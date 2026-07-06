@@ -3,23 +3,19 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from quiver.skills.layout import HARNESS_ROOTS, SHARED_LABEL, SHARED_REL
+
+# Backward-compatible alias used by setup wizard.
+SYMLINK_TARGETS = tuple((label, rel) for label, rel in HARNESS_ROOTS if label != SHARED_LABEL)
+
 
 @dataclass(frozen=True)
 class SkillsSymlinkHint:
     label: str
     path: Path
-    action: str  # create_shared | symlink | ok
+    action: str  # create_shared | symlink | ok | manual
     command: str
     reason: str
-
-
-SHARED_REL = Path(".agents/skills")
-
-SYMLINK_TARGETS = (
-    ("cursor", Path(".cursor/skills")),
-    ("codex", Path(".codex/skills")),
-    ("claude", Path(".claude/skills")),
-)
 
 
 def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
@@ -83,7 +79,6 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
             except OSError:
                 pass
             continue
-        # Real directory — do not auto-overwrite; suggest manual merge
         try:
             if path.resolve() == shared_real:
                 hints.append(

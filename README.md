@@ -21,6 +21,7 @@ quiver
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#commands">Commands</a> ·
+  <a href="#skills">Skills</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#contributing">Contributing</a>
 </p>
@@ -69,7 +70,7 @@ If you juggle more than one AI coding agent you end up with a mess:
 | **Launch** | Start any tool by name or alias; extra args pass straight through (`execvp`) |
 | **Sessions** | Unified, time-sorted view of recent sessions across agents + one-command resume |
 | **Models** | Aggregate model usage parsed read-only from each tool's session logs |
-| **Skills** | Discover every `SKILL.md` across shared, Cursor, Claude, Codex, and plugin roots |
+| **Skills** | Discover, list, catalog, symlink, and move skills across harness roots |
 | **MCP sync** | Inspect, compare, validate, and copy MCP servers between tools |
 
 ## Install
@@ -127,7 +128,13 @@ swe models                   # model usage across all tools
 swe models -t -p             # grouped by tool, with provider prefix
 
 swe skills                   # every SKILL.md across all skill roots
+swe skills discover          # find skill catalogs on Desktop/Documents
+swe skills discover --apply    # register discovered catalogs
+swe skills catalog add ~/path/to/skills [label]
 swe skills scope list        # list skill roots (scopes) with counts
+
+swe skills tree --sync       # persist symlink layout to skill_links.json
+swe skills help catalog      # detailed help for catalog subcommands
 
 swe mcp list                 # matrix of MCP servers across tools
 swe mcp sync opencode cursor # copy MCP servers between tools
@@ -149,7 +156,16 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe session [N] [use N] [--agent X] [--here]` | | List or resume recent sessions |
 | `swe models [-t] [-p]` | | Model usage analytics |
 | `swe skills [filter] [-d]` | `sk` | List agent skills and paths |
-| `swe skills scope list` | | List skill scopes (roots) with counts |
+| `swe skills scope list` | | List skill scopes (roots) with symlink info |
+| `swe skills tree [--sync]` | | Show harness symlink layout |
+| `swe skills link <harness> [target]` | | Symlink harness skills root to shared/other |
+| `swe skills unlink <harness> [--mkdir]` | | Break harness symlink (optional empty dir) |
+| `swe skills move <name> --from A --to B` | | Move skill folder between roots |
+| `swe skills discover [--apply]` | | Scan Desktop/Documents for skill catalogs |
+| `swe skills catalog add [path] [label]` | | Register a skills directory (default: `.`) |
+| `swe skills catalog .` | | Add the current directory as a catalog |
+| `swe skills catalog list` | | List configured skill catalogs |
+| `swe skills help [topic]` | | Per-topic help (catalog, discover, tree, link, …) |
 | `swe tags` | | List tags and associated tools |
 | `swe aliases` | | List alias → tool mappings |
 | `swe mcp <subcommand> …` | | MCP server management (see below) |
@@ -171,6 +187,63 @@ Run `swe <command> --help` for detailed help on any command.
 | `swe mcp doctor [--strict]` | Deep diagnostics |
 
 Flags for `sync`: `--only=a,b`, `--force`, `--skip-conflicts`, `--dry-run`, `--strict`.
+
+## Skills
+
+Agent skills are folders containing a `SKILL.md` file. quiver scans built-in harness roots (shared, Cursor, Claude, Codex, plugins) plus any catalogs you register.
+
+### Typical layout
+
+Most setups symlink every harness to one shared tree:
+
+```
+~/.agents/skills          ← canonical shared skills
+~/.codex/skills    → shared
+~/.claude/skills   → shared
+~/.cursor/skills   → shared
+```
+
+Run `swe skills tree` to inspect this layout. Use `swe skills tree --sync` to record observed symlinks in `~/.config/swe/skill_links.json`.
+
+### Discover and register catalogs
+
+Project skill folders outside the default roots can be registered manually or discovered automatically:
+
+```bash
+swe skills discover              # scan ~/Desktop and ~/Documents for */skills/
+swe skills discover --apply      # register new catalogs
+cd ~/Projects/my-app/skills && swe skills catalog .
+swe skills catalog list
+```
+
+Catalogs live in `~/.config/swe/skill_catalogs.json`. Nested catalogs (e.g. `gbrain/skills` inside `ai-engineering/skills`) are collapsed to the outermost match.
+
+### Symlinks and moving skills
+
+Link all harnesses to shared (what `swe setup` step 3 does):
+
+```bash
+swe skills link codex
+swe skills link claude shared
+```
+
+Give one harness its own private skills tree:
+
+```bash
+swe skills unlink codex --mkdir
+swe skills move my-skill --from shared --to codex
+```
+
+Run `swe skills help link`, `swe skills help move`, etc. for detailed usage.
+
+### Listing skills
+
+```bash
+swe skills                       # all skills with VISIBLE VIA column
+swe skills query                 # filter by name or scope
+swe skills -d                    # include descriptions
+swe skills scope list            # every root with symlink kind + counts
+```
 
 ## How it works
 
@@ -196,7 +269,7 @@ flowchart LR
 - **Registry** — your tool list lives in `~/.config/swe/tools.json`, auto-created from built-in defaults on first run. Edited by `swe add` / `remove` / `check`. Not shipped with the package (see `examples/tools.example.json`).
 - **Launching** — `swe use` resolves a name or alias and replaces the current process via `os.execvp`, so the tool behaves exactly as if you'd typed it directly.
 - **Analytics** — `swe session` and `swe models` parse each tool's on-disk logs (e.g. `~/.claude/projects`, `~/.codex/sessions`, `~/.local/share/opencode/opencode.db`). quiver **never writes** to those files.
-- **Skills** — walks known skill roots under `$HOME` (and `./.cursor/skills`), de-duplicates symlinked paths, reads each `SKILL.md` front matter.
+- **Skills** — walks known skill roots under `$HOME` (and `./.cursor/skills`), de-duplicates symlinked paths, reads each `SKILL.md` front matter. Catalogs from `skill_catalogs.json` extend the scan; `swe skills tree` / `link` / `move` manage harness symlinks without touching skill content.
 - **MCP sync** — reads each tool's native MCP config, normalizes to a canonical shape, re-emits in the target format. Nothing is written unless you run a real (non-`--dry-run`) `sync` or `edit`.
 
 ## Configuration
@@ -206,6 +279,8 @@ Everything quiver persists lives under `~/.config/swe/`:
 | File | Purpose | Shipped? |
 | --- | --- | --- |
 | `tools.json` | Your tool registry (versions for this machine) | No — auto-created |
+| `skill_catalogs.json` | Extra skill catalog directories | No — auto-created by discover/add |
+| `skill_links.json` | Recorded harness symlink layout | No — updated by link/tree --sync |
 | `mcp.json` | MCP source-of-truth (may contain tokens) | No — git-ignored |
 
 The MCP subsystem also reads/writes each tool's native config (e.g. `~/.claude.json`, `~/.cursor/mcp.json`, `~/.config/opencode/opencode.json`).

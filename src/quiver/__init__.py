@@ -5,7 +5,7 @@ see the "Renaming" section of the README; the values below are the single
 source of truth for the command name and on-disk config directory.
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.5"
 
 # User-facing CLI command name (the console entry point registered in
 # pyproject.toml). Kept as "swe" to preserve muscle memory.
