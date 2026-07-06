@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/mascot.png" alt="quiver mascot — a friendly quiver holding arrows for terminal, code, AI, and cursor" width="180">
+  <img src="assets/mascot.png" alt="quiver mascot — a friendly quiver holding arrows for terminal, code, AI, and cursor" width="400">
 </p>
 
 <h1 align="center">
