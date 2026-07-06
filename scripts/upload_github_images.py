@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Upload quiver repo images to GitHub (avatar + social preview).
+"""Print steps to set quiver's GitHub social preview image.
 
-GitHub does not expose a public API for repository avatar or social-preview
-uploads. Bearer-token POSTs to the web upload endpoint are rejected (CSRF /
-session required). Use this script to print exact manual steps, or automate
-with a logged-in browser (Playwright) if you add that separately.
+Personal user repos do NOT have a separate repo avatar. The small icon next
+to the repo name is your GitHub account avatar (github.com/settings/profile).
 
-Assets live in the repo at:
-  assets/mascot.png         — repo profile picture (~512×512 crop works well)
-  assets/social-preview.png — social preview (1280×640)
+What you CAN set per repo:
+  Settings → Social preview  (link unfurls on Slack, Twitter, etc.)
+
+The README mascot (assets/mascot.png) is what visitors see on the repo page.
 """
 
 import sys
@@ -20,30 +19,31 @@ SETTINGS = f"https://github.com/{REPO}/settings"
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    mascot = root / "assets" / "mascot.png"
     social = root / "assets" / "social-preview.png"
+    mascot = root / "assets" / "mascot.png"
 
-    for path in (mascot, social):
-        if not path.is_file():
-            print(f"Missing asset: {path}", file=sys.stderr)
-            return 1
+    if not social.is_file():
+        print(f"Missing: {social}", file=sys.stderr)
+        return 1
 
     print(
         f"""
-GitHub repo images — manual upload (no public API)
+GitHub images for a personal repo (not an org)
 
-1. Open repo settings:
-   {SETTINGS}
+There is no per-repo profile picture. The icon beside "quiver" on GitHub is
+your account avatar — change that at https://github.com/settings/profile if
+you want (optional; most people keep their face/logo there).
 
-2. Profile picture (repo avatar)
-   • Scroll to the profile picture / repository image section
-   • Upload: {mascot}
+Repo page branding
+  Already done: README shows {mascot.name} from assets/
 
-3. Social preview (link unfurls on Slack, Twitter, etc.)
-   • Scroll to "Social preview" → Edit
-   • Upload: {social}
+Social preview (when someone pastes the repo link)
+  1. Open {SETTINGS}
+  2. Scroll to "Social preview" → Edit → Upload an image
+  3. Choose: {social}
+     (1280×640 PNG — also fine for this upload)
 
-Both files are committed in the repo under assets/ for drag-and-drop.
+Direct link to settings: {SETTINGS}
 """
     )
     return 0
