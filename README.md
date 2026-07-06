@@ -105,6 +105,11 @@ python -m quiver.mcp_server
 ## Quick start
 
 ```bash
+swe setup                    # onboarding wizard (harness + MCP + skills)
+swe setup --apply            # apply safe defaults without prompting
+swe harness discover         # scan PATH for unregistered AI CLIs
+swe mcp discover             # find MCP servers not in ~/.config/swe/mcp.json
+
 swe list                     # all registered tools, sorted by recent usage
 swe list agentic             # filter by tag
 swe info claude              # command, version, path, tags, aliases
@@ -132,11 +137,14 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 
 | Command | Aliases | Description |
 | --- | --- | --- |
+| `swe setup [--apply]` | | Onboarding wizard (harnesses, MCP, skills roots) |
 | `swe list [tag]` | `ls` | List registered tools, sorted by 100-day usage |
 | `swe info <name\|alias>` | | Show command, version, path, tags, aliases |
 | `swe add <name> <cmd> …` | | Register or update a tool |
 | `swe remove <name\|alias>` | `rm` | Remove from registry (does not uninstall) |
 | `swe check` | | Probe live versions and refresh registry |
+| `swe harness discover [--apply]` | | Scan PATH for unregistered AI coding CLIs |
+| `swe discover [--apply]` | | Alias for `swe harness discover` |
 | `swe use <name\|alias> [args…]` | `run` | Launch a tool (replaces current process) |
 | `swe session [N] [use N] [--agent X] [--here]` | | List or resume recent sessions |
 | `swe models [-t] [-p]` | | Model usage analytics |
@@ -153,6 +161,7 @@ Run `swe <command> --help` for detailed help on any command.
 
 | Subcommand | Description |
 | --- | --- |
+| `swe mcp discover [--apply]` | Find MCP servers across tools vs `mcp.json` |
 | `swe mcp list [tool]` | Matrix view of MCP servers across tools |
 | `swe mcp status [tool]` | Matrix + health checks |
 | `swe mcp sync <source> <target…>` | Copy servers between tools (format conversion) |

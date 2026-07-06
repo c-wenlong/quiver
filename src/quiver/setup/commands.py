@@ -7,6 +7,8 @@ from pathlib import Path
 from quiver.console import c
 from quiver.harness.discover import apply_findings, discover_harnesses
 from quiver.harness.discover_commands import cmd_discover
+from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
+from quiver.skills.symlinks import apply_skills_symlink_hints, skills_symlink_hints
 
 
 def cmd_harness(args):
@@ -31,79 +33,145 @@ def cmd_harness(args):
     return 1
 
 
+def _setup_help():
+    print(
+        f"""
+  {c('bold', 'swe setup')} — Onboarding wizard for new quiver installs
+
+  {c('cyan', 'swe setup')}              Scan harnesses, MCP servers, and skills roots (dry-run)
+  {c('cyan', 'swe setup --apply')}      Apply safe changes (harness registry + mcp.json + symlinks)
+  {c('cyan', 'swe setup --json')}       Machine-readable output
+
+{c('bold', 'Steps')}
+  1. Discover AI coding CLI harnesses on PATH
+  2. Discover MCP servers across tool configs
+  3. Recommend skills-root symlinks (~/.agents/skills)
+"""
+    )
+
+
 def cmd_setup(args):
     apply = "--apply" in args
     json_out = "--json" in args
     if "-h" in args or "--help" in args:
-        print(
-            f"""
-  {c('bold', 'swe setup')} — Onboarding wizard for new quiver installs
-
-  Scans your machine for AI coding CLI harnesses and offers to register them.
-
-  {c('cyan', 'swe setup')}              Scan and show recommendations (dry-run)
-  {c('cyan', 'swe setup --apply')}      Add high-confidence harnesses to tools.json
-
-{c('bold', 'Coming soon')}
-  MCP server import and skills-root symlink hints in this wizard.
-"""
-        )
+        _setup_help()
         return 0
 
-    findings = discover_harnesses()
-    new_findings = [f for f in findings if f.status == "new" and f.confidence == "high"]
+    home = Path.home()
+    harness_findings = discover_harnesses()
+    new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
+    mcp_findings = discover_mcp_servers()
+    new_mcp = [f for f in mcp_findings if f.status == "new"]
+    skill_hints = skills_symlink_hints(home=home)
+    actionable_skills = [h for h in skill_hints if h.action in ("create_shared", "symlink")]
 
     if json_out:
         print(
             json.dumps(
                 {
                     "harness": [
+                        {"name": f.name, "command": f.command, "path": f.path}
+                        for f in new_harness
+                    ],
+                    "mcp": [{"name": f.name, "tools": list(f.tools)} for f in new_mcp],
+                    "skills": [
                         {
-                            "name": f.name,
-                            "command": f.command,
-                            "path": f.path,
-                            "confidence": f.confidence,
+                            "label": h.label,
+                            "action": h.action,
+                            "command": h.command,
+                            "reason": h.reason,
                         }
-                        for f in new_findings
-                    ]
+                        for h in skill_hints
+                        if h.action != "ok"
+                    ],
                 },
                 indent=2,
             )
         )
-        if apply and new_findings:
-            added = apply_findings(new_findings, min_confidence="high")
-            print(json.dumps({"added": added}, indent=2))
+        if apply:
+            result = {
+                "applied": {
+                    "harness": apply_findings(new_harness, min_confidence="high") if new_harness else [],
+                    "mcp": apply_mcp_findings(new_mcp) if new_mcp else [],
+                    "skills": apply_skills_symlink_hints(actionable_skills, home=home),
+                }
+            }
+            print(json.dumps(result, indent=2))
         return 0
 
     print(f"\n{c('bold', 'quiver setup')}\n")
-    print(c("dim", "  Step 1/1 — Discover AI coding CLI harnesses on PATH\n"))
 
-    if not new_findings:
+    # Step 1 — harnesses
+    print(c("dim", "  Step 1/3 — AI coding CLI harnesses\n"))
+    if new_harness:
+        for f in new_harness:
+            path = f.path.replace(str(home), "~")
+            print(f"  {c('green', '•')} {c('bold', f.name)} ({f.command})  {c('dim', path)}")
+    else:
         print(c("green", "  ✓ No new high-confidence harnesses to register."))
-        print(c("dim", "  Run `swe list` to see your registry, or `swe harness discover --all` for details.\n"))
+    print()
+
+    # Step 2 — MCP
+    print(c("dim", "  Step 2/3 — MCP servers\n"))
+    if new_mcp:
+        for f in new_mcp:
+            tools = ", ".join(f.tools)
+            print(f"  {c('green', '•')} {c('bold', f.name)}  {c('dim', f'({tools})')}")
+    else:
+        print(c("green", "  ✓ No new MCP servers outside ~/.config/swe/mcp.json."))
+    print()
+
+    # Step 3 — skills
+    print(c("dim", "  Step 3/3 — Skills roots\n"))
+    shown_skills = False
+    for hint in skill_hints:
+        if hint.action == "ok":
+            continue
+        shown_skills = True
+        if hint.action == "manual":
+            print(f"  {c('yellow', '!')} {hint.label}: {hint.reason}")
+            print(f"    {c('dim', hint.command)}")
+        else:
+            print(f"  {c('green', '•')} {hint.label}: {hint.reason}")
+            print(f"    {c('dim', hint.command)}")
+    if not shown_skills:
+        print(c("green", "  ✓ Skills roots look good (shared tree linked)."))
+    print()
+
+    has_work = bool(new_harness or new_mcp or actionable_skills)
+    if not has_work:
+        print(c("dim", "  Nothing to apply. Try `swe list`, `swe mcp list`, `swe skills scope list`.\n"))
         return 0
 
-    for f in new_findings:
-        path = f.path.replace(str(Path.home()), "~")
-        print(f"  {c('green', '•')} {c('bold', f.name)} ({f.command})  {c('dim', path)}")
-
-    print()
     if apply:
-        added = apply_findings(new_findings, min_confidence="high")
-        print(c("green", f"  ✓ Registered {len(added)} tool(s): {', '.join(added)}"))
-        print(c("dim", "  Next: `swe list`  ·  `swe check`  ·  `swe mcp list`\n"))
+        added_h = apply_findings(new_harness, min_confidence="high") if new_harness else []
+        added_m = apply_mcp_findings(new_mcp) if new_mcp else []
+        added_s = apply_skills_symlink_hints(actionable_skills, home=home)
+        parts = []
+        if added_h:
+            parts.append(f"{len(added_h)} harness(es)")
+        if added_m:
+            parts.append(f"{len(added_m)} MCP server(s)")
+        if added_s:
+            parts.append(f"{len(added_s)} skills action(s)")
+        print(c("green", f"  ✓ Applied: {', '.join(parts) or 'nothing'}"))
+        print(c("dim", "  Next: `swe list`  ·  `swe check`  ·  `swe mcp list`  ·  `swe skills`\n"))
         return 0
 
     if sys.stdin.isatty():
         try:
-            answer = input("  Add these tools to your registry? [y/N] ").strip().lower()
+            answer = input("  Apply safe setup changes? [y/N] ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print()
             return 130
         if answer in ("y", "yes"):
-            added = apply_findings(new_findings, min_confidence="high")
-            print(c("green", f"\n  ✓ Registered {len(added)} tool(s): {', '.join(added)}"))
-            print(c("dim", "  Next: `swe list`  ·  `swe check`\n"))
+            added_h = apply_findings(new_harness, min_confidence="high") if new_harness else []
+            added_m = apply_mcp_findings(new_mcp) if new_mcp else []
+            added_s = apply_skills_symlink_hints(actionable_skills, home=home)
+            print(c("green", f"\n  ✓ Harness: {', '.join(added_h) or '—'}"))
+            print(c("green", f"  ✓ MCP: {', '.join(added_m) or '—'}"))
+            print(c("green", f"  ✓ Skills: {', '.join(added_s) or '—'}"))
+            print(c("dim", "  Next: `swe list`  ·  `swe mcp list`\n"))
             return 0
 
     print(c("dim", "  Dry-run only. Run: swe setup --apply\n"))
