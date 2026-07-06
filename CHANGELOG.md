@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-06
+
+### Added
+
+- `swe harness discover` — scan PATH for AI coding CLIs not yet in `tools.json` (dry-run by default)
+- `swe harness discover --apply` / `--apply-all` — register discovered harnesses
+- `swe setup` — thin onboarding wizard with optional interactive confirm
+- `swe discover` alias for `swe harness discover`
+- Repo mascot (`assets/mascot.png`) in README
+
 ## [0.2.0] - 2026-07-06
 
 ### Changed

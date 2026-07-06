@@ -16,6 +16,7 @@ from quiver.harness.commands import (
 from quiver.help_text import cmd_help
 from quiver.mcp import main as mcp_main
 from quiver.sessions.commands import cmd_models, cmd_session
+from quiver.setup.commands import cmd_harness, cmd_setup
 from quiver.skills.commands import cmd_skills
 
 
@@ -40,6 +41,9 @@ COMMANDS = {
     "tags": cmd_tags,
     "aliases": cmd_aliases,
     "mcp": cmd_mcp,
+    "harness": cmd_harness,
+    "setup": cmd_setup,
+    "discover": lambda args: cmd_harness(["discover", *args]),
     "help": cmd_help,
     "--help": cmd_help,
     "-h": cmd_help,
