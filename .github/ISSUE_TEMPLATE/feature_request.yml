@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an idea for quiver
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea? We'd love to hear it — especially new tool parsers, MCP format support, or skills roots.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem does this solve? What workflow are you trying to improve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like quiver to behave?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Registry / launch
+        - Sessions
+        - Models analytics
+        - Skills discovery
+        - MCP sync
+        - Docs / DX
+        - Other
+    validations:
+      required: true

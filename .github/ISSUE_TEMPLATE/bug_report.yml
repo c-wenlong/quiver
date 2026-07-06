@@ -1,0 +1,56 @@
+name: Bug report
+description: Report something that isn't working as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as you can.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: I ran `swe session` and …
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Commands and inputs that trigger the issue.
+      placeholder: |
+        1. Run `swe list`
+        2. Run `swe use codex`
+        3. See error …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, quiver version.
+      placeholder: |
+        - OS: macOS 15
+        - Python: 3.12.8
+        - quiver: 0.1.0 (`pip show quiver`)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output / logs
+      description: Paste terminal output. Redact any tokens or paths you don't want to share.
+      render: shell
