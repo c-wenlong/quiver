@@ -149,15 +149,37 @@ HELP = {
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for detailed help on each command
 {c('bold', 'Source of truth')}  ~/.config/swe/mcp.json"""
     ),
+    "harness": (
+        "Harness registry utilities",
+        f"""\
+  {c('cyan', 'swe harness discover')}              Scan PATH for AI coding CLIs (dry-run)
+  {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to tools.json
+  {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
+  {c('cyan', 'swe harness discover --json')}       Machine-readable output
+
+{c('bold', 'Alias')}  {c('cyan', 'swe discover')} is the same as {c('cyan', 'swe harness discover')}"""
+    ),
+    "setup": (
+        "Onboarding wizard for new installs",
+        f"""\
+  {c('cyan', 'swe setup')}              Scan for harnesses and show recommendations
+  {c('cyan', 'swe setup --apply')}      Register high-confidence harnesses without prompting
+
+  On a TTY, {c('cyan', 'swe setup')} prompts before writing to tools.json."""
+    ),
 }
 
 COMMAND_CATEGORIES = [
+    ("Setup", [
+        ("setup",   None),
+    ]),
     ("Registry", [
         ("list",    "ls"),
         ("info",    None),
         ("add",     None),
         ("remove",  "rm"),
         ("check",   None),
+        ("harness", None),
     ]),
     ("Launch", [
         ("use",     "run"),
@@ -200,58 +222,6 @@ def cmd_help(args):
         return
 
     # ── full help ─────────────────────────────────────────────────────────────
-    print(f"\n{c('bold', 'swe')} — Central manager for AI coding CLI tools\n")
-    print(f"  {c('dim', 'USAGE')}  swe <command> [arguments]\n")
-
-    for cat_name, cmds in COMMAND_CATEGORIES:
-        print(f"  {c('bold', cat_name)}")
-        for primary, alias in cmds:
-            summary = HELP[primary][0]
-            if alias:
-                print(f"    {c('cyan', primary):<22} {c('dim', '(' + alias + ')'):<14} {summary}")
-            else:
-                print(f"    {c('cyan', primary):<22} {'':14} {summary}")
-        print()
-
-    print(f"  {c('dim', 'FLAGS')}")
-    print(f"    {c('cyan', 'swe help')}              Full help")
-    print(f"    {c('cyan', 'swe <cmd> --help')}      Detailed help for a command\n")
-
-    print(f"  {c('dim', 'ALIASES')}   cc=claude  gg=gemini  cx=codex  cp=copilot  oc=opencode")
-    print(f"  {'':>14}fc=forge  df=droid  olla=ollama  cs=cursor  cl=cline\n")
-
-    n_inst = 0
-    n_total = 0
-    try:
-        tools = load_registry()
-        n_total = len(tools)
-        n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
-    except Exception:
-        pass
-    print(f"  {c('dim', 'REGISTRY')}  {REGISTRY_FILE}")
-    print(f"  {c('dim', 'TOOLS')}     {n_inst}/{n_total} installed\n")
-
-
-def cmd_help(args):
-    if args:
-        cmd_name = args[0]
-        if cmd_name in HELP:
-            summary, detail = HELP[cmd_name]
-            print(f"\n  {c('bold', 'swe ' + cmd_name)} — {summary}\n")
-            print(detail)
-            print()
-            return
-        for cat, cmds in COMMAND_CATEGORIES:
-            for primary, alias in cmds:
-                if alias == cmd_name:
-                    summary, detail = HELP[primary]
-                    print(f"\n  {c('bold', 'swe ' + primary)} ({c('dim', alias)}) — {summary}\n")
-                    print(detail)
-                    print()
-                    return
-        print(c("red", f"  Unknown command: '{cmd_name}'"))
-        return
-
     print(f"\n{c('bold', 'swe')} — Central manager for AI coding CLI tools\n")
     print(f"  {c('dim', 'USAGE')}  swe <command> [arguments]\n")
 
