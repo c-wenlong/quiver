@@ -1,0 +1,81 @@
+"""Built-in default tool registry (seeded on first run)."""
+
+DEFAULT_TOOLS = {
+    "claude": {
+        "command": "claude",
+        "description": "Claude Code by Anthropic — agentic coding assistant",
+        "version": "2.1.104",
+        "tags": ["agentic", "coding"],
+        "aliases": ["cc"],
+    },
+    "gemini": {
+        "command": "gemini",
+        "description": "Gemini CLI by Google — large context (1M token) assistant",
+        "version": "0.35.1",
+        "tags": ["agentic", "coding"],
+        "aliases": ["gg"],
+    },
+    "codex": {
+        "command": "codex",
+        "description": "OpenAI Codex CLI",
+        "version": "0.120.0",
+        "tags": ["agentic", "coding"],
+        "aliases": ["cx"],
+    },
+    "copilot": {
+        "command": "copilot",
+        "description": "GitHub Copilot CLI",
+        "version": "1.0.34",
+        "tags": ["agentic", "coding"],
+        "aliases": ["cp"],
+    },
+    "opencode": {
+        "command": "opencode",
+        "description": "opencode — open source AI coding agent",
+        "version": "1.14.20",
+        "tags": ["agentic", "coding", "open-source"],
+        "aliases": ["oc"],
+    },
+    "forge": {
+        "command": "forge",
+        "description": "Forge — AI coding assistant",
+        "version": "2.12.0",
+        "tags": ["agentic", "coding"],
+        "aliases": ["fc"],
+    },
+    "droid": {
+        "command": "droid",
+        "description": "Factory Droids — autonomous background coding agent",
+        "version": "0.106.0",
+        "tags": ["agentic", "coding", "autonomous"],
+        "aliases": ["df"],
+    },
+    "ollama": {
+        "command": "ollama",
+        "description": "Ollama — run local LLMs",
+        "version": "0.20.4",
+        "tags": ["local", "llm", "infrastructure"],
+        "aliases": ["olla"],
+    },
+    "pi": {
+        "command": "pi",
+        "description": "pi — lightweight customisable coding agent harness",
+        "version": None,
+        "tags": ["agentic", "coding", "customisable"],
+        "aliases": ["pi"],
+    },
+    "continue": {
+        "command": "continue",
+        "description": "Continue — VS Code extension for AI pair programming",
+        "version": None,
+        "tags": ["agentic", "coding"],
+        "aliases": ["continue", "ct"],
+    },
+    "mimo": {
+        "command": "mimo",
+        "description": "mimo — coding agent",
+        "version": None,
+        "tags": ["agentic", "coding"],
+        "aliases": ["mimo"],
+    },
+}
