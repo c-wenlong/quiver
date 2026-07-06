@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-07-06
+
+### Added
+
+- `swe skills help <topic>` — per-topic help (catalog, discover, tree, link, unlink, move, scope)
+- README **Skills** section with discover, catalog, symlink, and move workflows
+
+### Changed
+
+- Centralized skills help in `skills/help_text.py` (used by subcommands and `swe skills help`)
+- Expanded `swe help skills`, `swe help setup`, and `swe help discover`
+- CONTRIBUTING and tests README updated for package layout and new test files
+
+## [0.2.4] - 2026-07-06
+
+### Added
+
+- `swe skills tree` — show harness symlink layout (codex/claude/cursor → shared)
+- `swe skills tree --sync` — persist observed symlinks to `skill_links.json`
+- `swe skills link` / `unlink` / `move` — manage symlinks and move skills between roots
+- Skills list shows **VISIBLE VIA** (all harness scopes that see each skill)
+
+## [0.2.3] - 2026-07-06
+
+### Added
+
+- `swe skills discover` — scan `~/Desktop` and `~/Documents` for `*/skills/` catalogs
+- `swe skills catalog add|list|remove` — register extra skill directories in `skill_catalogs.json`
+
 ## [0.2.2] - 2026-07-06
 
 ### Added

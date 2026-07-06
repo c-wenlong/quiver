@@ -4,12 +4,15 @@ import os
 import re
 from pathlib import Path
 
+from quiver.skills.catalogs import load_skill_catalogs
+from quiver.skills.layout import shared_scopes_for_skill
+
 
 def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple[str, Path]]:
     """Return [(scope_label, Path)] skill-root dirs that exist, deduped by realpath."""
     home = home or Path.home()
     cwd = cwd or Path.cwd()
-    candidates = [
+    candidates: list[tuple[str, Path]] = [
         ("shared", home / ".agents" / "skills"),
         ("cursor-builtin", home / ".cursor" / "skills-cursor"),
         ("cursor-plugin", home / ".cursor" / "plugins" / "cache"),
@@ -19,6 +22,10 @@ def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple
         ("cursor", home / ".cursor" / "skills"),
         ("project", cwd / ".cursor" / "skills"),
     ]
+    for entry in load_skill_catalogs():
+        label = entry.get("label", "catalog")
+        path = Path(entry.get("path", "")).expanduser()
+        candidates.append((label, path))
     roots: list[tuple[str, Path]] = []
     seen: set[Path] = set()
     for label, path in candidates:
@@ -87,6 +94,7 @@ def discover_skills(home: Path | None = None, cwd: Path | None = None) -> list[d
                     "scope": label,
                     "path": str(md),
                     "description": desc,
+                    "visible_via": shared_scopes_for_skill(md, home=home),
                 }
             )
     return skills

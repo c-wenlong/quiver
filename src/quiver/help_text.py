@@ -109,6 +109,13 @@ HELP = {
   {c('cyan', 'swe skills <filter>')}          Filter by name or scope substring
   {c('cyan', 'swe skills -d')}                Also show each skill's description
   {c('cyan', 'swe skills scope list')}        List the scopes (roots) available with counts
+  {c('cyan', 'swe skills tree [--sync]')}     Show symlink layout between harness roots
+  {c('cyan', 'swe skills link <harness> [target]')}   Symlink a harness root to shared/other
+  {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break a harness symlink
+  {c('cyan', 'swe skills move <name> --from A --to B')} Move a skill folder between roots
+  {c('cyan', 'swe skills discover [--apply]')} Scan Desktop/Documents for skill catalogs
+  {c('cyan', 'swe skills catalog add [path] [label]')} Register a skills directory (default: .)
+  {c('cyan', 'swe skills catalog .')}                Add the current directory as a catalog
 
 {c('bold', 'Flags')}
   {c('cyan', '-d, --desc')}                   Show skill descriptions
@@ -119,8 +126,12 @@ HELP = {
   cursor-plugin   ~/.cursor/plugins/cache
   claude-plugin   ~/.claude/plugins/cache
   project         ./.cursor/skills (current directory)
+  <catalog>       Paths from ~/.config/swe/skill_catalogs.json
 
-  Roots that resolve to the same real path are shown once."""
+  {c('dim', 'Discover')} finds folders named skills under ~/Desktop and ~/Documents,
+  then {c('cyan', 'swe skills discover --apply')} or {c('cyan', 'swe skills catalog add')} registers them.
+
+{c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')} — catalog, discover, tree, link, unlink, move, scope"""
     ),
     "tags": (
         "Show all tags and which tools use them",
@@ -166,7 +177,17 @@ HELP = {
   {c('cyan', 'swe setup')}              Scan harnesses, MCP, and skills roots (dry-run)
   {c('cyan', 'swe setup --apply')}      Apply safe setup changes without prompting
 
+  Three steps: (1) register AI CLIs via harness discover, (2) import MCP servers,
+  (3) symlink ~/.codex, ~/.claude, ~/.cursor/skills → ~/.agents/skills when safe.
+
   On a TTY, {c('cyan', 'swe setup')} prompts before writing registry, mcp.json, or symlinks."""
+    ),
+    "discover": (
+        "Scan PATH for unregistered AI coding CLIs",
+        f"""\
+  {c('cyan', 'swe discover [--apply]')}   Alias for {c('cyan', 'swe harness discover')}
+
+  See {c('cyan', 'swe help harness')} for flags (--apply, --apply-all, --json)."""
     ),
 }
 
@@ -180,7 +201,7 @@ COMMAND_CATEGORIES = [
         ("add",     None),
         ("remove",  "rm"),
         ("check",   None),
-        ("harness", None),
+        ("harness", "discover"),
     ]),
     ("Launch", [
         ("use",     "run"),
@@ -238,7 +259,8 @@ def cmd_help(args):
 
     print(f"  {c('dim', 'FLAGS')}")
     print(f"    {c('cyan', 'swe help')}              Full help")
-    print(f"    {c('cyan', 'swe <cmd> --help')}      Detailed help for a command\n")
+    print(f"    {c('cyan', 'swe <cmd> --help')}      Detailed help for a command")
+    print(f"    {c('cyan', 'swe skills help <topic>')} Per-topic skills help\n")
 
     print(f"  {c('dim', 'ALIASES')}   cc=claude  gg=gemini  cx=codex  cp=copilot  oc=opencode")
     print(f"  {'':>14}fc=forge  df=droid  olla=ollama  cs=cursor  cl=cline\n")
