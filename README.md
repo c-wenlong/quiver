@@ -2,7 +2,9 @@
   <img src="assets/mascot.png" alt="quiver mascot — a friendly quiver holding arrows for terminal, code, AI, and cursor" width="180">
 </p>
 
-# quiver
+<h1 align="center">
+quiver
+</h1>
 
 <p align="center">
   <strong>One command to launch, resume, and analyze every AI coding CLI on your machine.</strong>
