@@ -1,0 +1,51 @@
+{
+  "claude": {
+    "command": "claude",
+    "description": "Claude Code by Anthropic — agentic coding assistant",
+    "version": null,
+    "tags": ["agentic", "coding", "byok"],
+    "aliases": ["cc"]
+  },
+  "gemini": {
+    "command": "gemini",
+    "description": "Gemini CLI by Google — large context (1M token) assistant",
+    "version": null,
+    "tags": ["agentic", "coding", "byok"],
+    "aliases": ["gg"]
+  },
+  "codex": {
+    "command": "codex",
+    "description": "OpenAI Codex CLI",
+    "version": null,
+    "tags": ["agentic", "coding", "byok"],
+    "aliases": ["cx"]
+  },
+  "copilot": {
+    "command": "copilot",
+    "description": "GitHub Copilot CLI",
+    "version": null,
+    "tags": ["agentic", "coding", "subscription"],
+    "aliases": ["cp"]
+  },
+  "opencode": {
+    "command": "opencode",
+    "description": "opencode — open source AI coding agent",
+    "version": null,
+    "tags": ["agentic", "coding", "open-source", "byok"],
+    "aliases": ["oc"]
+  },
+  "cursor": {
+    "command": "agent",
+    "description": "Cursor CLI — AI-powered coding agent",
+    "version": null,
+    "tags": ["agentic", "coding", "subscription"],
+    "aliases": ["cs"]
+  },
+  "ollama": {
+    "command": "ollama",
+    "description": "Ollama — run local LLMs",
+    "version": null,
+    "tags": ["local", "llm", "infrastructure"],
+    "aliases": ["olla"]
+  }
+}
