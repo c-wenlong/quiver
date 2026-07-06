@@ -4,6 +4,7 @@
 Usage: swe mcp <command> [args] [--help]
 
 Commands:
+  discover [--apply] [--json]   Find MCP servers across tool configs
   list [tool]                  Matrix view of MCP servers across tools
   status [tool]                List with health checks
   sync <source> <target...>    Copy servers source → target(s)
@@ -881,6 +882,16 @@ def cmd_doctor(args):
 
 
 MCP_HELP = {
+    "discover": f"""\
+  {c('cyan', 'swe mcp discover')}              List MCP servers in tools not in mcp.json (dry-run)
+  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.config/swe/mcp.json
+  {c('cyan', 'swe mcp discover --json')}       Machine-readable output
+  {c('cyan', 'swe mcp discover --all')}        Include servers already in source-of-truth
+
+{c('bold', 'Examples')}
+  swe mcp discover
+  swe mcp discover --apply""",
+
     "list": f"""\
   {c('cyan', 'swe mcp list')}                 Matrix of all MCP servers across all tools
   {c('cyan', 'swe mcp list <tool>')}          Show servers for one tool only
@@ -1010,7 +1021,14 @@ def cmd_help(args=None):
     return 0
 
 
+def cmd_mcp_discover(args):
+    from quiver.mcp.discover_commands import cmd_discover
+
+    return cmd_discover(args)
+
+
 COMMANDS = {
+    "discover": cmd_mcp_discover,
     "list": cmd_list,
     "status": cmd_status,
     "sync": cmd_sync,

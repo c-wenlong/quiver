@@ -135,6 +135,7 @@ HELP = {
     "mcp": (
         "Manage MCP servers across AI tools",
         f"""\
+  {c('cyan', 'swe mcp discover [--apply]')}   Find MCP servers across tool configs
   {c('cyan', 'swe mcp list [tool]')}          Matrix view of MCP servers across tools
   {c('cyan', 'swe mcp status [tool]')}        List with health checks
   {c('cyan', 'swe mcp add <name> | -A')}      Stage server(s) for sync
@@ -162,10 +163,10 @@ HELP = {
     "setup": (
         "Onboarding wizard for new installs",
         f"""\
-  {c('cyan', 'swe setup')}              Scan for harnesses and show recommendations
-  {c('cyan', 'swe setup --apply')}      Register high-confidence harnesses without prompting
+  {c('cyan', 'swe setup')}              Scan harnesses, MCP, and skills roots (dry-run)
+  {c('cyan', 'swe setup --apply')}      Apply safe setup changes without prompting
 
-  On a TTY, {c('cyan', 'swe setup')} prompts before writing to tools.json."""
+  On a TTY, {c('cyan', 'swe setup')} prompts before writing registry, mcp.json, or symlinks."""
     ),
 }
 

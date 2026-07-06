@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-07-06
+
+### Added
+
+- `swe mcp discover` — find MCP servers across tool configs vs `~/.config/swe/mcp.json`
+- Skills-root symlink hints in `swe setup` (step 3/3)
+- `assets/social-preview.png` (1280×640) for GitHub link previews
+- `scripts/upload_github_images.py` — upload avatar/social preview via GitHub token
+
+### Changed
+
+- `swe setup` now covers harnesses, MCP, and skills roots in one wizard
+- README commands table documents `setup`, `discover`, and `harness discover`
+
 ## [0.2.1] - 2026-07-06
 
 ### Added
