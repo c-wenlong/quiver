@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-06
+
+### Changed
+
+- Refactored monolithic `cli.py` into domain packages: `harness/`, `sessions/`, `skills/`, `mcp/`
+- Extracted shared `console.py` and `paths.py` utilities
+- Added unit tests for harness registry, sessions aggregator, models analytics, and skills discovery (30 tests total)
+- CI runs tests verbosely across Python 3.10–3.13
+
 ## [0.1.0] - 2026-07-06
 
 ### Added

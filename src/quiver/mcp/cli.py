@@ -25,8 +25,11 @@ import tty
 import termios
 from pathlib import Path
 
-from quiver import CONFIG_DIR_NAME
-from quiver.mcp_formats import (
+from quiver.console import c, cpad, strip_ansi
+from quiver.harness.registry import load_registry as _load_registry
+from quiver.harness.registry import alias_map as _harness_alias_map
+from quiver.paths import CONFIG_DIR, REGISTRY_FILE
+from quiver.mcp.formats import (
     McpFormatHandler,
     convert_server_between_formats,
     get_conversion_issues,
@@ -34,35 +37,6 @@ from quiver.mcp_formats import (
     normalize_server as normalize_server_any,
 )
 
-CONFIG_DIR = Path.home() / ".config" / CONFIG_DIR_NAME
-REGISTRY_FILE = CONFIG_DIR / "tools.json"
-
-COLORS = {
-    "reset":  "\033[0m",
-    "bold":   "\033[1m",
-    "dim":    "\033[2m",
-    "red":    "\033[31m",
-    "green":  "\033[32m",
-    "yellow": "\033[33m",
-    "blue":   "\033[34m",
-    "cyan":   "\033[36m",
-}
-
-def c(color: str, text: str) -> str:
-    return f"{COLORS.get(color, '')}{text}{COLORS['reset']}"
-
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def cpad(color: str, text: str, width: int) -> str:
-    """Pad a colored string to a visual width."""
-    visible_len = len(text)
-    padding = max(0, width - visible_len)
-    return f"{c(color, text)}{' ' * padding}"
-
-
-def strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text)
 
 def getch():
     """Read a single character from stdin."""
@@ -209,31 +183,21 @@ _EXTRA_ALIASES = {
 }
 
 
-# ── Registry & alias resolution (mirrors swe.py) ─────────────────────
+# ── Registry & alias resolution ─────────────────────────────────────
 
 
 def load_registry() -> dict:
-    """Load tools.json registry."""
-    try:
-        return json.loads(REGISTRY_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    return _load_registry()
 
 
 def alias_map(registry: dict) -> dict:
-    """Return {alias_or_name: canonical_name} for every tool."""
-    amap = {}
-    for name, info in registry.items():
-        amap[name] = name
-        for a in info.get("aliases", []):
-            amap[a] = name
-    # Add extras not in registry
+    """Return {alias_or_name: canonical_name} for every tool (+ MCP extras)."""
+    amap = _harness_alias_map(registry)
     amap.update(_EXTRA_ALIASES)
     return amap
 
 
 def resolve(registry: dict, key: str) -> str | None:
-    """Resolve a name or alias to canonical name."""
     return alias_map(registry).get(key)
 
 

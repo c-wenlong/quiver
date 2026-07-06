@@ -3,22 +3,18 @@
 Run all tests (from the repo root, with the package installed — e.g. `pip install -e .`):
 
 ```bash
-python -m unittest discover -s tests -p 'test_*.py'
+python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Current coverage:
+## Coverage by package
 
-- `test_mcp_formats.py`
-  - format handler parse/emit roundtrips
-  - standard/opencode conversion behavior
-  - conversion issue detection used by `--strict`
+| Test file | Package | What it covers |
+| --- | --- | --- |
+| `test_harness_registry.py` | `quiver.harness` | Registry load/save, alias resolution, default seeding |
+| `test_sessions_aggregator.py` | `quiver.sessions` | Parser registry, sort/filter by time, agent, cwd |
+| `test_models_analytics.py` | `quiver.sessions` | Model provider classification |
+| `test_skills_discovery.py` | `quiver.skills` | SKILL.md parsing, root dedup, discovery |
+| `test_mcp_formats.py` | `quiver.mcp` | MCP format handler parse/emit/conversion |
+| `test_mcp_sync_integration.py` | `quiver.mcp` | End-to-end `python -m quiver.mcp` sync/validate/doctor |
 
-- `test_mcp_sync_integration.py`
-  - `swe mcp sync --dry-run` does not write files
-  - real `sync` writes and converts formats
-  - `sync --strict` blocks malformed/unsupported entries
-  - `validate` reports bad entries and returns non-zero
-  - `doctor --strict` returns non-zero for unhealthy servers
-
-  These run the MCP subsystem as `python -m quiver.mcp` against a throwaway
-  `$HOME`, so they never touch your real config.
+Integration tests run against a throwaway `$HOME` and never touch your real config.
