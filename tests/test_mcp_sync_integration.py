@@ -9,6 +9,17 @@ import unittest
 # The MCP subsystem is invoked as a module so the test exercises the installed
 # package exactly the way `swe mcp ...` does at runtime.
 MCP_MODULE = "quiver.mcp"
+PROJECT_SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
+
+
+def _mcp_env(home: pathlib.Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(PROJECT_SRC) if not existing else f"{PROJECT_SRC}{os.pathsep}{existing}"
+    )
+    return env
 
 
 class McpSyncIntegrationTest(unittest.TestCase):
@@ -65,11 +76,9 @@ class McpSyncIntegrationTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_mcp(self, *args):
-        env = os.environ.copy()
-        env["HOME"] = str(self.home)
         return subprocess.run(
             [sys.executable, "-m", MCP_MODULE, *args],
-            env=env,
+            env=_mcp_env(self.home),
             capture_output=True,
             text=True,
         )
@@ -272,11 +281,9 @@ class McpSyncCodexPeerTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _run(self, *args) -> subprocess.CompletedProcess:
-        env = os.environ.copy()
-        env["HOME"] = str(self.home)
         return subprocess.run(
             [sys.executable, "-m", MCP_MODULE, *args],
-            env=env, capture_output=True, text=True,
+            env=_mcp_env(self.home), capture_output=True, text=True,
         )
 
     def test_list_includes_codex_as_peer(self):
@@ -361,8 +368,7 @@ class McpSyncCodexPeerTest(unittest.TestCase):
             "d[first]['startup_timeout_sec'] = 90\n"
             "json.dump(d, open(p, 'w'), indent=2)\n"
         )
-        env = os.environ.copy()
-        env["HOME"] = str(self.home)
+        env = _mcp_env(self.home)
         env["EDITOR"] = f'{sys.executable} -c "{editor_script}"'
 
         r = subprocess.run(

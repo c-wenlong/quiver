@@ -70,11 +70,12 @@ class DiscoverProviderKeysTest(unittest.TestCase):
 
 
 class CommandsSmokeTest(unittest.TestCase):
-    def _setup(self, tmp: Path):
+    def _setup(self, tmp: Path, *, create_keys_dir: bool = True):
         config_dir = tmp / ".config" / "swe"
         registry_file = config_dir / "providers.json"
         keys_dir = tmp / ".api_keys"
-        keys_dir.mkdir()
+        if create_keys_dir:
+            keys_dir.mkdir()
         return config_dir, registry_file, keys_dir
 
     def test_cmd_list_does_not_raise(self):
@@ -177,6 +178,20 @@ class CommandsSmokeTest(unittest.TestCase):
                 return_value=keys_dir,
             ):
                 self.assertEqual(cmd_remove(["does-not-exist"]), 1)
+
+    def test_cmd_add_rejects_unknown_flag(self):
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_dir, registry_file, keys_dir = self._setup(tmp_path)
+            p1, p2 = _registry_patches(config_dir, registry_file)
+            with p1, p2, patch(
+                "quiver.providers.commands.default_keys_dir",
+                return_value=keys_dir,
+            ):
+                self.assertEqual(
+                    cmd_add(["myprov", "--aliases", "my-provider"]),
+                    1,
+                )
 
     def test_cmd_remove_does_not_delete_key_file(self):
         with TemporaryDirectory() as tmp:
@@ -390,7 +405,9 @@ class CommandsSmokeTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir, registry_file, _ = self._setup(tmp_path)
+            config_dir, registry_file, _ = self._setup(
+                tmp_path, create_keys_dir=False
+            )
             shell_keys = tmp_path / ".api_keys"
             shell_keys.write_text(
                 "export OPENAI_API_KEY=sk-proj-listEnvColTest12345678\n"
@@ -417,7 +434,9 @@ class CommandsSmokeTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir, registry_file, _ = self._setup(tmp_path)
+            config_dir, registry_file, _ = self._setup(
+                tmp_path, create_keys_dir=False
+            )
             shell_keys = tmp_path / ".api_keys"
             shell_keys.write_text(
                 "# Kimi (also recognised via MOONSHOT_API_KEY)\n"

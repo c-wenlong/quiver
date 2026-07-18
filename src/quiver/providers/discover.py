@@ -51,8 +51,9 @@ def discover_provider_keys(
                 raw, matched_env = result
             key_file = str(keys_dir)
         else:
-            key_file = find_key_file(info, keys_dir)
-            raw = read_key(key_file) if key_file else None
+            resolved_key_file = find_key_file(info, keys_dir)
+            key_file = str(resolved_key_file) if resolved_key_file else None
+            raw = read_key(resolved_key_file) if resolved_key_file else None
         rows.append(
             {
                 "name": name,

@@ -38,8 +38,7 @@ def print_providers_help() -> None:
   swe providers info openai
   swe providers add anthropic "Anthropic Claude" \
       --env ANTHROPIC_API_KEY \
-      --url https://console.anthropic.com/settings/keys \
-      --aliases claude-key
+      --url https://console.anthropic.com/settings/keys
   swe providers add myprov --env MY_API_KEY --url https://example.com
   swe providers remove myprov
 """

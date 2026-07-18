@@ -250,7 +250,7 @@ HELP = {
       List registered providers + masked key status (`-` = no key)
   {c('cyan', 'swe providers info <name|alias>')}
       Show details for one provider, including key status + path
-  {c('cyan', 'swe providers add <name> [--url URL] [--env ENV] [--file NAME] [--aliases a,b]')}
+  {c('cyan', 'swe providers add <name> [--url URL] [--env ENV] [--file NAME]')}
       Register a provider in ~/.config/swe/providers.json
   {c('cyan', 'swe providers remove <name>')}
       Unregister a provider (does not delete your key file)
