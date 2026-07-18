@@ -196,5 +196,193 @@ class McpSyncIntegrationTest(unittest.TestCase):
         self.assertIn("Unknown arg(s)", result.stdout)
 
 
+class McpSyncCodexPeerTest(unittest.TestCase):
+    """Verify codex is a first-class peer of the existing JSON tools.
+
+    After the refactor, ``swe mcp sync <source> codex`` (and the reverse)
+    go through the same generic loop that already powered json-to-json
+    sync. Codex is treated as a TOML-region file via ``quiver.mcp.codex_io``.
+    """
+
+    CODEX_PRESET = (
+        'model = "gpt-5.5"\n'
+        'personality = \'friendly\'\n\n'
+        '[features]\n'
+        'multi_agent = true\n\n'
+        '[plugins]\n'
+        '[plugins."github@openai-curated"]\n'
+        'enabled = true\n\n'
+        '[mcp_servers]\n'
+        '[mcp_servers.fathom]\n'
+        "args = ['--directory', '/tmp/fathom', 'run', 'python3', 'server.py']\n"
+        "command = 'uv'\n\n"
+        '[mcp_servers.node_repl]\n'
+        'args = []\n'
+        'command = "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"\n'
+        'startup_timeout_sec = 120\n\n'
+        '[mcp_servers.node_repl.env]\n'
+        'CODEX_HOME = "/Users/kaichen/.codex"\n\n'
+        '[mcp_servers.miro-mcp]\n'
+        "url = 'https://mcp.miro.com/'\n"
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.tmp.name)
+
+        # Minimal registry (just opencode + claude), codex is registered
+        # via _EXTRA_ALIASES so it does not need a tools.json entry.
+        swe_cfg = self.home / ".config" / "swe"
+        swe_cfg.mkdir(parents=True, exist_ok=True)
+        (swe_cfg / "tools.json").write_text(
+            json.dumps({
+                "opencode": {"aliases": ["oc"]},
+                "claude": {"aliases": ["cc"]},
+                "claude-desktop": {"aliases": ["cd"]},
+            }, indent=2) + "\n"
+        )
+
+        # Source: opencode with one MCP server.
+        opencode_cfg = self.home / ".config" / "opencode"
+        opencode_cfg.mkdir(parents=True, exist_ok=True)
+        (opencode_cfg / "opencode.json").write_text(
+            json.dumps({
+                "mcp": {
+                    "notion": {
+                        "command": ["node", "/tmp/notion.js"],
+                        "environment": {"NOTION_TOKEN": "tok"},
+                        "enabled": True,
+                        "type": "local",
+                    },
+                },
+            }, indent=2) + "\n"
+        )
+
+        # Destination: an empty Claude config.
+        (self.home / ".claude.json").write_text(
+            json.dumps({"mcpServers": {}}, indent=2) + "\n")
+
+        # Destination: codex.toml with non-MCP siblings and codex-only servers.
+        codex_dir = self.home / ".codex"
+        codex_dir.mkdir(parents=True, exist_ok=True)
+        self.codex_path = codex_dir / "config.toml"
+        self.codex_path.write_text(self.CODEX_PRESET)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, *args) -> subprocess.CompletedProcess:
+        env = os.environ.copy()
+        env["HOME"] = str(self.home)
+        return subprocess.run(
+            [sys.executable, "-m", MCP_MODULE, *args],
+            env=env, capture_output=True, text=True,
+        )
+
+    def test_list_includes_codex_as_peer(self):
+        r = self._run("list")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("codex", r.stdout)
+        self.assertIn("notion", r.stdout)
+        self.assertIn("fathom", r.stdout)
+
+    def test_diff_opencode_codex_runs(self):
+        r = self._run("diff", "opencode", "codex")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("notion", r.stdout)
+        self.assertIn("fathom", r.stdout)
+
+    def test_sync_opencode_to_codex_dry_run_preserves_non_mcp_sections(self):
+        r = self._run("sync", "opencode", "codex", "--only=notion",
+                      "--dry-run", "--no-interactive", "--force")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        # Dry-run: codex.toml unchanged.
+        text = self.codex_path.read_text()
+        self.assertNotIn("[mcp_servers.notion]", text)
+        # Existing codex-only servers untouched.
+        self.assertIn("[mcp_servers.fathom]", text)
+        self.assertIn("[mcp_servers.node_repl]", text)
+        self.assertIn("[mcp_servers.miro-mcp]", text)
+        # Non-MCP siblings untouched.
+        self.assertIn('model = "gpt-5.5"', text)
+        self.assertIn('[features]', text)
+        self.assertIn('[plugins."github@openai-curated"]', text)
+        self.assertIn("startup_timeout_sec = 120", text)
+
+    def test_sync_opencode_to_codex_writes_new_server(self):
+        r = self._run("sync", "opencode", "codex", "--only=notion",
+                      "--no-interactive", "--force")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        text = self.codex_path.read_text()
+        self.assertIn("[mcp_servers.notion]", text)
+        self.assertIn("[mcp_servers.fathom]", text)
+        self.assertIn("startup_timeout_sec = 120", text)
+        # Non-MCP siblings untouched.
+        self.assertIn('[features]', text)
+        self.assertIn('[plugins."github@openai-curated"]', text)
+
+    def test_prune_flag_now_graph_wide_removes_codex_only_servers(self):
+        r = self._run("sync", "opencode", "codex", "--only=notion",
+                      "--no-interactive", "--force", "--prune")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        text = self.codex_path.read_text()
+        # Newly synced server is present.
+        self.assertIn("[mcp_servers.notion]", text)
+        # Codex-only servers all deleted.
+        self.assertNotIn("[mcp_servers.fathom]", text)
+        self.assertNotIn("[mcp_servers.node_repl]", text)
+        self.assertNotIn("[mcp_servers.miro-mcp]", text)
+        # Non-MCP siblings untouched.
+        self.assertIn('model = "gpt-5.5"', text)
+        self.assertIn('[features]', text)
+
+    def test_write_to_codex_dry_run_keeps_file_unchanged(self):
+        # --dry-run yields a preview without modifying the codex.toml.
+        r = self._run("sync", "opencode", "codex",
+                      "--only=notion", "--no-interactive", "--force")
+        # The general sync does not default to dry-run (only sync-codex did),
+        # so this WILL write. Document the change.
+        self.assertEqual(r.returncode, 0)
+        text = self.codex_path.read_text()
+        self.assertIn("[mcp_servers.notion]", text)
+
+    def test_edit_codex_preserves_scalar_extras(self):
+        """Regression: `swe mcp edit codex node_repl` must NOT strip codex-specific
+        scalars like `startup_timeout_sec` when the user edits them in the JSON.
+
+        Before this fix, cmd_edit routed the edited dict through
+        StandardMcpFormatHandler.emit(), which drops unknown keys.
+        """
+        editor_script = (
+            "import json, sys\n"
+            "p = sys.argv[1]\n"
+            "d = json.load(open(p))\n"
+            "first = next(iter(d))\n"
+            "d[first]['startup_timeout_sec'] = 90\n"
+            "json.dump(d, open(p, 'w'), indent=2)\n"
+        )
+        env = os.environ.copy()
+        env["HOME"] = str(self.home)
+        env["EDITOR"] = f'{sys.executable} -c "{editor_script}"'
+
+        r = subprocess.run(
+            [sys.executable, "-m", MCP_MODULE, "edit", "codex", "node_repl"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+
+        text = self.codex_path.read_text()
+        # The user's edit survived the save.
+        self.assertIn("startup_timeout_sec = 90", text)
+        # Other codex-only servers untouched.
+        self.assertIn("[mcp_servers.fathom]", text)
+        self.assertIn("[mcp_servers.miro-mcp]", text)
+        # command preserved.
+        self.assertIn("/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl", text)
+        # Non-MCP siblings preserved.
+        self.assertIn("[features]", text)
+        self.assertIn('[plugins."github@openai-curated"]', text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,11 +9,39 @@ HELP = {
     "list": (
         "List all registered AI coding tools",
         f"""\
-  {c('cyan', 'swe list')}                     List all tools (sorted by 100d usage)
+  {c('cyan', 'swe list')}                     List all tools (starred first, then 100d usage)
   {c('cyan', 'swe list <tag>')}               Filter by tag (e.g. swe list agentic)
+  {c('cyan', 'swe list --refresh')}           Bypass session cache, re-parse all sessions
+
+  Favourited harnesses are pinned to the top with a neon border ({c('neon_pink', '★')}).
+  Use {c('cyan', 'swe star <name>')} to favourite / unfavourite.
 
 {c('bold', 'Flags')}
-  None — just list and filter by tag."""
+  {c('cyan', '--refresh')} / {c('cyan', '-r')}   Force re-parse of session data (bypass cache)."""
+    ),
+    "star": (
+        "Favourite / pin a harness to the top of swe list",
+        f"""\
+  {c('cyan', 'swe star')}                     List starred harnesses
+  {c('cyan', 'swe star <name|alias>')}        Toggle star (pin + neon highlight)
+  {c('cyan', 'swe unstar <name|alias>')}      Remove star
+  {c('cyan', 'swe star clear')}               Clear all stars
+
+  Stars are stored in {c('dim', '~/.config/swe/stars.json')} (separate from tools.json).
+  Starred harnesses sort above unstarred ones in {c('cyan', 'swe list')}.
+
+{c('bold', 'Examples')}
+  swe star droid
+  swe star df
+  swe unstar claude
+  swe favourite opencode"""
+    ),
+    "unstar": (
+        "Remove a harness from favourites",
+        f"""\
+  {c('cyan', 'swe unstar <name|alias>')}      Remove star
+
+  See also: {c('cyan', 'swe star')}"""
     ),
     "info": (
         "Show full details for a tool",
@@ -52,6 +80,27 @@ HELP = {
   swe add aider aider "AI pair programmer" --aliases ai --tags agentic,coding
   swe add mytool /usr/local/bin/mytool"""
     ),
+    "edit": (
+        "Edit fields of a registered harness",
+        f"""\
+  {c('cyan', 'swe edit <name|alias>')}                Interactive field editor
+  {c('cyan', 'swe edit <name> --description "..."')}  Set description
+  {c('cyan', 'swe edit <name> --aliases a,b')}        Replace aliases (comma-separated)
+  {c('cyan', 'swe edit <name> --tags t1,t2')}         Replace tags
+  {c('cyan', 'swe edit <name> --command <cmd>')}      Change launch command
+  {c('cyan', 'swe edit <name> --version <ver>')}      Set version string
+  {c('cyan', 'swe edit <name> --notes "..."')}        Set notes
+  {c('cyan', 'swe edit <name> --set field=value')}    Compact multi-set form
+
+  Editable fields: command, description, aliases, tags, version, notes.
+  With no field flags, opens an interactive prompt loop (save / quit).
+  Alias collisions with other tools are rejected.
+
+{c('bold', 'Examples')}
+  swe edit mastracode
+  swe edit mastracode --description "Mastra Code — AI coding agent" --aliases mc
+  swe edit droid --set tags=agentic,coding,autonomous"""
+    ),
     "remove": (
         "Remove a tool from the registry",
         f"""\
@@ -65,8 +114,38 @@ HELP = {
         f"""\
   {c('cyan', 'swe check')}                    Probe each tool for live version
 
-  Tries --version, -v, version, -V flags.
+  Tries version / --version / -v / -V flags.
+  Stores bare version numbers only (no tool-name prefix).
+  Also warns about off-PATH installs (e.g. nvm globals invisible to swe).
   Updates registry if version changed."""
+    ),
+    "doctor": (
+        "Diagnose Node/PATH issues that hide global installs",
+        f"""\
+  {c('cyan', 'swe doctor')}                   Report node/npm, global bin PATH, nvm, off-PATH tools
+
+  Catches the common failure mode: {c('dim', 'npm install -g')} under nvm while
+  interactive/non-interactive shells use Homebrew Node (tool missing from PATH).
+
+{c('bold', 'Exit codes')}
+  0  healthy
+  1  off-PATH tools or global bin not on PATH"""
+    ),
+    "install": (
+        "Install a harness via PATH-visible npm and register it",
+        f"""\
+  {c('cyan', 'swe install <name>')}                    npm install -g + register in tools.json
+  {c('cyan', 'swe install <name> --package <pkg>')}    Override npm package name
+  {c('cyan', 'swe install <name> --command <cmd>')}    Override CLI binary name
+  {c('cyan', 'swe install <name> --dry-run')}          Show what would run
+
+  Uses a PATH-visible npm (prefers Homebrew over nvm) so the binary lands where
+  {c('cyan', 'swe list')} / {c('cyan', 'swe check')} can see it.
+
+{c('bold', 'Examples')}
+  swe install mastracode
+  swe install jules --package @google/jules
+  swe install claude --package @anthropic-ai/claude-code"""
     ),
     "session": (
         "Show recent AI sessions across all agents",
@@ -76,15 +155,18 @@ HELP = {
   {c('cyan', 'swe session use <N>')}          Resume session #N
 
 {c('bold', 'Flags')}
-  {c('cyan', '--agent <name>')}               Filter by agent (claude, codex, opencode, cursor, ...)
+  {c('cyan', '--agent <name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
+  {c('cyan', '--search <text>')}              Filter title/path/agent/session id (alias: -q)
 
 {c('bold', 'Examples')}
   swe session
   swe session 20
   swe session use 3
   swe session --agent claude
-  swe session --here"""
+  swe session --here
+  swe session --search login
+  swe session 30 -q quiver"""
     ),
     "models": (
         "Show model usage across all tools",
@@ -151,7 +233,7 @@ HELP = {
   {c('cyan', 'swe mcp status [tool]')}        List with health checks
   {c('cyan', 'swe mcp add <name> | -A')}      Stage server(s) for sync
   {c('cyan', 'swe mcp remove <name>')}        Remove from source of truth
-  {c('cyan', 'swe mcp sync [tool...]')}       Push staged → tools (--force, --skip-conflicts)
+  {c('cyan', 'swe mcp sync [tool...]')}       Push staged → tools (--force, --prune, --skip-conflicts)
   {c('cyan', 'swe mcp diff <t1> <t2>')}       Compare two tools' configs
   {c('cyan', 'swe mcp edit <name>')}          Edit a server's config
   {c('cyan', 'swe mcp export [--full]')}      Dump config (redacted by default)
@@ -160,6 +242,22 @@ HELP = {
 
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for detailed help on each command
 {c('bold', 'Source of truth')}  ~/.config/swe/mcp.json"""
+    ),
+    "providers": (
+        "Manage AI provider API keys and metadata",
+        f"""\
+  {c('cyan', 'swe providers list [-d] [--api-keys-dir=DIR] [<filter>]')}
+      List registered providers + masked key status (`-` = no key)
+  {c('cyan', 'swe providers info <name|alias>')}
+      Show details for one provider, including key status + path
+  {c('cyan', 'swe providers add <name> [--url URL] [--env ENV] [--file NAME] [--aliases a,b]')}
+      Register a provider in ~/.config/swe/providers.json
+  {c('cyan', 'swe providers remove <name>')}
+      Unregister a provider (does not delete your key file)
+
+  Keys live as plain-text files in {c('bold', '~/.api_keys/')} (override
+  with --api-keys-dir=DIR). quiver stores metadata only — never the
+  raw key. See `swe providers help` for masking format."""
     ),
     "harness": (
         "Harness registry utilities",
@@ -189,17 +287,38 @@ HELP = {
 
   See {c('cyan', 'swe help harness')} for flags (--apply, --apply-all, --json)."""
     ),
+    "autocomplete": (
+        "Generate and inject shell completion script",
+        f"""\
+  {c('cyan', 'swe autocomplete zsh')}    Generate + inject zsh completion
+  {c('cyan', 'swe autocomplete bash')}   Generate + inject bash completion
+  {c('cyan', 'swe autocomplete fish')}   Generate + inject fish completion
+
+  Writes a completion script to {c('dim', '~/.config/swe/completions/')} and adds a
+  source line to your shell profile (~/.zshrc, ~/.bashrc, or fish config).
+
+  After running, restart your terminal or run:
+    {c('cyan', 'source ~/.zshrc')}  (or the equivalent for your shell)
+
+  The completion script calls {c('cyan', 'swe __complete')} under the hood to
+  provide dynamic completions for tool names, aliases, tags, and flags."""
+    ),
 }
 
 COMMAND_CATEGORIES = [
     ("Setup", [
         ("setup",   None),
+        ("doctor",  None),
+        ("install", None),
     ]),
     ("Registry", [
         ("list",    "ls"),
         ("info",    None),
         ("add",     None),
+        ("edit",    None),
         ("remove",  "rm"),
+        ("star",    "favourite"),
+        ("unstar",  None),
         ("check",   None),
         ("harness", "discover"),
     ]),
@@ -214,9 +333,13 @@ COMMAND_CATEGORIES = [
         ("skills",  None),
         ("tags",    None),
         ("aliases", None),
+        ("providers", "pv"),
     ]),
     ("MCP", [
         ("mcp",     None),
+    ]),
+    ("Setup", [
+        ("autocomplete", None),
     ]),
 ]
 

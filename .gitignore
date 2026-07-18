@@ -21,3 +21,7 @@ env/
 # Local user state — never commit these (machine-specific / may contain secrets)
 mcp.json
 tools.json
+providers.json
+stars.json
+session_cache.json
+completions/

@@ -4,14 +4,14 @@
 Usage: swe mcp <command> [args] [--help]
 
 Commands:
-  discover [--apply] [--json]   Find MCP servers across tool configs
-  list [tool]                  Matrix view of MCP servers across tools
-  status [tool]                List with health checks
-  sync <source> <target...>    Copy servers source → target(s)
-  diff <tool1> <tool2>         Compare two tools' configs
-  edit <tool> <name>           Edit one server config in one tool
-  validate [tool...]           Validate MCP config shape for one/all tools
-  doctor                       Deep diagnostics
+  discover [--apply] [--json]     Find MCP servers across tool configs
+  list [tool]                    Matrix view of MCP servers across tools
+  status [tool]                  List with health checks
+  sync <source> <target...>      Copy servers source → target(s) (any pair)
+  diff <tool1> <tool2>           Compare two tools' configs
+  edit <tool> <name>             Edit one server config in one tool
+  validate [tool...]             Validate MCP config shape for one/all tools
+  doctor                         Deep diagnostics
 
 Run 'swe mcp <command> help' for detailed help on each command.
 """
@@ -19,6 +19,7 @@ Run 'swe mcp <command> help' for detailed help on each command.
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,7 @@ from quiver.mcp.formats import (
     get_format_handler,
     normalize_server as normalize_server_any,
 )
+from quiver.mcp.codex_io import load_codex_servers, save_codex_servers
 
 
 def getch():
@@ -175,12 +177,21 @@ MCP_CONFIG_MAP = {
         "label": "opencode",
         "format": "opencode",
     },
+    "codex": {
+        "path": Path.home() / ".codex" / "config.toml",
+        "key": "mcp_servers",
+        "label": "Codex",
+        "format": "standard",
+        "io_type": "toml_region",
+    },
 }
 
-# Alias for claude-desktop that isn't in tools.json
+# Aliases for tools that aren't in tools.json registry (always-available peers).
 _EXTRA_ALIASES = {
     "claude-desktop": "claude-desktop",
     "cd": "claude-desktop",
+    "codex": "codex",
+    "cx-toml": "codex",
 }
 
 
@@ -238,12 +249,54 @@ def save_json(path: Path, data: dict):
 # ── Server helpers ────────────────────────────────────────────────────
 
 
+def get_tool_loader(tool_name: str):
+    """Return ``(path) -> {server_name: cfg}`` slice loader for the given tool.
+
+    JSON tools return the slice of the file under their declared ``key``.
+    codex (TOML-region) returns the slice directly because its loader
+    already understands the file format and only emits MCP entries.
+    """
+    cfg = MCP_CONFIG_MAP.get(tool_name)
+    if not cfg:
+        return None
+    if cfg.get("io_type") == "toml_region":
+        return load_codex_servers
+    key = cfg["key"]
+    def _load(p):
+        if not p.exists():
+            return {}
+        return load_json(p).get(key, {})
+    return _load
+
+
+def get_tool_saver(tool_name: str):
+    """Return ``(servers, path) -> None`` writer for the given tool.
+
+    JSON tools reconstruct the full file from existing content + the new
+    slice. codex (TOML-region) only touches the contiguous ``[mcp_servers*]``
+    block, preserving every other byte of ``config.toml``.
+    """
+    cfg = MCP_CONFIG_MAP.get(tool_name)
+    if not cfg:
+        return None
+    if cfg.get("io_type") == "toml_region":
+        return lambda servers, p: save_codex_servers(servers, p)
+    key = cfg["key"]
+    def _save(servers, p):
+        existing = load_json(p) if p.exists() else {}
+        existing[key] = servers
+        save_json(p, existing)
+    return _save
+
+
 def get_tool_servers(tool_name: str) -> dict:
     cfg = MCP_CONFIG_MAP.get(tool_name)
     if not cfg:
         return {}
-    data = load_json(cfg["path"])
-    return data.get(cfg["key"], {})
+    loader = get_tool_loader(tool_name)
+    if loader is None:
+        return {}
+    return loader(cfg["path"])
 
 
 def get_tool_format(tool_name: str) -> str:
@@ -487,7 +540,7 @@ def cmd_sync(args):
         print(MCP_HELP["sync"])
         return 0
 
-    allowed_flags = {"--force", "--skip-conflicts", "--all", "--no-interactive", "--dry-run", "--strict"}
+    allowed_flags = {"--force", "--skip-conflicts", "--all", "--no-interactive", "--dry-run", "--strict", "--prune"}
     unknown_flags = [a for a in args if a.startswith("--") and not a.startswith("--only=") and a not in allowed_flags]
     if unknown_flags:
         print(f"Unknown flag(s): {', '.join(unknown_flags)}")
@@ -502,6 +555,7 @@ def cmd_sync(args):
     no_interactive = "--no-interactive" in args
     dry_run = "--dry-run" in args
     strict = "--strict" in args
+    prune = "--prune" in args
 
     only_flag = None
     for a in args:
@@ -521,18 +575,25 @@ def cmd_sync(args):
         print(f"Unknown source tool: {positional[0]}")
         return 1
 
+    targets: list[str] = []
+    seen: set[str] = set()
+    seen.add(source)
+
     if all_targets:
-        targets = [t for t in mcp_tools if t != source]
+        candidates = [t for t in mcp_tools if t != source]
     else:
-        targets = []
+        candidates = []
         for a in positional[1:]:
             resolved = resolve_tool_arg(registry, a)
-            if resolved:
-                targets.append(resolved)
-            else:
+            if not resolved:
                 print(f"Unknown target tool: {a}")
                 return 1
-        targets = [t for i, t in enumerate(targets) if t != source and t not in targets[:i]]
+            candidates.append(resolved)
+
+    for t in candidates:
+        if t not in seen:
+            seen.add(t)
+            targets.append(t)
 
     if not targets:
         print("No valid target tools provided.")
@@ -597,8 +658,7 @@ def cmd_sync(args):
 
     for target in targets:
         target_cfg = MCP_CONFIG_MAP[target]
-        target_data = load_json(target_cfg["path"])
-        target_servers = target_data.get(target_cfg["key"], {})
+        target_servers = get_tool_servers(target)
 
         conflicts = [s for s in selected if s in target_servers]
         overwrite = set()
@@ -642,9 +702,17 @@ def cmd_sync(args):
                 target_servers[name] = converted
                 added += 1
 
-        if (added or updated) and not dry_run:
-            target_data[target_cfg["key"]] = target_servers
-            save_json(target_cfg["path"], target_data)
+        pruned = 0
+        if prune:
+            target_only = sorted(set(target_servers.keys()) - set(selected))
+            for name in target_only:
+                del target_servers[name]
+                pruned += 1
+
+        if (added or updated or pruned) and not dry_run:
+            saver = get_tool_saver(target)
+            if saver is not None:
+                saver(target_servers, target_cfg["path"])
 
         parts = []
         if added:
@@ -653,6 +721,8 @@ def cmd_sync(args):
             parts.append(f"{updated} {'would update' if dry_run else 'updated'}")
         if skipped:
             parts.append(f"{skipped} {'would skip' if dry_run else 'skipped'}")
+        if pruned:
+            parts.append(f"{pruned} {'would prune' if dry_run else 'pruned'}")
 
         if parts:
             status = c('cyan', '•') if dry_run else c('green', '✓')
@@ -731,9 +801,13 @@ def cmd_edit(args):
 
     name = args[1]
     tool_cfg = MCP_CONFIG_MAP[tool]
-    tool_data = load_json(tool_cfg["path"])
-    tool_servers = tool_data.get(tool_cfg["key"], {})
+    loader = get_tool_loader(tool)
+    saver = get_tool_saver(tool)
+    if loader is None or saver is None:
+        print(f"No MCP backend registered for {tool}.")
+        return 1
 
+    tool_servers = loader(tool_cfg["path"])
     if name not in tool_servers:
         print(f"'{name}' not found in {tool}.")
         return 1
@@ -742,14 +816,20 @@ def cmd_edit(args):
     tmp_file = CONFIG_DIR / ".mcp-edit-tmp.json"
     tmp_file.write_text(json.dumps({name: tool_servers[name]}, indent=2) + "\n")
 
-    subprocess.run([editor, str(tmp_file)])
+    subprocess.run(shlex.split(editor) + [str(tmp_file)])
 
     try:
         edited = json.loads(tmp_file.read_text())
         if name in edited and isinstance(edited[name], dict):
-            tool_servers[name] = edited[name]
-            tool_data[tool_cfg["key"]] = tool_servers
-            save_json(tool_cfg["path"], tool_data)
+            # Bypass the format handler for toml_region tools (codex) so that
+            # bespoke scalar extras like `startup_timeout_sec = 120` survive
+            # the save round-trip. JSON tools still go through emit() so that
+            # Copilot's "type": "stdio" remains auto-set.
+            if tool_cfg.get("io_type") == "toml_region":
+                tool_servers[name] = edited[name]
+            else:
+                tool_servers[name] = get_mcp_handler(tool).emit(edited[name])
+            saver(tool_servers, tool_cfg["path"])
             print(f"Updated '{name}' in {tool}")
         else:
             print("Server name removed from edit — no changes.")
@@ -950,7 +1030,7 @@ MCP_HELP = {
   swe mcp sync opencode cursor --force
   swe mcp sync opencode cursor --no-interactive --skip-conflicts
   swe mcp sync opencode cursor --dry-run
-  swe mcp sync opencode cursor --strict""", 
+  swe mcp sync opencode cursor --strict""",
 
     "diff": f"""\
   {c('cyan', 'swe mcp diff <tool1> <tool2>')}  Compare MCP configs between two tools
@@ -965,19 +1045,24 @@ MCP_HELP = {
     "edit": f"""\
   {c('cyan', 'swe mcp edit <tool> <name>')}    Edit one server config in one tool
 
-  Opens server config JSON in your editor. Save and exit to apply.
+  Opens the server config JSON in your editor. Save and exit to apply.
   If you remove the server key from the file, no changes are saved.
+  The edited JSON REPLACES the full server config, so copy any unusual
+  keys (e.g. codex-specific `startup_timeout_sec = 120`, `cwd`, etc.)
+  verbatim or they'll be lost on save.
 
 {c('bold', 'Args')}
-  <tool>              Tool name or alias (e.g. oc, cc, cursor)
+  <tool>              Tool name or alias (e.g. oc, cc, cursor, codex)
   <name>              Server name in that tool's config
 
 {c('bold', 'Editor')}
   Uses $EDITOR env var, falls back to vim.
+  $EDITOR can be a multi-word command (e.g. `code --wait`) — it is shlex-split.
 
 {c('bold', 'Examples')}
   swe mcp edit opencode dv__github
-  EDITOR=code swe mcp edit cursor GitKraken""",
+  EDITOR=code swe mcp edit cursor GitKraken
+  swe mcp edit codex node_repl     # preserve startup_timeout_sec verbatim""",
 
     "validate": f"""\
   {c('cyan', 'swe mcp validate')}             Validate all MCP-capable tools

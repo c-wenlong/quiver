@@ -11,6 +11,10 @@ COLORS = {
     "yellow": "\033[33m",
     "cyan": "\033[36m",
     "blue": "\033[34m",
+    # Neon accents for favourited harnesses (xterm-256)
+    "neon": "\033[38;5;51m",
+    "neon_pink": "\033[38;5;201m",
+    "neon_green": "\033[38;5;118m",
 }
 
 

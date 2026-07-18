@@ -8,6 +8,7 @@ from quiver.console import c
 from quiver.harness.discover import apply_findings, discover_harnesses
 from quiver.harness.discover_commands import cmd_discover
 from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
+from quiver.prompt import read_line
 from quiver.skills.symlinks import apply_skills_symlink_hints, skills_symlink_hints
 
 
@@ -160,7 +161,7 @@ def cmd_setup(args):
 
     if sys.stdin.isatty():
         try:
-            answer = input("  Apply safe setup changes? [y/N] ").strip().lower()
+            answer = read_line("  Apply safe setup changes? [y/N] ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print()
             return 130

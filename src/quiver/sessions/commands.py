@@ -6,7 +6,37 @@ from pathlib import Path
 
 from quiver.console import c, lpad, truncate
 from quiver.sessions.aggregator import get_all_sessions
+from quiver.sessions.identity import launch_tool
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
+
+# Resume flag strategies keyed by tool_name (not launch key)
+_RESUME_FLAGS = {
+    "opencode": lambda sid: ["--session", sid] if sid else [],
+    "claude": lambda sid: ["--resume", sid] if sid else [],
+    "codex": lambda sid: ["--resume", sid] if sid else [],
+    "pi": lambda sid: ["--session", sid] if sid else [],
+    "droid": lambda sid: ["--resume", sid] if sid else [],
+    "copilot": lambda sid: ["--resume", sid] if sid else [],
+    "freebuff": lambda sid: ["--continue", sid] if sid else [],
+}
+
+_LIMITED_RESUME = frozenset(
+    {
+        "gemini",
+        "antigravity",
+        "continue",
+        "crush",
+        "amp",
+        "kimi",
+        "hermes",
+        "grok",
+        "cline",
+        "forge",
+        "mimo",
+        "tau",
+        "cursor",
+    }
+)
 
 
 def cmd_models(args):
@@ -72,11 +102,12 @@ def cmd_models(args):
     print(c("dim", f"  {grand_total} messages, {n_models} models across {n_tools} tools\n"))
 
 
-def cmd_session(args):
+def _parse_session_args(args: list[str]):
     limit = 10
     agent_filter = None
     cwd_filter = None
     use_index = None
+    search = None
 
     i = 0
     while i < len(args):
@@ -86,6 +117,9 @@ def cmd_session(args):
         elif args[i] == "--agent" and i + 1 < len(args):
             agent_filter = args[i + 1]
             i += 2
+        elif args[i] in ("--search", "-q", "--grep") and i + 1 < len(args):
+            search = args[i + 1]
+            i += 2
         elif args[i] == "--here":
             cwd_filter = os.getcwd()
             i += 1
@@ -94,44 +128,114 @@ def cmd_session(args):
             i += 1
         else:
             print(c("red", f"Unknown argument: {args[i]}"))
-            return
+            return None
+    return limit, agent_filter, cwd_filter, use_index, search
 
+
+def _filter_search(sessions, search: str | None):
+    if not search:
+        return sessions
+    needle = search.lower()
+    out = []
+    for s in sessions:
+        hay = " ".join(
+            [
+                s.agent or "",
+                s.tool_name or "",
+                s.path or "",
+                s.title or "",
+                s.session_id or "",
+            ]
+        ).lower()
+        if needle in hay:
+            out.append(s)
+    return out
+
+
+def _launch_tool_name(tool_name: str) -> str:
+    return launch_tool(tool_name)
+
+
+def _resume_cmd_args(session) -> list[str]:
+    launch = _launch_tool_name(session.tool_name)
+    cmd_args = [launch]
+    builder = _RESUME_FLAGS.get(session.tool_name)
+    if builder:
+        cmd_args.extend(builder(session.session_id))
+    elif session.tool_name in _LIMITED_RESUME:
+        if session.tool_name in ("gemini", "antigravity"):
+            print(
+                c(
+                    "yellow",
+                    f"Note: {session.agent} does not support CLI resume flags. "
+                    "Type /resume in the prompt if needed.",
+                )
+            )
+        else:
+            print(
+                c(
+                    "yellow",
+                    f"Note: {session.agent} resume flags are limited; "
+                    "launching in session directory.",
+                )
+            )
+    return cmd_args
+
+
+def _display_title(session, width: int) -> str:
+    title = (session.title or "").strip()
+    if title:
+        return truncate(title, width)
+    sid = (session.session_id or "").strip()
+    if sid:
+        short = sid if len(sid) <= 12 else sid[:8] + "…"
+        return c("dim", f"#{short}")
+    return c("dim", "-")
+
+
+def cmd_session(args):
+    parsed = _parse_session_args(args)
+    if parsed is None:
+        return 1
+    limit, agent_filter, cwd_filter, use_index, search = parsed
+
+    # Fetch a wider window when searching, then re-limit
+    fetch_limit = None if search else (max(limit, use_index or 0) if use_index else limit)
     if use_index is not None and use_index > limit:
         limit = use_index
+        if not search:
+            fetch_limit = limit
 
-    sessions = get_all_sessions(limit=limit, agent=agent_filter, cwd=cwd_filter)
+    sessions = get_all_sessions(limit=fetch_limit, agent=agent_filter, cwd=cwd_filter)
+    sessions = _filter_search(sessions, search)
+    if search:
+        sessions = sessions[:limit]
+
     if not sessions:
         print(c("dim", "  No sessions found."))
         print()
-        return
+        return 0
 
     if use_index is not None:
         if use_index < 1 or use_index > len(sessions):
-            print(c("red", f"Invalid session index: {use_index}. Pick a number between 1 and {len(sessions)}."))
-            return
+            print(
+                c(
+                    "red",
+                    f"Invalid session index: {use_index}. "
+                    f"Pick a number between 1 and {len(sessions)}.",
+                )
+            )
+            return 1
 
         session = sessions[use_index - 1]
         if not os.path.exists(session.path):
             print(c("red", f"Directory not found: {session.path}"))
-            return
+            return 1
 
         print(c("cyan", f"Resuming {session.agent} session..."))
         os.chdir(session.path)
 
-        cmd_args = [session.tool_name]
-        if session.tool_name == "opencode" and session.session_id:
-            cmd_args.extend(["--session", session.session_id])
-        elif session.tool_name == "claude" and session.session_id:
-            cmd_args.extend(["--resume", session.session_id])
-        elif session.tool_name == "codex" and session.session_id:
-            cmd_args.extend(["--resume", session.session_id])
-        elif session.tool_name == "pi" and session.session_id:
-            cmd_args.extend(["--session", session.session_id])
-        elif session.tool_name == "gemini":
-            print(c("yellow", "Note: Gemini does not support CLI resume flags. Please type /resume in the prompt if needed."))
-        elif session.tool_name == "freebuff" and session.session_id:
-            cmd_args.extend(["--continue", session.session_id])
-
+        cmd_args = _resume_cmd_args(session)
         from quiver.harness.commands import cmd_use
 
         return cmd_use(cmd_args)
@@ -142,7 +246,10 @@ def cmd_session(args):
     max_path_len = max(len(s.path.replace(str(Path.home()), "~")) for s in sessions)
     w_path = max(45, max_path_len + 4)
 
-    hdr = f"  {'[#]':<{w_idx}} {'LAST ACTIVE':<{w_time}} {'AGENT':<{w_agent}} {'DIRECTORY':<{w_path}} {'TITLE/SUMMARY'}"
+    hdr = (
+        f"  {'[#]':<{w_idx}} {'LAST ACTIVE':<{w_time}} {'AGENT':<{w_agent}} "
+        f"{'DIRECTORY':<{w_path}} {'TITLE/SUMMARY'}"
+    )
     print(c("dim", hdr))
     print(c("dim", "  " + "─" * (w_idx + w_time + w_agent + w_path + w_title + 3)))
 
@@ -159,10 +266,14 @@ def cmd_session(args):
             t_str = f"{int(diff / 86400)}d ago"
 
         path = session.path.replace(str(Path.home()), "~")
-        title = truncate(session.title or c("dim", "-"), w_title)
+        title = _display_title(session, w_title)
         print(
             f"  [{c('bold', str(idx))}]{' ' * (w_idx - len(str(idx)) - 1)} "
             f"{c('cyan', t_str):<{w_time + 9}} {c('green', session.agent):<{w_agent + 9}} "
             f"{path:<{w_path}} {title}"
         )
     print()
+    if search:
+        print(c("dim", f"  filter: --search {search!r}  ·  {len(sessions)} match(es)"))
+        print()
+    return 0
