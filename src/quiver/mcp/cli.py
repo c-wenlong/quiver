@@ -369,6 +369,8 @@ def check_server_health(name: str, cfg: dict) -> str:
 
     if st == "http":
         url = cfg.get("url", "")
+        if not url.lower().startswith(("http://", "https://")):
+            return c("red", "✗ invalid URL scheme")
         try:
             import urllib.request
             req = urllib.request.Request(url, method="HEAD")
@@ -396,7 +398,7 @@ def check_server_health(name: str, cfg: dict) -> str:
 
     if st == "wrapped":
         args = cfg.get("args", [])
-        url = next((a for a in args if a.startswith("http")), None)
+        url = next((a for a in args if a.lower().startswith(("http://", "https://"))), None)
         if url:
             try:
                 import urllib.request
