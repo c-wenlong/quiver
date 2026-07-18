@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `swe autocomplete [zsh|bash|fish]` — generate and inject shell tab-completion
+- `swe __complete <words>` — hidden command powering dynamic completions (tool names, aliases, tags, flags)
+- `swe star` / `swe unstar` — favourite harnesses, pinned with neon highlight at top of `swe list`
+- `swe edit <name> [--field val]` — interactive or flag-based registry field editor
+- `swe doctor` — diagnose Node/npm/nvm PATH issues hiding global installs
+- `swe install <name>` — install a harness via PATH-visible npm and register it
+- `swe providers` — API key management for 27+ LLM providers (metadata only, no key strings)
+- `swe session --search` / `-q` — filter sessions by title, path, agent, or session ID text
+- `swe list --refresh` / `-r` — bypass session cache and re-parse all sessions
+- Three reusable session parser family engines: SQLite (`sqlite_engine.py`), JSONL (`jsonl_engine.py`), JSON (`json_engine.py`)
+- 20 session parsers: opencode, Claude Code, Gemini/Antigravity, Codex, Cursor, pi, Freebuff, Droid, Copilot, Continue, Crush, Amp, Kimi, Hermes, Grok, Cline, Forge, Mimo, Tau
+- `identity.py` — centralized launch/registry tool mapping (antigravity launches via gemini)
+- Disk cache (`session_cache.json`, 60s TTL) for session counts in `swe list`
+- `prompt.py` — CR-safe `read_line()` for interactive prompts (fixes `^M` on Enter in cooked TTY)
+- Hermes title cleanup: extracts actual task from cron/skill boilerplate
+
+### Changed
+
+- Generalized one-off parsers into declarative engine configs with per-tool callbacks
+- `parsers.py` slimmed to config-only adapters over family engines
+- `commands.py` and `usage.py` import from central `identity.py` instead of local mappings
+- README updated with autocomplete, favourites, providers, doctor, install, edit, and --search/--refresh docs
+
 ## [0.2.5] - 2026-07-06
 
 ### Added
