@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import pathlib
 import tempfile
-import tomllib
 import unittest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
+    import tomli as tomllib
 
 from quiver.mcp.codex_io import (
     apply_merges,
