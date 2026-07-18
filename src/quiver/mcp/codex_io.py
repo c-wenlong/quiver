@@ -37,8 +37,12 @@ from __future__ import annotations
 import copy
 import json
 import re
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
+    import tomli as tomllib
 
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 
