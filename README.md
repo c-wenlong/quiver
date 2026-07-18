@@ -68,10 +68,13 @@ If you juggle more than one AI coding agent you end up with a mess:
 | --- | --- |
 | **Registry** | List every AI coding CLI with tags, aliases, versions, and install status |
 | **Launch** | Start any tool by name or alias; extra args pass straight through (`execvp`) |
-| **Sessions** | Unified, time-sorted view of recent sessions across agents + one-command resume |
+| **Sessions** | Unified, time-sorted view of recent sessions across 20 agents + one-command resume |
 | **Models** | Aggregate model usage parsed read-only from each tool's session logs |
 | **Skills** | Discover, list, catalog, symlink, and move skills across harness roots |
 | **MCP sync** | Inspect, compare, validate, and copy MCP servers between tools |
+| **Favourites** | Pin harnesses to the top of `swe list` with neon highlighting |
+| **Autocomplete** | Shell tab-completion for zsh, bash, and fish (tool names, aliases, tags, flags) |
+| **Providers** | Manage API keys and metadata for 27+ LLM providers |
 
 ## Install
 
@@ -113,19 +116,28 @@ swe mcp discover             # find MCP servers not in ~/.config/swe/mcp.json
 
 swe list                     # all registered tools, sorted by recent usage
 swe list agentic             # filter by tag
+swe list --refresh           # bypass session cache, re-parse all sessions
 swe info claude              # command, version, path, tags, aliases
 swe check                    # probe installed tools and refresh versions
+swe doctor                   # diagnose Node/npm/PATH issues
 
 swe use cc                   # launch Claude Code (alias for `claude`)
 swe use codex --help         # extra args are passed straight through
+
+swe star gemini              # favourite a harness (pins to top of swe list)
+swe unstar gemini            # remove favourite
+swe edit claude --desc "..." # edit registry fields (or interactive mode)
 
 swe session                  # last 10 sessions across ALL agents
 swe session use 3            # cd into session #3 and resume it
 swe session --agent claude   # filter by agent
 swe session --here           # only sessions in the current directory
+swe session --search refactor # filter by title/path/agent text
 
 swe models                   # model usage across all tools
 swe models -t -p             # grouped by tool, with provider prefix
+
+swe autocomplete zsh         # generate + inject shell tab-completion
 
 swe skills                   # every SKILL.md across all skill roots
 swe skills discover          # find skill catalogs on Desktop/Documents
@@ -145,15 +157,21 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | Command | Aliases | Description |
 | --- | --- | --- |
 | `swe setup [--apply]` | | Onboarding wizard (harnesses, MCP, skills roots) |
-| `swe list [tag]` | `ls` | List registered tools, sorted by 100-day usage |
+| `swe list [tag] [--refresh]` | `ls` | List registered tools, sorted by 100-day usage |
 | `swe info <name\|alias>` | | Show command, version, path, tags, aliases |
 | `swe add <name> <cmd> …` | | Register or update a tool |
+| `swe edit <name> [--field val …]` | | Edit registry fields (flags or interactive) |
 | `swe remove <name\|alias>` | `rm` | Remove from registry (does not uninstall) |
+| `swe star <name\|alias>` | `favourite` | Pin a harness to top of `swe list` with neon highlight |
+| `swe unstar <name\|alias>` | | Remove harness from favourites |
 | `swe check` | | Probe live versions and refresh registry |
+| `swe doctor` | | Diagnose Node/npm/PATH issues hiding global installs |
+| `swe install <name>` | | Install a harness via npm and register it |
 | `swe harness discover [--apply]` | | Scan PATH for unregistered AI coding CLIs |
 | `swe discover [--apply]` | | Alias for `swe harness discover` |
+| `swe autocomplete [zsh\|bash\|fish]` | | Generate + inject shell tab-completion |
 | `swe use <name\|alias> [args…]` | `run` | Launch a tool (replaces current process) |
-| `swe session [N] [use N] [--agent X] [--here]` | | List or resume recent sessions |
+| `swe session [N] [use N] [--agent X] [--here] [--search Q]` | | List or resume recent sessions |
 | `swe models [-t] [-p]` | | Model usage analytics |
 | `swe skills [filter] [-d]` | `sk` | List agent skills and paths |
 | `swe skills scope list` | | List skill scopes (roots) with symlink info |
@@ -169,11 +187,55 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe tags` | | List tags and associated tools |
 | `swe aliases` | | List alias → tool mappings |
 | `swe mcp <subcommand> …` | | MCP server management (see below) |
+| `swe providers [<subcommand>] …` | | Provider API key + metadata management |
 | `swe help [command]` | `-h` | Full or per-command help |
 
 Run `swe <command> --help` for detailed help on any command.
 
+### Shell autocomplete
+
+```bash
+swe autocomplete zsh    # or bash, fish
+```
+
+Generates a completion script and injects it into your shell profile. After running, restart your terminal or `source ~/.zshrc` (or equivalent). The completion provides:
+
+- Subcommand names with descriptions (`swe <TAB>`)
+- Tool names and aliases from your registry (`swe use <TAB>`)
+- Tags for filtering (`swe list <TAB>`)
+- Flags (`swe list --<TAB>`, `swe session --<TAB>`)
+
+Idempotent — safe to re-run. Uses a hidden `swe __complete` command for dynamic completions.
+
+### `swe providers` subcommands
+
+| Subcommand | Description |
+| --- | --- |
+| `swe providers list [-d] [--api-keys-dir=DIR] [<filter>]` | Show every provider with its masked key (``-`` if no key) |
+| `swe providers info <name\|alias>` | Full details for one provider + key file path |
+| `swe providers add <name> [desc] [--url URL] [--env ENV, …] [--file NAME]` | Register a provider in `~/.config/swe/providers.json` |
+| `swe providers remove <name>` | Unregister a provider (does **not** delete your key file) |
+
+Keys live as plain-text files in `~/.api_keys/` (one per provider, filename = canonical slug). quiver stores **metadata only** — never the key string itself. Mask format: `first8 + *** + last4 + (len=N)`; short keys fall back to `first3 + *** + (len=N)`; missing keys render as `-`. Override the keys dir per-invocation with `--api-keys-dir=DIR`.
+
+Built-in providers (27): `openai`, `anthropic`, `gemini`, `deepseek`, `zai`, `minimax`, `kimi`, `qwen`, `mimo`, `xai`, `stepfun`, `groq`, `upstage`, `cerebras`, `mistral`, `routing_run`, `opencode_zen`, `openrouter`, `together_ai`, `fireworks_ai`, `vercel_gateway`, `nebius`, `featherless`, `cohere`, `perplexity`, `github`, `huggingface`. Add your own with `swe providers add`.
+
 ### `swe mcp` subcommands
+
+| Subcommand | Description |
+| --- | --- |
+| `swe mcp discover [--apply]` | Find MCP servers across tool configs |
+| `swe mcp list [tool]` | Matrix view of MCP servers across tools |
+| `swe mcp status [tool]` | List with health checks |
+| `swe mcp sync <source> <target…>` | Copy servers between tools (format conversion) |
+| `swe mcp diff <t1> <t2>` | Compare two tools' MCP configs |
+| `swe mcp edit <tool> <name>` | Edit one server in `$EDITOR` |
+| `swe mcp validate [tool…]` | Validate MCP config shape |
+| `swe mcp doctor [--strict]` | Deep diagnostics |
+
+Flags for `sync`: `--only=a,b`, `--force`, `--skip-conflicts`, `--dry-run`, `--strict`.
+
+### `swe providers` subcommands
 
 | Subcommand | Description |
 | --- | --- |
@@ -279,17 +341,21 @@ Everything quiver persists lives under `~/.config/swe/`:
 | File | Purpose | Shipped? |
 | --- | --- | --- |
 | `tools.json` | Your tool registry (versions for this machine) | No — auto-created |
+| `stars.json` | Favourited harness names | No — auto-created by `swe star` |
+| `session_cache.json` | Cached session parse results (60s TTL) | No — auto-created |
+| `completions/` | Shell completion scripts (zsh/bash/fish) | No — created by `swe autocomplete` |
 | `skill_catalogs.json` | Extra skill catalog directories | No — auto-created by discover/add |
 | `skill_links.json` | Recorded harness symlink layout | No — updated by link/tree --sync |
 | `mcp.json` | MCP source-of-truth (may contain tokens) | No — git-ignored |
+| `providers.json` | Provider metadata (not keys) | No — auto-created |
 
 The MCP subsystem also reads/writes each tool's native config (e.g. `~/.claude.json`, `~/.cursor/mcp.json`, `~/.config/opencode/opencode.json`).
 
 ## Supported tools
 
-quiver ships with defaults for Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, opencode, Forge, Factory Droids, Ollama, pi, Continue, Cursor CLI, Cline, and more. Register your own with `swe add`.
+quiver ships with defaults for 27+ AI coding CLIs: Claude Code, Codex, Gemini CLI, Antigravity, GitHub Copilot CLI, opencode, Cursor CLI, Forge, Factory Droids, Droid, Ollama, pi, Continue, Crush, Amp, Kimi, Hermes, Grok, Cline, Freebuff, Mimo, Tau, and more. Register your own with `swe add`.
 
-Session parsers currently cover: **opencode**, **Claude Code**, **Gemini/Antigravity**, **Codex**, **Cursor**, **pi**, and **Freebuff**. Model analytics cover opencode, Claude Code, Codex, and Freebuff.
+Session parsers currently cover **20 tools**: opencode, Claude Code, Gemini/Antigravity, Codex, Cursor, pi, Freebuff, Droid, Copilot, Continue, Crush, Amp, Kimi, Hermes, Grok, Cline, Forge, Mimo, and Tau. Parsers are built on three reusable family engines (SQLite, JSONL, JSON) with declarative per-tool configs. Model analytics cover opencode, Claude Code, Codex, and Freebuff.
 
 ## Development
 
