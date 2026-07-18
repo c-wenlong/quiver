@@ -215,6 +215,13 @@ class AutocompleteCommandTest(unittest.TestCase):
             result = cmd_autocomplete(["tcsh"])
         self.assertEqual(result, 1)
 
+    def test_bash_script_uses_bash_syntax(self):
+        from quiver.completion_scripts import BASH_SCRIPT
+
+        self.assertIn("while IFS= read -r line", BASH_SCRIPT)
+        self.assertNotIn("${(f)out}", BASH_SCRIPT)
+        self.assertNotIn("lines[-1]", BASH_SCRIPT)
+
     def test_no_args_returns_usage(self):
         import io
         from quiver.cli import cmd_autocomplete

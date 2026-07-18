@@ -92,6 +92,8 @@ class RegistryAutoMergeTest(unittest.TestCase):
                 self.assertIn("anthropic", providers)
                 # Bookkeeping key never leaks into the user-visible view.
                 self.assertNotIn("_removed", providers)
+                with_removed = load_registry(include_removed=True)
+                self.assertEqual(with_removed["_removed"], ["openai"])
 
 
 class RegistryLoadSeedingTest(unittest.TestCase):
@@ -181,7 +183,20 @@ class RegistrySaveRoundtripTest(unittest.TestCase):
                 }
                 save_registry(payload)
                 loaded = load_registry()
-                self.assertEqual(loaded, payload)
+                # Loading hydrates display fields from env_vars[0] and merges
+                # newly shipped defaults into sparse registries.
+                self.assertEqual(loaded["openai"]["url"], "https://x")
+                self.assertEqual(loaded["openai"]["key_filename"], "openai")
+                self.assertEqual(loaded["openai"]["env_vars"], ["OPENAI_API_KEY"])
+                self.assertEqual(loaded["openai"]["name"], "Openai")
+                self.assertEqual(loaded["openai"]["aliases"], ["openai"])
+                self.assertEqual(loaded["myprov"]["url"], "https://y")
+                self.assertEqual(loaded["myprov"]["key_filename"], "myprov")
+                self.assertEqual(loaded["myprov"]["env_vars"], ["MY_KEY"])
+                self.assertEqual(loaded["myprov"]["name"], "My Key")
+                self.assertEqual(loaded["myprov"]["aliases"], ["my-key"])
+                for name in DEFAULT_PROVIDERS:
+                    self.assertIn(name, loaded)
 
 
 class ResolveTest(unittest.TestCase):

@@ -69,8 +69,13 @@ def load_registry(include_removed: bool = False) -> dict:
                 data = json.load(f)
                 if isinstance(data, dict):
                     user_reg = data
-        except (FileNotFoundError, json.JSONDecodeError):
+        except FileNotFoundError:
             user_reg = {}
+        except json.JSONDecodeError:
+            # Do not overwrite a corrupt user registry with defaults. Returning
+            # an empty registry keeps the command read-only and preserves the
+            # broken file for manual recovery.
+            return {_REMOVED_KEY: []} if include_removed else {}
 
     explicitly_removed: set[str] = set(user_reg.get(_REMOVED_KEY) or [])
 
@@ -83,6 +88,7 @@ def load_registry(include_removed: bool = False) -> dict:
         save_registry(fresh)
         return fresh
 
+    removed_list = sorted(explicitly_removed)
     merged = {
         name: _hydrate(dict(info))
         for name, info in user_reg.items()
@@ -100,9 +106,16 @@ def load_registry(include_removed: bool = False) -> dict:
 
     if added_now:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        save_registry(merged)
+        to_save = dict(merged)
+        if removed_list:
+            to_save[_REMOVED_KEY] = removed_list
+        save_registry(to_save)
 
-    return merged if include_removed else dict(merged)
+    if include_removed:
+        out = dict(merged)
+        out[_REMOVED_KEY] = removed_list
+        return out
+    return dict(merged)
 
 
 def save_registry(providers: dict) -> None:

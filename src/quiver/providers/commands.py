@@ -276,10 +276,11 @@ def cmd_add(args: list[str]) -> int:
         elif a == "--file" and i + 1 < len(args):
             key_filename = args[i + 1]
             i += 2
+        elif a.startswith("--"):
+            print(c("red", f"Unknown flag: {a}"))
+            return 1
         elif not a.startswith("--"):
             description = a
-            i += 1
-        else:
             i += 1
 
     providers = load_registry()
@@ -338,7 +339,7 @@ def cmd_remove(args: list[str]) -> int:
     print(
         c(
             "dim",
-            f"  {'_removed' in providers!r} tracking is on — '{name}' will NOT come back on next upgrade.",
+            f"  Removal tracking is on — '{name}' will NOT come back on next upgrade.",
         )
     )
     return 0
