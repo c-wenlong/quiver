@@ -160,8 +160,14 @@ def get_all_sessions(limit=10, agent=None, cwd=None, use_cache=False) -> list[Se
     if cwd:
         target_path = os.path.realpath(cwd)
         filtered = []
+        # Memoize os.path.realpath to avoid redundant disk I/O on large session sets
+        # Performance impact: O(N) -> O(U) where U is unique paths (typically << N)
+        path_cache = {}
         for session in sessions:
-            session_path = os.path.realpath(session.path)
+            if session.path not in path_cache:
+                path_cache[session.path] = os.path.realpath(session.path)
+            session_path = path_cache[session.path]
+
             if session_path == target_path or session_path.startswith(target_path + os.sep):
                 filtered.append(session)
         sessions = filtered
