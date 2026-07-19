@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 0.2.7
+
+### Added
+
+- `swe mcp sync` now works between any two registry harnesses, not just the
+  10 with explicit MCP config entries. Harnesses without a verified entry
+  (hermes, kiro, amp, crush, qwen-code, augment, continue, grok, etc.) get
+  an optimistic default at `~/.<tool>/mcp.json` with the standard
+  `mcpServers` shape, flagged `unverified`. Sync creates the file if absent
+  and prints a note about the guessed path.
+- Factory Droid (`droid` / `df`) is now a verified MCP peer, syncing to and
+  from `~/.factory/mcp.json`. Remote servers get an explicit `type: "http"`
+  field, which Droid requires.
+
+### Changed
+
+- `swe mcp list` / `status` / `validate` / `doctor` hide unverified
+  harnesses whose config file does not exist yet, keeping the matrix
+  readable. Name a harness explicitly to inspect it.
+- `swe mcp sync <src> --all` broadcasts to verified peers plus unverified
+  tools that already have a config file; it no longer risks creating many
+  new files in one shot.
+
 ## [0.2.6] - 2026-07-17
 
 ### Added

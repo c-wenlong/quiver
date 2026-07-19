@@ -390,5 +390,205 @@ class McpSyncCodexPeerTest(unittest.TestCase):
         self.assertIn('[plugins."github@openai-curated"]', text)
 
 
+class McpSyncDroidPeerTest(unittest.TestCase):
+    """Verify Factory Droid is a first-class peer for ``swe mcp sync``.
+
+    Droid stores MCP config at ``~/.factory/mcp.json`` under the
+    ``mcpServers`` key, using the standard shape plus an explicit
+    ``type`` field on remote servers. The droid alias ``df`` resolves
+    through the tools.json registry, so no ``_EXTRA_ALIASES`` entry is
+    needed.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.tmp.name)
+
+        # Registry: opencode + droid (with its `df` alias).
+        swe_cfg = self.home / ".config" / "swe"
+        swe_cfg.mkdir(parents=True, exist_ok=True)
+        (swe_cfg / "tools.json").write_text(
+            json.dumps({
+                "opencode": {"aliases": ["oc"]},
+                "droid": {"aliases": ["df"]},
+            }, indent=2) + "\n"
+        )
+
+        # Source: opencode with a stdio and a remote server.
+        opencode_cfg = self.home / ".config" / "opencode"
+        opencode_cfg.mkdir(parents=True, exist_ok=True)
+        (opencode_cfg / "opencode.json").write_text(
+            json.dumps({
+                "mcp": {
+                    "notion": {
+                        "command": ["node", "/tmp/notion.js"],
+                        "environment": {"NOTION_TOKEN": "tok"},
+                        "enabled": True,
+                        "type": "local",
+                    },
+                    "linear": {
+                        "url": "https://mcp.linear.app/mcp",
+                        "enabled": True,
+                        "type": "remote",
+                    },
+                },
+            }, indent=2) + "\n"
+        )
+
+        # Destination: an empty Droid user-level mcp.json.
+        factory_dir = self.home / ".factory"
+        factory_dir.mkdir(parents=True, exist_ok=True)
+        self.droid_path = factory_dir / "mcp.json"
+        self.droid_path.write_text(json.dumps({"mcpServers": {}}, indent=2) + "\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, *args) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", MCP_MODULE, *args],
+            env=_mcp_env(self.home), capture_output=True, text=True,
+        )
+
+    def test_list_includes_droid_as_peer(self):
+        r = self._run("list")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("droid", r.stdout)
+        self.assertIn("notion", r.stdout)
+        self.assertIn("linear", r.stdout)
+
+    def test_df_alias_resolves_to_droid_target(self):
+        # The original failure: `swe mcp sync oc df` -> "Unknown target tool: df".
+        r = self._run("sync", "oc", "df", "--only=notion",
+                      "--no-interactive", "--force")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        droid = json.loads(self.droid_path.read_text())
+        notion = droid["mcpServers"]["notion"]
+        self.assertEqual(notion["command"], "node")
+        self.assertEqual(notion["args"], ["/tmp/notion.js"])
+        self.assertEqual(notion["env"], {"NOTION_TOKEN": "tok"})
+        # stdio servers do not require a `type` field in droid.
+        self.assertNotIn("type", notion)
+
+    def test_sync_opencode_to_droid_emits_type_for_remote(self):
+        r = self._run("sync", "opencode", "droid", "--only=linear",
+                      "--no-interactive", "--force")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        droid = json.loads(self.droid_path.read_text())
+        linear = droid["mcpServers"]["linear"]
+        self.assertEqual(linear["url"], "https://mcp.linear.app/mcp")
+        # Droid requires `type` for remote servers; default to http.
+        self.assertEqual(linear["type"], "http")
+
+    def test_sync_dry_run_does_not_write_droid_file(self):
+        before = self.droid_path.read_text()
+        r = self._run("sync", "opencode", "droid", "--only=notion",
+                      "--dry-run", "--no-interactive", "--force")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("Dry-run mode", r.stdout)
+        self.assertEqual(before, self.droid_path.read_text())
+
+
+class McpSyncUnverifiedHarnessTest(unittest.TestCase):
+    """Syncing to a harness without an explicit MCP_CONFIG_MAP entry.
+
+    Any registry harness without a verified MCP config gets an
+    optimistic default at ``~/.<tool>/mcp.json`` (standard ``mcpServers``
+    shape), flagged ``unverified``. This lets ``swe mcp sync`` work
+    between any two registry harnesses without per-tool code changes.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.tmp.name)
+
+        # Registry: opencode (verified MCP) + hermes (no MCP_CONFIG_MAP entry).
+        swe_cfg = self.home / ".config" / "swe"
+        swe_cfg.mkdir(parents=True, exist_ok=True)
+        (swe_cfg / "tools.json").write_text(
+            json.dumps({
+                "opencode": {"aliases": ["oc"]},
+                "hermes": {"aliases": ["hs"]},
+            }, indent=2) + "\n"
+        )
+
+        # Source: opencode with one server.
+        opencode_cfg = self.home / ".config" / "opencode"
+        opencode_cfg.mkdir(parents=True, exist_ok=True)
+        (opencode_cfg / "opencode.json").write_text(
+            json.dumps({
+                "mcp": {
+                    "notion": {
+                        "command": ["node", "/tmp/notion.js"],
+                        "environment": {"NOTION_TOKEN": "tok"},
+                        "enabled": True,
+                        "type": "local",
+                    },
+                },
+            }, indent=2) + "\n"
+        )
+
+        # Hermes has no config dir yet — sync should create ~/.hermes/mcp.json.
+        self.hermes_path = self.home / ".hermes" / "mcp.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, *args) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", MCP_MODULE, *args],
+            env=_mcp_env(self.home), capture_output=True, text=True,
+        )
+
+    def test_sync_to_unverified_harness_resolves_alias_and_writes(self):
+        # `hs` is hermes' alias; no MCP_CONFIG_MAP entry, but the registry
+        # knows it, so sync falls back to ~/.hermes/mcp.json.
+        r = self._run("sync", "oc", "hs", "--only=notion",
+                      "--no-interactive", "--force")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertTrue(self.hermes_path.exists())
+        hermes = json.loads(self.hermes_path.read_text())
+        notion = hermes["mcpServers"]["notion"]
+        self.assertEqual(notion["command"], "node")
+        self.assertEqual(notion["args"], ["/tmp/notion.js"])
+        self.assertEqual(notion["env"], {"NOTION_TOKEN": "tok"})
+
+    def test_sync_to_unverified_warns_about_optimistic_path(self):
+        r = self._run("sync", "opencode", "hermes", "--only=notion",
+                      "--no-interactive", "--force", "--dry-run")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("verified", r.stdout.lower())
+        self.assertIn("optimistic", r.stdout.lower())
+        self.assertIn(".hermes/mcp.json", r.stdout)
+
+    def test_list_hides_unverified_without_config_by_default(self):
+        r = self._run("list")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        # opencode (verified) shows; hermes (unverified, no file) is hidden.
+        self.assertIn("opencode", r.stdout)
+        self.assertNotIn("hermes", r.stdout)
+
+    def test_list_with_explicit_target_shows_unverified(self):
+        r = self._run("list", "hermes")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        # Explicitly naming hermes surfaces it (with "No MCP servers found"
+        # since the file doesn't exist yet).
+        self.assertEqual(r.returncode, 0)
+
+    def test_all_does_not_broadcast_to_unverified_without_config(self):
+        r = self._run("sync", "opencode", "--all", "--only=notion",
+                      "--no-interactive", "--force", "--dry-run")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        # --all broadcasts to verified peers only; hermes is not mentioned.
+        self.assertNotIn("hermes", r.stdout)
+
+    def test_diff_works_between_verified_and_unverified(self):
+        r = self._run("diff", "opencode", "hermes")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        # hermes has no servers; diff reports opencode-only.
+        self.assertIn("notion", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -210,10 +210,35 @@ class OpencodeMcpFormatHandler(McpFormatHandler):
         return {}
 
 
+class DroidMcpFormatHandler(StandardMcpFormatHandler):
+    """Factory Droid CLI MCP format.
+
+    Droid uses the standard ``mcpServers`` shape but requires an explicit
+    ``type`` field on remote servers (``http`` or ``sse``). ``stdio``
+    servers may omit ``type`` and default to stdio. The canonical shape
+    ignores ``type``, so we re-emit it on the way out for url-backed
+    servers; this keeps ``swe mcp sync <src> droid`` lossless for the
+    common remote case.
+    """
+
+    def parse(self, raw: dict) -> dict:
+        # `type` has no canonical representation; defer to standard parsing.
+        return super().parse(raw)
+
+    def emit(self, canonical: dict) -> dict:
+        out = super().emit(canonical)
+        if out.get("url"):
+            # Droid requires `type` for remote servers; default to the
+            # modern Streamable HTTP transport (sse is the legacy option).
+            out["type"] = "http"
+        return out
+
+
 _FORMAT_MCP_HANDLERS = {
     "standard": StandardMcpFormatHandler(),
     "copilot": CopilotMcpFormatHandler(),
     "opencode": OpencodeMcpFormatHandler(),
+    "droid": DroidMcpFormatHandler(),
 }
 
 

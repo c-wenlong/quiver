@@ -184,6 +184,12 @@ MCP_CONFIG_MAP = {
         "format": "standard",
         "io_type": "toml_region",
     },
+    "droid": {
+        "path": Path.home() / ".factory" / "mcp.json",
+        "key": "mcpServers",
+        "label": "Factory Droid",
+        "format": "droid",
+    },
 }
 
 # Aliases for tools that aren't in tools.json registry (always-available peers).
@@ -193,6 +199,37 @@ _EXTRA_ALIASES = {
     "codex": "codex",
     "cx-toml": "codex",
 }
+
+
+def _unverified_mcp_config(tool_name: str) -> dict:
+    """Optimistic default MCP descriptor for a harness without an explicit
+    ``MCP_CONFIG_MAP`` entry.
+
+    Assumes the de-facto convention ``~/.<tool>/mcp.json`` with the
+    standard ``mcpServers`` key. Flagged ``unverified`` so the UI can
+    distinguish "we know this path is correct" from "we're guessing".
+    Callers should gate input via :func:`resolve_tool_arg` so typo'd
+    names don't silently get a default.
+    """
+    return {
+        "path": Path.home() / f".{tool_name}" / "mcp.json",
+        "key": "mcpServers",
+        "label": "unverified",
+        "format": "standard",
+        "unverified": True,
+    }
+
+
+def get_tool_config(tool_name: str) -> dict | None:
+    """Return the MCP config descriptor for any tool name, or None.
+
+    Verified tools use ``MCP_CONFIG_MAP``. Any other non-empty name gets
+    an optimistic unverified default (see :func:`_unverified_mcp_config`).
+    Returns None only for empty/None input.
+    """
+    if not tool_name:
+        return None
+    return MCP_CONFIG_MAP.get(tool_name) or _unverified_mcp_config(tool_name)
 
 
 # ── Registry & alias resolution ─────────────────────────────────────
@@ -214,7 +251,13 @@ def resolve(registry: dict, key: str) -> str | None:
 
 
 def get_mcp_tools(registry: dict) -> dict:
-    """Return {canonical_name: mcp_config} for tools that have MCP support."""
+    """Return {canonical_name: mcp_config} for tools that have MCP support.
+
+    Verified tools (with an explicit ``MCP_CONFIG_MAP`` entry) come first.
+    Every other harness in the registry gets an optimistic unverified
+    default at ``~/.<tool>/mcp.json`` so ``swe mcp sync`` works between
+    any two registry harnesses without per-tool code changes.
+    """
     amap = alias_map(registry)
     result = {}
     for name, mcp_cfg in MCP_CONFIG_MAP.items():
@@ -226,6 +269,11 @@ def get_mcp_tools(registry: dict) -> dict:
             resolved = amap.get(name)
             if resolved and resolved in MCP_CONFIG_MAP:
                 result[resolved] = MCP_CONFIG_MAP[resolved]
+    # Optimistic defaults: any registry harness without an explicit entry
+    # is still sync-capable via the ~/.<tool>/mcp.json convention.
+    for name in registry:
+        if name not in result:
+            result[name] = _unverified_mcp_config(name)
     return result
 
 
@@ -255,8 +303,10 @@ def get_tool_loader(tool_name: str):
     JSON tools return the slice of the file under their declared ``key``.
     codex (TOML-region) returns the slice directly because its loader
     already understands the file format and only emits MCP entries.
+    Unverified tools fall back to the standard JSON loader at their
+    optimistic ``~/.<tool>/mcp.json`` path.
     """
-    cfg = MCP_CONFIG_MAP.get(tool_name)
+    cfg = get_tool_config(tool_name)
     if not cfg:
         return None
     if cfg.get("io_type") == "toml_region":
@@ -274,9 +324,10 @@ def get_tool_saver(tool_name: str):
 
     JSON tools reconstruct the full file from existing content + the new
     slice. codex (TOML-region) only touches the contiguous ``[mcp_servers*]``
-    block, preserving every other byte of ``config.toml``.
+    block, preserving every other byte of ``config.toml``. Unverified
+    tools use the standard JSON writer, creating the file if absent.
     """
-    cfg = MCP_CONFIG_MAP.get(tool_name)
+    cfg = get_tool_config(tool_name)
     if not cfg:
         return None
     if cfg.get("io_type") == "toml_region":
@@ -290,7 +341,7 @@ def get_tool_saver(tool_name: str):
 
 
 def get_tool_servers(tool_name: str) -> dict:
-    cfg = MCP_CONFIG_MAP.get(tool_name)
+    cfg = get_tool_config(tool_name)
     if not cfg:
         return {}
     loader = get_tool_loader(tool_name)
@@ -300,7 +351,7 @@ def get_tool_servers(tool_name: str) -> dict:
 
 
 def get_tool_format(tool_name: str) -> str:
-    return MCP_CONFIG_MAP.get(tool_name, {}).get("format", "standard")
+    return get_tool_config(tool_name).get("format", "standard")
 
 
 def get_mcp_handler(tool_name: str) -> McpFormatHandler:
@@ -411,17 +462,37 @@ def check_server_health(name: str, cfg: dict) -> str:
 
 
 def resolve_tool_arg(registry: dict, arg: str) -> str | None:
-    """Resolve a CLI arg to a canonical tool name that has MCP support."""
+    """Resolve a CLI arg to a canonical tool name that has MCP support.
+
+    Any harness in the registry is accepted — verified tools use their
+    explicit ``MCP_CONFIG_MAP`` entry, unverified tools get the
+    optimistic ``~/.<tool>/mcp.json`` default. Extras like
+    ``claude-desktop`` (not in the registry) are accepted directly.
+    """
     resolved = resolve(registry, arg)
-    if resolved and resolved in MCP_CONFIG_MAP:
+    if resolved:
         return resolved
-    # Also check direct MCP_CONFIG_MAP keys (e.g. claude-desktop)
+    # Extras not in the registry (e.g. claude-desktop, codex via cx-toml).
     if arg in MCP_CONFIG_MAP:
         return arg
     return None
 
 
 # ── Subcommands ──────────────────────────────────────────────────────
+
+
+def _display_tools(mcp_tools: dict) -> dict:
+    """Filter ``get_mcp_tools`` output for matrix-style display.
+
+    Unverified harnesses whose optimistic config path does not exist are
+    hidden from `swe mcp list` / `status` / `validate` to keep the matrix
+    readable. They remain fully sync-capable — name one explicitly to
+    inspect it, or let `swe mcp sync` create the file.
+    """
+    return {
+        name: cfg for name, cfg in mcp_tools.items()
+        if not cfg.get("unverified") or cfg["path"].exists()
+    }
 
 
 def cmd_list(args):
@@ -439,7 +510,7 @@ def cmd_list(args):
             print(f"Available: {', '.join(mcp_tools.keys())}")
             return 1
 
-    tools = {target: mcp_tools[target]} if target else mcp_tools
+    tools = {target: mcp_tools[target]} if target else _display_tools(mcp_tools)
 
     all_servers = set()
     tool_data = {}
@@ -490,7 +561,7 @@ def cmd_status(args):
             print(f"Unknown tool: {args[0]}")
             return 1
 
-    tools = {target: mcp_tools[target]} if target else mcp_tools
+    tools = {target: mcp_tools[target]} if target else _display_tools(mcp_tools)
 
     all_servers = set()
     tool_data = {}
@@ -580,7 +651,11 @@ def cmd_sync(args):
     seen.add(source)
 
     if all_targets:
-        candidates = [t for t in mcp_tools if t != source]
+        # Broadcast only to verified peers + unverified tools that already
+        # have a config file. Naming an unverified target explicitly still
+        # works (and creates the file); --all avoids surprising users with
+        # 19 new ~/.<tool>/mcp.json files in one shot.
+        candidates = [t for t in _display_tools(mcp_tools) if t != source]
     else:
         candidates = []
         for a in positional[1:]:
@@ -657,8 +732,14 @@ def cmd_sync(args):
             return 1
 
     for target in targets:
-        target_cfg = MCP_CONFIG_MAP[target]
+        target_cfg = get_tool_config(target)
         target_servers = get_tool_servers(target)
+        if target_cfg.get("unverified") and not target_cfg["path"].exists():
+            print(
+                f"\n  {c('yellow', 'Note')}: {c('cyan', target)} has no verified MCP "
+                f"config path; writing to the optimistic default "
+                f"{c('dim', str(target_cfg['path']))}."
+            )
 
         conflicts = [s for s in selected if s in target_servers]
         overwrite = set()
@@ -800,7 +881,10 @@ def cmd_edit(args):
         return 1
 
     name = args[1]
-    tool_cfg = MCP_CONFIG_MAP[tool]
+    tool_cfg = get_tool_config(tool)
+    if not tool_cfg:
+        print(f"No MCP backend registered for {tool}.")
+        return 1
     loader = get_tool_loader(tool)
     saver = get_tool_saver(tool)
     if loader is None or saver is None:
@@ -858,7 +942,7 @@ def cmd_validate(args):
             if t not in targets:
                 targets.append(t)
     else:
-        targets = list(mcp_tools.keys())
+        targets = list(_display_tools(mcp_tools).keys())
 
     if not targets:
         print("No MCP-capable tools found.")
@@ -1026,6 +1110,8 @@ MCP_HELP = {
 {c('bold', 'Examples')}
   swe mcp sync oc cursor
   swe mcp sync opencode --all
+  swe mcp sync opencode droid
+  swe mcp sync opencode hermes      # unverified target → ~/.hermes/mcp.json
   swe mcp sync opencode cursor --only=dv__github,dv__linear
   swe mcp sync opencode cursor --force
   swe mcp sync opencode cursor --no-interactive --skip-conflicts
