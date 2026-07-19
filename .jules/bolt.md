@@ -1,0 +1,3 @@
+## 2024-05-24 - File System I/O Bottleneck in Session Aggregation
+**Learning:** `os.path.realpath()` is surprisingly expensive because it does disk I/O to resolve symlinks. When aggregating a large list of parsed objects (like CLI sessions) that frequently share the same underlying base paths, calling `realpath` inside a loop for every single item causes a severe performance bottleneck (O(N) disk I/O).
+**Action:** When filtering or aggregating lists of objects by path, always memoize path resolution functions (`os.path.realpath`, `os.path.abspath`, etc.) in a local dictionary if many objects are likely to share the same path.
