@@ -438,7 +438,9 @@ def parse_kimi():
                 p = entry.get("path") if isinstance(entry, dict) else None
                 if not p:
                     continue
-                out[hashlib.md5(p.encode()).hexdigest()] = p
+                # bandit: usedforsecurity=False tells FIPS-compliant hashlib this is just for
+                # cache keys, not crypto. Avoids a B324 security warning.
+                out[hashlib.md5(p.encode(), usedforsecurity=False).hexdigest()] = p
         except Exception:
             pass
         return out
