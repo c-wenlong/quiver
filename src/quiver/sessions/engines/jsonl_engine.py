@@ -363,16 +363,19 @@ def _title_from_jsonl(fp: str, config: JsonlParserConfig) -> str:
 def _list_jsonl(directory: str, config: JsonlParserConfig) -> list[str]:
     out: list[str] = []
     try:
-        for name in os.listdir(directory):
-            if not name.endswith(".jsonl"):
-                continue
-            if name in config.skip_basenames:
-                continue
-            if config.primary_files and name not in config.primary_files:
-                continue
-            if name == config.index_basename and config.mode == "index_jsonl":
-                continue
-            out.append(os.path.join(directory, name))
+        # Performance optimization: using os.scandir instead of os.listdir
+        # avoids extra stat syscalls when traversing directories with many session logs.
+        with os.scandir(directory) as it:
+            for entry in it:
+                if not entry.is_file() or not entry.name.endswith(".jsonl"):
+                    continue
+                if entry.name in config.skip_basenames:
+                    continue
+                if config.primary_files and entry.name not in config.primary_files:
+                    continue
+                if entry.name == config.index_basename and config.mode == "index_jsonl":
+                    continue
+                out.append(entry.path)
     except Exception:
         pass
     return out
