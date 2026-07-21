@@ -92,10 +92,11 @@ def parse_jsonl_projects(config: JsonlParserConfig) -> list[Session]:
 def _parse_nested(base: str, config: JsonlParserConfig) -> list[Session]:
     sessions: list[Session] = []
     try:
-        for name in os.listdir(base):
-            proj = os.path.join(base, name)
-            if not os.path.isdir(proj):
+        for entry in os.scandir(base):
+            if not entry.is_dir():
                 continue
+            name = entry.name
+            proj = entry.path
             if config.project_filter and not config.project_filter(name, proj):
                 continue
             fallback_path = ""
@@ -162,10 +163,11 @@ def _parse_session_dirs(base: str, config: JsonlParserConfig) -> list[Session]:
     """base/<project>/[chats_subdir/]<session_id>/(primary jsonl)."""
     sessions: list[Session] = []
     try:
-        for proj_name in os.listdir(base):
-            proj = os.path.join(base, proj_name)
-            if not os.path.isdir(proj):
+        for proj_entry in os.scandir(base):
+            if not proj_entry.is_dir():
                 continue
+            proj_name = proj_entry.name
+            proj = proj_entry.path
             if config.project_filter and not config.project_filter(proj_name, proj):
                 continue
             fallback = ""
@@ -181,10 +183,11 @@ def _parse_session_dirs(base: str, config: JsonlParserConfig) -> list[Session]:
             )
             if not os.path.isdir(sessions_root):
                 continue
-            for sid in os.listdir(sessions_root):
-                sess_dir = os.path.join(sessions_root, sid)
-                if not os.path.isdir(sess_dir):
+            for sid_entry in os.scandir(sessions_root):
+                if not sid_entry.is_dir():
                     continue
+                sid = sid_entry.name
+                sess_dir = sid_entry.path
                 jsonl_files = _list_jsonl(sess_dir, config)
                 if not jsonl_files:
                     continue
@@ -218,10 +221,11 @@ def _parse_index_jsonl(base: str, config: JsonlParserConfig) -> list[Session]:
     """base/<project>/index.jsonl — each line describes a session."""
     sessions: list[Session] = []
     try:
-        for proj_name in os.listdir(base):
-            proj = os.path.join(base, proj_name)
-            if not os.path.isdir(proj):
+        for proj_entry in os.scandir(base):
+            if not proj_entry.is_dir():
                 continue
+            proj_name = proj_entry.name
+            proj = proj_entry.path
             if config.project_filter and not config.project_filter(proj_name, proj):
                 continue
             index_path = os.path.join(proj, config.index_basename)
