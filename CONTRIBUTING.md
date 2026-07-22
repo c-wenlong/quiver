@@ -48,7 +48,10 @@ Shared utilities: `console.py`, `paths.py`.
 1. Fork the repo and create a feature branch from `main`.
 2. Make your changes and ensure tests pass locally.
 3. Update README, `swe help`, or `swe skills help` if you add user-facing commands or flags.
-4. Open a PR with a clear description of what changed and why.
+4. **Reinstall and verify e2e** — re-run `pip install -e .` so the installed `swe` binary picks up new files, then run the actual `swe <command>` to confirm the feature works end-to-end (not just `PYTHONPATH=src` unit tests).
+5. Open a PR with a clear description of what changed and why.
+
+> **Why reinstall?** The `swe` command is a pip entry point. With an editable install (`pip install -e .`), new files are picked up automatically. But a stale non-editable install (e.g. from `pip install .` or pipx) won't see new modules until you reinstall. Unit tests with `PYTHONPATH=src` can pass while `swe` silently fails because it doesn't see the new module.
 
 ## Reporting bugs
 

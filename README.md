@@ -39,13 +39,13 @@ $ swe list
 
 AI Coding Tools
 
-  NAME             COMMAND            VERSION      ALIASES       100d  INSTALLED  DESCRIPTION
-  ──────────────────────────────────────────────────────────────────────────────────────────
-  claude           claude             2.1.126      cc              412  ✓   Claude Code by Anthropic …
-  codex            codex              0.133.0      cx              288  ✓   OpenAI Codex CLI
-  opencode         opencode           1.17.11      oc               96  ✓   opencode — open source …
-  gemini           gemini             0.35.1       gg               12  ✓   Gemini CLI by Google …
-  cursor           agent              2026.06.24   cs                4  ✓   Cursor CLI — AI-powered …
+  NAME             COMMAND            VERSION      ALIASES       100d  RATE        INST  DESCRIPTION
+  ─────────────────────────────────────────────────────────────────────────────────────────────
+  claude           claude             2.1.126      cc              412  —           ✓    Claude Code by Anthropic …
+  codex            codex              0.133.0      cx              288  100% 5d19h  ✓    OpenAI Codex CLI
+  opencode         opencode           1.17.11      oc               96  —           ✓    opencode — open source …
+  gemini           gemini             0.35.1       gg               12  —           ✓    Gemini CLI by Google …
+  cursor           agent              2026.06.24   cs                4  —           ✓    Cursor CLI — AI-powered …
 
   6/6 installed  ·  swe use <name|alias>  │  swe info <name>  │  swe list <tag>  │  swe check
   tags:  agentic  byok  coding  local  …
@@ -72,6 +72,7 @@ If you juggle more than one AI coding agent you end up with a mess:
 | **Models** | Aggregate model usage parsed read-only from each tool's session logs |
 | **Skills** | Discover, list, catalog, symlink, and move skills across harness roots |
 | **MCP sync** | Inspect, compare, validate, and copy MCP servers between tools |
+| **Rate limits** | Usage percentage + reset countdown in `swe list` for tools that expose rate limit APIs (Codex) |
 | **Favourites** | Pin harnesses to the top of `swe list` with neon highlighting |
 | **Autocomplete** | Shell tab-completion for zsh, bash, and fish (tool names, aliases, tags, flags) |
 | **Providers** | Manage API keys and metadata for 27+ LLM providers |
@@ -333,6 +334,7 @@ flowchart LR
 - **Analytics** — `swe session` and `swe models` parse each tool's on-disk logs (e.g. `~/.claude/projects`, `~/.codex/sessions`, `~/.local/share/opencode/opencode.db`). quiver **never writes** to those files.
 - **Skills** — walks known skill roots under `$HOME` (and `./.cursor/skills`), de-duplicates symlinked paths, reads each `SKILL.md` front matter. Catalogs from `skill_catalogs.json` extend the scan; `swe skills tree` / `link` / `move` manage harness symlinks without touching skill content.
 - **MCP sync** — reads each tool's native MCP config, normalizes to a canonical shape, re-emits in the target format. Nothing is written unless you run a real (non-`--dry-run`) `sync` or `edit`.
+- **Rate limits** — `swe list` fetches usage data from tools that expose a rate limit API. Codex is queried via the ChatGPT `backend-api/wham/usage` endpoint using the OAuth `access_token` from `~/.codex/auth.json` (the same token the Codex CLI uses). Results are cached in `rate_limits_cache.json` (60s TTL); `swe list --refresh` bypasses the cache. The architecture is pluggable — additional fetchers can be registered in `harness/rate_limits.py`. On macOS python.org builds that lack CA certificates, the fetcher retries with an unverified SSL context as a fallback (encrypted but no cert pinning).
 
 ## Configuration
 
@@ -343,6 +345,7 @@ Everything quiver persists lives under `~/.config/swe/`:
 | `tools.json` | Your tool registry (versions for this machine) | No — auto-created |
 | `stars.json` | Favourited harness names | No — auto-created by `swe star` |
 | `session_cache.json` | Cached session parse results (60s TTL) | No — auto-created |
+| `rate_limits_cache.json` | Cached rate limit fetches (60s TTL) | No — auto-created |
 | `completions/` | Shell completion scripts (zsh/bash/fish) | No — created by `swe autocomplete` |
 | `skill_catalogs.json` | Extra skill catalog directories | No — auto-created by discover/add |
 | `skill_links.json` | Recorded harness symlink layout | No — updated by link/tree --sync |
@@ -366,6 +369,32 @@ python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 The test suite runs against a throwaway `$HOME`, so it never touches your real config.
+
+### Reinstalling after changes
+
+The `swe` command is a pip-installed console entry point (`[project.scripts]` in `pyproject.toml`). With an **editable** install (`pip install -e .`), new Python files are picked up automatically. But if you ever installed with a plain `pip install .` (non-editable), files are copied to site-packages and new modules won't appear until you reinstall:
+
+```bash
+pip install -e .          # switch to editable, or sync site-packages
+swe list                  # verify the feature works end-to-end
+```
+
+> **Common pitfall:** unit tests run with `PYTHONPATH=src`, so they can pass while the installed `swe` command silently fails because it's reading from a stale non-editable site-packages copy. Always verify with the real `swe` command after adding files — if the feature doesn't show up, reinstall.
+
+For **pipx** installs (always non-editable):
+
+```bash
+pipx install --force git+https://github.com/c-wenlong/quiver.git
+```
+
+### E2e verification checklist
+
+Every feature that adds files or modifies `cmd_*` handlers must pass this checklist before opening a PR:
+
+1. ✅ Unit tests pass: `python -m unittest discover -s tests -p 'test_*.py'`
+2. ✅ Package reinstalled: `pip install -e .`
+3. ✅ Verified with real `swe` command (not just `PYTHONPATH=src python -m quiver.cli`)
+4. ✅ PR opened with clear description
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 

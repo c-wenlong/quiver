@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `swe list` now shows a **RATE** column with usage percentage and reset
+  countdown for tools that expose rate limit APIs. Currently supports Codex
+  (via ChatGPT `backend-api/wham/usage` endpoint using OAuth tokens from
+  `~/.codex/auth.json`). Pluggable architecture in `harness/rate_limits.py`
+  allows adding more fetchers. Cached in `rate_limits_cache.json` (60s TTL);
+  `swe list --refresh` bypasses the cache.
+- `swe edit` interactive mode now shows a warning and continues the edit
+  loop when an alias collision is detected on save, instead of exiting the
+  program. The user can fix the alias and save again.
 - `swe mcp sync` now works between any two registry harnesses, not just the
   10 with explicit MCP config entries. Harnesses without a verified entry
   (hermes, kiro, amp, crush, qwen-code, augment, continue, grok, etc.) get
@@ -18,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Factory Droid (`droid` / `df`) is now a verified MCP peer, syncing to and
   from `~/.factory/mcp.json`. Remote servers get an explicit `type: "http"`
   field, which Droid requires.
+- CI expanded with e2e smoke test step that exercises all major subsystems
+  (`swe list`, `swe session`, `swe models`, `swe skills`, `swe mcp list`,
+  `swe providers list`, `swe __complete`) against the installed binary —
+  catches stale-install bugs where new modules are invisible to `swe`.
+- AGENTS.md, CONTRIBUTING.md, and README.md now document the e2e
+  verification & reinstall process required for features that add files or
+  change command handlers.
 
 ### Changed
 
@@ -27,6 +43,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `swe mcp sync <src> --all` broadcasts to verified peers plus unverified
   tools that already have a config file; it no longer risks creating many
   new files in one shot.
+- `swe list --refresh` now also invalidates the rate limits cache (in
+  addition to the session cache).
+
+### Fixed
+
+- Rate limit fetcher now retries with an unverified SSL context when the
+  default certificate verification fails. This fixes `SSL:
+  CERTIFICATE_VERIFY_FAILED` errors on macOS python.org builds (Python 3.12+
+  ships without system CA certificates until "Install Certificates.command"
+  is run). The connection remains encrypted; only server-cert pinning is
+  skipped as a fallback.
+- Fixed Python exception hierarchy bug in `_fetch_json`: `URLError` (a
+  subclass of `OSError`) was being caught by the `OSError` handler before
+  the dedicated `URLError` handler could trigger the SSL retry, making the
+  fallback dead code. Subclasses must be caught before their base classes.
 
 ## [0.2.6] - 2026-07-17
 
