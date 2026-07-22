@@ -54,5 +54,26 @@ If a feature works with `PYTHONPATH=src python -m quiver.cli` but not with the i
 - **ISO 8601 parser** (`harness/rate_limits.py:_parse_iso8601_to_epoch`): shared `str → epoch float` helper used by Copilot's fetcher and Codex's string-`reset_at` fallback path. Compatible with Python 3.10+ (which doesn't accept fractional seconds combined with a timezone offset in `datetime.fromisoformat` — that was added in 3.11). Naïve datetimes (no offset) are explicitly treated as UTC to avoid `datetime.timestamp()` silently applying local time and producing TZ-dependent reset countdowns. Returns `0.0` for any unparseable / falsy input so a bad timestamp never breaks `swe list`.
 - **Bool guard for `reset_at` type dispatch** (`harness/rate_limits.py:_fetch_codex`): the numeric branch is `isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool)`. Without the `not bool` part, a pathological `reset_at: true` payload would silently become `1.0` because `bool` subclasses `int` in Python. Same conceptual guard pattern is applied in `_derive_copilot_fields` with explicit `try/except (TypeError, ValueError)` around float/int casts, returning `(0, False)` rather than crashing `swe list` mid-render.
 - **Test fixture isolation**: class-level JSON fixtures like `_SAMPLE_RESPONSE` are shallow-copied by default. Tests that **mutate nested keys** (e.g. `body["rate_limit"]["primary_window"]["reset_at"]`) MUST use `copy.deepcopy` to avoid leaking the mutation into later tests that read the same class fixture. Tests that only **replace top-level keys** (e.g. `body["quota_snapshots"] = {...}`) are safe with shallow copies. Watch for this whenever adding a parameterized test that walks a class-level fixture.
-- **SSL fallback** (`harness/rate_limits.py:_fetch_json`): macOS python.org builds (Python 3.12+) ship without CA certificates, causing `urllib.request.urlopen` to fail with `SSL: CERTIFICATE_VERIFY_FAILED`. The helper retries with an unverified SSL context (`ssl.CERT_NONE`) as a fallback — the connection stays encrypted, just without server-cert pinning. **Gotcha:** `urllib.error.URLError` is a subclass of `OSError`; always catch `URLError` before `OSError` in except chains or the SSL retry handler becomes dead code.
-- **Interactive alias collision** (`harness/commands.py:_edit_interactive`): when the user types `save` with a colliding alias, the loop shows a yellow warning and continues instead of exiting. The collision check runs inside the save handler (not in `_apply_edits`) so the user stays in the editor and can fix it. `_apply_edits` retains its own check as a safety net for the flag-based path.
+- **SSL fallback** (`harness/rate_limits.py:_fetch_json`): macOS python.org builds (Python 3.12+) ship without CA certificates, causing `urllib.request.urlopen` to fail with `SSL: CERTIFICATE_VERIFY_FAILED`. The helper retries with an unverified SSL context (`ssl.CERT_NONE`) as a fallback — the connection stays encrypted, just without server-cert pinning. **Gotcha:** `urllib.error.URLError` is a subclass of `OSError`; always catch `URLError` before `OSError` in except chains or the SSL retry handler becomes dead code.- **Interactive alias collision** (`harness/commands.py:_edit_interactive`):
+  when the user types `save` with a colliding alias, the loop shows
+  a yellow warning and continues instead of exiting. The collision check
+  runs inside the save handler (not in `_apply_edits`) so the user
+  stays in the editor and can fix it. `_apply_edits` retains its own
+  check as a safety net for the flag-based path.
+- **Table renderer** (`table.py`): declarative, pluggable component
+  replacing hand-rolled `f"{...:<{w}}"` string interpolation. Three
+  width-fit modes — `fixed` (ignore content), `content` (grow to longest
+  cell), `bounded` (grow to longest cell up to `max_width`) — and six
+  built-in column kinds: `text` (plain string, strips ANSI on input to
+  prevent mid-escape slicing across column gaps), `number` (right-aligned
+  int, optional `thousands=True`), `count_threshold` (right-aligned int,
+  green when above `threshold`), `list` (CSV-joined, color via
+  `attrs["color"]`, uses `cpad` for color+pad consistency),
+  `timestamp` (column-level `formatter` callable strips the lambda-from-row
+  ceremony), and `preformatted` (cells ship their own ANSI; combined with
+  `trust_cell_width=True` the column skips re-padding). Third-party
+  kinds register via `@register_kind("name")` decorator. Header is dim
+  ANSI; separator is `─` repeated; both share the table's total visible
+  width via `visible_len`. Contract tests live in `tests/test_table.py`.
+  Migration of existing `cmd_*` handlers is opt-in and currently
+  deferred.
