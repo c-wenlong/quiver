@@ -10,10 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `swe list` now shows a **RATE** column with usage percentage and reset
-  countdown for tools that expose rate limit APIs. Currently supports Codex
-  (via ChatGPT `backend-api/wham/usage` endpoint using OAuth tokens from
-  `~/.codex/auth.json`). Pluggable architecture in `harness/rate_limits.py`
-  allows adding more fetchers. Cached in `rate_limits_cache.json` (60s TTL);
+  countdown for tools that expose rate limit APIs. Currently supports:
+  - **Codex** via ChatGPT `backend-api/wham/usage` endpoint using OAuth
+    tokens from `~/.codex/auth.json`
+  - **GitHub Copilot** via `api.github.com/copilot_internal/user` using
+    the OAuth token from `gh auth token`
+  Pluggable architecture in `harness/rate_limits.py` allows adding more
+  fetchers. Cached in `rate_limits_cache.json` (60s TTL);
   `swe list --refresh` bypasses the cache.
 - `swe edit` interactive mode now shows a warning and continues the edit
   loop when an alias collision is detected on save, instead of exiting the
@@ -58,6 +61,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subclass of `OSError`) was being caught by the `OSError` handler before
   the dedicated `URLError` handler could trigger the SSL retry, making the
   fallback dead code. Subclasses must be caught before their base classes.
+- `_parse_iso8601_to_epoch` now correctly parses ISO 8601 timestamps with
+  fractional seconds combined with a timezone offset (e.g.
+  `"2026-08-01T00:00:00.000Z"`, `"...+00:00"`) on Python 3.10 — previously
+  only Python 3.11+ accepted that combination. Without the fix, the parser
+  silently returned `0.0` and the RATE column rendered `—` for the reset
+  countdown.
+- Naïve ISO 8601 timestamps (e.g. `"2026-08-01T00:00:00"`) are now
+  explicitly treated as UTC. Previously, `datetime.fromisoformat(...).timestamp()`
+  silently applied **local time** on naïve strings, producing a reset
+  countdown that shifted with the user's TZ. Codex's parser was refactored
+  to use the shared helper, eliminating a duplicated buggy inline parser.
+- `_fetch_codex` now uses `not isinstance(reset_at, bool)` as a guard
+  inside the numeric `reset_at` branch. Without it, a pathological
+  `reset_at: true` payload would silently become `1.0` (since `bool`
+  subclasses `int` in Python). Same fix applied conceptually to
+  `_derive_copilot_fields` for `percent_remaining` and `entitlement`.
+- Test fixture isolation: `test_fetch_codex_reset_at_type_dispatch` now
+  uses `copy.deepcopy` on the shared `_SAMPLE_RESPONSE` fixture before
+  mutating nested keys. A previous shallow-copy version leaked the
+  per-subtest `reset_at` mutation into `_SAMPLE_RESPONSE`, which corrupted
+  `test_fetch_codex_success` when the suite ran in alphabetical order.
 
 ## [0.2.6] - 2026-07-17
 
