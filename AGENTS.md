@@ -54,5 +54,61 @@ If a feature works with `PYTHONPATH=src python -m quiver.cli` but not with the i
 - **ISO 8601 parser** (`harness/rate_limits.py:_parse_iso8601_to_epoch`): shared `str → epoch float` helper used by Copilot's fetcher and Codex's string-`reset_at` fallback path. Compatible with Python 3.10+ (which doesn't accept fractional seconds combined with a timezone offset in `datetime.fromisoformat` — that was added in 3.11). Naïve datetimes (no offset) are explicitly treated as UTC to avoid `datetime.timestamp()` silently applying local time and producing TZ-dependent reset countdowns. Returns `0.0` for any unparseable / falsy input so a bad timestamp never breaks `swe list`.
 - **Bool guard for `reset_at` type dispatch** (`harness/rate_limits.py:_fetch_codex`): the numeric branch is `isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool)`. Without the `not bool` part, a pathological `reset_at: true` payload would silently become `1.0` because `bool` subclasses `int` in Python. Same conceptual guard pattern is applied in `_derive_copilot_fields` with explicit `try/except (TypeError, ValueError)` around float/int casts, returning `(0, False)` rather than crashing `swe list` mid-render.
 - **Test fixture isolation**: class-level JSON fixtures like `_SAMPLE_RESPONSE` are shallow-copied by default. Tests that **mutate nested keys** (e.g. `body["rate_limit"]["primary_window"]["reset_at"]`) MUST use `copy.deepcopy` to avoid leaking the mutation into later tests that read the same class fixture. Tests that only **replace top-level keys** (e.g. `body["quota_snapshots"] = {...}`) are safe with shallow copies. Watch for this whenever adding a parameterized test that walks a class-level fixture.
-- **SSL fallback** (`harness/rate_limits.py:_fetch_json`): macOS python.org builds (Python 3.12+) ship without CA certificates, causing `urllib.request.urlopen` to fail with `SSL: CERTIFICATE_VERIFY_FAILED`. The helper retries with an unverified SSL context (`ssl.CERT_NONE`) as a fallback — the connection stays encrypted, just without server-cert pinning. **Gotcha:** `urllib.error.URLError` is a subclass of `OSError`; always catch `URLError` before `OSError` in except chains or the SSL retry handler becomes dead code.
-- **Interactive alias collision** (`harness/commands.py:_edit_interactive`): when the user types `save` with a colliding alias, the loop shows a yellow warning and continues instead of exiting. The collision check runs inside the save handler (not in `_apply_edits`) so the user stays in the editor and can fix it. `_apply_edits` retains its own check as a safety net for the flag-based path.
+- **SSL fallback** (`harness/rate_limits.py:_fetch_json`): macOS python.org builds (Python 3.12+) ship without CA certificates, causing `urllib.request.urlopen` to fail with `SSL: CERTIFICATE_VERIFY_FAILED`. The helper retries with an unverified SSL context (`ssl.CERT_NONE`) as a fallback — the connection stays encrypted, just without server-cert pinning. **Gotcha:** `urllib.error.URLError` is a subclass of `OSError`; always catch `URLError` before `OSError` in except chains or the SSL retry handler becomes dead code.- **Interactive alias collision** (`harness/commands.py:_edit_interactive`):
+  when the user types `save` with a colliding alias, the loop shows
+  a yellow warning and continues instead of exiting. The collision check
+  runs inside the save handler (not in `_apply_edits`) so the user
+  stays in the editor and can fix it. `_apply_edits` retains its own
+  check as a safety net for the flag-based path.
+- **Table renderer** (`table.py`): declarative, pluggable component
+  replacing hand-rolled `f"{...:<{w}}"` string interpolation. Three
+  width-fit modes — `fixed` (ignore content), `content` (grow to longest
+  cell), `bounded` (grow to longest cell up to `max_width`) — and six
+  built-in column kinds: `text` (plain string, strips ANSI on input to
+  prevent mid-escape slicing across column gaps), `number` (right-aligned
+  int, optional `thousands=True`), `count_threshold` (right-aligned int,
+  green when above `threshold`), `list` (CSV-joined, color via
+  `attrs["color"]`, uses `cpad` for color+pad consistency),
+  `timestamp` (column-level `formatter` callable strips the lambda-from-row
+  ceremony), and `preformatted` (cells ship their own ANSI; combined with
+  `trust_cell_width=True` the column skips re-padding). Third-party
+  kinds register via `@register_kind("name")` decorator. Header is dim
+  ANSI; separator is `─` repeated; both share the table's total visible
+  width via `visible_len`. Contract tests live in `tests/test_table.py`.
+- **cmd_list migration to Table** (`harness/commands.py::cmd_list`,
+  `tests/test_harness_commands.py`): the 9-column schema is
+  `mark` (preformatted w=2), `name` (text w=16), `command` (text w=18),
+  `version` (text w=12), `aliases` (list w=12, color=cyan),
+  `sess` (preformatted w=8), `rate` (preformatted w=14,
+  `trust_cell_width=True`), `inst` (preformatted w=4),
+  `desc` (text w=36, value prefaced with one space cell-internally
+  to maintain a 3-char visible gap before DESCRIPTION given the
+  default `column_gap=2`). Starred rows pass
+  `accent="neon"` to `add_row(..., accent=...)`; the mark cell is
+  `c("neon_pink", " ★")` for the `★`-prefix variant or `"  "` for the
+  unstarred variant — **the mark cell's `visible_len` MUST equal 2**
+  (the column width) or the rendered offset of the tool NAME shifts
+  in the post-`★` columns. Defense-in-depth: `Table._compute_widths`
+  bounded-fit samples `visible_len` of every row's cell, so a future
+  contributor who passes a 3-visible-char mark_cell will silently see
+  the whole `mark` column auto-grow to 3 — alignment looks fine to the
+  unit-test eye (allocator reduced to a single visible column) but
+  every neighbouring column shifts right by 1 in actual rendering.
+  Migration closes the pre-existing column-justification drift between
+  favourited and unfavourited rows: in the OLD f-string, starred rows
+  rendered with the `║` border eating one column (`║` + `★` + ` ` +
+  `name` → `name` at column 3), while unstarred rows rendered with
+  the 2-space indent + `mark` (a single space) + ` ` separator →
+  `name` at column 4. Both styles are now replaced by a 2-char-wide
+  prefixed mark cell + `column_gap=2` series, so  both styles land
+  `name` at column 4 uniformly. **cmd_list is currently the ONLY
+  `cmd_*` handler that uses Table; `cmd_info`, `cmd_check`,
+  `cmd_doctor`, `cmd_tags`, `cmd_aliases` still hand-roll
+  `f"{...:<{w}}"` strings. Migrate intentionally, one handler at a
+  time rather than as a sweep — each handler has its own column
+  shape semantics and a bulk conversion would risk subtle drift
+  in non-trivial rows.** Pattern for migrating another `cmd_*` handler: build
+  the `Table` schema in one place, replace the render loop's
+  favourited/unfavourited branch with a single `add_row(..., accent=..)`
+  call, and rely on `accent` + `trust_cell_width` + per-kind renders
+  to preserve colour differences the old code had to special-case.
