@@ -13,6 +13,7 @@ SKILL_LINKS_FILE = CONFIG_DIR / "skill_links.json"
 SESSION_CACHE_FILE = CONFIG_DIR / "session_cache.json"
 COMPLETION_DIR = CONFIG_DIR / "completions"
 PROVIDERS_REGISTRY_FILE = CONFIG_DIR / "providers.json"
+RATE_LIMITS_CACHE_FILE = CONFIG_DIR / "rate_limits_cache.json"
 
 # Documented convention for the plain-text API-key directory. The actual
 # runtime path can be overridden via `swe providers --api-keys-dir=DIR`.

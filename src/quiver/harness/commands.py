@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, lpad, truncate
+from quiver.console import c, lpad, truncate, visible_len
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.harness.stars import is_starred, load_stars, toggle_star, unstar
 from quiver.harness.tools import extract_version_number, is_installed, live_version
@@ -39,13 +39,15 @@ def _pad(text: str, width: int) -> str:
 
 
 def cmd_list(args):
-    # --refresh bypasses session cache
+    # --refresh bypasses session cache and rate limits cache
     refresh = "--refresh" in args or "-r" in args
     args = [a for a in args if a not in ("--refresh", "-r")]
     if refresh:
-        from quiver.sessions.aggregator import invalidate_cache
+        from quiver.sessions.aggregator import invalidate_cache as _inv_sessions
+        from quiver.harness.rate_limits import invalidate_cache as _inv_rates
 
-        invalidate_cache()
+        _inv_sessions()
+        _inv_rates()
 
     tools = load_registry()
     tag_filter = args[0].lstrip("-") if args else None
@@ -53,15 +55,20 @@ def cmd_list(args):
     stars = load_stars()
     starred_set = set(stars)
 
+    # Fetch rate limits (cached 60s, --refresh bypasses)
+    from quiver.harness.rate_limits import get_all_rate_limits
+
+    rate_limits = get_all_rate_limits(use_cache=not refresh)
+
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
-    w_name, w_cmd, w_ver, w_alias, w_sess, w_desc = 16, 18, 12, 12, 8, 36
+    w_name, w_cmd, w_ver, w_alias, w_sess, w_rate, w_desc = 16, 18, 12, 12, 8, 14, 36
     hdr = (
         f"  {'':2}{'NAME':<{w_name}} {'COMMAND':<{w_cmd}} {'VERSION':<{w_ver}}"
-        f" {'ALIASES':<{w_alias}} {'100d':>{w_sess}} {'INST':<4} DESCRIPTION"
+        f" {'ALIASES':<{w_alias}} {'100d':>{w_sess}} {'RATE':<{w_rate}} {'INST':<4} DESCRIPTION"
     )
     print(c("dim", hdr))
-    print(c("dim", "  " + "─" * 112))
+    print(c("dim", "  " + "─" * (112 + w_rate + 1)))
 
     shown_starred = False
     for name, info in _sort_tools(tools, counts, stars):
@@ -84,6 +91,15 @@ def cmd_list(args):
             sess_known = False
         favourited = name in starred_set
 
+        # Rate limit column (preserve ANSI colors while padding)
+        rl = rate_limits.get(name)
+        if rl:
+            rate_str = rl.format_column()
+        else:
+            rate_str = c("dim", "—")
+        rate_pad = w_rate - visible_len(rate_str)
+        rate_col = rate_str + " " * max(rate_pad, 0)
+
         if favourited:
             shown_starred = True
             mark = c("neon_pink", "★")
@@ -92,10 +108,11 @@ def cmd_list(args):
             ver_s = c("neon", _pad(ver, w_ver))
             alias_s = c("neon", _pad(aliases, w_alias))
             sess_s = c("neon", f"{sess_plain:>{w_sess}}")
+            rate_s = c("neon", rate_col)
             desc_s = c("neon", desc_plain)
             border = c("neon", "║")
             print(
-                f"{border}{mark} {name_s} {cmd_s} {ver_s} {alias_s} {sess_s} {status}   {desc_s}{border}"
+                f"{border}{mark} {name_s} {cmd_s} {ver_s} {alias_s} {sess_s} {rate_s} {status}   {desc_s}{border}"
             )
         else:
             mark = " "
@@ -108,6 +125,7 @@ def cmd_list(args):
                 f"  {mark} {name_s} {info['command']:<{w_cmd}}"
                 f" {ver:<{w_ver}} {c('cyan', _pad(aliases, w_alias))} "
                 f"{sess_col}"
+                f" {rate_col}"
                 f" {status}   {c('dim', desc_plain)}"
             )
 
@@ -760,7 +778,7 @@ def _apply_edits(tools: dict, name: str, updates: dict) -> tuple[dict, list[str]
     return info, changes
 
 
-def _edit_interactive(name: str, info: dict) -> dict | None:
+def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
     """Interactive field editor. Returns updates dict, or None if cancelled."""
     draft = dict(info)
     updates: dict = {}
@@ -788,6 +806,13 @@ def _edit_interactive(name: str, info: dict) -> dict | None:
             _show_edit_fields(name, preview)
             continue
         if choice in ("save", "s", "done", "write"):
+            if "aliases" in updates:
+                new_aliases = _normalize_field_value("aliases", updates["aliases"])
+                conflict = _alias_collision(tools, name, new_aliases)
+                if conflict:
+                    print(c("yellow", f"  ⚠ {conflict}"))
+                    print(c("dim", "  Enter a different alias, then save again."))
+                    continue
             return updates
         if choice not in EDITABLE_FIELDS:
             print(c("red", f"  Unknown field/command: {choice}"))
@@ -860,7 +885,7 @@ def cmd_edit(args):
     _show_edit_fields(name, info)
 
     if not updates:
-        interactive = _edit_interactive(name, info)
+        interactive = _edit_interactive(name, info, tools)
         if interactive is None:
             return 1
         updates = interactive

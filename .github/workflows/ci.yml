@@ -24,10 +24,31 @@ jobs:
       - name: Install package
         run: pip install -e .
 
-      - name: Smoke test CLI
+      - name: E2e smoke test (installed binary)
+        # Run commands against the installed `swe` entry point — NOT
+        # PYTHONPATH=src.  This catches stale-install bugs where a new
+        # module file exists in the source tree but is invisible to the
+        # pip-installed binary (e.g. after switching from a non-editable
+        # install).  Each command exercises a different subsystem:
+        #   list      → harness registry + rate_limits + session cache
+        #   aliases   → harness registry
+        #   session   → session parsers + aggregator
+        #   models    → models analytics
+        #   skills    → skills discovery
+        #   mcp list  → mcp formats + cli
+        #   providers → providers registry + keys
+        #   __complete → completion engine
         run: |
           swe --help
           swe tags
+          swe list
+          swe aliases
+          swe session
+          swe models
+          swe skills
+          swe mcp list
+          swe providers list
+          swe __complete list
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
