@@ -110,6 +110,39 @@ class HarnessEditTest(unittest.TestCase):
                 self.assertEqual(saved["mastracode"]["description"], "Mastra Code — AI coding agent")
                 self.assertEqual(saved["mastracode"]["aliases"], ["mc"])
 
+    def test_cmd_edit_interactive_alias_collision_continues_loop(self):
+        """When a user saves an alias that collides, the loop continues instead of exiting."""
+        tools = {
+            "tau": {
+                "command": "tau",
+                "description": "tau",
+                "aliases": [],
+                "tags": ["coding"],
+                "version": None,
+            },
+            "augment": {
+                "command": "augment",
+                "description": "augment",
+                "aliases": ["au"],
+                "tags": ["coding"],
+                "version": None,
+            },
+        }
+        # 1st save: colliding alias 'au' → loop continues
+        # 2nd: re-enter aliases field with 'ta'
+        # 3rd save: succeeds
+        inputs = iter(["aliases", "au", "save", "aliases", "ta", "save"])
+        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.resolve", return_value="tau"
+        ), patch("quiver.harness.commands.read_line", side_effect=lambda *_a, **_k: next(inputs)):
+            rc = cmd_edit(["tau"])
+            self.assertEqual(rc, 0)
+            save.assert_called_once()
+            saved_tools = save.call_args[0][0]
+            self.assertEqual(saved_tools["tau"]["aliases"], ["ta"])
+
     def test_cmd_edit_interactive_save(self):
         tools = {
             "tau": {
