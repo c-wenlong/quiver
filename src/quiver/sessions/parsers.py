@@ -438,7 +438,7 @@ def parse_kimi():
                 p = entry.get("path") if isinstance(entry, dict) else None
                 if not p:
                     continue
-                out[hashlib.md5(p.encode()).hexdigest()] = p
+                out[hashlib.md5(p.encode(), usedforsecurity=False).hexdigest()] = p
         except Exception:
             pass
         return out
