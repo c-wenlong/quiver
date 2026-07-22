@@ -92,11 +92,11 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
     if os.path.exists(claude_dir):
         try:
             seen: dict[tuple[str, str], int] = {}
-            for directory in os.listdir(claude_dir):
-                dir_path = os.path.join(claude_dir, directory)
-                if not os.path.isdir(dir_path) or not directory.startswith("-"):
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            for entry in os.scandir(claude_dir):
+                if not entry.is_dir() or not entry.name.startswith("-"):
                     continue
-                for jsonl in glob.glob(os.path.join(dir_path, "*.jsonl")):
+                for jsonl in glob.glob(os.path.join(entry.path, "*.jsonl")):
                     for key, cnt in _scan_jsonl_models(jsonl, 30).items():
                         seen[key] = seen.get(key, 0) + cnt
             if seen:
@@ -120,18 +120,18 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
     if os.path.exists(freebuff_dir):
         try:
             seen: dict[tuple[str, str], int] = {}
-            for project in os.listdir(freebuff_dir):
-                project_path = os.path.join(freebuff_dir, project)
-                if not os.path.isdir(project_path):
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            for entry in os.scandir(freebuff_dir):
+                if not entry.is_dir():
                     continue
-                chats_dir = os.path.join(project_path, "chats")
+                chats_dir = os.path.join(entry.path, "chats")
                 if not os.path.exists(chats_dir):
                     continue
-                for session_dir in os.listdir(chats_dir):
-                    session_path = os.path.join(chats_dir, session_dir)
-                    if not os.path.isdir(session_path):
+                # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+                for s_entry in os.scandir(chats_dir):
+                    if not s_entry.is_dir():
                         continue
-                    log_path = os.path.join(session_path, "log.jsonl")
+                    log_path = os.path.join(s_entry.path, "log.jsonl")
                     if os.path.exists(log_path):
                         for key, cnt in _scan_jsonl_models(log_path, 50).items():
                             seen[key] = seen.get(key, 0) + cnt

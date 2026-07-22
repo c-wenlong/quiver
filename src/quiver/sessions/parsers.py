@@ -483,15 +483,15 @@ def parse_cursor():
             return sessions
         home = os.path.expanduser("~")
         try:
-            for enc_dir in os.listdir(projects_dir):
-                transcripts_dir = os.path.join(projects_dir, enc_dir, "agent-transcripts")
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            for enc_entry in os.scandir(projects_dir):
+                transcripts_dir = os.path.join(enc_entry.path, "agent-transcripts")
                 if not os.path.isdir(transcripts_dir):
                     continue
-                for uuid_dir in os.listdir(transcripts_dir):
-                    uuid_path = os.path.join(transcripts_dir, uuid_dir)
-                    if not os.path.isdir(uuid_path):
+                for uuid_entry in os.scandir(transcripts_dir):
+                    if not uuid_entry.is_dir():
                         continue
-                    jsonl_path = os.path.join(uuid_path, f"{uuid_dir}.jsonl")
+                    jsonl_path = os.path.join(uuid_entry.path, f"{uuid_entry.name}.jsonl")
                     if not os.path.isfile(jsonl_path):
                         continue
                     mtime = get_mtime(jsonl_path)
@@ -870,8 +870,9 @@ def parse_gemini():
         )
         ts = 0.0
         try:
-            for name in os.listdir(sess_dir):
-                ts = max(ts, get_mtime(os.path.join(sess_dir, name)))
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            for name_entry in os.scandir(sess_dir):
+                ts = max(ts, get_mtime(name_entry.path))
         except Exception:
             pass
         return ts or get_mtime(sess_dir)
@@ -901,11 +902,11 @@ def parse_antigravity():
         if not os.path.exists(brain_dir):
             return sessions
         try:
-            for d in os.listdir(brain_dir):
-                dp = os.path.join(brain_dir, d)
-                if not os.path.isdir(dp):
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            for d_entry in os.scandir(brain_dir):
+                if not d_entry.is_dir():
                     continue
-                mdata_files = glob.glob(os.path.join(dp, "*.metadata.json"))
+                mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
                 mtime = 0.0
                 title = ""
                 for mf in mdata_files:

@@ -124,20 +124,24 @@ def _parse_nested_dirs(config: JsonParserConfig) -> list[Session]:
     if not os.path.exists(base):
         return sessions
     try:
-        for parent_name in os.listdir(base):
-            parent_dir = os.path.join(base, parent_name)
-            if not os.path.isdir(parent_dir):
+        # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+        for parent_entry in os.scandir(base):
+            if not parent_entry.is_dir():
                 continue
+            parent_dir = parent_entry.path
+            parent_name = parent_entry.name
             fallback = ""
             if config.path_from_parent:
                 try:
                     fallback = config.path_from_parent(parent_name) or ""
                 except Exception:
                     fallback = ""
-            for sid in os.listdir(parent_dir):
-                sess_dir = os.path.join(parent_dir, sid)
-                if not os.path.isdir(sess_dir):
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            for sid_entry in os.scandir(parent_dir):
+                if not sid_entry.is_dir():
                     continue
+                sess_dir = sid_entry.path
+                sid = sid_entry.name
                 primary = os.path.join(sess_dir, config.session_file)
                 entry: Any = {}
                 file_path = primary if os.path.isfile(primary) else sess_dir
