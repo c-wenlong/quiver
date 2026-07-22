@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md, CONTRIBUTING.md, and README.md now document the e2e
   verification & reinstall process required for features that add files or
   change command handlers.
+- New **`quiver/table.py`** module: declarative, pluggable table renderer
+  for the CLI. Provides ``Table().add_column(...).add_row(...).render()``
+  with three width-fit modes (``fixed``, ``content``, ``bounded``) and six
+  built-in kinds registered via ``@register_kind``: `text`, `number`,
+  `count_threshold`, `list`, `timestamp`, `preformatted`. ANSI-safe width
+  math (cells painted with ``c(...)`` are stripped before byte-truncating,
+  so colour never bleeds across column gaps). Header + ``─`` separator
+  auto-sized to the table's total visible width. Migration of existing
+  ``cmd_*`` handlers is opt-in per file; none of the four current
+  ``cmd_list`` handlers have been migrated yet.
 
 ### Changed
 
