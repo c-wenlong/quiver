@@ -11,6 +11,7 @@ from quiver.providers.discover import discover_provider_keys
 from quiver.providers.help_text import print_providers_help
 from quiver.providers.keys import default_keys_dir
 from quiver.providers.registry import load_registry, resolve, save_registry
+from quiver.table import Table
 
 
 def _display_keys_dir(keys_dir: Path) -> str:
@@ -79,39 +80,59 @@ def cmd_list(args: list[str]) -> int:
             )
         ]
 
-
-
-
     rows.sort(key=lambda r: (r["info"].get("name") or r["name"]).lower())
 
     keys_dir_display = _display_keys_dir(keys_dir)
 
     print(f"\n{c('bold', 'AI Providers')}\n")
 
-    w_name, w_aliases, w_env, w_status, w_url = 14, 12, 22, 24, 28
+    # 5-column PROVIDER | ALIASES | ENV VAR | API KEY | URL Table.
+    # All five columns ship pre-coloured ANSI strings, so they use
+    # ``kind="preformatted"`` + ``trust_cell_width=True`` and are
+    # routed through ``cpad`` so each cell visibly matches its column
+    # width. PROVIDER is capped at 24 chars so long provider names
+    # truncate cleanly without breaking the otherwise-fixed left
+    # columns. URL uses fit="content" + kind="preformatted" so the
+    # column grows to fit the longest observed URL; since URL is the
+    # rightmost column, missing auto-pad on shorter URL cells does
+    # not misalign anything downstream.
+    #
+    # Column widths are pre-measured by walking rows once and tracking
+    # parallel text (+ colour) lists, then taking
+    # ``max(header_label_len, max(visible_len(cell)))`` for each
+    # column. The same exact value flows to both the Table schema
+    # ``add_column(width=...)`` AND the per-row ``cpad(..., width=...)``
+    # call, so column and cpad agree by construction — no fit="content"
+    # dead config, no width-math drift across rows.
+    #
+    # The description sub-line (when ``--desc`` is passed) is emitted
+    # as plain ``print()`` below the rendered row, indented
+    # ``HEADER_OUTER_PAD + provider_w + 2`` spaces so it visually
+    # aligns under the ALIASES column header. This restores a
+    # 2-line-per-provider layout similar to the cmd_skills batch-3
+    # pattern.
+    HEADER_OUTER_PAD = 2
+    PROVIDER_CAP = 24  # visual cap on the PROVIDER column width
 
-    # Header row + horizontal separator (anchors column widths)
-    print(
-        c(
-            "dim",
-            f"  {'PROVIDER':<{w_name}}  {'ALIASES':<{w_aliases}}  "
-            f"{'ENV VAR':<{w_env}}  {'API KEY':<{w_status}}  URL",
-        )
-    )
-    print(
-        c(
-            "dim",
-            "  " + "─" * (w_name + w_aliases + w_env + w_status + w_url + 10),
-        )
-    )
+    provider_texts: list[str] = []
+    aliases_texts: list[str] = []
+    env_texts: list[str] = []
+    api_key_texts: list[str] = []
+    api_key_colors: list[str] = []
+    url_texts: list[str] = []
 
     for row in rows:
+        # Truncate at PROVIDER_CAP so the cell arrives at exactly the
+        # capped visible width. ``cpad`` doesn't truncate by design
+        # (it pads-or-leaves-as-is), so we have to bound the input
+        # string before cpad for the cap to be real.
+        provider_texts.append(truncate(row["name"], PROVIDER_CAP))
+
         aliases_plain = ", ".join(
             a for a in (row["info"].get("aliases") or []) if a != row["name"]
-        )
-        if not aliases_plain:
-            # Em dash so the column reads as "absent" rather than "blank".
-            aliases_plain = "—"
+        ) or "—"
+        aliases_texts.append(aliases_plain)
+
         env_list = row["info"].get("env_vars") or []
         matched_env = row.get("matched_env")
         if matched_env:
@@ -122,24 +143,111 @@ def cmd_list(args: list[str]) -> int:
                 env_plain += f" (+{len(env_list) - 1})"
         else:
             env_plain = "—"
+        env_texts.append(env_plain)
+
         plain_status = row["masked"]
-        status_color = "dim" if plain_status == "-" else "green"
+        api_key_texts.append(plain_status)
+        api_key_colors.append("dim" if plain_status == "-" else "green")
+
         url_short = (row["info"].get("url") or "").replace(
             "https://", ""
         ).replace("http://", "").replace("www.", "")
-        url_visible = url_short[:w_url]
-        print(
-            f"  {cpad('bold', row['name'], w_name)}  "
-            f"{cpad('dim', aliases_plain, w_aliases)}  "
-            f"{cpad('dim', env_plain, w_env)}  "
-            f"{cpad(status_color, plain_status, w_status)}  "
-            f"{c('cyan', url_visible)}"
-        )
+        url_texts.append(url_short)
+
+    column_widths = {
+        "provider": max(
+            len("PROVIDER"),
+            max((len(t) for t in provider_texts), default=0),
+        ),
+        "aliases": max(
+            len("ALIASES"),
+            max((len(t) for t in aliases_texts), default=0),
+        ),
+        "env_var": max(
+            len("ENV VAR"),
+            max((len(t) for t in env_texts), default=0),
+        ),
+        "api_key": max(
+            len("API KEY"),
+            max((len(t) for t in api_key_texts), default=0),
+        ),
+        "url": max(
+            len("URL"),
+            max((len(t) for t in url_texts), default=0),
+        ),
+    }
+    # Cap PROVIDER width at 24 — long provider names truncate cleanly.
+    column_widths["provider"] = min(column_widths["provider"], 24)
+
+    table = Table()
+    table.add_column(
+        "provider", "PROVIDER", width=column_widths["provider"],
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "aliases", "ALIASES", width=column_widths["aliases"],
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "env_var", "ENV VAR", width=column_widths["env_var"],
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "api_key", "API KEY", width=column_widths["api_key"],
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "url", "URL", width=column_widths["url"],
+        kind="preformatted", fit="content",
+    )
+
+    for (
+        provider_text,
+        aliases_text,
+        env_text,
+        api_key_text,
+        api_key_color,
+        url_text,
+    ) in zip(
+        provider_texts,
+        aliases_texts,
+        env_texts,
+        api_key_texts,
+        api_key_colors,
+        url_texts,
+    ):
+        table.add_row({
+            "provider": cpad(
+                "bold", provider_text, column_widths["provider"],
+            ),
+            "aliases": cpad(
+                "dim", aliases_text, column_widths["aliases"],
+            ),
+            "env_var": cpad(
+                "dim", env_text, column_widths["env_var"],
+            ),
+            "api_key": cpad(
+                api_key_color, api_key_text, column_widths["api_key"],
+            ),
+            "url": c("cyan", url_text),
+        })
+
+    # Render once. The header + separator are emitted with the outer
+    # 2-space page padding; body rows are emitted 1-to-1 with the
+    # `rows` list, with description sub-lines interleaved when
+    # ``--desc`` was passed.
+    rendered = table.render()
+    print(" " * HEADER_OUTER_PAD + rendered[0])
+    print(" " * HEADER_OUTER_PAD + rendered[1])
+
+    desc_indent = HEADER_OUTER_PAD + column_widths["provider"] + 2
+    body_lines = rendered[2:]
+    for row, row_line in zip(rows, body_lines):
+        print(" " * HEADER_OUTER_PAD + row_line)
         if show_desc:
             desc = row["info"].get("description") or ""
             if desc:
-                # Indent under the slug column, not under API KEY.
-                print(f"    {c('dim', truncate(desc, 90))}")
+                print(" " * desc_indent + c("dim", truncate(desc, 90)))
 
     print()
     n_with = sum(1 for r in rows if r["masked"] != "-")

@@ -179,6 +179,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   math (cells painted with ``c(...)`` are stripped before byte-truncating,
   so colour never bleeds across column gaps). Header + ``─`` separator
   auto-sized to the table's total visible width.
+- **`swe providers list` migrated to the new `quiver.table.Table` component.**
+  Replaced hand-rolled `f"{...:<{w}}"` string interpolation with a single
+  5-column `Table().add_column(...).add_row(...)` build (PROVIDER |
+  ALIASES | ENV VAR | API KEY | URL). All five columns ship pre-coloured
+  ANSI strings via `kind="preformatted"` + `trust_cell_width=True`, and
+  each cell is routed through `cpad` so it visibly matches its column
+  width. The column widths are pre-measured across the current row set
+  via a single pre-measure pass that builds parallel text (+ colour)
+  lists and takes `max(header_label_len, max(visible_len(cell)))` for
+  each column. The same exact width flows to both `add_column(width=...)`
+  AND the per-row `cpad(..., width=...)` call so column and cpad agree
+  by construction — every body row arrives at the column visible
+  width. Previously hardcoded:
+  - PROVIDER width 14 → pre-measured, capped at 24 chars (long names
+    truncate cleanly without breaking the grid).
+  - ALIASES, ENV VAR, API KEY widths → pre-measured (no dead config,
+    no width-math drift across rows).
+  - URL width 28 → `kind="preformatted"` + `fit="content"` so the
+    column grows to the longest observed URL; since URL is the
+    rightmost column, missing auto-pad on shorter URL cells does not
+    misalign any trailing column.
+  The description sub-line (when `--desc` is passed) is now emitted as
+  plain `print()` below the rendered row, indented
+  `2 + provider_w + 2` spaces so it visually aligns under the ALIASES
+  column header (the description logically extends the alias/identity
+  block). This restores a 2-line-per-provider layout similar to the
+  cmd_skills batch-3 migration. URL prefix stripping
+  (`https://` / `http://` / `www.`) is preserved, the empty-aliases
+  em-dash fallback (`—`) is preserved, and the env-var `(+N)` suffix
+  for multi-env-var providers is preserved. ~17 new tests in
+  `tests/test_providers_commands.py::CmdListMigrationTest` pin:
+  5-column header order, separator width parity, body rows aligned to
+  header visible width (cpad-driven parity), ANSI colour shapes per
+  column (bold PROVIDER, dim ALIASES / ENV VAR, dim/green API KEY
+  conditional on masked key present, cyan URL), URL prefix-stripping,
+  em-dash fallback for empty aliases, matched-env rendering in
+  shell-export layout, `--desc` flag emissions and indent,
+  empty-description suppression, PROVIDER width cap at 24 chars,
+  filter correctness, no-keys Tip advisory order, no-keys-dir advisory
+  order, footer `N/N providers with keys` math, raw-key
+  non-leakage.
 - **`swe list` migrated to the new `quiver.table.Table` component.**
   Replaced the hand-rolled `f"{...:<{w}}"` string interpolation with a
   single 9-column `Table().add_column(...).add_row(..., accent=...)`
