@@ -179,7 +179,14 @@ def cmd_list(args: list[str]) -> int:
     # Cap PROVIDER width at 24 — long provider names truncate cleanly.
     column_widths["provider"] = min(column_widths["provider"], 24)
 
-    table = Table()
+    # ``column_gap=" │ "`` matches `swe list`'s visible column-border
+    # pattern (see harness/commands.py::cmd_list) so the providers
+    # listing renders with the same visual rhythm across commands.
+    # NOTE: cmd_info below intentionally stays at FIELD_GAP=1 — it's
+    # a 2-column definition list (Slug | openai) where the colon on
+    # each label already does separator work; forcing a ` │ ` border
+    # there would visually clash with the definition-list semantics.
+    table = Table(column_gap=" │ ")
     table.add_column(
         "provider", "PROVIDER", width=column_widths["provider"],
         kind="preformatted", trust_cell_width=True,
@@ -240,7 +247,11 @@ def cmd_list(args: list[str]) -> int:
     print(" " * HEADER_OUTER_PAD + rendered[0])
     print(" " * HEADER_OUTER_PAD + rendered[1])
 
-    desc_indent = HEADER_OUTER_PAD + column_widths["provider"] + 2
+    # Indent uses +3 because ``column_gap=" │ "``'s visible width is
+    # 3, not 2 (matches cmd_list's +2 form for the previous 2-space
+    # gap). Cross-tabs the alias column header offset so the
+    # description sub-line sits under ALIASES, not under the gap.
+    desc_indent = HEADER_OUTER_PAD + column_widths["provider"] + 3
     body_lines = rendered[2:]
     for row, row_line in zip(rows, body_lines):
         print(" " * HEADER_OUTER_PAD + row_line)

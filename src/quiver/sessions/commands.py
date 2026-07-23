@@ -80,8 +80,12 @@ def cmd_models(args):
     # caller to pre-color the value (the old code path did the colour
     # decision imperatively in the print loop).
     threshold = 100
+    # ``column_gap=" │ "`` matches ``swe list``'s visible column-border
+    # pattern (see harness/commands.py::cmd_list) so the three
+    # listing tables render with the same visual rhythm. Both
+    # by_tool + default Table builds opt in.
     if by_tool:
-        t = Table()
+        t = Table(column_gap=" │ ")
         t.add_column("tool", "TOOL", width=10, kind="text")
         t.add_column("model", "MODEL", width=42, kind="text")
         t.add_column("provider", "PROVIDER", width=12, kind="text")
@@ -90,7 +94,7 @@ def cmd_models(args):
             threshold=threshold,
         )
     else:
-        t = Table()
+        t = Table(column_gap=" │ ")
         t.add_column("model", "MODEL", width=42, kind="text")
         t.add_column("provider", "PROVIDER", width=12, kind="text")
         t.add_column(

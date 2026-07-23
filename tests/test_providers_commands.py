@@ -405,12 +405,13 @@ class CmdListMigrationTest(unittest.TestCase):
             # Pin: header PROVIDER column is exactly expected_provider_w
             # visible chars (cell cap = 24). PROVIDER cell width
             # computed from idx_aliases subtracts the outer page
-            # padding (HEADER_OUTER_PAD = 2) and the column_gap (2).
+            # padding (HEADER_OUTER_PAD = 2) and the visible width of
+            # the column_gap (" │ " = 3 visible chars).
             hdr_plain = strip_ansi(lines[hdr_idx])
             idx_aliases = hdr_plain.find("ALIASES")
             self.assertEqual(
-                expected_provider_w, idx_aliases - 4,
-                f"PROVIDER column width ({idx_aliases - 4}) is not "
+                expected_provider_w, idx_aliases - 5,
+                f"PROVIDER column width ({idx_aliases - 5}) is not "
                 f"the expected cap ({expected_provider_w}); idx_aliases "
                 f"was {idx_aliases}",
             )
@@ -505,6 +506,29 @@ class CmdListMigrationTest(unittest.TestCase):
             self.assertNotIn("ShouldNotLeakAnywhere", output)
             # Masked summary IS rendered.
             self.assertIn("***", output)
+
+    def test_visible_bar_column_gap_matches_swe_list(self):
+        # Cross-Table regression: ``swe providers list`` is supposed
+        # to render with the same `` │ `` column-boundary pattern as
+        # ``swe list`` (harness/commands.py::cmd_list). The bare
+        # ``Table()`` form would still produce rows whose visible
+        # width matches the header (cpad parity), but the body-row
+        # silhouette would lack the vertical-bar substring. This test
+        # pins that silhouette so a future revert to ``Table()``
+        # is caught rather than silently slipping past the
+        # width-parity test.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            patches = self._patches(tmp_path)
+            with patches[0], patches[1], patches[2]:
+                output = _run_cmd_list([])
+            plain = strip_ansi(output)
+            self.assertIn(
+                " │ ", plain,
+                f"providers body rows missing ' │ ' visible-bar "
+                f"separator (cmd_list should match swe list's "
+                f"column_gap pattern): {plain!r}",
+            )
 
 
 class CmdInfoMigrationTest(unittest.TestCase):
