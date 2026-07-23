@@ -233,6 +233,35 @@ class CmdModelsMigrationTest(unittest.TestCase):
         plain = strip_ansi(output)
         self.assertIn("No model data found", plain)
 
+    def test_visible_bar_column_gap_matches_swe_list(self):
+        # Cross-Table regression: ``swe models`` is supposed to render
+        # with the same `` │ `` column-boundary pattern as
+        # ``swe list`` (harness/commands.py::cmd_list). If the
+        # ``column_gap=" │ "`` ever drops, the body-row substring
+        # check fails — regardless of whether the total visible
+        # width still happens to match the header (the older
+        # whitespace-aligned form would otherwise pass silently).
+        for p in self._setup():
+            p.start()
+            self.addCleanup(p.stop)
+        # Default mode (3-column: MODEL │ PROVIDER │ MSGS).
+        output = _run_cmd_models()
+        plain = strip_ansi(output)
+        self.assertIn(
+            " │ ", plain,
+            f"default-mode body rows missing ' │ ' visible-bar "
+            f"separator (cmd_models should match swe list's "
+            f"column_gap pattern): {plain!r}",
+        )
+        # by_tool mode (4-column: TOOL │ MODEL │ PROVIDER │ MSGS).
+        output_bt = _run_cmd_models(["--by-tool"])
+        plain_bt = strip_ansi(output_bt)
+        self.assertIn(
+            " │ ", plain_bt,
+            f"by_tool-mode body rows missing ' │ ' visible-bar "
+            f"separator: {plain_bt!r}",
+        )
+
 
 # ---------------------------------------------------------------------------
 # cmd_session tests

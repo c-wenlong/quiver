@@ -3,17 +3,30 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased] - 0.2.7
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).## [Unreleased] - 0.2.7
 
 ### Added
 
+- **Column-border consistency across `swe` listings.** Iteration on the
+  `quiver.table.Table` visual contract: `swe models` and
+  `swe providers list` now render with the same ` │ ` visible-bar
+  column boundaries as `swe list` (via `Table(column_gap=" │ ")`,
+  matching the gold-standard pattern in
+  `harness/commands.py::cmd_list`). Cross-Table regression tests in
+  `tests/test_sessions_commands.py::CmdModelsMigrationTest` and
+  `tests/test_providers_commands.py::CmdListMigrationTest` pin the
+  substring so a future revert to bare `Table()` is caught even if
+  header/row visible-width parity still passes. The 2-column
+  `providers::cmd_info` definition list intentionally stays at a
+  single-space gap (column gap = 1) — the colon on each label already
+  does separator work, and forcing a ` │ ` border there would clash
+  with definition-list semantics. cmd_session and `cmd_check` are
+  out of scope for this batch (a follow-up sweep is queued).
 - **Two session handlers migrated to `quiver.table.Table`**: `cmd_models`
   and `cmd_session` (sessions domain). Removed the last hand-rolled
   ``f"{...:<{w}}"`` patterns in ``sessions/commands.py``. Eliminates
-  the magic ``+9`` width offsets the old code used to compensate for
-  ANSI-overhead in f-string padding — Table handles ANSI-aware
+  the magic ``+9`` width offsets the old code used to compensate
+  for ANSI-overhead in f-string padding — Table handles ANSI-aware
   width math natively.
   - `cmd_models` builds a Table once and renders it for either the
     3-column default mode (MODEL | PROVIDER | MSGS) or the 4-column
