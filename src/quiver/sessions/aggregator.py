@@ -159,10 +159,18 @@ def get_all_sessions(limit=10, agent=None, cwd=None, use_cache=False) -> list[Se
 
     if cwd:
         target_path = os.path.realpath(cwd)
+        target_path_sep = target_path + os.sep
         filtered = []
+
+        # ⚡ Bolt: Cache realpath results to avoid O(N) filesystem hits
+        # since many sessions share the same base path
+        realpath_cache: dict[str, str] = {}
         for session in sessions:
-            session_path = os.path.realpath(session.path)
-            if session_path == target_path or session_path.startswith(target_path + os.sep):
+            if session.path not in realpath_cache:
+                realpath_cache[session.path] = os.path.realpath(session.path)
+
+            session_path = realpath_cache[session.path]
+            if session_path == target_path or session_path.startswith(target_path_sep):
                 filtered.append(session)
         sessions = filtered
 
