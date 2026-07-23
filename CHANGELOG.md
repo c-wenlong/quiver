@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two session handlers migrated to `quiver.table.Table`**: `cmd_models`
+  and `cmd_session` (sessions domain). Removed the last hand-rolled
+  ``f"{...:<{w}}"`` patterns in ``sessions/commands.py``. Eliminates
+  the magic ``+9`` width offsets the old code used to compensate for
+  ANSI-overhead in f-string padding — Table handles ANSI-aware
+  width math natively.
+  - `cmd_models` builds a Table once and renders it for either the
+    3-column default mode (MODEL | PROVIDER | MSGS) or the 4-column
+    ``--by-tool`` mode (TOOL | MODEL | PROVIDER | MSGS). The MSGS
+    column uses ``kind="count_threshold"`` with ``threshold=100``, so
+    cells ≥100 pick up green ANSI automatically — the green-cell logic
+    moves into the kind renderer rather than being a per-row print
+    imperative.
+  - `cmd_session` builds a 5-column Table (IDX | LAST ACTIVE | AGENT |
+    DIRECTORY | TITLE/SUMMARY). The four human-derived cells (IDX,
+    LAST ACTIVE, AGENT, TITLE) use ``kind="preformatted"`` +
+    ``trust_cell_width=True`` so they carry their own colour without
+    ANSI bleed across column gaps. The DIRECTORY cell uses
+    ``kind="text"``+``fit="content"`` so the longest visible path
+    drives the column width adaptively (replacing the old
+    ``max(45, max_path_len + 4)`` imperative calc). The TITLE cell
+    pins a 50-char cap via ``max_width=50`` so long titles truncate
+    in the Table instead of via an inline ``truncate()`` call.
+    Search-filter footer lives BELOW the table as plain print() since
+    it is a post-table notice, not a row. The ``use <N>`` resume
+    branch is preserved verbatim — it still calls ``cmd_use`` after
+    chdir.
+  ~15 new tests in ``tests/test_sessions_commands.py``
+  (``CmdModelsMigrationTest``, ``CmdSessionMigrationTest``) pin:
+  3-vs-4 column mode, separator vs. header width, count_threshold
+  green colour decision, summary footer math (grand total / model /
+  tool counts), 5-column header order, body-row visible-width parity
+  (regression guard), idx cell bracket padding for single-digit
+  indices, all four relative-time branches ("Just now" / "5m ago" /
+  "3h ago" / "2d ago"), cyan time + green agent colour escapes,
+  tilde path substitution, dim title fallback for empty-title
+  sessions, search-filter footer conditional rendering.
 - **Three more `cmd_*` handlers migrated to `quiver.table.Table`**: `cmd_info`,
   `cmd_aliases`, `cmd_tags` (harness domain). Removed the last hand-rolled
   `f"{...:<{w}}"` string interpolation patterns in `harness/commands.py`.
