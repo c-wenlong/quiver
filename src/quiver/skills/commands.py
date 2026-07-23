@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from quiver.console import c, truncate
+from quiver.console import c, cpad, truncate
 from quiver.skills.catalog_commands import cmd_skills_catalog, cmd_skills_discover
 from quiver.skills.discovery import discover_skills, skill_roots
 from quiver.skills.help_text import cmd_skills_help, print_skills_overview
@@ -13,6 +13,7 @@ from quiver.skills.layout_commands import (
     cmd_skills_tree,
     cmd_skills_unlink,
 )
+from quiver.table import Table
 
 
 def cmd_skills_scopes(args):
@@ -32,34 +33,71 @@ def cmd_skills_scopes(args):
     entries = enumerate_skill_roots(home=home)
 
     print(f"\n{c('bold', 'Skill Scopes')}\n")
-    w_scope, w_kind, w_count = 16, 10, 8
-    hdr = f"  {'SCOPE':<{w_scope}} {'KIND':<{w_kind}} {'SKILLS':>{w_count}}  PATH"
-    print(c("dim", hdr))
-    print(c("dim", "  " + "─" * 100))
+
+    # Four-column SCOPE | KIND | SKILLS | PATH table. SCOPE / KIND /
+    # SKILLS ship pre-coloured ANSI strings, so they use
+    # ``kind="preformatted"``+``trust_cell_width=True`` and are routed
+    # through ``cpad`` so each cell visibly matches its column width.
+    # PATH also carries a dim-coloured arrow suffix (`  → tgt`) when
+    # the entry is a symlink or alias, so it uses
+    # ``kind="preformatted"`` — ``kind="text"`` would strip the ANSI
+    # escapes from the dim arrow (``table._text`` explicitly strips
+    # ANSI before measuring). The dash-separator measures via
+    # ``visible_len`` which understands ANSI escape sequences, so the
+    # separator still spans row-to-row even with painted arrows. PATH
+    # is the rightmost column so the missing auto-pad in preformatted
+    # cells does not misalign subsequent columns.
+    table = Table()
+    table.add_column(
+        "scope", "SCOPE", width=16,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "kind", "KIND", width=10,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "skills", "SKILLS", width=8,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "path", "PATH", width=30,
+        kind="preformatted", fit="content",
+    )
 
     for entry in entries:
         if not entry.exists:
             continue
         rp = str(entry.path).replace(home_str, "~")
         n = entry.skill_count if entry.skill_count else counts.get(entry.label, 0)
-        n_str = c("green", str(n)) if n > 0 else c("dim", "0")
+
         if entry.kind == "symlink":
-            kind = c("yellow", "symlink")
+            kind_cell = cpad("yellow", "symlink", 10)
             tgt = entry.link_target_label or (
                 str(entry.link_target).replace(home_str, "~") if entry.link_target else "?"
             )
             link_note = c("dim", f"  → {tgt}")
         elif entry.canonical_label and entry.canonical_label != entry.label:
-            kind = c("dim", "alias")
+            kind_cell = cpad("dim", "alias", 10)
             link_note = c("dim", f"  → {entry.canonical_label}")
         else:
-            kind = c("green", entry.kind)
+            kind_cell = cpad("green", entry.kind, 10)
             link_note = ""
-        print(
-            f"  {c('cyan', entry.label):<{w_scope + 9}} {kind:<{w_kind + 9}} {n_str:>{w_count + 9}}  "
-            f"{c('dim', rp)}{link_note}"
+
+        skills_cell = (
+            c("green", f"{n:>8}") if n > 0 else c("dim", f"{0:>8}")
         )
 
+        path_cell = rp + (link_note if link_note else "")
+        table.add_row({
+            "scope": cpad("cyan", entry.label, 16),
+            "kind": kind_cell,
+            "skills": skills_cell,
+            "path": path_cell,
+        })
+
+    for line in table.render():
+        print(line)
     print()
     print(
         c(
@@ -120,32 +158,104 @@ def cmd_skills(args):
     skills.sort(key=lambda s: (s["scope"], s["name"].lower()))
 
     print(f"\n{c('bold', 'Agent Skills')}\n")
-    w_name, w_scope = 28, 14
-    hdr = f"  {'NAME':<{w_name}} {'SCOPE':<{w_scope}} VISIBLE VIA"
-    print(c("dim", hdr))
-    print(c("dim", "  " + "─" * 100))
+
+    # 3-column NAME | SCOPE | VISIBLE_VIA Table. All three columns
+    # ship pre-coloured ANSI strings, so they use
+    # ``kind="preformatted"``+``trust_cell_width=True`` and are routed
+    # through ``cpad`` so each cell visibly matches its declared
+    # column width. The VISIBLE_VIA width is pre-measured — find the
+    # longest comma-joined via list across the current skill set,
+    # floor it at the header label width (``len("VISIBLE VIA") = 11``),
+    # and pass that exact same value to ``add_column(width=...)`` AND
+    # the per-row ``cpad(..., width=...)`` call. This guarantees the
+    # column and cpad agree by construction, so every body row's
+    # visible cell width matches the header without drift.
+    #
+    # PATH and DESCRIPTION are NOT columns of the table — they are
+    # emitted as plain ``print()`` lines below the row, with PATH
+    # aligned under VISIBLE_VIA (indented 28 + 2 + 14 + 2 = 46 spaces)
+    # and DESCRIPTION indented to the same column. This restores the
+    # pre-migration 2-3-line-per-skill layout rather than collapsing
+    # PATH onto a rightmost-column cell.
+    column_widths = {"name": 28, "scope": 14}
+    # Pre-measure visible_via: longest comma-joined via chunk across
+    # the current skill set, floored at the header label width. The
+    # same value is then used in ``add_column(width=...)`` AND the
+    # per-row ``cpad(..., width=...)`` call so column and cpad agree
+    # by construction — every body row arrives at the column visible
+    # width without drift.
+    via_texts: list[str] = []
+    via_colors: list[str] = []
+    for skill in skills:
+        via = skill.get("visible_via", [skill["scope"]])
+        if len(via) > 1:
+            via_texts.append(", ".join(via))
+            via_colors.append("cyan")
+        else:
+            via_texts.append(via[0])
+            via_colors.append("dim")
+    column_widths["visible_via"] = max(
+        len("VISIBLE VIA"),  # header label width
+        max((len(t) for t in via_texts), default=0),
+    )
+    path_indent = (
+        column_widths["name"]
+        + 2  # default column_gap
+        + column_widths["scope"]
+        + 2
+    )
+
+    table = Table()
+    table.add_column(
+        "name", "NAME", width=column_widths["name"],
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "scope", "SCOPE", width=column_widths["scope"],
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "visible_via", "VISIBLE VIA", width=column_widths["visible_via"],
+        kind="preformatted", trust_cell_width=True,
+    )
 
     home_str = str(Path.home())
-    for skill in skills:
-        name = truncate(skill["name"], w_name)
-        via = skill.get("visible_via", [skill["scope"]])
-        via_text = ", ".join(via) if len(via) > 1 else via[0]
-        if len(via) > 1:
-            via_text = c("cyan", via_text)
-        else:
-            via_text = c("dim", via_text)
-        path = skill["path"].replace(home_str, "~")
-        print(
-            f"  {c('bold', name):<{w_name + 9}} {c('cyan', skill['scope']):<{w_scope + 9}} {via_text}"
-        )
-        print(f"  {'':<{w_name}} {'':<{w_scope}} {c('dim', path)}")
-        if show_desc and skill["description"]:
-            print(
-                f"  {'':<{w_name}} {'':<{w_scope}} {c('dim', truncate(skill['description'], 96))}"
-            )
+    for skill, via_text, via_color in zip(skills, via_texts, via_colors):
+        name_plain = truncate(skill["name"], column_widths["name"])
+        table.add_row({
+            "name": cpad("bold", name_plain, column_widths["name"]),
+            "scope": cpad("cyan", skill["scope"], column_widths["scope"]),
+            "visible_via": cpad(
+                via_color, via_text, column_widths["visible_via"],
+            ),
+        })
 
-    n_scopes = len({s["scope"] for s in skills})
+    # Render the table once, peel off the header + separator, and
+    # interleave the rows 1-to-1 with the skills list so PATH and
+    # DESCRIPTION can be plain ``print()`` lines between each rendered
+    # row. ``render()`` always returns [header, separator, rows...],
+    # so ``body_lines`` is always length-equal to ``self._rows`` (one
+    # add_row per skill), and ``zip(skills, body_lines)`` walks them
+    # 1-to-1.
+    rendered = table.render()
+    print(rendered[0])  # dim header line
+    print(rendered[1])  # dashed separator
+    body_lines = rendered[2:]
+    for skill, row_line in zip(skills, body_lines):
+        print(row_line)
+        path_display = skill["path"].replace(home_str, "~")
+        print(c("dim", " " * path_indent + path_display))
+        if show_desc and skill.get("description"):
+            print(
+                c(
+                    "dim",
+                    " " * path_indent
+                    + truncate(skill["description"], 80),
+                )
+            )
+        print()
     print()
+    n_scopes = len({s["scope"] for s in skills})
     print(
         c(
             "dim",

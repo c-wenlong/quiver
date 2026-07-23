@@ -67,6 +67,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header (regression guard), conditional rows (`Notes` only when defined,
   empty-aliases tools omitted), cyan/dim colour shapes, alphabetical tag
   order, alphabetical tool list per row, multi-alias comma-join.
+- **Two skills handlers migrated to `quiver.table.Table`**: `cmd_skills_scopes`
+  and `cmd_skills` (skills domain). Removes the last hand-rolled
+  ``f"{...:<{w}}"`` patterns in ``skills/commands.py`` and eliminates
+  the magic ``+9`` width offsets the old code used to compensate
+  for ANSI-overhead in f-string padding.
+  - `cmd_skills_scopes` is a 4-column `SCOPE | KIND | SKILLS | PATH`
+    table. `SCOPE`/`KIND`/`SKILLS` use `kind="preformatted"` +
+    `trust_cell_width=True` and are routed through `cpad` so each
+    cell visibly matches its column width. `KIND` is yellow when
+    the entry is a symlink, dim when the entry is an alias of another
+    scope, green when the entry is a plain directory. `SKILLS` is
+    right-aligned and green when `>0`, dim `"0"` when zero.
+    `PATH` uses `kind="preformatted"` + `fit="content"` so the
+    dim-coloured ``  → tgt`` link-note arrow is preserved end-to-end
+    (the `text` kind strips ANSI before measuring and would silently
+    drop the colour escapes). The dash-separator measures via
+    `visible_len` so it spans row-to-row even when arrows carry
+    visible-length ANSI escapes.
+  - `cmd_skills` is a 3-column `NAME | SCOPE | VISIBLE_VIA` Table.
+    All three columns use `kind="preformatted"` +
+    `trust_cell_width=True` and are routed through `cpad` so each
+    cell visibly matches its column width. `NAME` is bold, `SCOPE`
+    cyan, `VISIBLE_VIA` cyan when reachable via multiple scopes
+    (comma-joined) and dim otherwise. The VISIBLE_VIA width is
+    pre-measured across the current skill set (`max(len("VISIBLE VIA"),
+    max(len(via_text))`) and that exact value is passed to both
+    `add_column(width=...)` and the per-row `cpad(..., width=...)`
+    call — column and cpad agree by construction so every body row's
+    visible cell width matches the header without drift. `PATH` and
+    `DESCRIPTION` (with `--desc`) are NOT table columns — they are
+    emitted as plain `print()` lines below each rendered row,
+    indented 28 + 2 + 14 + 2 = 46 spaces so they visually align
+    under the `VISIBLE_VIA` header column. The 2-3-line-per-skill
+    layout from the pre-migration era is preserved; only the
+    grid-row stripe goes through Table.render().
+  ~17 new tests in `tests/test_skills_commands.py`
+  (`CmdSkillsScopesMigrationTest`, `CmdSkillsMigrationTest`) pin:
+  4-column header order for scopes; separator vs. header width;
+  body-row visible-width non-exceeding-header (regression guard
+  for the preformatted+content no-pad case where short paths leave
+  the column right-aligned); symlink/alias/directory KIND colours;
+  green/dim SKILLS-count branch; dim-coloured PATH arrow round-trip
+  (kills the silent-ANSI-strip regression in the previous `text`
+  kind pass); no-arrow for plain directories; footer `4 roots ·
+  3 unique skills` math; 3-column default-mode header (no PATH,
+  no DESCRIPTION columns); separator-width parity; body row
+  rendered-cell parity to header width (each row arrives at the
+  full visible width via `cpad`); multi-scope cyan / single-scope
+  dim visible_via colour shapes; bold NAME + cyan SCOPE escape
+  codes; PATH sub-line below each row, indented 46 spaces, in
+  `dim` colour; PATH uses tilde substitution for `$HOME`; blank
+  line between skills; filter drops non-matching; empty filter
+  result notice; alphabetical sort within scope; long-name
+  truncation at 28 chars; `--desc` flag emits description sub-line
+  indented 46 spaces below PATH and skips empty descriptions.
 - **`swe check` migrated to the new `quiver.table.Table` component.**
   Replaced hand-rolled `f"{name:<22}{alias_str:<20}"` string interpolation
   with a single 4-column `Table().add_column(...).add_row(...)` build
