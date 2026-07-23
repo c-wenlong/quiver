@@ -124,70 +124,76 @@ def _parse_nested_dirs(config: JsonParserConfig) -> list[Session]:
     if not os.path.exists(base):
         return sessions
     try:
-        for parent_name in os.listdir(base):
-            parent_dir = os.path.join(base, parent_name)
-            if not os.path.isdir(parent_dir):
-                continue
-            fallback = ""
-            if config.path_from_parent:
-                try:
-                    fallback = config.path_from_parent(parent_name) or ""
-                except Exception:
-                    fallback = ""
-            for sid in os.listdir(parent_dir):
-                sess_dir = os.path.join(parent_dir, sid)
-                if not os.path.isdir(sess_dir):
+        # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+        with os.scandir(base) as parent_entry_it:
+            for parent_entry in parent_entry_it:
+                if not parent_entry.is_dir():
                     continue
-                primary = os.path.join(sess_dir, config.session_file)
-                entry: Any = {}
-                file_path = primary if os.path.isfile(primary) else sess_dir
-                if os.path.isfile(primary):
+                parent_dir = parent_entry.path
+                parent_name = parent_entry.name
+                fallback = ""
+                if config.path_from_parent:
                     try:
-                        with open(primary) as f:
-                            entry = json.load(f)
+                        fallback = config.path_from_parent(parent_name) or ""
                     except Exception:
-                        entry = {}
-                if config.include and not config.include(entry, file_path):
-                    continue
-
-                # Force session id from dir name unless get_id overrides
-                def get_id_wrapped(e, fp, _sid=sid, _orig=config.get_id):
-                    if _orig:
-                        try:
-                            val = _orig(e, fp)
-                            if val:
-                                return val
-                        except Exception:
-                            pass
-                    return _sid
-
-                # Inject fallback path via temporary get_path wrapper
-                orig_get_path = config.get_path
-
-                def get_path_wrapped(e, fp, _fb=fallback, _orig=orig_get_path):
-                    path = ""
-                    if _orig:
-                        try:
-                            path = _orig(e, fp) or ""
-                        except Exception:
+                        fallback = ""
+                # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+                with os.scandir(parent_dir) as sid_entry_it:
+                    for sid_entry in sid_entry_it:
+                        if not sid_entry.is_dir():
+                            continue
+                        sess_dir = sid_entry.path
+                        sid = sid_entry.name
+                        primary = os.path.join(sess_dir, config.session_file)
+                        entry: Any = {}
+                        file_path = primary if os.path.isfile(primary) else sess_dir
+                        if os.path.isfile(primary):
+                            try:
+                                with open(primary) as f:
+                                    entry = json.load(f)
+                            except Exception:
+                                entry = {}
+                        if config.include and not config.include(entry, file_path):
+                            continue
+        
+                        # Force session id from dir name unless get_id overrides
+                        def get_id_wrapped(e, fp, _sid=sid, _orig=config.get_id):
+                            if _orig:
+                                try:
+                                    val = _orig(e, fp)
+                                    if val:
+                                        return val
+                                except Exception:
+                                    pass
+                            return _sid
+        
+                        # Inject fallback path via temporary get_path wrapper
+                        orig_get_path = config.get_path
+        
+                        def get_path_wrapped(e, fp, _fb=fallback, _orig=orig_get_path):
                             path = ""
-                    return path or _fb
-
-                # Build fields with wrappers without mutating shared config permanently
-                saved_get_id = config.get_id
-                saved_get_path = config.get_path
-                config.get_id = get_id_wrapped
-                config.get_path = get_path_wrapped
-                try:
-                    sess = _to_session(entry, file_path, config)
-                finally:
-                    config.get_id = saved_get_id
-                    config.get_path = saved_get_path
-                if sess:
-                    # Prefer mtime of session dir contents if ts is only from missing file
-                    if not sess.timestamp:
-                        sess.timestamp = get_mtime(sess_dir)
-                    sessions.append(sess)
+                            if _orig:
+                                try:
+                                    path = _orig(e, fp) or ""
+                                except Exception:
+                                    path = ""
+                            return path or _fb
+        
+                        # Build fields with wrappers without mutating shared config permanently
+                        saved_get_id = config.get_id
+                        saved_get_path = config.get_path
+                        config.get_id = get_id_wrapped
+                        config.get_path = get_path_wrapped
+                        try:
+                            sess = _to_session(entry, file_path, config)
+                        finally:
+                            config.get_id = saved_get_id
+                            config.get_path = saved_get_path
+                        if sess:
+                            # Prefer mtime of session dir contents if ts is only from missing file
+                            if not sess.timestamp:
+                                sess.timestamp = get_mtime(sess_dir)
+                            sessions.append(sess)
     except Exception:
         pass
     return sessions
