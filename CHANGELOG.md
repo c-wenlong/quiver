@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Security: SSRF / LFI fix in `swe mcp <tool> status` health check.**
+  `src/quiver/mcp/cli.py::check_server_health` now validates that any
+  URL it fetches via `urllib.request.urlopen` strictly starts with
+  `http://` or `https://` (case-insensitive) before issuing the
+  HEAD request. Without this guard, an attacker who can write a
+  configuration file can pass a `file:///etc/passwd` URL and have
+  Python happily open and stat a local file as a "health check" —
+  turning a LFI probe into a single endpoint. The check applies to
+  both `http` server types (direct URL field) and `wrapped` server
+  types (URL inside `args`). (PR #2.)
+- **Security: Bandit B324 / FIPS-compliant `hashlib.md5` in Kimi
+  parser.** `src/quiver/sessions/parsers.py::parse_kimi::load_hash_map`
+  now passes `usedforsecurity=False` to the single
+  `hashlib.md5(p.encode())` call — the hash is used purely to build
+  a stable map-key from a path string, never for authentication or
+  integrity. This silences the Bandit B324 rule (weak hash for
+  security-related use) and is required for FIPS-mode Python builds.
+  `usedforsecurity` was added in Python 3.9; the project's
+  `requires-python = ">=3.10"` covers it natively. (PR #17.)
+- **Performance: memoize `os.path.realpath` in the session
+  aggregator's `cwd` filter loop.** `src/quiver/sessions/aggregator.py::get_all_sessions`
+  used to issue an `os.path.realpath` syscall on every session's
+  path when filtering by `cwd` — O(N) disk stats for what is
+  functionally O(U) unique paths (most sessions share a project
+  root, and a project tree has a small number of unique
+  realpaths). Now caches realpath results in a `dict[str, str]`
+  local to the loop, and hoists `target_path + os.sep` out of the
+  loop to avoid redundant string concatenation. (PR #1.)
+- **Performance: replace `os.listdir` with `os.scandir` across all
+  session engines.** `os.listdir()` + `os.path.isdir()` /
+  `os.path.isfile()` chains issue a separate `stat()` syscall per
+  entry to compute the file kind, multiplying latency in deeply
+  nested agent session trees. `os.scandir()` returns DirEntry
+  objects whose `is_dir()` / `is_file()` / `stat()` reuse cached
+  metadata from the directory iteration itself, collapsing the N+
+  syscalls into one. Touched files: `src/quiver/sessions/parsers.py`
+  (parse_cursor, parse_antigravity), `src/quiver/sessions/engines/jsonl_engine.py`
+  (5 sites), `src/quiver/sessions/engines/json_engine.py` (2 sites —
+  nested parent+session-dir loops), `src/quiver/sessions/models_analytics.py`
+  (3 sites — claude + freebuff paths). Every site is wrapped in
+  `with os.scandir(...) as <var>_it:` so the directory FD is
+  released on scope exit (caught and fixed during triage — bare
+  iterators leaked FDs on early-break / exception paths). (PR #18.)
+
+### Changed
+
+- **Triage workflow for auto-generated Bolt/Sentinel PRs.** When the
+  Sentinel/Bolt auto-agents open multiple PRs for the same finding
+  (e.g. three Sentinel PRs all adding `usedforsecurity=False` to
+  the same line), the workflow now cherry-picks the highest-quality
+  version onto a fresh branch from `origin/main`, appends the
+  `.jules/{sentinel,bolt}.md` entry to the existing main copy
+  (preserving prior entries), and closes the duplicates with a
+  one-comment explanation pointing at the canonical PR. This batch
+  triage closed PRs #3, #4, #5, #6, #7, #8, #9 as duplicates and
+  landed the canonical versions as #2, #1, #17, #18.
+
 - **Column-border consistency across `swe` listings.** Iteration on the
   `quiver.table.Table` visual contract: `swe models` and
   `swe providers list` now render with the same ` │ ` visible-bar
