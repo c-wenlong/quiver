@@ -179,6 +179,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   math (cells painted with ``c(...)`` are stripped before byte-truncating,
   so colour never bleeds across column gaps). Header + ``─`` separator
   auto-sized to the table's total visible width.
+- **`swe mcp list` and `swe mcp status` matrix view migrated to the
+  new `quiver.table.Table` component.** Replaced hand-rolled
+  `f"{'SERVER':<{server_width}}  {t:^{col_width}}"` padding with a
+  single `Table().add_column(...).add_row(...)` build per handler.
+  Both handlers emit the same server × tool matrix layout:
+  - SERVER column uses `kind="text"` so plain server names left-align
+    and pad to `server_width` (pre-measured = max of header label
+    + longest server name).
+  - 1..N tool columns use `kind="preformatted"` + `trust_cell_width=True`
+    and are routed through `cpad` so each cell visibly matches the
+    pre-measured `col_width`. Header labels are pre-centered
+    (`tool_name.center(col_width)`) so the rendered line matches the
+    original f-string `^{col_width}` alignment without a custom kind.
+  - Each tool cell is `cpad("green", "✓", col_width)` if the server
+    is present in that tool, else `cpad("dim", "—", col_width)`.
+  `cmd_status` adds a trailing HEALTH column with the result of
+  `check_server_health()` (already ANSI-coloured) using
+  `kind="preformatted"` + `trust_cell_width=True` + `fit="content"`.
+  Width is pre-measured to the longest health-string `visible_len`
+  so messages like `✗ missing env: FOO,BAR` don't misalign the
+  trailing columns. ~13 new tests in
+  `tests/test_mcp_commands.py::CmdListMatrixMigrationTest` +
+  `CmdStatusMatrixMigrationTest` pin: header order matches tool
+  keys, separator visible length matches header visible length,
+  body rows all share header visible width (cpad-driven parity),
+  green ✓ for present servers / dim — for absent, single-target
+  filter renders a 2-column table with `1 tools` footer, empty
+  matrix case prints only the `No MCP servers found.` notice,
+  footer `N servers across M tools` math, HEALTH column header
+  presence on cmd_status, ANSI green escape round-trip for the
+  HEALTH cell when server is healthy.
 - **`swe providers list` migrated to the new `quiver.table.Table` component.**
   Replaced hand-rolled `f"{...:<{w}}"` string interpolation with a single
   5-column `Table().add_column(...).add_row(...)` build (PROVIDER |

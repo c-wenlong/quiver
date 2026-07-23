@@ -27,7 +27,8 @@ import tty
 import termios
 from pathlib import Path
 
-from quiver.console import c, cpad, strip_ansi
+from quiver.console import c, cpad, strip_ansi, visible_len
+from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
 from quiver.paths import CONFIG_DIR, REGISTRY_FILE
@@ -525,24 +526,49 @@ def cmd_list(args):
 
     sorted_servers = sorted(all_servers)
     tool_names = list(tools.keys())
-    col_width = max(len(n) for n in tool_names + ["SERVER"])
-    server_width = max(len(n) for n in sorted_servers)
+    # Pre-measure widths. SERVER column = max(header_label, longest
+    # server name); tool column width = max(header_label, longest
+    # tool name). The same value flows to both Table.add_column and
+    # cpad so column and cpad agree by construction.
+    server_width = max(
+        len("SERVER"),
+        max((len(s) for s in sorted_servers), default=0),
+    )
+    col_width = max(
+        len("SERVER"),
+        max((len(t) for t in tool_names), default=0),
+    )
 
-    header = f"{'SERVER':<{server_width}}"
+    table = Table()
+    # SERVER column: kind="text" left-aligns + pads plain server
+    # names to server_width.
+    table.add_column(
+        "server", "SERVER", width=server_width,
+        kind="text",
+    )
+    # Tool columns: kind="preformatted" + trust_cell_width=True so
+    # the cpad-padded ✓/— cells arrive at exactly col_width visible
+    # chars. Header labels are pre-centered (``name.center(col_w)``)
+    # so the rendered line matches the original f-string ``^{col_w}``
+    # alignment without needing a custom kind.
     for t in tool_names:
-        header += f"  {t:^{col_width}}"
-    print(header)
-    print("─" * len(header))
+        table.add_column(
+            f"tool_{t}", t.center(col_width),
+            width=col_width,
+            kind="preformatted", trust_cell_width=True,
+        )
 
     for server in sorted_servers:
-        row = f"{server:<{server_width}}"
+        row = {"server": server}
         for t in tool_names:
             if server in tool_data[t]:
-                row += f"  {cpad('green', '✓', col_width)}"
+                row[f"tool_{t}"] = cpad("green", "✓", col_width)
             else:
-                row += f"  {cpad('dim', '—', col_width)}"
-        print(row)
+                row[f"tool_{t}"] = cpad("dim", "—", col_width)
+        table.add_row(row)
 
+    for line in table.render():
+        print(line)
     print(f"\n{len(sorted_servers)} servers across {len(tool_names)} tools")
     return 0
 
@@ -576,32 +602,75 @@ def cmd_status(args):
 
     sorted_servers = sorted(all_servers)
     tool_names = list(tools.keys())
-    col_width = max(len(n) for n in tool_names + ["SERVER"])
-    server_width = max(len(n) for n in sorted_servers)
-    health_width = 20
+    # Pre-measure widths. SERVER column + tool columns are the same
+    # pre-measure pattern as cmd_list. HEALTH column is the longest
+    # health-string visible_len across the row set.
+    server_width = max(
+        len("SERVER"),
+        max((len(s) for s in sorted_servers), default=0),
+    )
+    col_width = max(
+        len("SERVER"),
+        max((len(t) for t in tool_names), default=0),
+    )
 
-    header = f"{'SERVER':<{server_width}}"
-    for t in tool_names:
-        header += f"  {t:^{col_width}}"
-    header += f"  {'HEALTH':<{health_width}}"
-    print(header)
-    print("─" * len(header))
-
+    # Pre-compute health strings first (they drive HEALTH width) so
+    # we can include HEALTH in column-widths math. Since the union
+    # ``all_servers`` guarantees every server exists in at least one
+    # tool's servers dict, ``first_cfg`` is always present.
+    health_strings: list[str] = []
     for server in sorted_servers:
-        row = f"{server:<{server_width}}"
-        first_cfg = None
+        first_cfg = next(
+            tool_data[t][server] for t in tool_names
+            if server in tool_data[t]
+        )
+        health_strings.append(check_server_health(server, first_cfg))
+    health_width = max(
+        len("HEALTH"),
+        max((visible_len(h) for h in health_strings), default=0),
+    )
+
+    table = Table()
+    table.add_column(
+        "server", "SERVER", width=server_width,
+        kind="text",
+    )
+    for t in tool_names:
+        table.add_column(
+            f"tool_{t}", t.center(col_width),
+            width=col_width,
+            kind="preformatted", trust_cell_width=True,
+        )
+    # HEALTH column. Header label is left-aligned (preserves the
+    # original f-string ``<{health_w}`` alignment). The column uses
+    # ``kind="preformatted"`` + ``trust_cell_width=True`` + ``fit="content"``
+    # so the rightmost column grows to fit the longest health string
+    # (which may exceed 20 chars for ``✗ missing env: FOO,BAR`` etc.).
+    table.add_column(
+        "health", "HEALTH", width=health_width,
+        kind="preformatted", trust_cell_width=True, fit="content",
+    )
+
+    for server, health in zip(sorted_servers, health_strings):
+        row = {"server": server, "health": health}
         for t in tool_names:
             if server in tool_data[t]:
-                row += f"  {cpad('green', '✓', col_width)}"
-                if first_cfg is None:
-                    first_cfg = tool_data[t][server]
+                row[f"tool_{t}"] = cpad("green", "✓", col_width)
             else:
-                row += f"  {cpad('dim', '—', col_width)}"
-        if first_cfg:
-            health = check_server_health(server, first_cfg)
-            row += f"  {health:<{health_width}}"
-        print(row)
+                row[f"tool_{t}"] = cpad("dim", "—", col_width)
+        # HEALTH cells already carry ANSI from check_server_health();
+        # ``cpad`` would re-wrap their colour escapes in a generic
+        # colour, so we manually pad to ``health_width`` (mirroring
+        # the cmd_session alignment fix). Trailing spaces come AFTER
+        # the ANSI reset so they're plain — visible_len matches the
+        # column width and the row aligns with the dim HEALTH header.
+        row["health"] = health + " " * (
+            health_width - visible_len(health)
+        )
+        table.add_row(row)
 
+    for line in table.render():
+        print(line)
     print(f"\n{len(sorted_servers)} servers across {len(tool_names)} tools")
     return 0
 
