@@ -251,6 +251,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filter correctness, no-keys Tip advisory order, no-keys-dir advisory
   order, footer `N/N providers with keys` math, raw-key
   non-leakage.
+- **`swe providers info` migrated to the new `quiver.table.Table` component.**
+  Replaced the hand-rolled ``f"  {'  ' + label + ':':<20} {val}"`` loop in
+  ``cmd_info`` with a single 2-column ``Table()`` build (LABEL | VALUE).
+  ``column_gap=1`` preserves the original 1-space gap between the label box
+  and the value. The label column width is pre-measured to
+  ``max(len("  LABEL:"))`` across all rows (including the ``Key file`` row
+  that previously was emitted outside the loop with its own inline pattern
+  — now merged into ``rows_out`` so the full lookup-list renders through the
+  single Table renderer). All cells use ``kind="preformatted"`` +
+  ``trust_cell_width=True`` so cyan labels, green ``Key status``, and cyan
+  ``Key file`` path flow through Table unmodified. The body rows only
+  (header + separator skipped) are emitted because a definition list has
+  no anchoring value from a header line. The ``No key found.`` advisory
+  below the table, the leading ``Name`` header line, and the trailing
+  ``Usage``/not-found red-error paths are all preserved verbatim. ~17 new
+  tests in ``tests/test_providers_commands.py::CmdInfoMigrationTest`` pin:
+  label column is cyan (\033[36m), body rows all share the same visible
+  width (alignment parity), ``Key status`` is green ANSI when a masked
+  token is present and is a plain ``-`` when not, ``Key file`` row is
+  appended with cyan path when ``row["key_file"]`` exists and skipped
+  when null, ``Env vars`` displays matched env first with fallbacks list
+  in dim, ``Aliases`` filters out the canonical slug itself, em-dash
+  fallback for empty aliases / empty description / empty URL / empty
+  ``key_filename``, ``No key found.`` advisory conditional on
+  ``row["key_file"]`` + missing ``raw_key``, red ``Usage:`` error on empty
+  args and on unknown provider (return code 1), help-flag short-circuit
+  → 0, raw key never leaks to stdout.
 - **`swe list` migrated to the new `quiver.table.Table` component.**
   Replaced the hand-rolled `f"{...:<{w}}"` string interpolation with a
   single 9-column `Table().add_column(...).add_row(..., accent=...)`
