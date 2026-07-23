@@ -1,0 +1,4 @@
+## 2024-05-18 - SSRF/LFI via urllib.request.urlopen in Health Checks
+**Vulnerability:** `urllib.request.urlopen()` in `quiver/mcp/cli.py` (`check_server_health`) was used to perform HEAD requests to arbitrary URLs from user configuration (`mcp.json`). `urllib` natively supports `file://` schemes, which allowed reading local files (like `/etc/passwd`) without an actual network request.
+**Learning:** Python's `urllib` has a surprising behavior where it evaluates `file://` URLs even when used for supposedly HTTP/HTTPS only operations. The method `method="HEAD"` is ignored by the `file://` handler which executes the operation and reads the file.
+**Prevention:** Always explicitly validate that user-provided URLs start with `http://` or `https://` before passing them to URL fetching libraries like `urllib`.
