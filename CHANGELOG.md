@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe check` migrated to the new `quiver.table.Table` component.**
+  Replaced hand-rolled `f"{name:<22}{alias_str:<20}"` string interpolation
+  with a single 4-column `Table().add_column(...).add_row(...)` build
+  (STATUS | NAME | ALIASES | INFO). STATUS uses `kind="preformatted"`
+  + `trust_cell_width=True` for the green ✓ / red ✗ glyphs (mirrors
+  cmd_list's INST column). INFO uses `kind="preformatted"` with explicit
+  pre-pad to the 24-char column width so variable-width version strings
+  ("0.5.91" vs "version unknown") keep the grid aligned. ALIASES reuses
+  cmd_list's `kind="list"` + `color="cyan"` + `empty="—"` recipe. The
+  off-PATH diagnostic block still lives BELOW the table as plain print()
+  because its multi-line fix recipes don't fit the grid; only the table
+  body went through Table.render(). The heal side-effect (write
+  `live_version` back to `tools[name]["version"]`) is preserved
+  verbatim, running BEFORE the row is constructed so the displayed
+  version reflects what was just probed. ~13 new tests in
+  `tests/test_harness_commands.py::CmdCheck*Test` pin the migration:
+  column order, separator/header/body visible-width parity, green/red
+  status colors, dim version text, `version unknown` fallback, three
+  heal-side-effect cases (live overrides stored, live matches stored,
+  dirty stored value cleared), off-PATH footer conditional rendering
+  (with/without orphans), alphabetical row order, and bold header line.
 - `swe list` now shows a **RATE** column with usage percentage and reset
   countdown for tools that expose rate limit APIs. Currently supports:
   - **Codex** via ChatGPT `backend-api/wham/usage` endpoint using OAuth

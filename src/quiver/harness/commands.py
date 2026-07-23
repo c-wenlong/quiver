@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, truncate, visible_len
+from quiver.console import c, cpad, truncate, visible_len
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.harness.stars import is_starred, load_stars, toggle_star, unstar
 from quiver.harness.tools import extract_version_number, is_installed, live_version
@@ -331,15 +331,34 @@ def cmd_use(args):
 def cmd_check(args):
     from quiver.harness.path_health import find_off_path_tools, preferred_npm_bin
 
+    # Widths for the two cells that ship self-coloured ANSI via the
+    # `preformatted`+`trust_cell_width=True` path; the names matter
+    # because they're used by ``cpad`` AND by ``table.add_column`` so
+    # the rendered cell and the schema header agree on column width.
+    STATUS_COL_WIDTH = 2  # "✓ " or "✗ " (1 glyph + 1 trailing space)
+    INFO_COL_WIDTH = 24   # "version unknown" + headroom
+
     tools = load_registry()
     updated = False
     off_path_notes: list[str] = []
     print(f"\n{c('bold', 'Checking AI tools...')}\n")
+
+    table = Table()
+    table.add_column("status", "", width=STATUS_COL_WIDTH,
+                     kind="preformatted", trust_cell_width=True)
+    table.add_column("name", "NAME", width=22, kind="text")
+    table.add_column("aliases", "ALIASES", width=18,
+                     kind="list", color="cyan", empty="—")
+    table.add_column("info", "INFO", width=INFO_COL_WIDTH,
+                     kind="preformatted", trust_cell_width=True)
+
     for name, info in sorted(tools.items()):
         aliases = [a for a in info.get("aliases", []) if a != name]
-        alias_str = f"  ({', '.join(aliases)})" if aliases else ""
         command = info["command"]
         if is_installed(command):
+            # Probe live version + heal stored version BEFORE we render
+            # the row (this is the check-and-heal flow's side-effect,
+            # not just a display step).
             ver = live_version(command)
             if not ver:
                 # Fall back to sanitizing whatever is already stored
@@ -354,12 +373,29 @@ def cmd_check(args):
                     tools[name]["version"] = None
                     updated = True
             display = tools[name].get("version") or "version unknown"
-            print(f"  {c('green', '✓')}  {name:<22}{c('cyan', alias_str):<20} {c('dim', display)}")
+            table.add_row({
+                "status": cpad("green", "✓", STATUS_COL_WIDTH),
+                "name": name,
+                "aliases": aliases,
+                "info": cpad("dim", display, INFO_COL_WIDTH),
+            })
         else:
-            print(f"  {c('red', '✗')}  {name:<22}{c('dim', alias_str):<20} {c('dim', 'not installed')}")
+            table.add_row({
+                "status": cpad("red", "✗", STATUS_COL_WIDTH),
+                "name": name,
+                "aliases": aliases,
+                "info": cpad("dim", "not installed", INFO_COL_WIDTH),
+            })
+
+    for line in table.render():
+        print(line)
 
     orphans = find_off_path_tools(tools)
     if orphans:
+        # Off-PATH diagnostic block lives BELOW the table — these
+        # are not table rows (each orphan has a multi-line fix
+        # recipe, so they don't fit the grid). Keeping them as
+        # plain strings preserves the original output structure.
         print(f"\n{c('yellow', 'Off-PATH installs detected')} {c('dim', '(installed but invisible to swe)')}\n")
         npm = preferred_npm_bin() or "npm"
         for name, command, hit in orphans:
