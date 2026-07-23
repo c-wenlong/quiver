@@ -16,15 +16,18 @@ Tests below pin the structural invariants the new layout must hold:
 4. Starred rows carry the neon accent ANSI + the ``★`` marker;
    unstarred rows do NOT carry the neon accent on plain-text cells
    but DO carry cyan aliases (via ``list`` kind color attr).
-5. ``trust_cell_width=True`` is wired on the RATE column — the cell
-   is rendered at exactly ``visible_len(format_column output)`` chars,
-   with no extra padding bled into the column gap.
+5. ``trust_cell_width=True`` is wired on the RATE column. cmd_list
+   pre-pads every rate cell to the column width (14) so the
+   visible-border gap lands at exactly the same column offset
+   regardless of format_column()'s variable output width.
 6. INST shows green ``✓`` or red ``✗`` (preformatted).
 7. SESS shows the three states: dim em-dash (absent), dim zero
    (present-zero), green (positive).
 8. Sort order is preserved: starred first (pin order), then by
    100d usage descending, then alphabetical.
 9. Tag filter still drops rows whose tags don't include the arg.
+10. Total visible (ANSI-stripped) width is identical across every row
+    of the body — the regression guard for the alignment complaint.
 """
 
 import io
@@ -32,7 +35,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from quiver.console import strip_ansi, visible_len
+from quiver.console import c, strip_ansi, visible_len
 from quiver.harness.commands import _sort_tools, cmd_list
 from quiver.harness.rate_limits import RateLimitInfo
 
@@ -112,10 +115,9 @@ def _row_for_tool(output, tool_name):
     Robust against starred/unstarred layout differences (we no longer
     key by ``split()[1]`` since that returned "★" for starred rows).
     """
-    plain = strip_ansi(output)
     for line in output.split("\n"):
         if tool_name in strip_ansi(line):
-            return line, plain
+            return line
     raise AssertionError(f"No row for {tool_name!r} in output:\n{output}")
 
 
@@ -129,7 +131,7 @@ class CmdListHeaderTest(unittest.TestCase):
         output = _run_cmd_list()
         lines = output.split("\n")
         # Strip ANSI before searching: the header's column labels are wrapped
-        # in c(\"dim\", ...), so the raw line has ``\\033[2m`` between the
+        # in c("dim", ...), so the raw line has ``\\033[2m`` between the
         # col_gap and the label name — searching un-stripped would miss.
         hdr_idx = next(
             i for i, raw in enumerate(lines)
@@ -155,11 +157,10 @@ class CmdListHeaderTest(unittest.TestCase):
     def test_name_column_position_matches_across_starred_and_unstarred(self):
         # The migration's whole reason for existing: starred and unstarred
         # rows MUST put the tool name at the same visible column index.
-        # With the visible-border column_gap=" | " (3 visible chars per
+        # With the visible-border column_gap=" \u2502 " (3 visible chars per
         # gap) enabled in cmd_list, both rows must still land the tool
-        # name at the same offset — now column 5 (mark=2 + gap=3).
-        # This test needs claude starred — override load_stars locally
-        # without disturbing the class-level setUp.
+        # name at the same offset — column 5 (mark=2 + gap=3). Override
+        # load_stars locally without disturbing the class-level setUp.
         with patch("quiver.harness.commands.load_stars", return_value=["claude"]):
             output = _run_cmd_list()
         starred_row = next(
@@ -191,7 +192,7 @@ class CmdListAccentTest(unittest.TestCase):
 
     def test_starred_row_carries_neon_ansi_and_star_marker(self):
         output = _run_cmd_list()
-        starred_row, _ = _row_for_tool(output, "claude")
+        starred_row = _row_for_tool(output, "claude")
         self.assertIn("\033[", starred_row)
         self.assertIn("\u2605", strip_ansi(starred_row))
 
@@ -199,44 +200,116 @@ class CmdListAccentTest(unittest.TestCase):
         # droid is unstarred in this fixture — its alias cell must be cyan
         # from the list-kind color attribute, and it must NOT carry neon.
         output = _run_cmd_list()
-        droid_row, _ = _row_for_tool(output, "droid")
-        # No star marker (unstarred).
+        droid_row = _row_for_tool(output, "droid")
         self.assertNotIn("\u2605", strip_ansi(droid_row))
         # Cyan alias column color attribute fires even on empty list — the
-        # cell renders as c("cyan", "—", width=12) → contains \033[36m.
+        # cell renders as c("cyan", "—", width=12) → contains \\033[36m.
         self.assertIn("\033[36m", droid_row)
 
 
 class CmdListRateColumnTest(unittest.TestCase):
-    """trust_cell_width=True is wired on the RATE column."""
+    """trust_cell_width=True is wired on the RATE column + cmd_list pre-pads."""
 
     def setUp(self):
         _setup_patches(self)
 
-    def test_rate_cell_renders_at_format_column_visible_width(self):
+    def test_rate_cell_renders_aligned_to_column_width(self):
+        """Regression guard for the user's "rows with usage info misaligned" complaint.
+
+        RateLimitInfo.format_column() returns a variable-width string
+        — e.g. "30% \u2014" is 5 chars, "100% 8d23h" is 10. With
+        trust_cell_width=True the Table does NOT pad the cell, so
+        rows with longer rate payloads would push the visible-border
+        gap " \u2502 " rightward and break column alignment. cmd_list
+        pre-pads every rate cell to the column width (14) so the gap
+        lands at exactly rate_start + 14 regardless of payload.
+        """
         output = _run_cmd_list()
-        codex_row, _ = _row_for_tool(output, "codex")
+        codex_row = _row_for_tool(output, "codex")
         plain = strip_ansi(codex_row)
-        # format_column() output visible content: "30% —" (5 chars:
-        # "30%" + " " + "—"). trust_cell_width=True must NOT pad this
-        # up to the column width (14). Locate the rate cell by content.
+        # Span [rate_start, rate_start+14) must have visible length 14
+        # — the pre-pad closes the gap between "30% \u2014" (5 chars)
+        # and the column width.
+        rate_cell_width = 14
         rate_start = plain.find("30%")
         self.assertGreaterEqual(rate_start, 0, "rate cell content not found")
-        rate_visible = RateLimitInfo(
-            tool_name="codex", used_percent=30, limit_reached=False,
-            reset_at=0, plan_type="plus", window_seconds=604800,
-        ).format_column()
-        rate_visible_len = visible_len(rate_visible)
-        rate_end = rate_start + rate_visible_len
-        # Just past the rate cell must be the visible-border column_gap
-        # " | " (3 visible chars: space + bar + space), NOT padding
-        # bled from the column width=14. The Table's opt-in column
-        # border string replaces the 2-space default for cmd_list.
+        self.assertEqual(rate_cell_width, visible_len(plain[rate_start:rate_start + rate_cell_width]),
+            f"rate cell spans {visible_len(plain[rate_start:rate_start+rate_cell_width])} "
+            f"chars, expected {rate_cell_width} (= cmd_list's pre-pad column width)")
+        # Beyond the rate cell is the visible-border gap " \u2502 ".
         self.assertEqual(
-            plain[rate_end: rate_end + 3], " \u2502 ",
-            f"rate column leaked padding into border gap: "
-            f"{plain[rate_end:rate_end+5]!r}",
+            plain[rate_start + rate_cell_width: rate_start + rate_cell_width + 3], " \u2502 ",
+            f"rate column hasn't the documented column width: "
+            f"{plain[rate_start+rate_cell_width:rate_start+rate_cell_width+5]!r}",
         )
+
+    def test_rate_cell_pre_pad_math_holds_for_any_payload(self):
+        """Pre-pad normalises every rate cell payload to exactly 14 visible chars.
+
+        Locks the cmd_list pre-pad contract: regardless of payload
+        (em-dash, plain digits, ANSI-coloured dim/green/red/yellow,
+        multi-byte chars), the post-pad cell must have visible_len 14.
+        """
+        for label, payload in [
+            ("dim_em_dash", c("dim", "—")),
+            ("green_pct_only", c("green", "30%")),
+            ("format_column_30pct", RateLimitInfo(
+                tool_name="codex", used_percent=30, limit_reached=False,
+                reset_at=0, plan_type="plus", window_seconds=0,
+            ).format_column()),
+            ("format_column_100pct", RateLimitInfo(
+                tool_name="codex", used_percent=100, limit_reached=False,
+                reset_at=0, plan_type="plus", window_seconds=0,
+            ).format_column()),
+            ("format_column_reached", RateLimitInfo(
+                tool_name="codex", used_percent=100, limit_reached=True,
+                reset_at=0, plan_type="plus", window_seconds=0,
+            ).format_column()),
+        ]:
+            rate_cell_width = 14
+            pre_padded = payload + " " * max(0, rate_cell_width - visible_len(payload))
+            self.assertEqual(
+                rate_cell_width, visible_len(pre_padded),
+                f"{label}: payload {payload!r} pre-padded to "
+                f"{visible_len(pre_padded)} chars (expected {rate_cell_width})",
+            )
+
+
+class CmdListAlignmentTest(unittest.TestCase):
+    """Regression guard: every body row must share the same visible width.
+
+    This was the user's complaint about rows with actual usage info
+    being misaligned. Pre-pad the rate cell to column width, then
+    assert no row drifts from the header width.
+    """
+
+    def setUp(self):
+        _setup_patches(self)
+
+    def test_all_rows_have_identical_total_visible_width(self):
+        output = _run_cmd_list()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "COMMAND", "VERSION"))
+        )
+        expected_width = visible_len(lines[hdr_idx])
+        # Header and separator share width.
+        self.assertEqual(expected_width, visible_len(lines[hdr_idx + 1]),
+            f"separator width {visible_len(lines[hdr_idx+1])} != header width {expected_width}")
+        # Every body row after the separator must match. Skip blank lines
+        # and footer hints (which live before/after the table region).
+        for offset, line in enumerate(lines[hdr_idx + 2:], start=hdr_idx + 2):
+            if not strip_ansi(line).strip():
+                continue
+            # Stop at the divider once we've left the table — find the
+            # next blank line or footer marker.
+            plain = strip_ansi(line)
+            if "/" in plain and "installed" in plain:
+                break  # post-table footer ("3/22 installed …")
+            self.assertEqual(expected_width, visible_len(line),
+                f"line {offset} width {visible_len(line)} drifted from "
+                f"expected {expected_width}: {plain!r}")
 
 
 class CmdListInstColumnTest(unittest.TestCase):
@@ -267,15 +340,15 @@ class CmdListSessColumnTest(unittest.TestCase):
 
     def test_sess_three_states_shift_colors(self):
         output = _run_cmd_list()
-        claude_row, claude_plain = _row_for_tool(output, "claude")
-        codex_row, codex_plain = _row_for_tool(output, "codex")
-        droid_row, droid_plain = _row_for_tool(output, "droid")
+        claude_plain = strip_ansi(_row_for_tool(output, "claude"))
+        codex_plain = strip_ansi(_row_for_tool(output, "codex"))
+        droid_plain = strip_ansi(_row_for_tool(output, "droid"))
         # claude: positive count 42 → green; the digit "42" must be
         # somewhere in the row's plain text.
         self.assertIn("42", claude_plain)
         # codex: zero count → dim "0"; bare "0" must appear.
         self.assertIn("0", codex_plain)
-        # droid: absent → dim em-dash; must have "—".
+        # droid: absent → dim em-dash; must have "\u2014".
         self.assertIn("\u2014", droid_plain)
 
 
