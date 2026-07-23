@@ -93,47 +93,48 @@ def _parse_nested(base: str, config: JsonlParserConfig) -> list[Session]:
     sessions: list[Session] = []
     try:
         # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-        for name_entry in os.scandir(base):
-            if not name_entry.is_dir():
-                continue
-            proj = name_entry.path
-            name = name_entry.name
-            if config.project_filter and not config.project_filter(name, proj):
-                continue
-            fallback_path = ""
-            if config.path_from_project_dir:
-                try:
-                    fallback_path = config.path_from_project_dir(name) or ""
-                except Exception:
-                    fallback_path = ""
-            jsonl_files = _list_jsonl(proj, config)
-            if config.one_session_per_file:
-                for fp in jsonl_files:
-                    sess = _session_from_jsonl(fp, config, fallback_path)
-                    if sess:
-                        sessions.append(sess)
-            else:
-                if jsonl_files:
-                    latest = max(jsonl_files, key=get_mtime)
-                    sess = _session_from_jsonl(latest, config, fallback_path)
-                    if sess:
-                        sessions.append(sess)
-                elif fallback_path or config.default_path:
-                    # Preserve legacy behavior: project dir with no jsonl still counts
-                    mtime = get_mtime(proj)
-                    if mtime > 0:
-                        path = fallback_path or config.default_path or ""
-                        if path or not config.require_path:
-                            sessions.append(
-                                Session(
-                                    timestamp=mtime,
-                                    agent=config.agent,
-                                    path=path,
-                                    title="",
-                                    session_id="",
-                                    tool_name=config.tool_name,
+        with os.scandir(base) as name_entry_it:
+            for name_entry in name_entry_it:
+                if not name_entry.is_dir():
+                    continue
+                proj = name_entry.path
+                name = name_entry.name
+                if config.project_filter and not config.project_filter(name, proj):
+                    continue
+                fallback_path = ""
+                if config.path_from_project_dir:
+                    try:
+                        fallback_path = config.path_from_project_dir(name) or ""
+                    except Exception:
+                        fallback_path = ""
+                jsonl_files = _list_jsonl(proj, config)
+                if config.one_session_per_file:
+                    for fp in jsonl_files:
+                        sess = _session_from_jsonl(fp, config, fallback_path)
+                        if sess:
+                            sessions.append(sess)
+                else:
+                    if jsonl_files:
+                        latest = max(jsonl_files, key=get_mtime)
+                        sess = _session_from_jsonl(latest, config, fallback_path)
+                        if sess:
+                            sessions.append(sess)
+                    elif fallback_path or config.default_path:
+                        # Preserve legacy behavior: project dir with no jsonl still counts
+                        mtime = get_mtime(proj)
+                        if mtime > 0:
+                            path = fallback_path or config.default_path or ""
+                            if path or not config.require_path:
+                                sessions.append(
+                                    Session(
+                                        timestamp=mtime,
+                                        agent=config.agent,
+                                        path=path,
+                                        title="",
+                                        session_id="",
+                                        tool_name=config.tool_name,
+                                    )
                                 )
-                            )
     except Exception:
         pass
     return sessions
@@ -165,56 +166,58 @@ def _parse_session_dirs(base: str, config: JsonlParserConfig) -> list[Session]:
     sessions: list[Session] = []
     try:
         # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-        for proj_entry in os.scandir(base):
-            if not proj_entry.is_dir():
-                continue
-            proj = proj_entry.path
-            proj_name = proj_entry.name
-            if config.project_filter and not config.project_filter(proj_name, proj):
-                continue
-            fallback = ""
-            if config.path_from_project_dir:
-                try:
-                    fallback = config.path_from_project_dir(proj_name) or ""
-                except Exception:
-                    fallback = ""
-            sessions_root = (
-                os.path.join(proj, config.chats_subdir)
-                if config.chats_subdir
-                else proj
-            )
-            if not os.path.isdir(sessions_root):
-                continue
-            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-            for sid_entry in os.scandir(sessions_root):
-                if not sid_entry.is_dir():
+        with os.scandir(base) as proj_entry_it:
+            for proj_entry in proj_entry_it:
+                if not proj_entry.is_dir():
                     continue
-                sess_dir = sid_entry.path
-                sid = sid_entry.name
-                jsonl_files = _list_jsonl(sess_dir, config)
-                if not jsonl_files:
+                proj = proj_entry.path
+                proj_name = proj_entry.name
+                if config.project_filter and not config.project_filter(proj_name, proj):
                     continue
-                primary = max(jsonl_files, key=get_mtime)
-                sess = _session_from_jsonl(primary, config, fallback, forced_id=sid)
-                if not sess:
-                    continue
-                if config.enrich_session:
-                    fields = {
-                        "timestamp": sess.timestamp,
-                        "agent": sess.agent,
-                        "path": sess.path,
-                        "title": sess.title,
-                        "session_id": sess.session_id,
-                        "tool_name": sess.tool_name,
-                    }
+                fallback = ""
+                if config.path_from_project_dir:
                     try:
-                        config.enrich_session(fields, sess_dir, proj_name)
+                        fallback = config.path_from_project_dir(proj_name) or ""
                     except Exception:
-                        pass
-                    if config.require_path and not fields.get("path"):
-                        continue
-                    sess = Session(**fields)
-                sessions.append(sess)
+                        fallback = ""
+                sessions_root = (
+                    os.path.join(proj, config.chats_subdir)
+                    if config.chats_subdir
+                    else proj
+                )
+                if not os.path.isdir(sessions_root):
+                    continue
+                # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+                with os.scandir(sessions_root) as sid_entry_it:
+                    for sid_entry in sid_entry_it:
+                        if not sid_entry.is_dir():
+                            continue
+                        sess_dir = sid_entry.path
+                        sid = sid_entry.name
+                        jsonl_files = _list_jsonl(sess_dir, config)
+                        if not jsonl_files:
+                            continue
+                        primary = max(jsonl_files, key=get_mtime)
+                        sess = _session_from_jsonl(primary, config, fallback, forced_id=sid)
+                        if not sess:
+                            continue
+                        if config.enrich_session:
+                            fields = {
+                                "timestamp": sess.timestamp,
+                                "agent": sess.agent,
+                                "path": sess.path,
+                                "title": sess.title,
+                                "session_id": sess.session_id,
+                                "tool_name": sess.tool_name,
+                            }
+                            try:
+                                config.enrich_session(fields, sess_dir, proj_name)
+                            except Exception:
+                                pass
+                            if config.require_path and not fields.get("path"):
+                                continue
+                            sess = Session(**fields)
+                        sessions.append(sess)
     except Exception:
         pass
     return sessions
@@ -225,40 +228,41 @@ def _parse_index_jsonl(base: str, config: JsonlParserConfig) -> list[Session]:
     sessions: list[Session] = []
     try:
         # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-        for proj_entry in os.scandir(base):
-            if not proj_entry.is_dir():
-                continue
-            proj = proj_entry.path
-            proj_name = proj_entry.name
-            if config.project_filter and not config.project_filter(proj_name, proj):
-                continue
-            index_path = os.path.join(proj, config.index_basename)
-            if not os.path.isfile(index_path):
-                continue
-            fallback = ""
-            if config.path_from_project_dir:
+        with os.scandir(base) as proj_entry_it:
+            for proj_entry in proj_entry_it:
+                if not proj_entry.is_dir():
+                    continue
+                proj = proj_entry.path
+                proj_name = proj_entry.name
+                if config.project_filter and not config.project_filter(proj_name, proj):
+                    continue
+                index_path = os.path.join(proj, config.index_basename)
+                if not os.path.isfile(index_path):
+                    continue
+                fallback = ""
+                if config.path_from_project_dir:
+                    try:
+                        fallback = config.path_from_project_dir(proj_name) or ""
+                    except Exception:
+                        fallback = ""
                 try:
-                    fallback = config.path_from_project_dir(proj_name) or ""
+                    with open(index_path) as f:
+                        for line in f:
+                            if not line.strip():
+                                continue
+                            try:
+                                entry = json.loads(line)
+                            except Exception:
+                                continue
+                            if not isinstance(entry, dict):
+                                continue
+                            sess = _session_from_index_entry(
+                                entry, index_path, proj, fallback, config
+                            )
+                            if sess:
+                                sessions.append(sess)
                 except Exception:
-                    fallback = ""
-            try:
-                with open(index_path) as f:
-                    for line in f:
-                        if not line.strip():
-                            continue
-                        try:
-                            entry = json.loads(line)
-                        except Exception:
-                            continue
-                        if not isinstance(entry, dict):
-                            continue
-                        sess = _session_from_index_entry(
-                            entry, index_path, proj, fallback, config
-                        )
-                        if sess:
-                            sessions.append(sess)
-            except Exception:
-                pass
+                    pass
     except Exception:
         pass
     return sessions
@@ -372,17 +376,18 @@ def _list_jsonl(directory: str, config: JsonlParserConfig) -> list[str]:
     out: list[str] = []
     try:
         # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-        for name_entry in os.scandir(directory):
-            name = name_entry.name
-            if not name.endswith(".jsonl"):
-                continue
-            if name in config.skip_basenames:
-                continue
-            if config.primary_files and name not in config.primary_files:
-                continue
-            if name == config.index_basename and config.mode == "index_jsonl":
-                continue
-            out.append(name_entry.path)
+        with os.scandir(directory) as name_entry_it:
+            for name_entry in name_entry_it:
+                name = name_entry.name
+                if not name.endswith(".jsonl"):
+                    continue
+                if name in config.skip_basenames:
+                    continue
+                if config.primary_files and name not in config.primary_files:
+                    continue
+                if name == config.index_basename and config.mode == "index_jsonl":
+                    continue
+                out.append(name_entry.path)
     except Exception:
         pass
     return out
