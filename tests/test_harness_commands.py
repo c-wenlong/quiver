@@ -30,13 +30,14 @@ Tests below pin the structural invariants the new layout must hold:
     of the body — the regression guard for the alignment complaint.
 """
 
+import copy
 import io
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from quiver.console import c, strip_ansi, visible_len
-from quiver.harness.commands import _sort_tools, cmd_list
+from quiver.harness.commands import _sort_tools, cmd_check, cmd_list
 from quiver.harness.rate_limits import RateLimitInfo
 
 
@@ -82,7 +83,14 @@ def _is_installed_false(_cmd):
 def _setup_patches(testcase, *, stars=()):
     """Common setUp: patch external I/O so cmd_list runs offline."""
     patches = [
-        patch("quiver.harness.commands.load_registry", return_value=dict(_REGISTRY)),
+        # ``copy.deepcopy`` — same isolation discipline as cmd_check
+        # tests. cmd_list is read-only on the registry today so the
+        # shallow copy was harmless, but deepcopy future-proofs against
+        # any cmd_list mutation path that may be added later.
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(_REGISTRY),
+        ),
         patch("quiver.harness.commands._session_counts_100d", return_value={
             "claude": 42,  # positive → green
             "codex": 0,    # present-zero → dim
@@ -388,6 +396,398 @@ class CmdListSortAndFilterTest(unittest.TestCase):
         with redirect_stdout(buf2):
             cmd_list(["-anthropic"])
         self.assertEqual(buf1.getvalue(), buf2.getvalue())
+
+
+# ---------------------------------------------------------------------------
+# cmd_check migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# The refactored cmd_check now builds a 4-column Table once (STATUS | NAME |
+# ALIASES | INFO) and renders once per row. This is the second cmd_* handler
+# migrated off hand-rolled f-strings, validating the Table component's
+# generality beyond the 9-column / mixed-kind cmd_list.
+
+
+_CHECK_REGISTRY = {
+    "auggie": {
+        "command": "auggie",
+        "aliases": ["au"],
+        "tags": ["free"],
+        "version": "0.5.0",
+    },
+    "claude": {
+        "command": "claude",
+        "aliases": ["cl"],
+        "tags": ["paid"],
+        "version": "2.1.126",
+    },
+    "augment": {
+        "command": "augment",
+        "aliases": [],
+        "tags": ["paid"],
+        "version": None,
+    },
+}
+
+
+def _run_cmd_check():
+    """Capture cmd_check's stdout via redirect_stdout."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_check([])
+    return buf.getvalue()
+
+
+def _setup_check_patches(
+    testcase,
+    *,
+    installed_cmds=(),
+    live_versions=None,
+    orphans=(),
+    saved_calls=None,
+):
+    """Common cmd_check fixture setup.
+
+    ``installed_cmds`` is an iterable of command names that should
+    ``is_installed`` return True for; everything else returns False.
+    ``live_versions`` is a ``{cmd: '1.2.3'}`` dict for live_version.
+    ``orphans`` is a list of ``(name, command, hit)`` tuples mocking
+    ``find_off_path_tools`` output.
+    ``saved_calls`` is a list that records each call to save_registry
+    (used to assert the heal side-effect).
+    """
+    installed_set = set(installed_cmds)
+    live_versions = dict(live_versions or {})
+    saved_calls = saved_calls if saved_calls is not None else []
+
+    # ``copy.deepcopy`` (not ``dict(...)``) — the shallow-copied variant
+    # shares nested dicts by reference, so a test that writes back a
+    # mutated ``tools[name]["version"]`` instantly mutates the shared
+    # fixture, which silently contaminates every subsequent test in
+    # alphabetical order (annotated in AGENTS.md test-fixture-isolation
+    # bullet for the rate-limit cohort, applies to cmd_check too).
+    patches = [
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(_CHECK_REGISTRY),
+        ),
+        patch(
+            "quiver.harness.commands.is_installed",
+            side_effect=lambda cmd: cmd in installed_set,
+        ),
+        patch(
+            "quiver.harness.commands.live_version",
+            side_effect=lambda cmd: live_versions.get(cmd),
+        ),
+        patch(
+            "quiver.harness.commands.save_registry",
+            side_effect=lambda _tools: saved_calls.append(_tools),
+        ),
+        patch(
+            "quiver.harness.path_health.find_off_path_tools",
+            return_value=list(orphans),
+        ),
+    ]
+    for p in patches:
+        p.start()
+        testcase.addCleanup(p.stop)
+    # Expose saved_calls on the test case so individual tests can inspect it.
+    testcase._saved_calls = saved_calls
+
+
+class CmdCheckHeaderTest(unittest.TestCase):
+    """Header / separator / body alignment invariants for cmd_check."""
+
+    def setUp(self):
+        _setup_check_patches(
+            self, installed_cmds=("auggie", "claude"), live_versions={"auggie": "0.5.0", "claude": "2.1.126"},
+        )
+
+    def test_header_has_four_columns_with_expected_labels(self):
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        # Find the header row — the one carrying NAME/ALIASES/INFO labels
+        # (the status column has no header label, it's just a marker column).
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        header = strip_ansi(lines[hdr_idx])
+        for label in ("NAME", "ALIASES", "INFO"):
+            self.assertIn(label, header, f"missing {label!r} in header: {header!r}")
+        self.assertEqual(header.count("NAME"), 1)
+
+    def test_separator_visible_length_matches_header_width(self):
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        sep_idx = hdr_idx + 1
+        sep_count = strip_ansi(lines[sep_idx]).count("\u2500")
+        self.assertEqual(sep_count, visible_len(lines[hdr_idx]))
+
+    def test_all_body_rows_have_identical_visible_width(self):
+        """Regression guard: rows with both installed and not-installed
+        statuses must share visible width. Pre-pad the info cell to
+        the column width so the grid stays intact.
+        """
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        expected_width = visible_len(lines[hdr_idx])
+        # Header and separator agree.
+        self.assertEqual(expected_width, visible_len(lines[hdr_idx + 1]))
+        # Walk body rows until the next blank or footer line.
+        for offset, line in enumerate(lines[hdr_idx + 2:], start=hdr_idx + 2):
+            plain = strip_ansi(line)
+            if not plain.strip():
+                continue
+            # Stop past the table body: once we hit text that doesn't
+            # look like a table row (a hint line or footer).
+            if any(marker in plain for marker in ("Registry updated", "Tip:", "Checking AI")):
+                break
+            self.assertEqual(expected_width, visible_len(line),
+                f"line {offset} width {visible_len(line)} drifted from "
+                f"expected {expected_width}: {plain!r}")
+
+
+class CmdCheckStatusColumnTest(unittest.TestCase):
+    """STATUS column shows green ✓ when installed, red ✗ when not."""
+
+    def test_installed_row_carries_green_check(self):
+        _setup_check_patches(
+            self,
+            installed_cmds=("auggie",),
+            live_versions={"auggie": "0.5.0"},
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("\u2713", plain)
+        # Green escape sequence surrounding the check glyph.
+        self.assertIn("\033[32m\u2713", output)
+
+    def test_non_installed_row_carries_red_x(self):
+        _setup_check_patches(self, installed_cmds=())  # nothing installed
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("\u2717", plain)
+        self.assertIn("\033[31m\u2717", output)
+
+    def test_installed_row_uses_dim_version_text(self):
+        _setup_check_patches(
+            self,
+            installed_cmds=("claude",),
+            live_versions={"claude": "2.1.126"},
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("claude", plain)
+        self.assertIn("2.1.126", plain)
+        self.assertIn("cl", plain)  # alias
+
+    def test_non_installed_row_uses_dim_not_installed_text(self):
+        _setup_check_patches(self, installed_cmds=())
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        # "not installed" must appear in every non-installed row.
+        self.assertIn("not installed", plain)
+
+    def test_version_unknown_fallback_for_installed_with_no_live_version(self):
+        """Installed + live_version returns None + no stored version
+        yields the ``version unknown`` fallback (dim).
+        """
+        _setup_check_patches(
+            self,
+            installed_cmds=("augment",),  # augment has version=None
+            live_versions={"augment": None},
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("augment", plain)
+        self.assertIn("version unknown", plain)
+
+
+class CmdCheckHealSideEffectTest(unittest.TestCase):
+    """cmd_check heals stored versions when live_version differs."""
+
+    def test_live_version_overrides_stored_when_different(self):
+        saved_calls = []
+        _setup_check_patches(
+            self,
+            installed_cmds=("claude",),
+            live_versions={"claude": "9.9.9"},  # differs from stored 2.1.126
+            saved_calls=saved_calls,
+        )
+        _run_cmd_check()
+        # Healed value persisted; saved_registry called once.
+        self.assertEqual(len(saved_calls), 1)
+        self.assertEqual(saved_calls[0]["claude"]["version"], "9.9.9")
+
+    def test_stored_version_kept_when_live_version_matches(self):
+        saved_calls = []
+        _setup_check_patches(
+            self,
+            installed_cmds=("claude",),
+            live_versions={"claude": "2.1.126"},  # matches stored
+            saved_calls=saved_calls,
+        )
+        _run_cmd_check()
+        # No mutation → saved_registry not called.
+        self.assertEqual(len(saved_calls), 0)
+
+def test_dirty_stored_version_cleared_when_live_returns_none(self):
+    """If live_version can't probe AND the stored value isn't a
+    bare version number (dirty banner/text), drop it.
+    """
+    import re
+    saved_calls = []
+    dirty_registry = {
+        "claude": {
+            "command": "claude",
+            "aliases": ["cl"],
+            "tags": [],
+            "version": "cli installed via npm (set 09:32)",  # dirty
+        }
+    }
+    # extract_version_number("cli installed via npm (set 09:32)") == ""
+    # so the dirty value gets dropped. The mock mirrors the real
+    # behaviour: extract the first bare x.y.z rune, else return "".
+    def _fake_extract(raw):
+        if not raw:
+            return ""
+        m = re.search(r"\d+\.\d+(?:\.\d+)?", raw)
+        return m.group(0) if m else ""
+
+    # Use ``copy.deepcopy(dirty_registry)`` so the inline patch in
+    # THIS test never mutates any other fixture or the dirty_registry
+    # itself if it were ever shared.
+    patches = [
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(dirty_registry),
+        ),
+        patch("quiver.harness.commands.is_installed", return_value=True),
+        patch("quiver.harness.commands.live_version", return_value=None),
+        patch(
+            "quiver.harness.commands.extract_version_number",
+            side_effect=_fake_extract,
+        ),
+        patch(
+            "quiver.harness.commands.save_registry",
+            side_effect=lambda t: saved_calls.append(t),
+        ),
+        patch("quiver.harness.path_health.find_off_path_tools", return_value=[]),
+    ]
+    for p in patches:
+        p.start()
+        self.addCleanup(p.stop)
+    _run_cmd_check()
+    self.assertEqual(len(saved_calls), 1)
+    self.assertIsNone(saved_calls[0]["claude"]["version"])
+
+
+class CmdCheckOffPathFooterTest(unittest.TestCase):
+    """Off-PATH footer is conditional on find_off_path_tools returning orphans."""
+
+    def test_no_orphans_means_no_offpath_header_or_hints(self):
+        _setup_check_patches(self, installed_cmds=(), orphans=[])
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertNotIn("Off-PATH", plain)
+        # find_off_path_tools returned [] so the diagnostic yellow lines
+        # (per-orphan `path: ...`, `fix:`, `or:`) must not appear at all.
+        self.assertNotIn("found at", plain)
+        self.assertNotIn("not on current PATH", plain)
+
+    def test_orphans_render_under_off_path_header(self):
+        from quiver.harness.path_health import OffPathHit
+        _setup_check_patches(
+            self,
+            installed_cmds=(),
+            orphans=[
+                (
+                    "jules",
+                    "jules",
+                    OffPathHit(
+                        command="jules",
+                        path="/Users/x/.nvm/versions/node/v22/bin/jules",
+                        source="nvm",
+                    ),
+                ),
+            ],
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("Off-PATH installs detected", plain)
+        self.assertIn("jules", plain)
+        self.assertIn("found at", plain)
+        self.assertIn("/Users/x/.nvm/versions/node/v22/bin/jules", plain)
+        # The diagnostic must include the install hint.
+        self.assertIn("npm install -g jules", plain)
+        self.assertIn("swe install jules", plain)
+        self.assertIn("swe edit jules --command", plain)
+        # Yellow `!` marker escape sequence present.
+        self.assertIn("\033[33m!", output)
+
+    def test_orphans_trigger_doctor_tip(self):
+        from quiver.harness.path_health import OffPathHit
+        _setup_check_patches(
+            self,
+            installed_cmds=(),
+            orphans=[(
+                "jules", "jules",
+                OffPathHit(command="jules", path="/x/jules", source="nvm"),
+            )],
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("swe doctor", plain)
+
+    def test_no_orphans_no_doctor_tip(self):
+        _setup_check_patches(self, installed_cmds=(), orphans=[])
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertNotIn("swe doctor", plain)
+
+
+class CmdCheckSortAndPrintTest(unittest.TestCase):
+    """cmd_check preserves its own sort order (alphabetical) regardless
+    of the cmd_list sort logic; also verifies the bold header line.
+    """
+
+    def test_bold_header_line_announces_check(self):
+        _setup_check_patches(self)
+        output = _run_cmd_check()
+        # Bold ANSI sequence (01) followed by the check header text.
+        self.assertIn("\033[1mChecking AI tools...", output)
+
+    def test_rows_appear_in_alphabetical_order(self):
+        _setup_check_patches(
+            self,
+            installed_cmds=("auggie", "claude"),
+            live_versions={"auggie": "0.5.0", "claude": "2.1.126"},
+        )
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        body_plain = [
+            strip_ansi(line) for line in lines[hdr_idx + 2:] if strip_ansi(line).strip()
+        ]
+        # First three harness names should appear in alphabetical order.
+        names_in_order = []
+        for line in body_plain:
+            for name in ("auggie", "augment", "claude"):
+                if name in line and name not in names_in_order:
+                    names_in_order.append(name)
+        self.assertEqual(names_in_order[:3], ["auggie", "augment", "claude"])
 
 
 if __name__ == "__main__":
