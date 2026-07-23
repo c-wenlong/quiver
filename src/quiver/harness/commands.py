@@ -238,19 +238,44 @@ def cmd_info(args):
     aliases = [a for a in info.get("aliases", []) if a != name]
 
     print(f"\n  {c('bold', name)}")
+
+    # Two-column FIELD | VALUE table.
+    # VALUE uses ``preformatted`` + ``trust_cell_width=True`` because
+    # the value cell is sometimes ANSI-coloured (green/red for Status)
+    # and sometimes variable-width (paths, multi-line descriptions).
+    # ``fit="content"`` lets long paths / descriptions expand beyond
+    # the column width rather than truncate — matches the old
+    # ``print(f"  {label:<16} {val}")`` behaviour where overflow
+    # scrolled rather than got cut.
+    table = Table()
+    table.add_column("label", "FIELD", width=16, kind="text")
+    table.add_column(
+        "value", "VALUE", width=64,
+        kind="preformatted", trust_cell_width=True, fit="content",
+    )
+
     rows = [
-        ("Command", info["command"]),
-        ("Aliases", ", ".join(aliases) if aliases else "—"),
-        ("Description", info.get("description", "—")),
-        ("Version", info.get("version") or "unknown"),
-        ("Tags", ", ".join(info.get("tags", []))),
-        ("Status", c("green", "installed") if installed else c("red", "not installed")),
-        ("Path", path),
+        ("Command:", info["command"]),
+        ("Aliases:", ", ".join(aliases) if aliases else "—"),
+        ("Description:", info.get("description") or "—"),
+        ("Version:", info.get("version") or "unknown"),
+        ("Tags:", ", ".join(info.get("tags", [])) or "—"),
+        (
+            "Status:",
+            c("green", "installed") if installed else c("red", "not installed"),
+        ),
+        ("Path:", path),
     ]
-    if info.get("notes"):
-        rows.append(("Notes", info["notes"]))
     for label, val in rows:
-        print(f"  {'  ' + label + ':':<16} {val}")
+        table.add_row({"label": label, "value": val})
+    if info.get("notes"):
+        # ``Notes:`` is conditional — matches the pre-migration
+        # behaviour where the optional row was only appended when
+        # ``info["notes"]`` was truthy.
+        table.add_row({"label": "Notes:", "value": info["notes"]})
+
+    for line in table.render():
+        print(line)
     print()
 
 
@@ -420,20 +445,64 @@ def cmd_tags(args):
     for name, info in tools.items():
         for tag in info.get("tags", []):
             tag_map.setdefault(tag, []).append(name)
+
+    if not tag_map:
+        # No tags in registry at all — render a one-line notice
+        # rather than an empty table (preserves the old behaviour
+        # of just printing the title and trailing newline).
+        print(f"\n{c('bold', 'Available tags')}\n")
+        print(c("dim", "  No tags found.\n"))
+        return
+
     print(f"\n{c('bold', 'Available tags')}\n")
+
+    # Two-column TAG | TOOLS table. The TAG cell is ``preformatted``
+    # + ``trust_cell_width=True`` so the cyan colour from cpad()
+    # isn't double-wrapped by the Table renderer; the TOOLS cell
+    # uses the list kind so multi-tool lists join with ``, `` and
+    # adapt to fit mode.
+    table = Table()
+    table.add_column(
+        "tag", "TAG", width=14,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "tools", "TOOLS", width=40,
+        kind="list", color="dim", empty="—",
+    )
+
     for tag in sorted(tag_map):
-        names = ", ".join(sorted(tag_map[tag]))
-        print(f"  {c('cyan', tag):<{20}} {c('dim', names)}")
+        table.add_row({
+            "tag": cpad("cyan", tag, 14),
+            "tools": sorted(tag_map[tag]),
+        })
+
+    for line in table.render():
+        print(line)
     print()
 
 
 def cmd_aliases(args):
     tools = load_registry()
     print(f"\n{c('bold', 'Short aliases')}\n")
+
+    # Two-column ALIASES | NAME table; the ``column_gap=" → "`` makes
+    # the arrow separator part of the table so every row gets the
+    # same horizontal alignment structurally (not visually padded).
+    table = Table(column_gap=" → ")
+    table.add_column(
+        "aliases", "ALIASES", width=14,
+        kind="list", color="cyan", empty="—",
+    )
+    table.add_column("name", "NAME", width=20, kind="text", fit="content")
+
     for name, info in sorted(tools.items()):
         aliases = [a for a in info.get("aliases", []) if a != name]
         if aliases:
-            print(f"  {c('cyan', ', '.join(aliases)):<10}  →  {name}")
+            table.add_row({"aliases": aliases, "name": name})
+
+    for line in table.render():
+        print(line)
     print()
 
 

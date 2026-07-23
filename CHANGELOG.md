@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Three more `cmd_*` handlers migrated to `quiver.table.Table`**: `cmd_info`,
+  `cmd_aliases`, `cmd_tags` (harness domain). Removed the last hand-rolled
+  `f"{...:<{w}}"` string interpolation patterns in `harness/commands.py`.
+  - `cmd_info` is now a 2-column `FIELD | VALUE` table; the `VALUE` column
+    uses `kind="preformatted"` + `trust_cell_width=True` + `fit="content"`
+    so colour-wrapped status values stay clean and variable-width paths
+    expand instead of getting truncated.
+  - `cmd_aliases` is a 2-column `ALIASES | NAME` table with `column_gap=" → "`
+    so the arrow separator is part of the table itself (every row gets the
+    same horizontal alignment structurally, not via padded f-string).
+  - `cmd_tags` is a 2-column `TAG | TOOLS` table; `TAG` cell is cyan via
+    `cpad("cyan", tag, 14)` exactly like the harness aliases column, and
+    `TOOLS` uses the `list` kind with dim colour so multi-tool rows join
+    with `, ` and re-fit. Empty-tag fixtures emit a single `-line notice
+    instead of an empty table.
+  ~17 new tests in `tests/test_harness_commands.py` (`CmdInfoMigrationTest`,
+  `CmdAliasesMigrationTest`, `CmdTagsMigrationTest`) pin: column order,
+  separator-width parity with header, body-row visible-width parity with
+  header (regression guard), conditional rows (`Notes` only when defined,
+  empty-aliases tools omitted), cyan/dim colour shapes, alphabetical tag
+  order, alphabetical tool list per row, multi-alias comma-join.
 - **`swe check` migrated to the new `quiver.table.Table` component.**
   Replaced hand-rolled `f"{name:<22}{alias_str:<20}"` string interpolation
   with a single 4-column `Table().add_column(...).add_row(...)` build

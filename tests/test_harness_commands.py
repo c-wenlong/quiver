@@ -37,7 +37,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from quiver.console import c, strip_ansi, visible_len
-from quiver.harness.commands import _sort_tools, cmd_check, cmd_list
+from quiver.harness.commands import _sort_tools, cmd_aliases, cmd_check, cmd_info, cmd_list, cmd_tags
 from quiver.harness.rate_limits import RateLimitInfo
 
 
@@ -788,6 +788,371 @@ class CmdCheckSortAndPrintTest(unittest.TestCase):
                 if name in line and name not in names_in_order:
                     names_in_order.append(name)
         self.assertEqual(names_in_order[:3], ["auggie", "augment", "claude"])
+
+
+# ---------------------------------------------------------------------------
+# cmd_info migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# cmd_info is a label-value structured view of one registry entry.
+# Migrated to a 2-column Table (FIELD | VALUE) where VALUE uses
+# kind="preformatted" + trust_cell_width=True because values are
+# sometimes ANSI-coloured (Status) and sometimes variable-width
+# (Path, Description, Notes). Rows that are long expand via
+# fit="content" rather than truncate.
+
+_INFO_REGISTRY = {
+    "claude": {
+        "command": "claude",
+        "description": "Anthropic coding CLI",
+        "aliases": ["cl"],
+        "tags": ["anthropic", "paid"],
+        "version": "2.1.126",
+        "notes": "Resume with --resume flag",
+    }
+}
+
+
+def _run_cmd_info(name="claude"):
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_info([name])
+    return buf.getvalue()
+
+
+def _setup_info_patches(testcase, *, installed=True, which_path="/opt/homebrew/bin/claude"):
+    patches = [
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(_INFO_REGISTRY),
+        ),
+        patch("quiver.harness.commands.is_installed", return_value=installed),
+        patch("quiver.harness.commands.shutil.which", return_value=which_path),
+    ]
+    for p in patches:
+        p.start()
+        testcase.addCleanup(p.stop)
+
+
+class CmdInfoMigrationTest(unittest.TestCase):
+    """Tabular contract for cmd_info."""
+
+    def setUp(self):
+        _setup_info_patches(self)
+
+    def test_header_has_field_value_labels(self):
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("FIELD", plain)
+        self.assertIn("VALUE", plain)
+
+    def test_separator_visible_length_matches_header(self):
+        output = _run_cmd_info()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("FIELD", "VALUE"))
+        )
+        sep_dashes = strip_ansi(lines[hdr_idx + 1]).count("\u2500")
+        self.assertEqual(sep_dashes, visible_len(lines[hdr_idx]))
+
+    def test_field_labels_appear_in_body(self):
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        # Every field label is rendered as a row cell with trailing colon.
+        for field in ("Command:", "Aliases:", "Description:", "Version:", "Tags:", "Status:", "Path:"):
+            self.assertIn(field, plain, f"field label {field!r} missing from body")
+
+    def test_status_row_carries_green_when_installed(self):
+        output = _run_cmd_info()
+        self.assertIn("\033[32minstalled", output)
+        self.assertIn("installed", strip_ansi(output))
+
+    def test_status_row_carries_red_when_not_installed(self):
+        _setup_info_patches(self, installed=False)
+        output = _run_cmd_info()
+        self.assertIn("\033[31mnot installed", output)
+
+    def test_path_row_shows_command_path(self):
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("/opt/homebrew/bin/claude", plain)
+
+    def test_path_row_shows_not_found_for_missing_binary(self):
+        # When ``is_installed`` returns False, ``shutil.which`` returns None,
+        # so the path cell shows the literal ``not found``.
+        _setup_info_patches(self, installed=False, which_path=None)
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("not found", plain)
+
+    def test_notes_row_only_present_when_defined(self):
+        # Default _INFO_REGISTRY has a notes field — should appear.
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("Resume with", plain)
+
+    def test_notes_row_omitted_when_undefined(self):
+        no_notes_registry = copy.deepcopy(_INFO_REGISTRY)
+        del no_notes_registry["claude"]["notes"]
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=no_notes_registry,
+            ),
+            patch("quiver.harness.commands.is_installed", return_value=True),
+            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertNotIn("Notes:", plain)
+
+    def test_empty_tags_and_aliases_show_em_dash(self):
+        empty_registry = copy.deepcopy(_INFO_REGISTRY)
+        empty_registry["claude"]["tags"] = []
+        empty_registry["claude"]["aliases"] = []
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=empty_registry,
+            ),
+            patch("quiver.harness.commands.is_installed", return_value=True),
+            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        # Both em-dashes must appear (aliases default + tags fall-through).
+        self.assertIn("\u2014", plain)
+
+    def test_cmd_info_unknown_tool_prints_usage(self):
+        empty = {"no_such": {"command": "no_such"}}
+        patches = [
+            patch("quiver.harness.commands.load_registry", return_value=empty),
+            patch("quiver.harness.commands.is_installed", return_value=False),
+            patch("quiver.harness.commands.shutil.which", return_value=None),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cmd_info(["nope"])
+        plain = strip_ansi(buf.getvalue())
+        self.assertIn("not found", plain)
+
+
+# ---------------------------------------------------------------------------
+# cmd_aliases migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# cmd_aliases is a 2-column ALIASES | NAME table where the column gap
+# itself is the `` → `` arrow, so each row gets identical arrow placement.
+
+
+_ALIASES_REGISTRY = {
+    "auggie": {"command": "auggie", "aliases": ["au"]},
+    "claude": {"command": "claude", "aliases": ["cl", "anthropic"]},
+    "no_alias_tool": {"command": "nope", "aliases": []},
+}
+
+
+def _run_cmd_aliases():
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_aliases([])
+    return buf.getvalue()
+
+
+class CmdAliasesMigrationTest(unittest.TestCase):
+    def setUp(self):
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=copy.deepcopy(_ALIASES_REGISTRY),
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_header_has_aliases_name(self):
+        output = _run_cmd_aliases()
+        plain = strip_ansi(output)
+        self.assertIn("ALIASES", plain)
+        self.assertIn("NAME", plain)
+
+    def test_separator_visible_length_matches_header(self):
+        output = _run_cmd_aliases()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("ALIASES", "NAME"))
+        )
+        sep_dashes = strip_ansi(lines[hdr_idx + 1]).count("\u2500")
+        self.assertEqual(sep_dashes, visible_len(lines[hdr_idx]))
+
+    def test_all_body_rows_have_identical_visible_width(self):
+        output = _run_cmd_aliases()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("ALIASES", "NAME"))
+        )
+        expected_width = visible_len(lines[hdr_idx])
+        for offset, line in enumerate(lines[hdr_idx + 2:], start=hdr_idx + 2):
+            plain = strip_ansi(line)
+            if not plain.strip():
+                continue
+            self.assertEqual(
+                expected_width, visible_len(line),
+                f"line {offset} drifted from {expected_width}: {plain!r}",
+            )
+
+    def test_arrow_gap_renders_in_every_row(self):
+        output = _run_cmd_aliases()
+        # Arrow gap appears once in header (between ALIASES / NAME labels)
+        # and once per row. With 2 aliased rows we expect ≥3 occurrences.
+        self.assertGreaterEqual(strip_ansi(output).count("\u2192"), 3)
+
+    def test_cyan_aliases_cell_wrapper(self):
+        output = _run_cmd_aliases()
+        # The aliases cell ships with cyan ANSI from kind="list"+color="cyan".
+        # Cyan escape is \033[36m (matches cmd_list's alias column).
+        self.assertIn("\033[36m", output)
+
+    def test_multiple_aliases_joined_with_comma(self):
+        output = _run_cmd_aliases()
+        plain = strip_ansi(output)
+        # claude has [cl, anthropic] aliases, joined with ", ".
+        self.assertIn("cl, anthropic", plain)
+
+    def test_tool_without_aliases_omits_row(self):
+        output = _run_cmd_aliases()
+        plain = strip_ansi(output)
+        # no_alias_tool has empty aliases; its row is skipped.
+        self.assertNotIn("nope", plain)
+        # Auggie with single alias; claude with two aliases — both present.
+        self.assertIn("auggie", plain)
+        self.assertIn("claude", plain)
+
+
+# ---------------------------------------------------------------------------
+# cmd_tags migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# cmd_tags is a 2-column TAG | TOOLS table where the TAG cell is
+# preformatted+trust_cell_width=True (cyan) and the TOOLS cell uses
+# the list kind with dim color.
+
+
+_TAGS_REGISTRY = {
+    "claude": {"command": "claude", "tags": ["anthropic", "paid"]},
+    "codex": {"command": "codex", "tags": ["openai", "paid"]},
+    "auggie": {"command": "auggie", "tags": ["factory", "free"]},
+    "no_tag_tool": {"command": "x", "tags": []},
+}
+
+
+def _run_cmd_tags():
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_tags([])
+    return buf.getvalue()
+
+
+class CmdTagsMigrationTest(unittest.TestCase):
+    def setUp(self):
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=copy.deepcopy(_TAGS_REGISTRY),
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_header_has_tag_tools(self):
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        self.assertIn("TAG", plain)
+        self.assertIn("TOOLS", plain)
+
+    def test_separator_visible_length_matches_header(self):
+        output = _run_cmd_tags()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("TAG", "TOOLS"))
+        )
+        sep_dashes = strip_ansi(lines[hdr_idx + 1]).count("\u2500")
+        self.assertEqual(sep_dashes, visible_len(lines[hdr_idx]))
+
+    def test_rows_appear_in_alphabetical_tag_order(self):
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        # Tags from fixture (no_tag_tool emits nothing): anthropic, factory,
+        # free, openai, paid. Sorted alphabetically.
+        expected_tags = ["anthropic", "factory", "free", "openai", "paid"]
+        positions = []
+        for tag in expected_tags:
+            # Find the row containing this tag (the row also has the tools list).
+            # We measure position by the first occurrence of the tag text in
+            # the body lines (excluding header and separator).
+            body_lines = [
+                line for line in plain.split("\n")
+                if line.strip() and "\u2500" not in line and "TAG" not in line and "TOOLS" not in line
+            ]
+            for line in body_lines:
+                # Tag sits in left column; check it appears once per row.
+                if line.lstrip().startswith(tag) or f" {tag}," in line or f" {tag}" in line:
+                    positions.append(plain.find(tag))
+                    break
+        # Each body tag should be present at least once.
+        self.assertEqual(len(positions), len(expected_tags))
+        # And the positions should be monotonically non-decreasing because
+        # the table renders rows in alphabetical order.
+        self.assertEqual(positions, sorted(positions),
+            f"tag order should be alphabetical: got positions {positions}")
+
+    def test_cyan_tag_color_in_render(self):
+        output = _run_cmd_tags()
+        # TAG cell ships preformatted+trust_cell_width=True wrapped with c("cyan", ...).
+        self.assertIn("\033[36m", output)
+
+    def test_dim_tool_list_color(self):
+        output = _run_cmd_tags()
+        # TOOLS column uses kind="list" + color="dim" — emits dim ANSI.
+        self.assertIn("\033[2m", output)
+
+    def test_alphabetical_tool_list_per_row(self):
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        # The ``paid`` tag has claude and codex — sorted: [claude, codex].
+        self.assertIn("claude, codex", plain)
+        self.assertIn("auggie", plain)
+
+    def test_no_tags_emits_notice_instead_of_table(self):
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value={"noop": {"command": "noop", "tags": []}},
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        self.assertIn("No tags found", plain)
+        # No table header line because the empty-state branch bypasses Table.
+        self.assertNotIn("TOOLS", plain)
 
 
 if __name__ == "__main__":
