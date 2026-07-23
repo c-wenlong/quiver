@@ -109,10 +109,24 @@ def cmd_list(args):
         # Inst cell: padded status glyph (visible_width(status)=1).
         inst_cell = status + " " * max(0, 4 - visible_len(status))
 
-        # Rate cell: format_column returns its own ANSI-coloured,
-        # already-width-aligned string (e.g. "30% 5d12h"); trust it.
+        # Rate cell: format_column returns its own ANSI-coloured string
+        # but its visible width is variable ("30% —" = 5 chars vs
+        # "100% 5d18h" = 10 chars). With trust_cell_width=True the
+        # Table does NOT pad to the column width, so rows with longer
+        # rate content would push INST/DESCRIPTION columns right and
+        # break the grid. Pre-pad to the column width (14) here so the
+        # rate cell is exactly 14 visible chars regardless of payload
+        # — the actual character gap remains _column_gap_str (" | ").
+        rate_cell_width = 14
         rl = rate_limits.get(name)
-        rate_cell = rl.format_column() if rl else c("dim", "—")
+        rate_cell = (
+            "".join((
+                rl.format_column(),
+                " " * max(0, rate_cell_width - visible_len(rl.format_column())),
+            ))
+            if rl else
+            c("dim", "—") + " " * max(0, rate_cell_width - visible_len(c("dim", "—")))
+        )
 
         table.add_row(
             {
