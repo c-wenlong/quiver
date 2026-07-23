@@ -4,10 +4,11 @@ import os
 import time
 from pathlib import Path
 
-from quiver.console import c, lpad, truncate
+from quiver.console import c, cpad, truncate, visible_len
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.identity import launch_tool
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
+from quiver.table import Table
 
 # Resume flag strategies keyed by tool_name (not launch key)
 _RESUME_FLAGS = {
@@ -70,32 +71,64 @@ def cmd_models(args):
                 flat[key] = flat.get(key, 0) + cnt
         grouped = {"": flat}
 
-    w_tool, w_model, w_provider, w_msgs = 10, 42, 12, 8
-
     print(f"\n{c('bold', 'Model Usage')}\n")
+
+    # Build the table once, columns swap between by-tool and default
+    # modes. The MSGS column uses ``count_threshold`` with threshold=100
+    # so cells >= 100 picks up green ANSI automatically; the column
+    # also adapts to ``attrs[\"threshold\"]`` rather than requiring the
+    # caller to pre-color the value (the old code path did the colour
+    # decision imperatively in the print loop).
+    threshold = 100
     if by_tool:
-        print(c("dim", f"  {'TOOL':<{w_tool}}{'MODEL':<{w_model}}{'PROVIDER':<{w_provider}}{'MSGS':>{w_msgs}}"))
-        print(c("dim", f"  {'─' * w_tool}{'─' * w_model}{'─' * w_provider}{'─' * w_msgs}"))
+        t = Table()
+        t.add_column("tool", "TOOL", width=10, kind="text")
+        t.add_column("model", "MODEL", width=42, kind="text")
+        t.add_column("provider", "PROVIDER", width=12, kind="text")
+        t.add_column(
+            "msgs", "MSGS", width=8, kind="count_threshold",
+            threshold=threshold,
+        )
     else:
-        print(c("dim", f"  {'MODEL':<{w_model}}{'PROVIDER':<{w_provider}}{'MSGS':>{w_msgs}}"))
-        print(c("dim", f"  {'─' * w_model}{'─' * w_provider}{'─' * w_msgs}"))
+        t = Table()
+        t.add_column("model", "MODEL", width=42, kind="text")
+        t.add_column("provider", "PROVIDER", width=12, kind="text")
+        t.add_column(
+            "msgs", "MSGS", width=8, kind="count_threshold",
+            threshold=threshold,
+        )
 
     grand_total = 0
+    last_tool = None
     for tool in sorted(grouped):
         entries = sorted(grouped[tool].items(), key=lambda x: -x[1])
         for model, cnt in entries:
             grand_total += cnt
             provider = classify_provider(model)
-            cnt_str = f"{cnt:>{w_msgs}}"
-            cnt_colored = c("green", cnt_str) if cnt >= 100 else cnt_str
             if by_tool:
-                tool_colored = c("green", lpad(tool, w_tool))
-                line = f"  {tool_colored}{lpad(model, w_model)}{lpad(provider, w_provider)}{cnt_colored}"
+                # Visual separator between tool groups (preserves the
+                # blank-line behaviour the old hand-rolled print loop
+                # used to insert).
+                if last_tool is not None and last_tool != tool:
+                    print()
+                t.add_row({
+                    "tool": tool,
+                    "model": model,
+                    "provider": provider,
+                    "msgs": cnt,
+                })
             else:
-                line = f"  {lpad(model, w_model)}{lpad(provider, w_provider)}{cnt_colored}"
-            print(line)
+                t.add_row({
+                    "model": model,
+                    "provider": provider,
+                    "msgs": cnt,
+                })
         if by_tool:
-            print()
+            last_tool = tool
+
+    for line in t.render():
+        print(line)
+    print()
 
     n_tools = len(raw)
     n_models = len({m for entries in raw.values() for _, m in entries.keys()})
@@ -242,18 +275,41 @@ def cmd_session(args):
 
     print(f"\n{c('bold', 'Recent AI Sessions')}\n")
 
-    w_idx, w_time, w_agent, w_title = 4, 14, 14, 50
-    max_path_len = max(len(s.path.replace(str(Path.home()), "~")) for s in sessions)
-    w_path = max(45, max_path_len + 4)
-
-    hdr = (
-        f"  {'[#]':<{w_idx}} {'LAST ACTIVE':<{w_time}} {'AGENT':<{w_agent}} "
-        f"{'DIRECTORY':<{w_path}} {'TITLE/SUMMARY'}"
+    # Five-column table: IDX | LAST ACTIVE | AGENT | DIRECTORY | TITLE/SUMMARY.
+    #
+    # IDX, TIME, AGENT, TITLE all use ``kind="preformatted"`` with
+    # ``trust_cell_width=True`` because their cells ship pre-coloured
+    # ANSI (bold idx, cyan relative time, green agent, dim title
+    # fallback). Each TIME/AGENT cell is run through ``cpad`` so the
+    # rendered column visible-width never drifts below 14 (mirroring
+    # cmd_list's pre-pad pattern from the cmd_list migration).
+    # DIRECTORY uses ``kind="text"`` because paths are plain — no
+    # ANSI — and ``fit="content"`` so the longest visible path drives
+    # the column width. ``text`` auto-pads cells, so DIRECTORY rows
+    # stay aligned without manual padding.
+    table = Table()
+    table.add_column(
+        "idx", "[#]", width=4,
+        kind="preformatted", trust_cell_width=True,
     )
-    print(c("dim", hdr))
-    print(c("dim", "  " + "─" * (w_idx + w_time + w_agent + w_path + w_title + 3)))
+    table.add_column(
+        "time", "LAST ACTIVE", width=14,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "agent", "AGENT", width=14,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "directory", "DIRECTORY", width=45, fit="content", kind="text",
+    )
+    table.add_column(
+        "title", "TITLE/SUMMARY", width=50, max_width=50,
+        kind="preformatted", trust_cell_width=True,
+    )
 
     now = time.time()
+    home_str = str(Path.home())
     for idx, session in enumerate(sessions, start=1):
         diff = now - (session.timestamp / 1000)
         if diff < 60:
@@ -265,13 +321,28 @@ def cmd_session(args):
         else:
             t_str = f"{int(diff / 86400)}d ago"
 
-        path = session.path.replace(str(Path.home()), "~")
-        title = _display_title(session, w_title)
-        print(
-            f"  [{c('bold', str(idx))}]{' ' * (w_idx - len(str(idx)) - 1)} "
-            f"{c('cyan', t_str):<{w_time + 9}} {c('green', session.agent):<{w_agent + 9}} "
-            f"{path:<{w_path}} {title}"
-        )
+        path = session.path.replace(home_str, "~")
+        # IDX cell: ``[BOLD<N>]`` padded to width=4. ``trust_cell_width``
+        # skips renderer pad so we manually pad for column-grid alignment.
+        bold_idx = c("bold", str(idx))
+        idx_cell = f"[{bold_idx}]" + " " * max(0, 4 - len(str(idx)) - 2)
+        # TIME/AGENT cells go through ``cpad`` (coloured + literal-space
+        # pad to width) — this is the cmd_list migration's pre-pad
+        # pattern generalised. TITLE has multiple visual flavours
+        # (plain text OR dim fallback) so we add the pad outside cpad to
+        # keep the dim wrap contiguous.
+        title_raw = _display_title(session, 50)
+        title = title_raw + " " * max(0, 50 - visible_len(title_raw))
+        table.add_row({
+            "idx": idx_cell,
+            "time": cpad("cyan", t_str, 14),
+            "agent": cpad("green", session.agent, 14),
+            "directory": path,
+            "title": title,
+        })
+
+    for line in table.render():
+        print(line)
     print()
     if search:
         print(c("dim", f"  filter: --search {search!r}  ·  {len(sessions)} match(es)"))
