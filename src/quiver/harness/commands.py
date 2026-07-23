@@ -7,11 +7,12 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, lpad, truncate, visible_len
+from quiver.console import c, truncate, visible_len
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.harness.stars import is_starred, load_stars, toggle_star, unstar
 from quiver.harness.tools import extract_version_number, is_installed, live_version
 from quiver.prompt import read_line
+from quiver.table import Table
 
 
 def _session_counts_100d():
@@ -31,11 +32,6 @@ def _sort_tools(tools: dict, counts: dict[str, int], stars: list[str]):
         return (1, 0, -counts.get(name, 0), name)
 
     return sorted(tools.items(), key=key)
-
-
-def _pad(text: str, width: int) -> str:
-    """Pad plain text to width (ANSI-safe via lpad when colored)."""
-    return lpad(text, width)
 
 
 def cmd_list(args):
@@ -62,13 +58,16 @@ def cmd_list(args):
 
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
-    w_name, w_cmd, w_ver, w_alias, w_sess, w_rate, w_desc = 16, 18, 12, 12, 8, 14, 36
-    hdr = (
-        f"  {'':2}{'NAME':<{w_name}} {'COMMAND':<{w_cmd}} {'VERSION':<{w_ver}}"
-        f" {'ALIASES':<{w_alias}} {'100d':>{w_sess}} {'RATE':<{w_rate}} {'INST':<4} DESCRIPTION"
-    )
-    print(c("dim", hdr))
-    print(c("dim", "  " + "─" * (112 + w_rate + 1)))
+    table = Table()
+    table.add_column("mark", "", width=2, kind="preformatted")
+    table.add_column("name", "NAME", width=16, kind="text")
+    table.add_column("command", "COMMAND", width=18, kind="text")
+    table.add_column("version", "VERSION", width=12, kind="text")
+    table.add_column("aliases", "ALIASES", width=12, kind="list", color="cyan", empty="—")
+    table.add_column("sess", "100d", width=8, kind="preformatted", empty="—")
+    table.add_column("rate", "RATE", width=14, kind="preformatted", trust_cell_width=True)
+    table.add_column("inst", "INST", width=4, kind="preformatted")
+    table.add_column("desc", "DESCRIPTION", width=36, kind="text")
 
     shown_starred = False
     for name, info in _sort_tools(tools, counts, stars):
@@ -77,57 +76,61 @@ def cmd_list(args):
 
         installed = is_installed(info["command"])
         status = c("green", "✓") if installed else c("red", "✗")
-        ver = truncate(info.get("version") or "—", w_ver)
-        aliases = ", ".join(a for a in info.get("aliases", []) if a != name)
-        desc_plain = truncate(info.get("description", ""), w_desc)
-        # 0 when a session parser exists but found nothing; — when untracked
+        ver = truncate(info.get("version") or "—", 12)
+        aliases = [a for a in info.get("aliases", []) if a != name]
+        desc_text = info.get("description", "")
+
+        # Prepend 1 space to desc so the visible gap before DESCRIPTION
+        # is 3 chars (Table's column_gap=2 + 1 prepend = 3), matching
+        # the pre-migration visual.
+        desc_padded = " " + truncate(desc_text, 35)
+
+        # Session column: 3 visual states (absent=dim em-dash,
+        # present-zero=dim digit, positive=green digit). All are
+        # right-aligned within the 8-char width.
         if name in counts:
-            sess = counts.get(name, 0)
-            sess_plain = str(sess)
-            sess_known = True
+            sess_n = counts.get(name, 0)
+            sess_cell = (
+                c("green", f"{sess_n:>8}") if sess_n > 0
+                else c("dim", f"{sess_n:>8}")
+            )
         else:
-            sess = 0
-            sess_plain = "—"
-            sess_known = False
+            sess_cell = c("dim", f"{'—':>8}")
+
         favourited = name in starred_set
-
-        # Rate limit column (preserve ANSI colors while padding)
-        rl = rate_limits.get(name)
-        if rl:
-            rate_str = rl.format_column()
-        else:
-            rate_str = c("dim", "—")
-        rate_pad = w_rate - visible_len(rate_str)
-        rate_col = rate_str + " " * max(rate_pad, 0)
-
+        accent = None
         if favourited:
             shown_starred = True
-            mark = c("neon_pink", "★")
-            name_s = c("neon", _pad(name, w_name))
-            cmd_s = c("neon", _pad(info["command"], w_cmd))
-            ver_s = c("neon", _pad(ver, w_ver))
-            alias_s = c("neon", _pad(aliases, w_alias))
-            sess_s = c("neon", f"{sess_plain:>{w_sess}}")
-            rate_s = c("neon", rate_col)
-            desc_s = c("neon", desc_plain)
-            border = c("neon", "║")
-            print(
-                f"{border}{mark} {name_s} {cmd_s} {ver_s} {alias_s} {sess_s} {rate_s} {status}   {desc_s}{border}"
-            )
+            mark_cell = c("neon_pink", " \u2605")  # 1 space + ★ = 2 visible (matches column width)
+            accent = "neon"
         else:
-            mark = " "
-            name_s = c("bold", _pad(name, w_name))
-            if sess_known and sess > 0:
-                sess_col = c("green", f"{sess_plain:>{w_sess}}")
-            else:
-                sess_col = c("dim", f"{sess_plain:>{w_sess}}")
-            print(
-                f"  {mark} {name_s} {info['command']:<{w_cmd}}"
-                f" {ver:<{w_ver}} {c('cyan', _pad(aliases, w_alias))} "
-                f"{sess_col}"
-                f" {rate_col}"
-                f" {status}   {c('dim', desc_plain)}"
-            )
+            mark_cell = "  "  # 2 spaces of plain indent
+
+        # Inst cell: padded status glyph (visible_width(status)=1).
+        inst_cell = status + " " * max(0, 4 - visible_len(status))
+
+        # Rate cell: format_column returns its own ANSI-coloured,
+        # already-width-aligned string (e.g. "30% 5d12h"); trust it.
+        rl = rate_limits.get(name)
+        rate_cell = rl.format_column() if rl else c("dim", "—")
+
+        table.add_row(
+            {
+                "mark": mark_cell,
+                "name": name,
+                "command": info["command"],
+                "version": ver,
+                "aliases": aliases,
+                "sess": sess_cell,
+                "rate": rate_cell,
+                "inst": inst_cell,
+                "desc": desc_padded,
+            },
+            accent=accent,
+        )
+
+    for line in table.render():
+        print(line)
 
     print()
     n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
