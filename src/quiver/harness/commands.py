@@ -58,7 +58,7 @@ def cmd_list(args):
 
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
-    table = Table()
+    table = Table(column_gap=" │ ")
     table.add_column("mark", "", width=2, kind="preformatted")
     table.add_column("name", "NAME", width=16, kind="text")
     table.add_column("command", "COMMAND", width=18, kind="text")
@@ -80,10 +80,10 @@ def cmd_list(args):
         aliases = [a for a in info.get("aliases", []) if a != name]
         desc_text = info.get("description", "")
 
-        # Prepend 1 space to desc so the visible gap before DESCRIPTION
-        # is 3 chars (Table's column_gap=2 + 1 prepend = 3), matching
-        # the pre-migration visual.
-        desc_padded = " " + truncate(desc_text, 35)
+        # desc cell now sits behind the explicit " | " separator, so
+        # no extra prepend is needed - Table renders `cell | cell`
+        # directly with the gap string itself providing the visual gap.
+        desc_padded = truncate(desc_text, 36)
 
         # Session column: 3 visual states (absent=dim em-dash,
         # present-zero=dim digit, positive=green digit). All are

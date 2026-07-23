@@ -150,6 +150,60 @@ class TableCustomKindTest(unittest.TestCase):
 
 
 class TableHeaderSeparatorTest(unittest.TestCase):
+    def test_string_column_gap_renders_as_visible_border(self):
+        """Opt-in border mode: Table(column_gap="|") emits "cell|cell".
+
+        Backward-compat: the int default (2) produces the space-only gap.
+        String form places the literal characters between every column
+        AND keeps the dash-divider total aligned (the math uses
+        visible_len of the gap string, not byte length, so ANSI-painted
+        gaps still work).
+        """
+        GAP = "|"  # use the same ASCII pipe in the assertion as in the ctor
+        table = Table(column_gap=GAP)
+        table.add_column("a", "A", width=3)
+        table.add_column("b", "B", width=3)
+        table.add_column("c", "C", width=3)
+        table.add_row({"a": "x", "b": "y", "c": "z"})
+        lines = table.render()
+        # Header: dim "A   |B   |C   " (cell width=3, gap="|")
+        plain_header = strip_ansi(lines[0])
+        self.assertIn(GAP, plain_header,
+            f"visible-bar missing from header: {plain_header!r}")
+        # Cells are text-kind pad to width=3 ("x  ") joined by "|"
+        # between columns. Strip ANSI, strip trailing whitespace, and
+        # split on the gap char to verify segments + ordering.
+        plain_row = strip_ansi(lines[-1])
+        segments = plain_row.split(GAP)
+        self.assertEqual(["x  ", "y  ", "z  "], segments,
+            f"row cells not joined by the visible border: {plain_row!r}")
+        # The sep-line total visible length must include the gap widths.
+        # 3 cells of width 3 + 2 gaps of visible_len("|") = 11.
+        sep_plain = strip_ansi(lines[1])
+        self.assertEqual(11, visible_len(sep_plain),
+            f"separator width drifted: {sep_plain!r} (len={visible_len(sep_plain)})")
+
+    def test_string_column_gap_with_ansi_escapes(self):
+        """Gap strings carrying ANSI escapes: visible_len math holds.
+
+        _column_gap_width is computed via visible_len, so the dash
+        divider total stays correct when the gap carries a dim colour
+        (e.g. c("dim", " \u2502 ") → visible length 3).
+        """
+        gap = c("dim", " \u2502 ")        # explicit \u2502 to match the source emitter
+        expected_plain_gap = " \u2502 "   # what strip_ansi'd gap looks like
+        table = Table(column_gap=gap)
+        table.add_column("a", "A", width=3)
+        table.add_column("b", "B", width=3)
+        table.add_row({"a": "x", "b": "y"})
+        lines = table.render()
+        plain_row = strip_ansi(lines[-1])
+        # Use slice to compare exactly: "x  " (3 chars) + gap (3 chars) + "y  " (3 chars) = 9
+        self.assertEqual("x  " + expected_plain_gap + "y  ", plain_row,
+            f"row layout drifted: {plain_row!r}")
+        # Separator visible length: 3 + 3 + visible_len(gap)=3 = 9.
+        self.assertEqual(9, visible_len(strip_ansi(lines[1])))
+
     def test_separator_matches_total_width(self):
         t = Table()
         t.add_column("a", "A", width=6, fit="fixed")

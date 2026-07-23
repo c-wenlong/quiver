@@ -155,6 +155,9 @@ class CmdListHeaderTest(unittest.TestCase):
     def test_name_column_position_matches_across_starred_and_unstarred(self):
         # The migration's whole reason for existing: starred and unstarred
         # rows MUST put the tool name at the same visible column index.
+        # With the visible-border column_gap=" | " (3 visible chars per
+        # gap) enabled in cmd_list, both rows must still land the tool
+        # name at the same offset — now column 5 (mark=2 + gap=3).
         # This test needs claude starred — override load_stars locally
         # without disturbing the class-level setUp.
         with patch("quiver.harness.commands.load_stars", return_value=["claude"]):
@@ -167,16 +170,17 @@ class CmdListHeaderTest(unittest.TestCase):
             line for line in output.split("\n")
             if "codex" in strip_ansi(line) and "\u2605" not in strip_ansi(line)
         )
-        # Both rows have mark cell width=2 + col_gap=2 = 4 leading chars
-        # before the tool-name. If the mark cell grows (round-1 bug) or
-        # the col_gap drifts, the offsets differ.
-        starred_plain = strip_ansi(starred_row)
-        unstarred_plain = strip_ansi(unstarred_row)
-        self.assertEqual(
-            starred_plain.find("claude"), unstarred_plain.find("codex"),
-            f"starred ({starred_plain.find('claude')!r}) and unstarred "
-            f"({unstarred_plain.find('codex')!r}) tool-name offsets diverge",
-        )
+        # Both rows should land their respective tool name at column 5
+        # (mark width=2 + visible-border gap visible_len=3). Pin the
+        # literal offset AND assert equality between rows so a future
+        # gap change can't drift silently.
+        starred_offset = strip_ansi(starred_row).find("claude")
+        unstarred_offset = strip_ansi(unstarred_row).find("codex")
+        self.assertEqual(5, starred_offset,
+            f"starred row tool-name offset drifted to {starred_offset} (expected 5)")
+        self.assertEqual(starred_offset, unstarred_offset,
+            f"starred ({starred_offset}) and unstarred ({unstarred_offset}) "
+            f"tool-name offsets diverge")
 
 
 class CmdListAccentTest(unittest.TestCase):
@@ -224,12 +228,14 @@ class CmdListRateColumnTest(unittest.TestCase):
         ).format_column()
         rate_visible_len = visible_len(rate_visible)
         rate_end = rate_start + rate_visible_len
-        # Just past the rate cell must be the column_gap (2 spaces), not
-        # padding bled from width=14.
+        # Just past the rate cell must be the visible-border column_gap
+        # " | " (3 visible chars: space + bar + space), NOT padding
+        # bled from the column width=14. The Table's opt-in column
+        # border string replaces the 2-space default for cmd_list.
         self.assertEqual(
-            plain[rate_end: rate_end + 2], "  ",
-            f"rate column leaked {visible_len(plain[rate_end:rate_end+2])} chars "
-            f"into gap: {plain[rate_end:rate_end+4]!r}",
+            plain[rate_end: rate_end + 3], " \u2502 ",
+            f"rate column leaked padding into border gap: "
+            f"{plain[rate_end:rate_end+5]!r}",
         )
 
 
