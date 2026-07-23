@@ -44,9 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `count_threshold`, `list`, `timestamp`, `preformatted`. ANSI-safe width
   math (cells painted with ``c(...)`` are stripped before byte-truncating,
   so colour never bleeds across column gaps). Header + ``─`` separator
-  auto-sized to the table's total visible width. Migration of existing
-  ``cmd_*`` handlers is opt-in per file; none of the four current
-  ``cmd_list`` handlers have been migrated yet.
+  auto-sized to the table's total visible width.
+- **`swe list` migrated to the new `quiver.table.Table` component.**
+  Replaced the hand-rolled `f"{...:<{w}}"` string interpolation with a
+  single 9-column `Table().add_column(...).add_row(..., accent=...)`
+  build, removing the favourited-vs-unfavourited print-loop divergence.
+  Starred rows pass `accent="neon"` (rows 1–3 are prefix-pinned); the
+  RATE column uses `trust_cell_width=True` so `RateLimitInfo.format_column()`
+  controls its own width without Table re-padding. 12 new tests in
+  `tests/test_harness_commands.py` pin the migrated layout: header
+  column order, separator-width alignment with header, starred vs.
+  unstarred row NAME alignment at the same visible column index (the
+  whole reason for the migration), sentinel `_text`-strip-ANSI safety,
+  three-state SESS coloring, green/red INST glyphs, sort order
+  preservation, and tag-filter behavior.
 
 ### Changed
 
