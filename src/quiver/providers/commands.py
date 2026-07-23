@@ -342,12 +342,55 @@ def cmd_info(args: list[str]) -> int:
             "-" if not row or row["masked"] == "-" else c("green", row["masked"]),
         ),
     ]
-    for label, val in rows_out:
-        print(f"  {'  ' + label + ':':<20} {val}")
-
     if row and row["key_file"]:
         path_display = _display_keys_dir(Path(row["key_file"]))
-        print(f"  {'  Key file:':<20} {c('cyan', path_display)}")
+        rows_out.append(("Key file", c("cyan", path_display)))
+
+    # Migrate from hand-rolled ``f"{...:<20} {val}"`` to a 2-column
+    # Table. ``column_gap=1`` preserves the original 1-space gap
+    # between the right-padded label box and the value. The label
+    # column width is pre-measured to ``max(len("  LABEL:"))`` so
+    # it is exactly wide enough to fit the longest label (no wasted
+    # whitespace on rows whose label is short, mirroring the
+    # cmd_list PROVIDER pre-measure pattern). All cells use
+    # ``kind="preformatted"`` + ``trust_cell_width=True`` so ANSI
+    # (cyan labels, green ``Key status``, cyan ``Key file`` path)
+    # flows through Table unmodified.
+    FIELD_OUTER_PAD = 2
+    FIELD_INNER_PAD = 2  # mirrors the original ``"  ' + label + ':'"``
+    FIELD_GAP = 1  # 1-char gap between label cell and value cell
+    label_cell_width = max(
+        len(" " * FIELD_INNER_PAD + lbl + ":") for lbl, _ in rows_out
+    )
+
+    table = Table(column_gap=FIELD_GAP)
+    table.add_column(
+        "label", " ", width=label_cell_width,
+        kind="preformatted", trust_cell_width=True,
+    )
+    # Value column uses fit="content", which does
+    # ``max(col.width, observed)`` so width=0 is fine (the
+    # observed visible_len of the longest value cell drives the
+    # column width at render time).
+    table.add_column(
+        "value", " ", width=0, fit="content",
+        kind="preformatted", trust_cell_width=True,
+    )
+
+    for lbl, val in rows_out:
+        label_text = (" " * FIELD_INNER_PAD) + lbl + ":"
+        # ljust the plain label text to label_cell_width with plain
+        # spaces BEFORE colour-wrapping so the cyan ANSI encloses the
+        # full padded width — visible_len(c(label_text.ljust(w))) = w.
+        label_cell = c("cyan", label_text.ljust(label_cell_width))
+        table.add_row({"label": label_cell, "value": str(val)})
+
+    # Render body rows only — cmd_info is a single-provider
+    # definition list, not a multi-row comparison, so a header +
+    # separator offers no anchoring value.
+    rendered = table.render()
+    for line in rendered[2:]:
+        print(" " * FIELD_OUTER_PAD + line)
 
     if row and not row.get("raw_key") and row["key_file"]:
         print()
