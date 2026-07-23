@@ -92,10 +92,12 @@ def parse_jsonl_projects(config: JsonlParserConfig) -> list[Session]:
 def _parse_nested(base: str, config: JsonlParserConfig) -> list[Session]:
     sessions: list[Session] = []
     try:
-        for name in os.listdir(base):
-            proj = os.path.join(base, name)
-            if not os.path.isdir(proj):
+        # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+        for name_entry in os.scandir(base):
+            if not name_entry.is_dir():
                 continue
+            proj = name_entry.path
+            name = name_entry.name
             if config.project_filter and not config.project_filter(name, proj):
                 continue
             fallback_path = ""
@@ -162,10 +164,12 @@ def _parse_session_dirs(base: str, config: JsonlParserConfig) -> list[Session]:
     """base/<project>/[chats_subdir/]<session_id>/(primary jsonl)."""
     sessions: list[Session] = []
     try:
-        for proj_name in os.listdir(base):
-            proj = os.path.join(base, proj_name)
-            if not os.path.isdir(proj):
+        # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+        for proj_entry in os.scandir(base):
+            if not proj_entry.is_dir():
                 continue
+            proj = proj_entry.path
+            proj_name = proj_entry.name
             if config.project_filter and not config.project_filter(proj_name, proj):
                 continue
             fallback = ""
@@ -181,10 +185,12 @@ def _parse_session_dirs(base: str, config: JsonlParserConfig) -> list[Session]:
             )
             if not os.path.isdir(sessions_root):
                 continue
-            for sid in os.listdir(sessions_root):
-                sess_dir = os.path.join(sessions_root, sid)
-                if not os.path.isdir(sess_dir):
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            for sid_entry in os.scandir(sessions_root):
+                if not sid_entry.is_dir():
                     continue
+                sess_dir = sid_entry.path
+                sid = sid_entry.name
                 jsonl_files = _list_jsonl(sess_dir, config)
                 if not jsonl_files:
                     continue
@@ -218,10 +224,12 @@ def _parse_index_jsonl(base: str, config: JsonlParserConfig) -> list[Session]:
     """base/<project>/index.jsonl — each line describes a session."""
     sessions: list[Session] = []
     try:
-        for proj_name in os.listdir(base):
-            proj = os.path.join(base, proj_name)
-            if not os.path.isdir(proj):
+        # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+        for proj_entry in os.scandir(base):
+            if not proj_entry.is_dir():
                 continue
+            proj = proj_entry.path
+            proj_name = proj_entry.name
             if config.project_filter and not config.project_filter(proj_name, proj):
                 continue
             index_path = os.path.join(proj, config.index_basename)
@@ -363,7 +371,9 @@ def _title_from_jsonl(fp: str, config: JsonlParserConfig) -> str:
 def _list_jsonl(directory: str, config: JsonlParserConfig) -> list[str]:
     out: list[str] = []
     try:
-        for name in os.listdir(directory):
+        # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+        for name_entry in os.scandir(directory):
+            name = name_entry.name
             if not name.endswith(".jsonl"):
                 continue
             if name in config.skip_basenames:
@@ -372,7 +382,7 @@ def _list_jsonl(directory: str, config: JsonlParserConfig) -> list[str]:
                 continue
             if name == config.index_basename and config.mode == "index_jsonl":
                 continue
-            out.append(os.path.join(directory, name))
+            out.append(name_entry.path)
     except Exception:
         pass
     return out
