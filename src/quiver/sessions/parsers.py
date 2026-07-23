@@ -484,60 +484,62 @@ def parse_cursor():
         home = os.path.expanduser("~")
         try:
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-            for enc_entry in os.scandir(projects_dir):
-                transcripts_dir = os.path.join(enc_entry.path, "agent-transcripts")
-                if not os.path.isdir(transcripts_dir):
-                    continue
-                for uuid_entry in os.scandir(transcripts_dir):
-                    if not uuid_entry.is_dir():
+            with os.scandir(projects_dir) as enc_entry_it:
+                for enc_entry in enc_entry_it:
+                    transcripts_dir = os.path.join(enc_entry.path, "agent-transcripts")
+                    if not os.path.isdir(transcripts_dir):
                         continue
-                    jsonl_path = os.path.join(uuid_entry.path, f"{uuid_entry.name}.jsonl")
-                    if not os.path.isfile(jsonl_path):
-                        continue
-                    mtime = get_mtime(jsonl_path)
-                    if mtime == 0:
-                        continue
-                    title = ""
-                    all_paths: list[str] = []
-                    try:
-                        with open(jsonl_path) as f:
-                            for line in f:
-                                if not line.strip():
-                                    continue
-                                data = json.loads(line)
-                                role = data.get("role", "")
-                                content = data.get("message", {}).get("content", "")
-                                if role == "user" and not title:
-                                    title = clean_title(extract_user_text(content), 80)
-                                if isinstance(content, list):
-                                    for block in content:
-                                        inp = block.get("input", {})
-                                        if isinstance(inp, dict):
-                                            p = inp.get("path", "")
-                                            if p and p.startswith(home):
-                                                all_paths.append(p)
-                                if title and len(all_paths) >= 5:
-                                    break
-                    except Exception:
-                        pass
-                    path = ""
-                    if all_paths:
-                        try:
-                            path = os.path.commonpath(all_paths)
-                        except ValueError:
-                            pass
-                    if not path:
-                        path = enc_dir
-                    sessions.append(
-                        Session(
-                            timestamp=mtime,
-                            agent="Cursor",
-                            path=path,
-                            title=title,
-                            session_id=uuid_dir,
-                            tool_name="cursor",
-                        )
-                    )
+                    with os.scandir(transcripts_dir) as uuid_entry_it:
+                        for uuid_entry in uuid_entry_it:
+                            if not uuid_entry.is_dir():
+                                continue
+                            jsonl_path = os.path.join(uuid_entry.path, f"{uuid_entry.name}.jsonl")
+                            if not os.path.isfile(jsonl_path):
+                                continue
+                            mtime = get_mtime(jsonl_path)
+                            if mtime == 0:
+                                continue
+                            title = ""
+                            all_paths: list[str] = []
+                            try:
+                                with open(jsonl_path) as f:
+                                    for line in f:
+                                        if not line.strip():
+                                            continue
+                                        data = json.loads(line)
+                                        role = data.get("role", "")
+                                        content = data.get("message", {}).get("content", "")
+                                        if role == "user" and not title:
+                                            title = clean_title(extract_user_text(content), 80)
+                                        if isinstance(content, list):
+                                            for block in content:
+                                                inp = block.get("input", {})
+                                                if isinstance(inp, dict):
+                                                    p = inp.get("path", "")
+                                                    if p and p.startswith(home):
+                                                        all_paths.append(p)
+                                        if title and len(all_paths) >= 5:
+                                            break
+                            except Exception:
+                                pass
+                            path = ""
+                            if all_paths:
+                                try:
+                                    path = os.path.commonpath(all_paths)
+                                except ValueError:
+                                    pass
+                            if not path:
+                                path = enc_dir
+                            sessions.append(
+                                Session(
+                                    timestamp=mtime,
+                                    agent="Cursor",
+                                    path=path,
+                                    title=title,
+                                    session_id=uuid_dir,
+                                    tool_name="cursor",
+                                )
+                            )
         except Exception:
             pass
         return sessions
@@ -871,8 +873,9 @@ def parse_gemini():
         ts = 0.0
         try:
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-            for name_entry in os.scandir(sess_dir):
-                ts = max(ts, get_mtime(name_entry.path))
+            with os.scandir(sess_dir) as name_entry_it:
+                for name_entry in name_entry_it:
+                    ts = max(ts, get_mtime(name_entry.path))
         except Exception:
             pass
         return ts or get_mtime(sess_dir)
@@ -903,46 +906,47 @@ def parse_antigravity():
             return sessions
         try:
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-            for d_entry in os.scandir(brain_dir):
-                if not d_entry.is_dir():
-                    continue
-                mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
-                mtime = 0.0
-                title = ""
-                for mf in mdata_files:
-                    mt = get_mtime(mf)
-                    if mt > mtime:
-                        mtime = mt
+            with os.scandir(brain_dir) as d_entry_it:
+                for d_entry in d_entry_it:
+                    if not d_entry.is_dir():
+                        continue
+                    mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
+                    mtime = 0.0
+                    title = ""
+                    for mf in mdata_files:
+                        mt = get_mtime(mf)
+                        if mt > mtime:
+                            mtime = mt
+                            try:
+                                with open(mf) as f:
+                                    data = json.load(f)
+                                title = data.get("summary", title)
+                            except Exception:
+                                pass
+                    if mtime == 0:
+                        mtime = get_mtime(dp)
+                    path = ""
+                    overview_path = os.path.join(dp, ".system_generated", "logs", "overview.txt")
+                    if os.path.exists(overview_path):
                         try:
-                            with open(mf) as f:
-                                data = json.load(f)
-                            title = data.get("summary", title)
+                            with open(overview_path) as f:
+                                content = f.read()
+                            match = re.search(r'"Cwd":"\\?"([^"\\]+)', content)
+                            if match:
+                                path = match.group(1)
                         except Exception:
                             pass
-                if mtime == 0:
-                    mtime = get_mtime(dp)
-                path = ""
-                overview_path = os.path.join(dp, ".system_generated", "logs", "overview.txt")
-                if os.path.exists(overview_path):
-                    try:
-                        with open(overview_path) as f:
-                            content = f.read()
-                        match = re.search(r'"Cwd":"\\?"([^"\\]+)', content)
-                        if match:
-                            path = match.group(1)
-                    except Exception:
-                        pass
-                if path:
-                    sessions.append(
-                        Session(
-                            timestamp=mtime,
-                            agent="Antigravity",
-                            path=path,
-                            title=title,
-                            session_id="",
-                            tool_name="antigravity",
+                    if path:
+                        sessions.append(
+                            Session(
+                                timestamp=mtime,
+                                agent="Antigravity",
+                                path=path,
+                                title=title,
+                                session_id="",
+                                tool_name="antigravity",
+                            )
                         )
-                    )
         except Exception:
             pass
         return sessions

@@ -93,14 +93,15 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
         try:
             seen: dict[tuple[str, str], int] = {}
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-            for entry in os.scandir(claude_dir):
-                if not entry.is_dir() or not entry.name.startswith("-"):
-                    continue
-                for jsonl in glob.glob(os.path.join(entry.path, "*.jsonl")):
-                    for key, cnt in _scan_jsonl_models(jsonl, 30).items():
-                        seen[key] = seen.get(key, 0) + cnt
-            if seen:
-                raw["claude"] = seen
+            with os.scandir(claude_dir) as entry_it:
+                for entry in entry_it:
+                    if not entry.is_dir() or not entry.name.startswith("-"):
+                        continue
+                    for jsonl in glob.glob(os.path.join(entry.path, "*.jsonl")):
+                        for key, cnt in _scan_jsonl_models(jsonl, 30).items():
+                            seen[key] = seen.get(key, 0) + cnt
+                if seen:
+                    raw["claude"] = seen
         except Exception:
             pass
 
@@ -121,22 +122,24 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
         try:
             seen: dict[tuple[str, str], int] = {}
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-            for entry in os.scandir(freebuff_dir):
-                if not entry.is_dir():
-                    continue
-                chats_dir = os.path.join(entry.path, "chats")
-                if not os.path.exists(chats_dir):
-                    continue
-                # ⚡ Bolt: Using os.scandir to reduce stat syscalls
-                for s_entry in os.scandir(chats_dir):
-                    if not s_entry.is_dir():
+            with os.scandir(freebuff_dir) as entry_it:
+                for entry in entry_it:
+                    if not entry.is_dir():
                         continue
-                    log_path = os.path.join(s_entry.path, "log.jsonl")
-                    if os.path.exists(log_path):
-                        for key, cnt in _scan_jsonl_models(log_path, 50).items():
-                            seen[key] = seen.get(key, 0) + cnt
-            if seen:
-                raw["freebuff"] = seen
+                    chats_dir = os.path.join(entry.path, "chats")
+                    if not os.path.exists(chats_dir):
+                        continue
+                    # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+                    with os.scandir(chats_dir) as s_entry_it:
+                        for s_entry in s_entry_it:
+                            if not s_entry.is_dir():
+                                continue
+                            log_path = os.path.join(s_entry.path, "log.jsonl")
+                            if os.path.exists(log_path):
+                                for key, cnt in _scan_jsonl_models(log_path, 50).items():
+                                    seen[key] = seen.get(key, 0) + cnt
+                if seen:
+                    raw["freebuff"] = seen
         except Exception:
             pass
 
