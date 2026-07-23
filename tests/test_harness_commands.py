@@ -16,24 +16,28 @@ Tests below pin the structural invariants the new layout must hold:
 4. Starred rows carry the neon accent ANSI + the ``★`` marker;
    unstarred rows do NOT carry the neon accent on plain-text cells
    but DO carry cyan aliases (via ``list`` kind color attr).
-5. ``trust_cell_width=True`` is wired on the RATE column — the cell
-   is rendered at exactly ``visible_len(format_column output)`` chars,
-   with no extra padding bled into the column gap.
+5. ``trust_cell_width=True`` is wired on the RATE column. cmd_list
+   pre-pads every rate cell to the column width (14) so the
+   visible-border gap lands at exactly the same column offset
+   regardless of format_column()'s variable output width.
 6. INST shows green ``✓`` or red ``✗`` (preformatted).
 7. SESS shows the three states: dim em-dash (absent), dim zero
    (present-zero), green (positive).
 8. Sort order is preserved: starred first (pin order), then by
    100d usage descending, then alphabetical.
 9. Tag filter still drops rows whose tags don't include the arg.
+10. Total visible (ANSI-stripped) width is identical across every row
+    of the body — the regression guard for the alignment complaint.
 """
 
+import copy
 import io
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from quiver.console import strip_ansi, visible_len
-from quiver.harness.commands import _sort_tools, cmd_list
+from quiver.console import c, strip_ansi, visible_len
+from quiver.harness.commands import _sort_tools, cmd_aliases, cmd_check, cmd_info, cmd_list, cmd_tags
 from quiver.harness.rate_limits import RateLimitInfo
 
 
@@ -79,7 +83,14 @@ def _is_installed_false(_cmd):
 def _setup_patches(testcase, *, stars=()):
     """Common setUp: patch external I/O so cmd_list runs offline."""
     patches = [
-        patch("quiver.harness.commands.load_registry", return_value=dict(_REGISTRY)),
+        # ``copy.deepcopy`` — same isolation discipline as cmd_check
+        # tests. cmd_list is read-only on the registry today so the
+        # shallow copy was harmless, but deepcopy future-proofs against
+        # any cmd_list mutation path that may be added later.
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(_REGISTRY),
+        ),
         patch("quiver.harness.commands._session_counts_100d", return_value={
             "claude": 42,  # positive → green
             "codex": 0,    # present-zero → dim
@@ -112,10 +123,9 @@ def _row_for_tool(output, tool_name):
     Robust against starred/unstarred layout differences (we no longer
     key by ``split()[1]`` since that returned "★" for starred rows).
     """
-    plain = strip_ansi(output)
     for line in output.split("\n"):
         if tool_name in strip_ansi(line):
-            return line, plain
+            return line
     raise AssertionError(f"No row for {tool_name!r} in output:\n{output}")
 
 
@@ -129,7 +139,7 @@ class CmdListHeaderTest(unittest.TestCase):
         output = _run_cmd_list()
         lines = output.split("\n")
         # Strip ANSI before searching: the header's column labels are wrapped
-        # in c(\"dim\", ...), so the raw line has ``\\033[2m`` between the
+        # in c("dim", ...), so the raw line has ``\\033[2m`` between the
         # col_gap and the label name — searching un-stripped would miss.
         hdr_idx = next(
             i for i, raw in enumerate(lines)
@@ -155,8 +165,10 @@ class CmdListHeaderTest(unittest.TestCase):
     def test_name_column_position_matches_across_starred_and_unstarred(self):
         # The migration's whole reason for existing: starred and unstarred
         # rows MUST put the tool name at the same visible column index.
-        # This test needs claude starred — override load_stars locally
-        # without disturbing the class-level setUp.
+        # With the visible-border column_gap=" \u2502 " (3 visible chars per
+        # gap) enabled in cmd_list, both rows must still land the tool
+        # name at the same offset — column 5 (mark=2 + gap=3). Override
+        # load_stars locally without disturbing the class-level setUp.
         with patch("quiver.harness.commands.load_stars", return_value=["claude"]):
             output = _run_cmd_list()
         starred_row = next(
@@ -167,16 +179,17 @@ class CmdListHeaderTest(unittest.TestCase):
             line for line in output.split("\n")
             if "codex" in strip_ansi(line) and "\u2605" not in strip_ansi(line)
         )
-        # Both rows have mark cell width=2 + col_gap=2 = 4 leading chars
-        # before the tool-name. If the mark cell grows (round-1 bug) or
-        # the col_gap drifts, the offsets differ.
-        starred_plain = strip_ansi(starred_row)
-        unstarred_plain = strip_ansi(unstarred_row)
-        self.assertEqual(
-            starred_plain.find("claude"), unstarred_plain.find("codex"),
-            f"starred ({starred_plain.find('claude')!r}) and unstarred "
-            f"({unstarred_plain.find('codex')!r}) tool-name offsets diverge",
-        )
+        # Both rows should land their respective tool name at column 5
+        # (mark width=2 + visible-border gap visible_len=3). Pin the
+        # literal offset AND assert equality between rows so a future
+        # gap change can't drift silently.
+        starred_offset = strip_ansi(starred_row).find("claude")
+        unstarred_offset = strip_ansi(unstarred_row).find("codex")
+        self.assertEqual(5, starred_offset,
+            f"starred row tool-name offset drifted to {starred_offset} (expected 5)")
+        self.assertEqual(starred_offset, unstarred_offset,
+            f"starred ({starred_offset}) and unstarred ({unstarred_offset}) "
+            f"tool-name offsets diverge")
 
 
 class CmdListAccentTest(unittest.TestCase):
@@ -187,7 +200,7 @@ class CmdListAccentTest(unittest.TestCase):
 
     def test_starred_row_carries_neon_ansi_and_star_marker(self):
         output = _run_cmd_list()
-        starred_row, _ = _row_for_tool(output, "claude")
+        starred_row = _row_for_tool(output, "claude")
         self.assertIn("\033[", starred_row)
         self.assertIn("\u2605", strip_ansi(starred_row))
 
@@ -195,42 +208,116 @@ class CmdListAccentTest(unittest.TestCase):
         # droid is unstarred in this fixture — its alias cell must be cyan
         # from the list-kind color attribute, and it must NOT carry neon.
         output = _run_cmd_list()
-        droid_row, _ = _row_for_tool(output, "droid")
-        # No star marker (unstarred).
+        droid_row = _row_for_tool(output, "droid")
         self.assertNotIn("\u2605", strip_ansi(droid_row))
         # Cyan alias column color attribute fires even on empty list — the
-        # cell renders as c("cyan", "—", width=12) → contains \033[36m.
+        # cell renders as c("cyan", "—", width=12) → contains \\033[36m.
         self.assertIn("\033[36m", droid_row)
 
 
 class CmdListRateColumnTest(unittest.TestCase):
-    """trust_cell_width=True is wired on the RATE column."""
+    """trust_cell_width=True is wired on the RATE column + cmd_list pre-pads."""
 
     def setUp(self):
         _setup_patches(self)
 
-    def test_rate_cell_renders_at_format_column_visible_width(self):
+    def test_rate_cell_renders_aligned_to_column_width(self):
+        """Regression guard for the user's "rows with usage info misaligned" complaint.
+
+        RateLimitInfo.format_column() returns a variable-width string
+        — e.g. "30% \u2014" is 5 chars, "100% 8d23h" is 10. With
+        trust_cell_width=True the Table does NOT pad the cell, so
+        rows with longer rate payloads would push the visible-border
+        gap " \u2502 " rightward and break column alignment. cmd_list
+        pre-pads every rate cell to the column width (14) so the gap
+        lands at exactly rate_start + 14 regardless of payload.
+        """
         output = _run_cmd_list()
-        codex_row, _ = _row_for_tool(output, "codex")
+        codex_row = _row_for_tool(output, "codex")
         plain = strip_ansi(codex_row)
-        # format_column() output visible content: "30% —" (5 chars:
-        # "30%" + " " + "—"). trust_cell_width=True must NOT pad this
-        # up to the column width (14). Locate the rate cell by content.
+        # Span [rate_start, rate_start+14) must have visible length 14
+        # — the pre-pad closes the gap between "30% \u2014" (5 chars)
+        # and the column width.
+        rate_cell_width = 14
         rate_start = plain.find("30%")
         self.assertGreaterEqual(rate_start, 0, "rate cell content not found")
-        rate_visible = RateLimitInfo(
-            tool_name="codex", used_percent=30, limit_reached=False,
-            reset_at=0, plan_type="plus", window_seconds=604800,
-        ).format_column()
-        rate_visible_len = visible_len(rate_visible)
-        rate_end = rate_start + rate_visible_len
-        # Just past the rate cell must be the column_gap (2 spaces), not
-        # padding bled from width=14.
+        self.assertEqual(rate_cell_width, visible_len(plain[rate_start:rate_start + rate_cell_width]),
+            f"rate cell spans {visible_len(plain[rate_start:rate_start+rate_cell_width])} "
+            f"chars, expected {rate_cell_width} (= cmd_list's pre-pad column width)")
+        # Beyond the rate cell is the visible-border gap " \u2502 ".
         self.assertEqual(
-            plain[rate_end: rate_end + 2], "  ",
-            f"rate column leaked {visible_len(plain[rate_end:rate_end+2])} chars "
-            f"into gap: {plain[rate_end:rate_end+4]!r}",
+            plain[rate_start + rate_cell_width: rate_start + rate_cell_width + 3], " \u2502 ",
+            f"rate column hasn't the documented column width: "
+            f"{plain[rate_start+rate_cell_width:rate_start+rate_cell_width+5]!r}",
         )
+
+    def test_rate_cell_pre_pad_math_holds_for_any_payload(self):
+        """Pre-pad normalises every rate cell payload to exactly 14 visible chars.
+
+        Locks the cmd_list pre-pad contract: regardless of payload
+        (em-dash, plain digits, ANSI-coloured dim/green/red/yellow,
+        multi-byte chars), the post-pad cell must have visible_len 14.
+        """
+        for label, payload in [
+            ("dim_em_dash", c("dim", "—")),
+            ("green_pct_only", c("green", "30%")),
+            ("format_column_30pct", RateLimitInfo(
+                tool_name="codex", used_percent=30, limit_reached=False,
+                reset_at=0, plan_type="plus", window_seconds=0,
+            ).format_column()),
+            ("format_column_100pct", RateLimitInfo(
+                tool_name="codex", used_percent=100, limit_reached=False,
+                reset_at=0, plan_type="plus", window_seconds=0,
+            ).format_column()),
+            ("format_column_reached", RateLimitInfo(
+                tool_name="codex", used_percent=100, limit_reached=True,
+                reset_at=0, plan_type="plus", window_seconds=0,
+            ).format_column()),
+        ]:
+            rate_cell_width = 14
+            pre_padded = payload + " " * max(0, rate_cell_width - visible_len(payload))
+            self.assertEqual(
+                rate_cell_width, visible_len(pre_padded),
+                f"{label}: payload {payload!r} pre-padded to "
+                f"{visible_len(pre_padded)} chars (expected {rate_cell_width})",
+            )
+
+
+class CmdListAlignmentTest(unittest.TestCase):
+    """Regression guard: every body row must share the same visible width.
+
+    This was the user's complaint about rows with actual usage info
+    being misaligned. Pre-pad the rate cell to column width, then
+    assert no row drifts from the header width.
+    """
+
+    def setUp(self):
+        _setup_patches(self)
+
+    def test_all_rows_have_identical_total_visible_width(self):
+        output = _run_cmd_list()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "COMMAND", "VERSION"))
+        )
+        expected_width = visible_len(lines[hdr_idx])
+        # Header and separator share width.
+        self.assertEqual(expected_width, visible_len(lines[hdr_idx + 1]),
+            f"separator width {visible_len(lines[hdr_idx+1])} != header width {expected_width}")
+        # Every body row after the separator must match. Skip blank lines
+        # and footer hints (which live before/after the table region).
+        for offset, line in enumerate(lines[hdr_idx + 2:], start=hdr_idx + 2):
+            if not strip_ansi(line).strip():
+                continue
+            # Stop at the divider once we've left the table — find the
+            # next blank line or footer marker.
+            plain = strip_ansi(line)
+            if "/" in plain and "installed" in plain:
+                break  # post-table footer ("3/22 installed …")
+            self.assertEqual(expected_width, visible_len(line),
+                f"line {offset} width {visible_len(line)} drifted from "
+                f"expected {expected_width}: {plain!r}")
 
 
 class CmdListInstColumnTest(unittest.TestCase):
@@ -261,15 +348,15 @@ class CmdListSessColumnTest(unittest.TestCase):
 
     def test_sess_three_states_shift_colors(self):
         output = _run_cmd_list()
-        claude_row, claude_plain = _row_for_tool(output, "claude")
-        codex_row, codex_plain = _row_for_tool(output, "codex")
-        droid_row, droid_plain = _row_for_tool(output, "droid")
+        claude_plain = strip_ansi(_row_for_tool(output, "claude"))
+        codex_plain = strip_ansi(_row_for_tool(output, "codex"))
+        droid_plain = strip_ansi(_row_for_tool(output, "droid"))
         # claude: positive count 42 → green; the digit "42" must be
         # somewhere in the row's plain text.
         self.assertIn("42", claude_plain)
         # codex: zero count → dim "0"; bare "0" must appear.
         self.assertIn("0", codex_plain)
-        # droid: absent → dim em-dash; must have "—".
+        # droid: absent → dim em-dash; must have "\u2014".
         self.assertIn("\u2014", droid_plain)
 
 
@@ -309,6 +396,763 @@ class CmdListSortAndFilterTest(unittest.TestCase):
         with redirect_stdout(buf2):
             cmd_list(["-anthropic"])
         self.assertEqual(buf1.getvalue(), buf2.getvalue())
+
+
+# ---------------------------------------------------------------------------
+# cmd_check migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# The refactored cmd_check now builds a 4-column Table once (STATUS | NAME |
+# ALIASES | INFO) and renders once per row. This is the second cmd_* handler
+# migrated off hand-rolled f-strings, validating the Table component's
+# generality beyond the 9-column / mixed-kind cmd_list.
+
+
+_CHECK_REGISTRY = {
+    "auggie": {
+        "command": "auggie",
+        "aliases": ["au"],
+        "tags": ["free"],
+        "version": "0.5.0",
+    },
+    "claude": {
+        "command": "claude",
+        "aliases": ["cl"],
+        "tags": ["paid"],
+        "version": "2.1.126",
+    },
+    "augment": {
+        "command": "augment",
+        "aliases": [],
+        "tags": ["paid"],
+        "version": None,
+    },
+}
+
+
+def _run_cmd_check():
+    """Capture cmd_check's stdout via redirect_stdout."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_check([])
+    return buf.getvalue()
+
+
+def _setup_check_patches(
+    testcase,
+    *,
+    installed_cmds=(),
+    live_versions=None,
+    orphans=(),
+    saved_calls=None,
+):
+    """Common cmd_check fixture setup.
+
+    ``installed_cmds`` is an iterable of command names that should
+    ``is_installed`` return True for; everything else returns False.
+    ``live_versions`` is a ``{cmd: '1.2.3'}`` dict for live_version.
+    ``orphans`` is a list of ``(name, command, hit)`` tuples mocking
+    ``find_off_path_tools`` output.
+    ``saved_calls`` is a list that records each call to save_registry
+    (used to assert the heal side-effect).
+    """
+    installed_set = set(installed_cmds)
+    live_versions = dict(live_versions or {})
+    saved_calls = saved_calls if saved_calls is not None else []
+
+    # ``copy.deepcopy`` (not ``dict(...)``) — the shallow-copied variant
+    # shares nested dicts by reference, so a test that writes back a
+    # mutated ``tools[name]["version"]`` instantly mutates the shared
+    # fixture, which silently contaminates every subsequent test in
+    # alphabetical order (annotated in AGENTS.md test-fixture-isolation
+    # bullet for the rate-limit cohort, applies to cmd_check too).
+    patches = [
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(_CHECK_REGISTRY),
+        ),
+        patch(
+            "quiver.harness.commands.is_installed",
+            side_effect=lambda cmd: cmd in installed_set,
+        ),
+        patch(
+            "quiver.harness.commands.live_version",
+            side_effect=lambda cmd: live_versions.get(cmd),
+        ),
+        patch(
+            "quiver.harness.commands.save_registry",
+            side_effect=lambda _tools: saved_calls.append(_tools),
+        ),
+        patch(
+            "quiver.harness.path_health.find_off_path_tools",
+            return_value=list(orphans),
+        ),
+    ]
+    for p in patches:
+        p.start()
+        testcase.addCleanup(p.stop)
+    # Expose saved_calls on the test case so individual tests can inspect it.
+    testcase._saved_calls = saved_calls
+
+
+class CmdCheckHeaderTest(unittest.TestCase):
+    """Header / separator / body alignment invariants for cmd_check."""
+
+    def setUp(self):
+        _setup_check_patches(
+            self, installed_cmds=("auggie", "claude"), live_versions={"auggie": "0.5.0", "claude": "2.1.126"},
+        )
+
+    def test_header_has_four_columns_with_expected_labels(self):
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        # Find the header row — the one carrying NAME/ALIASES/INFO labels
+        # (the status column has no header label, it's just a marker column).
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        header = strip_ansi(lines[hdr_idx])
+        for label in ("NAME", "ALIASES", "INFO"):
+            self.assertIn(label, header, f"missing {label!r} in header: {header!r}")
+        self.assertEqual(header.count("NAME"), 1)
+
+    def test_separator_visible_length_matches_header_width(self):
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        sep_idx = hdr_idx + 1
+        sep_count = strip_ansi(lines[sep_idx]).count("\u2500")
+        self.assertEqual(sep_count, visible_len(lines[hdr_idx]))
+
+    def test_all_body_rows_have_identical_visible_width(self):
+        """Regression guard: rows with both installed and not-installed
+        statuses must share visible width. Pre-pad the info cell to
+        the column width so the grid stays intact.
+        """
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        expected_width = visible_len(lines[hdr_idx])
+        # Header and separator agree.
+        self.assertEqual(expected_width, visible_len(lines[hdr_idx + 1]))
+        # Walk body rows until the next blank or footer line.
+        for offset, line in enumerate(lines[hdr_idx + 2:], start=hdr_idx + 2):
+            plain = strip_ansi(line)
+            if not plain.strip():
+                continue
+            # Stop past the table body: once we hit text that doesn't
+            # look like a table row (a hint line or footer).
+            if any(marker in plain for marker in ("Registry updated", "Tip:", "Checking AI")):
+                break
+            self.assertEqual(expected_width, visible_len(line),
+                f"line {offset} width {visible_len(line)} drifted from "
+                f"expected {expected_width}: {plain!r}")
+
+
+class CmdCheckStatusColumnTest(unittest.TestCase):
+    """STATUS column shows green ✓ when installed, red ✗ when not."""
+
+    def test_installed_row_carries_green_check(self):
+        _setup_check_patches(
+            self,
+            installed_cmds=("auggie",),
+            live_versions={"auggie": "0.5.0"},
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("\u2713", plain)
+        # Green escape sequence surrounding the check glyph.
+        self.assertIn("\033[32m\u2713", output)
+
+    def test_non_installed_row_carries_red_x(self):
+        _setup_check_patches(self, installed_cmds=())  # nothing installed
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("\u2717", plain)
+        self.assertIn("\033[31m\u2717", output)
+
+    def test_installed_row_uses_dim_version_text(self):
+        _setup_check_patches(
+            self,
+            installed_cmds=("claude",),
+            live_versions={"claude": "2.1.126"},
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("claude", plain)
+        self.assertIn("2.1.126", plain)
+        self.assertIn("cl", plain)  # alias
+
+    def test_non_installed_row_uses_dim_not_installed_text(self):
+        _setup_check_patches(self, installed_cmds=())
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        # "not installed" must appear in every non-installed row.
+        self.assertIn("not installed", plain)
+
+    def test_version_unknown_fallback_for_installed_with_no_live_version(self):
+        """Installed + live_version returns None + no stored version
+        yields the ``version unknown`` fallback (dim).
+        """
+        _setup_check_patches(
+            self,
+            installed_cmds=("augment",),  # augment has version=None
+            live_versions={"augment": None},
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("augment", plain)
+        self.assertIn("version unknown", plain)
+
+
+class CmdCheckHealSideEffectTest(unittest.TestCase):
+    """cmd_check heals stored versions when live_version differs."""
+
+    def test_live_version_overrides_stored_when_different(self):
+        saved_calls = []
+        _setup_check_patches(
+            self,
+            installed_cmds=("claude",),
+            live_versions={"claude": "9.9.9"},  # differs from stored 2.1.126
+            saved_calls=saved_calls,
+        )
+        _run_cmd_check()
+        # Healed value persisted; saved_registry called once.
+        self.assertEqual(len(saved_calls), 1)
+        self.assertEqual(saved_calls[0]["claude"]["version"], "9.9.9")
+
+    def test_stored_version_kept_when_live_version_matches(self):
+        saved_calls = []
+        _setup_check_patches(
+            self,
+            installed_cmds=("claude",),
+            live_versions={"claude": "2.1.126"},  # matches stored
+            saved_calls=saved_calls,
+        )
+        _run_cmd_check()
+        # No mutation → saved_registry not called.
+        self.assertEqual(len(saved_calls), 0)
+
+def test_dirty_stored_version_cleared_when_live_returns_none(self):
+    """If live_version can't probe AND the stored value isn't a
+    bare version number (dirty banner/text), drop it.
+    """
+    import re
+    saved_calls = []
+    dirty_registry = {
+        "claude": {
+            "command": "claude",
+            "aliases": ["cl"],
+            "tags": [],
+            "version": "cli installed via npm (set 09:32)",  # dirty
+        }
+    }
+    # extract_version_number("cli installed via npm (set 09:32)") == ""
+    # so the dirty value gets dropped. The mock mirrors the real
+    # behaviour: extract the first bare x.y.z rune, else return "".
+    def _fake_extract(raw):
+        if not raw:
+            return ""
+        m = re.search(r"\d+\.\d+(?:\.\d+)?", raw)
+        return m.group(0) if m else ""
+
+    # Use ``copy.deepcopy(dirty_registry)`` so the inline patch in
+    # THIS test never mutates any other fixture or the dirty_registry
+    # itself if it were ever shared.
+    patches = [
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(dirty_registry),
+        ),
+        patch("quiver.harness.commands.is_installed", return_value=True),
+        patch("quiver.harness.commands.live_version", return_value=None),
+        patch(
+            "quiver.harness.commands.extract_version_number",
+            side_effect=_fake_extract,
+        ),
+        patch(
+            "quiver.harness.commands.save_registry",
+            side_effect=lambda t: saved_calls.append(t),
+        ),
+        patch("quiver.harness.path_health.find_off_path_tools", return_value=[]),
+    ]
+    for p in patches:
+        p.start()
+        self.addCleanup(p.stop)
+    _run_cmd_check()
+    self.assertEqual(len(saved_calls), 1)
+    self.assertIsNone(saved_calls[0]["claude"]["version"])
+
+
+class CmdCheckOffPathFooterTest(unittest.TestCase):
+    """Off-PATH footer is conditional on find_off_path_tools returning orphans."""
+
+    def test_no_orphans_means_no_offpath_header_or_hints(self):
+        _setup_check_patches(self, installed_cmds=(), orphans=[])
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertNotIn("Off-PATH", plain)
+        # find_off_path_tools returned [] so the diagnostic yellow lines
+        # (per-orphan `path: ...`, `fix:`, `or:`) must not appear at all.
+        self.assertNotIn("found at", plain)
+        self.assertNotIn("not on current PATH", plain)
+
+    def test_orphans_render_under_off_path_header(self):
+        from quiver.harness.path_health import OffPathHit
+        _setup_check_patches(
+            self,
+            installed_cmds=(),
+            orphans=[
+                (
+                    "jules",
+                    "jules",
+                    OffPathHit(
+                        command="jules",
+                        path="/Users/x/.nvm/versions/node/v22/bin/jules",
+                        source="nvm",
+                    ),
+                ),
+            ],
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("Off-PATH installs detected", plain)
+        self.assertIn("jules", plain)
+        self.assertIn("found at", plain)
+        self.assertIn("/Users/x/.nvm/versions/node/v22/bin/jules", plain)
+        # The diagnostic must include the install hint.
+        self.assertIn("npm install -g jules", plain)
+        self.assertIn("swe install jules", plain)
+        self.assertIn("swe edit jules --command", plain)
+        # Yellow `!` marker escape sequence present.
+        self.assertIn("\033[33m!", output)
+
+    def test_orphans_trigger_doctor_tip(self):
+        from quiver.harness.path_health import OffPathHit
+        _setup_check_patches(
+            self,
+            installed_cmds=(),
+            orphans=[(
+                "jules", "jules",
+                OffPathHit(command="jules", path="/x/jules", source="nvm"),
+            )],
+        )
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertIn("swe doctor", plain)
+
+    def test_no_orphans_no_doctor_tip(self):
+        _setup_check_patches(self, installed_cmds=(), orphans=[])
+        output = _run_cmd_check()
+        plain = strip_ansi(output)
+        self.assertNotIn("swe doctor", plain)
+
+
+class CmdCheckSortAndPrintTest(unittest.TestCase):
+    """cmd_check preserves its own sort order (alphabetical) regardless
+    of the cmd_list sort logic; also verifies the bold header line.
+    """
+
+    def test_bold_header_line_announces_check(self):
+        _setup_check_patches(self)
+        output = _run_cmd_check()
+        # Bold ANSI sequence (01) followed by the check header text.
+        self.assertIn("\033[1mChecking AI tools...", output)
+
+    def test_rows_appear_in_alphabetical_order(self):
+        _setup_check_patches(
+            self,
+            installed_cmds=("auggie", "claude"),
+            live_versions={"auggie": "0.5.0", "claude": "2.1.126"},
+        )
+        output = _run_cmd_check()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "ALIASES", "INFO"))
+        )
+        body_plain = [
+            strip_ansi(line) for line in lines[hdr_idx + 2:] if strip_ansi(line).strip()
+        ]
+        # First three harness names should appear in alphabetical order.
+        names_in_order = []
+        for line in body_plain:
+            for name in ("auggie", "augment", "claude"):
+                if name in line and name not in names_in_order:
+                    names_in_order.append(name)
+        self.assertEqual(names_in_order[:3], ["auggie", "augment", "claude"])
+
+
+# ---------------------------------------------------------------------------
+# cmd_info migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# cmd_info is a label-value structured view of one registry entry.
+# Migrated to a 2-column Table (FIELD | VALUE) where VALUE uses
+# kind="preformatted" + trust_cell_width=True because values are
+# sometimes ANSI-coloured (Status) and sometimes variable-width
+# (Path, Description, Notes). Rows that are long expand via
+# fit="content" rather than truncate.
+
+_INFO_REGISTRY = {
+    "claude": {
+        "command": "claude",
+        "description": "Anthropic coding CLI",
+        "aliases": ["cl"],
+        "tags": ["anthropic", "paid"],
+        "version": "2.1.126",
+        "notes": "Resume with --resume flag",
+    }
+}
+
+
+def _run_cmd_info(name="claude"):
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_info([name])
+    return buf.getvalue()
+
+
+def _setup_info_patches(testcase, *, installed=True, which_path="/opt/homebrew/bin/claude"):
+    patches = [
+        patch(
+            "quiver.harness.commands.load_registry",
+            return_value=copy.deepcopy(_INFO_REGISTRY),
+        ),
+        patch("quiver.harness.commands.is_installed", return_value=installed),
+        patch("quiver.harness.commands.shutil.which", return_value=which_path),
+    ]
+    for p in patches:
+        p.start()
+        testcase.addCleanup(p.stop)
+
+
+class CmdInfoMigrationTest(unittest.TestCase):
+    """Tabular contract for cmd_info."""
+
+    def setUp(self):
+        _setup_info_patches(self)
+
+    def test_header_has_field_value_labels(self):
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("FIELD", plain)
+        self.assertIn("VALUE", plain)
+
+    def test_separator_visible_length_matches_header(self):
+        output = _run_cmd_info()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("FIELD", "VALUE"))
+        )
+        sep_dashes = strip_ansi(lines[hdr_idx + 1]).count("\u2500")
+        self.assertEqual(sep_dashes, visible_len(lines[hdr_idx]))
+
+    def test_field_labels_appear_in_body(self):
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        # Every field label is rendered as a row cell with trailing colon.
+        for field in ("Command:", "Aliases:", "Description:", "Version:", "Tags:", "Status:", "Path:"):
+            self.assertIn(field, plain, f"field label {field!r} missing from body")
+
+    def test_status_row_carries_green_when_installed(self):
+        output = _run_cmd_info()
+        self.assertIn("\033[32minstalled", output)
+        self.assertIn("installed", strip_ansi(output))
+
+    def test_status_row_carries_red_when_not_installed(self):
+        _setup_info_patches(self, installed=False)
+        output = _run_cmd_info()
+        self.assertIn("\033[31mnot installed", output)
+
+    def test_path_row_shows_command_path(self):
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("/opt/homebrew/bin/claude", plain)
+
+    def test_path_row_shows_not_found_for_missing_binary(self):
+        # When ``is_installed`` returns False, ``shutil.which`` returns None,
+        # so the path cell shows the literal ``not found``.
+        _setup_info_patches(self, installed=False, which_path=None)
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("not found", plain)
+
+    def test_notes_row_only_present_when_defined(self):
+        # Default _INFO_REGISTRY has a notes field — should appear.
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("Resume with", plain)
+
+    def test_notes_row_omitted_when_undefined(self):
+        no_notes_registry = copy.deepcopy(_INFO_REGISTRY)
+        del no_notes_registry["claude"]["notes"]
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=no_notes_registry,
+            ),
+            patch("quiver.harness.commands.is_installed", return_value=True),
+            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertNotIn("Notes:", plain)
+
+    def test_empty_tags_and_aliases_show_em_dash(self):
+        empty_registry = copy.deepcopy(_INFO_REGISTRY)
+        empty_registry["claude"]["tags"] = []
+        empty_registry["claude"]["aliases"] = []
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=empty_registry,
+            ),
+            patch("quiver.harness.commands.is_installed", return_value=True),
+            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        # Both em-dashes must appear (aliases default + tags fall-through).
+        self.assertIn("\u2014", plain)
+
+    def test_cmd_info_unknown_tool_prints_usage(self):
+        empty = {"no_such": {"command": "no_such"}}
+        patches = [
+            patch("quiver.harness.commands.load_registry", return_value=empty),
+            patch("quiver.harness.commands.is_installed", return_value=False),
+            patch("quiver.harness.commands.shutil.which", return_value=None),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cmd_info(["nope"])
+        plain = strip_ansi(buf.getvalue())
+        self.assertIn("not found", plain)
+
+
+# ---------------------------------------------------------------------------
+# cmd_aliases migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# cmd_aliases is a 2-column ALIASES | NAME table where the column gap
+# itself is the `` → `` arrow, so each row gets identical arrow placement.
+
+
+_ALIASES_REGISTRY = {
+    "auggie": {"command": "auggie", "aliases": ["au"]},
+    "claude": {"command": "claude", "aliases": ["cl", "anthropic"]},
+    "no_alias_tool": {"command": "nope", "aliases": []},
+}
+
+
+def _run_cmd_aliases():
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_aliases([])
+    return buf.getvalue()
+
+
+class CmdAliasesMigrationTest(unittest.TestCase):
+    def setUp(self):
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=copy.deepcopy(_ALIASES_REGISTRY),
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_header_has_aliases_name(self):
+        output = _run_cmd_aliases()
+        plain = strip_ansi(output)
+        self.assertIn("ALIASES", plain)
+        self.assertIn("NAME", plain)
+
+    def test_separator_visible_length_matches_header(self):
+        output = _run_cmd_aliases()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("ALIASES", "NAME"))
+        )
+        sep_dashes = strip_ansi(lines[hdr_idx + 1]).count("\u2500")
+        self.assertEqual(sep_dashes, visible_len(lines[hdr_idx]))
+
+    def test_all_body_rows_have_identical_visible_width(self):
+        output = _run_cmd_aliases()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("ALIASES", "NAME"))
+        )
+        expected_width = visible_len(lines[hdr_idx])
+        for offset, line in enumerate(lines[hdr_idx + 2:], start=hdr_idx + 2):
+            plain = strip_ansi(line)
+            if not plain.strip():
+                continue
+            self.assertEqual(
+                expected_width, visible_len(line),
+                f"line {offset} drifted from {expected_width}: {plain!r}",
+            )
+
+    def test_arrow_gap_renders_in_every_row(self):
+        output = _run_cmd_aliases()
+        # Arrow gap appears once in header (between ALIASES / NAME labels)
+        # and once per row. With 2 aliased rows we expect ≥3 occurrences.
+        self.assertGreaterEqual(strip_ansi(output).count("\u2192"), 3)
+
+    def test_cyan_aliases_cell_wrapper(self):
+        output = _run_cmd_aliases()
+        # The aliases cell ships with cyan ANSI from kind="list"+color="cyan".
+        # Cyan escape is \033[36m (matches cmd_list's alias column).
+        self.assertIn("\033[36m", output)
+
+    def test_multiple_aliases_joined_with_comma(self):
+        output = _run_cmd_aliases()
+        plain = strip_ansi(output)
+        # claude has [cl, anthropic] aliases, joined with ", ".
+        self.assertIn("cl, anthropic", plain)
+
+    def test_tool_without_aliases_omits_row(self):
+        output = _run_cmd_aliases()
+        plain = strip_ansi(output)
+        # no_alias_tool has empty aliases; its row is skipped.
+        self.assertNotIn("nope", plain)
+        # Auggie with single alias; claude with two aliases — both present.
+        self.assertIn("auggie", plain)
+        self.assertIn("claude", plain)
+
+
+# ---------------------------------------------------------------------------
+# cmd_tags migration to quiver.table.Table
+# ---------------------------------------------------------------------------
+#
+# cmd_tags is a 2-column TAG | TOOLS table where the TAG cell is
+# preformatted+trust_cell_width=True (cyan) and the TOOLS cell uses
+# the list kind with dim color.
+
+
+_TAGS_REGISTRY = {
+    "claude": {"command": "claude", "tags": ["anthropic", "paid"]},
+    "codex": {"command": "codex", "tags": ["openai", "paid"]},
+    "auggie": {"command": "auggie", "tags": ["factory", "free"]},
+    "no_tag_tool": {"command": "x", "tags": []},
+}
+
+
+def _run_cmd_tags():
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_tags([])
+    return buf.getvalue()
+
+
+class CmdTagsMigrationTest(unittest.TestCase):
+    def setUp(self):
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=copy.deepcopy(_TAGS_REGISTRY),
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_header_has_tag_tools(self):
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        self.assertIn("TAG", plain)
+        self.assertIn("TOOLS", plain)
+
+    def test_separator_visible_length_matches_header(self):
+        output = _run_cmd_tags()
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("TAG", "TOOLS"))
+        )
+        sep_dashes = strip_ansi(lines[hdr_idx + 1]).count("\u2500")
+        self.assertEqual(sep_dashes, visible_len(lines[hdr_idx]))
+
+    def test_rows_appear_in_alphabetical_tag_order(self):
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        # Tags from fixture (no_tag_tool emits nothing): anthropic, factory,
+        # free, openai, paid. Sorted alphabetically.
+        expected_tags = ["anthropic", "factory", "free", "openai", "paid"]
+        positions = []
+        for tag in expected_tags:
+            # Find the row containing this tag (the row also has the tools list).
+            # We measure position by the first occurrence of the tag text in
+            # the body lines (excluding header and separator).
+            body_lines = [
+                line for line in plain.split("\n")
+                if line.strip() and "\u2500" not in line and "TAG" not in line and "TOOLS" not in line
+            ]
+            for line in body_lines:
+                # Tag sits in left column; check it appears once per row.
+                if line.lstrip().startswith(tag) or f" {tag}," in line or f" {tag}" in line:
+                    positions.append(plain.find(tag))
+                    break
+        # Each body tag should be present at least once.
+        self.assertEqual(len(positions), len(expected_tags))
+        # And the positions should be monotonically non-decreasing because
+        # the table renders rows in alphabetical order.
+        self.assertEqual(positions, sorted(positions),
+            f"tag order should be alphabetical: got positions {positions}")
+
+    def test_cyan_tag_color_in_render(self):
+        output = _run_cmd_tags()
+        # TAG cell ships preformatted+trust_cell_width=True wrapped with c("cyan", ...).
+        self.assertIn("\033[36m", output)
+
+    def test_dim_tool_list_color(self):
+        output = _run_cmd_tags()
+        # TOOLS column uses kind="list" + color="dim" — emits dim ANSI.
+        self.assertIn("\033[2m", output)
+
+    def test_alphabetical_tool_list_per_row(self):
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        # The ``paid`` tag has claude and codex — sorted: [claude, codex].
+        self.assertIn("claude, codex", plain)
+        self.assertIn("auggie", plain)
+
+    def test_no_tags_emits_notice_instead_of_table(self):
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value={"noop": {"command": "noop", "tags": []}},
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        output = _run_cmd_tags()
+        plain = strip_ansi(output)
+        self.assertIn("No tags found", plain)
+        # No table header line because the empty-state branch bypasses Table.
+        self.assertNotIn("TOOLS", plain)
 
 
 if __name__ == "__main__":

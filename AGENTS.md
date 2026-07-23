@@ -77,3 +77,22 @@ If a feature works with `PYTHONPATH=src python -m quiver.cli` but not with the i
   width via `visible_len`. Contract tests live in `tests/test_table.py`.
   Migration of existing `cmd_*` handlers is opt-in and currently
   deferred.
+
+- **cmd_check → Table migration pattern**: `cmd_check` migrated after
+  `cmd_list` validated that Table scales beyond the 9-column / mixed-kind
+  case. cmd_check is intentionally simpler — 4 columns (STATUS | NAME |
+  ALIASES | INFO), all `kind` values are `preformatted`+`trust_cell_width`
+  or `text`/`list` (no `count_threshold`, no `timestamp`). Status column
+  is `kind="preformatted"` width=2, glyph is `c("green", "✓") + " "` (or
+  red/yellow for the footer marker); info column is `kind="preformatted"`
+  with explicit pre-pad `c("dim", text) + " " * max(0, INFO_COL_WIDTH -
+  visible_len(text))` so variable-width version strings keep the grid
+  intact. The off-PATH diagnostic block stays as plain print() BELOW the
+  table because each orphan has a multi-line fix recipe that doesn't fit
+  a single grid row — only the table body is migrated. The heal
+  side-effect (`live_version → tools[name]["version"]`) MUST run
+  BEFORE the table row is constructed (not after) so the displayed
+  version reflects what was just probed and saved. When migrating
+  similar cmd_* handlers, follow this pattern: pre-compute everything
+  outside the loop, build the Table once with columns pinned, then
+  `table.add_row(...)` per item, then `table.render()`.
