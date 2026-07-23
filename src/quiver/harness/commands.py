@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, truncate, visible_len
+from quiver.console import c, cpad, truncate, visible_len
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.harness.stars import is_starred, load_stars, toggle_star, unstar
 from quiver.harness.tools import extract_version_number, is_installed, live_version
@@ -58,7 +58,7 @@ def cmd_list(args):
 
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
-    table = Table()
+    table = Table(column_gap=" │ ")
     table.add_column("mark", "", width=2, kind="preformatted")
     table.add_column("name", "NAME", width=16, kind="text")
     table.add_column("command", "COMMAND", width=18, kind="text")
@@ -80,10 +80,10 @@ def cmd_list(args):
         aliases = [a for a in info.get("aliases", []) if a != name]
         desc_text = info.get("description", "")
 
-        # Prepend 1 space to desc so the visible gap before DESCRIPTION
-        # is 3 chars (Table's column_gap=2 + 1 prepend = 3), matching
-        # the pre-migration visual.
-        desc_padded = " " + truncate(desc_text, 35)
+        # desc cell now sits behind the explicit " | " separator, so
+        # no extra prepend is needed - Table renders `cell | cell`
+        # directly with the gap string itself providing the visual gap.
+        desc_padded = truncate(desc_text, 36)
 
         # Session column: 3 visual states (absent=dim em-dash,
         # present-zero=dim digit, positive=green digit). All are
@@ -109,10 +109,24 @@ def cmd_list(args):
         # Inst cell: padded status glyph (visible_width(status)=1).
         inst_cell = status + " " * max(0, 4 - visible_len(status))
 
-        # Rate cell: format_column returns its own ANSI-coloured,
-        # already-width-aligned string (e.g. "30% 5d12h"); trust it.
+        # Rate cell: format_column returns its own ANSI-coloured string
+        # but its visible width is variable ("30% —" = 5 chars vs
+        # "100% 5d18h" = 10 chars). With trust_cell_width=True the
+        # Table does NOT pad to the column width, so rows with longer
+        # rate content would push INST/DESCRIPTION columns right and
+        # break the grid. Pre-pad to the column width (14) here so the
+        # rate cell is exactly 14 visible chars regardless of payload
+        # — the actual character gap remains _column_gap_str (" | ").
+        rate_cell_width = 14
         rl = rate_limits.get(name)
-        rate_cell = rl.format_column() if rl else c("dim", "—")
+        rate_cell = (
+            "".join((
+                rl.format_column(),
+                " " * max(0, rate_cell_width - visible_len(rl.format_column())),
+            ))
+            if rl else
+            c("dim", "—") + " " * max(0, rate_cell_width - visible_len(c("dim", "—")))
+        )
 
         table.add_row(
             {
@@ -224,19 +238,44 @@ def cmd_info(args):
     aliases = [a for a in info.get("aliases", []) if a != name]
 
     print(f"\n  {c('bold', name)}")
+
+    # Two-column FIELD | VALUE table.
+    # VALUE uses ``preformatted`` + ``trust_cell_width=True`` because
+    # the value cell is sometimes ANSI-coloured (green/red for Status)
+    # and sometimes variable-width (paths, multi-line descriptions).
+    # ``fit="content"`` lets long paths / descriptions expand beyond
+    # the column width rather than truncate — matches the old
+    # ``print(f"  {label:<16} {val}")`` behaviour where overflow
+    # scrolled rather than got cut.
+    table = Table()
+    table.add_column("label", "FIELD", width=16, kind="text")
+    table.add_column(
+        "value", "VALUE", width=64,
+        kind="preformatted", trust_cell_width=True, fit="content",
+    )
+
     rows = [
-        ("Command", info["command"]),
-        ("Aliases", ", ".join(aliases) if aliases else "—"),
-        ("Description", info.get("description", "—")),
-        ("Version", info.get("version") or "unknown"),
-        ("Tags", ", ".join(info.get("tags", []))),
-        ("Status", c("green", "installed") if installed else c("red", "not installed")),
-        ("Path", path),
+        ("Command:", info["command"]),
+        ("Aliases:", ", ".join(aliases) if aliases else "—"),
+        ("Description:", info.get("description") or "—"),
+        ("Version:", info.get("version") or "unknown"),
+        ("Tags:", ", ".join(info.get("tags", [])) or "—"),
+        (
+            "Status:",
+            c("green", "installed") if installed else c("red", "not installed"),
+        ),
+        ("Path:", path),
     ]
-    if info.get("notes"):
-        rows.append(("Notes", info["notes"]))
     for label, val in rows:
-        print(f"  {'  ' + label + ':':<16} {val}")
+        table.add_row({"label": label, "value": val})
+    if info.get("notes"):
+        # ``Notes:`` is conditional — matches the pre-migration
+        # behaviour where the optional row was only appended when
+        # ``info["notes"]`` was truthy.
+        table.add_row({"label": "Notes:", "value": info["notes"]})
+
+    for line in table.render():
+        print(line)
     print()
 
 
@@ -317,15 +356,34 @@ def cmd_use(args):
 def cmd_check(args):
     from quiver.harness.path_health import find_off_path_tools, preferred_npm_bin
 
+    # Widths for the two cells that ship self-coloured ANSI via the
+    # `preformatted`+`trust_cell_width=True` path; the names matter
+    # because they're used by ``cpad`` AND by ``table.add_column`` so
+    # the rendered cell and the schema header agree on column width.
+    STATUS_COL_WIDTH = 2  # "✓ " or "✗ " (1 glyph + 1 trailing space)
+    INFO_COL_WIDTH = 24   # "version unknown" + headroom
+
     tools = load_registry()
     updated = False
     off_path_notes: list[str] = []
     print(f"\n{c('bold', 'Checking AI tools...')}\n")
+
+    table = Table()
+    table.add_column("status", "", width=STATUS_COL_WIDTH,
+                     kind="preformatted", trust_cell_width=True)
+    table.add_column("name", "NAME", width=22, kind="text")
+    table.add_column("aliases", "ALIASES", width=18,
+                     kind="list", color="cyan", empty="—")
+    table.add_column("info", "INFO", width=INFO_COL_WIDTH,
+                     kind="preformatted", trust_cell_width=True)
+
     for name, info in sorted(tools.items()):
         aliases = [a for a in info.get("aliases", []) if a != name]
-        alias_str = f"  ({', '.join(aliases)})" if aliases else ""
         command = info["command"]
         if is_installed(command):
+            # Probe live version + heal stored version BEFORE we render
+            # the row (this is the check-and-heal flow's side-effect,
+            # not just a display step).
             ver = live_version(command)
             if not ver:
                 # Fall back to sanitizing whatever is already stored
@@ -340,12 +398,29 @@ def cmd_check(args):
                     tools[name]["version"] = None
                     updated = True
             display = tools[name].get("version") or "version unknown"
-            print(f"  {c('green', '✓')}  {name:<22}{c('cyan', alias_str):<20} {c('dim', display)}")
+            table.add_row({
+                "status": cpad("green", "✓", STATUS_COL_WIDTH),
+                "name": name,
+                "aliases": aliases,
+                "info": cpad("dim", display, INFO_COL_WIDTH),
+            })
         else:
-            print(f"  {c('red', '✗')}  {name:<22}{c('dim', alias_str):<20} {c('dim', 'not installed')}")
+            table.add_row({
+                "status": cpad("red", "✗", STATUS_COL_WIDTH),
+                "name": name,
+                "aliases": aliases,
+                "info": cpad("dim", "not installed", INFO_COL_WIDTH),
+            })
+
+    for line in table.render():
+        print(line)
 
     orphans = find_off_path_tools(tools)
     if orphans:
+        # Off-PATH diagnostic block lives BELOW the table — these
+        # are not table rows (each orphan has a multi-line fix
+        # recipe, so they don't fit the grid). Keeping them as
+        # plain strings preserves the original output structure.
         print(f"\n{c('yellow', 'Off-PATH installs detected')} {c('dim', '(installed but invisible to swe)')}\n")
         npm = preferred_npm_bin() or "npm"
         for name, command, hit in orphans:
@@ -370,20 +445,64 @@ def cmd_tags(args):
     for name, info in tools.items():
         for tag in info.get("tags", []):
             tag_map.setdefault(tag, []).append(name)
+
+    if not tag_map:
+        # No tags in registry at all — render a one-line notice
+        # rather than an empty table (preserves the old behaviour
+        # of just printing the title and trailing newline).
+        print(f"\n{c('bold', 'Available tags')}\n")
+        print(c("dim", "  No tags found.\n"))
+        return
+
     print(f"\n{c('bold', 'Available tags')}\n")
+
+    # Two-column TAG | TOOLS table. The TAG cell is ``preformatted``
+    # + ``trust_cell_width=True`` so the cyan colour from cpad()
+    # isn't double-wrapped by the Table renderer; the TOOLS cell
+    # uses the list kind so multi-tool lists join with ``, `` and
+    # adapt to fit mode.
+    table = Table()
+    table.add_column(
+        "tag", "TAG", width=14,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "tools", "TOOLS", width=40,
+        kind="list", color="dim", empty="—",
+    )
+
     for tag in sorted(tag_map):
-        names = ", ".join(sorted(tag_map[tag]))
-        print(f"  {c('cyan', tag):<{20}} {c('dim', names)}")
+        table.add_row({
+            "tag": cpad("cyan", tag, 14),
+            "tools": sorted(tag_map[tag]),
+        })
+
+    for line in table.render():
+        print(line)
     print()
 
 
 def cmd_aliases(args):
     tools = load_registry()
     print(f"\n{c('bold', 'Short aliases')}\n")
+
+    # Two-column ALIASES | NAME table; the ``column_gap=" → "`` makes
+    # the arrow separator part of the table so every row gets the
+    # same horizontal alignment structurally (not visually padded).
+    table = Table(column_gap=" → ")
+    table.add_column(
+        "aliases", "ALIASES", width=14,
+        kind="list", color="cyan", empty="—",
+    )
+    table.add_column("name", "NAME", width=20, kind="text", fit="content")
+
     for name, info in sorted(tools.items()):
         aliases = [a for a in info.get("aliases", []) if a != name]
         if aliases:
-            print(f"  {c('cyan', ', '.join(aliases)):<10}  →  {name}")
+            table.add_row({"aliases": aliases, "name": name})
+
+    for line in table.render():
+        print(line)
     print()
 
 

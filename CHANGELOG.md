@@ -9,6 +9,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two session handlers migrated to `quiver.table.Table`**: `cmd_models`
+  and `cmd_session` (sessions domain). Removed the last hand-rolled
+  ``f"{...:<{w}}"`` patterns in ``sessions/commands.py``. Eliminates
+  the magic ``+9`` width offsets the old code used to compensate for
+  ANSI-overhead in f-string padding — Table handles ANSI-aware
+  width math natively.
+  - `cmd_models` builds a Table once and renders it for either the
+    3-column default mode (MODEL | PROVIDER | MSGS) or the 4-column
+    ``--by-tool`` mode (TOOL | MODEL | PROVIDER | MSGS). The MSGS
+    column uses ``kind="count_threshold"`` with ``threshold=100``, so
+    cells ≥100 pick up green ANSI automatically — the green-cell logic
+    moves into the kind renderer rather than being a per-row print
+    imperative.
+  - `cmd_session` builds a 5-column Table (IDX | LAST ACTIVE | AGENT |
+    DIRECTORY | TITLE/SUMMARY). The four human-derived cells (IDX,
+    LAST ACTIVE, AGENT, TITLE) use ``kind="preformatted"`` +
+    ``trust_cell_width=True`` so they carry their own colour without
+    ANSI bleed across column gaps. The DIRECTORY cell uses
+    ``kind="text"``+``fit="content"`` so the longest visible path
+    drives the column width adaptively (replacing the old
+    ``max(45, max_path_len + 4)`` imperative calc). The TITLE cell
+    pins a 50-char cap via ``max_width=50`` so long titles truncate
+    in the Table instead of via an inline ``truncate()`` call.
+    Search-filter footer lives BELOW the table as plain print() since
+    it is a post-table notice, not a row. The ``use <N>`` resume
+    branch is preserved verbatim — it still calls ``cmd_use`` after
+    chdir.
+  ~15 new tests in ``tests/test_sessions_commands.py``
+  (``CmdModelsMigrationTest``, ``CmdSessionMigrationTest``) pin:
+  3-vs-4 column mode, separator vs. header width, count_threshold
+  green colour decision, summary footer math (grand total / model /
+  tool counts), 5-column header order, body-row visible-width parity
+  (regression guard), idx cell bracket padding for single-digit
+  indices, all four relative-time branches ("Just now" / "5m ago" /
+  "3h ago" / "2d ago"), cyan time + green agent colour escapes,
+  tilde path substitution, dim title fallback for empty-title
+  sessions, search-filter footer conditional rendering.
+- **Three more `cmd_*` handlers migrated to `quiver.table.Table`**: `cmd_info`,
+  `cmd_aliases`, `cmd_tags` (harness domain). Removed the last hand-rolled
+  `f"{...:<{w}}"` string interpolation patterns in `harness/commands.py`.
+  - `cmd_info` is now a 2-column `FIELD | VALUE` table; the `VALUE` column
+    uses `kind="preformatted"` + `trust_cell_width=True` + `fit="content"`
+    so colour-wrapped status values stay clean and variable-width paths
+    expand instead of getting truncated.
+  - `cmd_aliases` is a 2-column `ALIASES | NAME` table with `column_gap=" → "`
+    so the arrow separator is part of the table itself (every row gets the
+    same horizontal alignment structurally, not via padded f-string).
+  - `cmd_tags` is a 2-column `TAG | TOOLS` table; `TAG` cell is cyan via
+    `cpad("cyan", tag, 14)` exactly like the harness aliases column, and
+    `TOOLS` uses the `list` kind with dim colour so multi-tool rows join
+    with `, ` and re-fit. Empty-tag fixtures emit a single `-line notice
+    instead of an empty table.
+  ~17 new tests in `tests/test_harness_commands.py` (`CmdInfoMigrationTest`,
+  `CmdAliasesMigrationTest`, `CmdTagsMigrationTest`) pin: column order,
+  separator-width parity with header, body-row visible-width parity with
+  header (regression guard), conditional rows (`Notes` only when defined,
+  empty-aliases tools omitted), cyan/dim colour shapes, alphabetical tag
+  order, alphabetical tool list per row, multi-alias comma-join.
+- **Two skills handlers migrated to `quiver.table.Table`**: `cmd_skills_scopes`
+  and `cmd_skills` (skills domain). Removes the last hand-rolled
+  ``f"{...:<{w}}"`` patterns in ``skills/commands.py`` and eliminates
+  the magic ``+9`` width offsets the old code used to compensate
+  for ANSI-overhead in f-string padding.
+  - `cmd_skills_scopes` is a 4-column `SCOPE | KIND | SKILLS | PATH`
+    table. `SCOPE`/`KIND`/`SKILLS` use `kind="preformatted"` +
+    `trust_cell_width=True` and are routed through `cpad` so each
+    cell visibly matches its column width. `KIND` is yellow when
+    the entry is a symlink, dim when the entry is an alias of another
+    scope, green when the entry is a plain directory. `SKILLS` is
+    right-aligned and green when `>0`, dim `"0"` when zero.
+    `PATH` uses `kind="preformatted"` + `fit="content"` so the
+    dim-coloured ``  → tgt`` link-note arrow is preserved end-to-end
+    (the `text` kind strips ANSI before measuring and would silently
+    drop the colour escapes). The dash-separator measures via
+    `visible_len` so it spans row-to-row even when arrows carry
+    visible-length ANSI escapes.
+  - `cmd_skills` is a 3-column `NAME | SCOPE | VISIBLE_VIA` Table.
+    All three columns use `kind="preformatted"` +
+    `trust_cell_width=True` and are routed through `cpad` so each
+    cell visibly matches its column width. `NAME` is bold, `SCOPE`
+    cyan, `VISIBLE_VIA` cyan when reachable via multiple scopes
+    (comma-joined) and dim otherwise. The VISIBLE_VIA width is
+    pre-measured across the current skill set (`max(len("VISIBLE VIA"),
+    max(len(via_text))`) and that exact value is passed to both
+    `add_column(width=...)` and the per-row `cpad(..., width=...)`
+    call — column and cpad agree by construction so every body row's
+    visible cell width matches the header without drift. `PATH` and
+    `DESCRIPTION` (with `--desc`) are NOT table columns — they are
+    emitted as plain `print()` lines below each rendered row,
+    indented 28 + 2 + 14 + 2 = 46 spaces so they visually align
+    under the `VISIBLE_VIA` header column. The 2-3-line-per-skill
+    layout from the pre-migration era is preserved; only the
+    grid-row stripe goes through Table.render().
+  ~17 new tests in `tests/test_skills_commands.py`
+  (`CmdSkillsScopesMigrationTest`, `CmdSkillsMigrationTest`) pin:
+  4-column header order for scopes; separator vs. header width;
+  body-row visible-width non-exceeding-header (regression guard
+  for the preformatted+content no-pad case where short paths leave
+  the column right-aligned); symlink/alias/directory KIND colours;
+  green/dim SKILLS-count branch; dim-coloured PATH arrow round-trip
+  (kills the silent-ANSI-strip regression in the previous `text`
+  kind pass); no-arrow for plain directories; footer `4 roots ·
+  3 unique skills` math; 3-column default-mode header (no PATH,
+  no DESCRIPTION columns); separator-width parity; body row
+  rendered-cell parity to header width (each row arrives at the
+  full visible width via `cpad`); multi-scope cyan / single-scope
+  dim visible_via colour shapes; bold NAME + cyan SCOPE escape
+  codes; PATH sub-line below each row, indented 46 spaces, in
+  `dim` colour; PATH uses tilde substitution for `$HOME`; blank
+  line between skills; filter drops non-matching; empty filter
+  result notice; alphabetical sort within scope; long-name
+  truncation at 28 chars; `--desc` flag emits description sub-line
+  indented 46 spaces below PATH and skips empty descriptions.
+- **`swe check` migrated to the new `quiver.table.Table` component.**
+  Replaced hand-rolled `f"{name:<22}{alias_str:<20}"` string interpolation
+  with a single 4-column `Table().add_column(...).add_row(...)` build
+  (STATUS | NAME | ALIASES | INFO). STATUS uses `kind="preformatted"`
+  + `trust_cell_width=True` for the green ✓ / red ✗ glyphs (mirrors
+  cmd_list's INST column). INFO uses `kind="preformatted"` with explicit
+  pre-pad to the 24-char column width so variable-width version strings
+  ("0.5.91" vs "version unknown") keep the grid aligned. ALIASES reuses
+  cmd_list's `kind="list"` + `color="cyan"` + `empty="—"` recipe. The
+  off-PATH diagnostic block still lives BELOW the table as plain print()
+  because its multi-line fix recipes don't fit the grid; only the table
+  body went through Table.render(). The heal side-effect (write
+  `live_version` back to `tools[name]["version"]`) is preserved
+  verbatim, running BEFORE the row is constructed so the displayed
+  version reflects what was just probed. ~13 new tests in
+  `tests/test_harness_commands.py::CmdCheck*Test` pin the migration:
+  column order, separator/header/body visible-width parity, green/red
+  status colors, dim version text, `version unknown` fallback, three
+  heal-side-effect cases (live overrides stored, live matches stored,
+  dirty stored value cleared), off-PATH footer conditional rendering
+  (with/without orphans), alphabetical row order, and bold header line.
 - `swe list` now shows a **RATE** column with usage percentage and reset
   countdown for tools that expose rate limit APIs. Currently supports:
   - **Codex** via ChatGPT `backend-api/wham/usage` endpoint using OAuth
@@ -45,6 +179,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   math (cells painted with ``c(...)`` are stripped before byte-truncating,
   so colour never bleeds across column gaps). Header + ``─`` separator
   auto-sized to the table's total visible width.
+- **`swe mcp list` and `swe mcp status` matrix view migrated to the
+  new `quiver.table.Table` component.** Replaced hand-rolled
+  `f"{'SERVER':<{server_width}}  {t:^{col_width}}"` padding with a
+  single `Table().add_column(...).add_row(...)` build per handler.
+  Both handlers emit the same server × tool matrix layout:
+  - SERVER column uses `kind="text"` so plain server names left-align
+    and pad to `server_width` (pre-measured = max of header label
+    + longest server name).
+  - 1..N tool columns use `kind="preformatted"` + `trust_cell_width=True`
+    and are routed through `cpad` so each cell visibly matches the
+    pre-measured `col_width`. Header labels are pre-centered
+    (`tool_name.center(col_width)`) so the rendered line matches the
+    original f-string `^{col_width}` alignment without a custom kind.
+  - Each tool cell is `cpad("green", "✓", col_width)` if the server
+    is present in that tool, else `cpad("dim", "—", col_width)`.
+  `cmd_status` adds a trailing HEALTH column with the result of
+  `check_server_health()` (already ANSI-coloured) using
+  `kind="preformatted"` + `trust_cell_width=True` + `fit="content"`.
+  Width is pre-measured to the longest health-string `visible_len`
+  so messages like `✗ missing env: FOO,BAR` don't misalign the
+  trailing columns. ~13 new tests in
+  `tests/test_mcp_commands.py::CmdListMatrixMigrationTest` +
+  `CmdStatusMatrixMigrationTest` pin: header order matches tool
+  keys, separator visible length matches header visible length,
+  body rows all share header visible width (cpad-driven parity),
+  green ✓ for present servers / dim — for absent, single-target
+  filter renders a 2-column table with `1 tools` footer, empty
+  matrix case prints only the `No MCP servers found.` notice,
+  footer `N servers across M tools` math, HEALTH column header
+  presence on cmd_status, ANSI green escape round-trip for the
+  HEALTH cell when server is healthy.
+- **`swe providers list` migrated to the new `quiver.table.Table` component.**
+  Replaced hand-rolled `f"{...:<{w}}"` string interpolation with a single
+  5-column `Table().add_column(...).add_row(...)` build (PROVIDER |
+  ALIASES | ENV VAR | API KEY | URL). All five columns ship pre-coloured
+  ANSI strings via `kind="preformatted"` + `trust_cell_width=True`, and
+  each cell is routed through `cpad` so it visibly matches its column
+  width. The column widths are pre-measured across the current row set
+  via a single pre-measure pass that builds parallel text (+ colour)
+  lists and takes `max(header_label_len, max(visible_len(cell)))` for
+  each column. The same exact width flows to both `add_column(width=...)`
+  AND the per-row `cpad(..., width=...)` call so column and cpad agree
+  by construction — every body row arrives at the column visible
+  width. Previously hardcoded:
+  - PROVIDER width 14 → pre-measured, capped at 24 chars (long names
+    truncate cleanly without breaking the grid).
+  - ALIASES, ENV VAR, API KEY widths → pre-measured (no dead config,
+    no width-math drift across rows).
+  - URL width 28 → `kind="preformatted"` + `fit="content"` so the
+    column grows to the longest observed URL; since URL is the
+    rightmost column, missing auto-pad on shorter URL cells does not
+    misalign any trailing column.
+  The description sub-line (when `--desc` is passed) is now emitted as
+  plain `print()` below the rendered row, indented
+  `2 + provider_w + 2` spaces so it visually aligns under the ALIASES
+  column header (the description logically extends the alias/identity
+  block). This restores a 2-line-per-provider layout similar to the
+  cmd_skills batch-3 migration. URL prefix stripping
+  (`https://` / `http://` / `www.`) is preserved, the empty-aliases
+  em-dash fallback (`—`) is preserved, and the env-var `(+N)` suffix
+  for multi-env-var providers is preserved. ~17 new tests in
+  `tests/test_providers_commands.py::CmdListMigrationTest` pin:
+  5-column header order, separator width parity, body rows aligned to
+  header visible width (cpad-driven parity), ANSI colour shapes per
+  column (bold PROVIDER, dim ALIASES / ENV VAR, dim/green API KEY
+  conditional on masked key present, cyan URL), URL prefix-stripping,
+  em-dash fallback for empty aliases, matched-env rendering in
+  shell-export layout, `--desc` flag emissions and indent,
+  empty-description suppression, PROVIDER width cap at 24 chars,
+  filter correctness, no-keys Tip advisory order, no-keys-dir advisory
+  order, footer `N/N providers with keys` math, raw-key
+  non-leakage.
 - **`swe list` migrated to the new `quiver.table.Table` component.**
   Replaced the hand-rolled `f"{...:<{w}}"` string interpolation with a
   single 9-column `Table().add_column(...).add_row(..., accent=...)`

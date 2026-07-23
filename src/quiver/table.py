@@ -6,12 +6,15 @@ with a single component that:
 
 - normalises each column's width to ``max(preferred_width, max_cell_width)``
   (bounded by ``max_width`` when ``fit="bounded"``),
-- truncates cells that overflow the column with ``…``,
+- truncates cells that overflow the column with ``...``,
 - left-aligns text by default while ANSI-aware padding preserves colors,
 - dispatches to a per-kind render function (extensible via
-  ``@register_kind``), and
-- emits a dim header row + ``─`` separator that matches the table's
-  total visible width.
+  ``@register_kind``),
+- emits a dim header row + ``-`` separator that matches the table's
+  total visible width, and
+- lets callers opt into **visible column borders** by passing
+  ``column_gap=" | "`` (or any string) to the constructor instead of
+  the default ``column_gap=2`` integer-width gap.
 
 The component is intentionally additive: nothing in the existing
 commands imports it yet. Migration is opt-in, one ``cmd_*`` handler at
@@ -21,7 +24,7 @@ a time (see ``tests/test_table.py`` for the contract examples).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Literal
+from typing import Any, Callable, Dict, Literal, Union
 
 from quiver.console import c, cpad, strip_ansi, truncate, visible_len
 
@@ -32,7 +35,7 @@ FitMode = Literal["fixed", "content", "bounded"]
 #     render(value, width, **attrs) -> str
 # returning an already-width-padded cell. The truncate step used for
 # width measurement is derived automatically (stringify + visible_len)
-# — keep kinds simple unless a real callable needs a non-string measure.
+# - keep kinds simple unless a real callable needs a non-string measure.
 KindRenderFn = Callable[[Any, int, dict], str]
 KindTruncateFn = Callable[[Any, int, dict], str]
 
@@ -96,7 +99,7 @@ def _register_default_kinds() -> None:
         raw = "" if value is None else str(value)
         # ANSI-painted inputs are stripped to plain before truncation so
         # ``console.truncate`` (which slices by bytes) cannot chop a
-        # ``\033[…m`` escape mid-sequence — that would leak the colour
+        # ``ESC[…m`` escape mid-sequence - that would leak the colour
         # into the gap that follows this cell. Callers who want ANSI
         # in a text-style column should use ``kind="preformatted"`` or
         # ``trust_cell_width=True``; ``text`` is plain-only by design.
@@ -107,7 +110,7 @@ def _register_default_kinds() -> None:
     @register_kind("number")
     def _number(value, width, attrs):
         if value is None:
-            plain = attrs.get("empty", "—")
+            plain = attrs.get("empty", "-")
         else:
             plain = f"{int(value):,}" if attrs.get("thousands") else str(int(value))
         return plain.rjust(width)
@@ -116,7 +119,7 @@ def _register_default_kinds() -> None:
     def _count_threshold(value, width, attrs):
         threshold = attrs.get("threshold", 0)
         if value is None:
-            plain = attrs.get("empty", "—")
+            plain = attrs.get("empty", "-")
             return plain.rjust(width)
         n = int(value)
         plain = str(n)
@@ -126,10 +129,10 @@ def _register_default_kinds() -> None:
 
     @register_kind("list")
     def _list(value, width, attrs):
-        # Use cpad for color coherence with ``console.cpad`` — pad AND
+        # Use cpad for color coherence with ``console.cpad`` - pad AND
         # text get the same color so neighbouring columns never see a
         # dim gap that visually disconnects from the cell.
-        empty = attrs.get("empty", "—")
+        empty = attrs.get("empty", "-")
         color = attrs.get("color", "cyan")
         if not value:
             return cpad(color, empty, width)
@@ -142,7 +145,7 @@ def _register_default_kinds() -> None:
         # (a Callable[[Any], str]) so callers don't have to wrap every
         # row in a ``(seconds, lambda)`` tuple.
         formatter: Callable[[Any], str] | None = attrs.get("formatter")
-        empty = attrs.get("empty", "—")
+        empty = attrs.get("empty", "-")
         right = attrs.get("right", False)
         if value is None or formatter is None:
             return empty.rjust(width) if right else empty.ljust(width)
@@ -194,7 +197,7 @@ class Table:
 
     Usage::
 
-        t = Table(separator_char="─", header_style="dim")
+        t = Table(separator_char="-", header_style="dim")
         t.add_column("name", "NAME", width=14)
         t.add_column("rate", "RATE", width=14, kind="preformatted",
                      trust_cell_width=True)
@@ -203,14 +206,49 @@ class Table:
                       accent="neon")
         for line in t.render():
             print(line)
+
+    Visible column borders (opt-in)::
+
+        t = Table(column_gap=" | ")        # one space + bar + one space
+        # or, dim-styled for subtlety:
+        t = Table(column_gap=lambda: c("dim", " | "))
+
+    The ``column_gap`` accepts an ``int`` (number of plain spaces;
+    default 2) OR a ``str`` (literal characters emitted between every
+    column). When the string contains ANSI escapes, ``_column_gap_width``
+    is computed from ``visible_len`` so the dash divider stays
+    appropriately wide.
     """
 
-    def __init__(self, separator_char: str = "─", header_style: str = "dim"):
+    def __init__(
+        self,
+        separator_char: str = "\u2500",
+        header_style: str = "dim",
+        column_gap: Union[str, int] = 2,
+    ):
+        """Build a Table.
+
+        ``column_gap`` accepts either an int (number of spaces, the
+        default of 2) OR a string (literal characters emitted between
+        every column). The string form lets callers opt into visible
+        column borders - e.g. ``Table(column_gap=" | ")`` produces
+        ``cell | cell | cell``. The string is taken verbatim (no
+        auto-padding) so callers can place the divider wherever they
+        want in the gap. The separator line's total width is computed
+        from the **visible length** of the string (``visible_len``) so
+        the dashes always span row-to-row, even when the gap string
+        itself carries ANSI escapes.
+        """
         self.separator_char = separator_char
         self.header_style = header_style
         self._columns: list[Column] = []
         self._rows: list[Row] = []
-        self._column_gap = 2  # visible spaces between columns
+        if isinstance(column_gap, int):
+            self._column_gap_width: int = column_gap
+            self._column_gap_str: str = " " * column_gap
+        else:
+            self._column_gap_width = visible_len(column_gap)
+            self._column_gap_str = column_gap
 
     # ------------------------------------------------------------------ API
 
@@ -243,7 +281,7 @@ class Table:
         column_names = {c.name for c in self._columns}
         unknown = set(data) - column_names
         if unknown:
-            # Drop quietly — see design §8. Future: warn via logging.
+            # Drop quietly - see design section 8. Future: warn via logging.
             data = {k: v for k, v in data.items() if k in column_names}
         self._rows.append(Row(cells=data, accent=accent))
         return self
@@ -291,14 +329,17 @@ class Table:
                 c(self.header_style, label + " " * max(widths[col.name] - visible_len(label), 0))
             )
             if i < len(self._columns) - 1:
-                parts.append(" " * self._column_gap)
+                parts.append(self._column_gap_str)
         return "".join(parts)
 
     def _render_separator(self, widths: Dict[str, int]) -> str:
-        # Width math must match the header — the gap is plain spaces.
+        # Width math must match the header - the gap's *visible length*
+        # (not its byte length) drives the dash total so ANSI-painted
+        # gap strings (e.g. column_gap=c("dim", " | ")) still produce a
+        # header-to-row aligned separator.
         total = sum(widths[c.name] for c in self._columns) + max(
             0, len(self._columns) - 1
-        ) * self._column_gap
+        ) * self._column_gap_width
         return c(self.header_style, self.separator_char * total)
 
     def _render_row(self, row: Row, widths: Dict[str, int]) -> str:
@@ -323,7 +364,7 @@ class Table:
                 cell_text = c(row.accent, cell_text)
             renderable.append(cell_text)
             if i < len(self._columns) - 1:
-                renderable.append(" " * self._column_gap)
+                renderable.append(self._column_gap_str)
         return "".join(renderable)
 
 
@@ -341,7 +382,7 @@ def _cell_value(col: Column, row: Row) -> Any:
     """
     if col.name in row.cells:
         return row.cells[col.name]
-    return col.attrs.get("empty", "—")
+    return col.attrs.get("empty", "-")
 
 
 def registered_kinds() -> list[str]:
