@@ -91,7 +91,16 @@ def os_walk_limited(root: Path):
 
 
 def catalog_has_skills(root: Path) -> bool:
-    return count_skill_md(root) > 0
+    """Return True if at least one SKILL.md file exists under the root."""
+    if not root.is_dir():
+        return False
+    try:
+        for _dirpath, _dirnames, filenames in os_walk_limited(root):
+            if "SKILL.md" in filenames:
+                return True
+    except OSError:
+        return False
+    return False
 
 
 def resolve_catalog_path(path: str | Path) -> Path:
