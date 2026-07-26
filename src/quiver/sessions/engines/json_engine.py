@@ -90,30 +90,51 @@ def _parse_index(config: JsonParserConfig) -> list[Session]:
 
 def _parse_files(config: JsonParserConfig) -> list[Session]:
     import glob as _glob
+    import fnmatch
 
     sessions: list[Session] = []
     base = expand_path(config.base_dir)
     if not os.path.exists(base):
         return sessions
-    pattern = os.path.join(base, config.file_glob)
-    try:
-        for fp in _glob.glob(pattern, recursive=True):
-            if not os.path.isfile(fp):
-                continue
-            if os.path.basename(fp) in config.skip_basenames:
-                continue
-            try:
-                with open(fp) as f:
-                    data = json.load(f)
-            except Exception:
-                continue
-            if config.include and not config.include(data, fp):
-                continue
-            sess = _to_session(data, fp, config)
-            if sess:
-                sessions.append(sess)
-    except Exception:
-        pass
+
+    # ⚡ Bolt: Fast path for flat globs to avoid redundant stat syscalls from glob + isfile
+    fast_path_used = False
+    files_to_process = []
+
+    if "**" not in config.file_glob and "/" not in config.file_glob:
+        try:
+            with os.scandir(base) as it:
+                for entry in it:
+                    if entry.is_file() and fnmatch.fnmatch(entry.name, config.file_glob):
+                        files_to_process.append(entry.path)
+            fast_path_used = True
+        except Exception:
+            files_to_process = []
+            fast_path_used = False
+
+    if not fast_path_used:
+        pattern = os.path.join(base, config.file_glob)
+        try:
+            for fp in _glob.glob(pattern, recursive=True):
+                if not os.path.isfile(fp):
+                    continue
+                files_to_process.append(fp)
+        except Exception:
+            pass
+
+    for fp in files_to_process:
+        if os.path.basename(fp) in config.skip_basenames:
+            continue
+        try:
+            with open(fp) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if config.include and not config.include(data, fp):
+            continue
+        sess = _to_session(data, fp, config)
+        if sess:
+            sessions.append(sess)
     return sessions
 
 
