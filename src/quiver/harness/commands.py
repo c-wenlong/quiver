@@ -51,7 +51,8 @@ def cmd_list(args):
     stars = load_stars()
     starred_set = set(stars)
 
-    # Fetch rate limits (cached 60s, --refresh bypasses)
+    # Fetch rate limits (cached 5min by default, --refresh bypasses;
+    # override TTL with SWE_RATE_LIMITS_TTL=<seconds>)
     from quiver.harness.rate_limits import get_all_rate_limits
 
     rate_limits = get_all_rate_limits(use_cache=not refresh)
