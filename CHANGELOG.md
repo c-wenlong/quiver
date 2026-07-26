@@ -212,13 +212,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status colors, dim version text, `version unknown` fallback, three
   heal-side-effect cases (live overrides stored, live matches stored,
   dirty stored value cleared), off-PATH footer conditional rendering
-  (with/without orphans), alphabetical row order, and bold header line.
-- `swe list` now shows a **RATE** column with usage percentage and reset
-  countdown for tools that expose rate limit APIs. Currently supports:
+  (with/without orphans), alphabetical row order, and bold header line.- `swe list` now shows a **RATE** column with usage percentage and reset countdown for tools that expose rate limit APIs. Currently supports:
   - **Codex** via ChatGPT `backend-api/wham/usage` endpoint using OAuth
     tokens from `~/.codex/auth.json`
   - **GitHub Copilot** via `api.github.com/copilot_internal/user` using
     the OAuth token from `gh auth token`
+  - **Claude Code** via `api.anthropic.com/api/oauth/usage` — surfaces
+    whichever of the three Claude windows (5h / 7d / 7d_sonnet) has the
+    highest utilization; OAuth token sourced from
+    `~/.claude/.credentials.json` (Linux/portable) or the macOS
+    Keychain entry `Claude Code-credentials`. A `_BETA_VERSIONS` table
+    backs the `anthropic-beta: oauth-2025-04-20` header and prints a
+    single-line stderr hint on 401 so the operator can rotate the
+    beta-string when Anthropic bumps it.
+  - **Droid (Factory AI)** via `api.factory.ai/api/billing/limits` —
+    surfaces whichever billing window (`standard` / `premium` / etc.)
+    has the highest utilization. Auth ladder: `FACTORY_API_KEY` env
+    var (free, CI-friendly, takes priority) → macOS Keychain
+    `Factory Safe Storage` → `Factory Key`. Headers include the
+    `api.factory.ai` URL but `Origin: https://app.factory.ai` to
+    match the web-app signature the WAF gates on. `RateLimitInfo`
+    gained a `window: str = ""` field so the per-tool window label
+    (`5h` / `7d` / `7ds` / `std` / `prm` / ...) surfaces inside the
+    14-char RATE cell alongside the percentage.
   Pluggable architecture in `harness/rate_limits.py` allows adding more
   fetchers. Cached in `rate_limits_cache.json` (60s TTL);
   `swe list --refresh` bypasses the cache.
@@ -375,6 +391,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rate-limit fetchers now print actionable stderr hints on HTTP errors:
+  401 (stale token — re-auth required), 429 (parsed ``Retry-After``
+  countdown so the user knows exactly when to retry), 403/404 (the
+  URL or ``x-factory-client`` header may need updating), and 5xx
+  (upstream or network error). Previously, an unreachable endpoint
+  silently produced a `—` in the RATE column with no signal as to why;
+  running `swe list --refresh 2>&1` now surfaces the root cause. The
+  Claude fetcher's hint for 401 includes the offending
+  ``anthropic-beta`` value so the operator can rotate it in
+  `_BETA_VERSIONS`. The Droid hint for 401 names the macOS Keychain
+  label (`Factory Safe Storage`) plus the `FACTORY_API_KEY` env var
+  override so the user has the exact commands to fix it. The `_fetch_json`
+  helper's `on_401` callback contract is preserved; an `on_http_error`
+  callback is added as a new optional kwarg that defaults to None.
+  Replaces the previous silent-degrade pattern in both `harness/rate_limits.py`
+  -type fetcher wrappers.
 - Rate limit fetcher now retries with an unverified SSL context when the
   default certificate verification fails. This fixes `SSL:
   CERTIFICATE_VERIFY_FAILED` errors on macOS python.org builds (Python 3.12+
