@@ -24,8 +24,10 @@ def _restore_cooked_tty(fd: int) -> None:
     except Exception:
         return
     iflag, oflag, cflag, lflag, ispeed, ospeed, cc = attrs
-    # Map CR -> NL on input; enable canonical mode + echo
+    # Map CR -> NL on input; enable canonical mode + echo;
+    # ensure NL -> CRNL on output so the cursor returns to column 0
     iflag |= termios.ICRNL
+    oflag |= termios.ONLCR
     lflag |= termios.ICANON | termios.ECHO
     try:
         termios.tcsetattr(
