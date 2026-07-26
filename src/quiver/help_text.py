@@ -73,6 +73,8 @@ HELP = {
   {c('cyan', 'swe add <name> <command> [desc]')}      Add with description
   {c('cyan', 'swe add <name> <cmd> --aliases a,b')}   Set short aliases
   {c('cyan', 'swe add <name> <cmd> --tags t1,t2')}    Set tags
+  {c('cyan', 'swe add -i')}                           Interactive form (walk each field)
+  {c('cyan', 'swe add <name> -i')}                    Interactive, pre-filled name
 
   If the tool already exists, it updates the entry.
 

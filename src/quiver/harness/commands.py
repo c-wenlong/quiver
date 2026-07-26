@@ -280,9 +280,163 @@ def cmd_info(args):
     print()
 
 
+_ADD_FIELDS = ("name", "command", "description", "aliases", "tags")
+
+
+def _prompt_field(label: str, default: str = "") -> str:
+    """Prompt for one field; Enter keeps the default (shown dim in brackets)."""
+    hint = f" {c('dim', '[' + default + ']')}" if default else ""
+    try:
+        return read_line(c("cyan", f"  {label}>{hint} "))
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise
+
+
+def _ask(label: str, default: str) -> str:
+    """Prompt for a field; an empty answer keeps the default."""
+    raw = _prompt_field(label, default)
+    val = raw.strip()
+    return val if val else default
+
+
+def _add_interactive(args: list[str]) -> int:
+    """Interactive form: walk each field, show a summary, confirm before saving."""
+    tools = load_registry()
+
+    # Pre-fill from positional args / flags (same shape as flag-based cmd_add).
+    rest = [a for a in args if a not in ("-i", "--interactive")]
+    name_pre = command_pre = desc_pre = ""
+    aliases_pre = ""
+    tags_pre = "agentic, coding"
+    positional: list[str] = []
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--aliases" and i + 1 < len(rest):
+            aliases_pre = rest[i + 1]; i += 2; continue
+        if a == "--tags" and i + 1 < len(rest):
+            tags_pre = rest[i + 1]; i += 2; continue
+        if a == "--description" and i + 1 < len(rest):
+            desc_pre = rest[i + 1]; i += 2; continue
+        if a == "--command" and i + 1 < len(rest):
+            command_pre = rest[i + 1]; i += 2; continue
+        if not a.startswith("--"):
+            positional.append(a)
+        i += 1
+    if positional:
+        name_pre = positional[0]
+    if len(positional) > 1:
+        command_pre = positional[1]
+    if len(positional) > 2:
+        desc_pre = positional[2]
+
+    draft = {
+        "name": name_pre,
+        "command": command_pre,
+        "description": desc_pre,
+        "aliases": aliases_pre,
+        "tags": tags_pre,
+    }
+
+    print(c("bold", "\n  swe add — interactive"))
+    print(c("dim", "  Walk through each field. Enter keeps the [default]. Ctrl-C to cancel.\n"))
+
+    while True:
+        try:
+            # --- name (required, collision-checked) ---
+            draft["name"] = _ask("name", draft["name"])
+            while not draft["name"]:
+                print(c("red", "  name is required"))
+                draft["name"] = _ask("name", draft["name"])
+            owner = resolve(tools, draft["name"])
+            if owner and owner != draft["name"]:
+                print(c("yellow", f"  ⚠ '{draft['name']}' is an alias of '{owner}' — choose a different name."))
+                continue
+            if draft["name"] in tools:
+                print(c("yellow", f"  ⚠ '{draft['name']}' already exists — saving will update it."))
+
+            # --- command (required) ---
+            draft["command"] = _ask("command", draft["command"])
+            while not draft["command"]:
+                print(c("red", "  command is required"))
+                draft["command"] = _ask("command", draft["command"])
+
+            # --- optional fields ---
+            draft["description"] = _ask("description", draft["description"])
+            draft["aliases"] = _ask("aliases", draft["aliases"])
+            draft["tags"] = _ask("tags", draft["tags"])
+        except (EOFError, KeyboardInterrupt):
+            print(c("dim", "  Cancelled."))
+            return 1
+
+        # alias collision check
+        aliases_list = _split_csv(draft["aliases"])
+        collision = _alias_collision(tools, draft["name"], aliases_list)
+        if collision:
+            print(c("yellow", f"  ⚠ {collision}"))
+            print(c("dim", "  Re-enter aliases (Enter to keep, or type new ones)."))
+            try:
+                draft["aliases"] = _ask("aliases", draft["aliases"])
+            except (EOFError, KeyboardInterrupt):
+                print(c("dim", "  Cancelled."))
+                return 1
+            aliases_list = _split_csv(draft["aliases"])
+            if _alias_collision(tools, draft["name"], aliases_list):
+                print(c("yellow", f"  ⚠ {collision} — not saved."))
+                print(c("dim", "  Restarting field walk…\n"))
+                continue
+
+        # --- summary ---
+        tags_list = _split_csv(draft["tags"])
+        installed = is_installed(draft["command"])
+        version = live_version(draft["command"]) if installed else None
+        status_label = c("green", "installed") if installed else c("yellow", "not in PATH")
+        print()
+        print(c("bold", "  Summary"))
+        print(f"    name:        {draft['name']}")
+        print(f"    command:     {draft['command']}  ({status_label})")
+        print(f"    description: {draft['description'] or c('dim', '—')}")
+        print(f"    aliases:     {_format_list(aliases_list)}")
+        print(f"    tags:        {_format_list(tags_list)}")
+        if version:
+            print(f"    version:     {c('dim', version)}  {c('dim', '(auto-detected)')}")
+        print()
+
+        # --- confirm ---
+        try:
+            choice = _prompt_field("Save? [Y]es / [e]dit / [c]ancel", "").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print(c("dim", "  Cancelled."))
+            return 1
+        if choice in ("", "y", "yes"):
+            action = "Updated" if draft["name"] in tools else "Added"
+            tools[draft["name"]] = {
+                "command": draft["command"],
+                "description": draft["description"],
+                "version": version,
+                "tags": tags_list,
+                "aliases": aliases_list,
+                "added": datetime.now().isoformat(),
+            }
+            save_registry(tools)
+            saved_status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
+            alias_str = f"  aliases: {', '.join(aliases_list)}" if aliases_list else ""
+            print(f"  {c('green', '✓')} {action} '{draft['name']}' → '{draft['command']}' ({saved_status}){alias_str}")
+            return 0
+        if choice in ("e", "edit"):
+            print(c("dim", "  Re-editing fields…\n"))
+            continue
+        print(c("dim", "  Cancelled."))
+        return 1
+
+
 def cmd_add(args):
+    if "-i" in args or "--interactive" in args:
+        return _add_interactive(args)
     if len(args) < 2:
         print(c("red", "Usage: swe add <name> <command> [description] [--aliases a,b] [--tags t1,t2]"))
+        print(c("dim", "  Interactive: swe add -i   ·   swe add <name> -i"))
         return
     tools = load_registry()
     name = args[0]

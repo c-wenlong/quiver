@@ -40,6 +40,7 @@ _TOOL_TARGET_COMMANDS = frozenset({
 _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "list": [("--refresh", "Bypass session cache"), ("-r", "Short for --refresh")],
     "session": [("--search", "Filter sessions"), ("-q", "Short for --search")],
+    "add": [("-i", "Interactive form"), ("--interactive", "Interactive form")],
 }
 
 
