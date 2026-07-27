@@ -1,6 +1,7 @@
 """Model usage analytics mined read-only from tool session logs."""
 
 import glob
+import fnmatch
 import os
 import re
 import sqlite3
@@ -97,9 +98,14 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
                 for entry in entry_it:
                     if not entry.is_dir() or not entry.name.startswith("-"):
                         continue
-                    for jsonl in glob.glob(os.path.join(entry.path, "*.jsonl")):
-                        for key, cnt in _scan_jsonl_models(jsonl, 30).items():
-                            seen[key] = seen.get(key, 0) + cnt
+                    try:
+                        with os.scandir(entry.path) as sub_entry_it:
+                            for sub_entry in sub_entry_it:
+                                if sub_entry.is_file() and fnmatch.fnmatch(sub_entry.name, "*.jsonl"):
+                                    for key, cnt in _scan_jsonl_models(sub_entry.path, 30).items():
+                                        seen[key] = seen.get(key, 0) + cnt
+                    except OSError:
+                        pass
                 if seen:
                     raw["claude"] = seen
         except Exception:
