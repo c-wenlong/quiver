@@ -426,7 +426,7 @@ def check_server_health(name: str, cfg: dict) -> str:
         try:
             import urllib.request
             req = urllib.request.Request(url, method="HEAD")
-            urllib.request.urlopen(req, timeout=5)
+            urllib.request.urlopen(req, timeout=5)  # nosec B310
             return c("green", "✓")
         except Exception:
             return c("red", "✗ url unreachable")
@@ -455,7 +455,7 @@ def check_server_health(name: str, cfg: dict) -> str:
             try:
                 import urllib.request
                 req = urllib.request.Request(url, method="HEAD")
-                urllib.request.urlopen(req, timeout=5)
+                urllib.request.urlopen(req, timeout=5)  # nosec B310
                 return c("green", "✓")
             except Exception:
                 return c("red", "✗ url unreachable")
@@ -764,7 +764,7 @@ def cmd_sync(args):
     interactive = (not no_interactive) and sys.stdin.isatty() and sys.stdout.isatty()
 
     if interactive:
-        print(f"\n  Select servers to copy from {c('cyan', source)}:\n")
+        print(f"\n  Choose servers to copy from {c('cyan', source)}:\n")
         selected = interactive_select(
             server_names,
             source_label=source,
