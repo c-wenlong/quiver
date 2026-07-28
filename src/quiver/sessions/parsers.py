@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import glob
 import hashlib
 import json
@@ -910,19 +911,23 @@ def parse_antigravity():
                 for d_entry in d_entry_it:
                     if not d_entry.is_dir():
                         continue
-                    mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
                     mtime = 0.0
                     title = ""
-                    for mf in mdata_files:
-                        mt = get_mtime(mf)
-                        if mt > mtime:
-                            mtime = mt
-                            try:
-                                with open(mf) as f:
-                                    data = json.load(f)
-                                title = data.get("summary", title)
-                            except Exception:
-                                pass
+                    try:
+                        with os.scandir(d_entry.path) as f_entry_it:
+                            for f_entry in f_entry_it:
+                                if f_entry.is_file() and fnmatch.fnmatch(f_entry.name, "*.metadata.json"):
+                                    mt = get_mtime(f_entry.path)
+                                    if mt > mtime:
+                                        mtime = mt
+                                        try:
+                                            with open(f_entry.path) as f:
+                                                data = json.load(f)
+                                            title = data.get("summary", title)
+                                        except Exception:
+                                            pass
+                    except OSError:
+                        pass
                     if mtime == 0:
                         mtime = get_mtime(dp)
                     path = ""
