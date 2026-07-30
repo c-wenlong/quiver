@@ -6,3 +6,8 @@
 **Vulnerability:** Use of weak MD5 hash without specifying it is not used for security purposes (`usedforsecurity=False`), leading to potential FIPS non-compliance and security linter failures.
 **Learning:** `hashlib.md5` was used for non-cryptographic purposes (caching directory paths in Kimi sessions) but lacked the `usedforsecurity=False` flag required in Python >= 3.9 for FIPS environments.
 **Prevention:** Always add the `usedforsecurity=False` keyword argument when using `hashlib.md5` (or similar algorithms) for non-cryptographic purposes (e.g., cache keys, hashing object identities) to comply with FIPS and pass security linters like Bandit.
+
+## 2026-07-30 - SSRF prevention false-positives and HTTP handling
+**Vulnerability:** URL fetch calls flagged by Bandit B310 for SSRF potential in `rate_limits.py` and `cli.py`.
+**Learning:** When addressing B310 in a security context, you must not only add validation (checking for http/https prefixes) but also document the mitigation with explicit comments. Also, when you fix false positives in text output (e.g. B608 for SQL injection in prompt strings), be careful not to expand PR scope if unrelated to the core security fix.
+**Prevention:** Apply `# nosec BXXX` strictly after adding prefix validation and a comment explaining the fix, and strictly avoid unrelated text changes in security PRs.
