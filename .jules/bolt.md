@@ -7,3 +7,6 @@
 ## 2026-07-22 - File System Traversal Performance Issue
 **Learning:** os.listdir() combined with os.path.join and os.path.isdir/os.path.isfile generates many redundant stat syscalls, slowing down the parsing of sessions from deeply nested directories.
 **Action:** Switch from os.listdir() to os.scandir() which yields DirEntry objects containing cached metadata. Use entry.is_dir() and entry.is_file() instead of os.path.isdir and os.path.isfile.
+## 2026-07-22 - File System Traversal Performance Issue
+**Learning:** glob.glob() combined with os.path.join creates performance overhead by triggering redundant stat calls and os.listdir. This can bottleneck code heavily when aggregating paths over a directory or deep traversal.
+**Action:** Switch from glob.glob() to os.scandir(). Use entry.name.endswith() and entry.is_file(). This prevents the overhead of redundant file system checks.
