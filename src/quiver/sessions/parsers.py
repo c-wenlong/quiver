@@ -910,9 +910,14 @@ def parse_antigravity():
                 for d_entry in d_entry_it:
                     if not d_entry.is_dir():
                         continue
-                    mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
                     mtime = 0.0
                     title = ""
+                    try:
+                        # ⚡ Bolt: Use os.scandir to reduce stat syscalls instead of glob.glob
+                        with os.scandir(d_entry.path) as m_entry_it:
+                            mdata_files = [e.path for e in m_entry_it if e.is_file() and e.name.endswith(".metadata.json")]
+                    except Exception:
+                        mdata_files = []
                     for mf in mdata_files:
                         mt = get_mtime(mf)
                         if mt > mtime:
