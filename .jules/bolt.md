@@ -7,3 +7,7 @@
 ## 2026-07-22 - File System Traversal Performance Issue
 **Learning:** os.listdir() combined with os.path.join and os.path.isdir/os.path.isfile generates many redundant stat syscalls, slowing down the parsing of sessions from deeply nested directories.
 **Action:** Switch from os.listdir() to os.scandir() which yields DirEntry objects containing cached metadata. Use entry.is_dir() and entry.is_file() instead of os.path.isdir and os.path.isfile.
+
+## 2024-08-02 - Flat file matching optimization
+**Learning:** `glob.glob` followed by `os.path.isfile` causes redundant `stat` syscalls.
+**Action:** For flat file matching (patterns without `**` or `/`), prefer using `os.scandir` combined with `str.endswith()` over `glob.glob` followed by `os.path.isfile` to prevent redundant stat syscalls and I/O overhead.
