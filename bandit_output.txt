@@ -1,0 +1,970 @@
+Working... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:01
+Run started:2026-08-03 10:29:27.069540+00:00
+
+Test results:
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/cli.py:88:4
+87	                already_present = True
+88	    except Exception:
+89	        pass
+90
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: src/quiver/harness/commands.py:6:0
+5	import shutil
+6	import subprocess
+7	from datetime import datetime
+
+--------------------------------------------------
+>> Issue: [B606:start_process_with_no_shell] Starting a process without a shell.
+   Severity: Low   Confidence: Medium
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b606_start_process_with_no_shell.html
+   Location: src/quiver/harness/commands.py:508:4
+507	    print(c("dim", f"  → {label}\n"))
+508	    os.execvp(command, [command] + extra)
+509
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/harness/commands.py:814:17
+813	    try:
+814	        result = subprocess.run(
+815	            [npm, "install", "-g", npm_pkg],
+816	            capture_output=False,
+817	            text=True,
+818	            timeout=300,
+819	        )
+820	    except subprocess.TimeoutExpired:
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/harness/commands.py:847:21
+846
+847	            prefix = subprocess.run(
+848	                [npm, "prefix", "-g"],
+849	                capture_output=True,
+850	                text=True,
+851	                timeout=5,
+852	                stdin=subprocess.DEVNULL,
+853	            ).stdout.strip()
+854	            if npm_pkg.startswith("@"):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/harness/commands.py:862:8
+861	                ver = extract_version_number(raw_ver) or raw_ver or None
+862	        except Exception:
+863	            pass
+864
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/harness/discover.py:47:8
+46	            resolved = Path(entry).resolve()
+47	        except Exception:
+48	            continue
+49	        if resolved not in seen and resolved.is_dir():
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: src/quiver/harness/path_health.py:7:0
+6	import shutil
+7	import subprocess
+8	from dataclasses import dataclass
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/harness/path_health.py:49:8
+48	                return True
+49	        except Exception:
+50	            continue
+51	    return False
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/harness/path_health.py:56:17
+55	    try:
+56	        result = subprocess.run(
+57	            cmd,
+58	            capture_output=True,
+59	            text=True,
+60	            timeout=timeout,
+61	            stdin=subprocess.DEVNULL,
+62	        )
+63	    except Exception:
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: src/quiver/harness/rate_limits.py:28:0
+27	import ssl
+28	import subprocess
+29	import time
+
+--------------------------------------------------
+>> Issue: [B310:blacklist] Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.
+   Severity: Medium   Confidence: High
+   CWE: CWE-22 (https://cwe.mitre.org/data/definitions/22.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b310-urllib-urlopen
+   Location: src/quiver/harness/rate_limits.py:226:13
+225	    try:
+226	        with urllib.request.urlopen(req, timeout=timeout) as resp:
+227	            return json.loads(resp.read().decode("utf-8"))
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/harness/rate_limits.py:232:12
+231	                on_401()
+232	            except Exception:
+233	                pass
+234	        elif on_http_error is not None and exc.code != 401:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/harness/rate_limits.py:242:12
+241	                on_http_error(exc.code, retry_after)
+242	            except Exception:
+243	                pass
+244	        return None
+
+--------------------------------------------------
+>> Issue: [B310:blacklist] Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.
+   Severity: Medium   Confidence: High
+   CWE: CWE-22 (https://cwe.mitre.org/data/definitions/22.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b310-urllib-urlopen
+   Location: src/quiver/harness/rate_limits.py:259:13
+258	    try:
+259	        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+260	            return json.loads(resp.read().decode("utf-8"))
+
+--------------------------------------------------
+>> Issue: [B607:start_process_with_partial_path] Starting a process with a partial executable path
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b607_start_process_with_partial_path.html
+   Location: src/quiver/harness/rate_limits.py:372:17
+371	    try:
+372	        result = subprocess.run(
+373	            ["gh", "auth", "token"],
+374	            capture_output=True,
+375	            text=True,
+376	            timeout=5,
+377	        )
+378	    except (subprocess.TimeoutExpired, OSError):
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/harness/rate_limits.py:372:17
+371	    try:
+372	        result = subprocess.run(
+373	            ["gh", "auth", "token"],
+374	            capture_output=True,
+375	            text=True,
+376	            timeout=5,
+377	        )
+378	    except (subprocess.TimeoutExpired, OSError):
+
+--------------------------------------------------
+>> Issue: [B607:start_process_with_partial_path] Starting a process with a partial executable path
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b607_start_process_with_partial_path.html
+   Location: src/quiver/harness/rate_limits.py:647:17
+646	    try:
+647	        result = subprocess.run(
+648	            ["security", "find-generic-password",
+649	             "-l", "Claude Code-credentials", "-w"],
+650	            capture_output=True,
+651	            text=True,
+652	            timeout=5,
+653	        )
+654	    except (subprocess.TimeoutExpired, OSError):
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/harness/rate_limits.py:647:17
+646	    try:
+647	        result = subprocess.run(
+648	            ["security", "find-generic-password",
+649	             "-l", "Claude Code-credentials", "-w"],
+650	            capture_output=True,
+651	            text=True,
+652	            timeout=5,
+653	        )
+654	    except (subprocess.TimeoutExpired, OSError):
+
+--------------------------------------------------
+>> Issue: [B607:start_process_with_partial_path] Starting a process with a partial executable path
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b607_start_process_with_partial_path.html
+   Location: src/quiver/harness/rate_limits.py:1072:21
+1071	        try:
+1072	            result = subprocess.run(
+1073	                ["security", "find-generic-password",
+1074	                 "-l", label, "-w"],
+1075	                capture_output=True,
+1076	                text=True,
+1077	                timeout=5,
+1078	            )
+1079	        except (subprocess.TimeoutExpired, OSError):
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/harness/rate_limits.py:1072:21
+1071	        try:
+1072	            result = subprocess.run(
+1073	                ["security", "find-generic-password",
+1074	                 "-l", label, "-w"],
+1075	                capture_output=True,
+1076	                text=True,
+1077	                timeout=5,
+1078	            )
+1079	        except (subprocess.TimeoutExpired, OSError):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/harness/rate_limits.py:1348:4
+1347	            json.dump(payload, f)
+1348	    except Exception:
+1349	        pass
+1350
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/harness/rate_limits.py:1357:4
+1356	            RATE_LIMITS_CACHE_FILE.unlink()
+1357	    except Exception:
+1358	        pass
+1359
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: src/quiver/harness/tools.py:5:0
+4	import shutil
+5	import subprocess
+6
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/harness/tools.py:60:21
+59	        try:
+60	            result = subprocess.run(
+61	                [command, flag],
+62	                capture_output=True,
+63	                text=True,
+64	                timeout=3,
+65	                stdin=subprocess.DEVNULL,  # avoid CLIs that block on piped/empty stdin
+66	            )
+67	        except Exception:
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/harness/tools.py:67:8
+66	            )
+67	        except Exception:
+68	            continue
+69
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/help_text.py:399:4
+398	        n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
+399	    except Exception:
+400	        pass
+401	    print(f"  {c('dim', 'REGISTRY')}  {REGISTRY_FILE}")
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: src/quiver/mcp/cli.py:24:0
+23	import shutil
+24	import subprocess
+25	import sys
+
+--------------------------------------------------
+>> Issue: [B310:blacklist] Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.
+   Severity: Medium   Confidence: High
+   CWE: CWE-22 (https://cwe.mitre.org/data/definitions/22.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b310-urllib-urlopen
+   Location: src/quiver/mcp/cli.py:429:12
+428	            req = urllib.request.Request(url, method="HEAD")
+429	            urllib.request.urlopen(req, timeout=5)
+430	            return c("green", "✓")
+
+--------------------------------------------------
+>> Issue: [B310:blacklist] Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.
+   Severity: Medium   Confidence: High
+   CWE: CWE-22 (https://cwe.mitre.org/data/definitions/22.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b310-urllib-urlopen
+   Location: src/quiver/mcp/cli.py:458:16
+457	                req = urllib.request.Request(url, method="HEAD")
+458	                urllib.request.urlopen(req, timeout=5)
+459	                return c("green", "✓")
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src/quiver/mcp/cli.py:767:16
+766	    if interactive:
+767	        print(f"\n  Select servers to copy from {c('cyan', source)}:\n")
+768	        selected = interactive_select(
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src/quiver/mcp/cli.py:974:4
+973
+974	    subprocess.run(shlex.split(editor) + [str(tmp_file)])
+975
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/prompt.py:38:4
+37	        )
+38	    except Exception:
+39	        pass
+40
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/prompt.py:98:16
+97	                            stream.seek(pos)
+98	                except Exception:
+99	                    pass
+100	            break
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/prompt.py:152:16
+151	                            _unread_byte(nxt[0])
+152	                except Exception:
+153	                    pass
+154	            else:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/aggregator.py:113:4
+112	            json.dump(payload, f)
+113	    except Exception:
+114	        pass
+115
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/aggregator.py:130:4
+129	            SESSION_CACHE_FILE.unlink()
+130	    except Exception:
+131	        pass
+132
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:86:4
+85	                sessions.append(sess)
+86	    except Exception:
+87	        pass
+88	    return sessions
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/sessions/engines/json_engine.py:108:12
+107	                    data = json.load(f)
+108	            except Exception:
+109	                continue
+110	            if config.include and not config.include(data, fp):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:115:4
+114	                sessions.append(sess)
+115	    except Exception:
+116	        pass
+117	    return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:166:32
+165	                                        return val
+166	                                except Exception:
+167	                                    pass
+168	                            return _sid
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:197:4
+196	                            sessions.append(sess)
+197	    except Exception:
+198	        pass
+199	    return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:248:16
+247	                        entry["data"] = loaded
+248	                except Exception:
+249	                    pass
+250
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:262:20
+261	                            return val
+262	                    except Exception:
+263	                        pass
+264	                return str(_pk or "")
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:274:4
+273	                sessions.append(sess)
+274	    except Exception:
+275	        pass
+276	    return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/json_engine.py:378:8
+377	            config.enrich(fields, entry, file_path)
+378	        except Exception:
+379	            pass
+380
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:138:4
+137	                                )
+138	    except Exception:
+139	        pass
+140	    return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:159:4
+158	                sessions.append(sess)
+159	    except Exception:
+160	        pass
+161	    return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:215:28
+214	                                config.enrich_session(fields, sess_dir, proj_name)
+215	                            except Exception:
+216	                                pass
+217	                            if config.require_path and not fields.get("path"):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:221:4
+220	                        sessions.append(sess)
+221	    except Exception:
+222	        pass
+223	    return sessions
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:255:28
+254	                                entry = json.loads(line)
+255	                            except Exception:
+256	                                continue
+257	                            if not isinstance(entry, dict):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:264:16
+263	                                sessions.append(sess)
+264	                except Exception:
+265	                    pass
+266	    except Exception:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:266:4
+265	                    pass
+266	    except Exception:
+267	        pass
+268	    return sessions
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:360:16
+359	                    data = json.loads(line)
+360	                except Exception:
+361	                    continue
+362	                if not isinstance(data, dict):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:370:4
+369	                    return clean_title(raw, config.title_max_len)
+370	    except Exception:
+371	        pass
+372	    return ""
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:391:4
+390	                out.append(name_entry.path)
+391	    except Exception:
+392	        pass
+393	    return out
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:422:16
+421	                    data = json.loads(line)
+422	                except Exception:
+423	                    continue
+424	                if not isinstance(data, dict):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:436:20
+435	                            title = clean_title(raw, config.title_max_len)
+436	                    except Exception:
+437	                        pass
+438	                if path and title:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/jsonl_engine.py:444:4
+443	                    break
+444	    except Exception:
+445	        pass
+446
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/sqlite_engine.py:82:16
+81	                    config.enrich(conn, row, fields)
+82	                except Exception:
+83	                    pass
+84	            if config.require_path and not fields.get("path"):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/sqlite_engine.py:87:4
+86	            sessions.append(Session(**fields))
+87	    except Exception:
+88	        pass
+89	    finally:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/engines/sqlite_engine.py:92:8
+91	            conn.close()
+92	        except Exception:
+93	            pass
+94	    return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/models_analytics.py:88:8
+87	            conn.close()
+88	        except Exception:
+89	            pass
+90
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/models_analytics.py:105:8
+104	                    raw["claude"] = seen
+105	        except Exception:
+106	            pass
+107
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/models_analytics.py:117:8
+116	                raw["codex"] = seen
+117	        except Exception:
+118	            pass
+119
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/models_analytics.py:143:8
+142	                    raw["freebuff"] = seen
+143	        except Exception:
+144	            pass
+145
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:82:8
+81	                fields["title"] = clean_title(r[0])
+82	        except Exception:
+83	            pass
+84
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/sessions/parsers.py:161:16
+160	                    data = json.loads(raw)
+161	                except Exception:
+162	                    continue
+163	                if data.get("type") == "text" and data.get("text"):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:166:8
+165	                    break
+166	        except Exception:
+167	            pass
+168
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:247:4
+246	            )
+247	    except Exception:
+248	        pass
+249	    return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:442:8
+441	                out[hashlib.md5(p.encode(), usedforsecurity=False).hexdigest()] = p
+442	        except Exception:
+443	            pass
+444	        return out
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:523:28
+522	                                            break
+523	                            except Exception:
+524	                                pass
+525	                            path = ""
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:543:8
+542	                            )
+543	        except Exception:
+544	            pass
+545	        return sessions
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:580:8
+579	                    break
+580	        except Exception:
+581	            pass
+582
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:626:16
+625	                            break
+626	                except Exception:
+627	                    pass
+628
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:808:12
+807	                    fields["path"] = cwd
+808	            except Exception:
+809	                pass
+810	        if not fields.get("path"):
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:860:8
+859	                        break
+860	        except Exception:
+861	            pass
+862
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:879:8
+878	                    ts = max(ts, get_mtime(name_entry.path))
+879	        except Exception:
+880	            pass
+881	        return ts or get_mtime(sess_dir)
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:924:28
+923	                                title = data.get("summary", title)
+924	                            except Exception:
+925	                                pass
+926	                    if mtime == 0:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:937:24
+936	                                path = match.group(1)
+937	                        except Exception:
+938	                            pass
+939	                    if path:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src/quiver/sessions/parsers.py:950:8
+949	                        )
+950	        except Exception:
+951	            pass
+952	        return sessions
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/skills/discovery.py:36:8
+35	            real = path.resolve()
+36	        except Exception:
+37	            continue
+38	        if real in seen:
+
+--------------------------------------------------
+>> Issue: [B112:try_except_continue] Try, Except, Continue detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b112_try_except_continue.html
+   Location: src/quiver/skills/discovery.py:84:8
+83	            root_real = root.resolve()
+84	        except Exception:
+85	            continue
+86	        for dirpath, _dirnames, filenames in os.walk(root_real):
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 10784
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 78
+		Medium: 5
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 1
+		Medium: 1
+		High: 81
+Files skipped (0):
