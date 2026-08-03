@@ -430,6 +430,10 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         return mock_resp
 
     def _patch_token(self, token="fake-gh-token"):
+        # Python 3.12+ (or environments without gh) will fast-fail in shutil.which
+        return patch("quiver.harness.rate_limits.shutil.which", return_value="/usr/bin/gh")
+
+    def _patch_subprocess(self, token="fake-gh-token"):
         return patch(
             "quiver.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
@@ -438,7 +442,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
     def test_fetch_copilot_success(self):
         from quiver.harness.rate_limits import _fetch_github_copilot
 
-        with self._patch_token(), patch(
+        with self._patch_token(), self._patch_subprocess(), patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(self._SAMPLE_RESPONSE),
         ):
@@ -466,7 +470,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
                 "has_quota": False, "remaining": -2,
             }
         }
-        with self._patch_token(), patch(
+        with self._patch_token(), self._patch_subprocess(), patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
@@ -487,7 +491,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
                 "has_quota": True,
             }
         }
-        with self._patch_token(), patch(
+        with self._patch_token(), self._patch_subprocess(), patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
@@ -502,7 +506,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
         body = dict(self._SAMPLE_RESPONSE)
         body["quota_snapshots"] = {}
-        with self._patch_token(), patch(
+        with self._patch_token(), self._patch_subprocess(), patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
@@ -520,7 +524,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         body = dict(self._SAMPLE_RESPONSE)
         body.pop("quota_reset_date_utc", None)
         body.pop("quota_reset_date", None)
-        with self._patch_token(), patch(
+        with self._patch_token(), self._patch_subprocess(), patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
