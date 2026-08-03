@@ -6,3 +6,7 @@
 **Vulnerability:** Use of weak MD5 hash without specifying it is not used for security purposes (`usedforsecurity=False`), leading to potential FIPS non-compliance and security linter failures.
 **Learning:** `hashlib.md5` was used for non-cryptographic purposes (caching directory paths in Kimi sessions) but lacked the `usedforsecurity=False` flag required in Python >= 3.9 for FIPS environments.
 **Prevention:** Always add the `usedforsecurity=False` keyword argument when using `hashlib.md5` (or similar algorithms) for non-cryptographic purposes (e.g., cache keys, hashing object identities) to comply with FIPS and pass security linters like Bandit.
+## 2024-05-18 - SSRF/LFI via urllib.request.urlopen in rate limit fetchers
+**Vulnerability:** `urllib.request.urlopen()` in `quiver/harness/rate_limits.py` (`_fetch_json`) was used to fetch usage endpoints. `urllib` natively supports `file://` schemes, which allowed reading local files (like `/etc/passwd`) if a user managed to control the URL passed to this function.
+**Learning:** Python's `urllib` has a surprising behavior where it evaluates `file://` URLs. We must explicitly validate the scheme before calling `urlopen`. We also learned that `B310` bandit warning needs to be suppressed with `# nosec B310` only after explicit validation.
+**Prevention:** Always explicitly validate that user-provided URLs start with `http://` or `https://` before passing them to URL fetching libraries like `urllib`.
