@@ -13,7 +13,6 @@ from quiver.skills.catalogs import (
     load_skill_catalogs,
     remove_skill_catalog,
     resolve_catalog_path,
-    suggest_catalog_label,
 )
 
 _CATALOG_SUBCOMMANDS = frozenset({"list", "ls", "add", "remove", "rm", "help", "-h", "--help"})
