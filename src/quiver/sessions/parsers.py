@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import hashlib
 import json
 import os
@@ -910,19 +909,24 @@ def parse_antigravity():
                 for d_entry in d_entry_it:
                     if not d_entry.is_dir():
                         continue
-                    mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
                     mtime = 0.0
                     title = ""
-                    for mf in mdata_files:
-                        mt = get_mtime(mf)
-                        if mt > mtime:
-                            mtime = mt
-                            try:
-                                with open(mf) as f:
-                                    data = json.load(f)
-                                title = data.get("summary", title)
-                            except Exception:
-                                pass
+                    # ⚡ Bolt: Using os.scandir to reduce stat syscalls and avoid flat globbing
+                    try:
+                        with os.scandir(d_entry.path) as m_entry_it:
+                            for m_entry in m_entry_it:
+                                if m_entry.is_file() and m_entry.name.endswith(".metadata.json"):
+                                    mt = get_mtime(m_entry.path)
+                                    if mt > mtime:
+                                        mtime = mt
+                                        try:
+                                            with open(m_entry.path) as f:
+                                                data = json.load(f)
+                                            title = data.get("summary", title)
+                                        except Exception:
+                                            pass
+                    except Exception:
+                        pass
                     if mtime == 0:
                         mtime = get_mtime(dp)
                     path = ""
