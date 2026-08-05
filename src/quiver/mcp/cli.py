@@ -421,12 +421,13 @@ def check_server_health(name: str, cfg: dict) -> str:
 
     if st == "http":
         url = cfg.get("url", "")
+        # Mitigate SSRF/LFI by restricting allowed URL schemes
         if not url.lower().startswith(("http://", "https://")):
             return c("red", "✗ invalid URL scheme")
         try:
             import urllib.request
             req = urllib.request.Request(url, method="HEAD")
-            urllib.request.urlopen(req, timeout=5)
+            urllib.request.urlopen(req, timeout=5)  # nosec B310
             return c("green", "✓")
         except Exception:
             return c("red", "✗ url unreachable")
@@ -450,12 +451,13 @@ def check_server_health(name: str, cfg: dict) -> str:
 
     if st == "wrapped":
         args = cfg.get("args", [])
+        # Mitigate SSRF/LFI by restricting allowed URL schemes
         url = next((a for a in args if a.lower().startswith(("http://", "https://"))), None)
         if url:
             try:
                 import urllib.request
                 req = urllib.request.Request(url, method="HEAD")
-                urllib.request.urlopen(req, timeout=5)
+                urllib.request.urlopen(req, timeout=5)  # nosec B310
                 return c("green", "✓")
             except Exception:
                 return c("red", "✗ url unreachable")
