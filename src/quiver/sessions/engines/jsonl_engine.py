@@ -6,7 +6,6 @@ import json
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
 
 from quiver.sessions.engines.common import (
     clean_title,
@@ -142,20 +141,40 @@ def _parse_nested(base: str, config: JsonlParserConfig) -> list[Session]:
 
 def _parse_glob(base: str, config: JsonlParserConfig) -> list[Session]:
     import glob as _glob
+    import fnmatch
 
     sessions: list[Session] = []
     pattern = os.path.join(base, config.session_glob)
+
+    # ⚡ Bolt: Fast path for flat globs without subdirectories using scandir
+    is_flat = "**" not in config.session_glob and "/" not in config.session_glob and "\\" not in config.session_glob
+
     try:
-        for fp in _glob.glob(pattern, recursive=True):
-            if not os.path.isfile(fp):
-                continue
-            if os.path.basename(fp) in config.skip_basenames:
-                continue
-            if config.primary_files and os.path.basename(fp) not in config.primary_files:
-                continue
-            sess = _session_from_jsonl(fp, config, "")
-            if sess:
-                sessions.append(sess)
+        if is_flat:
+            with os.scandir(base) as it:
+                for entry in it:
+                    if not entry.is_file():
+                        continue
+                    if not fnmatch.fnmatch(entry.name, config.session_glob):
+                        continue
+                    if entry.name in config.skip_basenames:
+                        continue
+                    if config.primary_files and entry.name not in config.primary_files:
+                        continue
+                    sess = _session_from_jsonl(entry.path, config, "")
+                    if sess:
+                        sessions.append(sess)
+        else:
+            for fp in _glob.glob(pattern, recursive=True):
+                if not os.path.isfile(fp):
+                    continue
+                if os.path.basename(fp) in config.skip_basenames:
+                    continue
+                if config.primary_files and os.path.basename(fp) not in config.primary_files:
+                    continue
+                sess = _session_from_jsonl(fp, config, "")
+                if sess:
+                    sessions.append(sess)
     except Exception:
         pass
     return sessions

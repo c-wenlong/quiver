@@ -90,28 +90,53 @@ def _parse_index(config: JsonParserConfig) -> list[Session]:
 
 def _parse_files(config: JsonParserConfig) -> list[Session]:
     import glob as _glob
+    import fnmatch
 
     sessions: list[Session] = []
     base = expand_path(config.base_dir)
     if not os.path.exists(base):
         return sessions
     pattern = os.path.join(base, config.file_glob)
+
+    # ⚡ Bolt: Fast path for flat globs without subdirectories using scandir
+    is_flat = "**" not in config.file_glob and "/" not in config.file_glob and "\\" not in config.file_glob
+
     try:
-        for fp in _glob.glob(pattern, recursive=True):
-            if not os.path.isfile(fp):
-                continue
-            if os.path.basename(fp) in config.skip_basenames:
-                continue
-            try:
-                with open(fp) as f:
-                    data = json.load(f)
-            except Exception:
-                continue
-            if config.include and not config.include(data, fp):
-                continue
-            sess = _to_session(data, fp, config)
-            if sess:
-                sessions.append(sess)
+        if is_flat:
+            with os.scandir(base) as it:
+                for entry in it:
+                    if not entry.is_file():
+                        continue
+                    if not fnmatch.fnmatch(entry.name, config.file_glob):
+                        continue
+                    if entry.name in config.skip_basenames:
+                        continue
+                    try:
+                        with open(entry.path) as f:
+                            data = json.load(f)
+                    except Exception:
+                        continue
+                    if config.include and not config.include(data, entry.path):
+                        continue
+                    sess = _to_session(data, entry.path, config)
+                    if sess:
+                        sessions.append(sess)
+        else:
+            for fp in _glob.glob(pattern, recursive=True):
+                if not os.path.isfile(fp):
+                    continue
+                if os.path.basename(fp) in config.skip_basenames:
+                    continue
+                try:
+                    with open(fp) as f:
+                        data = json.load(f)
+                except Exception:
+                    continue
+                if config.include and not config.include(data, fp):
+                    continue
+                sess = _to_session(data, fp, config)
+                if sess:
+                    sessions.append(sess)
     except Exception:
         pass
     return sessions
