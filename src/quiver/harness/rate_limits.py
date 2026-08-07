@@ -222,8 +222,12 @@ def _fetch_json(
     flip the result away from ``None``. Network errors and the SSL
     fallback path do NOT trigger either callback (no signal there).
     """
+    # Mitigate SSRF/LFI by restricting allowed URL schemes
+    if not req.full_url.startswith(("http://", "https://")):
+        raise ValueError("Invalid URL scheme")
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 401 and on_401 is not None:
@@ -256,7 +260,7 @@ def _fetch_json(
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310
             return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
             OSError, TimeoutError, ssl.SSLError):
