@@ -16,7 +16,6 @@ Two on-disk layouts are supported:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
 
 from quiver.paths import DEFAULT_API_KEYS_DIR
 
@@ -72,7 +71,7 @@ def read_key(path: Path | None) -> str | None:
 
 def read_shell_export_keys(
     path: Path | None, env_vars: list[str]
-) -> Optional[Tuple[str, str]]:
+) -> tuple[str, str] | None:
     """Parse a shell-style export file and return ``(value, env_var)``
     for the first matching env-var name.
 

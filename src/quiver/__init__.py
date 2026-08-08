@@ -16,4 +16,4 @@ CLI_NAME = "swe"
 # so the two can diverge if desired.
 CONFIG_DIR_NAME = "swe"
 
-__all__ = ["__version__", "CLI_NAME", "CONFIG_DIR_NAME"]
+__all__ = ["CLI_NAME", "CONFIG_DIR_NAME", "__version__"]
