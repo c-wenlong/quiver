@@ -97,9 +97,15 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
                 for entry in entry_it:
                     if not entry.is_dir() or not entry.name.startswith("-"):
                         continue
-                    for jsonl in glob.glob(os.path.join(entry.path, "*.jsonl")):
-                        for key, cnt in _scan_jsonl_models(jsonl, 30).items():
-                            seen[key] = seen.get(key, 0) + cnt
+                    try:
+                        # ⚡ Bolt: Using os.scandir to avoid flat glob.glob overhead
+                        with os.scandir(entry.path) as j_entry_it:
+                            for j_entry in j_entry_it:
+                                if j_entry.is_file() and j_entry.name.endswith(".jsonl"):
+                                    for key, cnt in _scan_jsonl_models(j_entry.path, 30).items():
+                                        seen[key] = seen.get(key, 0) + cnt
+                    except Exception:
+                        pass
                 if seen:
                     raw["claude"] = seen
         except Exception:

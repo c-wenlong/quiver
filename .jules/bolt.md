@@ -7,3 +7,7 @@
 ## 2026-07-22 - File System Traversal Performance Issue
 **Learning:** os.listdir() combined with os.path.join and os.path.isdir/os.path.isfile generates many redundant stat syscalls, slowing down the parsing of sessions from deeply nested directories.
 **Action:** Switch from os.listdir() to os.scandir() which yields DirEntry objects containing cached metadata. Use entry.is_dir() and entry.is_file() instead of os.path.isdir and os.path.isfile.
+
+## 2024-07-25 - Avoid flat glob.glob for performance
+**Learning:** `glob.glob("*.extension")` inside nested loops creates significant I/O overhead by fetching all filenames, sorting them, and keeping them in memory, which is inefficient when we only need to read the `mtime` and content of matching files.
+**Action:** When performing flat file searches, especially inside nested loops where a directory only contains flat files, use `os.scandir` combined with `entry.name.endswith(".extension")` and `entry.is_file()` instead of `glob.glob`. This approach is an iterator and avoids loading the entire directory contents into memory, significantly reducing the overhead. Ensure `os.scandir` is always safely wrapped in a `try...except Exception:` block to catch `FileNotFoundError` or `PermissionError`.
