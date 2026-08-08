@@ -5,15 +5,20 @@ import sys
 from pathlib import Path
 
 from quiver.console import c, truncate
-from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
-from quiver.skills.help_text import print_skills_catalog_help, print_skills_discover_help
+from quiver.skills.catalog_discover import (
+    apply_skill_catalog_findings,
+    discover_skill_catalogs,
+)
 from quiver.skills.catalogs import (
     add_skill_catalog,
     count_skill_md,
     load_skill_catalogs,
     remove_skill_catalog,
     resolve_catalog_path,
-    suggest_catalog_label,
+)
+from quiver.skills.help_text import (
+    print_skills_catalog_help,
+    print_skills_discover_help,
 )
 
 _CATALOG_SUBCOMMANDS = frozenset({"list", "ls", "add", "remove", "rm", "help", "-h", "--help"})

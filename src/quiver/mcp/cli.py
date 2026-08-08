@@ -18,28 +18,29 @@ Run 'swe mcp <command> help' for detailed help on each command.
 
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
 import sys
-import tty
 import termios
+import tty
 from pathlib import Path
 
 from quiver.console import c, cpad, strip_ansi, visible_len
-from quiver.table import Table
-from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
-from quiver.paths import CONFIG_DIR, REGISTRY_FILE
+from quiver.harness.registry import load_registry as _load_registry
+from quiver.mcp.codex_io import load_codex_servers, save_codex_servers
 from quiver.mcp.formats import (
     McpFormatHandler,
     convert_server_between_formats,
     get_conversion_issues,
     get_format_handler,
+)
+from quiver.mcp.formats import (
     normalize_server as normalize_server_any,
 )
-from quiver.mcp.codex_io import load_codex_servers, save_codex_servers
+from quiver.paths import CONFIG_DIR
+from quiver.table import Table
 
 
 def getch():
@@ -426,7 +427,10 @@ def check_server_health(name: str, cfg: dict) -> str:
         try:
             import urllib.request
             req = urllib.request.Request(url, method="HEAD")
-            urllib.request.urlopen(req, timeout=5)
+            if not req.full_url.startswith(("http://", "https://")):
+                return c("red", "✗ invalid URL scheme")
+            # Mitigate SSRF/LFI by restricting allowed URL schemes
+            urllib.request.urlopen(req, timeout=5)  # nosec B310
             return c("green", "✓")
         except Exception:
             return c("red", "✗ url unreachable")
@@ -455,7 +459,10 @@ def check_server_health(name: str, cfg: dict) -> str:
             try:
                 import urllib.request
                 req = urllib.request.Request(url, method="HEAD")
-                urllib.request.urlopen(req, timeout=5)
+                if not req.full_url.startswith(("http://", "https://")):
+                    return c("red", "✗ invalid URL scheme")
+                # Mitigate SSRF/LFI by restricting allowed URL schemes
+                urllib.request.urlopen(req, timeout=5)  # nosec B310
                 return c("green", "✓")
             except Exception:
                 return c("red", "✗ url unreachable")

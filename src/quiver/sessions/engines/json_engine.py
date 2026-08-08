@@ -358,8 +358,7 @@ def _to_session(entry: Any, file_path: str, config: JsonParserConfig) -> Session
     if not sid and file_path:
         sid = os.path.basename(file_path)
         for suffix in (".json", ".jsonl"):
-            if sid.endswith(suffix):
-                sid = sid[: -len(suffix)]
+            sid = sid.removesuffix(suffix)
         # nested_dirs: file is summary.json inside session dir
         if sid == config.session_file.removesuffix(".json") or sid == "summary":
             sid = os.path.basename(os.path.dirname(file_path))
@@ -383,4 +382,4 @@ def _to_session(entry: Any, file_path: str, config: JsonParserConfig) -> Session
     return Session(**fields)
 
 
-__all__ = ["JsonParserConfig", "parse_json_store", "dig"]
+__all__ = ["JsonParserConfig", "dig", "parse_json_store"]
