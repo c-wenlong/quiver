@@ -13,7 +13,7 @@ from quiver.harness.tools import live_version
 
 # Uncatalogued agent binaries and *-code suffixes (avoid generic *-cli false positives).
 _UNCATALOGUED_BINARIES = frozenset({"aider", "warp", "factory"})
-_PATH_CODE_SUFFIX_RE = re.compile(r"^.+-code$", re.I)
+_PATH_CODE_SUFFIX_RE = re.compile(r"^.+-code$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -109,10 +109,7 @@ def _catalog_findings(
         path, resolved_command = _resolve_executable(name, command, path_env, path_dirs)
         in_registry = name in registered_names
         if path and resolved_command:
-            if in_registry:
-                status = "registered"
-                confidence = "high"
-            elif resolved_command in reg_by_command:
+            if in_registry or resolved_command in reg_by_command:
                 status = "registered"
                 confidence = "high"
             else:

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver.paths import CONFIG_DIR, SKILL_LINKS_FILE
-from quiver.skills.catalogs import load_skill_catalogs, count_skill_md
+from quiver.skills.catalogs import count_skill_md, load_skill_catalogs
 
 SHARED_LABEL = "shared"
 SHARED_REL = Path(".agents/skills")

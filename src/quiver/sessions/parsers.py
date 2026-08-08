@@ -10,8 +10,8 @@ import re
 from urllib.parse import unquote
 
 from quiver.sessions.engines import (
-    JsonParserConfig,
     JsonlParserConfig,
+    JsonParserConfig,
     SqliteParserConfig,
     clean_title,
     extract_user_text,
@@ -25,7 +25,6 @@ from quiver.sessions.engines import (
 )
 from quiver.sessions.engines.jsonl_engine import event_cwd
 from quiver.sessions.models import Session
-
 
 # ---------------------------------------------------------------------------
 # SQLite family
@@ -117,7 +116,7 @@ def parse_forge():
             text = inner.get("text") if isinstance(inner, dict) else None
             if isinstance(text, dict) and str(text.get("role", "")).lower() == "user":
                 content = text.get("content") or ""
-                m = re.search(r"<task>\s*(.*?)\s*</task>", content, re.S | re.I)
+                m = re.search(r"<task>\s*(.*?)\s*</task>", content, re.DOTALL | re.IGNORECASE)
                 fields["title"] = clean_title(m.group(1) if m else content)
                 break
 
@@ -369,8 +368,7 @@ def parse_pi():
 
     def path_from_project_dir(name: str) -> str:
         inner = name[2:-2] if name.startswith("--") and name.endswith("--") else name
-        if inner.startswith("-"):
-            inner = inner[1:]
+        inner = inner.removeprefix("-")
         return "/" + inner.replace("-", "/")
 
     return parse_jsonl_projects(

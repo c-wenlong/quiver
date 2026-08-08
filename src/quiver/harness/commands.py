@@ -39,8 +39,8 @@ def cmd_list(args):
     refresh = "--refresh" in args or "-r" in args
     args = [a for a in args if a not in ("--refresh", "-r")]
     if refresh:
-        from quiver.sessions.aggregator import invalidate_cache as _inv_sessions
         from quiver.harness.rate_limits import invalidate_cache as _inv_rates
+        from quiver.sessions.aggregator import invalidate_cache as _inv_sessions
 
         _inv_sessions()
         _inv_rates()

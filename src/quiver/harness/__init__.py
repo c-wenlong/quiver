@@ -5,12 +5,12 @@ from quiver.harness.stars import is_starred, load_stars, star, toggle_star, unst
 
 __all__ = [
     "alias_map",
+    "is_starred",
     "load_registry",
+    "load_stars",
     "resolve",
     "save_registry",
-    "load_stars",
-    "is_starred",
     "star",
-    "unstar",
     "toggle_star",
+    "unstar",
 ]

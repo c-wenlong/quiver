@@ -23,11 +23,11 @@ a time (see ``tests/test_table.py`` for the contract examples).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Literal, Union
+from typing import Any, Literal
 
 from quiver.console import c, cpad, strip_ansi, truncate, visible_len
-
 
 FitMode = Literal["fixed", "content", "bounded"]
 
@@ -39,7 +39,7 @@ FitMode = Literal["fixed", "content", "bounded"]
 KindRenderFn = Callable[[Any, int, dict], str]
 KindTruncateFn = Callable[[Any, int, dict], str]
 
-_KINDS: Dict[str, tuple[KindRenderFn, KindTruncateFn]] = {}
+_KINDS: dict[str, tuple[KindRenderFn, KindTruncateFn]] = {}
 
 
 def register_kind(
@@ -183,7 +183,7 @@ class Column:
 
 @dataclass
 class Row:
-    cells: Dict[str, Any]
+    cells: dict[str, Any]
     accent: str | None = None
 
 
@@ -224,7 +224,7 @@ class Table:
         self,
         separator_char: str = "\u2500",
         header_style: str = "dim",
-        column_gap: Union[str, int] = 2,
+        column_gap: str | int = 2,
     ):
         """Build a Table.
 
@@ -262,7 +262,7 @@ class Table:
         fit: FitMode = "bounded",
         trust_cell_width: bool = False,
         **attrs,
-    ) -> "Table":
+    ) -> Table:
         self._columns.append(
             Column(
                 name=name,
@@ -277,7 +277,7 @@ class Table:
         )
         return self
 
-    def add_row(self, data: Dict[str, Any], accent: str | None = None) -> "Table":
+    def add_row(self, data: dict[str, Any], accent: str | None = None) -> Table:
         column_names = {c.name for c in self._columns}
         unknown = set(data) - column_names
         if unknown:
@@ -299,8 +299,8 @@ class Table:
 
     # -------------------------------------------------------------- helpers
 
-    def _compute_widths(self) -> Dict[str, int]:
-        widths: Dict[str, int] = {}
+    def _compute_widths(self) -> dict[str, int]:
+        widths: dict[str, int] = {}
         for col in self._columns:
             _, trunc_fn = _kind(col.kind)
             # Width samples: header + every cell's plain-text form.
@@ -321,7 +321,7 @@ class Table:
                 widths[col.name] = max(col.width, min(observed, upper))
         return widths
 
-    def _render_header(self, widths: Dict[str, int]) -> str:
+    def _render_header(self, widths: dict[str, int]) -> str:
         parts: list[str] = []
         for i, col in enumerate(self._columns):
             label = truncate(col.header, widths[col.name])
@@ -332,7 +332,7 @@ class Table:
                 parts.append(self._column_gap_str)
         return "".join(parts)
 
-    def _render_separator(self, widths: Dict[str, int]) -> str:
+    def _render_separator(self, widths: dict[str, int]) -> str:
         # Width math must match the header - the gap's *visible length*
         # (not its byte length) drives the dash total so ANSI-painted
         # gap strings (e.g. column_gap=c("dim", " | ")) still produce a
@@ -342,7 +342,7 @@ class Table:
         ) * self._column_gap_width
         return c(self.header_style, self.separator_char * total)
 
-    def _render_row(self, row: Row, widths: Dict[str, int]) -> str:
+    def _render_row(self, row: Row, widths: dict[str, int]) -> str:
         renderable: list[str] = []
         for i, col in enumerate(self._columns):
             value = _cell_value(col, row)

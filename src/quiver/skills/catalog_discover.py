@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quiver.skills.catalogs import (
-    DEFAULT_SEARCH_ROOTS,
     add_skill_catalog,
     count_skill_md,
     discover_catalog_dirs,

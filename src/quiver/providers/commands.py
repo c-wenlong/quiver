@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver.console import c, cpad, truncate
-from quiver.providers.defaults import DEFAULT_PROVIDERS
 from quiver.providers.discover import discover_provider_keys
 from quiver.providers.help_text import print_providers_help
 from quiver.providers.keys import default_keys_dir

@@ -6,3 +6,12 @@
 **Vulnerability:** Use of weak MD5 hash without specifying it is not used for security purposes (`usedforsecurity=False`), leading to potential FIPS non-compliance and security linter failures.
 **Learning:** `hashlib.md5` was used for non-cryptographic purposes (caching directory paths in Kimi sessions) but lacked the `usedforsecurity=False` flag required in Python >= 3.9 for FIPS environments.
 **Prevention:** Always add the `usedforsecurity=False` keyword argument when using `hashlib.md5` (or similar algorithms) for non-cryptographic purposes (e.g., cache keys, hashing object identities) to comply with FIPS and pass security linters like Bandit.
+
+## 2026-10-09 - SSRF/LFI via file:// scheme in urllib.request.urlopen
+**Vulnerability:**  called without checking if the URL scheme was strictly http or https allowed reading local files if a  scheme URL was provided, leading to Server-Side Request Forgery or Local File Inclusion.
+**Learning:** In python,  processes  by default. Even when performing operations intended only for HTTP (like sending headers or tracking rate limits), failing to explicitly restrict the scheme leaves the application vulnerable.
+**Prevention:** When using , explicitly validate the scheme of the constructed Request object (e.g. ) before calling urlopen, and add  to ignore the static check after this validation.
+## 2026-10-09 - SSRF/LFI via file:// scheme in urllib.request.urlopen
+**Vulnerability:** `urllib.request.urlopen()` called without checking if the URL scheme was strictly http or https allowed reading local files if a `file://` scheme URL was provided, leading to Server-Side Request Forgery or Local File Inclusion.
+**Learning:** In python, `urllib.request.urlopen` processes `file://` by default. Even when performing operations intended only for HTTP (like sending headers or tracking rate limits), failing to explicitly restrict the scheme leaves the application vulnerable.
+**Prevention:** When using `urllib.request.urlopen()`, explicitly validate the scheme of the constructed Request object (e.g. `if not req.full_url.startswith(("http://", "https://"))`) before calling urlopen, and add `# nosec B310` to ignore the static check after this validation.
