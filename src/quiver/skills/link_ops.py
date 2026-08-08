@@ -8,7 +8,6 @@ from pathlib import Path
 from quiver.skills.discovery import discover_skills
 from quiver.skills.layout import (
     SHARED_LABEL,
-    enumerate_skill_roots,
     record_symlink,
     remove_link_record,
     resolve_root_ref,

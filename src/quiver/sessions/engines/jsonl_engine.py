@@ -6,7 +6,6 @@ import json
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
 
 from quiver.sessions.engines.common import (
     clean_title,
