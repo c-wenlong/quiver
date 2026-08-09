@@ -6,3 +6,7 @@
 **Vulnerability:** Use of weak MD5 hash without specifying it is not used for security purposes (`usedforsecurity=False`), leading to potential FIPS non-compliance and security linter failures.
 **Learning:** `hashlib.md5` was used for non-cryptographic purposes (caching directory paths in Kimi sessions) but lacked the `usedforsecurity=False` flag required in Python >= 3.9 for FIPS environments.
 **Prevention:** Always add the `usedforsecurity=False` keyword argument when using `hashlib.md5` (or similar algorithms) for non-cryptographic purposes (e.g., cache keys, hashing object identities) to comply with FIPS and pass security linters like Bandit.
+## 2026-08-09 - Ensure urlopen Mocks Provide geturl and url Attributes
+**Vulnerability:** Not a direct vulnerability, but a critical learning on testing security fixes.
+**Learning:** When adding explicit `req.full_url` validation checks to methods that wrap `urllib.request.urlopen`, unit tests that previously relied on a generic `MagicMock` for the response may suddenly fail or return `None` (failing silently). This happens because `urllib` internals or the new validation logic might rely on the response having the `geturl()` method or `url` property available.
+**Prevention:** When mocking `urllib.request.urlopen` responses, always ensure the mock includes `.geturl.return_value = "<URL>"` and `.url = "<URL>"` alongside `.read()`.
