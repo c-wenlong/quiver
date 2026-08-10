@@ -426,7 +426,10 @@ def check_server_health(name: str, cfg: dict) -> str:
         try:
             import urllib.request
             req = urllib.request.Request(url, method="HEAD")
-            urllib.request.urlopen(req, timeout=5)
+            # Mitigate SSRF/LFI by restricting allowed URL schemes on the Request object
+            if not req.full_url.startswith(("http://", "https://")):
+                return c("red", "✗ invalid URL scheme")
+            urllib.request.urlopen(req, timeout=5)  # nosec B310
             return c("green", "✓")
         except Exception:
             return c("red", "✗ url unreachable")
@@ -455,7 +458,10 @@ def check_server_health(name: str, cfg: dict) -> str:
             try:
                 import urllib.request
                 req = urllib.request.Request(url, method="HEAD")
-                urllib.request.urlopen(req, timeout=5)
+                # Mitigate SSRF/LFI by restricting allowed URL schemes on the Request object
+                if not req.full_url.startswith(("http://", "https://")):
+                    return c("red", "✗ invalid URL scheme")
+                urllib.request.urlopen(req, timeout=5)  # nosec B310
                 return c("green", "✓")
             except Exception:
                 return c("red", "✗ url unreachable")
