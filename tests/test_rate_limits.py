@@ -425,15 +425,31 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
     def _mock_response(self, body):
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(body).encode()
+        mock_resp.geturl.return_value = "https://api.github.com/copilot_internal/user"
+        mock_resp.url = "https://api.github.com/copilot_internal/user"
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         return mock_resp
 
     def _patch_token(self, token="fake-gh-token"):
-        return patch(
-            "quiver.harness.rate_limits.subprocess.run",
-            return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
-        )
+        from unittest.mock import patch, MagicMock
+        class _PatchContext:
+            def __init__(self, token):
+                self.p1 = patch(
+                    "quiver.harness.rate_limits.subprocess.run",
+                    return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
+                )
+                self.p2 = patch(
+                    "quiver.harness.rate_limits.shutil.which",
+                    return_value="gh",
+                )
+            def __enter__(self):
+                self.p1.__enter__()
+                self.p2.__enter__()
+            def __exit__(self, *args):
+                self.p1.__exit__(*args)
+                self.p2.__exit__(*args)
+        return _PatchContext(token)
 
     def test_fetch_copilot_success(self):
         from quiver.harness.rate_limits import _fetch_github_copilot
