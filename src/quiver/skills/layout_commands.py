@@ -1,9 +1,8 @@
 """Skills tree, link, unlink, and move CLI commands."""
 
-import sys
 from pathlib import Path
 
-from quiver.console import c, truncate
+from quiver.console import c
 from quiver.paths import SKILL_LINKS_FILE
 from quiver.skills.help_text import (
     print_skills_link_help,
@@ -12,7 +11,6 @@ from quiver.skills.help_text import (
     print_skills_unlink_help,
 )
 from quiver.skills.layout import (
-    enumerate_skill_roots,
     layout_groups,
     load_link_records,
     sync_link_records_from_filesystem,
@@ -79,7 +77,7 @@ def cmd_skills_tree(args):
         canonical = group["canonical"]
         if canonical is None:
             continue
-        resolved = group["resolved"]
+
         count = canonical.skill_count
         count_str = f"{count} skill{'s' if count != 1 else ''}" if count else "empty"
 
