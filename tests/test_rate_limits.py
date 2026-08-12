@@ -427,6 +427,8 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         mock_resp.read.return_value = json.dumps(body).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.geturl.return_value = "https://api.github.com/copilot_internal/user"
+        mock_resp.url = "https://api.github.com/copilot_internal/user"
         return mock_resp
 
     def _patch_token(self, token="fake-gh-token"):
@@ -434,6 +436,15 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
             "quiver.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
         )
+
+    def setUp(self):
+        super().setUp()
+        self._which_patch = patch("quiver.harness.rate_limits.shutil.which", return_value="gh")
+        self._which_patch.start()
+
+    def tearDown(self):
+        self._which_patch.stop()
+        super().tearDown()
 
     def test_fetch_copilot_success(self):
         from quiver.harness.rate_limits import _fetch_github_copilot
@@ -578,6 +589,8 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         mock_resp.read.return_value = b"not json"
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.geturl.return_value = "https://api.github.com/copilot_internal/user"
+        mock_resp.url = "https://api.github.com/copilot_internal/user"
         with self._patch_token(), patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             return_value=mock_resp,
@@ -773,6 +786,8 @@ class ClaudeFetcherTest(unittest.TestCase):
         mock_resp.read.return_value = json.dumps(body).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.geturl.return_value = "https://api.anthropic.com/api/oauth/usage"
+        mock_resp.url = "https://api.anthropic.com/api/oauth/usage"
         return mock_resp
 
     def _linux_creds_file(self, token="fake-claude-token"):
@@ -1004,6 +1019,8 @@ class DroidFetcherTest(unittest.TestCase):
         mock_resp.read.return_value = json.dumps(body).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.geturl.return_value = "https://api.factory.ai/api/billing/limits"
+        mock_resp.url = "https://api.factory.ai/api/billing/limits"
         return mock_resp
 
     # Fixed "now" for deterministic expiry checks. 2026-07-25T10:00:00Z
