@@ -3,7 +3,7 @@
 import time
 
 from quiver.sessions.aggregator import PARSER_REGISTRY, get_all_sessions
-from quiver.sessions.identity import COUNT_TO_REGISTRY, registry_tool
+from quiver.sessions.identity import registry_tool
 
 # `_COUNT_TO_REGISTRY` is imported from identity.py for source-of-truth.
 

@@ -18,7 +18,6 @@ Run 'swe mcp <command> help' for detailed help on each command.
 
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -31,7 +30,7 @@ from quiver.console import c, cpad, strip_ansi, visible_len
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
-from quiver.paths import CONFIG_DIR, REGISTRY_FILE
+from quiver.paths import CONFIG_DIR
 from quiver.mcp.formats import (
     McpFormatHandler,
     convert_server_between_formats,

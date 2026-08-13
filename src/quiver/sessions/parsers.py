@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import hashlib
 import json
 import os
@@ -875,7 +874,11 @@ def parse_gemini():
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
             with os.scandir(sess_dir) as name_entry_it:
                 for name_entry in name_entry_it:
-                    ts = max(ts, get_mtime(name_entry.path))
+                    try:
+                        mt = name_entry.stat().st_mtime * 1000
+                    except Exception:
+                        mt = 0.0
+                    ts = max(ts, mt)
         except Exception:
             pass
         return ts or get_mtime(sess_dir)
@@ -910,23 +913,30 @@ def parse_antigravity():
                 for d_entry in d_entry_it:
                     if not d_entry.is_dir():
                         continue
-                    mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
                     mtime = 0.0
                     title = ""
-                    for mf in mdata_files:
-                        mt = get_mtime(mf)
-                        if mt > mtime:
-                            mtime = mt
-                            try:
-                                with open(mf) as f:
-                                    data = json.load(f)
-                                title = data.get("summary", title)
-                            except Exception:
-                                pass
+                    try:
+                        with os.scandir(d_entry.path) as md_entry_it:
+                            for md_entry in md_entry_it:
+                                if md_entry.name.endswith(".metadata.json"):
+                                    try:
+                                        mt = md_entry.stat().st_mtime * 1000
+                                    except Exception:
+                                        mt = 0.0
+                                    if mt > mtime:
+                                        mtime = mt
+                                        try:
+                                            with open(md_entry.path) as f:
+                                                data = json.load(f)
+                                            title = data.get("summary", title)
+                                        except Exception:
+                                            pass
+                    except Exception:
+                        pass
                     if mtime == 0:
-                        mtime = get_mtime(dp)
+                        mtime = get_mtime(d_entry.path)
                     path = ""
-                    overview_path = os.path.join(dp, ".system_generated", "logs", "overview.txt")
+                    overview_path = os.path.join(d_entry.path, ".system_generated", "logs", "overview.txt")
                     if os.path.exists(overview_path):
                         try:
                             with open(overview_path) as f:
