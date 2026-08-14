@@ -102,7 +102,7 @@ def cmd_autocomplete(args):
             return 1
 
     # 3. Print success message
-    print(f"Autocomplete script generated and injected successfully.")
+    print("Autocomplete script generated and injected successfully.")
     print(f"Please source your {shell} profile to apply the changes or restart your terminal.")
     print(f"For manual sourcing, use: {config['profile_instructions']}")
     return 0
