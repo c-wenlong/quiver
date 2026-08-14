@@ -6,3 +6,7 @@
 **Vulnerability:** Use of weak MD5 hash without specifying it is not used for security purposes (`usedforsecurity=False`), leading to potential FIPS non-compliance and security linter failures.
 **Learning:** `hashlib.md5` was used for non-cryptographic purposes (caching directory paths in Kimi sessions) but lacked the `usedforsecurity=False` flag required in Python >= 3.9 for FIPS environments.
 **Prevention:** Always add the `usedforsecurity=False` keyword argument when using `hashlib.md5` (or similar algorithms) for non-cryptographic purposes (e.g., cache keys, hashing object identities) to comply with FIPS and pass security linters like Bandit.
+## 2026-08-14 - Fix SSRF/LFI with urllib Request Objects
+**Vulnerability:** Calls to `urllib.request.urlopen` accepted any URL directly without explicitly checking if the protocol scheme was restricted to HTTP/HTTPS, enabling potential Server-Side Request Forgery (SSRF) and Local File Inclusion (LFI) via the `file://` scheme.
+**Learning:** Checking the raw `url` string for schemes (e.g. `url.startswith(("http://", "https://"))`) before constructing the Request object isn't completely safe, and in other places validation was missing entirely.
+**Prevention:** Always perform explicit scheme validation on the constructed `urllib.request.Request` object itself using `req.full_url.startswith(("http://", "https://"))` prior to calling `urlopen`, and append `# nosec B310` to safely bypass Bandit warnings.
