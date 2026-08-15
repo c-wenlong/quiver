@@ -7,3 +7,7 @@
 ## 2026-07-22 - File System Traversal Performance Issue
 **Learning:** os.listdir() combined with os.path.join and os.path.isdir/os.path.isfile generates many redundant stat syscalls, slowing down the parsing of sessions from deeply nested directories.
 **Action:** Switch from os.listdir() to os.scandir() which yields DirEntry objects containing cached metadata. Use entry.is_dir() and entry.is_file() instead of os.path.isdir and os.path.isfile.
+
+## 2024-08-15 - Using os.scandir to reduce stat syscalls
+**Learning:** Using `os.scandir()` provides `DirEntry` objects with cached metadata. But passing `entry.path` to a helper function like `get_mtime(entry.path)` forces a redundant `stat` syscall, completely defeating the performance benefit.
+**Action:** Extract cached attributes directly via `entry.stat().st_mtime * 1000` (wrapped in a try...except block defaulting to 0.0) instead of using `get_mtime(entry.path)`.
