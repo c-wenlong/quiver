@@ -427,12 +427,17 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         mock_resp.read.return_value = json.dumps(body).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
+        # Adding explicitly so new URL scheme checks in urlopen mock pass.
+        # Downstream code that depends on .url won't receive None.
+        mock_resp.geturl.return_value = "https://api.github.com/copilot_internal/user"
+        mock_resp.url = "https://api.github.com/copilot_internal/user"
         return mock_resp
 
     def _patch_token(self, token="fake-gh-token"):
-        return patch(
-            "quiver.harness.rate_limits.subprocess.run",
-            return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
+        return patch.multiple(
+            "quiver.harness.rate_limits",
+            subprocess=MagicMock(run=MagicMock(return_value=_CompletedProc(returncode=0, stdout=token + "\n"))),
+            shutil=MagicMock(which=MagicMock(return_value="/usr/bin/gh")),
         )
 
     def test_fetch_copilot_success(self):
