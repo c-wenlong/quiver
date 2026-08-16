@@ -4,7 +4,7 @@ from pathlib import Path
 
 from quiver.console import c, cpad, truncate
 from quiver.skills.catalog_commands import cmd_skills_catalog, cmd_skills_discover
-from quiver.skills.discovery import discover_skills, skill_roots
+from quiver.skills.discovery import discover_skills
 from quiver.skills.help_text import cmd_skills_help, print_skills_overview
 from quiver.skills.layout import enumerate_skill_roots
 from quiver.skills.layout_commands import (
