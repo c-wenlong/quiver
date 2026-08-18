@@ -875,7 +875,10 @@ def parse_gemini():
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
             with os.scandir(sess_dir) as name_entry_it:
                 for name_entry in name_entry_it:
-                    ts = max(ts, get_mtime(name_entry.path))
+                    try:
+                        ts = max(ts, name_entry.stat().st_mtime * 1000)
+                    except Exception:
+                        pass
         except Exception:
             pass
         return ts or get_mtime(sess_dir)
