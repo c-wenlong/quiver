@@ -68,7 +68,7 @@ class HarnessEditTest(unittest.TestCase):
 
     def test_cmd_edit_flag_mode_persists(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".config" / "swe"
+            config_dir = Path(tmp) / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
             config_dir.mkdir(parents=True)
             registry_file.write_text(

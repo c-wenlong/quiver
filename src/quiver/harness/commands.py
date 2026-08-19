@@ -9,6 +9,7 @@ from pathlib import Path
 
 from quiver.console import c, cpad, truncate, visible_len
 from quiver.harness.registry import load_registry, resolve, save_registry
+from quiver.init.layout import link_states
 from quiver.harness.stars import is_starred, load_stars, toggle_star, unstar
 from quiver.harness.tools import extract_version_number, is_installed, live_version
 from quiver.prompt import read_line
@@ -34,16 +35,71 @@ def _sort_tools(tools: dict, counts: dict[str, int], stars: list[str]):
     return sorted(tools.items(), key=key)
 
 
+# Which instruction filename each harness insists on, so the column shows
+# what is actually linked rather than a bare tick.
+_AGENTS_FILENAMES = {
+    "claude": "CLAUDE.md",
+    "codex": "AGENTS.md",
+    "cursor": "AGENTS.md",
+    "gemini": "GEMINI.md",
+    "qwen-code": "QWEN.md",
+    "crush": "CRUSH.md",
+    "opencode": "AGENTS.md",
+    "droid": "AGENTS.md",
+    "amp": "AGENTS.md",
+}
+
+
+# Link-state glyphs for `swe list --links`. "linked" is the goal state;
+# "conflict" means a real file is sitting where the symlink should be;
+# "skipped" means the harness is not installed. A tool with no known
+# instruction-file convention gets None and renders as a dim dot.
+_LINK_GLYPH = {
+    "linked": ("green", "\u2713"),
+    "create": ("yellow", "\u25cb"),
+    "relink": ("yellow", "\u21bb"),
+    "conflict": ("red", "\u2717"),
+    "skipped": ("dim", "\u00b7"),
+}
+
+
+def _link_cell(state, label, width):
+    """Render one link column: glyph plus what it links, padded to width."""
+    if state is None:
+        return c("dim", "\u00b7".ljust(width))
+    colour, glyph = _LINK_GLYPH.get(state, ("dim", "?"))
+    text = f"{glyph} {label}" if label else glyph
+    return c(colour, glyph) + " " + c("dim" if state != "linked" else "green", label) + " " * max(
+        0, width - visible_len(c(colour, glyph)) - 1 - len(label)
+    )
+
+
 def cmd_list(args):
-    # --refresh bypasses session cache and rate limits cache
-    refresh = "--refresh" in args or "-r" in args
-    args = [a for a in args if a not in ("--refresh", "-r")]
+    # Refresh aliases bypass both the session and rate-limit caches.
+    refresh_flags = {"--refresh", "-r", "-n"}
+    refresh = any(arg in refresh_flags for arg in args)
+    args = [arg for arg in args if arg not in refresh_flags]
+
+    # Usage is opt-in. Rate limits are the only part of `swe list` that
+    # touches the network, and on a cold cache they cost ~850ms against
+    # ~15ms for everything else combined. Asking for them explicitly keeps
+    # the default listing instant. Refreshing implies wanting to see them.
+    usage_flags = {"--usage", "-u"}
+    usage_view = refresh or any(arg in usage_flags for arg in args)
+    args = [arg for arg in args if arg not in usage_flags]
+
+    # --links swaps in quiver link status. It is a different question about
+    # the same rows, so it replaces columns rather than widening an already
+    # wide table.
+    link_flags = {"--links", "-L"}
+    links_view = any(arg in link_flags for arg in args)
+    args = [arg for arg in args if arg not in link_flags]
+    if links_view:
+        usage_view = False
     if refresh:
         from quiver.sessions.aggregator import invalidate_cache as _inv_sessions
-        from quiver.harness.rate_limits import invalidate_cache as _inv_rates
 
         _inv_sessions()
-        _inv_rates()
 
     tools = load_registry()
     tag_filter = args[0].lstrip("-") if args else None
@@ -51,11 +107,19 @@ def cmd_list(args):
     stars = load_stars()
     starred_set = set(stars)
 
-    # Fetch rate limits (cached 5min by default, --refresh bypasses;
+    # Fetch rate limits (cached 5min by default, refresh flags bypass;
     # override TTL with SWE_RATE_LIMITS_TTL=<seconds>)
     from quiver.harness.rate_limits import get_all_rate_limits
 
-    rate_limits = get_all_rate_limits(use_cache=not refresh)
+    rate_limits = (
+        get_all_rate_limits(
+            use_cache=not refresh,
+            tool_names={name for name in starred_set if name in tools},
+        )
+        if usage_view
+        else {}
+    )
+    link_status = link_states() if links_view else {}
 
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
@@ -65,10 +129,21 @@ def cmd_list(args):
     table.add_column("command", "COMMAND", width=18, kind="text")
     table.add_column("version", "VERSION", width=12, kind="text")
     table.add_column("aliases", "ALIASES", width=12, kind="list", color="cyan", empty="—")
-    table.add_column("sess", "100d", width=8, kind="preformatted", empty="—")
-    table.add_column("rate", "RATE", width=14, kind="preformatted", trust_cell_width=True)
-    table.add_column("inst", "INST", width=4, kind="preformatted")
-    table.add_column("desc", "DESCRIPTION", width=36, kind="text")
+    if links_view:
+        table.add_column("agents", "AGENTS.MD", width=22, kind="preformatted")
+        table.add_column("skills", "SKILLS", width=12, kind="preformatted")
+        table.add_column("inst", "INST", width=4, kind="preformatted")
+    elif usage_view:
+        table.add_column("sess", "100d", width=8, kind="preformatted", empty="—")
+        table.add_column(
+            "rate", "REMAINING", width=14, kind="preformatted",
+            trust_cell_width=True,
+        )
+        table.add_column("inst", "INST", width=4, kind="preformatted")
+        table.add_column("desc", "DESCRIPTION", width=36, kind="text")
+    else:
+        table.add_column("inst", "INST", width=4, kind="preformatted")
+        table.add_column("desc", "DESCRIPTION", width=46, kind="text")
 
     shown_starred = False
     for name, info in _sort_tools(tools, counts, stars):
@@ -110,13 +185,13 @@ def cmd_list(args):
         # Inst cell: padded status glyph (visible_width(status)=1).
         inst_cell = status + " " * max(0, 4 - visible_len(status))
 
-        # Rate cell: format_column returns its own ANSI-coloured string
-        # but its visible width is variable ("30% —" = 5 chars vs
+        # Remaining cell: format_column returns its own ANSI-coloured string
+        # but its visible width is variable ("70% —" = 5 chars vs
         # "100% 5d18h" = 10 chars). With trust_cell_width=True the
         # Table does NOT pad to the column width, so rows with longer
-        # rate content would push INST/DESCRIPTION columns right and
+        # quota content would push INST/DESCRIPTION columns right and
         # break the grid. Pre-pad to the column width (14) here so the
-        # rate cell is exactly 14 visible chars regardless of payload
+        # remaining cell is exactly 14 visible chars regardless of payload
         # — the actual character gap remains _column_gap_str (" | ").
         rate_cell_width = 14
         rl = rate_limits.get(name)
@@ -129,20 +204,28 @@ def cmd_list(args):
             c("dim", "—") + " " * max(0, rate_cell_width - visible_len(c("dim", "—")))
         )
 
-        table.add_row(
-            {
-                "mark": mark_cell,
-                "name": name,
-                "command": info["command"],
-                "version": ver,
-                "aliases": aliases,
-                "sess": sess_cell,
-                "rate": rate_cell,
-                "inst": inst_cell,
-                "desc": desc_padded,
-            },
-            accent=accent,
-        )
+        row = {
+            "mark": mark_cell,
+            "name": name,
+            "command": info["command"],
+            "version": ver,
+            "aliases": aliases,
+            "inst": inst_cell,
+        }
+        if links_view:
+            states = link_status.get(name, {})
+            row["agents"] = _link_cell(
+                states.get("agents"), _AGENTS_FILENAMES.get(name, ""), 22
+            )
+            row["skills"] = _link_cell(states.get("skills"), "skills/", 12)
+        elif usage_view:
+            row["sess"] = sess_cell
+            row["rate"] = rate_cell
+            row["desc"] = desc_padded
+        else:
+            row["desc"] = truncate(desc_text, 46)
+
+        table.add_row(row, accent=accent)
 
     for line in table.render():
         print(line)

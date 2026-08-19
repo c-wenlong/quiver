@@ -910,23 +910,29 @@ def parse_antigravity():
                 for d_entry in d_entry_it:
                     if not d_entry.is_dir():
                         continue
-                    mdata_files = glob.glob(os.path.join(d_entry.path, "*.metadata.json"))
                     mtime = 0.0
                     title = ""
-                    for mf in mdata_files:
-                        mt = get_mtime(mf)
-                        if mt > mtime:
-                            mtime = mt
-                            try:
-                                with open(mf) as f:
-                                    data = json.load(f)
-                                title = data.get("summary", title)
-                            except Exception:
-                                pass
+                    with os.scandir(d_entry.path) as metadata_it:
+                        for metadata_entry in metadata_it:
+                            if not metadata_entry.is_file() or not metadata_entry.name.endswith(
+                                ".metadata.json"
+                            ):
+                                continue
+                            mt = get_mtime(metadata_entry.path)
+                            if mt > mtime:
+                                mtime = mt
+                                try:
+                                    with open(metadata_entry.path) as f:
+                                        data = json.load(f)
+                                    title = data.get("summary", title)
+                                except Exception:
+                                    pass
                     if mtime == 0:
-                        mtime = get_mtime(dp)
+                        mtime = get_mtime(d_entry.path)
                     path = ""
-                    overview_path = os.path.join(dp, ".system_generated", "logs", "overview.txt")
+                    overview_path = os.path.join(
+                        d_entry.path, ".system_generated", "logs", "overview.txt"
+                    )
                     if os.path.exists(overview_path):
                         try:
                             with open(overview_path) as f:

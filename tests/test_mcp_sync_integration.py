@@ -28,7 +28,7 @@ class McpSyncIntegrationTest(unittest.TestCase):
         self.home = pathlib.Path(self.tmp.name)
 
         # Registry
-        swe_cfg = self.home / ".config" / "swe"
+        swe_cfg = self.home / ".quiver" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps(
@@ -241,7 +241,7 @@ class McpSyncCodexPeerTest(unittest.TestCase):
 
         # Minimal registry (just opencode + claude), codex is registered
         # via _EXTRA_ALIASES so it does not need a tools.json entry.
-        swe_cfg = self.home / ".config" / "swe"
+        swe_cfg = self.home / ".quiver" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({
@@ -405,7 +405,7 @@ class McpSyncDroidPeerTest(unittest.TestCase):
         self.home = pathlib.Path(self.tmp.name)
 
         # Registry: opencode + droid (with its `df` alias).
-        swe_cfg = self.home / ".config" / "swe"
+        swe_cfg = self.home / ".quiver" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({
@@ -503,7 +503,7 @@ class McpSyncUnverifiedHarnessTest(unittest.TestCase):
         self.home = pathlib.Path(self.tmp.name)
 
         # Registry: opencode (verified MCP) + hermes (no MCP_CONFIG_MAP entry).
-        swe_cfg = self.home / ".config" / "swe"
+        swe_cfg = self.home / ".quiver" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({

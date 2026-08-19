@@ -11,14 +11,28 @@ from quiver.paths import CONFIG_DIR, SKILL_LINKS_FILE
 from quiver.skills.catalogs import load_skill_catalogs, count_skill_md
 
 SHARED_LABEL = "shared"
-SHARED_REL = Path(".agents/skills")
+# The canonical tree moved into ~/.quiver so one directory owns every shared
+# asset. ~/.agents/skills stays below as a legacy alias: it is now a symlink to
+# the new root, so anything still referring to the old path keeps resolving.
+SHARED_REL = Path(".quiver/skills")
 
 # Harness skill roots that can be symlinked to shared or each other.
 HARNESS_ROOTS: tuple[tuple[str, Path], ...] = (
-    (SHARED_LABEL, Path(".agents/skills")),
+    (SHARED_LABEL, SHARED_REL),
     ("cursor", Path(".cursor/skills")),
     ("codex", Path(".codex/skills")),
     ("claude", Path(".claude/skills")),
+    ("qwen", Path(".qwen/skills")),
+    ("forge", Path(".forge/skills")),
+    ("cline", Path(".cline/skills")),
+    ("kiro", Path(".kiro/skills")),
+    ("vibe", Path(".vibe/skills")),
+    ("augment", Path(".augment/skills")),
+    ("continue", Path(".continue/skills")),
+    ("pi", Path(".pi/skills")),
+    ("grok", Path(".grok/skills")),
+    ("crush", Path(".config/crush/skills")),
+    ("agents-legacy", Path(".agents/skills")),
 )
 
 BUILTIN_ROOTS: tuple[tuple[str, Path], ...] = (
@@ -241,11 +255,7 @@ def sync_link_records_from_filesystem(home: Path | None = None) -> list[str]:
         if entry.label not in harness_labels:
             continue
         if entry.kind == "symlink" and entry.resolved is not None and entry.link_target is not None:
-            try:
-                target = entry.link_target.expanduser().resolve()
-            except OSError:
-                target = entry.resolved
-            record_symlink(entry.label, entry.path, target)
+            record_symlink(entry.label, entry.path, entry.resolved)
             updated.append(entry.label)
         elif entry.label != SHARED_LABEL:
             remove_link_record(entry.label)

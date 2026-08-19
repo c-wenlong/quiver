@@ -2,12 +2,14 @@
 
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from quiver.console import c, cpad, truncate, visible_len
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.identity import launch_tool
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
+from quiver.sessions.query import SessionQuery, calendar_range_ms
 from quiver.table import Table
 
 # Resume flag strategies keyed by tool_name (not launch key)
@@ -139,12 +141,39 @@ def cmd_models(args):
     print(c("dim", f"  {grand_total} messages, {n_models} models across {n_tools} tools\n"))
 
 
+@dataclass
+class _SessionArgs:
+    limit: int = 10
+    agent_filter: str | None = None
+    cwd_filter: str | None = None
+    use_index: int | None = None
+    search: str | None = None
+    days: int | None = None
+    weeks: int | None = None
+    start: str | None = None
+    end: str | None = None
+    limit_explicit: bool = False
+
+    def __iter__(self):
+        # Preserve the original five-value helper contract for callers/tests.
+        yield self.limit
+        yield self.agent_filter
+        yield self.cwd_filter
+        yield self.use_index
+        yield self.search
+
+
 def _parse_session_args(args: list[str]):
     limit = 10
     agent_filter = None
     cwd_filter = None
     use_index = None
     search = None
+    days = None
+    weeks = None
+    start = None
+    end = None
+    limit_explicit = False
 
     i = 0
     while i < len(args):
@@ -160,13 +189,51 @@ def _parse_session_args(args: list[str]):
         elif args[i] == "--here":
             cwd_filter = os.getcwd()
             i += 1
+        elif args[i] in ("--days", "-d") and i + 1 < len(args):
+            try:
+                days = int(args[i + 1])
+            except ValueError:
+                print(c("red", "--days must be a positive integer"))
+                return None
+            i += 2
+        elif args[i] in ("--weeks", "-w") and i + 1 < len(args):
+            try:
+                weeks = int(args[i + 1])
+            except ValueError:
+                print(c("red", "--weeks must be a positive integer"))
+                return None
+            i += 2
+        elif args[i] in ("--start", "-s") and i + 1 < len(args):
+            start = args[i + 1]
+            i += 2
+        elif args[i] in ("--end", "-e") and i + 1 < len(args):
+            end = args[i + 1]
+            i += 2
         elif args[i].isdigit() and use_index is None:
             limit = int(args[i])
+            limit_explicit = True
             i += 1
         else:
             print(c("red", f"Unknown argument: {args[i]}"))
             return None
-    return limit, agent_filter, cwd_filter, use_index, search
+    if any(value is not None for value in (days, weeks, start, end)):
+        try:
+            calendar_range_ms(days=days, weeks=weeks, start=start, end=end)
+        except ValueError as exc:
+            print(c("red", str(exc)))
+            return None
+    return _SessionArgs(
+        limit=limit,
+        agent_filter=agent_filter,
+        cwd_filter=cwd_filter,
+        use_index=use_index,
+        search=search,
+        days=days,
+        weeks=weeks,
+        start=start,
+        end=end,
+        limit_explicit=limit_explicit,
+    )
 
 
 def _filter_search(sessions, search: str | None):
@@ -235,18 +302,42 @@ def cmd_session(args):
     if parsed is None:
         return 1
     limit, agent_filter, cwd_filter, use_index, search = parsed
+    has_date_filter = any(
+        value is not None
+        for value in (parsed.days, parsed.weeks, parsed.start, parsed.end)
+    )
 
-    # Fetch a wider window when searching, then re-limit
-    fetch_limit = None if search else (max(limit, use_index or 0) if use_index else limit)
+    # Search and date filtering must inspect the complete local inventory.
+    fetch_limit = (
+        None
+        if search or has_date_filter
+        else (max(limit, use_index or 0) if use_index else limit)
+    )
     if use_index is not None and use_index > limit:
         limit = use_index
-        if not search:
+        if not search and not has_date_filter:
             fetch_limit = limit
 
     sessions = get_all_sessions(limit=fetch_limit, agent=agent_filter, cwd=cwd_filter)
-    sessions = _filter_search(sessions, search)
-    if search:
-        sessions = sessions[:limit]
+    result_limit = limit if parsed.limit_explicit or not has_date_filter else None
+    if use_index is not None:
+        result_limit = max(result_limit or 0, use_index)
+    if has_date_filter:
+        start_ms, end_ms = calendar_range_ms(
+            days=parsed.days,
+            weeks=parsed.weeks,
+            start=parsed.start,
+            end=parsed.end,
+        )
+        query = SessionQuery(
+            start_ms=start_ms,
+            end_ms=end_ms,
+            search=search,
+            limit=result_limit,
+        )
+    else:
+        query = SessionQuery(search=search, limit=result_limit)
+    sessions = query.apply(sessions)
 
     if not sessions:
         print(c("dim", "  No sessions found."))

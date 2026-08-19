@@ -17,7 +17,7 @@ from quiver.harness.stars import (
 
 class HarnessStarsTest(unittest.TestCase):
     def _patch_paths(self, tmp: str):
-        config_dir = Path(tmp) / ".config" / "swe"
+        config_dir = Path(tmp) / ".quiver" / "config"
         stars_file = config_dir / "stars.json"
         return patch.multiple(
             "quiver.harness.stars",
@@ -47,7 +47,7 @@ class HarnessStarsTest(unittest.TestCase):
             with self._patch_paths(tmp):
                 save_stars(["droid", "claude", "droid", ""])
                 self.assertEqual(load_stars(), ["droid", "claude"])
-                raw = json.loads((Path(tmp) / ".config" / "swe" / "stars.json").read_text())
+                raw = json.loads((Path(tmp) / ".quiver" / "config" / "stars.json").read_text())
                 self.assertEqual(raw, ["droid", "claude"])
 
     def test_sort_tools_pins_stars_first(self):

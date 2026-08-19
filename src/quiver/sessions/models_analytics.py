@@ -68,6 +68,7 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
 
     db_path = os.path.expanduser("~/.local/share/opencode/opencode.db")
     if os.path.exists(db_path):
+        conn = None
         try:
             conn = sqlite3.connect(db_path)
             cur = conn.cursor()
@@ -84,9 +85,11 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
             for provider, model, cnt in cur.fetchall():
                 if model:
                     raw.setdefault("opencode", {})[(provider or "", model)] = cnt
-            conn.close()
         except Exception:
             pass
+        finally:
+            if conn is not None:
+                conn.close()
 
     claude_dir = os.path.expanduser("~/.claude/projects/")
     if os.path.exists(claude_dir):
@@ -97,9 +100,12 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
                 for entry in entry_it:
                     if not entry.is_dir() or not entry.name.startswith("-"):
                         continue
-                    for jsonl in glob.glob(os.path.join(entry.path, "*.jsonl")):
-                        for key, cnt in _scan_jsonl_models(jsonl, 30).items():
-                            seen[key] = seen.get(key, 0) + cnt
+                    with os.scandir(entry.path) as file_it:
+                        for file_entry in file_it:
+                            if not file_entry.is_file() or not file_entry.name.endswith(".jsonl"):
+                                continue
+                            for key, cnt in _scan_jsonl_models(file_entry.path, 30).items():
+                                seen[key] = seen.get(key, 0) + cnt
                 if seen:
                     raw["claude"] = seen
         except Exception:

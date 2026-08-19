@@ -15,7 +15,7 @@ def print_providers_help() -> None:
       Show full details for one provider, including key status + path
 
   {c('cyan', 'swe providers add <name> [desc] [--url URL] [--env ENV] [--file NAME]')}
-      Register a provider in {c('bold', '~/.config/swe/providers.json')}.
+      Register a provider in {c('bold', '~/.quiver/config/providers.json')}.
       Does not create or touch any key file.
 
   {c('cyan', 'swe providers remove <name>')}

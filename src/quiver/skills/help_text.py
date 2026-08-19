@@ -85,7 +85,7 @@ def print_skills_tree_help():
   {c('cyan', 'swe skills tree --json')}       Machine-readable layout
 
 {c('bold', 'Typical layout')}
-  shared   ~/.agents/skills          (canonical shared tree)
+  shared   ~/.quiver/skills          (canonical shared tree)
   codex    ~/.codex/skills  → shared
   claude   ~/.claude/skills → shared
   cursor   ~/.cursor/skills → shared
