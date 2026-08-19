@@ -11,13 +11,27 @@ HELP = {
         f"""\
   {c('cyan', 'swe list')}                     List all tools (starred first, then 100d usage)
   {c('cyan', 'swe list <tag>')}               Filter by tag (e.g. swe list agentic)
-  {c('cyan', 'swe list --refresh')}           Bypass session cache, re-parse all sessions
+  {c('cyan', 'swe list --usage')}             Add 100d sessions and remaining quota
+  {c('cyan', 'swe list --links')}             Add AGENTS.MD and SKILLS link status
+  {c('cyan', 'swe list -n')}                  Fetch new session and rate-limit data
 
   Favourited harnesses are pinned to the top with a neon border ({c('neon_pink', '★')}).
   Use {c('cyan', 'swe star <name>')} to favourite / unfavourite.
 
 {c('bold', 'Flags')}
-  {c('cyan', '--refresh')} / {c('cyan', '-r')}   Force re-parse of session data (bypass cache)."""
+  {c('cyan', '--usage')} / {c('cyan', '-u')}            Show usage. This is the only part of swe list
+                          that touches the network, so it is opt-in: the plain
+                          listing runs in ~70ms, --usage costs ~700ms on a cold
+                          cache. Implied by --refresh.
+  {c('cyan', '--links')} / {c('cyan', '-L')}            Show quiver link status instead of usage.
+  {c('cyan', '--refresh')} / {c('cyan', '-r')} / {c('cyan', '-n')}   Bypass caches and fetch new data.
+
+{c('bold', 'Link states')}
+  {c('green', '✓')}  linked to ~/.quiver      {c('yellow', '○')}  nothing there yet
+  {c('yellow', '↻')}  symlink points elsewhere  {c('red', '✗')}  real file in the way, needs --force
+  {c('dim', '·')}  no known convention, or harness not installed
+
+  Run {c('cyan', 'swe init')} to link everything."""
     ),
     "star": (
         "Favourite / pin a harness to the top of swe list",
@@ -27,7 +41,7 @@ HELP = {
   {c('cyan', 'swe unstar <name|alias>')}      Remove star
   {c('cyan', 'swe star clear')}               Clear all stars
 
-  Stars are stored in {c('dim', '~/.config/swe/stars.json')} (separate from tools.json).
+  Stars are stored in {c('dim', '~/.quiver/config/stars.json')} (separate from tools.json).
   Starred harnesses sort above unstarred ones in {c('cyan', 'swe list')}.
 
 {c('bold', 'Examples')}
@@ -160,6 +174,10 @@ HELP = {
   {c('cyan', '--agent <name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
   {c('cyan', '--search <text>')}              Filter title/path/agent/session id (alias: -q)
+  {c('cyan', '-d, --days <N>')}               Include today and the preceding N-1 calendar dates
+  {c('cyan', '-w, --weeks <N>')}              Include the latest N times 7 calendar dates
+  {c('cyan', '-s, --start <YYYY-MM-DD>')}      Inclusive range start; use together with --end
+  {c('cyan', '-e, --end <YYYY-MM-DD>')}        Inclusive range end; use together with --start
 
 {c('bold', 'Examples')}
   swe session
@@ -167,8 +185,65 @@ HELP = {
   swe session use 3
   swe session --agent claude
   swe session --here
+  swe session -d 5
+  swe session -w 3
+  swe session -s 2026-07-01 -e 2026-07-30
   swe session --search login
   swe session 30 -q quiver"""
+    ),
+    "report": (
+        "Summarize coding sessions and manage follow-ups",
+        f"""\
+  {c('cyan', 'swe report daily')}              Preview and generate a daily coding-session report
+  {c('cyan', 'swe report weekly')}             Preview and generate a weekly coding-session report
+  {c('cyan', 'swe report warnings <manifest>')} Print warnings recorded for one specific report
+  {c('cyan', 'swe report followups')}           List open follow-ups
+  {c('cyan', 'swe report followup done <id>')}  Mark a follow-up done manually
+  {c('cyan', 'swe report followup work <id>')}  Resume its source or start a contextual session
+
+Before any model runs, Quiver displays session counts, exclusions, cache hits,
+planned calls, and estimated input tokens. Normal plans ask for y/N. Plans over
+configured limits require the exact phrase {c('bold', 'process all')}.
+When a report completes with warnings, Quiver prints the exact
+{c('cyan', 'swe report warnings <manifest.json>')} command for that report.
+
+{c('bold', 'Source flags')}
+  {c('cyan', '-d, --days <N>')}                Override the report with N calendar dates
+  {c('cyan', '-w, --weeks <N>')}               Override the report with N times 7 calendar dates
+  {c('cyan', '-s, --start <YYYY-MM-DD>')}       Inclusive custom start; requires --end
+  {c('cyan', '-e, --end <YYYY-MM-DD>')}         Inclusive custom end; requires --start
+  {c('cyan', '--here')}                        Include only the current project
+  {c('cyan', '--agent <name>')}                Include only one coding harness
+  {c('cyan', '--search <text>')}               Match session title/path/agent/id (alias: -q)
+
+{c('bold', 'Runner override flags')}
+  {c('cyan', '--session-harness <name>')}       Cheap summarizer harness: claude or codex
+  {c('cyan', '--session-model <model>')}        Model used for project/session summaries
+  {c('cyan', '--session-arg <arg>')}            Pass one extra summarizer argument; repeat as needed
+  {c('cyan', '--writer-harness <name>')}        Harness used for the final report
+  {c('cyan', '--writer-model <model>')}         Strong model used for the final report
+  {c('cyan', '--writer-arg <arg>')}             Pass one extra writer argument; repeat as needed
+
+{c('bold', 'Follow-up actions')}
+  add <text> [--project PATH]   Add an item; project defaults to the current directory
+  edit <id> <text>             Correct an item's text
+  done|dismiss|reopen <id>     Change status explicitly
+  work <id> --resume           Resume the newest referenced supported session
+  work <id> --new --harness X  Start a new contextual session with harness X"""
+    ),
+    "config": (
+        "View or update Quiver configuration",
+        f"""\
+  {c('cyan', 'swe config')}                     Print resolved configuration
+  {c('cyan', 'swe config get <key>')}           Print one resolved dotted key
+  {c('cyan', 'swe config set <key> <value>')}   Save a string, number, boolean, or JSON array
+  {c('cyan', 'swe config unset <key>')}         Remove a user-set value
+  {c('cyan', 'swe config edit')}                Open ~/.quiver/config/config.json in VISUAL or EDITOR
+  {c('cyan', 'swe config check')}               Validate types, report setup, and secret safety
+  {c('cyan', 'swe config setup report')}        Configure cheap summary and strong writer models
+
+Quiver never stores model credentials in this file. Claude and Codex continue
+to use their own login state and environment."""
     ),
     "models": (
         "Show model usage across all tools",
@@ -205,12 +280,12 @@ HELP = {
   {c('cyan', '-d, --desc')}                   Show skill descriptions
 
 {c('bold', 'Scopes scanned')}
-  shared          ~/.agents/skills (the tree ~/.claude, ~/.codex, ~/.cursor symlink to)
+  shared          ~/.quiver/skills (the tree every harness skills/ symlinks to)
   cursor-builtin  ~/.cursor/skills-cursor
   cursor-plugin   ~/.cursor/plugins/cache
   claude-plugin   ~/.claude/plugins/cache
   project         ./.cursor/skills (current directory)
-  <catalog>       Paths from ~/.config/swe/skill_catalogs.json
+  <catalog>       Paths from ~/.quiver/config/skill_catalogs.json
 
   {c('dim', 'Discover')} finds folders named skills under ~/Desktop and ~/Documents,
   then {c('cyan', 'swe skills discover --apply')} or {c('cyan', 'swe skills catalog add')} registers them.
@@ -243,7 +318,7 @@ HELP = {
   {c('cyan', 'swe mcp doctor')}               Deep diagnostics
 
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for detailed help on each command
-{c('bold', 'Source of truth')}  ~/.config/swe/mcp.json"""
+{c('bold', 'Source of truth')}  ~/.quiver/config/mcp.json"""
     ),
     "providers": (
         "Manage AI provider API keys and metadata",
@@ -253,7 +328,7 @@ HELP = {
   {c('cyan', 'swe providers info <name|alias>')}
       Show details for one provider, including key status + path
   {c('cyan', 'swe providers add <name> [--url URL] [--env ENV] [--file NAME]')}
-      Register a provider in ~/.config/swe/providers.json
+      Register a provider in ~/.quiver/config/providers.json
   {c('cyan', 'swe providers remove <name>')}
       Unregister a provider (does not delete your key file)
 
@@ -271,16 +346,47 @@ HELP = {
 
 {c('bold', 'Alias')}  {c('cyan', 'swe discover')} is the same as {c('cyan', 'swe harness discover')}"""
     ),
-    "setup": (
-        "Onboarding wizard for new installs",
+    "init": (
+        "Create ~/.quiver and symlink every harness to it",
         f"""\
-  {c('cyan', 'swe setup')}              Scan harnesses, MCP, and skills roots (dry-run)
-  {c('cyan', 'swe setup --apply')}      Apply safe setup changes without prompting
+  {c('cyan', 'swe init')}                    Create the layout and link all harnesses
+  {c('cyan', 'swe init --check')}            Show what would change, write nothing
+  {c('cyan', 'swe init --force')}            Replace real files too (backed up first)
 
-  Three steps: (1) register AI CLIs via harness discover, (2) import MCP servers,
-  (3) symlink ~/.codex, ~/.claude, ~/.cursor/skills → ~/.agents/skills when safe.
+{c('bold', 'What it owns')}
+  ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
+                        own name (CLAUDE.md, QWEN.md, CRUSH.md, GEMINI.md)
+  ~/.quiver/skills/     one skill tree, linked in as every harness's skills/
+  ~/.quiver/backups/    anything replaced, timestamped
 
-  On a TTY, {c('cyan', 'swe setup')} prompts before writing registry, mcp.json, or symlinks."""
+{c('bold', 'States')}
+  {c('green', 'linked')}    already points at the canonical file
+  {c('cyan', 'create')}    nothing there yet, will symlink
+  {c('yellow', 'relink')}    symlink pointing elsewhere, will repoint
+  {c('red', 'conflict')}  a real file or directory, needs --force
+  {c('dim', 'skipped')}   harness not installed on this machine"""
+    ),
+    "setup": (
+        "Sectioned setup wizard for Quiver",
+        f"""\
+  {c('cyan', 'swe setup')}                    Run all six interactive setup stages
+  {c('cyan', 'swe setup --quick')}            Only visit missing or actionable stages
+  {c('cyan', 'swe setup harnesses')}          Discover and register coding CLIs
+  {c('cyan', 'swe setup providers')}          Review provider credential coverage
+  {c('cyan', 'swe setup mcp')}                Import MCP servers into mcp.json
+  {c('cyan', 'swe setup skills')}             Unify safe roots under ~/.quiver/skills
+  {c('cyan', 'swe setup report')}             Configure summarizer and writer models
+  {c('cyan', 'swe setup check')}              Verify the resulting setup
+
+  Returning-user prompts show current values; Enter keeps them. Quiver creates a
+  timestamped backup before changing tools.json, mcp.json, or config.json.
+
+  {c('cyan', 'swe setup --apply')}            Apply safe discovery changes without prompts
+  {c('cyan', 'swe setup --json')}             Print the discovery preview as JSON
+  {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
+
+  Provider credentials remain external. Use {c('cyan', 'swe providers info <name>')} for the
+  expected key file and environment variable; harness OAuth remains harness-owned."""
     ),
     "discover": (
         "Scan PATH for unregistered AI coding CLIs",
@@ -296,7 +402,7 @@ HELP = {
   {c('cyan', 'swe autocomplete bash')}   Generate + inject bash completion
   {c('cyan', 'swe autocomplete fish')}   Generate + inject fish completion
 
-  Writes a completion script to {c('dim', '~/.config/swe/completions/')} and adds a
+  Writes a completion script to {c('dim', '~/.quiver/completions/')} and adds a
   source line to your shell profile (~/.zshrc, ~/.bashrc, or fish config).
 
   After running, restart your terminal or run:
@@ -309,7 +415,9 @@ HELP = {
 
 COMMAND_CATEGORIES = [
     ("Setup", [
+        ("init",    None),
         ("setup",   None),
+        ("config",  None),
         ("doctor",  None),
         ("install", None),
     ]),
@@ -329,6 +437,7 @@ COMMAND_CATEGORIES = [
     ]),
     ("Analytics", [
         ("session", None),
+        ("report",  None),
         ("models",  None),
     ]),
     ("Reference", [

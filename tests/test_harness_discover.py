@@ -29,7 +29,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "kiro-cli")
 
-            config_dir = tmp_path / ".config" / "swe"
+            config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
             minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
 
@@ -50,7 +50,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "my-tool-code")
 
-            config_dir = tmp_path / ".config" / "swe"
+            config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
             minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
 
@@ -71,7 +71,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "kiro-cli")
 
-            config_dir = tmp_path / ".config" / "swe"
+            config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
             minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
 
@@ -94,7 +94,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "claude")
 
-            config_dir = tmp_path / ".config" / "swe"
+            config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
 
             p1, p2 = _registry_patches(config_dir, registry_file)
@@ -111,7 +111,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "claude")
 
-            config_dir = tmp_path / ".config" / "swe"
+            config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
 
             p1, p2 = _registry_patches(config_dir, registry_file)

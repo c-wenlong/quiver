@@ -1,0 +1,16 @@
+[run]
+branch = True
+parallel = True
+patch = subprocess
+source = quiver
+
+[report]
+fail_under = 69
+precision = 1
+show_missing = True
+skip_covered = True
+exclude_also =
+    if __name__ == .__main__.:
+
+[xml]
+output = coverage.xml

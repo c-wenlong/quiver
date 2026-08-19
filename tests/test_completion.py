@@ -16,6 +16,8 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertIn("list", names)
         self.assertIn("use", names)
         self.assertIn("session", names)
+        self.assertIn("report", names)
+        self.assertIn("config", names)
         self.assertIn("autocomplete", names)
         # __complete should NOT appear
         self.assertNotIn("__complete", names)
@@ -80,6 +82,10 @@ class CompletionEngineTest(unittest.TestCase):
         names = [c for c, _ in comps]
         self.assertIn("--refresh", names)
 
+        short_comps = get_completions(["list", "-"])
+        short_names = [c for c, _ in short_comps]
+        self.assertIn("-n", short_names)
+
     def test_list_tag_completions(self):
         fake_registry = {
             "claude": {"description": "Claude", "aliases": [], "tags": ["coding", "byok"]},
@@ -99,6 +105,30 @@ class CompletionEngineTest(unittest.TestCase):
         comps = get_completions(["session", "--"])
         names = [c for c, _ in comps]
         self.assertIn("--search", names)
+        self.assertIn("--days", names)
+        self.assertIn("--start", names)
+
+    def test_report_and_config_subcommands(self):
+        from quiver.completion import get_completions
+
+        report = [name for name, _ in get_completions(["report", ""])]
+        config = [name for name, _ in get_completions(["config", ""])]
+        self.assertIn("daily", report)
+        self.assertIn("followups", report)
+        self.assertIn("set", config)
+        self.assertIn("check", config)
+
+    def test_setup_sections_and_flags(self):
+        from quiver.completion import get_completions
+
+        sections = [name for name, _ in get_completions(["setup", ""])]
+        flags = [name for name, _ in get_completions(["setup", "--"])]
+        self.assertEqual(
+            sections,
+            ["harnesses", "providers", "mcp", "skills", "report", "check"],
+        )
+        self.assertIn("--quick", flags)
+        self.assertIn("--non-interactive", flags)
 
     def test_no_completions_for_unknown_context(self):
         from quiver.completion import get_completions

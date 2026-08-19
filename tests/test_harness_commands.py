@@ -16,7 +16,7 @@ Tests below pin the structural invariants the new layout must hold:
 4. Starred rows carry the neon accent ANSI + the ``★`` marker;
    unstarred rows do NOT carry the neon accent on plain-text cells
    but DO carry cyan aliases (via ``list`` kind color attr).
-5. ``trust_cell_width=True`` is wired on the RATE column. cmd_list
+5. ``trust_cell_width=True`` is wired on the REMAINING column. cmd_list
    pre-pads every rate cell to the column width (14) so the
    visible-border gap lands at exactly the same column offset
    regardless of format_column()'s variable output width.
@@ -41,11 +41,16 @@ from quiver.harness.commands import _sort_tools, cmd_aliases, cmd_check, cmd_inf
 from quiver.harness.rate_limits import RateLimitInfo
 
 
-def _run_cmd_list():
-    """Capture cmd_list's stdout via redirect_stdout (handles ``print()`` with no args)."""
+def _run_cmd_list(args=None):
+    """Capture cmd_list's stdout via redirect_stdout (handles ``print()`` with no args).
+
+    Defaults to the usage view. Usage became opt-in once it turned out to be
+    the only networked part of the listing, but these tests are specifically
+    about the usage columns, so they ask for them.
+    """
     buf = io.StringIO()
     with redirect_stdout(buf):
-        cmd_list([])
+        cmd_list(["--usage"] if args is None else args)
     return buf.getvalue()
 
 
@@ -146,7 +151,7 @@ class CmdListHeaderTest(unittest.TestCase):
             if all(label in strip_ansi(raw) for label in ("NAME", "COMMAND", "VERSION"))
         )
         header = strip_ansi(lines[hdr_idx])
-        for label in ("NAME", "COMMAND", "VERSION", "ALIASES", "100d", "RATE", "INST", "DESCRIPTION"):
+        for label in ("NAME", "COMMAND", "VERSION", "ALIASES", "100d", "REMAINING", "INST", "DESCRIPTION"):
             self.assertIn(label, header, f"missing {label!r} in header: {header!r}")
         self.assertEqual(header.count("NAME"), 1)
         self.assertEqual(header.count("COMMAND"), 1)
@@ -216,7 +221,7 @@ class CmdListAccentTest(unittest.TestCase):
 
 
 class CmdListRateColumnTest(unittest.TestCase):
-    """trust_cell_width=True is wired on the RATE column + cmd_list pre-pads."""
+    """The REMAINING column uses trusted widths and explicit pre-padding."""
 
     def setUp(self):
         _setup_patches(self)
@@ -225,7 +230,7 @@ class CmdListRateColumnTest(unittest.TestCase):
         """Regression guard for the user's "rows with usage info misaligned" complaint.
 
         RateLimitInfo.format_column() returns a variable-width string
-        — e.g. "30% \u2014" is 5 chars, "100% 8d23h" is 10. With
+        — e.g. "70% \u2014" is 5 chars, "100% 8d23h" is 10. With
         trust_cell_width=True the Table does NOT pad the cell, so
         rows with longer rate payloads would push the visible-border
         gap " \u2502 " rightward and break column alignment. cmd_list
@@ -236,10 +241,10 @@ class CmdListRateColumnTest(unittest.TestCase):
         codex_row = _row_for_tool(output, "codex")
         plain = strip_ansi(codex_row)
         # Span [rate_start, rate_start+14) must have visible length 14
-        # — the pre-pad closes the gap between "30% \u2014" (5 chars)
+        # — the pre-pad closes the gap between "70% \u2014" (5 chars)
         # and the column width.
         rate_cell_width = 14
-        rate_start = plain.find("30%")
+        rate_start = plain.find("70%")
         self.assertGreaterEqual(rate_start, 0, "rate cell content not found")
         self.assertEqual(rate_cell_width, visible_len(plain[rate_start:rate_start + rate_cell_width]),
             f"rate cell spans {visible_len(plain[rate_start:rate_start+rate_cell_width])} "
@@ -396,6 +401,39 @@ class CmdListSortAndFilterTest(unittest.TestCase):
         with redirect_stdout(buf2):
             cmd_list(["-anthropic"])
         self.assertEqual(buf1.getvalue(), buf2.getvalue())
+
+
+class CmdListRefreshFlagTest(unittest.TestCase):
+    """Fresh-data aliases refresh sessions and starred usage before rendering."""
+
+    def test_list_requests_usage_only_for_starred_harnesses(self):
+        _setup_patches(self, stars=["claude", "droid"])
+        with patch(
+            "quiver.harness.rate_limits.get_all_rate_limits",
+            return_value={},
+        ) as fetch_rates, redirect_stdout(io.StringIO()):
+            cmd_list(["--usage"])
+
+        fetch_rates.assert_called_once_with(
+            use_cache=True,
+            tool_names={"claude", "droid"},
+        )
+
+    def test_new_short_flag_refetches_sessions_and_rate_limits(self):
+        _setup_patches(self)
+        with patch(
+            "quiver.sessions.aggregator.invalidate_cache",
+        ) as invalidate_sessions, patch(
+            "quiver.harness.rate_limits.invalidate_cache",
+        ) as invalidate_rates, patch(
+            "quiver.harness.rate_limits.get_all_rate_limits",
+            return_value={},
+        ) as fetch_rates, redirect_stdout(io.StringIO()):
+            cmd_list(["-n"])
+
+        invalidate_sessions.assert_called_once_with()
+        invalidate_rates.assert_not_called()
+        fetch_rates.assert_called_once_with(use_cache=False, tool_names=set())
 
 
 # ---------------------------------------------------------------------------
@@ -640,55 +678,51 @@ class CmdCheckHealSideEffectTest(unittest.TestCase):
         # No mutation → saved_registry not called.
         self.assertEqual(len(saved_calls), 0)
 
-def test_dirty_stored_version_cleared_when_live_returns_none(self):
-    """If live_version can't probe AND the stored value isn't a
-    bare version number (dirty banner/text), drop it.
-    """
-    import re
-    saved_calls = []
-    dirty_registry = {
-        "claude": {
-            "command": "claude",
-            "aliases": ["cl"],
-            "tags": [],
-            "version": "cli installed via npm (set 09:32)",  # dirty
+    def test_dirty_stored_version_cleared_when_live_returns_none(self):
+        """A failed probe clears a stored value that is not a version."""
+        import re
+        saved_calls = []
+        dirty_registry = {
+            "claude": {
+                "command": "claude",
+                "aliases": ["cl"],
+                "tags": [],
+                "version": "cli installed via npm (set 09:32)",
+            }
         }
-    }
-    # extract_version_number("cli installed via npm (set 09:32)") == ""
-    # so the dirty value gets dropped. The mock mirrors the real
-    # behaviour: extract the first bare x.y.z rune, else return "".
-    def _fake_extract(raw):
-        if not raw:
-            return ""
-        m = re.search(r"\d+\.\d+(?:\.\d+)?", raw)
-        return m.group(0) if m else ""
 
-    # Use ``copy.deepcopy(dirty_registry)`` so the inline patch in
-    # THIS test never mutates any other fixture or the dirty_registry
-    # itself if it were ever shared.
-    patches = [
-        patch(
-            "quiver.harness.commands.load_registry",
-            return_value=copy.deepcopy(dirty_registry),
-        ),
-        patch("quiver.harness.commands.is_installed", return_value=True),
-        patch("quiver.harness.commands.live_version", return_value=None),
-        patch(
-            "quiver.harness.commands.extract_version_number",
-            side_effect=_fake_extract,
-        ),
-        patch(
-            "quiver.harness.commands.save_registry",
-            side_effect=lambda t: saved_calls.append(t),
-        ),
-        patch("quiver.harness.path_health.find_off_path_tools", return_value=[]),
-    ]
-    for p in patches:
-        p.start()
-        self.addCleanup(p.stop)
-    _run_cmd_check()
-    self.assertEqual(len(saved_calls), 1)
-    self.assertIsNone(saved_calls[0]["claude"]["version"])
+        def _fake_extract(raw):
+            if not raw:
+                return ""
+            m = re.search(r"\d+\.\d+(?:\.\d+)?", raw)
+            return m.group(0) if m else ""
+
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=copy.deepcopy(dirty_registry),
+            ),
+            patch("quiver.harness.commands.is_installed", return_value=True),
+            patch("quiver.harness.commands.live_version", return_value=None),
+            patch(
+                "quiver.harness.commands.extract_version_number",
+                side_effect=_fake_extract,
+            ),
+            patch(
+                "quiver.harness.commands.save_registry",
+                side_effect=lambda t: saved_calls.append(t),
+            ),
+            patch(
+                "quiver.harness.path_health.find_off_path_tools",
+                return_value=[],
+            ),
+        ]
+        for item in patches:
+            item.start()
+            self.addCleanup(item.stop)
+        _run_cmd_check()
+        self.assertEqual(len(saved_calls), 1)
+        self.assertIsNone(saved_calls[0]["claude"]["version"])
 
 
 class CmdCheckOffPathFooterTest(unittest.TestCase):

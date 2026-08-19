@@ -3,10 +3,71 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).## [Unreleased] - 0.2.7
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased] - 0.2.7
 
 ### Added
 
+- **`swe init --migrate`.** Moves a pre-0.2.7 `~/.config/swe` into `~/.quiver`,
+  routing authored state to `config/`, caches to `cache/`, and leaving
+  `completions/` and `reports/` at the root. Unrecognised files go to `config/`
+  rather than being dropped. Existing destinations are never overwritten. Also
+  writes a `.gitignore` so the root can be a git repo without committing cache.
+
+- **`swe list --usage`.** Usage columns (100d, REMAINING) are now opt-in.
+  They were the only part of the listing that touches the network. Implied by
+  `--refresh`.
+
+- **`swe list --links`.** Swaps the usage columns (100d, REMAINING,
+  DESCRIPTION) for AGENTS.MD and SKILLS link status, so the table gets narrower
+  (124 cols vs 146) rather than wider. Needs no network, so it also runs in
+  ~83 ms against ~170 ms warm and ~870 ms on a cold rate-limit cache.
+
+- **`swe init` and the `~/.quiver` layout.** One directory now owns the assets
+  every harness duplicates. `~/.quiver/AGENTS.md` is symlinked into each harness
+  under that harness's own filename (CLAUDE.md, QWEN.md, CRUSH.md, GEMINI.md),
+  and `~/.quiver/skills` is symlinked in as every harness's `skills/`. Run
+  `swe init --check` for a dry run, `--force` to back up and replace real files.
+  Instruction filenames were confirmed against the installed binaries; harnesses
+  whose convention could not be confirmed are skipped rather than guessed at.
+
+- **Freebuff GLM 5.2 session usage in `swe list`.** Starred Freebuff rows read
+  the CLI's authenticated, read-only session status and display remaining/total
+  premium sessions plus the server-provided reset countdown without joining a
+  session.
+- **Sectioned interactive setup wizard.** `swe setup` now walks through
+  harness discovery, provider credential coverage, MCP import, shared skills
+  roots, coding-session report models, and final verification. Returning-user
+  prompts preserve current values on Enter, `swe setup <section>` reruns one
+  stage, and `--quick` skips configured work. Quiver creates timestamped
+  backups before changing its registry, MCP source-of-truth, or general config;
+  the existing `--apply`, `--json`, and non-interactive preview paths remain
+  available for scripts.
+
+- **Coding-session reports and durable follow-ups.** `swe report daily` and
+  `swe report weekly` normalize local histories from all 20 session parsers,
+  remove startup-only noise, reuse digest-cached summaries, batch short useful
+  sessions by Git repository, and use separate inexpensive summarizer and
+  strong writer models. Every run shows model-call and input-token estimates
+  before confirmation; over-budget runs require typing `process all` exactly.
+  Reports, manifests, cursors, exclusions, and manually controlled follow-ups
+  live under `~/.config/swe/reports/`. `swe config` provides credential-free
+  report setup and dotted get/set/unset/edit/check operations.
+  Warning-bearing runs now print a report-specific
+  `swe report warnings <manifest.json>` command, which validates that manifest
+  and prints its numbered warning list without mixing in other reports.
+- **Calendar filters for `swe session`.** `-d/--days`, `-w/--weeks`, and the
+  inclusive `-s/--start` plus `-e/--end` range filter session history using
+  local calendar boundaries. Date-filtered listings show every match unless a
+  positional maximum is supplied.
+- **Antigravity rate limits in `swe list`.** Quiver discovers a running
+  Antigravity app or CLI backend and reads its loopback-only
+  `RetrieveUserQuotaSummary` RPC without accessing Google OAuth credentials.
+  It compares Gemini and third-party model buckets across weekly and five-hour
+  windows, displays the most restrictive one, and favors five-hour usage when
+  utilization ties. Existing outage caching keeps the last successful reading
+  visible when Antigravity is closed.
 - **Security: SSRF / LFI fix in `swe mcp <tool> status` health check.**
   `src/quiver/mcp/cli.py::check_server_health` now validates that any
   URL it fetches via `urllib.request.urlopen` strictly starts with
@@ -53,6 +114,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One root: `~/.quiver`.** Quiver used to own two directories, `~/.quiver`
+  for what harnesses read and `~/.config/swe` for its own state. They are now
+  one, split by lifecycle instead: `config/` and the shared `AGENTS.md` and
+  `skills/` are worth versioning, `cache/` and `backups/` are not. The root
+  sits in `$HOME` rather than `$HOME/.config` to match the 24 of 28 harness
+  config directories that live there. `paths.py` is the single owner of the
+  layout; `quiver.init.layout` re-exports its helpers instead of redefining
+  them.
+- **`DATA_DIR_NAME` replaces `CONFIG_DIR_NAME`.** Set to `quiver`, so the
+  directory is named for the project. `swe` remains the command. The old name
+  is kept as an alias.
+
+- **`swe list` no longer fetches rate limits by default.** Cold runs went from
+  ~870ms to ~73ms, and the table narrowed from 146 to 128 columns. Pass
+  `--usage` for the old view.
+
+- **Shared skills root moved to `~/.quiver/skills`.** It was `~/.agents/skills`,
+  which stays as a symlink so existing references keep resolving. `swe skills`
+  gained 10 more harness roots (qwen, forge, cline, kiro, vibe, augment,
+  continue, pi, grok, crush), all pointing at the one tree.
+
+- `swe list` now labels provider quota as **REMAINING** and displays the
+  percentage still available instead of the percentage already used.
+- `swe list` now runs usage and rate-limit fetchers only for starred harnesses.
+  Unstarred tools retain registry details and local session counts without API
+  calls or loopback probes; refresh flags only refetch the starred set.
+- `swe list -n` is now an alias for `swe list --refresh` / `-r`. It fetches
+  new session counts and provider rate limits instead of using either cache.
 - **Triage workflow for auto-generated Bolt/Sentinel PRs.** When the
   Sentinel/Bolt auto-agents open multiple PRs for the same finding
   (e.g. three Sentinel PRs all adding `usedforsecurity=False` to
@@ -236,7 +325,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`5h` / `7d` / `7ds` / `std` / `prm` / ...) surfaces inside the
     14-char RATE cell alongside the percentage.
   Pluggable architecture in `harness/rate_limits.py` allows adding more
-  fetchers. Cached in `rate_limits_cache.json` (60s TTL);
+  fetchers. Cached in `rate_limits_cache.json` (5-minute TTL);
   `swe list --refresh` bypasses the cache.
 - `swe edit` interactive mode now shows a warning and continues the edit
   loop when an alias collision is detected on save, instead of exiting the
@@ -391,6 +480,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Deleted 331 KB of dead source from the config directory.** `mcp.py`,
+  `mcp_formats.py`, `mcp_server.py`, `tests/`, `__pycache__/` and
+  `archive/swe.py` were left over from the single-file era. Nothing referenced
+  them: not the package, not any MCP config, not the shell profiles.
+
+- **Rate-limit cache never covered providers that report nothing.** A fetcher
+  returning no data was absent from the cache, so it counted as a miss and
+  re-ran on every invocation. For antigravity that meant spawning two
+  subprocesses per `swe list`, 70ms even on a warm cache. Negative results are
+  now remembered for the same TTL, taking the warm path to 0.1ms. Fetchers that
+  hit the deadline are still retried rather than recorded as empty.
+
+- Antigravity 2.3.x quota discovery now carries the per-language-server
+  `--csrf_token` into the loopback `RetrieveUserQuotaSummary` request. Quiver
+  previously found the correct listeners but received HTTP 401 responses, so
+  the RATE cell stayed blank even when Antigravity was running.
+- Claude Code usage is fetched again for paid subscriptions instead of always
+  rendering the temporary `no-sub` placeholder. The RATE cell shows the most
+  utilized 5-hour, 7-day, or 7-day Sonnet window, treats Anthropic's
+  `utilization` value as an existing 0-100 percentage, and retains the last
+  successful reading during a 429 `Retry-After` cooldown. HTTP diagnostics now
+  also survive the macOS certificate fallback path. Expired, non-refreshable
+  Claude credentials now render `re-login` instead of a blank RATE cell.
+- Forced rate-limit refreshes retain each provider's last successful reading
+  for up to 24 hours when its network request fails or misses the shared
+  deadline. A slow refresh can no longer replace the complete RATE cache with
+  an empty snapshot; per-provider timestamps prevent stale readings from being
+  renewed merely because another provider succeeded.
+- Droid now displays an exhausted monthly or weekly quota when that longer
+  window is blocking usage, instead of always showing the available 5h quota.
+  When no window is exhausted, 5h remains the default. The reset countdown
+  now corresponds to the displayed window. Factory's current
+  `usedPercent` field is treated as usage directly; the previous inversion
+  incorrectly turned a live `100%` weekly lock into `0%` usage.
+- Droid rate-limit lookups now have a two-second wall-clock deadline, so a
+  stalled DNS lookup or Factory API request cannot freeze `swe list`. Slow or
+  unavailable responses degrade to an empty RATE value for that cache refresh.
+  All provider lookups now run concurrently under the same two-second overall
+  budget, and empty results are cached to avoid repeated waits during outages.
 - Rate-limit fetchers now print actionable stderr hints on HTTP errors:
   401 (stale token — re-auth required), 429 (parsed ``Retry-After``
   countdown so the user knows exactly when to retry), 403/404 (the

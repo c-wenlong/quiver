@@ -38,20 +38,41 @@ class RateLimitInfoTest(unittest.TestCase):
         info = self._make_info(30, False, 3600)  # 1h ahead
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        self.assertIn("30%", col)
+        self.assertIn("70%", col)
         self.assertIn("1h0m", col)
 
     def test_format_column_yellow_threshold(self):
         info = self._make_info(85, False, 7200)  # 2h ahead
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        self.assertIn("85%", col)
+        self.assertIn("15%", col)
 
     def test_format_column_red_when_reached(self):
         info = self._make_info(100, True, 503753)
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        self.assertIn("100%", col)
+        self.assertIn("0%", col)
+
+    def test_remaining_percent_is_clamped(self):
+        self.assertEqual(self._make_info(-5, False, 0).remaining_percent, 100)
+        self.assertEqual(self._make_info(105, True, 0).remaining_percent, 0)
+
+    def test_format_column_supports_remaining_session_counts(self):
+        info = RateLimitInfo(
+            tool_name="freebuff",
+            used_percent=25,
+            limit_reached=False,
+            reset_at=self._NOW + 3600,
+            plan_type="free",
+            window_seconds=0,
+            remaining_units=3,
+            total_units=4,
+        )
+        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+            col = info.format_column()
+        self.assertIn("3/4", col)
+        self.assertIn("1h0m", col)
+        self.assertNotIn("75%", col)
 
     def test_reset_in_human_days(self):
         info = self._make_info(50, False, 5 * 86400 + 3600)  # 5d1h ahead
@@ -68,6 +89,12 @@ class RateLimitInfoTest(unittest.TestCase):
         info.reset_at = 0  # override to truly unknown
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             self.assertEqual(info.reset_in_human, "—")
+
+    def test_format_column_shows_relogin_for_expired_credentials(self):
+        info = self._make_info(
+            0, False, 0, plan_type="auth-required", window_seconds=0,
+        )
+        self.assertIn("re-login", info.format_column())
 
 
 class RateLimitCacheTest(unittest.TestCase):
@@ -160,6 +187,104 @@ class RateLimitCacheTest(unittest.TestCase):
 
 
 class RateLimitRegistryTest(unittest.TestCase):
+    def test_single_unstarred_lookup_does_not_run_fetcher(self):
+        saved = _FETCHERS.copy()
+        fetcher = MagicMock()
+        _FETCHERS.clear()
+        register("unused", fetcher)
+        try:
+            with patch("quiver.harness.stars.is_starred", return_value=False):
+                result = get_rate_limit("unused", use_cache=False)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertIsNone(result)
+        fetcher.assert_not_called()
+
+    def test_only_selected_fetchers_run(self):
+        saved = _FETCHERS.copy()
+        selected = MagicMock(return_value=RateLimitInfo(
+            tool_name="selected",
+            used_percent=10,
+            limit_reached=False,
+            reset_at=0,
+            plan_type="free",
+            window_seconds=0,
+        ))
+        unselected = MagicMock(return_value=RateLimitInfo(
+            tool_name="unselected",
+            used_percent=20,
+            limit_reached=False,
+            reset_at=0,
+            plan_type="free",
+            window_seconds=0,
+        ))
+        _FETCHERS.clear()
+        register("selected", selected)
+        register("unselected", unselected)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                result = get_all_rate_limits(
+                    use_cache=False,
+                    tool_names={"selected"},
+                )
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(set(result), {"selected"})
+        selected.assert_called_once_with()
+        unselected.assert_not_called()
+
+    def test_newly_selected_fetcher_runs_when_missing_from_fresh_cache(self):
+        saved = _FETCHERS.copy()
+        already_cached = MagicMock()
+        newly_selected = MagicMock(return_value=RateLimitInfo(
+            tool_name="new",
+            used_percent=30,
+            limit_reached=False,
+            reset_at=0,
+            plan_type="free",
+            window_seconds=0,
+        ))
+        _FETCHERS.clear()
+        register("cached", already_cached)
+        register("new", newly_selected)
+        cached = {
+            "cached": {
+                "tool_name": "cached",
+                "used_percent": 15,
+                "limit_reached": False,
+                "reset_at": 0,
+                "plan_type": "free",
+                "window_seconds": 0,
+                "window": "",
+            }
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+
+                _save_cached(cached)
+                result = get_all_rate_limits(
+                    use_cache=True,
+                    tool_names={"cached", "new"},
+                )
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(set(result), {"cached", "new"})
+        already_cached.assert_not_called()
+        newly_selected.assert_called_once_with()
+
     def test_register_and_fetch(self):
         """A custom fetcher can be registered and queried."""
         saved = _FETCHERS.copy()
@@ -174,6 +299,7 @@ class RateLimitRegistryTest(unittest.TestCase):
                 window_seconds=3600,
             )
 
+        _FETCHERS.clear()
         register("test-tool", fake_fetch)
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -193,6 +319,7 @@ class RateLimitRegistryTest(unittest.TestCase):
         def none_fetch():
             return None
 
+        _FETCHERS.clear()
         register("no-limits-tool", none_fetch)
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -211,6 +338,7 @@ class RateLimitRegistryTest(unittest.TestCase):
         def boom_fetch():
             raise RuntimeError("network down")
 
+        _FETCHERS.clear()
         register("boom-tool", boom_fetch)
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -221,6 +349,145 @@ class RateLimitRegistryTest(unittest.TestCase):
         finally:
             _FETCHERS.clear()
             _FETCHERS.update(saved)
+
+    def test_slow_fetcher_does_not_delay_fast_fetchers(self):
+        """Optional provider lookups share one bounded wall-clock budget."""
+        import threading
+
+        saved = _FETCHERS.copy()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_fetch():
+            started.set()
+            release.wait(timeout=1.0)
+            return None
+
+        def fast_fetch():
+            return RateLimitInfo(
+                tool_name="fast-tool",
+                used_percent=10,
+                limit_reached=False,
+                reset_at=0,
+                plan_type="free",
+                window_seconds=0,
+            )
+
+        _FETCHERS.clear()
+        register("slow-tool", slow_fetch)
+        register("fast-tool", fast_fetch)
+        began = time.monotonic()
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                0.05,
+                create=True,
+            ):
+                result = get_all_rate_limits(use_cache=False)
+        finally:
+            release.set()
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertTrue(started.is_set())
+        self.assertIn("fast-tool", result)
+        self.assertLess(time.monotonic() - began, 0.5)
+
+    def test_refresh_keeps_last_good_value_when_provider_fails(self):
+        """A forced fetch must not replace known usage with a blank cell."""
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+        register("codex", lambda: None)
+        stale = {
+            "codex": {
+                "tool_name": "codex",
+                "used_percent": 42,
+                "limit_reached": False,
+                "reset_at": time.time() + 3600,
+                "plan_type": "plus",
+                "window_seconds": 604800,
+                "window": "",
+            }
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+                _save_cached(stale)
+                result = get_all_rate_limits(use_cache=False)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(result["codex"].used_percent, 42)
+
+    def test_refresh_drops_stale_auth_required_status(self):
+        """A renewed login must not keep displaying a stale re-login marker."""
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+        register("claude", lambda: None)
+        stale = {
+            "claude": {
+                "tool_name": "claude",
+                "used_percent": 0,
+                "limit_reached": False,
+                "reset_at": 0.0,
+                "plan_type": "auth-required",
+                "window_seconds": 0,
+                "window": "",
+            }
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+                _save_cached(stale)
+                result = get_all_rate_limits(use_cache=False)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertNotIn("claude", result)
+
+    def test_refresh_drops_provider_value_after_stale_fallback_expires(self):
+        """Failed readings older than the fallback window are not displayed."""
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+        register("codex", lambda: None)
+        raw = {
+            "tool_name": "codex",
+            "used_percent": 42,
+            "limit_reached": False,
+            "reset_at": time.time() + 3600,
+            "plan_type": "plus",
+            "window_seconds": 604800,
+            "window": "",
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                cache_file = Path(tmp) / "rate_limits_cache.json"
+                cache_file.write_text(json.dumps({
+                    "cached_at": time.time(),
+                    "limits": {"codex": raw},
+                    "updated_at": {"codex": time.time() - 90000},
+                }))
+                with patch(
+                    "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                    cache_file,
+                ):
+                    result = get_all_rate_limits(use_cache=False)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertNotIn("codex", result)
 
 
 class CodexFetcherTest(unittest.TestCase):
@@ -763,9 +1030,9 @@ class ClaudeFetcherTest(unittest.TestCase):
     """Test the Claude /api/oauth/usage fetcher with mocked credentials + HTTP."""
 
     _SAMPLE_RESPONSE = {
-        "five_hour": {"utilization": 0.42, "resets_at": "2026-02-28T17:00:00Z"},
-        "seven_day": {"utilization": 0.61, "resets_at": "2026-03-07T08:00:00Z"},
-        "seven_day_sonnet": {"utilization": 0.85, "resets_at": "2026-03-07T08:00:00Z"},
+        "five_hour": {"utilization": 42, "resets_at": "2026-08-01T17:00:00Z"},
+        "seven_day": {"utilization": 85, "resets_at": "2026-08-07T08:00:00Z"},
+        "seven_day_sonnet": {"utilization": 61, "resets_at": "2026-08-07T08:00:00Z"},
     }
 
     def _mock_response(self, body):
@@ -775,7 +1042,7 @@ class ClaudeFetcherTest(unittest.TestCase):
         mock_resp.__exit__ = MagicMock(return_value=False)
         return mock_resp
 
-    def _linux_creds_file(self, token="fake-claude-token"):
+    def _linux_creds_file(self, token="fake-claude-token", **oauth_overrides):
         """Build a Linux-style credentials file and return (tmpdir, patches).
 
         Patches ``os.path.expanduser`` so ``~/.claude/.credentials.json``
@@ -784,13 +1051,13 @@ class ClaudeFetcherTest(unittest.TestCase):
         """
         tmp = tempfile.TemporaryDirectory()
         creds_path = Path(tmp.name) / "creds.json"
-        creds_path.write_text(json.dumps({
-            "claudeAiOauth": {
-                "accessToken": token,
-                "refreshToken": "x",
-                "expiresAt": 9999999999,
-            },
-        }))
+        oauth = {
+            "accessToken": token,
+            "refreshToken": "x",
+            "expiresAt": 9_999_999_999_999,
+        }
+        oauth.update(oauth_overrides)
+        creds_path.write_text(json.dumps({"claudeAiOauth": oauth}))
         patches = [
             patch(
                 "quiver.harness.rate_limits.os.path.expanduser",
@@ -802,34 +1069,26 @@ class ClaudeFetcherTest(unittest.TestCase):
         ]
         return tmp, patches
 
-    # --- polling-disabled behaviour -------------------------------------
-    # The live ``api.anthropic.com/api/oauth/usage`` polling is currently
-    # commented out in ``_fetch_claude`` (the endpoint is undocumented
-    # and 429s aggressively). While disabled, any account with Claude
-    # Code credentials renders ``no-sub``; no credentials renders None.
-    # The ``_fetch_claude_url`` helper's 401/429 diagnostics are still
-    # covered by ``ClaudeHTTPDiagnosticTest`` below.
-
-    def test_creds_present_returns_no_sub(self):
-        """Credentials resolve → ``no-sub`` RateLimitInfo (polling disabled)."""
+    def test_creds_present_fetches_most_limiting_window(self):
+        """A paid Claude login surfaces the most-used subscription window."""
         from quiver.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file()
         try:
-            # urlopen is NOT called while polling is disabled; the mock
-            # is here only to assert the endpoint is never hit.
             with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp.name) / "rate_limits_cache.json",
+            ), patch(
                 "quiver.harness.rate_limits.urllib.request.urlopen",
+                return_value=self._mock_response(self._SAMPLE_RESPONSE),
             ) as mock_open:
                 info = _fetch_claude()
             self.assertIsNotNone(info)
             self.assertEqual(info.tool_name, "claude")
-            self.assertEqual(info.plan_type, "no-sub")
-            self.assertEqual(info.used_percent, 0)
+            self.assertEqual(info.used_percent, 85)
             self.assertFalse(info.limit_reached)
-            self.assertEqual(info.window, "")
-            # The endpoint must not be polled while disabled.
-            mock_open.assert_not_called()
+            self.assertEqual(info.window, "7d")
+            self.assertEqual(mock_open.call_count, 1)
         finally:
             tmp.cleanup()
 
@@ -843,26 +1102,124 @@ class ClaudeFetcherTest(unittest.TestCase):
             info = _fetch_claude()
         self.assertIsNone(info)
 
-    def test_macos_keychain_path(self):
-        """macOS: keychain creds resolve → ``no-sub`` (polling disabled)."""
+    def test_expired_credentials_without_refresh_token_request_relogin(self):
+        """Known-expired, non-refreshable auth is shown instead of a blank."""
         from quiver.harness.rate_limits import _fetch_claude
 
+        tmp, patches = self._linux_creds_file(
+            refreshToken="",
+            expiresAt=1,
+        )
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp.name) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits.urllib.request.urlopen",
+            ) as request:
+                info = _fetch_claude()
+        finally:
+            tmp.cleanup()
+
+        self.assertEqual(info.plan_type, "auth-required")
+        self.assertIn("re-login", info.format_column())
+        request.assert_not_called()
+
+    def test_rate_limit_reuses_last_reading_during_retry_after(self):
+        """A 429 keeps Claude visible and suppresses calls during cooldown."""
+        from quiver.harness.rate_limits import _fetch_claude
+
+        tmp, patches = self._linux_creds_file()
+        cache_file = Path(tmp.name) / "rate_limits_cache.json"
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+                return_value=self._SAMPLE_RESPONSE,
+            ):
+                first = _fetch_claude()
+
+            def rate_limited(req, on_rate_limited=None):
+                on_rate_limited(120)
+                return None
+
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+                side_effect=rate_limited,
+            ):
+                stale = _fetch_claude()
+
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+            ) as fetch:
+                during_cooldown = _fetch_claude()
+
+            self.assertEqual(first.used_percent, 85)
+            self.assertEqual(stale.used_percent, 85)
+            self.assertEqual(during_cooldown.used_percent, 85)
+            fetch.assert_not_called()
+        finally:
+            tmp.cleanup()
+
+    def test_new_credentials_bypass_existing_retry_after(self):
+        """Logging in again invalidates a cooldown tied to the old token."""
+        from quiver.harness.rate_limits import _fetch_claude
+
+        tmp, patches = self._linux_creds_file(token="new-token")
+        cache_file = Path(tmp.name) / "rate_limits_cache.json"
+        claude_cache = cache_file.with_name("claude_usage_cache.json")
+        claude_cache.write_text(json.dumps({
+            "info": None,
+            "retry_at": time.time() + 3600,
+            "credential_fingerprint": "old-token-fingerprint",
+        }))
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+                return_value=self._SAMPLE_RESPONSE,
+            ) as fetch:
+                info = _fetch_claude()
+
+            self.assertEqual(info.used_percent, 85)
+            fetch.assert_called_once()
+        finally:
+            tmp.cleanup()
+
+    def test_macos_keychain_path(self):
+        """macOS keychain credentials can fetch Claude subscription usage."""
+        from quiver.harness.rate_limits import _fetch_claude
+
+        tmp = tempfile.TemporaryDirectory()
         creds_json = json.dumps({"claudeAiOauth": {"accessToken": "kc-token"}})
         completed = _CompletedProc(returncode=0, stdout=creds_json)
-        with patch("quiver.harness.rate_limits.os.path.expanduser",
-                   side_effect=lambda p: "/no/such/path/x" if "~/.claude" in str(p) else p), \
-             patch("quiver.harness.rate_limits.shutil.which",
-                   return_value="/usr/bin/security"), \
-             patch("quiver.harness.rate_limits.subprocess.run",
-                   return_value=completed), \
-             patch(
-                 "quiver.harness.rate_limits.urllib.request.urlopen",
-             ) as mock_open:
-            info = _fetch_claude()
-        self.assertIsNotNone(info)
-        self.assertEqual(info.tool_name, "claude")
-        self.assertEqual(info.plan_type, "no-sub")
-        mock_open.assert_not_called()
+        try:
+            with patch("quiver.harness.rate_limits.os.path.expanduser",
+                       side_effect=lambda p: "/no/such/path/x" if "~/.claude" in str(p) else p), \
+                 patch("quiver.harness.rate_limits.shutil.which",
+                       return_value="/usr/bin/security"), \
+                 patch("quiver.harness.rate_limits.subprocess.run",
+                       return_value=completed), \
+                 patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                       Path(tmp.name) / "rate_limits_cache.json"), \
+                 patch("quiver.harness.rate_limits.urllib.request.urlopen",
+                       return_value=self._mock_response(self._SAMPLE_RESPONSE)):
+                info = _fetch_claude()
+            self.assertIsNotNone(info)
+            self.assertEqual(info.tool_name, "claude")
+            self.assertEqual(info.used_percent, 85)
+        finally:
+            tmp.cleanup()
 
     def test_keychain_bad_json_returns_none(self):
         """Non-JSON keychain password field → return None (defensive parse)."""
@@ -915,10 +1272,10 @@ class ClaudeFetcherTest(unittest.TestCase):
         # Window label MUST appear; reset countdown MUST appear.
         self.assertIn("7ds", col)
         self.assertIn("5h0m", col)
-        self.assertIn("85%", col)
+        self.assertIn("15%", col)
 
-    def test_format_column_without_window_default_unchanged(self):
-        """Backwards compat: window='' default keeps the legacy single-token shape."""
+    def test_format_column_without_window_shows_remaining(self):
+        """A provider without a window label still shows remaining quota."""
         info = RateLimitInfo(
             tool_name="codex",
             used_percent=30,
@@ -933,19 +1290,287 @@ class ClaudeFetcherTest(unittest.TestCase):
             col = info.format_column()
         # No window marker; the colons that mark the window prefix must not appear.
         self.assertNotIn(":", col.replace("—", ""))
-        self.assertIn("30%", col)
+        self.assertIn("70%", col)
+
+
+class AntigravityFetcherTest(unittest.TestCase):
+    """Test quota reads through Antigravity's loopback Connect RPC."""
+
+    _SAMPLE_RESPONSE = {
+        "response": {
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "buckets": [
+                        {
+                            "bucketId": "gemini-weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.2,
+                            "resetTime": "2026-08-05T04:57:07Z",
+                        },
+                        {
+                            "bucketId": "gemini-5h",
+                            "window": "5h",
+                            "remainingFraction": 0.8,
+                            "resetTime": "2026-07-29T09:57:07Z",
+                        },
+                    ],
+                },
+                {
+                    "displayName": "Claude and GPT models",
+                    "buckets": [
+                        {
+                            "bucketId": "3p-weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.6,
+                            "resetTime": "2026-08-05T04:57:07Z",
+                        },
+                        {
+                            "bucketId": "3p-5h",
+                            "window": "5h",
+                            "remainingFraction": 0.7,
+                            "resetTime": "2026-07-29T09:57:07Z",
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+
+    def test_parser_selects_most_restrictive_bucket(self):
+        from quiver.harness.rate_limits import _parse_antigravity_quota
+
+        info = _parse_antigravity_quota(self._SAMPLE_RESPONSE)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.tool_name, "antigravity")
+        self.assertEqual(info.used_percent, 80)
+        self.assertEqual(info.window, "7d")
+        self.assertEqual(info.reset_at, 1785905827.0)
+
+    def test_parser_prefers_five_hour_when_usage_ties(self):
+        from quiver.harness.rate_limits import _parse_antigravity_quota
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        for group in data["response"]["groups"]:
+            for bucket in group["buckets"]:
+                bucket["remainingFraction"] = 1
+
+        info = _parse_antigravity_quota(data)
+
+        self.assertEqual(info.used_percent, 0)
+        self.assertEqual(info.window, "5h")
+
+    def test_fetch_probes_loopback_rpc_with_post(self):
+        from quiver.harness.rate_limits import _fetch_antigravity
+
+        with patch(
+            "quiver.harness.rate_limits._antigravity_rpc_endpoints",
+            return_value=[("http://127.0.0.1:12345", "csrf-token")],
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            return_value=self._SAMPLE_RESPONSE,
+        ) as fetch_json:
+            info = _fetch_antigravity()
+
+        self.assertEqual(info.used_percent, 80)
+        request = fetch_json.call_args.args[0]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.data, b"{}")
+        self.assertEqual(
+            request.get_header("X-codeium-csrf-token"),
+            "csrf-token",
+        )
+        self.assertTrue(request.full_url.endswith(
+            "/exa.language_server_pb.LanguageServerService/"
+            "RetrieveUserQuotaSummary"
+        ))
+
+    def test_no_running_backend_returns_none(self):
+        from quiver.harness.rate_limits import _fetch_antigravity
+
+        with patch(
+            "quiver.harness.rate_limits._antigravity_rpc_endpoints",
+            return_value=[],
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch_json:
+            info = _fetch_antigravity()
+
+        self.assertIsNone(info)
+        fetch_json.assert_not_called()
+
+    def test_rpc_discovery_carries_process_csrf_token(self):
+        from quiver.harness.rate_limits import _antigravity_rpc_endpoints
+
+        lsof_output = "\n".join([
+            "p101", "clanguage_server", "n127.0.0.1:56201",
+            "p102", "cpython", "n127.0.0.1:8000",
+            "p103", "clanguage_server_macos_arm", "n*:9000",
+        ])
+        ps_output = "\n".join([
+            "101 /Applications/Antigravity.app/Contents/Resources/bin/"
+            "language_server --standalone --csrf_token csrf-101",
+            "103 language_server_macos_arm --csrf_token wrong-process",
+        ])
+        with patch("quiver.harness.rate_limits.shutil.which",
+                   return_value="/usr/sbin/lsof"), patch(
+            "quiver.harness.rate_limits.subprocess.run",
+            side_effect=[
+                _CompletedProc(returncode=0, stdout=lsof_output),
+                _CompletedProc(returncode=0, stdout=ps_output),
+            ],
+        ):
+            endpoints = _antigravity_rpc_endpoints()
+
+        self.assertEqual(
+            endpoints,
+            [("http://127.0.0.1:56201", "csrf-101")],
+        )
+
+
+class FreebuffFetcherTest(unittest.TestCase):
+    """Test the read-only Freebuff GLM 5.2 session allowance."""
+
+    _SAMPLE_RESPONSE = {
+        "status": "none",
+        "accessTier": "full",
+        "referral": {
+            "qualifiedCount": 4,
+            "weeklySessionsRemaining": 3,
+            "resetAt": "2026-08-01T07:00:00.000Z",
+        },
+    }
+
+    def test_parser_returns_remaining_and_total_session_counts(self):
+        from quiver.harness.rate_limits import _parse_freebuff_quota
+
+        info = _parse_freebuff_quota(self._SAMPLE_RESPONSE)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.tool_name, "freebuff")
+        self.assertEqual(info.remaining_units, 3)
+        self.assertEqual(info.total_units, 4)
+        self.assertEqual(info.used_percent, 25)
+        self.assertFalse(info.limit_reached)
+        self.assertEqual(info.reset_at, 1785567600.0)
+
+    def test_parser_marks_exhausted_allowance(self):
+        from quiver.harness.rate_limits import _parse_freebuff_quota
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        data["referral"]["weeklySessionsRemaining"] = 0
+
+        info = _parse_freebuff_quota(data)
+
+        self.assertEqual(info.used_percent, 100)
+        self.assertTrue(info.limit_reached)
+
+    def test_parser_prefers_exact_glm_model_quota(self):
+        from quiver.harness.rate_limits import _parse_freebuff_quota
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        data["rateLimitsByModel"] = {
+            "z-ai/glm-5.2": {
+                "model": "z-ai/glm-5.2",
+                "limit": 5,
+                "recentCount": 1.5,
+                "resetAt": "2026-08-02T07:00:00.000Z",
+            },
+        }
+
+        info = _parse_freebuff_quota(data)
+
+        self.assertEqual(info.remaining_units, 3.5)
+        self.assertEqual(info.total_units, 5)
+        self.assertEqual(info.used_percent, 30)
+        self.assertEqual(info.reset_at, 1785654000.0)
+
+    def test_parser_uses_active_glm_quota_without_referral_block(self):
+        from quiver.harness.rate_limits import _parse_freebuff_quota
+
+        info = _parse_freebuff_quota({
+            "status": "active",
+            "model": "z-ai/glm-5.2",
+            "rateLimit": {
+                "limit": 4,
+                "recentCount": 1,
+                "resetAt": "2026-08-01T07:00:00.000Z",
+            },
+        })
+
+        self.assertEqual(info.remaining_units, 3)
+        self.assertEqual(info.total_units, 4)
+
+    def test_parser_rejects_missing_or_inconsistent_quota(self):
+        from quiver.harness.rate_limits import _parse_freebuff_quota
+
+        self.assertIsNone(_parse_freebuff_quota({"status": "none"}))
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        data["referral"]["weeklySessionsRemaining"] = 5
+        self.assertIsNone(_parse_freebuff_quota(data))
+
+    def test_fetch_uses_bearer_token_without_starting_session(self):
+        from quiver.harness.rate_limits import _fetch_freebuff
+
+        with patch(
+            "quiver.harness.rate_limits._get_freebuff_access_token",
+            return_value="freebuff-token",
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            return_value=self._SAMPLE_RESPONSE,
+        ) as fetch_json:
+            info = _fetch_freebuff()
+
+        request = fetch_json.call_args.args[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(
+            request.get_header("Authorization"),
+            "Bearer freebuff-token",
+        )
+        self.assertTrue(request.full_url.endswith("/api/v1/freebuff/session"))
+        self.assertEqual(info.remaining_units, 3)
+
+    def test_fetch_without_credentials_does_not_call_endpoint(self):
+        from quiver.harness.rate_limits import _fetch_freebuff
+
+        with patch(
+            "quiver.harness.rate_limits._get_freebuff_access_token",
+            return_value=None,
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch_json:
+            info = _fetch_freebuff()
+
+        self.assertIsNone(info)
+        fetch_json.assert_not_called()
+
+    def test_reads_token_from_freebuff_credentials(self):
+        from quiver.harness.rate_limits import _get_freebuff_access_token
+
+        with tempfile.TemporaryDirectory() as tmp:
+            credentials = Path(tmp) / "credentials.json"
+            credentials.write_text(json.dumps({
+                "default": {"authToken": "stored-token"},
+                "chatgptOAuth": {"accessToken": "not-this-token"},
+            }))
+            with patch(
+                "quiver.harness.rate_limits.os.path.expanduser",
+                return_value=str(credentials),
+            ):
+                token = _get_freebuff_access_token()
+
+        self.assertEqual(token, "stored-token")
 
 
 class CopilotRegistrationTest(unittest.TestCase):
-    """Built-in fetchers (codex, copilot, claude, droid) must be registered at import time."""
+    """Built-in rate-limit fetchers must be registered at import time."""
 
     def test_built_in_fetchers_registered(self):
         # _FETCHERS is populated at import time by the _register_*
-        # functions. Verify all four built-ins are wired in.
+        # functions. Verify every built-in is wired in.
         self.assertIn("codex", _FETCHERS)
         self.assertIn("copilot", _FETCHERS)
         self.assertIn("claude", _FETCHERS)
         self.assertIn("droid", _FETCHERS)
+        self.assertIn("antigravity", _FETCHERS)
+        self.assertIn("freebuff", _FETCHERS)
 
 
 class DroidFetcherTest(unittest.TestCase):
@@ -956,8 +1581,8 @@ class DroidFetcherTest(unittest.TestCase):
     response) where category is ``standard`` / ``core`` and window is
     ``fiveHour`` / ``weekly`` / ``monthly``. Each window carries
     ``usedPercent`` (already 0-100), ``windowEnd`` (ISO 8601), and
-    ``secondsRemaining``. The fetcher surfaces the most-restrictive
-    window (highest ``usedPercent``) across ALL categories+windows.
+    ``secondsRemaining``. Exhausted longer-term windows win; otherwise
+    the fetcher averages the core and standard fiveHour values.
 
     Auth ladder: (1) ``FACTORY_API_KEY`` env var, (2) decrypted
     ``~/.factory/auth.v2.file`` (AES-256-GCM via system libcrypto),
@@ -971,7 +1596,7 @@ class DroidFetcherTest(unittest.TestCase):
         "usesTokenRateLimitsBilling": True,
         "limits": {
             "standard": {
-                "fiveHour": {"usedPercent": 19,
+                "fiveHour": {"usedPercent": 20,
                              "windowEnd": "2026-07-25T22:31:13Z",
                              "secondsRemaining": 15091},
                 "weekly": {"usedPercent": 40,
@@ -982,7 +1607,7 @@ class DroidFetcherTest(unittest.TestCase):
                             "secondsRemaining": 1173010},
             },
             "core": {
-                "fiveHour": {"usedPercent": 100,
+                "fiveHour": {"usedPercent": 60,
                              "windowEnd": "2026-07-25T12:40:31Z",
                              "secondsRemaining": None},
                 "weekly": {"usedPercent": 51,
@@ -1057,6 +1682,38 @@ class DroidFetcherTest(unittest.TestCase):
             self._now_patch(),
         )
 
+    def test_droid_fetch_has_wall_clock_deadline(self):
+        """A stalled DNS/HTTP call must not block ``swe list`` indefinitely."""
+        import threading
+        from quiver.harness.rate_limits import _droid_fetch
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def stalled_fetch(*args, **kwargs):
+            started.set()
+            release.wait(timeout=1.0)
+            return None
+
+        req = MagicMock()
+        began = time.monotonic()
+        try:
+            with patch(
+                "quiver.harness.rate_limits._DROID_FETCH_TIMEOUT",
+                0.05,
+                create=True,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_json",
+                side_effect=stalled_fetch,
+            ):
+                info = _droid_fetch(req)
+        finally:
+            release.set()
+
+        self.assertTrue(started.is_set())
+        self.assertIsNone(info)
+        self.assertLess(time.monotonic() - began, 0.5)
+
     # 1. Env var priority — bypasses decryption + keychain entirely.
     def test_factory_key_env_var_takes_priority(self):
         from quiver.harness.rate_limits import _fetch_droid
@@ -1069,11 +1726,10 @@ class DroidFetcherTest(unittest.TestCase):
             info = _fetch_droid()
         self.assertIsNotNone(info)
         self.assertEqual(info.tool_name, "droid")
-        # API usedPercent is REMAINING. core/5h=100 remaining → 0 used;
-        # standard/5h=19 remaining → 81 used. Average = (0+81)/2 = 40.5 → 40.
+        # core/5h=60 used; standard/5h=20 used. Average = 40.
         self.assertEqual(info.used_percent, 40)
         self.assertEqual(info.window, "5h")
-        # Neither budget is at 0% remaining → not reached.
+        # Neither budget is fully used.
         self.assertFalse(info.limit_reached)
 
     # 2. Empty / whitespace env var must NOT be treated as a real token.
@@ -1102,7 +1758,7 @@ class DroidFetcherTest(unittest.TestCase):
             info = _fetch_droid()
         self.assertIsNotNone(info)
         self.assertEqual(info.tool_name, "droid")
-        # (0 + 81) / 2 = 40 (inverted from remaining).
+        # (60 + 20) / 2 = 40.
         self.assertEqual(info.used_percent, 40)
         self.assertEqual(info.window, "5h")
 
@@ -1123,7 +1779,7 @@ class DroidFetcherTest(unittest.TestCase):
             info = _fetch_droid()
         self.assertIsNotNone(info)
         self.assertEqual(info.tool_name, "droid")
-        # (0 + 81) / 2 = 40 (inverted from remaining).
+        # (60 + 20) / 2 = 40.
         self.assertEqual(info.used_percent, 40)
 
     # 5. Keychain fallback ladder: Safe Storage fails, Factory Key succeeds.
@@ -1177,7 +1833,7 @@ class DroidFetcherTest(unittest.TestCase):
         self.assertIsNone(info)
 
     # 8. Malformed fiveHour in one category → skipped; the other
-    #    category's fiveHour still feeds the average (inverted).
+    #    category's fiveHour still feeds the average.
     def test_malformed_window_skipped_then_other_window_wins(self):
         from quiver.harness.rate_limits import _fetch_droid
 
@@ -1200,8 +1856,8 @@ class DroidFetcherTest(unittest.TestCase):
         ):
             info = _fetch_droid()
         self.assertIsNotNone(info)
-        # Only core/5h usable: 60 remaining → 40 used. Average of [40] = 40.
-        self.assertEqual(info.used_percent, 40)
+        # Only core/5h is usable, so its direct 60% value wins.
+        self.assertEqual(info.used_percent, 60)
         self.assertEqual(info.window, "5h")
 
     # 8b. All windows malformed → return None.
@@ -1235,8 +1891,8 @@ class DroidFetcherTest(unittest.TestCase):
             info = _fetch_droid()
         self.assertIsNone(info)
 
-    # 10. usedPercent=0 means 0% REMAINING → 100% used → limit reached.
-    def test_zero_remaining_means_fully_used(self):
+    # 10. usedPercent=0 means no usage and must not mark the limit reached.
+    def test_zero_used_is_available(self):
         from quiver.harness.rate_limits import _fetch_droid
 
         body = {
@@ -1254,22 +1910,21 @@ class DroidFetcherTest(unittest.TestCase):
         ):
             info = _fetch_droid()
         self.assertIsNotNone(info)
-        # 0% remaining → 100% used.
-        self.assertEqual(info.used_percent, 100)
-        self.assertTrue(info.limit_reached)
+        self.assertEqual(info.used_percent, 0)
+        self.assertFalse(info.limit_reached)
 
-    # 11. Percentage is the average of the INVERTED core/5h and standard/5h.
-    def test_averages_inverted_core_and_standard_five_hour(self):
+    # 11. Percentage is the average of core/5h and standard/5h.
+    def test_averages_core_and_standard_five_hour(self):
         from quiver.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
                 "standard": {
-                    "fiveHour": {"usedPercent": 70,  # remaining → 30 used
+                    "fiveHour": {"usedPercent": 70,
                                  "windowEnd": "2026-07-25T22:31:13Z"},
                 },
                 "core": {
-                    "fiveHour": {"usedPercent": 50,  # remaining → 50 used
+                    "fiveHour": {"usedPercent": 50,
                                  "windowEnd": "2026-07-25T12:40:31Z"},
                 },
             },
@@ -1281,25 +1936,25 @@ class DroidFetcherTest(unittest.TestCase):
         ):
             info = _fetch_droid()
         self.assertIsNotNone(info)
-        # (30 + 50) / 2 = 40.
-        self.assertEqual(info.used_percent, 40)
+        # (70 + 50) / 2 = 60.
+        self.assertEqual(info.used_percent, 60)
         self.assertEqual(info.window, "5h")
         self.assertFalse(info.limit_reached)
 
-    # 12. One 5h window at 0% remaining (100% used) ⇒ limit_reached even
+    # 12. One 5h window at 100% used ⇒ limit_reached even
     #     though the average is below 100 — the average must not mask a
     #     per-budget cutoff.
-    def test_one_budget_at_zero_remaining_marks_reached(self):
+    def test_one_budget_at_100_used_marks_reached(self):
         from quiver.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
                 "core": {
-                    "fiveHour": {"usedPercent": 0,  # 0 remaining → 100 used
+                    "fiveHour": {"usedPercent": 100,
                                  "windowEnd": "2026-07-25T12:40:31Z"},
                 },
                 "standard": {
-                    "fiveHour": {"usedPercent": 20,  # 20 remaining → 80 used
+                    "fiveHour": {"usedPercent": 80,
                                  "windowEnd": "2026-07-25T22:31:13Z"},
                 },
             },
@@ -1316,19 +1971,84 @@ class DroidFetcherTest(unittest.TestCase):
         self.assertTrue(info.limit_reached)
         self.assertEqual(info.window, "5h")
 
-    # 13. Negative usedPercent (overage: < 0% remaining) clamps to 0
-    #     remaining → 100% used before averaging.
-    def test_negative_remaining_clamps_to_fully_used(self):
+    def test_exhausted_weekly_window_overrides_available_five_hour(self):
+        """Show the weekly gate when it blocks use despite 5h capacity."""
+        from quiver.harness.rate_limits import _fetch_droid
+
+        body = {
+            "limits": {
+                "standard": {
+                    "fiveHour": {"usedPercent": 20,
+                                 "windowEnd": "2026-07-25T22:31:13Z"},
+                    "weekly": {"usedPercent": 100,
+                               "windowEnd": "2026-08-01T00:00:00Z"},
+                    "monthly": {"usedPercent": 40,
+                                "windowEnd": "2026-08-25T00:00:00Z"},
+                },
+                "core": {
+                    "fiveHour": {"usedPercent": 0,
+                                 "windowEnd": "2026-07-25T22:31:13Z"},
+                    "weekly": {"usedPercent": 50,
+                               "windowEnd": "2026-08-01T00:00:00Z"},
+                    "monthly": {"usedPercent": 0,
+                                "windowEnd": "2026-08-25T00:00:00Z"},
+                },
+            },
+        }
+        env_patch, what_patch, dec_patch, now_patch = self._env_only()
+        with env_patch, what_patch, dec_patch, now_patch, patch(
+            "quiver.harness.rate_limits.urllib.request.urlopen",
+            return_value=self._mock_response(body),
+        ):
+            info = _fetch_droid()
+
+        self.assertIsNotNone(info)
+        # Weekly used values are 100 and 50, averaged to 75.
+        self.assertEqual(info.used_percent, 75)
+        self.assertTrue(info.limit_reached)
+        self.assertEqual(info.window, "7d")
+        self.assertEqual(info.reset_at, 1785542400.0)
+
+    def test_exhausted_monthly_window_overrides_exhausted_weekly(self):
+        """When multiple windows block use, show the longest-lived gate."""
+        from quiver.harness.rate_limits import _fetch_droid
+
+        body = {
+            "limits": {
+                "standard": {
+                    "fiveHour": {"usedPercent": 20,
+                                 "windowEnd": "2026-07-25T22:31:13Z"},
+                    "weekly": {"usedPercent": 100,
+                               "windowEnd": "2026-08-01T00:00:00Z"},
+                    "monthly": {"usedPercent": 100,
+                                "windowEnd": "2026-08-25T00:00:00Z"},
+                },
+            },
+        }
+        env_patch, what_patch, dec_patch, now_patch = self._env_only()
+        with env_patch, what_patch, dec_patch, now_patch, patch(
+            "quiver.harness.rate_limits.urllib.request.urlopen",
+            return_value=self._mock_response(body),
+        ):
+            info = _fetch_droid()
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.used_percent, 100)
+        self.assertTrue(info.limit_reached)
+        self.assertEqual(info.window, "30d")
+
+    # 13. Overage values above 100 clamp to fully used before averaging.
+    def test_over_100_used_clamps_to_fully_used(self):
         from quiver.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
                 "core": {
-                    "fiveHour": {"usedPercent": -50,  # clamp to 0 → 100 used
+                    "fiveHour": {"usedPercent": 150,
                                  "windowEnd": "2026-07-25T12:40:31Z"},
                 },
                 "standard": {
-                    "fiveHour": {"usedPercent": -30,  # clamp to 0 → 100 used
+                    "fiveHour": {"usedPercent": 130,
                                  "windowEnd": "2026-07-25T22:31:13Z"},
                 },
             },
@@ -1340,7 +2060,7 @@ class DroidFetcherTest(unittest.TestCase):
         ):
             info = _fetch_droid()
         self.assertIsNotNone(info)
-        # Both clamp to 0 remaining → 100 used → average 100.
+        # Both clamp to 100 used, so the average is 100.
         self.assertEqual(info.used_percent, 100)
         self.assertTrue(info.limit_reached)
 
@@ -1366,9 +2086,9 @@ class DroidFetcherTest(unittest.TestCase):
         # 2026-08-01T00:00:00Z = 1785542400; allow ±1 day.
         self.assertAlmostEqual(info.reset_at, 1785542400.0, delta=86400)
 
-    # 14b. reset_at is the EARLIEST windowEnd across all six windows,
-    #      not the fiveHour window's reset — the soonest refresh wins.
-    def test_reset_at_is_earliest_across_all_windows(self):
+    # 14b. reset_at belongs to the selected fiveHour window, not an
+    #      unrelated weekly/monthly window.
+    def test_reset_at_matches_selected_window(self):
         from quiver.harness.rate_limits import _fetch_droid
 
         body = {
@@ -1394,38 +2114,32 @@ class DroidFetcherTest(unittest.TestCase):
         ):
             info = _fetch_droid()
         self.assertIsNotNone(info)
-        # Earliest windowEnd is standard/monthly 2026-07-26T00:00:00Z
-        # = 1785024000; allow ±1 day. NOT the fiveHour reset.
-        self.assertAlmostEqual(info.reset_at, 1785024000.0, delta=86400)
-        # Percentage averages the INVERTED fiveHour windows:
-        # core/5h=42 remaining → 58 used; standard/5h=30 remaining → 70 used.
-        # (58 + 70) / 2 = 64.
-        self.assertEqual(info.used_percent, 64)
+        # The selected 5h window's earliest future reset is core/fiveHour
+        # at 2026-08-01T00:00:00Z.
+        self.assertAlmostEqual(info.reset_at, 1785542400.0, delta=1)
+        # Percentage directly averages the fiveHour windows: (42 + 30) / 2.
+        self.assertEqual(info.used_percent, 36)
 
-    # 15. The API field ``usedPercent`` is REMAINING, not used. A
-    #     rolled-over 5h window reports 100% remaining (0% used) with a
-    #     stale past windowEnd — it must be INVERTED and INCLUDED in the
-    #     average (not skipped), matching the Factory dashboard's fresh
-    #     0%-used view. The reset countdown skips the stale past
-    #     windowEnd and uses the soonest future one.
-    def test_inverts_remaining_and_includes_rolled_over_window(self):
+    # 15. A rolled-over 5h window may report 0% used with a stale past
+    #     windowEnd. It still feeds the average, while reset selection skips
+    #     the stale timestamp and uses the next future reset.
+    def test_rolled_over_zero_used_window_is_included(self):
         from quiver.harness.rate_limits import _fetch_droid
 
         # _NOW = 2026-07-25T10:00:00Z. core/fiveHour windowEnd 08:00 is
-        # in the past (rolled over) but reports 100% remaining (0% used);
-        # standard/fiveHour 22:31 is future and reports 46% remaining
-        # (54% used). Both feed the average; reset uses the future one.
+        # in the past (rolled over) and reports 0% used; standard/fiveHour
+        # 22:31 is future and reports 54% used. Both feed the average.
         body = {
             "limits": {
                 "core": {
-                    "fiveHour": {"usedPercent": 100,
+                    "fiveHour": {"usedPercent": 0,
                                  "windowEnd": "2026-07-25T08:00:00Z",
                                  "secondsRemaining": None},
                     "weekly": {"usedPercent": 51,
                                "windowEnd": "2026-08-01T07:40:31Z"},
                 },
                 "standard": {
-                    "fiveHour": {"usedPercent": 46,
+                    "fiveHour": {"usedPercent": 54,
                                  "windowEnd": "2026-07-25T22:31:13Z"},
                 },
             },
@@ -1437,10 +2151,9 @@ class DroidFetcherTest(unittest.TestCase):
         ):
             info = _fetch_droid()
         self.assertIsNotNone(info)
-        # (0 + 54) / 2 = 27 — the rolled-over core window (100% remaining
-        # = 0% used) is included, NOT skipped.
+        # (0 + 54) / 2 = 27; the rolled-over core window is included.
         self.assertEqual(info.used_percent, 27)
-        # 100% remaining on core is NOT a cutoff → not reached.
+        # 0% used on core is not a cutoff.
         self.assertFalse(info.limit_reached)
         # Reset is the earliest FUTURE windowEnd — the stale 08:00 is
         # excluded, so standard/5h 22:31 wins (not "now").
@@ -1616,6 +2329,30 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
         finally:
             sys.stderr = original_stderr
         self.assertIn("a few minutes", buf.getvalue())
+
+    def test_ssl_fallback_preserves_retry_after_callback(self):
+        """A 429 after the macOS SSL retry still reports its cooldown."""
+        from quiver.harness.rate_limits import _fetch_json
+        import ssl
+        import urllib.error
+
+        ssl_error = urllib.error.URLError(ssl.SSLError("certificate verify failed"))
+        http_error = urllib.error.HTTPError(
+            "url", 429, "Too Many Requests", {"Retry-After": "90"}, None,
+        )
+        observed = []
+        req = urllib.request.Request("https://api.anthropic.com/api/oauth/usage")
+        with patch(
+            "quiver.harness.rate_limits.urllib.request.urlopen",
+            side_effect=[ssl_error, http_error],
+        ):
+            result = _fetch_json(
+                req,
+                on_http_error=lambda code, retry: observed.append((code, retry)),
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(observed, [(429, 90.0)])
 
 
 class DroidHTTPDiagnosticTest(unittest.TestCase):

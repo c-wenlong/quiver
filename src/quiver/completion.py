@@ -19,6 +19,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("doctor", "Diagnose Node/PATH issues"),
     ("install", "Install a harness"),
     ("session", "Show recent sessions"),
+    ("report", "Summarize coding sessions"),
     ("models", "Show model usage"),
     ("skills", "List agent skills"),
     ("tags", "Show all tags"),
@@ -27,6 +28,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("mcp", "Manage MCP servers"),
     ("harness", "Harness registry utils"),
     ("setup", "Onboarding wizard"),
+    ("config", "View or update configuration"),
     ("autocomplete", "Generate shell completion"),
 ]
 
@@ -38,9 +40,63 @@ _TOOL_TARGET_COMMANDS = frozenset({
 
 # Flags for specific commands.
 _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
-    "list": [("--refresh", "Bypass session cache"), ("-r", "Short for --refresh")],
-    "session": [("--search", "Filter sessions"), ("-q", "Short for --search")],
+    "list": [
+        ("--refresh", "Fetch new data"),
+        ("-r", "Short for --refresh"),
+        ("-n", "Fetch new data"),
+    ],
+    "session": [
+        ("--search", "Filter sessions"), ("-q", "Short for --search"),
+        ("--days", "Past N calendar days"), ("-d", "Short for --days"),
+        ("--weeks", "Past N calendar weeks"), ("-w", "Short for --weeks"),
+        ("--start", "Range start date"), ("-s", "Short for --start"),
+        ("--end", "Range end date"), ("-e", "Short for --end"),
+        ("--agent", "Filter by agent"), ("--here", "Current project only"),
+    ],
+    "report": [
+        ("--days", "Override with N calendar days"), ("-d", "Short for --days"),
+        ("--weeks", "Override with N calendar weeks"), ("-w", "Short for --weeks"),
+        ("--start", "Override range start"), ("-s", "Short for --start"),
+        ("--end", "Override range end"), ("-e", "Short for --end"),
+        ("--here", "Current project only"), ("--agent", "Filter by agent"),
+        ("--session-harness", "Cheap summarizer harness"),
+        ("--session-model", "Cheap summarizer model"),
+        ("--writer-harness", "Final writer harness"),
+        ("--writer-model", "Final writer model"),
+    ],
+    "setup": [
+        ("--quick", "Only missing or actionable stages"),
+        ("--apply", "Apply safe discovery changes"),
+        ("--json", "Print discovery preview as JSON"),
+        ("--non-interactive", "Preview without prompts or writes"),
+    ],
     "add": [("-i", "Interactive form"), ("--interactive", "Interactive form")],
+}
+
+_SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
+    "report": [
+        ("daily", "Report since the previous daily report"),
+        ("weekly", "Report since the previous weekly report"),
+        ("warnings", "Show warnings for one report manifest"),
+        ("followups", "List follow-ups"),
+        ("followup", "Manage or work on a follow-up"),
+    ],
+    "config": [
+        ("get", "Read a resolved value"),
+        ("set", "Set a value"),
+        ("unset", "Remove a value"),
+        ("edit", "Open config in an editor"),
+        ("check", "Validate configuration"),
+        ("setup", "Run interactive setup"),
+    ],
+    "setup": [
+        ("harnesses", "Discover and register coding CLIs"),
+        ("providers", "Review provider credential coverage"),
+        ("mcp", "Import MCP servers"),
+        ("skills", "Unify shared skill roots"),
+        ("report", "Configure report models"),
+        ("check", "Verify setup state"),
+    ],
 }
 
 
@@ -74,6 +130,9 @@ def get_completions(words: list[str]) -> list[tuple[str, str]]:
     # Tool-name completion for commands that take a tool argument
     if cmd in _TOOL_TARGET_COMMANDS and len(rest) == 0:
         return _tool_completions(partial)
+
+    if cmd in _SUBCOMMANDS and len(rest) == 0:
+        return _filter_by_prefix(_SUBCOMMANDS[cmd], partial)
 
     # Tag completion for `swe list [tag]`
     if cmd in ("list", "ls") and len(rest) == 0:

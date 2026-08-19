@@ -42,6 +42,26 @@ class SessionCommandsTest(unittest.TestCase):
         self.assertEqual(search, "quiver")
         self.assertTrue(cwd)
 
+    def test_parse_date_filters(self):
+        parsed = _parse_session_args(["-d", "5"])
+        self.assertEqual(parsed.days, 5)
+        self.assertFalse(parsed.limit_explicit)
+
+        parsed = _parse_session_args(["20", "--weeks", "3"])
+        self.assertEqual(parsed.weeks, 3)
+        self.assertEqual(parsed.limit, 20)
+        self.assertTrue(parsed.limit_explicit)
+
+        parsed = _parse_session_args(["-s", "2026-07-01", "-e", "2026-07-30"])
+        self.assertEqual(parsed.start, "2026-07-01")
+        self.assertEqual(parsed.end, "2026-07-30")
+
+    def test_rejects_invalid_date_filters(self):
+        with patch("builtins.print"):
+            self.assertIsNone(_parse_session_args(["-d", "0"]))
+            self.assertIsNone(_parse_session_args(["-w", "nope"]))
+            self.assertIsNone(_parse_session_args(["-s", "2026-07-01"]))
+
     def test_filter_search(self):
         sessions = [
             SimpleNamespace(

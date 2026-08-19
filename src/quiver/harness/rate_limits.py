@@ -6,32 +6,38 @@ returns a ``RateLimitInfo`` dataclass (or ``None`` if unavailable).
 a short disk cache (60s TTL, same pattern as session cache).
 
 Currently supported:
-  - Codex   (ChatGPT backend-api wham/usage, OAuth from ~/.codex/auth.json)
-  - Copilot (api.github.com/copilot_internal/user, OAuth via `gh` CLI token)
-  - Claude  (api.anthropic.com/api/oauth/usage, OAuth from Claude Code creds)
-  - Droid   (api.factory.ai/api/billing/limits, FACTORY_API_KEY / keychain)
+  - Codex       (ChatGPT backend-api wham/usage, OAuth from ~/.codex/auth.json)
+  - Copilot     (api.github.com/copilot_internal/user, OAuth via `gh` CLI token)
+  - Claude      (api.anthropic.com/api/oauth/usage, OAuth from Claude Code creds)
+  - Droid       (api.factory.ai/api/billing/limits, FACTORY_API_KEY / keychain)
+  - Antigravity (running app/CLI's loopback RetrieveUserQuotaSummary RPC)
+  - Freebuff    (codebuff.com free-session status, local Freebuff auth token)
 
-All four endpoints are internal/undocumented — they work today because the
+These interfaces are internal/undocumented — they work today because the
 official CLIs use them and they happen to be queryable. They can change
 without notice. The same SSL-fallback logic that handles macOS python.org
-builds without CA certificates applies to all four.
+builds without CA certificates applies to the remote HTTP fetchers.
 """
 
 from __future__ import annotations
 
 import base64
 import datetime
+import hashlib
 import json
+import math
 import os
 import shutil
 import ssl
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, asdict
-from typing import Callable
+from typing import Callable, Iterable
 
+from quiver import __version__
 from quiver.console import c
 from quiver.paths import RATE_LIMITS_CACHE_FILE
 
@@ -59,6 +65,13 @@ class RateLimitInfo:
                                 # all existing call sites + cache
                                 # reconstruction (RateLimitInfo(**raw))
                                 # backward-compatible.
+    remaining_units: float | None = None
+    total_units: float | None = None
+
+    @property
+    def remaining_percent(self) -> int:
+        """Percentage of the selected quota window still available."""
+        return max(0, min(100, 100 - self.used_percent))
 
     @property
     def reset_in_human(self) -> str:
@@ -84,10 +97,25 @@ class RateLimitInfo:
         # Renders a compact label instead of a misleading "0% —" figure.
         if self.plan_type == "no-sub":
             return c("dim", "no-sub")
-        pct = f"{self.used_percent}%"
-        if self.limit_reached:
+        if self.plan_type == "auth-required":
+            return c("red", "re-login")
+        remaining = self.remaining_percent
+        if self.remaining_units is not None and self.total_units is not None:
+            def compact(value: float) -> str:
+                return (
+                    str(int(value)) if value.is_integer()
+                    else f"{value:.1f}".rstrip("0").rstrip(".")
+                )
+
+            pct = (
+                f"{compact(float(self.remaining_units))}/"
+                f"{compact(float(self.total_units))}"
+            )
+        else:
+            pct = f"{remaining}%"
+        if self.limit_reached or remaining == 0:
             pct_str = c("red", pct)
-        elif self.used_percent >= 80:
+        elif remaining <= 20:
             pct_str = c("yellow", pct)
         else:
             pct_str = c("green", pct)
@@ -96,8 +124,8 @@ class RateLimitInfo:
             # Compact form (`5h`, `7d`, `7ds`) keeps the column width
             # budget intact while letting the user tell which window
             # the figure came from. Examples:
-            #     80% 5h:3h12m  ← most-restrictive is the 5h rolling
-            #     91% 7d:4d3h   ← most-restrictive is the weekly
+            #     20% 5h:3h12m  ← most-restrictive is the 5h rolling
+            #      9% 7d:4d3h   ← most-restrictive is the weekly
             return f"{pct_str} {c('dim', self.window + ':')} {c('dim', reset)}"
         return f"{pct_str} {c('dim', reset)}"
 
@@ -127,7 +155,7 @@ def _env_cache_ttl(default: float = 300.0) -> float:
 # Rate limits are fetched from undocumented per-provider endpoints that
 # rate-limit aggressively (e.g. Anthropic 429s the usage endpoint). The
 # 5-minute default keeps ``swe list`` fast and avoids spamming those
-# endpoints on every invocation; ``swe list --refresh`` (or ``-r``)
+# endpoints on every invocation; ``swe list --refresh`` (or ``-r``/``-n``)
 # bypasses the cache for a force-refetch. Override the TTL at runtime
 # with ``SWE_RATE_LIMITS_TTL=<seconds>``.
 _CACHE_TTL = _env_cache_ttl()
@@ -219,13 +247,10 @@ def _fetch_json(
       is ``None`` when the server omits the header.
 
     Callbacks that raise are swallowed — a diagnostic bug must never
-    flip the result away from ``None``. Network errors and the SSL
-    fallback path do NOT trigger either callback (no signal there).
+    flip the result away from ``None``. Network errors do not trigger
+    either callback. HTTP errors from the SSL fallback do.
     """
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
+    def handle_http_error(exc: urllib.error.HTTPError) -> None:
         if exc.code == 401 and on_401 is not None:
             try:
                 on_401()
@@ -241,6 +266,12 @@ def _fetch_json(
                 on_http_error(exc.code, retry_after)
             except Exception:
                 pass
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        handle_http_error(exc)
         return None
     except urllib.error.URLError as exc:
         # SSL cert verification failure — retry with unverified context
@@ -258,8 +289,11 @@ def _fetch_json(
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
-            OSError, TimeoutError, ssl.SSLError):
+    except urllib.error.HTTPError as exc:
+        handle_http_error(exc)
+        return None
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, TimeoutError,
+            ssl.SSLError):
         return None
 
 
@@ -546,7 +580,7 @@ def _fetch_github_copilot() -> RateLimitInfo | None:
             "Accept": "application/json",
             "Editor-Version": "vscode/1.95.0",
             "Editor-Plugin-Version": "copilot-chat/0.26.7",
-            "User-Agent": "quiver/0.2.7",
+            "User-Agent": f"quiver/{__version__}",
         },
     )
 
@@ -608,8 +642,8 @@ _CLAUDE_WINDOWS: dict[str, str] = {
 }
 
 
-def _get_claude_access_token() -> str | None:
-    """Return the Claude Code OAuth ``accessToken`` from the best known source.
+def _get_claude_oauth_credentials() -> dict | None:
+    """Return Claude Code's OAuth credential mapping from the best source.
 
     Order of resolution (first hit wins):
       1. Portable file path — ``~/.claude/.credentials.json`` direct
@@ -635,9 +669,8 @@ def _get_claude_access_token() -> str | None:
         if isinstance(creds, dict):
             oauth = creds.get("claudeAiOauth") or {}
             if isinstance(oauth, dict):
-                tok = oauth.get("accessToken")
-                if isinstance(tok, str) and tok:
-                    return tok
+                if isinstance(oauth.get("accessToken"), str):
+                    return oauth
 
     # 2. macOS Keychain. ``security`` ships with macOS; check via
     #    shutil.which to avoid FileNotFoundError on non-Apple platforms.
@@ -667,16 +700,27 @@ def _get_claude_access_token() -> str | None:
     oauth = creds.get("claudeAiOauth") or {}
     if not isinstance(oauth, dict):
         return None
-    tok = oauth.get("accessToken")
-    return tok if isinstance(tok, str) and tok else None
+    return oauth if isinstance(oauth.get("accessToken"), str) else None
 
 
-def _fetch_claude_url(req: urllib.request.Request) -> dict | None:
+def _get_claude_access_token() -> str | None:
+    """Return the access token from Claude Code's OAuth credentials."""
+    oauth = _get_claude_oauth_credentials()
+    if not oauth:
+        return None
+    token = oauth.get("accessToken")
+    return token if isinstance(token, str) and token else None
+
+
+def _fetch_claude_url(
+    req: urllib.request.Request,
+    on_rate_limited: Callable[[float | None], None] | None = None,
+) -> dict | None:
     """Claude-specific fetch — like ``_fetch_json`` but emits two
     targeted diagnostics:
 
-    - HTTP 401 → suggests ``_BETA_VERSIONS`` is stale (Anthropic
-      silently rotates ``anthropic-beta`` without docs).
+    - HTTP 401 → suggests renewing Claude authentication first, then
+      checking ``_BETA_VERSIONS`` if a fresh login still fails.
     - HTTP 429 → Anthropic is rate-limiting the endpoint itself;
       surfaces the parsed ``Retry-After`` so the user knows when to
       try again instead of debugging the wrong thing.
@@ -690,14 +734,16 @@ def _fetch_claude_url(req: urllib.request.Request) -> dict | None:
         # stderr-bound and not accidentally stripped.
         import sys
         print(
-            f"Claude usage endpoint returned 401 — the `anthropic-beta` "
-            f"value (`{beta_header}`) is most likely stale. Update "
-            f"`_BETA_VERSIONS` in `src/quiver/harness/rate_limits.py`.",
+            f"Claude usage endpoint returned 401. Run `claude auth login` "
+            f"to renew the OAuth credential. If a fresh login still fails, "
+            f"the `anthropic-beta` value (`{beta_header}`) may need updating.",
             file=sys.stderr,
         )
 
     def _warn_claude_429(code: int, retry_after_seconds: float | None) -> None:
         import sys
+        if code == 429 and on_rate_limited is not None:
+            on_rate_limited(retry_after_seconds)
         if retry_after_seconds and retry_after_seconds > 0:
             minutes = int(retry_after_seconds // 60)
             seconds = int(retry_after_seconds % 60)
@@ -720,103 +766,133 @@ def _fetch_claude_url(req: urllib.request.Request) -> dict | None:
     )
 
 
+def _claude_cache_file():
+    return RATE_LIMITS_CACHE_FILE.with_name("claude_usage_cache.json")
+
+
+def _claude_credential_fingerprint(token: str) -> str:
+    """Return a non-reversible identifier for cooldown ownership."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _load_claude_state() -> tuple[RateLimitInfo | None, float, str]:
+    try:
+        raw = json.loads(_claude_cache_file().read_text())
+        info_raw = raw.get("info")
+        info = RateLimitInfo(**info_raw) if isinstance(info_raw, dict) else None
+        retry_at = float(raw.get("retry_at") or 0)
+        fingerprint = raw.get("credential_fingerprint") or ""
+        return info, retry_at, str(fingerprint)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None, 0.0, ""
+
+
+def _save_claude_state(
+    info: RateLimitInfo | None,
+    retry_at: float = 0.0,
+    credential_fingerprint: str = "",
+) -> None:
+    path = _claude_cache_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "info": asdict(info) if info is not None else None,
+            "retry_at": retry_at,
+            "credential_fingerprint": credential_fingerprint,
+        }))
+    except OSError:
+        pass
+
+
 def _fetch_claude() -> RateLimitInfo | None:
-    """Return Claude Code's rate-limit status for the ``swe list`` column.
-
-    Currently **disabled** — the live polling of
-    ``api.anthropic.com/api/oauth/usage`` is commented out below. The
-    endpoint is undocumented and Anthropic rate-limits it aggressively
-    (a 429 from the endpoint itself, not the account), which made the
-    fetcher hammer the API on every ``swe list --refresh`` and surface
-    a misleading ``—`` for no-subscription accounts. While we're not
-    polling, we render ``no-sub`` for any account that has Claude Code
-    credentials installed, and ``None`` (``—``) when there are no
-    credentials at all (Claude Code not logged in / not installed).
-
-    The original HTTP + parsing logic is preserved as a commented block
-    so it can be re-enabled once the endpoint stabilises or a paid
-    subscription is detected. Restore by uncommenting the block and
-    removing the ``no-sub`` return below.
-    """
-    token = _get_claude_access_token()
+    """Return Claude Code's most limiting subscription usage window."""
+    oauth = _get_claude_oauth_credentials()
+    token = oauth.get("accessToken") if oauth else None
     if not token:
-        # No Claude Code credentials → not logged in / not installed.
-        # Render ``—`` (the default for tools with no rate data).
         return None
 
-    # --- no-subscription / polling-disabled return ----------------------
-    # While the endpoint polling is disabled, every account with Claude
-    # Code credentials renders ``no-sub``. ``format_column()`` checks
-    # ``plan_type == "no-sub"`` and renders the literal label, so the
-    # numeric fields are inert placeholders.
-    return RateLimitInfo(
-        tool_name="claude",
-        used_percent=0,
-        limit_reached=False,
-        reset_at=0.0,
-        plan_type="no-sub",
-        window_seconds=0,
-        window="",
-    )
+    expires_at = oauth.get("expiresAt")
+    try:
+        expires_at = float(expires_at)
+        expires_at_seconds = (
+            expires_at / 1000 if expires_at > 100_000_000_000 else expires_at
+        )
+    except (TypeError, ValueError):
+        expires_at_seconds = 0.0
+    if (
+        expires_at_seconds
+        and expires_at_seconds <= time.time()
+        and not oauth.get("refreshToken")
+    ):
+        return RateLimitInfo(
+            tool_name="claude",
+            used_percent=0,
+            limit_reached=False,
+            reset_at=0.0,
+            plan_type="auth-required",
+            window_seconds=0,
+        )
 
-    # --- original live-fetch logic (disabled) ---------------------------
-    # url = "https://api.anthropic.com/api/oauth/usage"
-    # beta_header = _BETA_VERSIONS["claude-oauth-usage"]
-    # req = urllib.request.Request(
-    #     url,
-    #     headers={
-    #         "Authorization": f"Bearer {token}",
-    #         "anthropic-beta": beta_header,
-    #         "Accept": "application/json",
-    #         "User-Agent": "quiver/0.2.7",
-    #     },
-    # )
-    #
-    # data = _fetch_claude_url(req)
-    # if not isinstance(data, dict):
-    #     return None
-    #
-    # best_window_key = ""
-    # best_utilization = -1.0
-    # best_reset_at = 0.0
-    # limit_reached = False
-    #
-    # # Iteration order doesn't matter; we pick by raw ``utilization``
-    # # magnitude so a sub-1.0 value never beats a 1.0 value (which would
-    # # signal "rate-limited").
-    # for key in ("five_hour", "seven_day", "seven_day_sonnet"):
-    #     window = data.get(key)
-    #     if not isinstance(window, dict):
-    #         continue
-    #     try:
-    #         util = float(window.get("utilization", 0))
-    #     except (TypeError, ValueError):
-    #         # Malformed payload — skip rather than crash ``swe list``.
-    #         continue
-    #     if util > best_utilization:
-    #         best_utilization = util
-    #         best_window_key = key
-    #         best_reset_at = _parse_iso8601_to_epoch(window.get("resets_at"))
-    #         # The endpoint doesn't expose an explicit ``limit_reached``
-    #         # flag; treat utilization >= 1.0 (= 100% consumed in the
-    #         # window) as the canonical "you're cut off" signal.
-    #         limit_reached = util >= 1.0
-    #
-    # if best_utilization < 0:
-    #     return None
-    #
-    # window_label = _CLAUDE_WINDOWS.get(best_window_key, "")
-    # used_percent = int(round(min(100.0, max(0.0, best_utilization * 100))))
-    #
-    # return RateLimitInfo(
-    #     tool_name="claude",
-    #     used_percent=used_percent,
-    #     limit_reached=limit_reached,
-    #     reset_at=best_reset_at,
-    #     plan_type="—",  # usage endpoint doesn't expose plan_type
-    #     window_seconds=0,  # usage endpoint doesn't expose this either
-    #     window=window_label,
-    # )
+    credential_fingerprint = _claude_credential_fingerprint(token)
+    stale_info, retry_at, cooldown_fingerprint = _load_claude_state()
+    if (
+        retry_at > time.time()
+        and cooldown_fingerprint == credential_fingerprint
+    ):
+        return stale_info
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/api/oauth/usage",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": _BETA_VERSIONS["claude-oauth-usage"],
+            "Accept": "application/json",
+            "User-Agent": f"quiver/{__version__}",
+        },
+    )
+    retry_after: list[float | None] = []
+    data = _fetch_claude_url(req, on_rate_limited=retry_after.append)
+    if not isinstance(data, dict):
+        if retry_after:
+            wait = retry_after[-1] if retry_after[-1] is not None else 300.0
+            _save_claude_state(
+                stale_info,
+                time.time() + max(60.0, wait),
+                credential_fingerprint,
+            )
+        return stale_info
+
+    best_window_key = ""
+    best_utilization = -1.0
+    best_reset_at = 0.0
+    for key in _CLAUDE_WINDOWS:
+        window = data.get(key)
+        if not isinstance(window, dict):
+            continue
+        try:
+            utilization = float(window.get("utilization"))
+        except (TypeError, ValueError):
+            continue
+        if utilization > best_utilization:
+            best_window_key = key
+            best_utilization = utilization
+            best_reset_at = _parse_iso8601_to_epoch(window.get("resets_at"))
+
+    if best_utilization < 0:
+        return None
+
+    used_percent = int(round(min(100.0, max(0.0, best_utilization))))
+    info = RateLimitInfo(
+        tool_name="claude",
+        used_percent=used_percent,
+        limit_reached=best_utilization >= 100,
+        reset_at=best_reset_at,
+        plan_type="—",
+        window_seconds=0,
+        window=_CLAUDE_WINDOWS[best_window_key],
+    )
+    _save_claude_state(info, credential_fingerprint=credential_fingerprint)
+    return info
 
 
 def _register_claude() -> None:
@@ -1106,7 +1182,7 @@ def _droid_request(url: str, token: str) -> urllib.request.Request:
             "Referer": _DROID_APP_REFERER,
             "x-factory-client": "web-app",
             "Authorization": f"Bearer {token}",
-            "User-Agent": "quiver/0.2.7",
+            "User-Agent": f"quiver/{__version__}",
         },
     )
 
@@ -1154,55 +1230,72 @@ def _warn_droid_http_error(code: int, retry_after_seconds: float | None) -> None
         )
 
 
+_DROID_FETCH_TIMEOUT = 2.0
+_DROID_WINDOW_LABELS = {
+    "fiveHour": "5h",
+    "weekly": "7d",
+    "monthly": "30d",
+}
+
+
 def _droid_fetch(req: urllib.request.Request) -> dict | None:
     """Droid-specific fetch — like ``_fetch_json`` but emits targeted
     diagnostics for the 401 (stale keychain token) and 429/403/5xx paths
     found in real-world droid installations.
     """
-    return _fetch_json(
-        req,
-        timeout=10,
-        on_401=_warn_droid_invalid_token,
-        on_http_error=_warn_droid_http_error,
-    )
+    result: list[dict | None] = []
+    timed_out = threading.Event()
+
+    def warn_401() -> None:
+        if not timed_out.is_set():
+            _warn_droid_invalid_token()
+
+    def warn_http_error(code: int, retry_after_seconds: float | None) -> None:
+        if not timed_out.is_set():
+            _warn_droid_http_error(code, retry_after_seconds)
+
+    def fetch() -> None:
+        result.append(_fetch_json(
+            req,
+            timeout=_DROID_FETCH_TIMEOUT,
+            on_401=warn_401,
+            on_http_error=warn_http_error,
+        ))
+
+    # DNS resolution can outlive urllib's socket timeout. Keep this optional
+    # status lookup from holding the entire `swe list` command hostage.
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    worker.join(_DROID_FETCH_TIMEOUT)
+    if worker.is_alive():
+        timed_out.set()
+        return None
+    return result[0] if result else None
 
 
 def _fetch_droid() -> RateLimitInfo | None:
     """Fetch Droid (Factory AI) billing-window quota.
 
     Hits ``GET https://api.factory.ai/api/billing/limits`` and surfaces
-    the **average USED percent of the core and standard fiveHour
-    windows** as the RATE percentage. Factory exposes two parallel
-    budgets (``core`` and ``standard``), each with three windows
-    (``fiveHour`` / ``weekly`` / ``monthly``). The 5h rolling window is
-    the most actionable short-term signal, and averaging the two
-    budgets gives a single blended figure that reflects how much of
-    BOTH budgets is consumed rather than only the one that happens to
-    be more restrictive.
+    the window that currently gates Droid usage. Exhausted longer-term
+    windows take priority (monthly, then weekly, then fiveHour). When no
+    window is exhausted, fiveHour remains the default. Percentages are
+    averaged across the parallel core and standard budgets for the
+    selected window.
 
-    **The API field is named ``usedPercent`` but is actually REMAINING
-    percent.** We invert it (``used = 100 - usedPercent``) before
-    averaging. Example: standard/5h reports 46 (remaining) → 54% used,
-    core/5h reports 100 (remaining, a freshly-rolled-over window) → 0%
-    used; the column shows ``(54 + 0) / 2 = 27%``. Both fiveHour windows
-    are included in the average regardless of their ``windowEnd`` — a
-    just-rolled-over window legitimately reports 100% remaining (0%
-    used), which is the current state, not stale data.
+    Factory's current API reports ``usedPercent`` as the consumed
+    percentage directly. Values are clamped to 0-100 before selection
+    and averaging so malformed overage values cannot break rendering.
 
-    The reset countdown is the **earliest *future* ``windowEnd`` across
-    all six windows** (the nearest reset that hasn't already happened).
-    Past ``windowEnd`` values are skipped for the reset because a
-    rolled-over window's stale ``windowEnd`` would render a meaningless
-    "now" — the soonest future refresh is the actionable signal.
+    The reset countdown comes from the selected window. For an exhausted
+    window, the latest exhausted-budget reset is the real unlock time;
+    otherwise the earliest future reset is the next refresh.
 
-    ``limit_reached`` is True when EITHER 5h window reports 0% remaining
-    (i.e. 100% used) — the average alone could mask a cutoff (e.g.
-    core/5h=0% remaining, standard/5h=80% remaining averages to 10%
-    used, but core is actually cut off), so the flag honours the
-    per-budget signal.
+    ``limit_reached`` is True when either budget for the selected window
+    reports 100% used. The average alone must not mask a cutoff.
 
     Single-endpoint strategy (no second call to /subscription/usage or
-    /app/auth/me): the RATE column budget is unforgiving and we already
+    /app/auth/me): the REMAINING column budget is unforgiving and we already
     know the user has droid installed + authenticated. Plan type is
     intentionally default ``"—"`` to mirror Claude's behaviour — the
     web-app quota dashboard exposes plan tier if the user wants it.
@@ -1211,7 +1304,7 @@ def _fetch_droid() -> RateLimitInfo | None:
 
         {"usesTokenRateLimitsBilling": true,
          "limits": {
-           "standard": {"fiveHour": {"usedPercent": 19,   # REMAINING
+           "standard": {"fiveHour": {"usedPercent": 19,
                                      "windowEnd": "2026-07-25T22:31:13Z",
                                      "secondsRemaining": 15091},
                         "weekly":   {...}, "monthly": {...}},
@@ -1223,8 +1316,7 @@ def _fetch_droid() -> RateLimitInfo | None:
       - HTTP error fires a diagnostic callback (401/429/5xx) and the
         server's response is dropped
       - response is not a dict, or carries no ``limits`` map
-      - neither ``core`` nor ``standard`` has a ``fiveHour`` window with
-        a numeric ``usedPercent``
+      - no supported window has a numeric ``usedPercent``
 
     The endpoint is undocumented and may change without notice. Same
     fragility assumption as the Codex / Claude fetchers.
@@ -1244,16 +1336,9 @@ def _fetch_droid() -> RateLimitInfo | None:
         return None
 
     now = time.time()
-    # Collect USED percent (inverted from the API's REMAINING value)
-    # from every fiveHour window with a numeric usedPercent, and track
-    # the earliest FUTURE windowEnd across all windows for the reset
-    # countdown. Past windowEnds are skipped for the reset (a
-    # rolled-over window's stale windowEnd would show a meaningless
-    # "now"), but the window's usedPercent is still included in the
-    # average — a rolled-over 5h window legitimately reports 100%
-    # remaining (0% used), which is the current state.
-    used_pcts: list[int] = []
-    earliest_reset_at = 0.0
+    window_samples: dict[str, list[tuple[int, float]]] = {
+        key: [] for key in _DROID_WINDOW_LABELS
+    }
 
     for category, cat_windows in limits.items():
         if not isinstance(category, str) or not isinstance(cat_windows, dict):
@@ -1261,45 +1346,62 @@ def _fetch_droid() -> RateLimitInfo | None:
         for win_key, win in cat_windows.items():
             if not isinstance(win_key, str) or not isinstance(win, dict):
                 continue
-            reset_at = _parse_iso8601_to_epoch(win.get("windowEnd"))
-            if reset_at > now:
-                # Earliest future reset across every active window.
-                if earliest_reset_at == 0.0 or reset_at < earliest_reset_at:
-                    earliest_reset_at = reset_at
-            # Only fiveHour windows feed the averaged percentage.
-            if win_key != "fiveHour":
+            if win_key not in window_samples:
                 continue
             raw = win.get("usedPercent")
             if raw is None:
                 continue
             try:
-                remaining = max(0, min(100, int(round(float(raw)))))
+                used = max(0, min(100, int(round(float(raw)))))
             except (TypeError, ValueError):
                 # Malformed payload — skip rather than crash ``swe list``.
                 continue
-            # API field is REMAINING; invert to USED.
-            used_pcts.append(100 - remaining)
+            window_samples[win_key].append((
+                used,
+                _parse_iso8601_to_epoch(win.get("windowEnd")),
+            ))
 
-    if not used_pcts:
+    exhausted_order = ("monthly", "weekly", "fiveHour")
+    selected_key = next((
+        key for key in exhausted_order
+        if any(used >= 100 for used, _reset in window_samples[key])
+    ), None)
+    if selected_key is None:
+        selected_key = next((
+            key for key in ("fiveHour", "weekly", "monthly")
+            if window_samples[key]
+        ), None)
+    if selected_key is None:
         return None
 
+    selected_samples = window_samples[selected_key]
+    used_pcts = [used for used, _reset in selected_samples]
     used_percent = int(round(sum(used_pcts) / len(used_pcts)))
     used_percent = max(0, min(100, used_percent))
-    # A budget is exhausted when any single 5h window reports 0%
-    # remaining (100% used); the average alone can hide that, so honour
-    # the per-budget signal.
     limit_reached = any(p >= 100 for p in used_pcts)
+
+    future_resets = [
+        reset for _used, reset in selected_samples if reset > now
+    ]
+    exhausted_resets = [
+        reset for used, reset in selected_samples
+        if used >= 100 and reset > now
+    ]
+    if limit_reached and exhausted_resets:
+        reset_at = max(exhausted_resets)
+    elif future_resets:
+        reset_at = min(future_resets)
+    else:
+        reset_at = 0.0
 
     return RateLimitInfo(
         tool_name="droid",
         used_percent=used_percent,
         limit_reached=limit_reached,
-        reset_at=earliest_reset_at,
+        reset_at=reset_at,
         plan_type="—",
         window_seconds=0,
-        # Blended 5h figure across core + standard; ``5h`` conveys the
-        # rolling window without implying a single category.
-        window="5h",
+        window=_DROID_WINDOW_LABELS[selected_key],
     )
 
 
@@ -1312,11 +1414,309 @@ def _register_droid() -> None:
     register("droid", fetch)
 
 
+# ---------------------------------------------------------------------------
+# Antigravity fetcher
+# ---------------------------------------------------------------------------
+
+_ANTIGRAVITY_QUOTA_ROUTE = (
+    "/exa.language_server_pb.LanguageServerService/"
+    "RetrieveUserQuotaSummary"
+)
+_ANTIGRAVITY_RPC_TIMEOUT = 0.35
+
+
+def _antigravity_csrf_tokens() -> dict[str, str]:
+    """Return Antigravity CSRF tokens keyed by language-server PID."""
+    try:
+        result = subprocess.run(
+            ["ps", "-ww", "-axo", "pid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return {}
+    if result.returncode != 0:
+        return {}
+
+    tokens: dict[str, str] = {}
+    for line in (result.stdout or "").splitlines():
+        pid, separator, command = line.strip().partition(" ")
+        if not separator or not pid.isdigit() or "--csrf_token" not in command:
+            continue
+        args = command.split()
+        for index, arg in enumerate(args):
+            if arg == "--csrf_token" and index + 1 < len(args):
+                tokens[pid] = args[index + 1]
+                break
+            if arg.startswith("--csrf_token="):
+                tokens[pid] = arg.split("=", 1)[1]
+                break
+    return tokens
+
+
+def _antigravity_rpc_endpoints() -> list[tuple[str, str]]:
+    """Return loopback listeners and per-process CSRF tokens."""
+    lsof = shutil.which("lsof")
+    if not lsof:
+        return []
+    try:
+        result = subprocess.run(
+            [lsof, "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    listeners: list[tuple[str, str]] = []
+    current_pid = ""
+    is_antigravity = False
+    for line in (result.stdout or "").splitlines():
+        if line.startswith("p"):
+            current_pid = line[1:]
+            is_antigravity = False
+        elif line.startswith("c"):
+            command = line[1:].lower()
+            is_antigravity = (
+                command == "agy"
+                or "antigravity" in command
+                or command.startswith("language_server")
+            )
+        elif line.startswith("n") and is_antigravity:
+            address = line[1:]
+            if address.startswith("[::1]:"):
+                port = address.rsplit(":", 1)[-1]
+            else:
+                try:
+                    host, port = address.rsplit(":", 1)
+                except ValueError:
+                    continue
+                if host not in ("127.0.0.1", "localhost", "::1"):
+                    continue
+            if not port.isdigit():
+                continue
+            url = f"http://127.0.0.1:{port}"
+            if all(existing_url != url for existing_url, _pid in listeners):
+                listeners.append((url, current_pid))
+
+    tokens = _antigravity_csrf_tokens()
+    return [(url, tokens.get(pid, "")) for url, pid in listeners]
+
+
+def _parse_antigravity_quota(data: dict) -> RateLimitInfo | None:
+    """Select the currently most restrictive Antigravity quota bucket."""
+    response = data.get("response")
+    if not isinstance(response, dict):
+        return None
+    groups = response.get("groups")
+    if not isinstance(groups, list):
+        return None
+
+    candidates: list[tuple[float, str, float]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        buckets = group.get("buckets")
+        if not isinstance(buckets, list):
+            continue
+        for bucket in buckets:
+            if not isinstance(bucket, dict):
+                continue
+            window = str(bucket.get("window") or "")
+            window_label = {"weekly": "7d", "5h": "5h"}.get(window)
+            if not window_label:
+                continue
+            try:
+                remaining = float(bucket.get("remainingFraction"))
+            except (TypeError, ValueError):
+                continue
+            remaining = min(1.0, max(0.0, remaining))
+            used = (1.0 - remaining) * 100.0
+            reset_at = _parse_iso8601_to_epoch(bucket.get("resetTime"))
+            candidates.append((used, window_label, reset_at))
+
+    if not candidates:
+        return None
+
+    # Highest utilization wins. At equal non-exhausted utilization, the 5h
+    # window is the useful default; if both are exhausted, the weekly reset is
+    # the longer-lived gate and therefore the actionable one to display.
+    def rank(candidate: tuple[float, str, float]) -> tuple[float, int]:
+        used, window, _reset = candidate
+        preferred = window == ("7d" if used >= 100 else "5h")
+        return used, int(preferred)
+
+    used, window, reset_at = max(candidates, key=rank)
+    used_percent = int(round(used))
+    return RateLimitInfo(
+        tool_name="antigravity",
+        used_percent=used_percent,
+        limit_reached=used >= 100,
+        reset_at=reset_at,
+        plan_type="—",
+        window_seconds=0,
+        window=window,
+    )
+
+
+def _fetch_antigravity() -> RateLimitInfo | None:
+    """Read quota from a running Antigravity app or CLI over loopback."""
+    for base_url, csrf_token in _antigravity_rpc_endpoints()[:8]:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": f"quiver/{__version__}",
+        }
+        if csrf_token:
+            headers["X-Codeium-Csrf-Token"] = csrf_token
+        req = urllib.request.Request(
+            base_url + _ANTIGRAVITY_QUOTA_ROUTE,
+            data=b"{}",
+            headers=headers,
+        )
+        data = _fetch_json(req, timeout=_ANTIGRAVITY_RPC_TIMEOUT)
+        if isinstance(data, dict):
+            info = _parse_antigravity_quota(data)
+            if info is not None:
+                return info
+    return None
+
+
+def _register_antigravity() -> None:
+    """Register the Antigravity loopback rate limit fetcher."""
+
+    def fetch() -> RateLimitInfo | None:
+        return _fetch_antigravity()
+
+    register("antigravity", fetch)
+
+
+# ---------------------------------------------------------------------------
+# Freebuff fetcher
+# ---------------------------------------------------------------------------
+
+_FREEBUFF_SESSION_URL = "https://www.codebuff.com/api/v1/freebuff/session"
+
+
+def _get_freebuff_access_token() -> str | None:
+    """Return Freebuff's locally stored auth token without exposing it."""
+    credentials_path = os.path.expanduser(
+        "~/.config/manicode/credentials.json",
+    )
+    try:
+        with open(credentials_path) as file:
+            credentials = json.load(file)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    default = credentials.get("default")
+    if not isinstance(default, dict):
+        return None
+    token = default.get("authToken")
+    return token if isinstance(token, str) and token else None
+
+
+def _parse_freebuff_quota(data: dict) -> RateLimitInfo | None:
+    """Parse the referral-unlocked GLM 5.2 session allowance."""
+    def is_glm(model: object) -> bool:
+        return isinstance(model, str) and (
+            model == "z-ai/glm-5.2" or model.startswith("z-ai/glm-5.2-")
+        )
+
+    quota = None
+    by_model = data.get("rateLimitsByModel")
+    if isinstance(by_model, dict):
+        quota = next(
+            (
+                value for model, value in by_model.items()
+                if is_glm(model) and isinstance(value, dict)
+            ),
+            None,
+        )
+    active_quota = data.get("rateLimit")
+    if quota is None and isinstance(active_quota, dict) and is_glm(
+        active_quota.get("model") or data.get("model"),
+    ):
+        quota = active_quota
+
+    if quota is not None:
+        try:
+            total_units = float(quota.get("limit"))
+            used_units = float(quota.get("recentCount"))
+        except (TypeError, ValueError):
+            return None
+        remaining_units = max(0.0, total_units - used_units)
+        reset_at = quota.get("resetAt")
+    else:
+        referral = data.get("referral")
+        if not isinstance(referral, dict):
+            return None
+        try:
+            remaining_units = float(referral.get("weeklySessionsRemaining"))
+            total_units = float(referral.get("qualifiedCount"))
+        except (TypeError, ValueError):
+            return None
+        reset_at = referral.get("resetAt")
+
+    if not (
+        math.isfinite(remaining_units)
+        and math.isfinite(total_units)
+        and remaining_units >= 0
+        and total_units > 0
+        and remaining_units <= total_units
+    ):
+        return None
+
+    used_percent = int(round((1.0 - remaining_units / total_units) * 100.0))
+    return RateLimitInfo(
+        tool_name="freebuff",
+        used_percent=used_percent,
+        limit_reached=remaining_units <= 0,
+        reset_at=_parse_iso8601_to_epoch(reset_at),
+        plan_type="free",
+        window_seconds=0,
+        remaining_units=remaining_units,
+        total_units=total_units,
+    )
+
+
+def _fetch_freebuff() -> RateLimitInfo | None:
+    """Read Freebuff's GLM 5.2 session allowance without joining a session."""
+    token = _get_freebuff_access_token()
+    if not token:
+        return None
+    request = urllib.request.Request(
+        _FREEBUFF_SESSION_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "User-Agent": f"quiver/{__version__}",
+        },
+    )
+    data = _fetch_json(request)
+    return _parse_freebuff_quota(data) if isinstance(data, dict) else None
+
+
+def _register_freebuff() -> None:
+    """Register the Freebuff GLM session-quota fetcher."""
+
+    def fetch() -> RateLimitInfo | None:
+        return _fetch_freebuff()
+
+    register("freebuff", fetch)
+
+
 # Register built-in fetchers at import time
 _register_codex()
 _register_github_copilot()
 _register_claude()
 _register_droid()
+_register_antigravity()
+_register_freebuff()
 
 
 # ---------------------------------------------------------------------------
@@ -1338,11 +1738,43 @@ def _load_cached() -> dict[str, dict] | None:
         return None
 
 
-def _save_cached(limits: dict[str, dict]) -> None:
+def _load_cached_no_data() -> set[str]:
+    """Names whose fetcher recently returned nothing.
+
+    Without this a provider that never reports usage counts as a permanent
+    cache miss: it is absent from ``limits``, so every call re-runs its
+    fetcher. For providers that shell out (antigravity spawns two
+    subprocesses) that cost lands on every ``swe list``. Remembering the
+    negative answer for the same TTL keeps the miss to once per window.
+    """
+    try:
+        if not RATE_LIMITS_CACHE_FILE.exists():
+            return set()
+        with open(RATE_LIMITS_CACHE_FILE) as f:
+            data = json.load(f)
+        if time.time() - data.get("cached_at", 0) > _CACHE_TTL:
+            return set()
+        names = data.get("no_data", [])
+        return set(names) if isinstance(names, list) else set()
+    except Exception:
+        return set()
+
+
+def _save_cached(
+    limits: dict[str, dict],
+    updated_at: dict[str, float] | None = None,
+    no_data: Iterable[str] | None = None,
+) -> None:
     """Persist rate limits to disk cache."""
     try:
         RATE_LIMITS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"cached_at": time.time(), "limits": limits}
+        now = time.time()
+        payload = {
+            "cached_at": now,
+            "limits": limits,
+            "updated_at": updated_at or {name: now for name in limits},
+            "no_data": sorted(no_data or ()),
+        }
         with open(RATE_LIMITS_CACHE_FILE, "w") as f:
             json.dump(payload, f)
     except Exception:
@@ -1362,40 +1794,147 @@ def invalidate_cache() -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def get_all_rate_limits(use_cache: bool = True) -> dict[str, RateLimitInfo]:
-    """Fetch rate limits for all registered tools.
+_RATE_LIMIT_FETCH_DEADLINE = 2.0
+_STALE_CACHE_TTL = 24 * 60 * 60
+
+
+def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
+    """Load the last snapshot for outage fallback, up to 24 hours old."""
+    try:
+        with open(RATE_LIMITS_CACHE_FILE) as f:
+            data = json.load(f)
+        cached_at = float(data.get("cached_at", 0))
+        limits = data.get("limits", {})
+        timestamps = data.get("updated_at", {})
+        if not isinstance(limits, dict) or not isinstance(timestamps, dict):
+            return {}, {}
+        usable: dict[str, dict] = {}
+        usable_timestamps: dict[str, float] = {}
+        for name, raw in limits.items():
+            # Authentication failures are transient status, not a successful
+            # usage reading. A forced refresh after login must be able to
+            # replace or remove this marker immediately.
+            if raw.get("plan_type") == "auth-required":
+                continue
+            try:
+                provider_updated_at = float(timestamps.get(name, cached_at))
+            except (TypeError, ValueError):
+                continue
+            if time.time() - provider_updated_at <= _STALE_CACHE_TTL:
+                usable[name] = raw
+                usable_timestamps[name] = provider_updated_at
+        return usable, usable_timestamps
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}, {}
+
+
+def get_all_rate_limits(
+    use_cache: bool = True,
+    tool_names: Iterable[str] | None = None,
+) -> dict[str, RateLimitInfo]:
+    """Fetch rate limits for the selected registered tools.
 
     Returns a dict mapping ``tool_name`` → ``RateLimitInfo``.
-    Tools without a fetcher or whose fetch fails are omitted.
+    ``tool_names=None`` retains the low-level all-fetchers behavior for tests
+    and diagnostics. CLI callers pass the starred harness set so unselected
+    usage scripts never start. Tools without a fetcher or whose fetch fails
+    are omitted.
     """
     result: dict[str, RateLimitInfo] = {}
+    requested = None if tool_names is None else set(tool_names)
+    fetchers = [
+        (name, fetcher)
+        for name, fetcher in _FETCHERS.items()
+        if requested is None or name in requested
+    ]
+    fetcher_names = {name for name, _fetcher in fetchers}
+    raw_cache: dict[str, dict] = {}
+    cache_updated_at: dict[str, float] = {}
 
     if use_cache:
         cached = _load_cached()
         if cached is not None:
             for name, raw in cached.items():
+                if name not in fetcher_names:
+                    continue
                 try:
                     result[name] = RateLimitInfo(**raw)
                 except (TypeError, ValueError):
                     pass
-            return result
+            # A provider that answered "nothing to report" last time is
+            # covered for this window too, otherwise it is refetched forever.
+            known_empty = _load_cached_no_data() & fetcher_names
+            missing = fetcher_names - result.keys() - known_empty
+            if not missing:
+                return result
+            fetchers = [item for item in fetchers if item[0] in missing]
+            now = time.time()
+            raw_cache = {name: asdict(info) for name, info in result.items()}
+            cache_updated_at = {name: now for name in result}
 
-    raw_cache: dict[str, dict] = {}
-    for tool_name, fetcher in _FETCHERS.items():
+    if not raw_cache:
+        stale_limits, stale_updated_at = _load_stale_cached()
+        for name, raw in stale_limits.items():
+            if name not in fetcher_names:
+                continue
+            try:
+                info = RateLimitInfo(**raw)
+            except (TypeError, ValueError):
+                continue
+            result[name] = info
+            raw_cache[name] = raw
+            cache_updated_at[name] = stale_updated_at[name]
+
+    fetched: dict[str, RateLimitInfo | None] = {}
+    fetched_lock = threading.Lock()
+
+    def fetch_one(tool_name: str, fetcher: Callable) -> None:
         try:
             info = fetcher()
         except Exception:
             info = None
+        with fetched_lock:
+            fetched[tool_name] = info
+
+    workers = [
+        threading.Thread(target=fetch_one, args=item, daemon=True)
+        for item in fetchers
+    ]
+    deadline = time.monotonic() + _RATE_LIMIT_FETCH_DEADLINE
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(max(0.0, deadline - time.monotonic()))
+
+    with fetched_lock:
+        completed = fetched.copy()
+    empty_fetchers: set[str] = set()
+    for tool_name, _fetcher in fetchers:
+        info = completed.get(tool_name)
         if info:
             result[tool_name] = info
             raw_cache[tool_name] = asdict(info)
+            cache_updated_at[tool_name] = time.time()
+        elif tool_name in completed:
+            # Ran to completion and produced nothing. Distinct from a worker
+            # that hit the deadline, which is absent from ``completed`` and
+            # should be retried rather than remembered as empty.
+            empty_fetchers.add(tool_name)
 
-    if raw_cache:
-        _save_cached(raw_cache)
+    # Cache an empty result only when no recent successful snapshot exists.
+    # Partial outages retain each provider's last known value for up to 24h.
+    _save_cached(raw_cache, cache_updated_at, no_data=empty_fetchers)
 
     return result
 
 
 def get_rate_limit(tool_name: str, use_cache: bool = True) -> RateLimitInfo | None:
-    """Fetch rate limit for a single tool."""
-    return get_all_rate_limits(use_cache=use_cache).get(tool_name)
+    """Fetch one starred tool's rate limit without polling other providers."""
+    from quiver.harness.stars import is_starred
+
+    if not is_starred(tool_name):
+        return None
+    return get_all_rate_limits(
+        use_cache=use_cache,
+        tool_names={tool_name},
+    ).get(tool_name)

@@ -33,7 +33,7 @@ def _load_source_servers() -> dict:
 
 
 def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]:
-    """Find MCP servers in tool configs not yet in ~/.config/swe/mcp.json."""
+    """Find MCP servers in tool configs not yet in ~/.quiver/config/mcp.json."""
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
     source = _load_source_servers()
@@ -70,7 +70,7 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
 
 
 def apply_mcp_findings(findings: list[McpFinding]) -> list[str]:
-    """Merge new MCP findings into ~/.config/swe/mcp.json."""
+    """Merge new MCP findings into ~/.quiver/config/mcp.json."""
     source_data = load_json(MCP_SOURCE_FILE)
     servers = dict(_load_source_servers())
     added: list[str] = []

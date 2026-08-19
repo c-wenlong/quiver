@@ -32,7 +32,7 @@ def _print_help():
   {c('bold', 'swe mcp discover')} — Find MCP servers across your AI tools
 
   {c('cyan', 'swe mcp discover')}              List servers in tool configs not in mcp.json (dry-run)
-  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.config/swe/mcp.json
+  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.quiver/config/mcp.json
   {c('cyan', 'swe mcp discover --json')}       Machine-readable output
   {c('cyan', 'swe mcp discover --all')}        Include servers already in source-of-truth
 

@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from quiver.skills.catalogs import load_skill_catalogs
-from quiver.skills.layout import shared_scopes_for_skill
+from quiver.skills.layout import SHARED_REL, shared_scopes_for_skill
 
 
 def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple[str, Path]]:
@@ -13,7 +13,7 @@ def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple
     home = home or Path.home()
     cwd = cwd or Path.cwd()
     candidates: list[tuple[str, Path]] = [
-        ("shared", home / ".agents" / "skills"),
+        ("shared", home / SHARED_REL),
         ("cursor-builtin", home / ".cursor" / "skills-cursor"),
         ("cursor-plugin", home / ".cursor" / "plugins" / "cache"),
         ("claude-plugin", home / ".claude" / "plugins" / "cache"),

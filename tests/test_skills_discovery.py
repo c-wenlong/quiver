@@ -11,7 +11,7 @@ class SkillsDiscoveryTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name)
-        self.skills = self.home / ".agents" / "skills"
+        self.skills = self.home / ".quiver" / "skills"
         self.builtin = self.home / ".cursor" / "skills-cursor"
 
     def tearDown(self):

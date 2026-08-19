@@ -21,7 +21,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_discovers_servers_not_in_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".config" / "swe"
+            config_dir = tmp_path / ".quiver" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "tools.json"
             mcp_file = config_dir / "mcp.json"
@@ -78,7 +78,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_apply_writes_to_mcp_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".config" / "swe"
+            config_dir = tmp_path / ".quiver" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "tools.json"
             mcp_file = config_dir / "mcp.json"

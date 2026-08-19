@@ -10,6 +10,7 @@ from quiver.harness.discover_commands import cmd_discover
 from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
 from quiver.prompt import read_line
 from quiver.skills.symlinks import apply_skills_symlink_hints, skills_symlink_hints
+from quiver.setup.wizard import SECTION_ALIASES, run_setup_wizard
 
 
 def cmd_harness(args):
@@ -39,14 +40,24 @@ def _setup_help():
         f"""
   {c('bold', 'swe setup')} — Onboarding wizard for new quiver installs
 
-  {c('cyan', 'swe setup')}              Scan harnesses, MCP servers, and skills roots (dry-run)
-  {c('cyan', 'swe setup --apply')}      Apply safe changes (harness registry + mcp.json + symlinks)
-  {c('cyan', 'swe setup --json')}       Machine-readable output
+  {c('cyan', 'swe setup')}              Run the complete interactive setup wizard
+  {c('cyan', 'swe setup --quick')}      Configure only missing or actionable stages
+  {c('cyan', 'swe setup <section>')}    Run one section: harnesses, providers, mcp,
+                                skills, report, or check
+  {c('cyan', 'swe setup --apply')}      Non-interactively apply safe discovery changes
+  {c('cyan', 'swe setup --json')}       Print the discovery preview as JSON
+  {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
 
 {c('bold', 'Steps')}
-  1. Discover AI coding CLI harnesses on PATH
-  2. Discover MCP servers across tool configs
-  3. Recommend skills-root symlinks (~/.agents/skills)
+  1. Discover and register AI coding CLI harnesses
+  2. Check LLM provider credential coverage without storing secrets
+  3. Import discovered MCP servers into the source-of-truth
+  4. Unify safe skills roots under ~/.quiver/skills
+  5. Configure session summarizer and report writer models
+  6. Verify the resulting setup and show next commands
+
+  Existing values are shown as defaults. Files are backed up before changes.
+  Ctrl+C stops the wizard without undoing stages that already completed.
 """
     )
 
@@ -54,9 +65,41 @@ def _setup_help():
 def cmd_setup(args):
     apply = "--apply" in args
     json_out = "--json" in args
+    quick = "--quick" in args
+    non_interactive = "--non-interactive" in args
     if "-h" in args or "--help" in args:
         _setup_help()
         return 0
+
+    known_flags = {"--apply", "--json", "--quick", "--non-interactive"}
+    unknown_flags = [arg for arg in args if arg.startswith("-") and arg not in known_flags]
+    positional = [arg for arg in args if not arg.startswith("-")]
+    if unknown_flags:
+        print(c("red", f"  Unknown setup option: {unknown_flags[0]}"))
+        print(c("dim", "  Run: swe setup --help"))
+        return 1
+    if len(positional) > 1 or (positional and positional[0] not in SECTION_ALIASES):
+        section = positional[0] if positional else ""
+        print(c("red", f"  Unknown setup section: {section or 'too many arguments'}"))
+        print(c("dim", "  Sections: harnesses, providers, mcp, skills, report, check"))
+        return 1
+    section = positional[0] if positional else None
+    if section and (apply or json_out or non_interactive):
+        print(c("red", "  Section setup is interactive; do not combine it with --apply, --json, or --non-interactive."))
+        return 1
+    if quick and (apply or json_out or non_interactive):
+        print(c("red", "  --quick is for the interactive wizard and cannot be combined with non-interactive modes."))
+        return 1
+
+    interactive = sys.stdin.isatty() and not non_interactive
+    if not apply and not json_out and interactive:
+        return run_setup_wizard(section=section, quick=quick)
+    if section:
+        print(c("red", "  This setup section requires an interactive terminal."))
+        return 1
+    if quick and not interactive:
+        print(c("red", "  --quick requires an interactive terminal."))
+        return 1
 
     home = Path.home()
     harness_findings = discover_harnesses()
@@ -119,7 +162,7 @@ def cmd_setup(args):
             tools = ", ".join(f.tools)
             print(f"  {c('green', '•')} {c('bold', f.name)}  {c('dim', f'({tools})')}")
     else:
-        print(c("green", "  ✓ No new MCP servers outside ~/.config/swe/mcp.json."))
+        print(c("green", "  ✓ No new MCP servers outside ~/.quiver/config/mcp.json."))
     print()
 
     # Step 3 — skills

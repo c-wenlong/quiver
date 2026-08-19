@@ -1119,7 +1119,7 @@ def cmd_doctor(args):
 MCP_HELP = {
     "discover": f"""\
   {c('cyan', 'swe mcp discover')}              List MCP servers in tools not in mcp.json (dry-run)
-  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.config/swe/mcp.json
+  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.quiver/config/mcp.json
   {c('cyan', 'swe mcp discover --json')}       Machine-readable output
   {c('cyan', 'swe mcp discover --all')}        Include servers already in source-of-truth
 

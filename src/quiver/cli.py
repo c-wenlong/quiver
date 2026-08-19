@@ -3,6 +3,7 @@
 
 import sys
 
+from quiver.config_commands import cmd_config
 from quiver.harness.commands import (
     cmd_add,
     cmd_aliases,
@@ -19,8 +20,10 @@ from quiver.harness.commands import (
     cmd_use,
 )
 from quiver.help_text import cmd_help
+from quiver.init import cmd_init
 from quiver.mcp import main as mcp_main
 from quiver.providers import cli as providers_cli
+from quiver.reports.commands import cmd_report
 from quiver.sessions.commands import cmd_models, cmd_session
 from quiver.setup.commands import cmd_harness, cmd_setup
 from quiver.skills.commands import cmd_skills
@@ -63,7 +66,7 @@ def cmd_autocomplete(args):
     config = SHELL_CONFIGS[shell]
     import os
 
-    # 1. Write completion script to ~/.config/swe/completions/
+    # 1. Write completion script to ~/.quiver/completions/
     script_dir = os.path.expanduser(str(COMPLETION_DIR))
     os.makedirs(script_dir, exist_ok=True)
     script_path = os.path.join(script_dir, config["filename"])
@@ -134,8 +137,11 @@ COMMANDS = {
     "mcp": cmd_mcp,
     "harness": cmd_harness,
     "setup": cmd_setup,
+    "init": cmd_init,
     "providers": cmd_providers,
     "pv": cmd_providers,
+    "config": cmd_config,
+    "report": cmd_report,
     "discover": lambda args: cmd_harness(["discover", *args]),
     "autocomplete": cmd_autocomplete,
     "help": cmd_help,

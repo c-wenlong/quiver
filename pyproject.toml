@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quiver"
-version = "0.2.6"
+version = "0.2.7"
 description = "Central manager for AI coding CLI tools — one command to launch, resume, and analyze many AI coding agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -37,6 +37,7 @@ dependencies = [
 # `mcp_server.py` exposes session history as a FastMCP server; only needed if
 # you run `python -m quiver.mcp_server`. The core `swe` CLI is stdlib-only.
 server = ["mcp>=1.0.0"]
+test = ["coverage[toml]>=7.10"]
 
 [project.scripts]
 swe = "quiver.cli:main"

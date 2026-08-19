@@ -17,7 +17,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_enumerate_shows_symlinks_not_deduped(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".agents" / "skills"
+            shared = home / ".quiver" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "alpha", "alpha")
             codex = home / ".codex" / "skills"
@@ -33,7 +33,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_link_and_unlink_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".agents" / "skills"
+            shared = home / ".quiver" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "shared-skill", "shared-skill")
             codex = home / ".codex" / "skills"
@@ -49,7 +49,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_move_skill_between_unlinked_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".agents" / "skills"
+            shared = home / ".quiver" / "skills"
             codex = home / ".codex" / "skills"
             shared.mkdir(parents=True)
             codex.mkdir(parents=True)
@@ -62,7 +62,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_move_rejects_same_resolved_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".agents" / "skills"
+            shared = home / ".quiver" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "x", "x")
             codex = home / ".codex" / "skills"
@@ -77,7 +77,7 @@ class SkillsLayoutTest(unittest.TestCase):
             home = Path(tmp)
             config_dir = home / ".config" / "swe"
             links_file = config_dir / "skill_links.json"
-            shared = home / ".agents" / "skills"
+            shared = home / ".quiver" / "skills"
             shared.mkdir(parents=True)
             codex = home / ".codex" / "skills"
             codex.parent.mkdir(parents=True)
@@ -92,6 +92,56 @@ class SkillsLayoutTest(unittest.TestCase):
                 self.assertIn("codex", synced)
                 data = json.loads(links_file.read_text())
                 self.assertEqual(data["links"][0]["label"], "codex")
+
+    def test_sync_link_records_resolves_relative_target_from_link_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            links_file = config_dir / "skill_links.json"
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            codex = home / ".codex" / "skills"
+            codex.parent.mkdir(parents=True)
+            codex.symlink_to(Path("../.quiver/skills"))
+
+            with patch("quiver.skills.layout.SKILL_LINKS_FILE", links_file), patch(
+                "quiver.skills.layout.CONFIG_DIR", config_dir
+            ):
+                sync_link_records_from_filesystem(home=home)
+
+            data = json.loads(links_file.read_text())
+            codex_record = next(link for link in data["links"] if link["label"] == "codex")
+            self.assertEqual(Path(codex_record["target"]), shared.resolve())
+
+    def test_sync_link_records_removes_stale_harness_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            links_file = config_dir / "skill_links.json"
+            config_dir.mkdir(parents=True)
+            links_file.write_text(
+                json.dumps(
+                    {
+                        "links": [
+                            {
+                                "label": "codex",
+                                "path": str(home / ".codex" / "skills"),
+                                "target": str(home / ".quiver" / "skills"),
+                                "kind": "symlink",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("quiver.skills.layout.SKILL_LINKS_FILE", links_file), patch(
+                "quiver.skills.layout.CONFIG_DIR", config_dir
+            ):
+                synced = sync_link_records_from_filesystem(home=home)
+
+            self.assertNotIn("codex", synced)
+            self.assertEqual(json.loads(links_file.read_text())["links"], [])
 
 
 if __name__ == "__main__":

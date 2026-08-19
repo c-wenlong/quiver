@@ -25,7 +25,7 @@ class HarnessRegistryTest(unittest.TestCase):
 
     def test_load_registry_creates_defaults_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".config" / "swe"
+            config_dir = Path(tmp) / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
             with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
                 "quiver.harness.registry.REGISTRY_FILE", registry_file
@@ -37,7 +37,7 @@ class HarnessRegistryTest(unittest.TestCase):
 
     def test_save_and_reload_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".config" / "swe"
+            config_dir = Path(tmp) / ".quiver" / "config"
             registry_file = config_dir / "tools.json"
             custom = dict(DEFAULT_TOOLS)
             custom["mytool"] = {

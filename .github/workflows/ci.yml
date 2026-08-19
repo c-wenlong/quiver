@@ -39,6 +39,7 @@ jobs:
         #   providers → providers registry + keys
         #   __complete → completion engine
         run: |
+          export HOME="$(mktemp -d)"
           swe --help
           swe tags
           swe list
@@ -51,4 +52,94 @@ jobs:
           swe __complete list
 
       - name: Run unit tests
-        run: python -m unittest discover -s tests -p 'test_*.py' -v
+        run: |
+          export HOME="$(mktemp -d)"
+          python -m unittest discover -s tests -p 'test_*.py' -v
+
+  coverage:
+    name: Coverage (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and coverage tooling
+        run: pip install -e ".[test]"
+
+      - name: Run coverage audit
+        run: |
+          export HOME="$(mktemp -d)"
+          python -m coverage run -m unittest discover -s tests -p 'test_*.py'
+          python -m coverage combine
+          python -m coverage report
+          python -m coverage xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          use_oidc: true
+          files: ./coverage.xml
+          flags: python-${{ matrix.python-version }}
+          name: python-${{ matrix.python-version }}
+          fail_ci_if_error: true
+
+  package:
+    name: Built wheel smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel
+        run: |
+          python3 -m pip install build
+          python3 -m build --wheel
+
+      - name: Install and exercise wheel in isolation
+        run: |
+          python3 -m venv /tmp/quiver-wheel
+          /tmp/quiver-wheel/bin/pip install dist/quiver-*.whl
+          test_home="$(mktemp -d)"
+          cd /tmp
+          HOME="$test_home" /tmp/quiver-wheel/bin/swe --help
+          HOME="$test_home" /tmp/quiver-wheel/bin/swe session --help
+          HOME="$test_home" /tmp/quiver-wheel/bin/swe config --help
+          HOME="$test_home" /tmp/quiver-wheel/bin/swe report --help
+
+  macos-smoke:
+    name: macOS path and entry-point smoke test
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install package
+        run: python3 -m pip install -e .
+
+      - name: Exercise macOS-sensitive paths
+        run: |
+          python3 -m unittest discover -s tests -p 'test_path_health.py' -v
+          test_home="$(mktemp -d)"
+          HOME="$test_home" swe --help
+          HOME="$test_home" swe session --help

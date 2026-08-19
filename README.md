@@ -12,6 +12,7 @@ quiver
 
 <p align="center">
   <a href="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml"><img src="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://app.codecov.io/gh/c-wenlong/quiver"><img src="https://codecov.io/gh/c-wenlong/quiver/graph/badge.svg?branch=main" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
   <img src="https://img.shields.io/badge/deps-stdlib--only-brightgreen.svg" alt="stdlib only">
@@ -39,10 +40,10 @@ $ swe list
 
 AI Coding Tools
 
-  NAME             COMMAND            VERSION      ALIASES       100d  RATE        INST  DESCRIPTION
+  NAME             COMMAND            VERSION      ALIASES       100d  REMAINING   INST  DESCRIPTION
   ─────────────────────────────────────────────────────────────────────────────────────────────
   claude           claude             2.1.126      cc              412  —           ✓    Claude Code by Anthropic …
-  codex            codex              0.133.0      cx              288  100% 5d19h  ✓    OpenAI Codex CLI
+  codex            codex              0.133.0      cx              288  42% 5d19h   ✓    OpenAI Codex CLI
   opencode         opencode           1.17.11      oc               96  —           ✓    opencode — open source …
   gemini           gemini             0.35.1       gg               12  —           ✓    Gemini CLI by Google …
   cursor           agent              2026.06.24   cs                4  —           ✓    Cursor CLI — AI-powered …
@@ -72,8 +73,8 @@ If you juggle more than one AI coding agent you end up with a mess:
 | **Models** | Aggregate model usage parsed read-only from each tool's session logs |
 | **Skills** | Discover, list, catalog, symlink, and move skills across harness roots |
 | **MCP sync** | Inspect, compare, validate, and copy MCP servers between tools |
-| **Rate limits** | Usage percentage + reset countdown in `swe list` for tools that expose rate limit APIs (Codex) |
-| **Favourites** | Pin harnesses to the top of `swe list` with neon highlighting |
+| **Rate limits** | Remaining quota + reset countdown for starred Codex, Copilot, Claude, Droid, Antigravity, and Freebuff harnesses |
+| **Favourites** | Pin harnesses to the top of `swe list` and opt them into usage polling |
 | **Autocomplete** | Shell tab-completion for zsh, bash, and fish (tool names, aliases, tags, flags) |
 | **Providers** | Manage API keys and metadata for 27+ LLM providers |
 
@@ -110,14 +111,16 @@ python -m quiver.mcp_server
 ## Quick start
 
 ```bash
-swe setup                    # onboarding wizard (harness + MCP + skills)
+swe setup                    # six-stage interactive onboarding wizard
+swe setup --quick            # only missing or actionable setup stages
+swe setup report             # configure coding-session report models only
 swe setup --apply            # apply safe defaults without prompting
 swe harness discover         # scan PATH for unregistered AI CLIs
-swe mcp discover             # find MCP servers not in ~/.config/swe/mcp.json
+swe mcp discover             # find MCP servers not in ~/.quiver/config/mcp.json
 
 swe list                     # all registered tools, sorted by recent usage
 swe list agentic             # filter by tag
-swe list --refresh           # bypass session cache, re-parse all sessions
+swe list -n                  # bypass caches and refresh starred harness usage
 swe info claude              # command, version, path, tags, aliases
 swe check                    # probe installed tools and refresh versions
 swe doctor                   # diagnose Node/npm/PATH issues
@@ -125,7 +128,7 @@ swe doctor                   # diagnose Node/npm/PATH issues
 swe use cc                   # launch Claude Code (alias for `claude`)
 swe use codex --help         # extra args are passed straight through
 
-swe star gemini              # favourite a harness (pins to top of swe list)
+swe star gemini              # pin a harness and enable its usage polling
 swe unstar gemini            # remove favourite
 swe edit claude --desc "..." # edit registry fields (or interactive mode)
 
@@ -133,7 +136,15 @@ swe session                  # last 10 sessions across ALL agents
 swe session use 3            # cd into session #3 and resume it
 swe session --agent claude   # filter by agent
 swe session --here           # only sessions in the current directory
+swe session -d 5             # sessions active during the latest 5 calendar dates
+swe session -w 3             # sessions active during the latest 3 times 7 dates
+swe session -s 2026-07-01 -e 2026-07-30 # inclusive explicit date range
 swe session --search refactor # filter by title/path/agent text
+
+swe config setup report      # choose cheap summary and strong report models
+swe report daily             # preview cost, confirm, then generate a report
+swe report weekly --here     # weekly report for the current repository
+swe report followups         # list user-owned follow-up work
 
 swe models                   # model usage across all tools
 swe models -t -p             # grouped by tool, with provider prefix
@@ -157,8 +168,8 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 
 | Command | Aliases | Description |
 | --- | --- | --- |
-| `swe setup [--apply]` | | Onboarding wizard (harnesses, MCP, skills roots) |
-| `swe list [tag] [--refresh]` | `ls` | List registered tools, sorted by 100-day usage |
+| `swe setup [section] [--quick]` | | Sectioned wizard for harnesses, providers, MCP, skills, reports, and verification |
+| `swe list [tag] [--refresh\|-r\|-n]` | `ls` | List tools; refresh flags bypass caches |
 | `swe info <name\|alias>` | | Show command, version, path, tags, aliases |
 | `swe add <name> <cmd> …` | | Register or update a tool |
 | `swe edit <name> [--field val …]` | | Edit registry fields (flags or interactive) |
@@ -172,7 +183,10 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe discover [--apply]` | | Alias for `swe harness discover` |
 | `swe autocomplete [zsh\|bash\|fish]` | | Generate + inject shell tab-completion |
 | `swe use <name\|alias> [args…]` | `run` | Launch a tool (replaces current process) |
-| `swe session [N] [use N] [--agent X] [--here] [--search Q]` | | List or resume recent sessions |
+| `swe session [N] [use N] [--agent X] [--here] [date flags]` | | List or resume recent sessions |
+| `swe report daily\|weekly [date flags]` | | Preview and summarize coding sessions |
+| `swe report followups\|followup …` | | Manage and launch work from persistent follow-ups |
+| `swe config [get\|set\|unset\|edit\|check\|setup]` | | Manage credential-free Quiver configuration |
 | `swe models [-t] [-p]` | | Model usage analytics |
 | `swe skills [filter] [-d]` | `sk` | List agent skills and paths |
 | `swe skills scope list` | | List skill scopes (roots) with symlink info |
@@ -192,6 +206,34 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe help [command]` | `-h` | Full or per-command help |
 
 Run `swe <command> --help` for detailed help on any command.
+
+### Coding-session reports
+
+`swe report daily` and `swe report weekly` read the same local histories shown
+by `swe session`. Before calling a model, Quiver removes startup-only sessions,
+reuses digest-cached summaries, groups short meaningful sessions by Git
+repository, and displays the planned model-call count and estimated input
+tokens. Nothing runs until you confirm. Plans above the configured call or
+token limits require typing the exact phrase `process all`.
+
+The first run opens `swe config setup report`. Configure an inexpensive Claude
+or Codex model for project/session summaries and a stronger model for the final
+report. Credentials remain in the harness's existing login or environment.
+
+Reports omit empty sections and persist under `~/.quiver/reports/` with
+their manifests, session-summary cache, exclusions, cadence cursors, and
+follow-up ledger. Follow-up status is always manual:
+
+```bash
+swe report followup done fu_1234
+swe report followup work fu_1234 --resume
+swe report followup work fu_1234 --new --harness codex
+```
+
+Date flags use local calendar boundaries: `-d N` means the latest N dates,
+`-w N` means N times seven dates, and `-s YYYY-MM-DD -e YYYY-MM-DD` supplies an
+inclusive custom range. Custom ranges create reusable summaries without moving
+the normal daily or weekly cursor.
 
 ### Shell autocomplete
 
@@ -214,7 +256,7 @@ Idempotent — safe to re-run. Uses a hidden `swe __complete` command for dynami
 | --- | --- |
 | `swe providers list [-d] [--api-keys-dir=DIR] [<filter>]` | Show every provider with its masked key (``-`` if no key) |
 | `swe providers info <name\|alias>` | Full details for one provider + key file path |
-| `swe providers add <name> [desc] [--url URL] [--env ENV, …] [--file NAME]` | Register a provider in `~/.config/swe/providers.json` |
+| `swe providers add <name> [desc] [--url URL] [--env ENV, …] [--file NAME]` | Register a provider in `~/.quiver/config/providers.json` |
 | `swe providers remove <name>` | Unregister a provider (does **not** delete your key file) |
 
 Keys live as plain-text files in `~/.api_keys/` (one per provider, filename = canonical slug). quiver stores **metadata only** — never the key string itself. Mask format: `first8 + *** + last4 + (len=N)`; short keys fall back to `first3 + *** + (len=N)`; missing keys render as `-`. Override the keys dir per-invocation with `--api-keys-dir=DIR`.
@@ -266,7 +308,7 @@ Most setups symlink every harness to one shared tree:
 ~/.cursor/skills   → shared
 ```
 
-Run `swe skills tree` to inspect this layout. Use `swe skills tree --sync` to record observed symlinks in `~/.config/swe/skill_links.json`.
+Run `swe skills tree` to inspect this layout. Use `swe skills tree --sync` to record observed symlinks in `~/.quiver/config/skill_links.json`.
 
 ### Discover and register catalogs
 
@@ -279,11 +321,11 @@ cd ~/Projects/my-app/skills && swe skills catalog .
 swe skills catalog list
 ```
 
-Catalogs live in `~/.config/swe/skill_catalogs.json`. Nested catalogs (e.g. `gbrain/skills` inside `ai-engineering/skills`) are collapsed to the outermost match.
+Catalogs live in `~/.quiver/config/skill_catalogs.json`. Nested catalogs (e.g. `gbrain/skills` inside `ai-engineering/skills`) are collapsed to the outermost match.
 
 ### Symlinks and moving skills
 
-Link all harnesses to shared (what `swe setup` step 3 does):
+Link all harnesses to shared (what `swe setup` step 4 does):
 
 ```bash
 swe skills link codex
@@ -316,41 +358,59 @@ flowchart LR
     R[Registry]
     L[Launch]
     S[Sessions]
+    RP[Reports]
     M[Models]
     K[Skills]
     P[MCP sync]
   end
 
-  R --> TJ["~/.config/swe/tools.json"]
+  R --> TJ["~/.quiver/config/tools.json"]
   S --> Logs["Tool session logs\n(read-only)"]
+  RP --> Logs
+  RP --> Reports["~/.quiver/reports\n(manifests + follow-ups)"]
   M --> Logs
   K --> Roots["Skill roots\n~/.agents/skills, plugins, …"]
   P --> MCP["Per-tool MCP configs"]
   L --> Bin["Real CLI binaries\nclaude, codex, …"]
 ```
 
-- **Registry** — your tool list lives in `~/.config/swe/tools.json`, auto-created from built-in defaults on first run. Edited by `swe add` / `remove` / `check`. Not shipped with the package (see `examples/tools.example.json`).
+- **Registry** — your tool list lives in `~/.quiver/config/tools.json`, auto-created from built-in defaults on first run. Edited by `swe add` / `remove` / `check`. Not shipped with the package (see `examples/tools.example.json`).
 - **Launching** — `swe use` resolves a name or alias and replaces the current process via `os.execvp`, so the tool behaves exactly as if you'd typed it directly.
 - **Analytics** — `swe session` and `swe models` parse each tool's on-disk logs (e.g. `~/.claude/projects`, `~/.codex/sessions`, `~/.local/share/opencode/opencode.db`). quiver **never writes** to those files.
+- **Reports** — normalizes those logs into semantic messages, filters startup noise, batches useful sessions by project, and invokes configured Claude/Codex models only after a local cost preview is approved.
 - **Skills** — walks known skill roots under `$HOME` (and `./.cursor/skills`), de-duplicates symlinked paths, reads each `SKILL.md` front matter. Catalogs from `skill_catalogs.json` extend the scan; `swe skills tree` / `link` / `move` manage harness symlinks without touching skill content.
 - **MCP sync** — reads each tool's native MCP config, normalizes to a canonical shape, re-emits in the target format. Nothing is written unless you run a real (non-`--dry-run`) `sync` or `edit`.
-- **Rate limits** — `swe list` fetches usage data from tools that expose a rate limit API. Codex is queried via the ChatGPT `backend-api/wham/usage` endpoint using the OAuth `access_token` from `~/.codex/auth.json` (the same token the Codex CLI uses). Results are cached in `rate_limits_cache.json` (60s TTL); `swe list --refresh` bypasses the cache. The architecture is pluggable — additional fetchers can be registered in `harness/rate_limits.py`. On macOS python.org builds that lack CA certificates, the fetcher retries with an unverified SSL context as a fallback (encrypted but no cert pinning).
+- **Rate limits** — `swe list` shows the percentage of quota remaining and fetches usage data only for starred harnesses that expose a rate limit API; Freebuff instead shows remaining/total referral-unlocked GLM 5.2 sessions. Starring is the explicit opt-in for provider traffic. Unstarred harnesses still show registry details and local 100-day session counts without running usage scripts. Codex, Copilot, Claude, Droid, and Freebuff use their authenticated provider endpoints. Antigravity is read through the running app or CLI's loopback-only quota RPC, so quiver never reads its Google OAuth credential directly; the last successful value remains available from the outage cache when Antigravity is closed. Results are cached in `rate_limits_cache.json` (5-minute TTL); `swe list --refresh`, `swe list -r`, and `swe list -n` bypass the fresh cache for starred harnesses only. The architecture is pluggable — additional fetchers can be registered in `harness/rate_limits.py`. On macOS python.org builds that lack CA certificates, remote fetchers retry with an unverified SSL context as a fallback (encrypted but no cert pinning).
 
 ## Configuration
 
-Everything quiver persists lives under `~/.config/swe/`:
+Everything quiver persists lives under one root, `~/.quiver/`. It is split by
+lifecycle so the directory can be a git repo: `config/` and the shared
+`AGENTS.md` / `skills/` are worth versioning, `cache/` and `backups/` are not
+(a generated `.gitignore` covers them).
 
-| File | Purpose | Shipped? |
+The root sits in `$HOME` rather than `$HOME/.config` deliberately. Quiver
+manages coding harnesses, and most harness config directories are `$HOME/.<tool>`.
+
+| Path | Purpose | Shipped? |
 | --- | --- | --- |
-| `tools.json` | Your tool registry (versions for this machine) | No — auto-created |
-| `stars.json` | Favourited harness names | No — auto-created by `swe star` |
-| `session_cache.json` | Cached session parse results (60s TTL) | No — auto-created |
-| `rate_limits_cache.json` | Cached rate limit fetches (60s TTL) | No — auto-created |
+| `AGENTS.md` | Shared instructions, symlinked into each harness under its own filename | No — created by `swe init` |
+| `skills/` | Shared skill tree, symlinked in as every harness's `skills/` | No — created by `swe init` |
+| `config/tools.json` | Your tool registry (versions for this machine) | No — auto-created |
+| `config/stars.json` | Favourited harness names | No — auto-created by `swe star` |
+| `config/mcp.json` | MCP source of truth | No — created by `swe mcp discover --apply` |
+| `config/providers.json` | Provider metadata and key locations | No — auto-created |
+| `config/config.json` | Credential-free Quiver and report runner settings | No — created by `swe config` |
+| `config/skill_catalogs.json` | Extra skill catalog directories | No — auto-created by discover/add |
+| `config/skill_links.json` | Recorded harness skill-root symlinks | No — auto-created |
+| `cache/session_cache.json` | Cached session parse results (60s TTL) | No — auto-created |
+| `cache/rate_limits_cache.json` | Cached rate limit fetches (5-minute TTL) | No — auto-created |
 | `completions/` | Shell completion scripts (zsh/bash/fish) | No — created by `swe autocomplete` |
-| `skill_catalogs.json` | Extra skill catalog directories | No — auto-created by discover/add |
-| `skill_links.json` | Recorded harness symlink layout | No — updated by link/tree --sync |
-| `mcp.json` | MCP source-of-truth (may contain tokens) | No — git-ignored |
-| `providers.json` | Provider metadata (not keys) | No — auto-created |
+| `reports/` | Reports, manifests, summary cache, cursors, exclusions, and follow-ups | No — created by `swe report` |
+| `backups/` | Anything `swe init` replaced, timestamped | No — auto-created |
+
+Upgrading from a pre-0.2.7 install: `swe init --migrate` moves `~/.config/swe`
+into this layout and removes the old root.
 
 The MCP subsystem also reads/writes each tool's native config (e.g. `~/.claude.json`, `~/.cursor/mcp.json`, `~/.config/opencode/opencode.json`).
 
@@ -364,11 +424,19 @@ Session parsers currently cover **20 tools**: opencode, Claude Code, Gemini/Anti
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[test]"
 python -m unittest discover -s tests -p 'test_*.py'
+test_home="$(mktemp -d)"
+HOME="$test_home" python -m coverage run -m unittest discover -s tests -p 'test_*.py'
+python -m coverage combine
+python -m coverage report
 ```
 
-The test suite runs against a throwaway `$HOME`, so it never touches your real config.
+CI runs the suite against a throwaway `$HOME`, so it never touches real config or
+counts machine-local coding sessions as test coverage. Coverage includes child
+processes, tracks branches, and must remain above the configured regression
+floor. See the dated [coverage audit](docs/COVERAGE.md) for current risk areas;
+the badge at the top of this README follows `main` live.
 
 ### Reinstalling after changes
 

@@ -253,6 +253,39 @@ class ParseHermesTest(unittest.TestCase):
             self.assertEqual(sessions[0].session_id, "abc")
 
 
+class ParseAntigravityTest(unittest.TestCase):
+    def test_reads_metadata_and_overview_without_glob_traversal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            brain = Path(tmp) / "brain"
+            session_dir = brain / "session-1"
+            logs_dir = session_dir / ".system_generated" / "logs"
+            logs_dir.mkdir(parents=True)
+            (session_dir / "session.metadata.json").write_text(
+                json.dumps({"summary": "Repair session discovery"}),
+                encoding="utf-8",
+            )
+            (logs_dir / "overview.txt").write_text(
+                '{"Cwd":"\\"/Users/test/project\\""}',
+                encoding="utf-8",
+            )
+
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                return_value=str(brain),
+            ), mock.patch(
+                "quiver.sessions.parsers.glob.glob",
+                side_effect=AssertionError("Antigravity traversal must use os.scandir"),
+            ):
+                from quiver.sessions.parsers import parse_antigravity
+
+                sessions = parse_antigravity()
+
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].tool_name, "antigravity")
+            self.assertEqual(sessions[0].path, "/Users/test/project")
+            self.assertEqual(sessions[0].title, "Repair session discovery")
+
+
 class ParseGrokTest(unittest.TestCase):
     def test_reads_encoded_cwd_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:

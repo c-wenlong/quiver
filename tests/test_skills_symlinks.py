@@ -9,7 +9,7 @@ class SkillsSymlinksTest(unittest.TestCase):
     def test_suggests_symlink_when_cursor_skills_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".agents" / "skills"
+            shared = home / ".quiver" / "skills"
             shared.mkdir(parents=True)
             (shared / "demo-skill").mkdir()
             (shared / "demo-skill" / "SKILL.md").write_text("---\nname: demo\n---\n")
@@ -23,7 +23,7 @@ class SkillsSymlinksTest(unittest.TestCase):
     def test_apply_creates_symlink_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".agents" / "skills"
+            shared = home / ".quiver" / "skills"
             shared.mkdir(parents=True)
 
             hints = skills_symlink_hints(home=home)
