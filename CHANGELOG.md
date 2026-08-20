@@ -5,9 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.8] - 2026-08-20
 
 ### Added
+
+- **`swe find`.** The read-only counterpart to `swe init`: where the shared
+  assets live and what links to them. `swe find amd` for AGENTS.md, `swe find
+  skills` for skills and plugins, bare `swe find` for both.
+  - `--root` / `-r` scans from wherever `~/.quiver` lives; the default scans the
+    current directory. Both recursive.
+  - `--scope=global|local|all`, default `global`. A file is global when it sits
+    directly in a harness root (`~/.<tool>/`, `~/.config/<tool>/`) or is
+    symlinked to the shared copy. On a real machine that is 10 files out of 112.
+  - Files nested deeper inside a harness directory (plugin caches, vendored
+    repos, editor extensions) are counted in every view and listed under
+    `--scope=all`, so an unexplained jump stays visible.
+
+### Removed
+
+- **The `~/.agents` legacy alias.** The old shared skills root, plus the 74
+  per-skill symlinks six harnesses kept pointing into it (42 of which were
+  already broken). Those roots now link to `~/.quiver/skills` directly.
 
 - **`swe mcp discover --prune`.** Removes hub servers that no harness
   configures any more. Without it they are reported and left in place.
