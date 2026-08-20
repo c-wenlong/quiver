@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, cpad, truncate, visible_len
+from quiver.console import c, cpad, terminal_width, truncate, visible_len
 from quiver.harness.columns import (
     COLUMNS,
     DEFAULT_COLUMNS,
@@ -40,7 +40,11 @@ _USAGE_COLOR = {
 }
 
 
-def _usage_cell(entry, width: int = 9) -> str:
+# The longest level, so the column is exactly as wide as it needs to be.
+_USAGE_WIDTH = max(len(x) for x in _USAGE_COLOR)
+
+
+def _usage_cell(entry, width: int = _USAGE_WIDTH) -> str:
     """How much an archived harness got used. Blank for an active one."""
     if not entry:
         return " " * width
@@ -501,6 +505,15 @@ def cmd_list(args):
     tag_filter = args[0].lstrip("-") if args else None
     counts = _session_counts()
     broken = _broken_tools() if "sess" in set(load_columns()) else set()
+    # Right-aligned numbers are padded by hand, so the column cannot use
+    # fit="shrink"; size it here from the widest value it will actually
+    # hold instead of reserving room for five figures.
+    _sess_label = window_label(load_window())
+    sess_w = max(len(_sess_label),
+                 max((len(str(v)) for v in counts.values()), default=1))
+    # USAGE is only ever filled in for an archived harness, so in the
+    # default active scope it rendered as a wholly blank column.
+    shows_usage = any(n in archived for n in tools)
     stars = load_stars()
     starred_set = set(stars)
 
@@ -530,39 +543,72 @@ def cmd_list(args):
 
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
+    # Widths the shrinking columns will actually settle on, so the
+    # description can be given the remainder rather than guessing.
+    names = list(tools)
+    name_w = max([len("NAME")] + [len(n) for n in names]) if names else 16
+    command_w = max([len("COMMAND")] +
+                    [len(str(i.get("command") or "")) for i in tools.values()]) if names else 18
+    version_w = min(12, max([len("VERSION")] +
+                    [len(str(i.get("version") or "")) for i in tools.values()])) if names else 12
+    aliases_w = min(12, max([len("ALIASES")] + [
+        len(", ".join(a for a in i.get("aliases", []) if a != n))
+        for n, i in tools.items()])) if names else 12
+    rendered = set()
+
     table = Table(column_gap=" │ ")
     _head = wanted
+    rendered.add("mark")
     table.add_column("mark", "", width=2, kind="preformatted")
-    table.add_column("name", "NAME", width=16, kind="text")
+    rendered.add("name")
+    table.add_column("name", "NAME", width=16, kind="text", fit="shrink")
     if "command" in _head:
-        table.add_column("command", "COMMAND", width=18, kind="text")
+        rendered.add("command")
+        table.add_column("command", "COMMAND", width=18, kind="text",
+                         fit="shrink")
     if "version" in _head:
-        table.add_column("version", "VERSION", width=12, kind="text")
+        rendered.add("version")
+        table.add_column("version", "VERSION", width=12, kind="text",
+                         fit="shrink")
     if "aliases" in _head:
+        rendered.add("aliases")
         table.add_column("aliases", "ALIASES", width=12, kind="list",
-                         color="cyan", empty="—")
+                         color="cyan", empty="—", fit="shrink")
     if "sess" in wanted:
-        table.add_column("sess", window_label(load_window()), width=8,
+        rendered.add("sess")
+        table.add_column("sess", _sess_label, width=sess_w,
                          kind="preformatted", empty="—")
-    if "usage" in wanted:
-        table.add_column("usage", "USAGE", width=9, kind="preformatted",
-                         trust_cell_width=True)
+    if "usage" in wanted and shows_usage:
+        rendered.add("usage")
+        table.add_column("usage", "USAGE", width=_USAGE_WIDTH,
+                         kind="preformatted", trust_cell_width=True)
     if "rate" in wanted:
         table.add_column(
             "rate", "REMAINING", width=14, kind="preformatted",
             trust_cell_width=True,
         )
     if "agents" in wanted:
+        rendered.add("agents")
         table.add_column("agents", "AGENTS.MD", width=22, kind="preformatted")
     if "skills" in wanted:
+        rendered.add("skills")
         table.add_column("skills", "SKILLS", width=12, kind="preformatted")
     if "inst" in wanted:
+        rendered.add("inst")
         table.add_column("inst", "INST", width=4, kind="preformatted")
     if "desc" in wanted:
-        # Wider when nothing else is competing for the row.
-        narrow = wanted & {"sess", "rate", "agents", "skills"}
-        table.add_column("desc", "DESCRIPTION",
-                         width=36 if narrow else 46, kind="text")
+        # Last column, so it absorbs whatever the others leave rather than
+        # truncating at a fixed 36 with half the terminal unused.
+        used = sum(w for key, w in (
+            ("mark", 2), ("name", name_w), ("command", command_w),
+            ("version", version_w), ("aliases", aliases_w),
+            ("inst", 4), ("sess", sess_w), ("usage", _USAGE_WIDTH),
+            ("rate", 14), ("agents", 22), ("skills", 12),
+        ) if key in rendered)
+        gaps = 3 * max(0, len(rendered))          # the " │ " between columns
+        desc_w = max(24, terminal_width() - used - gaps - 2)
+        table.add_column("desc", "DESCRIPTION", width=desc_w, kind="text",
+                         fit="shrink")
 
     shown_starred = False
     for name, info in _sort_tools(tools, counts, stars):
@@ -578,7 +624,6 @@ def cmd_list(args):
         # desc cell now sits behind the explicit " | " separator, so
         # no extra prepend is needed - Table renders `cell | cell`
         # directly with the gap string itself providing the visual gap.
-        desc_padded = truncate(desc_text, 36)
 
         # Session column, four states. A crashed parser yields zero
         # sessions, which used to render exactly like a harness you have
@@ -589,15 +634,15 @@ def cmd_list(args):
         #   !   red     the parser failed, so the count is unknown
         #   —   dim     no session parser exists for this harness yet
         if name in broken:
-            sess_cell = c("red", f"{'!':>8}")
+            sess_cell = c("red", f"{'!':>{sess_w}}")
         elif name in counts:
             sess_n = counts.get(name, 0)
             sess_cell = (
-                c("green", f"{sess_n:>8}") if sess_n > 0
-                else c("dim", f"{sess_n:>8}")
+                c("green", f"{sess_n:>{sess_w}}") if sess_n > 0
+                else c("dim", f"{sess_n:>{sess_w}}")
             )
         else:
-            sess_cell = c("dim", f"{'—':>8}")
+            sess_cell = c("dim", f"{'—':>{sess_w}}")
 
         favourited = name in starred_set
         accent = None
@@ -652,13 +697,14 @@ def cmd_list(args):
                 row["skills"] = _link_cell(states.get("skills"), "skills/", 12)
         if "sess" in wanted:
             row["sess"] = sess_cell
-        if "usage" in wanted:
+        if "usage" in wanted and shows_usage:
             row["usage"] = _usage_cell(archived.get(name))
         if "rate" in wanted:
             row["rate"] = rate_cell
         if "desc" in wanted:
-            narrow = wanted & {"sess", "rate", "agents", "skills"}
-            row["desc"] = desc_padded if narrow else truncate(desc_text, 46)
+            # The column now sizes itself, so the cell must not pre-truncate
+            # to a narrower fixed number than the column will allow.
+            row["desc"] = desc_text
 
         table.add_row(row, accent=accent)
 

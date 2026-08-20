@@ -663,3 +663,135 @@ class LegendCoversEveryMarkerTest(unittest.TestCase):
         with mock.patch("quiver.harness.columns.load_window", return_value=7):
             out = self._legend()
         self.assertIn("7d", out)
+
+
+class ShrinkFitTest(unittest.TestCase):
+    """`width` as a ceiling rather than a floor.
+
+    Every other fit mode takes max(width, observed), so a column declared
+    wide enough for the worst case stayed that wide for every table that
+    never hit it: NAME held 16 columns for names of 11.
+    """
+
+    def _header(self, fit, values, width=16):
+        from quiver.console import strip_ansi
+        from quiver.table import Table
+
+        t = Table()
+        t.add_column("name", "NAME", width=width, kind="text", fit=fit)
+        for v in values:
+            t.add_row({"name": v})
+        # Not rstripped: the header label is short, so the padding is the
+        # only thing that reveals the resolved column width.
+        return strip_ansi(t.render()[0])
+
+    def test_it_narrows_below_the_declared_width(self):
+        wide = self._header("bounded", ["ab", "cd"])
+        tight = self._header("shrink", ["ab", "cd"])
+        self.assertLess(len(tight), len(wide))
+
+    def test_it_never_narrows_past_the_header(self):
+        """A shorter label than the header would truncate the header."""
+        self.assertGreaterEqual(len(self._header("shrink", ["a"])), len("NAME"))
+
+    def test_it_does_not_widen_past_the_declared_width(self):
+        header = self._header("shrink", ["x" * 40], width=10)
+        self.assertLessEqual(len(header), 10)
+
+    def test_it_fits_the_longest_value(self):
+        header = self._header("shrink", ["ab", "abcdefghij"])
+        self.assertGreaterEqual(len(header), len("abcdefghij"))
+
+    def test_an_empty_table_still_renders(self):
+        self.assertGreaterEqual(len(self._header("shrink", [])), len("NAME"))
+
+
+class ListWidthTest(unittest.TestCase):
+    REGISTRY = {
+        "claude": {"command": "claude", "version": "2.1.1", "aliases": ["cc"],
+                   "description": "Claude Code by Anthropic", "tags": []},
+        "opencode": {"command": "opencode", "version": "1.0", "aliases": ["oc"],
+                     "description": "opencode", "tags": []},
+    }
+
+    def _render(self, columns, archived=None, counts=None):
+        from quiver.harness import commands
+
+        with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
+             mock.patch.object(commands, "load_columns", return_value=list(columns)), \
+             mock.patch.object(commands, "_session_counts",
+                               return_value=counts if counts is not None else {}), \
+             mock.patch.object(commands, "_broken_tools", return_value=set()), \
+             mock.patch("quiver.harness.archive.load_archive",
+                        return_value=archived or {}):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                commands.cmd_list(["--scope=all"])
+        return re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+
+    def _lines(self, out):
+        body = [ln.rstrip("\n") for ln in out.splitlines() if ln.strip()]
+        head = next(i for i, ln in enumerate(body) if "NAME" in ln)
+        return body[head], body[head + 1], body[head + 2:head + 4]
+
+    def test_the_name_column_fits_the_longest_name(self):
+        header, _, _ = self._lines(self._render(["mark", "name"]))
+        # "opencode" is 8; the old floor of 16 wasted half the column.
+        self.assertLess(len(header), 16)
+
+    def test_the_session_column_fits_its_widest_number(self):
+        out = self._render(["mark", "name", "sess"], counts={"claude": 7})
+        header, _, _ = self._lines(out)
+        self.assertNotIn("       ", header.split("│")[2])
+
+    def test_usage_is_hidden_when_nothing_is_archived(self):
+        self.assertNotIn("USAGE", self._render(["mark", "name", "usage"]))
+
+    def test_usage_appears_once_something_is_archived(self):
+        out = self._render(["mark", "name", "usage"], archived={
+            "claude": {"reason": "x", "archived_at": "", "usage": "heavy"}})
+        self.assertIn("USAGE", out)
+
+    def test_the_separator_still_matches_the_header(self):
+        header, sep, _ = self._lines(self._render(["mark", "name", "sess", "desc"]))
+        self.assertEqual(len(sep), len(header))
+
+    def test_every_row_matches_the_header_width(self):
+        header, _, rows = self._lines(
+            self._render(["mark", "name", "sess", "usage", "desc"]))
+        for row in rows:
+            self.assertEqual(len(row), len(header), row)
+
+    def test_the_description_is_not_capped_at_the_old_thirty_six(self):
+        long = "x" * 90
+        reg = {"claude": {"command": "claude", "version": "1", "aliases": [],
+                          "description": long, "tags": []}}
+        from quiver.harness import commands
+
+        with mock.patch.object(commands, "load_registry", return_value=reg), \
+             mock.patch.object(commands, "load_columns",
+                               return_value=["mark", "name", "desc"]), \
+             mock.patch.object(commands, "_session_counts", return_value={}), \
+             mock.patch.object(commands, "_broken_tools", return_value=set()), \
+             mock.patch("quiver.harness.archive.load_archive", return_value={}), \
+             mock.patch("quiver.harness.commands.terminal_width", return_value=200):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                commands.cmd_list([])
+        out = re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+        self.assertIn("x" * 60, out, "description truncated with room to spare")
+
+    def test_a_narrow_terminal_still_leaves_a_usable_description(self):
+        from quiver.harness import commands
+
+        with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
+             mock.patch.object(commands, "load_columns",
+                               return_value=["mark", "name", "desc"]), \
+             mock.patch.object(commands, "_session_counts", return_value={}), \
+             mock.patch.object(commands, "_broken_tools", return_value=set()), \
+             mock.patch("quiver.harness.archive.load_archive", return_value={}), \
+             mock.patch("quiver.harness.commands.terminal_width", return_value=40):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = commands.cmd_list([])
+        self.assertEqual(code, None if code is None else code)
