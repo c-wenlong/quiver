@@ -276,3 +276,86 @@ class PreviewTest(unittest.TestCase):
         e = Entry("dv", children=[Entry("cloudflare"), Entry("blaxel")])
         lines = _preview(e, limit=10)
         self.assertTrue(any("cloudflare" in ln for ln in lines))
+
+
+class SelectionBarTest(unittest.TestCase):
+    """A filled bar, not coloured text.
+
+    A foreground-only highlight is easy to lose in a pane you are not
+    driving, and impossible to find at a glance across three of them.
+    """
+
+    def test_the_selected_row_fills_its_whole_cell(self):
+        from quiver.console import visible_len
+        from quiver.find.browser import _left_cell
+
+        cell = _left_cell(Entry("x", detail="1 item"), 30, active=True)
+        self.assertIn("\x1b[48;5;", cell, "no background set")
+        self.assertEqual(visible_len(cell), 30, "bar does not span the cell")
+
+    def test_an_unselected_row_has_no_bar(self):
+        from quiver.find.browser import _left_cell
+
+        self.assertNotIn("48;5;", _left_cell(Entry("x"), 30, active=False))
+
+    def test_the_parent_uses_a_quieter_bar(self):
+        """Two bars of the same colour would compete; the parent is
+        context, not the pane being driven."""
+        from quiver.find.browser import _left_cell
+
+        live = _left_cell(Entry("x"), 30, active=True, muted=False)
+        parent = _left_cell(Entry("x"), 30, active=True, muted=True)
+        self.assertNotEqual(live, parent)
+        self.assertIn("48;5;", parent)
+
+    def test_the_bar_closes_its_escape(self):
+        """An unterminated background bleeds into the rest of the row."""
+        from quiver.find.browser import _left_cell
+
+        self.assertTrue(_left_cell(Entry("x"), 20, active=True).endswith("\x1b[0m"))
+
+    def test_a_long_label_still_fits_the_bar(self):
+        from quiver.console import visible_len
+        from quiver.find.browser import _left_cell
+
+        cell = _left_cell(Entry("z" * 90, detail="d" * 40), 24, active=True)
+        self.assertEqual(visible_len(cell), 24)
+
+
+class ResizeTest(unittest.TestCase):
+    """The browser follows the window while it is open."""
+
+    def test_widths_are_recomputed_from_the_ratio(self):
+        from quiver.find.browser import _pane_widths
+
+        self.assertNotEqual(_pane_widths(80, (2, 3, 5)),
+                            _pane_widths(160, (2, 3, 5)))
+
+    def test_the_size_comes_from_the_terminal_not_the_environment(self):
+        """shutil.get_terminal_size prefers COLUMNS, which a resize never
+        updates, so a shell exporting it would pin the browser to the size
+        it started at."""
+        from pathlib import Path
+
+        source = Path("src/quiver/find/browser.py").read_text()
+        measure = source[source.index("def measure()"):]
+        measure = measure[:measure.index("\n    heading")]
+        self.assertIn("os.get_terminal_size", measure)
+
+    def test_a_resize_handler_is_installed_and_restored(self):
+        from pathlib import Path
+
+        source = Path("src/quiver/find/browser.py").read_text()
+        self.assertIn("SIGWINCH", source)
+        # Restored in the finally, beside the termios reset: leaving a
+        # handler installed would outlive the browser.
+        tail = source[source.index("    finally:"):]
+        self.assertIn("signal.signal", tail)
+
+    def test_it_waits_on_select_rather_than_a_bare_read(self):
+        """PEP 475 retries an interrupted read, so a blocking os.read
+        would never notice the signal."""
+        from pathlib import Path
+
+        source = Path("src/quiver/find/browser.py").read_text()
+        self.assertIn("select.select", source)
