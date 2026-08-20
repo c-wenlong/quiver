@@ -16,6 +16,7 @@ HELP = {
   {c('cyan', 'swe list -n')}                  Fetch new session and rate-limit data
   {c('cyan', 'swe list edit')}                Choose which columns to show
   {c('cyan', 'swe list edit --reset')}        Restore the default columns
+  {c('cyan', 'swe list legend')}             Explain the AGENTS.MD / SKILLS glyphs
 
   Favourited harnesses are pinned to the top with a neon border ({c('neon_pink', '★')}).
   Use {c('cyan', 'swe star <name>')} to favourite / unfavourite.
@@ -29,10 +30,12 @@ HELP = {
   {c('cyan', '--refresh')} / {c('cyan', '-r')} / {c('cyan', '-n')}   Bypass caches and fetch new data.
 
 {c('bold', 'Link states')}
-  {c('green', '✓')}  linked to ~/.quiver      {c('yellow', '○')}  nothing there yet
+  {c('green', '✓')}  linked to ~/.quiver      {c('yellow', '○')}  nothing there yet, or safe to absorb
   {c('yellow', '↻')}  symlink points elsewhere  {c('red', '✗')}  real file in the way, needs --force
+  {c('yellow', '○')}  holds files that exist nowhere else, left alone on purpose
   {c('dim', '·')}  no known convention, or harness not installed
 
+  {c('cyan', 'swe list legend')} prints this with each state named.
   Run {c('cyan', 'swe init')} to link everything."""
     ),
     "star": (

@@ -9,23 +9,41 @@ from quiver.skills.layout import SHARED_REL, shared_scopes_for_skill
 
 
 def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple[str, Path]]:
-    """Return [(scope_label, Path)] skill-root dirs that exist, deduped by realpath."""
+    """Return [(scope_label, Path)] skill-root dirs that exist, deduped by realpath.
+
+    The harness roots come from the same filesystem scan that backs
+    ``swe find skills``, so the two commands cannot disagree about where
+    skills live. Before this shared a hardcoded list of eight paths, it
+    missed roots like ~/.pane/skills and ~/.hermes/skills entirely.
+
+    Three kinds of root that scan does not reach are added here: plugin
+    caches (a level deeper than a harness root), directories whose name is
+    not "skills" (Cursor ships ~/.cursor/skills-cursor), and catalogs the
+    user registered outside their home harness dirs.
+    """
+    from quiver.init.layout import discover_skill_roots, skill_root_label
+
     home = home or Path.home()
     cwd = cwd or Path.cwd()
-    candidates: list[tuple[str, Path]] = [
-        ("shared", home / SHARED_REL),
+
+    candidates: list[tuple[str, Path]] = [("shared", home / SHARED_REL)]
+
+    # Every ~/.<harness>/skills and ~/.config/<harness>/skills on disk.
+    for path in discover_skill_roots(home):
+        candidates.append((skill_root_label(path, home), path))
+
+    candidates += [
         ("cursor-builtin", home / ".cursor" / "skills-cursor"),
         ("cursor-plugin", home / ".cursor" / "plugins" / "cache"),
         ("claude-plugin", home / ".claude" / "plugins" / "cache"),
-        ("codex", home / ".codex" / "skills"),
-        ("claude", home / ".claude" / "skills"),
-        ("cursor", home / ".cursor" / "skills"),
         ("project", cwd / ".cursor" / "skills"),
     ]
+
     for entry in load_skill_catalogs():
         label = entry.get("label", "catalog")
         path = Path(entry.get("path", "")).expanduser()
         candidates.append((label, path))
+
     roots: list[tuple[str, Path]] = []
     seen: set[Path] = set()
     for label, path in candidates:
