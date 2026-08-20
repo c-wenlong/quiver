@@ -341,6 +341,41 @@ class SelectionBarTest(unittest.TestCase):
 class ResizeTest(unittest.TestCase):
     """The browser follows the window while it is open."""
 
+    def test_the_panes_fill_the_window_height(self):
+        """Sizing rows to the longest pane left the dividers stopping
+        partway down a tall terminal, so the layout read as a small box
+        floating at the top rather than a browser using the screen."""
+        import io
+        from contextlib import redirect_stdout
+
+        from quiver.find.browser import _render
+
+        for height in (6, 20, 38):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                _render([], 0, [Entry("a"), Entry("b")], 0, ["x"], "T",
+                        "crumb", 0, height, 140, (2, 3, 5))
+            rows = [ln for ln in buf.getvalue().split("\r\n") if "│" in ln]
+            self.assertEqual(len(rows), height, height)
+
+    def test_every_row_spans_the_full_width(self):
+        """The preview pane used to stop wherever its text ran out, so a
+        wide window looked unused even though the dividers were placed
+        correctly."""
+        import io
+        from contextlib import redirect_stdout
+
+        from quiver.console import visible_len
+        from quiver.find.browser import _render
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _render([], 0, [Entry("a")], 0, ["short"], "T", "crumb", 0,
+                    8, 140, (2, 3, 5))
+        rows = [ln for ln in buf.getvalue().split("\r\n") if "│" in ln]
+        widths = {visible_len(r) for r in rows}
+        self.assertEqual(len(widths), 1, f"ragged right edge: {sorted(widths)}")
+
     def test_widths_are_recomputed_from_the_ratio(self):
         from quiver.find.browser import _pane_widths
 

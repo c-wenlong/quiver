@@ -287,7 +287,11 @@ def _render(parent: list[Entry], parent_cursor: int,
     rewind in the wrong place.
     """
     total = len(entries)
-    view = min(height, max(total, len(preview), len(parent), 1))
+    # Fill the window rather than shrinking to the longest pane. Sizing to
+    # content left the dividers stopping partway down a tall terminal, so
+    # the layout read as a small box floating at the top rather than a
+    # browser occupying the screen. Blank rows still carry their dividers.
+    view = max(1, height)
 
     def window(n: int, cur: int) -> int:
         return 0 if n <= view else max(0, min(cur - view // 2, n - view))
@@ -322,8 +326,12 @@ def _render(parent: list[Entry], parent_cursor: int,
             mid = " " * current_w
         mid += " " * max(0, current_w - visible_len(mid))
 
-        text = preview[row] if row < len(preview) else ""
-        right = c("dim", truncate(text, preview_w)) if text else ""
+        # Pad the preview to its full width. Without it the row simply
+        # stopped wherever the text ran out, so a wide window looked like
+        # the layout had failed to use it even though the panes were
+        # allocated correctly and the dividers were in the right columns.
+        text = truncate(preview[row], preview_w) if row < len(preview) else ""
+        right = c("dim", text) + " " * max(0, preview_w - visible_len(text))
         out.append(f"{left} {sep} {mid} {sep} {right}\r\n")
 
     tail = []
