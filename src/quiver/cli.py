@@ -5,6 +5,7 @@ import sys
 
 from quiver.config_commands import cmd_config
 from quiver.harness.commands import (
+    cmd_list_edit,
     cmd_add,
     cmd_aliases,
     cmd_check,

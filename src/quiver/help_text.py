@@ -14,6 +14,8 @@ HELP = {
   {c('cyan', 'swe list --usage')}             Add 100d sessions and remaining quota
   {c('cyan', 'swe list --links')}             Add AGENTS.MD and SKILLS link status
   {c('cyan', 'swe list -n')}                  Fetch new session and rate-limit data
+  {c('cyan', 'swe list edit')}                Choose which columns to show
+  {c('cyan', 'swe list edit --reset')}        Restore the default columns
 
   Favourited harnesses are pinned to the top with a neon border ({c('neon_pink', '★')}).
   Use {c('cyan', 'swe star <name>')} to favourite / unfavourite.

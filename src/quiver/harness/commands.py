@@ -8,6 +8,12 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver.console import c, cpad, truncate, visible_len
+from quiver.harness.columns import (
+    COLUMNS,
+    DEFAULT_COLUMNS,
+    load_columns,
+    save_columns,
+)
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.init.layout import link_states
 from quiver.harness.stars import is_starred, load_stars, toggle_star, unstar
@@ -74,7 +80,49 @@ def _link_cell(state, label, width):
     )
 
 
+
+def cmd_list_edit(args=None) -> int:
+    """Pick which columns `swe list` shows."""
+    from quiver.multiselect import Choice, multiselect
+
+    args = list(args or [])
+    if args and args[0] in ("-h", "--help", "help"):
+        print(f"\n  {c('bold', 'swe list edit')} — choose the columns swe list shows\n")
+        print(f"  {c('dim', 'space toggles · a selects all · n clears · enter saves · q cancels')}")
+        print(f"  {c('dim', 'NAME and the favourite marker are always shown.')}\n")
+        return 0
+    if args and args[0] == "--reset":
+        save_columns(DEFAULT_COLUMNS)
+        print(f"  {c('green', 'reset')} {c('dim', 'to ' + ', '.join(DEFAULT_COLUMNS))}")
+        return 0
+
+    current = load_columns()
+    choices = [Choice(col.key, col.label, col.about, col.locked) for col in COLUMNS]
+    picked = multiselect(choices, current, title="  Columns for swe list")
+    if picked is None:
+        print(f"  {c('dim', 'cancelled, nothing changed')}")
+        return 0
+
+    saved = save_columns(picked)
+    added = [k for k in saved if k not in current]
+    removed = [k for k in current if k not in saved]
+    print(f"  {c('green', 'saved')}  {c('dim', ', '.join(saved))}")
+    if added:
+        print(f"  {c('dim', '+ ' + ', '.join(added))}")
+    if removed:
+        print(f"  {c('dim', '- ' + ', '.join(removed))}")
+    if "rate" in saved:
+        note = ("REMAINING fetches over the network, so swe list will be "
+                "slower on a cold cache")
+        print(f"  {c('yellow', 'note')} {c('dim', note)}")
+    return 0
+
+
 def cmd_list(args):
+    args = list(args or [])
+    if args and args[0] == "edit":
+        return cmd_list_edit(args[1:])
+
     # Refresh aliases bypass both the session and rate-limit caches.
     refresh_flags = {"--refresh", "-r", "-n"}
     refresh = any(arg in refresh_flags for arg in args)
@@ -124,26 +172,41 @@ def cmd_list(args):
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
     table = Table(column_gap=" │ ")
+    _head = set(load_columns())
     table.add_column("mark", "", width=2, kind="preformatted")
     table.add_column("name", "NAME", width=16, kind="text")
-    table.add_column("command", "COMMAND", width=18, kind="text")
-    table.add_column("version", "VERSION", width=12, kind="text")
-    table.add_column("aliases", "ALIASES", width=12, kind="list", color="cyan", empty="—")
+    if "command" in _head:
+        table.add_column("command", "COMMAND", width=18, kind="text")
+    if "version" in _head:
+        table.add_column("version", "VERSION", width=12, kind="text")
+    if "aliases" in _head:
+        table.add_column("aliases", "ALIASES", width=12, kind="list",
+                         color="cyan", empty="—")
+    # Configured set, plus whatever the flags ask for on top.
+    wanted = set(load_columns())
     if links_view:
-        table.add_column("agents", "AGENTS.MD", width=22, kind="preformatted")
-        table.add_column("skills", "SKILLS", width=12, kind="preformatted")
-        table.add_column("inst", "INST", width=4, kind="preformatted")
-    elif usage_view:
+        wanted |= {"agents", "skills"}
+    if usage_view:
+        wanted |= {"sess", "rate"}
+
+    if "sess" in wanted:
         table.add_column("sess", "100d", width=8, kind="preformatted", empty="—")
+    if "rate" in wanted:
         table.add_column(
             "rate", "REMAINING", width=14, kind="preformatted",
             trust_cell_width=True,
         )
+    if "agents" in wanted:
+        table.add_column("agents", "AGENTS.MD", width=22, kind="preformatted")
+    if "skills" in wanted:
+        table.add_column("skills", "SKILLS", width=12, kind="preformatted")
+    if "inst" in wanted:
         table.add_column("inst", "INST", width=4, kind="preformatted")
-        table.add_column("desc", "DESCRIPTION", width=36, kind="text")
-    else:
-        table.add_column("inst", "INST", width=4, kind="preformatted")
-        table.add_column("desc", "DESCRIPTION", width=46, kind="text")
+    if "desc" in wanted:
+        # Wider when nothing else is competing for the row.
+        narrow = wanted & {"sess", "rate", "agents", "skills"}
+        table.add_column("desc", "DESCRIPTION",
+                         width=36 if narrow else 46, kind="text")
 
     shown_starred = False
     for name, info in _sort_tools(tools, counts, stars):
@@ -204,26 +267,29 @@ def cmd_list(args):
             c("dim", "—") + " " * max(0, rate_cell_width - visible_len(c("dim", "—")))
         )
 
-        row = {
-            "mark": mark_cell,
-            "name": name,
-            "command": info["command"],
-            "version": ver,
-            "aliases": aliases,
-            "inst": inst_cell,
-        }
-        if links_view:
+        row = {"mark": mark_cell, "name": name}
+        if "command" in wanted:
+            row["command"] = info["command"]
+        if "version" in wanted:
+            row["version"] = ver
+        if "aliases" in wanted:
+            row["aliases"] = aliases
+        if "inst" in wanted:
+            row["inst"] = inst_cell
+        if "agents" in wanted or "skills" in wanted:
             states = link_status.get(name, {})
-            row["agents"] = _link_cell(
-                states.get("agents"), _AGENTS_FILENAMES.get(name, ""), 22
-            )
-            row["skills"] = _link_cell(states.get("skills"), "skills/", 12)
-        elif usage_view:
+            if "agents" in wanted:
+                row["agents"] = _link_cell(
+                    states.get("agents"), _AGENTS_FILENAMES.get(name, ""), 22)
+            if "skills" in wanted:
+                row["skills"] = _link_cell(states.get("skills"), "skills/", 12)
+        if "sess" in wanted:
             row["sess"] = sess_cell
+        if "rate" in wanted:
             row["rate"] = rate_cell
-            row["desc"] = desc_padded
-        else:
-            row["desc"] = truncate(desc_text, 46)
+        if "desc" in wanted:
+            narrow = wanted & {"sess", "rate", "agents", "skills"}
+            row["desc"] = desc_padded if narrow else truncate(desc_text, 46)
 
         table.add_row(row, accent=accent)
 
