@@ -557,3 +557,134 @@ class ColumnWidthTest(unittest.TestCase):
         width, lengths = self._width(home, rels)
         self.assertLessEqual(width, PATH_WIDTH)
         self.assertLess(width, lengths[-1])
+
+
+class DeepSkillCountTest(unittest.TestCase):
+    """Skill roots nest at wildly different depths and use symlinks.
+
+    A shallow one-level scan reported ~/.pane/skills as empty and dropped 155
+    skills from the listing; `rglob` missed lazyweb's, which are symlinks into
+    a vendor repo. The counter has to walk deep AND follow links.
+    """
+
+    def test_counts_skills_nested_several_levels_down(self):
+        from quiver.find.tree import count_skills
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "skills"
+            _skill(root / "a" / "b" / "c", "deep-one")
+            _skill(root / "a", "shallow-one")
+            self.assertEqual(count_skills(root), 2)
+
+    def test_follows_symlinks_into_another_tree(self):
+        from quiver.find.tree import count_skills
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            _skill(home / "vendor", "linked-one")
+            root = home / "skills"
+            root.mkdir()
+            (root / "linked-one").symlink_to(home / "vendor" / "linked-one")
+            self.assertEqual(count_skills(root), 1)
+
+    def test_a_symlink_loop_does_not_hang(self):
+        from quiver.find.tree import count_skills
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "skills"
+            _skill(root, "one")
+            (root / "loop").symlink_to(root)      # points at its own parent
+            self.assertEqual(count_skills(root), 1)
+
+    def test_duplicate_names_count_once(self):
+        # ~/.pane/skills keeps a fetched copy under .sources beside the
+        # expanded one: 155 SKILL.md files for 61 actual skills.
+        from quiver.find.tree import count_skills
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "skills"
+            _skill(root / "live", "parsa")
+            _skill(root / ".sources" / "upstream", "parsa")
+            self.assertEqual(count_skills(root), 1)
+
+    def test_hidden_directories_are_searched(self):
+        # Real skills live under dot-directories: .pane/skills/dcouple/parsa/
+        # .codex/skills/ and .codex/vendor_imports/skills/skills/.curated/.
+        from quiver.find.tree import count_skills
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "skills"
+            _skill(root / ".curated", "hidden-one")
+            self.assertEqual(count_skills(root), 1)
+
+    def test_a_root_with_only_nested_skills_is_not_dropped(self):
+        from quiver.find.tree import scan_skill_roots
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _skill(home / ".pane" / "skills" / "group" / "sub", "nested-only")
+            found = {n.path for n in scan_skill_roots(home, home)}
+            self.assertIn(home / ".pane" / "skills", found)
+
+    def test_find_and_init_report_the_same_number(self):
+        from quiver.find.tree import count_skills
+        from quiver.init.layout import skill_folder_names
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "skills"
+            _skill(root / "a" / "b", "one")
+            _skill(root / "c", "two")
+            self.assertEqual(count_skills(root), len(skill_folder_names(root)))
+
+    def test_backup_directories_are_not_listed(self):
+        from quiver.find.tree import scan_skill_roots
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _skill(home / ".hermes.pre-bootstrap-20260730" / "skills", "old")
+            _skill(home / ".hermes" / "skills", "current")
+            labels = {n.path.parent.name for n in scan_skill_roots(home, home)}
+            self.assertIn(".hermes", labels)
+            self.assertNotIn(".hermes.pre-bootstrap-20260730", labels)
+
+
+class NestedResultTest(unittest.TestCase):
+    """A result can also be a parent of results.
+
+    ~/.codex/vendor_imports/skills contains another skills/ directory, so one
+    scan hit is a path prefix of another. The trie crashed on that with
+    "'Node' object does not support item assignment".
+    """
+
+    def _rows(self, home: Path, rels):
+        from quiver.find.commands import _build_trie, _collapse, _walk_trie
+        from quiver.find.tree import Node
+
+        nodes = [Node("x", home / r, "dir", "keep") for r in rels]
+        return list(_walk_trie(_collapse(_build_trie(nodes, home, home))))
+
+    def test_a_result_inside_another_result_does_not_crash(self):
+        rows = self._rows(Path("/h"), [
+            ".codex/vendor_imports/skills",
+            ".codex/vendor_imports/skills/skills",
+        ])
+        self.assertEqual(len(rows), 2)
+
+    def test_both_the_parent_and_the_child_carry_their_node(self):
+        rows = self._rows(Path("/h"), [
+            ".codex/vendor_imports/skills",
+            ".codex/vendor_imports/skills/skills",
+        ])
+        self.assertTrue(all(node is not None for _i, _l, node in rows))
+
+    def test_the_parent_row_is_marked_as_a_directory(self):
+        rows = self._rows(Path("/h"), [".a/skills", ".a/skills/skills"])
+        parent = rows[0]
+        self.assertTrue(parent[1].endswith("/"), parent[1])
+
+    def test_three_deep_nesting_still_renders(self):
+        rows = self._rows(Path("/h"), [
+            ".a/skills", ".a/skills/skills", ".a/skills/skills/skills",
+        ])
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(n is not None for _i, _l, n in rows))

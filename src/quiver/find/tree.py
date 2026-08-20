@@ -13,7 +13,9 @@ from pathlib import Path
 from quiver import paths
 from quiver.init.layout import (
     INSTRUCTION_TARGETS,
+    _looks_like_backup,
     classify_skill_root,
+    skill_folder_names,
     discover_skill_roots,
     inspect,
     skill_root_label,
@@ -44,9 +46,9 @@ class PluginNode:
 def _skill_names(root: Path) -> list[str]:
     """Skill folder names directly under ``root``.
 
-    Not ``rglob``: it does not follow symlinks, and several skills are links
-    into a vendor repo (lazyweb), so a recursive glob silently undercounts.
-    Skills live exactly one level down, so a shallow scan is also correct.
+    Only correct where the layout guarantees one level, which the plugin spec
+    does. For an arbitrary skills directory use ``count_skills``: real
+    libraries nest anywhere from two to seven levels deep.
     """
     if not root.is_dir():
         return []
@@ -54,6 +56,17 @@ def _skill_names(root: Path) -> list[str]:
         d.name for d in root.iterdir()
         if (d / "SKILL.md").is_file()
     )
+
+
+def count_skills(root: Path) -> int:
+    """Distinct skill folders under ``root`` at any depth, following symlinks.
+
+    Delegates to the same function `swe init` uses so the two can never print
+    different numbers for one directory. Counting SKILL.md files instead would
+    double-count: ~/.pane/skills keeps a fetched copy under .sources alongside
+    the expanded one, 155 files for 61 actual skills.
+    """
+    return len(skill_folder_names(root))
 
 
 def _describe(path: Path) -> tuple[str, Path | None]:
@@ -92,7 +105,7 @@ def skills_tree(home: Path | None = None) -> tuple[Path, list[Node]]:
         kind, target = _describe(path)
         count = 0
         if kind == "directory":
-            count = len(_skill_names(path))
+            count = count_skills(path)
         nodes.append(Node(skill_root_label(path, home), path, kind, state,
                           target, count, detail))
     return shared, nodes
@@ -211,15 +224,17 @@ def scan_skill_roots(root: Path, home: Path | None = None) -> list[Node]:
             path = dirpath / d
             if path in seen or path == shared:
                 continue
+            if any(_looks_like_backup(part) for part in path.parts):
+                continue          # .hermes.pre-bootstrap-20260730-110640 etc
             seen.add(path)
             kind, target = _describe(path)
             if kind == "symlink":
                 state = "linked" if target == shared else "relink"
                 count = 0
             else:
-                count = len(_skill_names(path))
+                count = count_skills(path)
                 if not count:
-                    continue          # an empty skills/ is noise in a project scan
+                    continue          # a genuinely empty skills/ is noise
                 state, _detail = classify_skill_root(path, home)
             found.append(Node(path.parent.name, path, kind, state, target, count))
     return sorted(found, key=lambda n: str(n.path))

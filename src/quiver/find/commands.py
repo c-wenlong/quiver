@@ -14,6 +14,7 @@ from quiver.find.tree import (
     scan_skill_roots,
     skills_tree,
 )
+from quiver.find.plugins import discover_plugins, filter_plugins
 from quiver.find.tree import filter_scope
 
 # Colour by what you would do about it, not by filesystem type.
@@ -90,8 +91,14 @@ def _rel(path: Path, root: Path, home: Path, width: int = PATH_WIDTH) -> str:
     return _elide(text, width).ljust(width) + " "
 
 
+# A path can be both a result and a parent of results: ~/.codex/vendor_imports/
+# skills holds another skills/ inside it. So every trie value is a dict, and a
+# node attaches under this sentinel key rather than replacing the dict.
+LEAF = "\x00leaf"
+
+
 def _build_trie(nodes, root: Path, home: Path) -> dict:
-    """Nest nodes by path segment. Leaves map a filename to its Node."""
+    """Nest nodes by path segment. A node attaches at LEAF on its own dict."""
     trie: dict = {}
     for n in nodes:
         try:
@@ -99,54 +106,54 @@ def _build_trie(nodes, root: Path, home: Path) -> dict:
         except ValueError:
             parts = [_short(n.path, home)]
         cur = trie
-        for seg in parts[:-1]:
+        for seg in parts:
             cur = cur.setdefault(seg, {})
-        cur[parts[-1]] = n            # a Node value marks a leaf
+        cur[LEAF] = n
     return trie
+
+
+def _is_pure_leaf(sub: dict) -> bool:
+    """A result with nothing nested under it."""
+    return LEAF in sub and len(sub) == 1
 
 
 def _collapse(trie: dict) -> dict:
     """Fold single-child directory chains into one segment.
 
     Without this a vendored path becomes a staircase of one-child levels:
-    plugins/ then cache/ then openai-curated/ then build-web-apps/, each on
-    its own line saying nothing. Joined, it reads as one hop.
+    plugins/ then cache/ then openai-curated/, each saying nothing on its own.
+    A directory holding exactly one file collapses onto that file's row too.
     """
     out: dict = {}
     for name, child in trie.items():
-        if not isinstance(child, dict):
+        if name == LEAF:
             out[name] = child
             continue
         child = _collapse(child)
-        while len(child) == 1:
+        while len(child) == 1 and LEAF not in child:
             only_name, only_child = next(iter(child.items()))
             name = f"{name}/{only_name}"
-            if not isinstance(only_child, dict):
-                # A directory holding one file collapses onto a single line
-                # too, otherwise ".amp/" and "AGENTS.md" take two lines to say
-                # what ".amp/AGENTS.md" says in one.
-                out[name] = only_child
-                break
             child = only_child
-        else:
-            out[name] = child
+        out[name] = child
     return out
 
 
 def _walk_trie(trie: dict, prefix: str = ""):
-    """Yield (indent, label, node_or_None) in display order, dirs first."""
-    # Files before subdirectories: a directory's own instruction file is the
-    # thing you are looking for, and burying it under nested branches hides it.
-    items = sorted(trie.items(),
-                   key=lambda kv: (isinstance(kv[1], dict), kv[0].lower()))
+    """Yield (indent, label, node_or_None) in display order, files first."""
+    items = [(k, v) for k, v in trie.items() if k != LEAF]
+    # Files before subdirectories: a directory's own entry is what you are
+    # looking for, and burying it under nested branches hides it.
+    items.sort(key=lambda kv: (not _is_pure_leaf(kv[1]), kv[0].lower()))
     for i, (name, child) in enumerate(items):
         last = i == len(items) - 1
         branch = TREE_END if last else TREE_MID
-        if isinstance(child, dict):
-            yield prefix + branch, name + "/", None
-            yield from _walk_trie(child, prefix + ("   " if last else TREE_BAR))
-        else:
-            yield prefix + branch, name, child
+        deeper = prefix + ("   " if last else TREE_BAR)
+        if _is_pure_leaf(child):
+            yield prefix + branch, name, child[LEAF]
+            continue
+        # Both a result and a parent: show it on its own row, then descend.
+        yield prefix + branch, name + "/", child.get(LEAF)
+        yield from _walk_trie(child, deeper)
 
 
 def _render_tree(nodes, root: Path, home: Path) -> None:
@@ -317,9 +324,65 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
     return 0
 
 
+def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") -> int:
+    """Plugins across every harness that has a plugin system."""
+    home = Path.home()
+    plugins = discover_plugins(home)
+    shown, hidden = filter_plugins(plugins, scope)
+
+    label = {"global": "installed and enabled",
+             "local": "installed but disabled",
+             "all": "everything on disk"}[scope]
+    print(f"\n{c('bold', 'Plugins')}  {c('dim', f'--scope={scope} · {label}')}\n")
+    if not shown:
+        print(f"  {c('dim', 'none')}\n")
+        return 0
+
+    by_harness: dict = {}
+    for p in shown:
+        by_harness.setdefault(p.harness, []).append(p)
+
+    totals: dict = {}
+    for harness in sorted(by_harness):
+        group = sorted(by_harness[harness], key=lambda p: p.ref)
+        # cursor and grok expose no install record, so say so once per harness
+        # rather than implying every cached copy is active.
+        unknown = all(p.enabled is None for p in group)
+        note = c("dim", "  (cached; no install record)") if unknown else ""
+        print(f"  {c('bold', harness)}{note}")
+        # Sized per harness: codex refs reach 30 characters and its versions
+        # are build hashes, which would pad claude's short rows out to match.
+        ref_w = min(max(len(p.ref) for p in group) + 2, 40)
+        ver_w = min(max(len(p.version or "-") for p in group) + 2, 16)
+        for i, p in enumerate(group):
+            branch = TREE_END if i == len(group) - 1 else TREE_MID
+            state = ("enabled" if p.enabled else "disabled") if p.enabled is not None else "cached"
+            colour = {"enabled": "green", "disabled": "yellow", "cached": "dim"}[state]
+            parts = ", ".join(f"{n} {k}" for k, n in sorted(p.components.items()))
+            for k, n in p.components.items():
+                totals[k] = totals.get(k, 0) + n
+            print(f"  {c('dim', branch)}"
+                  f"{c(colour, _elide(p.ref, ref_w - 1).ljust(ref_w))}"
+                  f"{c('dim', _elide(p.version or '-', ver_w - 1).ljust(ver_w))}"
+                  f"{c(colour, state.ljust(9))}{c('dim', parts)}")
+        print()
+
+    summary = f"{len(shown)} plugins across {len(by_harness)} harnesses"
+    if totals:
+        summary += "  ·  " + ", ".join(f"{n} {k}" for k, n in sorted(totals.items()))
+    print(f"  {c('dim', summary)}")
+    if hidden:
+        print(f"  {c('yellow', f'{hidden} more')} "
+              f"{c('dim', 'not in this scope — see --scope=all')}")
+    print()
+    return 0
+
+
 def cmd_find(args) -> int:
     args = list(args or [])
-    if args and args[0] in ("-h", "--help", "help"):
+    # Anywhere, not just first: `swe find plugins --help` should print help
+    # rather than the listing.
+    if any(a in ("-h", "--help", "help") for a in args):
         print_find_help()
         return 0
 
@@ -340,9 +403,12 @@ def cmd_find(args) -> int:
         return cmd_find_agents(args[1:], root_flag, scope)
     if topic in ("skills", "skill"):
         return cmd_find_skills(args[1:], root_flag, scope)
+    if topic in ("plugins", "plugin"):
+        return cmd_find_plugins(args[1:], root_flag, scope)
     if topic is None:
         cmd_find_agents([], root_flag, scope)
         cmd_find_skills([], root_flag, scope)
+        cmd_find_plugins([], root_flag, scope)
         return 0
 
     print(f"Unknown topic: {topic}")
@@ -357,6 +423,7 @@ def print_find_help() -> None:
   {c('cyan', 'swe find')}              Both trees
   {c('cyan', 'swe find amd')}          AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}       Skills, plugins, and every harness skill root
+  {c('cyan', 'swe find plugins')}      Plugins across every harness that has them
 
   {c('bold', 'Where it scans')}
     default        the current directory, recursively

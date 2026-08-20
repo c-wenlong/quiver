@@ -104,6 +104,35 @@ def skill_root_label(path: Path, home: Path | None = None) -> str:
     return owner[1:] if owner.startswith(".") else owner
 
 
+def skill_folder_names(root: Path) -> set[str]:
+    """Names of skill folders under ``root`` at any depth, following symlinks.
+
+    Not ``rglob``: it does not follow symlinks, so it missed skills that are
+    links into a vendor repo and disagreed with what `swe find` reported for
+    the same directory.
+    """
+    import os
+
+    if not root.is_dir():
+        return set()
+    seen: set[tuple[int, int]] = set()
+    names: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        try:
+            st = os.stat(dirpath)
+        except OSError:
+            dirnames[:] = []
+            continue
+        key = (st.st_dev, st.st_ino)
+        if key in seen:
+            dirnames[:] = []
+            continue
+        seen.add(key)
+        if "SKILL.md" in filenames:
+            names.add(Path(dirpath).name)
+    return names
+
+
 def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]:
     """Return (state, detail) for one discovered skills directory.
 
@@ -125,11 +154,11 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
     if not path.is_dir():
         return "create", ""
 
-    names = {p.parent.name for p in path.rglob("SKILL.md")}
+    names = skill_folder_names(path)
     if not names:
         return "absorb", "empty"
 
-    shared_names = {p.parent.name for p in shared.rglob("SKILL.md")} if shared.is_dir() else set()
+    shared_names = skill_folder_names(shared)
     unique = names - shared_names
     if not unique:
         return "absorb", f"{len(names)} skills, all already shared"
