@@ -225,8 +225,9 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
                   f"{c(colour, STATE_WORD.get(n.state, n.state).ljust(12))}"
                   f"{c('dim', n.detail)}")
 
-    print(f"\n  {c('dim', f'{total} skills · {len(linked)} roots synced · '
-                          f'{len(other)} left alone')}\n")
+    summary = (f"{total} skills · {len(linked)} roots synced · "
+               f"{len(other)} left alone")
+    print(f"\n  {c('dim', summary)}\n")
     return 0
 
 
