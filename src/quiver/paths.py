@@ -126,3 +126,81 @@ mcp/servers/
 def legacy_config_dir() -> Path | None:
     """The old ~/.config/swe root, if this machine still has one."""
     return LEGACY_CONFIG_DIR if LEGACY_CONFIG_DIR.is_dir() else None
+
+
+def atomic_write_text(path: "Path", text: str, *, private: bool = False) -> None:
+    """Write ``text`` to ``path`` atomically, preserving its permissions.
+
+    The tmp-file-then-rename pattern this replaces created the temp file
+    fresh under the process umask, so renaming it over a 0600 file left
+    the result 0644. Harness MCP configs hold resolved API tokens and are
+    0600 for that reason, and `swe mcp sync` was quietly widening them to
+    world-readable on every run.
+
+    An existing file's mode is carried over. ``private=True`` floors a new
+    file at 0600, for anything that may hold credentials.
+    """
+    import os
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = 0o600 if private else None
+
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
+                               dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        # mkstemp is 0600; widen only to whatever the file already was.
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def backup_tree(path: "Path", home: "Path | None" = None) -> "Path":
+    """Copy a file or directory into ~/.quiver/backups before it is replaced.
+
+    Hardened against three ways the previous version failed:
+
+    * ``relative_to(home)`` raised ValueError for anything outside $HOME,
+      aborting mid-run. Paths outside home now fall back to a flattened
+      absolute name.
+    * ``copytree`` defaults to following symlinks, so one broken link
+      anywhere in the tree raised and aborted the whole operation. Links
+      are copied as links, which is also what you want when restoring.
+    * Two backups of the same path in one second collided and raised
+      FileExistsError. A counter disambiguates.
+    """
+    import shutil
+    from datetime import datetime
+
+    home = home or Path.home()
+    dest_dir = backups_dir_for(home)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        flat = str(path.relative_to(home)).replace("/", "_")
+    except ValueError:
+        flat = str(path).lstrip("/").replace("/", "_")
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = dest_dir / f"{flat}.{stamp}"
+    n = 1
+    while dest.exists():
+        dest = dest_dir / f"{flat}.{stamp}.{n}"
+        n += 1
+
+    if path.is_dir() and not path.is_symlink():
+        shutil.copytree(path, dest, symlinks=True)
+    else:
+        shutil.copy2(path, dest, follow_symlinks=False)
+    return dest

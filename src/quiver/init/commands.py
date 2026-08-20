@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import shutil
-from datetime import datetime
 from pathlib import Path
 
 from quiver.console import c
+from quiver.paths import backup_tree
 from quiver.init.migrate import apply_migration, plan_migration, write_gitignore
 from quiver.init.layout import (
     LinkStatus,
@@ -40,16 +40,7 @@ def _short(path: Path, home: Path) -> str:
 
 def _backup(path: Path, home: Path) -> Path:
     """Copy a real file or directory aside before it is replaced."""
-    dest_dir = backups_dir(home)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    flat = str(path.relative_to(home)).replace("/", "_")
-    dest = dest_dir / f"{flat}.{stamp}"
-    if path.is_dir():
-        shutil.copytree(path, dest)
-    else:
-        shutil.copy2(path, dest)
-    return dest
+    return backup_tree(path, home)
 
 
 def _apply(status: LinkStatus, canonical: Path, home: Path, force: bool) -> str:

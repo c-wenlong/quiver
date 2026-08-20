@@ -35,7 +35,7 @@ from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
 from quiver.mcp.secrets import resolve as resolve_secrets
 from quiver.mcp.secrets import unresolved_names
-from quiver.paths import CONFIG_DIR, REGISTRY_FILE, MCP_SOURCE_FILE
+from quiver.paths import atomic_write_text, CONFIG_DIR, REGISTRY_FILE, MCP_SOURCE_FILE
 from quiver.mcp.formats import (
     McpFormatHandler,
     convert_server_between_formats,
@@ -293,10 +293,13 @@ def load_json(path: Path) -> dict:
 
 
 def save_json(path: Path, data: dict):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    tmp.rename(path)
+    """Write a harness MCP config, keeping whatever mode it already had.
+
+    These files carry resolved API tokens. The previous tmp+rename left a
+    0600 config world-readable, because the temp file was created fresh
+    under the umask rather than inheriting the target's mode.
+    """
+    atomic_write_text(path, json.dumps(data, indent=2) + "\n", private=True)
 
 
 # ── Server helpers ────────────────────────────────────────────────────

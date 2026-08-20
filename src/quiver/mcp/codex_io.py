@@ -39,6 +39,8 @@ import json
 import re
 from pathlib import Path
 
+from quiver.paths import atomic_write_text
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
@@ -262,9 +264,7 @@ def save_codex_servers(servers: dict[str, dict], path: Path = CODEX_CONFIG) -> b
     final = apply_merges(text, servers)
     if final == text:
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write: tmp + rename (mirrors quiver.mcp.cli.save_json).
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(final)
-    tmp.rename(path)
+    # Atomic, and keeps the file's mode: this holds resolved tokens and is
+    # 0600 for a reason.
+    atomic_write_text(path, final, private=True)
     return True
