@@ -717,3 +717,66 @@ class UsageFlagTest(unittest.TestCase):
     def test_the_level_is_echoed_back(self):
         _, out = self._run(["kiro", "--usage=heavy", "why"])
         self.assertIn("heavy", out)
+
+
+class HarnessListRoutingTest(unittest.TestCase):
+    """`swe harness list` is the canonical home; `swe list` is the shortcut.
+
+    Every harness verb lives under `swe harness`, but listing is the command
+    run most often, so it keeps a top-level name too.
+    """
+
+    def _call(self, args):
+        from quiver.setup.commands import cmd_harness
+
+        with mock.patch("quiver.harness.commands.cmd_list", return_value=0) as m:
+            with redirect_stdout(io.StringIO()):
+                code = cmd_harness(list(args))
+        return code, m
+
+    def test_harness_list_routes_to_cmd_list(self):
+        _, m = self._call(["list"])
+        m.assert_called_once_with([])
+
+    def test_ls_is_accepted_too(self):
+        _, m = self._call(["ls"])
+        m.assert_called_once_with([])
+
+    def test_arguments_pass_through(self):
+        _, m = self._call(["list", "--scope=archived"])
+        m.assert_called_once_with(["--scope=archived"])
+
+    def test_subcommands_pass_through(self):
+        _, m = self._call(["list", "edit", "--reset"])
+        m.assert_called_once_with(["edit", "--reset"])
+
+    def test_the_top_level_shortcut_is_the_same_callable(self):
+        from quiver.cli import COMMANDS
+        from quiver.harness.commands import cmd_list
+
+        self.assertIs(COMMANDS["list"], cmd_list)
+        self.assertIs(COMMANDS["ls"], cmd_list)
+
+    def test_the_container_help_lists_it_first(self):
+        from quiver.setup.commands import cmd_harness
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cmd_harness([])
+        out = strip_ansi(buf.getvalue())
+        verbs = [v for v in ("list", "edit", "star", "archive", "discover")
+                 if f"swe harness {v}" in out]
+        self.assertEqual(verbs[0], "list")
+
+    def test_completion_offers_list_under_harness(self):
+        import quiver.completion as comp
+
+        for parent in ("harness", "hs"):
+            names = [n for n, _ in comp.get_completions([parent, ""])]
+            self.assertIn("list", names, parent)
+
+    def test_completion_offers_list_flags_one_level_deep(self):
+        import quiver.completion as comp
+
+        flags = [n for n, _ in comp.get_completions(["hs", "list", "--sc"])]
+        self.assertTrue(any(f.startswith("--scope") for f in flags), flags)

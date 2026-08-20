@@ -112,6 +112,8 @@ def cmd_autocomplete(args):
 
 
 COMMANDS = {
+    # Shortcuts for `swe harness list`, which is where the harness verbs
+    # live. Kept at the top level because it is the command run most.
     "list": cmd_list,
     "ls": cmd_list,
     "info": cmd_info,

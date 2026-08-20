@@ -7,9 +7,10 @@ from quiver.paths import REGISTRY_FILE
 
 HELP = {
     "list": (
-        "List all registered AI coding tools",
+        "List all registered AI coding tools (short for swe harness list)",
         f"""\
   {c('cyan', 'swe list')}                     List all tools (starred first, then 100d usage)
+  {c('dim', 'Short for')} {c('cyan', 'swe harness list')}{c('dim', '; every harness verb lives under swe harness.')}
   {c('cyan', 'swe list <tag>')}               Filter by tag (e.g. swe list agentic)
   {c('cyan', 'swe list --usage')}             Add 100d sessions and remaining quota
   {c('cyan', 'swe list --links')}             Add AGENTS.MD and SKILLS link status
@@ -333,8 +334,12 @@ to use their own login state and environment."""
   raw key. See `swe providers help` for masking format."""
     ),
     "harness": (
-        "Harness registry utilities",
+        "Everything about the harnesses you have",
         f"""\
+  {c('cyan', 'swe harness list')}                  List them  {c('dim', '(swe list is the shortcut)')}
+  {c('cyan', 'swe harness edit')}                  Review every harness at once
+  {c('cyan', 'swe harness star <name>')}           Toggle a favourite
+  {c('cyan', 'swe harness archive <name> [why]')}  Shelve one you have ruled out
   {c('cyan', 'swe harness discover')}              Scan PATH for AI coding CLIs (dry-run)
   {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to tools.json
   {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
@@ -450,7 +455,7 @@ COMMAND_CATEGORIES = [
         ("edit",    None),
         ("remove",  "rm"),
         ("check",   None),
-        ("harness", "discover"),
+        ("harness", "hs"),
     ]),
     ("Launch", [
         ("use",     "run"),
