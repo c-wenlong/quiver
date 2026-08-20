@@ -22,6 +22,7 @@ from pathlib import Path
 
 from quiver.console import c, elide, strip_ansi, truncate, visible_len
 from quiver.find.entries import HIDE_DIRS, TEXT_SUFFIXES, Entry
+from quiver.find.highlight import highlight
 
 # Past this, reading a file to show a dozen lines costs more than the preview
 # is worth, and a minified bundle or a checkpoint will happily be several MB.
@@ -162,6 +163,20 @@ def _file_preview(path: Path, limit: int) -> list[str]:
     return rows or ["(empty file)"]
 
 
+def _preview_language(entry: Entry) -> str:
+    """Grammar for the preview, or "" when it is a listing rather than a file."""
+    from quiver.find.highlight import language_for
+
+    if entry.children or entry.path is None:
+        return ""
+    try:
+        if entry.path.is_dir():
+            return ""
+    except OSError:
+        return ""
+    return language_for(entry.path)
+
+
 def _preview(entry: Entry, limit: int) -> list[str]:
     """What the right pane shows for ``entry``, at most ``limit`` lines.
 
@@ -199,6 +214,11 @@ def _preview(entry: Entry, limit: int) -> list[str]:
 # both light and dark terminal themes.
 SELECT_BG = "\033[48;5;33m\033[38;5;16m"
 SELECT_DIM_BG = "\033[48;5;24m\033[38;5;253m"
+# A file bar is light rather than blue. Blue reads as "there is more
+# below this", and on a file there is not: right does nothing, and the
+# preview is already the whole content.
+SELECT_FILE_BG = "\033[48;5;253m\033[38;5;16m"
+SELECT_FILE_DIM_BG = "\033[48;5;145m\033[38;5;16m"
 RESET = "\033[0m"
 
 
@@ -221,7 +241,10 @@ def _left_cell(entry: Entry, width: int, active: bool, muted: bool = False) -> s
     if active:
         # The bar spans the whole cell, so it has to be built from plain
         # text: nesting colours inside it would end the background early.
-        bar = SELECT_DIM_BG if muted else SELECT_BG
+        if entry.can_descend:
+            bar = SELECT_DIM_BG if muted else SELECT_BG
+        else:
+            bar = SELECT_FILE_DIM_BG if muted else SELECT_FILE_BG
         return bar + f" {name}{detail}".ljust(width) + RESET
 
     body = c("blue", f" {name}") if entry.can_descend else f" {name}"
@@ -274,7 +297,7 @@ def _pane_cell(entry: Entry | None, width: int, active: bool, dim: bool) -> str:
 def _render(parent: list[Entry], parent_cursor: int,
             entries: list[Entry], cursor: int, preview: list[str],
             title: str, crumb: str, prev_lines: int, height: int,
-            width: int, ratio) -> int:
+            width: int, ratio, language: str = "") -> int:
     """Draw three panes, returning how many lines were written.
 
     Parent on the left, the level you are in next to it, and what the
@@ -308,8 +331,13 @@ def _render(parent: list[Entry], parent_cursor: int,
         out.append(f"\x1b[{prev_lines}A")
     out.append("\r\x1b[J")
 
-    out.append(c("bold", truncate(title, width - 1)) + "\r\n")
-    out.append(c("dim", elide(crumb, width - 1)) + "\r\n")
+    # One header line, not two. The title and the path were stacked with
+    # matching indents, which read as a gap above the panes rather than as
+    # a heading. Yazi shows the path alone; this keeps the scope beside it
+    # because the same tree looks different under a different scope.
+    head = c("bold", truncate(title, max(8, width // 3)))
+    trail_text = elide(crumb, max(8, width - visible_len(head) - 4))
+    out.append(f"{head} {c('dim', trail_text)}\r\n")
 
     sep = c("dim", "│")
     for row in range(view):
@@ -333,7 +361,12 @@ def _render(parent: list[Entry], parent_cursor: int,
         # the layout had failed to use it even though the panes were
         # allocated correctly and the dividers were in the right columns.
         text = truncate(preview[row], preview_w) if row < len(preview) else ""
-        right = c("dim", text) + " " * max(0, preview_w - visible_len(text))
+        pad = " " * max(0, preview_w - len(text))
+        # Colour after truncating, never before: the pane cuts to its own
+        # width, and cutting a line that already held escape sequences
+        # would slice one in half and bleed colour across the row.
+        body = highlight(text, language) if language and text else c("dim", text)
+        right = body + pad
         out.append(f"{left} {sep} {mid} {sep} {right}\r\n")
 
     tail = []
@@ -427,14 +460,16 @@ def browse(roots: list[Entry], title: str = "") -> int:
             entries = levels[-1]
             cursor = min(cursors[-1], max(0, len(entries) - 1))
             cursors[-1] = cursor
-            crumb = "  " + (" / ".join(trail) if trail else "top level")
+            crumb = " / ".join(trail) if trail else "top level"
             preview = _preview(entries[cursor], height) if entries else []
+            language = _preview_language(entries[cursor]) if entries else ""
             # levels[-2] is literally where back would take you, so the
             # parent pane needs no separate bookkeeping.
             parent = levels[-2] if len(levels) > 1 else []
             parent_cursor = cursors[-2] if len(cursors) > 1 else 0
             drawn = _render(parent, parent_cursor, entries, cursor, preview,
-                            heading, crumb, drawn, height, width, ratio)
+                            heading, crumb, drawn, height, width, ratio,
+                            language)
 
             # Block on input, but wake often enough that a resize is
             # visible immediately rather than on the next keypress.
@@ -445,7 +480,7 @@ def browse(roots: list[Entry], title: str = "") -> int:
                     height, width = new
                     drawn = _render(parent, parent_cursor, entries, cursor,
                                     preview, heading, crumb, drawn, height,
-                                    width, ratio)
+                                    width, ratio, language)
             key = _read_key(fd)
             if key == "cancel":
                 return 0
