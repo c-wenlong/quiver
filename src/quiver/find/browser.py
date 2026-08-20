@@ -20,14 +20,21 @@ import sys
 from itertools import islice
 from pathlib import Path
 
-from quiver.console import c, elide, terminal_width, truncate, visible_len
+from quiver.console import c, elide, strip_ansi, terminal_width, truncate, visible_len
 from quiver.find.entries import HIDE_DIRS, TEXT_SUFFIXES, Entry
 
 # Past this, reading a file to show a dozen lines costs more than the preview
 # is worth, and a minified bundle or a checkpoint will happily be several MB.
 MAX_PREVIEW_BYTES = 256 * 1024
 
-FOOTER = "  ↑↓ move · → open · ← back · g/G top, bottom · q quit"
+FOOTER = ("  ↑↓ move · → open · ← back · g/G top, bottom · "
+          "[ ] { } resize · q quit")
+
+# Relative widths of parent, current and preview. Yazi's default shape:
+# the parent is only there for orientation, the preview earns the most
+# room because it is what you are actually reading.
+DEFAULT_RATIO = (2, 3, 5)
+MIN_PANE = 10
 
 
 def _supported() -> bool:
@@ -61,6 +68,10 @@ def _read_key(fd: int) -> str:
         b"k": "up", b"j": "down",
         b"l": "open", b"h": "back",
         b"g": "top", b"G": "bottom",
+        # Two dividers, so two pairs. Square brackets sit next to each
+        # other and read as "push this edge left / right".
+        b"[": "wider_parent", b"]": "narrower_parent",
+        b"{": "wider_preview", b"}": "narrower_preview",
     }.get(ch, "")
 
 
@@ -199,60 +210,117 @@ def _left_cell(entry: Entry, width: int, active: bool) -> str:
     return body
 
 
-def _render(entries: list[Entry], cursor: int, preview: list[str], title: str,
-            crumb: str, prev_lines: int, height: int, width: int) -> int:
-    """Draw both panes, returning how many lines were written.
+def _pane_widths(width: int, ratio: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Split the row between parent, current and preview.
 
-    The caller feeds that count back as ``prev_lines`` so the next redraw
-    rewinds by exactly what was drawn. Rows are budgeted one column short of
-    the terminal: a line filling the last column leaves some terminals with a
-    pending wrap, and one stray wrap puts every later rewind in the wrong place.
+    Weights rather than fixed columns, so a resize keeps working when the
+    window changes. Each pane is floored: a pane narrower than MIN_PANE
+    shows nothing useful, and a reader would rather lose the parent than
+    read three columns of ellipsis.
+    """
+    avail = max(3 * MIN_PANE, width - 9)   # pointer, gaps, two separators
+    total = sum(ratio) or 1
+    parent = max(MIN_PANE, avail * ratio[0] // total)
+    current = max(MIN_PANE, avail * ratio[1] // total)
+    preview = max(MIN_PANE, avail - parent - current)
+    # Give back any overshoot from the floors, taking it from the widest.
+    over = parent + current + preview - avail
+    while over > 0:
+        widest = max((parent, "p"), (current, "c"), (preview, "v"))[1]
+        if widest == "p" and parent > MIN_PANE:
+            parent -= 1
+        elif widest == "c" and current > MIN_PANE:
+            current -= 1
+        elif preview > MIN_PANE:
+            preview -= 1
+        else:
+            break
+        over -= 1
+    return parent, current, preview
+
+
+def _pane_cell(entry: Entry | None, width: int, active: bool, dim: bool) -> str:
+    """One row of a list pane, padded to width."""
+    if entry is None:
+        return " " * width
+    cell = _left_cell(entry, width, active)
+    if dim and not active:
+        cell = c("dim", strip_ansi(cell))
+    return cell + " " * max(0, width - visible_len(cell))
+
+
+def _render(parent: list[Entry], parent_cursor: int,
+            entries: list[Entry], cursor: int, preview: list[str],
+            title: str, crumb: str, prev_lines: int, height: int,
+            width: int, ratio) -> int:
+    """Draw three panes, returning how many lines were written.
+
+    Parent on the left, the level you are in next to it, and what the
+    highlighted row contains on the right. The parent pane is what makes
+    left and right feel like movement rather than a jump: you can see
+    where back would take you before you press it.
+
+    The caller feeds the returned count back as ``prev_lines`` so the next
+    redraw rewinds by exactly what was drawn. Rows are budgeted one column
+    short of the terminal: a line filling the last column leaves some
+    terminals with a pending wrap, and one stray wrap puts every later
+    rewind in the wrong place.
     """
     total = len(entries)
-    # The panes share their rows, so the taller one sets the count. Sizing to
-    # the list alone let a two-row level cut a file preview down to two lines.
-    view = min(height, max(total, len(preview), 1))
-    top = 0
-    if total > view:
-        top = max(0, min(cursor - view // 2, total - view))
+    view = min(height, max(total, len(preview), len(parent), 1))
 
-    avail = max(20, width - 7)           # pointer, two gaps, separator, margin
-    left_w = max(20, min(46, avail // 3))
-    right_w = max(0, avail - left_w)
+    def window(n: int, cur: int) -> int:
+        return 0 if n <= view else max(0, min(cur - view // 2, n - view))
+
+    top = window(total, cursor)
+    ptop = window(len(parent), parent_cursor)
+
+    parent_w, current_w, preview_w = _pane_widths(width, ratio)
 
     out = []
     if prev_lines:
-        out.append(f"\x1b[{prev_lines}A")   # back to the top of the widget
-    out.append("\r\x1b[J")                  # and clear everything below it
+        out.append(f"\x1b[{prev_lines}A")
+    out.append("\r\x1b[J")
 
     out.append(c("bold", truncate(title, width - 1)) + "\r\n")
     out.append(c("dim", elide(crumb, width - 1)) + "\r\n")
 
     sep = c("dim", "│")
     for row in range(view):
-        i = top + row
-        pointer = " "
+        i, pi = top + row, ptop + row
+
+        # Parent: dimmed, with the row you came through still marked, so
+        # the eye can find it without it competing with the live cursor.
+        p_entry = parent[pi] if pi < len(parent) else None
+        left = _pane_cell(p_entry, parent_w, pi == parent_cursor, dim=True)
+
         if i < total:
             pointer = c("cyan", ">") if i == cursor else " "
-            left = _left_cell(entries[i], left_w, i == cursor)
+            mid = _pane_cell(entries[i], current_w, i == cursor, dim=False)
         elif not total and not row:
-            left = c("dim", "(empty)".ljust(left_w))
+            pointer = " "
+            mid = c("dim", "(empty)".ljust(current_w))
         else:
-            left = " " * left_w      # a row the preview needs and the list does not
-        # The cells are built to width, but padding by what is actually
-        # visible keeps the separator column straight if any of them is not.
-        left += " " * max(0, left_w - visible_len(left))
-        text = preview[row] if row < len(preview) else ""
-        right = c("dim", truncate(text, right_w)) if text else ""
-        out.append(f" {pointer} {left} {sep} {right}\r\n")
+            pointer = " "
+            mid = " " * current_w
+        mid += " " * max(0, current_w - visible_len(mid))
 
+        text = preview[row] if row < len(preview) else ""
+        right = c("dim", truncate(text, preview_w)) if text else ""
+        out.append(f"{left} {sep} {pointer} {mid} {sep} {right}\r\n")
+
+    tail = []
     if total > view:
-        out.append(c("dim", f"  {top + 1}–{top + view} of {total}") + "\r\n")
-    out.append(c("dim", FOOTER) + "\r\n")
+        tail.append(f"{top + 1}–{top + view} of {total}")
+    if tuple(ratio) != DEFAULT_RATIO:
+        tail.append(f"panes {ratio[0]}:{ratio[1]}:{ratio[2]}")
+    if tail:
+        out.append(c("dim", "  " + "  ·  ".join(tail)) + "\r\n")
+    out.append(c("dim", truncate(FOOTER, width - 1)) + "\r\n")
 
     sys.stdout.write("".join(out))
     sys.stdout.flush()
-    return view + 3 + (1 if total > view else 0)
+    return view + 3 + (1 if tail else 0)
 
 
 def browse(roots: list[Entry], title: str = "") -> int:
@@ -283,6 +351,7 @@ def browse(roots: list[Entry], title: str = "") -> int:
     width = terminal_width()
     heading = title or "browse"
 
+    ratio = list(DEFAULT_RATIO)
     levels: list[list[Entry]] = [list(roots)]
     cursors: list[int] = [0]
     trail: list[str] = []
@@ -299,8 +368,12 @@ def browse(roots: list[Entry], title: str = "") -> int:
             cursors[-1] = cursor
             crumb = "  " + (" / ".join(trail) if trail else "top level")
             preview = _preview(entries[cursor], height) if entries else []
-            drawn = _render(entries, cursor, preview, heading, crumb,
-                            drawn, height, width)
+            # levels[-2] is literally where back would take you, so the
+            # parent pane needs no separate bookkeeping.
+            parent = levels[-2] if len(levels) > 1 else []
+            parent_cursor = cursors[-2] if len(cursors) > 1 else 0
+            drawn = _render(parent, parent_cursor, entries, cursor, preview,
+                            heading, crumb, drawn, height, width, ratio)
 
             key = _read_key(fd)
             if key == "cancel":
@@ -319,6 +392,18 @@ def browse(roots: list[Entry], title: str = "") -> int:
                 cursors[-1] = (cursor - 1) % len(entries)
             elif key == "down":
                 cursors[-1] = (cursor + 1) % len(entries)
+            elif key in ("wider_parent", "narrower_parent",
+                         "wider_preview", "narrower_preview"):
+                # Weights, not columns: one step is a noticeable move at
+                # any window size, and the split survives a resize.
+                if key == "wider_parent":
+                    ratio[0], ratio[1] = ratio[0] + 1, max(1, ratio[1] - 1)
+                elif key == "narrower_parent":
+                    ratio[0], ratio[1] = max(1, ratio[0] - 1), ratio[1] + 1
+                elif key == "wider_preview":
+                    ratio[2], ratio[1] = ratio[2] + 1, max(1, ratio[1] - 1)
+                else:
+                    ratio[2], ratio[1] = max(1, ratio[2] - 1), ratio[1] + 1
             elif key == "top":
                 cursors[-1] = 0
             elif key == "bottom":

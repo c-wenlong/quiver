@@ -169,3 +169,110 @@ class PluginRootsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThreePaneLayoutTest(unittest.TestCase):
+    """Parent, current, preview.
+
+    Two panes lost the sense of where back would take you, so left and
+    right felt like jumps rather than movement. The parent pane is only
+    for orientation, which is why it is dimmed and why it gives up its
+    width first when the window is tight.
+    """
+
+    def _widths(self, width, ratio):
+        from quiver.find.browser import _pane_widths
+
+        return _pane_widths(width, ratio)
+
+    def test_the_three_panes_fit_the_row(self):
+        from quiver.find.browser import MIN_PANE
+
+        for width in (40, 80, 120, 200):
+            p, c_, v = self._widths(width, (2, 3, 5))
+            self.assertLessEqual(p + c_ + v, max(3 * MIN_PANE, width - 9), width)
+
+    def test_no_pane_collapses_to_nothing(self):
+        from quiver.find.browser import MIN_PANE
+
+        for width in (20, 40, 200):
+            for ratio in ((2, 3, 5), (1, 1, 20), (20, 1, 1)):
+                for w in self._widths(width, ratio):
+                    self.assertGreaterEqual(w, MIN_PANE, (width, ratio))
+
+    def test_a_bigger_weight_gets_a_wider_pane(self):
+        narrow = self._widths(200, (1, 3, 5))[0]
+        wide = self._widths(200, (6, 3, 5))[0]
+        self.assertGreater(wide, narrow)
+
+    def test_weights_survive_a_window_resize(self):
+        """Relative widths, not fixed columns, so the split a reader
+        chose still means the same thing in a different window."""
+        small = self._widths(100, (2, 3, 5))
+        large = self._widths(200, (2, 3, 5))
+        self.assertLess(small[2], large[2])
+
+    def test_a_zero_ratio_does_not_divide_by_zero(self):
+        self.assertTrue(all(w > 0 for w in self._widths(120, (0, 0, 0))))
+
+    def test_the_resize_keys_are_bound(self):
+        import os
+
+        from quiver.find.browser import _read_key
+
+        for seq, want in ((b"[", "wider_parent"), (b"]", "narrower_parent"),
+                          (b"{", "wider_preview"), (b"}", "narrower_preview")):
+            r, w = os.pipe()
+            os.write(w, seq)
+            os.close(w)
+            self.assertEqual(_read_key(r), want, seq)
+            os.close(r)
+
+    def test_the_footer_mentions_resizing(self):
+        from quiver.find.browser import FOOTER
+
+        self.assertIn("resize", FOOTER)
+
+
+class PreviewTest(unittest.TestCase):
+    """Arrowing onto a file shows the file, not the next folder."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+
+    def test_a_directory_previews_its_children(self):
+        from quiver.find.browser import _preview
+
+        (self.d / "skills").mkdir()
+        (self.d / "commands").mkdir()
+        lines = _preview(Entry("p", self.d), limit=20)
+        self.assertTrue(any("skills" in ln for ln in lines))
+
+    def test_a_text_file_previews_its_contents(self):
+        from quiver.find.browser import _preview
+
+        f = self.d / "SKILL.md"
+        f.write_text("---\nname: wrangler\n---\n\n# Wrangler\n\nDeploy Workers.\n")
+        lines = _preview(Entry("f", f), limit=20)
+        self.assertTrue(any("Wrangler" in ln for ln in lines),
+                        f"file contents not shown: {lines[:3]}")
+
+    def test_an_oversized_file_is_described_not_dumped(self):
+        from quiver.find.browser import MAX_PREVIEW_BYTES, _preview
+
+        f = self.d / "big.md"
+        f.write_bytes(b"x" * (MAX_PREVIEW_BYTES + 1))
+        lines = _preview(Entry("f", f), limit=20)
+        self.assertLess(len(lines), 20)
+
+    def test_an_unreadable_path_does_not_raise(self):
+        from quiver.find.browser import _preview
+
+        self.assertIsInstance(_preview(Entry("x", Path("/nope/nope")), 10), list)
+
+    def test_a_grouping_row_previews_its_children(self):
+        from quiver.find.browser import _preview
+
+        e = Entry("dv", children=[Entry("cloudflare"), Entry("blaxel")])
+        lines = _preview(e, limit=10)
+        self.assertTrue(any("cloudflare" in ln for ln in lines))

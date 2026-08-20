@@ -640,9 +640,10 @@ def print_find_help() -> None:
   {c('dim', 'you are looking for; swe find mcps answers what the hub holds.')}
 
   {c('bold', 'Browse instead of print')}  {c('cyan', '--interactive')} / {c('cyan', '-i')}
-    Works on {c('cyan', 'amd')}, {c('cyan', 'skills')} and {c('cyan', 'plugins')}. Arrows move and descend,
-    {c('cyan', 'q')} quits. The listing says a plugin has 11 skills; this is how
-    you see which 11, and read them.
+    Works on {c('cyan', 'amd')}, {c('cyan', 'skills')} and {c('cyan', 'plugins')}. Three panes: where you came
+    from, where you are, and what the highlighted row holds. A file shows
+    its contents there rather than a folder listing.
+    {c('cyan', 'arrows')} move and descend  {c('cyan', 'g')}/{c('cyan', 'G')} jump  {c('cyan', '[ ]')} and {c('cyan', '{{ }}')} resize  {c('cyan', 'q')} quits
 
   {c('bold', 'Where it scans')}
     default        the current directory, recursively
