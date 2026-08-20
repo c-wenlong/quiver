@@ -26,13 +26,14 @@ import subprocess
 import sys
 import tty
 import termios
+from datetime import datetime
 from pathlib import Path
 
 from quiver.console import c, cpad, strip_ansi, visible_len
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
-from quiver.paths import CONFIG_DIR, REGISTRY_FILE
+from quiver.paths import CONFIG_DIR, REGISTRY_FILE, MCP_SOURCE_FILE
 from quiver.mcp.formats import (
     McpFormatHandler,
     convert_server_between_formats,
@@ -363,6 +364,51 @@ def _filter_by_patterns(servers: dict, patterns: list[str]) -> tuple[dict, list[
     return selected, unmatched
 
 
+# ── The hub ──────────────────────────────────────────────────────────
+#
+# ~/.quiver/mcp.json is the middleman: `swe mcp discover --apply` pulls from
+# every harness into it, `swe mcp sync quiver <targets>` pushes back out. It
+# is not a harness, so it has no config file of its own to read; it stores
+# canonical shape directly, which is why its format is "standard".
+
+MCP_SOURCE_KEY = "mcpServers"  # mirrors quiver.mcp.discover
+
+HUB_LABEL = "quiver"
+HUB_ALIASES = ("quiver", "hub", "mcp.json", ".")
+
+
+def is_hub(name: str | None) -> bool:
+    return bool(name) and name.lower() in HUB_ALIASES
+
+
+def get_hub_servers() -> dict:
+    """Canonical servers recorded in mcp.json, keyed by name."""
+    data = load_json(MCP_SOURCE_FILE) or {}
+    servers = data.get(MCP_SOURCE_KEY, {})
+    return servers if isinstance(servers, dict) else {}
+
+
+def save_hub_servers(servers: dict) -> None:
+    data = load_json(MCP_SOURCE_FILE) or {}
+    data[MCP_SOURCE_KEY] = servers
+    data["updated"] = datetime.now().isoformat()
+    save_json(MCP_SOURCE_FILE, data)
+
+
+def servers_for_source(name: str) -> dict:
+    """Servers to sync FROM, in that source's own on-disk shape.
+
+    Harnesses return raw config, not canonical: callers convert with
+    ``convert_server_for_target``, and ``--strict`` relies on seeing the
+    unparsed original to detect a lossy conversion. Parsing here would
+    normalise the very thing strict mode is meant to catch.
+
+    The hub is already canonical, and its format is declared "standard", so
+    the same conversion path handles it without a special case.
+    """
+    return get_hub_servers() if is_hub(name) else get_tool_servers(name)
+
+
 def get_tool_servers(tool_name: str) -> dict:
     cfg = get_tool_config(tool_name)
     if not cfg:
@@ -374,6 +420,8 @@ def get_tool_servers(tool_name: str) -> dict:
 
 
 def get_tool_format(tool_name: str) -> str:
+    if is_hub(tool_name):
+        return "standard"
     return get_tool_config(tool_name).get("format", "standard")
 
 
@@ -494,6 +542,8 @@ def resolve_tool_arg(registry: dict, arg: str) -> str | None:
     optimistic ``~/.<tool>/mcp.json`` default. Extras like
     ``claude-desktop`` (not in the registry) are accepted directly.
     """
+    if is_hub(arg):
+        return HUB_LABEL
     resolved = resolve(registry, arg)
     if resolved:
         return resolved
@@ -757,13 +807,24 @@ def cmd_sync(args):
         # have a config file. Naming an unverified target explicitly still
         # works (and creates the file); --all avoids surprising users with
         # 19 new ~/.<tool>/mcp.json files in one shot.
-        candidates = [t for t in _display_tools(mcp_tools) if t != source]
+        candidates = [
+            t for t in _display_tools(mcp_tools) if t != source and not is_hub(t)
+        ]
     else:
         candidates = []
         for a in positional[1:]:
             resolved = resolve_tool_arg(registry, a)
             if not resolved:
                 print(f"Unknown target tool: {a}")
+                return 1
+            if is_hub(resolved):
+                # Data flows harness -> hub via discover, hub -> harness via
+                # sync. Writing tool-shaped configs into the canonical file
+                # would corrupt the one thing everything else reads.
+                print(
+                    f"{HUB_LABEL} is the hub, not a sync target. "
+                    "Use `swe mcp discover --apply` to pull into it."
+                )
                 return 1
             candidates.append(resolved)
 
@@ -776,9 +837,12 @@ def cmd_sync(args):
         print("No valid target tools provided.")
         return 1
 
-    source_servers = get_tool_servers(source)
+    source_servers = servers_for_source(source)
     if not source_servers:
-        print(f"{source} has no MCP servers.")
+        if is_hub(source):
+            print(f"{MCP_SOURCE_FILE} has no servers. Run `swe mcp discover --apply` first.")
+        else:
+            print(f"{source} has no MCP servers.")
         return 0
 
     if only_flag:
@@ -1198,6 +1262,19 @@ MCP_HELP = {
     "sync": f"""\
   {c('cyan', 'swe mcp sync <source> <target...>')}   Copy MCP servers source → target(s)
   {c('cyan', 'swe mcp sync <source> --all')}          Copy MCP servers source → all other MCP tools
+  {c('cyan', 'swe mcp sync quiver <target...>')}      Copy from the hub (~/.quiver/mcp.json)
+  {c('cyan', 'swe mcp sync quiver --all')}            Push the hub out to every MCP tool
+
+{c('bold', 'The hub')}
+  ~/.quiver/mcp.json is the middleman. Everything flows through it:
+
+    harness configs  --( swe mcp discover --apply )-->  mcp.json
+    mcp.json         --( swe mcp sync quiver ... )  -->  harness configs
+
+  It stores canonical shape, so it converts cleanly to any tool format.
+  Names: {c('cyan', 'quiver')}, {c('cyan', 'hub')}, {c('cyan', 'mcp.json')}, {c('cyan', '.')}
+  Source only. Pulling into it is discover's job, so naming it as a
+  target is refused.
 
 {c('bold', 'Flags')}
   --only=a,b,...      Copy only servers matching these names or globs
@@ -1226,6 +1303,8 @@ MCP_HELP = {
   swe mcp sync opencode --all
   swe mcp sync opencode droid
   swe mcp sync opencode hermes      # unverified target → ~/.hermes/mcp.json
+  swe mcp sync quiver --all --only='*__*'              # hub → everything
+  swe mcp sync quiver cursor --only=dv__*              # hub → one tool
   swe mcp sync opencode cursor --only=dv__github,dv__linear
   swe mcp sync opencode cursor --only=dv__*            # one category
   swe mcp sync opencode --all --only='*__*'            # every prefixed server
