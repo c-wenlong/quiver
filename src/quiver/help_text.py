@@ -352,10 +352,12 @@ to use their own login state and environment."""
   {c('cyan', 'swe find')}                  Both trees
   {c('cyan', 'swe find amd')}              AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}           Skills, plugins, and every harness skill root
+  {c('cyan', 'swe find plugins')}          Plugins across all five plugin-capable harnesses
   {c('cyan', 'swe find amd --scope=all')}  Include project and vendored files
 
 {c('bold', 'Scope')}  {c('cyan', '--scope=global|local|all')}, default global
-  {c('cyan', 'global')}   loaded into every harness session
+  {c('cyan', 'global')}   loaded into every harness session (for plugins: installed
+           and enabled; a cached copy with no install record is not)
   {c('cyan', 'local')}    project files only
   {c('cyan', 'all')}      both, plus vendored plugin and extension copies
 
