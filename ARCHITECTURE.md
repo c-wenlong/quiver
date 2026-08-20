@@ -129,7 +129,12 @@ exporting to the environment, because Claude and Cursor launch from the Dock
 and never read a shell profile.
 
 Servers are namespaced by function: `rf` reference, `pd` productivity,
-`dv` development, `so` social, `sr` search.
+`dv` development, `so` social, `sr` search. `swe find mcps` shows what the
+hub holds against what each harness actually has.
+
+One server may appear as both a local and a remote entry, since those are
+two ways to reach it. Two locals, or two remotes, under different names
+are the same thing filed twice, and are reported as duplicates.
 
 ## Layering rules
 
