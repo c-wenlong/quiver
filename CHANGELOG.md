@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2026-08-20
+
+### Fixed
+
+- **v0.2.8 could not start on Python 3.10 or 3.11.** `swe find`'s summary line
+  used a nested f-string with implicit concatenation inside a replacement
+  field, which is PEP 701 and valid only on 3.12+. It parsed fine locally and
+  raised `SyntaxError` on import for anyone at the declared floor, taking the
+  whole CLI down. Anyone on v0.2.8 should upgrade.
+
+### Added
+
+- **A syntax-floor test.** Compiles every file in `src/` with an interpreter at
+  or below `requires-python`, so this class of bug fails locally instead of in
+  the release. Two earlier attempts at this guard silently passed:
+  `ast.parse(feature_version=...)` accepts the syntax even at `(3, 8)`, and
+  `py_compile` with `cfile='/dev/null'` raises `FileExistsError` before it
+  reaches the parser. It uses the builtin `compile()` now, and is verified
+  against the actual v0.2.8 defect.
+
 ## [0.2.8] - 2026-08-20
 
 ### Added
