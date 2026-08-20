@@ -5,9 +5,11 @@ from datetime import datetime
 
 from quiver.mcp.cli import (
     get_mcp_tools,
+    get_tool_config,
     get_tool_servers_canonical,
     load_json,
     load_registry,
+    normalize_server,
     save_json,
 )
 from quiver.mcp.secrets import redact as redact_secrets
@@ -37,8 +39,64 @@ def _load_source_servers() -> dict:
     return {k: v for k, v in servers.items() if isinstance(v, dict)}
 
 
+def _registered_paths(mcp_tools) -> set:
+    """Resolved config paths quiver already reads, to skip on the disk pass."""
+    from pathlib import Path
+
+    out = set()
+    for tool in mcp_tools:
+        cfg = get_tool_config(tool) or {}
+        path = cfg.get("path")
+        if not path:
+            continue
+        try:
+            out.add(Path(str(path)).expanduser().resolve())
+        except OSError:
+            continue
+    return out
+
+
+def _scanned_servers(mcp_tools) -> dict:
+    """Servers in MCP configs on disk that no registered path covers.
+
+    The registered list is what quiver was told about, so on its own it
+    reports a clean bill of health for anything nobody registered. Here
+    that was four config files holding three unknown servers, including a
+    whole harness (LM Studio) quiver had no entry for.
+
+    Vendored configs are excluded: an editor extension shipping its own
+    server is not something the hub should adopt.
+    """
+    from quiver.find.mcps import scan_configs
+
+    known = _registered_paths(mcp_tools)
+    out: dict[str, dict] = {}
+    for cfg in scan_configs(scope="global"):
+        try:
+            if cfg.path.resolve() in known:
+                continue
+        except OSError:
+            continue
+        if cfg.harness in ("quiver",):
+            continue
+        # Scanned entries are raw, so they take the same normalise and
+        # redact path as registered ones. Skipping it would write literal
+        # credentials into the hub.
+        for name, raw in cfg.servers.items():
+            if not isinstance(raw, dict):
+                continue
+            out.setdefault(name, {"server": normalize_server(raw),
+                                  "tool": cfg.harness})
+    return out
+
+
 def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]:
-    """Compare every harness config against the hub at ~/.quiver/mcp.json."""
+    """Compare every MCP config against the hub at ~/.quiver/mcp.json.
+
+    Reads both the config paths quiver has registered and the ones found by
+    scanning the harness directories, because a server in a config nobody
+    registered is exactly the one worth telling you about.
+    """
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
     source = _load_source_servers()
@@ -55,6 +113,14 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
                 {"tools": set(), "server": server, "source_tool": tool},
             )
             entry["tools"].add(tool)
+
+    for name, meta in sorted(_scanned_servers(mcp_tools).items()):
+        server = redact_secrets({name: meta["server"]})[name]
+        entry = by_name.setdefault(
+            name,
+            {"tools": set(), "server": server, "source_tool": meta["tool"]},
+        )
+        entry["tools"].add(meta["tool"])
 
     findings: list[McpFinding] = []
     for name, meta in sorted(by_name.items()):

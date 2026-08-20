@@ -165,6 +165,10 @@ class ThreeWayMergeTest(unittest.TestCase):
             ("load_registry", {"return_value": {}}),
             ("get_tool_servers_canonical", {"return_value": self.HARNESS}),
             ("redact_secrets", {"side_effect": lambda x: x}),
+            # discover also walks the disk now. These tests are about the
+            # three-way merge, so the walk is stubbed: leaving it live made
+            # the result depend on what happens to be installed.
+            ("_scanned_servers", {"return_value": {}}),
         ):
             stack.enter_context(patch.object(D, target, **kwargs))
         return D, path
@@ -255,3 +259,173 @@ class ThreeWayMergeTest(unittest.TestCase):
             res = D.apply_mcp_findings(D.discover_mcp_servers(include_in_source=True))
             self.assertFalse(res.wrote)
             self.assertEqual(path.read_text(), before)
+
+
+class DiscoverReadsTheDiskTest(unittest.TestCase):
+    """discover enumerated only the config paths quiver had registered.
+
+    That is a clean bill of health for anything nobody registered, which is
+    exactly where an unmanaged server hides. Here it was four config files
+    holding three unknown servers, including a whole harness (LM Studio)
+    with no registry entry at all.
+    """
+
+    def _run(self, stack, scanned, hub, harness=None):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from quiver.mcp import discover as D
+
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
+        path = Path(tmp) / "mcp.json"
+        path.write_text(json.dumps({"mcpServers": hub}))
+        for target, kwargs in (
+            ("MCP_SOURCE_FILE", {"new": path}),
+            ("get_mcp_tools", {"return_value": ["claude"]}),
+            ("load_registry", {"return_value": {}}),
+            ("get_tool_servers_canonical", {"return_value": harness or {}}),
+            ("redact_secrets", {"side_effect": lambda x: x}),
+            ("_scanned_servers", {"return_value": scanned}),
+        ):
+            stack.enter_context(patch.object(D, target, **kwargs))
+        return D.discover_mcp_servers(include_in_source=True)
+
+    def test_a_scanned_server_absent_from_the_hub_is_reported_new(self):
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            found = self._run(
+                stack,
+                scanned={"exa": {"server": {"url": "https://x"}, "tool": "lmstudio"}},
+                hub={},
+            )
+        self.assertEqual([(f.name, f.status) for f in found], [("exa", "new")])
+
+    def test_it_names_the_harness_the_config_belonged_to(self):
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            found = self._run(
+                stack,
+                scanned={"exa": {"server": {"url": "https://x"}, "tool": "lmstudio"}},
+                hub={},
+            )
+        self.assertEqual(found[0].tools, ("lmstudio",))
+        self.assertEqual(found[0].source_tool, "lmstudio")
+
+    def test_a_scanned_server_already_in_the_hub_is_not_new(self):
+        import contextlib
+
+        server = {"url": "https://x"}
+        with contextlib.ExitStack() as stack:
+            found = self._run(
+                stack,
+                scanned={"exa": {"server": dict(server), "tool": "lmstudio"}},
+                hub={"exa": server},
+            )
+        self.assertEqual(found[0].status, "in_source")
+
+    def test_a_registered_config_wins_over_a_scanned_one(self):
+        """The registered read is canonicalised through the tool's format
+        handler, so it is the better copy when both see a server."""
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            found = self._run(
+                stack,
+                scanned={"dup": {"server": {"command": "scanned"}, "tool": "other"}},
+                hub={},
+                harness={"dup": {"command": "registered"}},
+            )
+        entry = next(f for f in found if f.name == "dup")
+        self.assertEqual(entry.server["command"], "registered")
+        self.assertIn("other", entry.tools)
+
+    def test_a_scanned_server_no_longer_counts_as_orphaned(self):
+        """An orphan is a hub server no config declares. One found only by
+        the scan is still declared, so reporting it as orphaned would
+        invite a --prune that deletes a live server."""
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            found = self._run(
+                stack,
+                scanned={"only_scanned": {"server": {"command": "x"}, "tool": "t"}},
+                hub={"only_scanned": {"command": "x"}},
+            )
+        self.assertNotIn("orphaned", [f.status for f in found])
+
+
+class ScannedServersAreRedactedTest(unittest.TestCase):
+    """Scanned entries are raw config, so they take the same redact path.
+
+    Skipping it would write live credentials into a versioned file.
+    """
+
+    def test_a_literal_credential_is_swapped_for_a_reference(self):
+        import contextlib
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from quiver.mcp import discover as D
+
+        with contextlib.ExitStack() as stack:
+            tmp = stack.enter_context(tempfile.TemporaryDirectory())
+            path = Path(tmp) / "mcp.json"
+            path.write_text(json.dumps({"mcpServers": {}}))
+            for target, kwargs in (
+                ("MCP_SOURCE_FILE", {"new": path}),
+                ("get_mcp_tools", {"return_value": []}),
+                ("load_registry", {"return_value": {}}),
+                ("_scanned_servers", {"return_value": {
+                    "s": {"server": {"url": "https://x",
+                                     "headers": {"Authorization": "sk-live-SECRET"}},
+                          "tool": "t"}}}),
+            ):
+                stack.enter_context(patch.object(D, target, **kwargs))
+            stack.enter_context(patch(
+                "quiver.mcp.secrets.load_secrets",
+                return_value={"MY_KEY": "sk-live-SECRET"}))
+            found = D.discover_mcp_servers()
+
+        blob = json.dumps(found[0].server)
+        self.assertNotIn("sk-live-SECRET", blob, "credential would reach the hub")
+        self.assertIn("${MY_KEY}", blob)
+
+
+class VersionPinnedTest(unittest.TestCase):
+    """A config can sit somewhere ordinary while launching from a versioned
+    extension directory, which the next upgrade deletes."""
+
+    def test_a_versioned_extension_path_is_flagged(self):
+        from quiver.find.mcps import version_pinned
+
+        server = {"command": "node",
+                  "args": ["/h/.ide/extensions/vendor.thing-0.7.2/cli/bundle.js"]}
+        self.assertTrue(version_pinned(server))
+
+    def test_an_ordinary_command_is_not_flagged(self):
+        from quiver.find.mcps import version_pinned
+
+        self.assertEqual(version_pinned({"command": "npx", "args": ["-y", "pkg"]}), "")
+
+    def test_a_remote_server_is_not_flagged(self):
+        from quiver.find.mcps import version_pinned
+
+        self.assertEqual(version_pinned({"url": "https://x/mcp"}), "")
+
+    def test_a_version_outside_a_vendored_directory_is_not_flagged(self):
+        from quiver.find.mcps import version_pinned
+
+        self.assertEqual(
+            version_pinned({"command": "/opt/tool-1.2.3/bin/run"}), "")
+
+    def test_a_malformed_entry_does_not_raise(self):
+        from quiver.find.mcps import version_pinned
+
+        self.assertEqual(version_pinned(None), "")
+        self.assertEqual(version_pinned({"args": [None, 3]}), "")

@@ -8,6 +8,7 @@ harnesses are still empty.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -304,3 +305,26 @@ def unmanaged(home: Path | None = None, hub: dict | None = None,
             if name not in hub_names:
                 out.setdefault(name, []).append(cfg)
     return out
+
+
+# extensions/<name>-1.2.3/ — a path carrying a version that an upgrade will
+# change out from under whatever recorded it.
+_VERSIONED_PATH = re.compile(r"[-/][0-9]+\.[0-9]+\.[0-9]+")
+
+
+def version_pinned(server: dict) -> str:
+    """The version-pinned path a server launches from, or "".
+
+    A config can sit in a perfectly ordinary place while launching a binary
+    from inside a versioned extension directory. Adopting one of those into
+    the hub records a path that stops existing at the next upgrade, so it is
+    worth saying out loud before it is copied anywhere.
+    """
+    if not isinstance(server, dict):
+        return ""
+    for value in [server.get("command"), *(server.get("args") or [])]:
+        if isinstance(value, str) and _VERSIONED_PATH.search(value):
+            for marker in VENDORED_MARKERS:
+                if f"/{marker}/" in value:
+                    return value
+    return ""

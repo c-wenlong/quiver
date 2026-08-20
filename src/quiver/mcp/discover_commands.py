@@ -39,9 +39,35 @@ def _print_help():
   {c('cyan', 'swe mcp discover --all')}        Include servers already in source-of-truth
   {c('cyan', 'swe mcp discover --prune')}      Also remove hub servers no harness configures
 
+{c('bold', 'Where it looks')}
+  Both the configs quiver has registered and the harness directories it
+  scans for ones it has not, since a server in an unregistered config is
+  the one worth telling you about. Vendored configs (editor extensions)
+  are skipped.
+
 {c('bold', 'Source of truth')}  {MCP_SOURCE_FILE}
 """
     )
+
+
+def _warn_version_pinned(findings) -> None:
+    """Name any discovery that launches from a versioned directory.
+
+    Adopting one records a path the next extension upgrade deletes, so the
+    hub would keep a server that no longer starts.
+    """
+    from quiver.find.mcps import version_pinned
+
+    pinned = [(f.name, version_pinned(f.server))
+              for f in findings if f.status == "new"]
+    pinned = [(n, path) for n, path in pinned if path]
+    if not pinned:
+        return
+    print(c("yellow", "  Launches from a versioned directory, so the path "
+                      "breaks on upgrade:"))
+    for name, path in pinned:
+        print(f"    {c('yellow', name)}  {c('dim', path)}")
+    print()
 
 
 def cmd_discover(args):
@@ -87,6 +113,7 @@ def cmd_discover(args):
                     f"{stat:<{w_stat + 9}} {c('dim', summary)}"
                 )
             print()
+            _warn_version_pinned(findings)
             print(c("dim", "  dry-run  ·  swe mcp discover --apply  │  swe setup --apply\n"))
 
     if opts["apply"]:
