@@ -151,3 +151,85 @@ class ScopeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarketplaceGroupingTest(unittest.TestCase):
+    """Plugins group by marketplace, mirroring the on-disk layout.
+
+    ~/.quiver/plugins/dv/cloudflare, and claude's cache mirrors it at
+    ~/.claude/plugins/cache/dv/cloudflare/0.1.0.
+    """
+
+    def _render(self, home: Path, scope="all"):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        from quiver.find import commands as fc
+
+        with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                fc.cmd_find_plugins([], False, scope)
+        import re
+        return re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+
+    def test_marketplaces_appear_as_directory_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(
+                tmp, enabled={"a@dv": True, "b@rf": True},
+                installs={"a@dv": [{"version": "1", "installPath": tmp + "/a"}],
+                          "b@rf": [{"version": "1", "installPath": tmp + "/b"}]})
+            out = self._render(home)
+            self.assertIn("dv/", out)
+            self.assertIn("rf/", out)
+
+    def test_plugin_rows_drop_the_marketplace_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(
+                tmp, enabled={"cloudflare@dv": True},
+                installs={"cloudflare@dv": [{"version": "1", "installPath": tmp + "/c"}]})
+            out = self._render(home)
+            # The name sits under its marketplace row, so "@dv" would be noise.
+            self.assertIn("cloudflare", out)
+            self.assertNotIn("cloudflare@dv", out)
+
+    def test_two_marketplaces_are_not_merged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(
+                tmp, enabled={"x@dv": True, "x@rf": True},
+                installs={"x@dv": [{"version": "1", "installPath": tmp + "/1"}],
+                          "x@rf": [{"version": "2", "installPath": tmp + "/2"}]})
+            out = self._render(home)
+            self.assertEqual(out.count("dv/"), 1)
+            self.assertEqual(out.count("rf/"), 1)
+
+    def test_summary_counts_marketplaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(
+                tmp, enabled={"a@dv": True, "b@pd": True},
+                installs={"a@dv": [{"version": "1", "installPath": tmp + "/a"}],
+                          "b@pd": [{"version": "1", "installPath": tmp + "/b"}]})
+            self.assertIn("2 marketplaces", self._render(home))
+
+    def test_hashed_marketplace_dirs_resolve_to_their_real_name(self):
+        # grok names marketplace directories by content hash; each carries a
+        # marketplace.json with the name you would actually recognise.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cache = home / ".grok" / "marketplace-cache" / "783232b622f8182e"
+            (cache / ".claude-plugin").mkdir(parents=True)
+            (cache / ".claude-plugin" / "marketplace.json").write_text(
+                json.dumps({"name": "claude-plugins-official"}))
+            _plugin(cache / "plugins" / "demo", "demo", skills=("s",))
+            got = discover_plugins(home)
+            self.assertEqual(len(got), 1)
+            self.assertEqual(got[0].marketplace, "claude-plugins-official")
+
+    def test_an_unhashed_marketplace_keeps_its_directory_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cache = home / ".cursor" / "plugins" / "cache" / "cursor-public"
+            _plugin(cache / "slack", "slack", skills=("s",))
+            got = discover_plugins(home)
+            self.assertEqual(got[0].marketplace, "cursor-public")

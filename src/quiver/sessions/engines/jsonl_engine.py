@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from quiver.sessions import failures
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -73,7 +75,10 @@ def parse_jsonl_projects(config: JsonlParserConfig) -> list[Session]:
     if config.custom:
         try:
             return config.custom()
-        except Exception:
+        except Exception as exc:
+            # Still caught: one broken harness must not take down the rest.
+            # Recorded so it shows up as an error rather than as no history.
+            failures.record(config.tool_name, exc)
             return []
 
     base = expand_path(config.base_dir)

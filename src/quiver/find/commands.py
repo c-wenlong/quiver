@@ -325,7 +325,12 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
 
 
 def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") -> int:
-    """Plugins across every harness that has a plugin system."""
+    """Plugins across every harness that has a plugin system.
+
+    Nested harness -> marketplace -> plugin, because that is the directory
+    layout on disk: ~/.quiver/plugins/dv/cloudflare, and claude's cache
+    mirrors it at ~/.claude/plugins/cache/dv/cloudflare/0.1.0.
+    """
     home = Path.home()
     plugins = discover_plugins(home)
     shown, hidden = filter_plugins(plugins, scope)
@@ -338,36 +343,43 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") 
         print(f"  {c('dim', 'none')}\n")
         return 0
 
-    by_harness: dict = {}
+    tree: dict = {}
     for p in shown:
-        by_harness.setdefault(p.harness, []).append(p)
+        tree.setdefault(p.harness, {}).setdefault(p.marketplace or "(none)", []).append(p)
 
     totals: dict = {}
-    for harness in sorted(by_harness):
-        group = sorted(by_harness[harness], key=lambda p: p.ref)
+    for harness in sorted(tree):
+        markets = tree[harness]
         # cursor and grok expose no install record, so say so once per harness
         # rather than implying every cached copy is active.
-        unknown = all(p.enabled is None for p in group)
+        unknown = all(p.enabled is None for m in markets.values() for p in m)
         note = c("dim", "  (cached; no install record)") if unknown else ""
         print(f"  {c('bold', harness)}{note}")
-        # Sized per harness: codex refs reach 30 characters and its versions
-        # are build hashes, which would pad claude's short rows out to match.
-        ref_w = min(max(len(p.ref) for p in group) + 2, 40)
-        ver_w = min(max(len(p.version or "-") for p in group) + 2, 16)
-        for i, p in enumerate(group):
-            branch = TREE_END if i == len(group) - 1 else TREE_MID
-            state = ("enabled" if p.enabled else "disabled") if p.enabled is not None else "cached"
-            colour = {"enabled": "green", "disabled": "yellow", "cached": "dim"}[state]
-            parts = ", ".join(f"{n} {k}" for k, n in sorted(p.components.items()))
-            for k, n in p.components.items():
-                totals[k] = totals.get(k, 0) + n
-            print(f"  {c('dim', branch)}"
-                  f"{c(colour, _elide(p.ref, ref_w - 1).ljust(ref_w))}"
-                  f"{c('dim', _elide(p.version or '-', ver_w - 1).ljust(ver_w))}"
-                  f"{c(colour, state.ljust(9))}{c('dim', parts)}")
+
+        every = [p for m in markets.values() for p in m]
+        name_w = min(max(len(p.name) for p in every) + 2, 34)
+        ver_w = min(max(len(p.version or "-") for p in every) + 2, 16)
+
+        for mi, market in enumerate(sorted(markets)):
+            m_last = mi == len(markets) - 1
+            print(f"  {c('dim', TREE_END if m_last else TREE_MID)}{c('cyan', market + '/')}")
+            bar = "   " if m_last else TREE_BAR
+            group = sorted(markets[market], key=lambda p: p.name)
+            for i, p in enumerate(group):
+                branch = TREE_END if i == len(group) - 1 else TREE_MID
+                state = ("enabled" if p.enabled else "disabled") if p.enabled is not None else "cached"
+                colour = {"enabled": "green", "disabled": "yellow", "cached": "dim"}[state]
+                parts = ", ".join(f"{n} {k}" for k, n in sorted(p.components.items()))
+                for k, n in p.components.items():
+                    totals[k] = totals.get(k, 0) + n
+                print(f"  {c('dim', bar + branch)}"
+                      f"{c(colour, _elide(p.name, name_w - 1).ljust(name_w))}"
+                      f"{c('dim', _elide(p.version or '-', ver_w - 1).ljust(ver_w))}"
+                      f"{c(colour, state.ljust(9))}{c('dim', parts)}")
         print()
 
-    summary = f"{len(shown)} plugins across {len(by_harness)} harnesses"
+    n_markets = sum(len(m) for m in tree.values())
+    summary = f"{len(shown)} plugins · {n_markets} marketplaces · {len(tree)} harnesses"
     if totals:
         summary += "  ·  " + ", ".join(f"{n} {k}" for k, n in sorted(totals.items()))
     print(f"  {c('dim', summary)}")

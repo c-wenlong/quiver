@@ -5,6 +5,7 @@ import os
 import time
 
 from quiver.paths import SESSION_CACHE_FILE
+from quiver.sessions import failures
 from quiver.sessions.models import Session
 from quiver.sessions.parsers import (
     parse_amp,
@@ -114,11 +115,20 @@ def _save_cached_sessions(sessions: list[Session]) -> None:
         pass
 
 
+def _run_parser(name: str, parser) -> list[Session]:
+    """Run one parser, recording rather than propagating a failure."""
+    try:
+        return parser()
+    except Exception as exc:
+        failures.record(name, exc)
+        return []
+
+
 def _run_all_parsers() -> list[Session]:
     """Execute all registered parsers and return raw session list."""
     sessions: list[Session] = []
-    for _name, parser, _keys in PARSER_REGISTRY:
-        sessions.extend(parser())
+    for name, parser, _keys in PARSER_REGISTRY:
+        sessions.extend(_run_parser(name, parser))
     return sessions
 
 
@@ -153,9 +163,9 @@ def get_all_sessions(limit=10, agent=None, cwd=None, use_cache=False) -> list[Se
     else:
         # No cache: only run parsers matching the agent filter
         sessions: list[Session] = []
-        for _name, parser, keys in PARSER_REGISTRY:
+        for name, parser, keys in PARSER_REGISTRY:
             if _agent_matches(agent, keys):
-                sessions.extend(parser())
+                sessions.extend(_run_parser(name, parser))
 
     if cwd:
         target_path = os.path.realpath(cwd)
