@@ -13,6 +13,7 @@ from quiver.sessions.engines.common import (
     open_sqlite_ro,
     parse_iso_ts,
 )
+from quiver.sessions import failures
 from quiver.sessions.models import Session
 
 
@@ -84,8 +85,10 @@ def parse_sqlite(config: SqliteParserConfig) -> list[Session]:
             if config.require_path and not fields.get("path"):
                 continue
             sessions.append(Session(**fields))
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught, but a failure here means the whole tool reports no
+        # sessions, which is indistinguishable from never having used it.
+        failures.record(config.tool_name, exc)
     finally:
         try:
             conn.close()
