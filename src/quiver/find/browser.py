@@ -30,10 +30,12 @@ MAX_PREVIEW_BYTES = 256 * 1024
 FOOTER = ("  ↑↓ move · → open · ← back · g/G top, bottom · "
           "[ ] { } resize · q quit")
 
-# Relative widths of parent, current and preview. Yazi's default shape:
-# the parent is only there for orientation, the preview earns the most
-# room because it is what you are actually reading.
-DEFAULT_RATIO = (2, 3, 5)
+# Relative widths of parent, current and preview: 15%, 45% and 40%.
+# Kept as twentieths rather than percentages so one resize step is a
+# visible 5% rather than a barely perceptible 1%. The parent only needs
+# enough width to recognise where back leads, which leaves the two panes
+# you are reading with the rest.
+DEFAULT_RATIO = (3, 9, 8)
 MIN_PANE = 10
 
 
