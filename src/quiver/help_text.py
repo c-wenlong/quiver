@@ -19,7 +19,7 @@ HELP = {
   {c('cyan', 'swe list legend')}             Explain the AGENTS.MD / SKILLS glyphs
 
   Favourited harnesses are pinned to the top with a neon border ({c('neon_pink', '★')}).
-  Use {c('cyan', 'swe star <name>')} to favourite / unfavourite.
+  Use {c('cyan', 'swe hs star <name>')} to favourite, {c('cyan', 'swe hs archive <name>')} to shelve.
 
 {c('bold', 'Flags')}
   {c('cyan', '--usage')} / {c('cyan', '-u')}            Show usage. This is the only part of swe list
@@ -41,16 +41,16 @@ HELP = {
     "star": (
         "Toggle a harness favourite (pins it to the top of swe list)",
         f"""\
-  {c('cyan', 'swe star')}                     List starred harnesses
-  {c('cyan', 'swe star <name|alias>')}        Toggle star (pin + neon highlight)
-  {c('cyan', 'swe star clear')}               Clear all stars
+  {c('cyan', 'swe hs star')}                   List starred harnesses
+  {c('cyan', 'swe hs star <name|alias>')}      Toggle star (pin + neon highlight)
+  {c('cyan', 'swe hs star clear')}             Clear all stars
 
   Stars are stored in {c('dim', '~/.quiver/config/stars.json')} (separate from tools.json).
   Star again to remove it. Starred harnesses sort above the rest in {c('cyan', 'swe list')}.
 
 {c('bold', 'Examples')}
-  swe star droid
-  swe star df
+  swe hs star droid
+  swe hs star df
   swe favourite opencode"""
     ),
     "info": (
@@ -449,7 +449,6 @@ COMMAND_CATEGORIES = [
         ("add",     None),
         ("edit",    None),
         ("remove",  "rm"),
-        ("star",    "favourite"),
         ("check",   None),
         ("harness", "discover"),
     ]),

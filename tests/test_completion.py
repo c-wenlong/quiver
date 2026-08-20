@@ -28,9 +28,10 @@ class CompletionEngineTest(unittest.TestCase):
         comps = get_completions(["s"])
         names = [c for c, _ in comps]
         self.assertIn("session", names)
-        self.assertIn("star", names)
         self.assertIn("skills", names)
         self.assertNotIn("list", names)
+        # star moved under `swe harness` / `swe hs`.
+        self.assertNotIn("star", names)
 
     def test_use_returns_tool_completions(self):
         fake_registry = {
@@ -47,14 +48,14 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertIn("cc", names)
         self.assertIn("cx", names)
 
-    def test_star_returns_tool_completions(self):
+    def test_hs_star_returns_tool_completions(self):
         fake_registry = {
             "claude": {"description": "Claude Code", "aliases": ["cc"]},
         }
         with patch("quiver.completion.load_registry", return_value=fake_registry):
             from quiver.completion import get_completions
 
-            comps = get_completions(["star", ""])
+            comps = get_completions(["hs", "star", ""])
         names = [c for c, _ in comps]
         self.assertIn("claude", names)
         self.assertIn("cc", names)

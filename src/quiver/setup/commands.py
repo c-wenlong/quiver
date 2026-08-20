@@ -14,14 +14,23 @@ from quiver.setup.wizard import SECTION_ALIASES, run_setup_wizard
 
 
 def cmd_harness(args):
-    if not args or args[0] in ("-h", "--help"):
+    """Registry-facing verbs for one harness, grouped under a single command.
+
+    star and archive were top-level, which put two more names in a first
+    layer that was already long. They act on a harness's standing in the
+    registry, so they live with the rest of that.
+    """
+    if not args or args[0] in ("-h", "--help", "help"):
         print(
             f"""
-  {c('bold', 'swe harness')} — Harness registry utilities
+  {c('bold', 'swe harness')} — registry utilities  {c('dim', '(alias: swe hs)')}
 
+  {c('cyan', 'swe harness star <name>')}        Toggle a favourite (pins it to the top)
+  {c('cyan', 'swe harness archive <name> [why]')}  Shelve one you have ruled out
+  {c('cyan', 'swe harness archive')}            List what you archived, and why
   {c('cyan', 'swe harness discover [flags]')}   Scan PATH for AI coding CLIs
 
-  Run {c('cyan', 'swe harness discover --help')} for flags.
+  {c('dim', 'Archived harnesses drop out of swe list; --scope=all brings them back.')}
 """
         )
         return 0
@@ -30,8 +39,18 @@ def cmd_harness(args):
     if sub == "discover":
         result = cmd_discover(rest)
         return result if isinstance(result, int) else 0
+    if sub in ("star", "favourite", "favorite"):
+        from quiver.harness.commands import cmd_star
+
+        result = cmd_star(rest)
+        return result if isinstance(result, int) else 0
+    if sub in ("archive", "shelve"):
+        from quiver.harness.commands import cmd_archive
+
+        result = cmd_archive(rest)
+        return result if isinstance(result, int) else 0
     print(c("red", f"  Unknown harness subcommand: '{sub}'"))
-    print(c("dim", "  Try: swe harness discover"))
+    print(c("dim", "  Try: swe harness star | archive | discover"))
     return 1
 
 
