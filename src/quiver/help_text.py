@@ -345,10 +345,11 @@ to use their own login state and environment."""
     "find": (
         "Show where shared assets live and what links to them",
         f"""\
-  {c('cyan', 'swe find')}                  Both trees
+  {c('cyan', 'swe find')}                  Every tree
   {c('cyan', 'swe find amd')}              AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}           Skills, plugins, and every harness skill root
   {c('cyan', 'swe find plugins')}          Plugins across all five plugin-capable harnesses
+  {c('cyan', 'swe find mcps')}             MCP servers in the hub, and which harnesses have them
   {c('cyan', 'swe find amd --scope=all')}  Include project and vendored files
 
 {c('bold', 'Scope')}  {c('cyan', '--scope=global|local|all')}, default global

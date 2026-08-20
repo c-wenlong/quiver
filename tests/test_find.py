@@ -162,10 +162,18 @@ class CmdFindTest(unittest.TestCase):
             self.assertIn("Skills", out)
 
     def test_unknown_topic_is_rejected(self):
+        # "mcp" used to be the example here; it is a real topic now.
         with tempfile.TemporaryDirectory() as tmp:
-            code, out = self._run(_home(tmp), ["mcp"])
+            code, out = self._run(_home(tmp), ["nonsense"])
             self.assertEqual(code, 1)
             self.assertIn("Unknown topic", out)
+
+    def test_mcp_is_a_recognised_topic(self):
+        for alias in ("mcp", "mcps", "servers"):
+            with tempfile.TemporaryDirectory() as tmp:
+                code, out = self._run(_home(tmp), [alias])
+                self.assertEqual(code, 0, alias)
+                self.assertNotIn("Unknown topic", out)
 
     def test_help_exits_clean(self):
         with tempfile.TemporaryDirectory() as tmp:

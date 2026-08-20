@@ -338,6 +338,76 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
     return 0
 
 
+PREFIX_MEANING = {
+    "dv": "development",
+    "pd": "productivity",
+    "rf": "reference",
+    "so": "social",
+    "sr": "search",
+}
+
+
+def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> int:
+    """Where MCP servers live, and how far the hub has reached.
+
+    `swe mcp list` gives the tool-by-server matrix, which is the right
+    shape once you know what you are looking for. This answers the prior
+    question: what the hub holds, and which harnesses are behind it.
+    """
+    from quiver.find.mcps import PREFIX_UNFILED, hub_view, tool_views
+
+    home = Path.home()
+    hub = hub_view()
+    total = len(hub.servers)
+
+    print(f"\n{c('bold', 'MCP servers')}"
+          f"  {c('dim', '--scope=' + scope)}\n")
+
+    if not total:
+        print(f"  {c('dim', 'no hub yet — swe mcp discover --apply')}\n")
+        return 0
+
+    print(f"  {c('green', '~/.quiver/mcp.json')}  {c('dim', f'{total} servers')}")
+    for prefix in sorted(hub.by_prefix, key=lambda p: (p == PREFIX_UNFILED, p)):
+        names = hub.by_prefix[prefix]
+        if prefix:
+            head = c("cyan", f"{prefix}@".ljust(8))
+            note = c("dim", PREFIX_MEANING.get(prefix, ""))
+        else:
+            head = c("yellow", "(none)".ljust(8))
+            note = c("dim", "no prefix, outside the taxonomy")
+        print(f"    {head}{note}")
+        _skill_columns([n.split("__")[-1] for n in names], indent="      ",
+                       cols=4, width=26)
+
+    views = tool_views(hub.servers)
+    if views:
+        print(f"\n  {c('bold', 'Harness configs')}")
+        for i, t in enumerate(views):
+            got = len(t.present)
+            colour = "green" if got == total else "yellow" if got else "red"
+            bar = f"{got}/{total}"
+            print(f"  {c('dim', _branch(i, len(views)))}"
+                  f"{c(colour, t.name.ljust(18))}"
+                  f"{c(colour, bar.ljust(9))}"
+                  f"{c('dim', _short(Path(t.path), home) if t.path else '')}")
+            if t.only_here:
+                print(f"      {c('yellow', 'only here: ')}"
+                      f"{c('dim', ', '.join(sorted(t.only_here)[:6]))}")
+
+    if hub.duplicates:
+        print(f"\n  {c('bold', 'Same server under two names')}")
+        print(f"  {c('dim', 'one local and one remote copy is fine; two of a kind is not')}")
+        for pair in hub.duplicates:
+            print(f"    {c('yellow', ' == '.join(pair))}")
+
+    behind = [t for t in views if len(t.present) < total]
+    summary = (f"{total} servers · {len(views)} configured tools · "
+               f"{len(behind)} behind the hub")
+    print(f"\n  {c('dim', summary)}\n")
+    return 0
+
+
 def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") -> int:
     """Plugins across every harness that has a plugin system.
 
@@ -431,10 +501,13 @@ def cmd_find(args) -> int:
         return cmd_find_skills(args[1:], root_flag, scope)
     if topic in ("plugins", "plugin"):
         return cmd_find_plugins(args[1:], root_flag, scope)
+    if topic in ("mcp", "mcps", "servers"):
+        return cmd_find_mcps(args[1:], root_flag, scope)
     if topic is None:
         cmd_find_agents([], root_flag, scope)
         cmd_find_skills([], root_flag, scope)
         cmd_find_plugins([], root_flag, scope)
+        cmd_find_mcps([], root_flag, scope)
         return 0
 
     print(f"Unknown topic: {topic}")
@@ -446,10 +519,14 @@ def print_find_help() -> None:
     print(f"""
   {c('bold', 'swe find')} — where the shared assets live and what links to them
 
-  {c('cyan', 'swe find')}              Both trees
+  {c('cyan', 'swe find')}              Every tree
   {c('cyan', 'swe find amd')}          AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}       Skills, plugins, and every harness skill root
   {c('cyan', 'swe find plugins')}      Plugins across every harness that has them
+  {c('cyan', 'swe find mcps')}         MCP servers in the hub, and which harnesses have them
+
+  {c('dim', 'swe mcp list gives the tool-by-server matrix once you know what')}
+  {c('dim', 'you are looking for; swe find mcps answers what the hub holds.')}
 
   {c('bold', 'Where it scans')}
     default        the current directory, recursively
