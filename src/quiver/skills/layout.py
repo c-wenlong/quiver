@@ -11,9 +11,9 @@ from quiver.paths import CONFIG_DIR, SKILL_LINKS_FILE
 from quiver.skills.catalogs import load_skill_catalogs, count_skill_md
 
 SHARED_LABEL = "shared"
-# The canonical tree moved into ~/.quiver so one directory owns every shared
-# asset. ~/.agents/skills stays below as a legacy alias: it is now a symlink to
-# the new root, so anything still referring to the old path keeps resolving.
+# The one canonical tree. ~/.agents/skills was the pre-0.2.7 root and has been
+# removed, along with the 74 per-skill symlinks that six harnesses kept pointing
+# into it; those roots now link to this path directly.
 SHARED_REL = Path(".quiver/skills")
 
 # Harness skill roots that can be symlinked to shared or each other.
@@ -32,7 +32,6 @@ HARNESS_ROOTS: tuple[tuple[str, Path], ...] = (
     ("pi", Path(".pi/skills")),
     ("grok", Path(".grok/skills")),
     ("crush", Path(".config/crush/skills")),
-    ("agents-legacy", Path(".agents/skills")),
 )
 
 BUILTIN_ROOTS: tuple[tuple[str, Path], ...] = (
