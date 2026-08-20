@@ -77,6 +77,12 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
 }
 
 # Subcommands that themselves take a tool name, e.g. `swe hs star cl<TAB>`.
+# `swe hs list --scope=...` should offer the same flags as `swe list`.
+_NESTED_FLAG_PARENTS: dict[str, frozenset[str]] = {
+    "harness": frozenset({"list", "ls"}),
+    "hs": frozenset({"list", "ls"}),
+}
+
 _NESTED_TOOL_TARGETS: dict[str, frozenset[str]] = {
     "harness": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
     "hs": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
@@ -84,6 +90,8 @@ _NESTED_TOOL_TARGETS: dict[str, frozenset[str]] = {
 
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     "harness": [
+        ("list", "List every harness (swe list is the shortcut)"),
+        ("ls", "Short for list"),
         ("edit", "Review every harness at once"),
         ("star", "Toggle a favourite"),
         ("archive", "Shelve a harness you have ruled out"),
@@ -97,6 +105,8 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("followup", "Manage or work on a follow-up"),
     ],
     "hs": [
+        ("list", "List every harness (swe list is the shortcut)"),
+        ("ls", "Short for list"),
         ("edit", "Review every harness at once"),
         ("star", "Toggle a favourite"),
         ("archive", "Shelve a harness you have ruled out"),
@@ -145,6 +155,9 @@ def get_completions(words: list[str]) -> list[tuple[str, str]]:
 
     # Flag completion
     if partial.startswith("-"):
+        nested = _NESTED_FLAG_PARENTS.get(cmd)
+        if nested and len(rest) == 1 and rest[0] in nested:
+            return _filter_by_prefix(_COMMAND_FLAGS.get("list", []), partial)
         flags = _COMMAND_FLAGS.get(cmd, [])
         return _filter_by_prefix(flags, partial)
 
