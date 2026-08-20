@@ -25,6 +25,7 @@ def cmd_harness(args):
             f"""
   {c('bold', 'swe harness')} — registry utilities  {c('dim', '(alias: swe hs)')}
 
+  {c('cyan', 'swe harness edit')}               Review every harness at once
   {c('cyan', 'swe harness star <name>')}        Toggle a favourite (pins it to the top)
   {c('cyan', 'swe harness archive <name> [why]')}  Shelve one you have ruled out
   {c('cyan', 'swe harness archive')}            List what you archived, and why
@@ -44,13 +45,18 @@ def cmd_harness(args):
 
         result = cmd_star(rest)
         return result if isinstance(result, int) else 0
+    if sub in ("edit", "review"):
+        from quiver.harness.commands import cmd_harness_edit
+
+        result = cmd_harness_edit(rest)
+        return result if isinstance(result, int) else 0
     if sub in ("archive", "shelve"):
         from quiver.harness.commands import cmd_archive
 
         result = cmd_archive(rest)
         return result if isinstance(result, int) else 0
     print(c("red", f"  Unknown harness subcommand: '{sub}'"))
-    print(c("dim", "  Try: swe harness star | archive | discover"))
+    print(c("dim", "  Try: swe harness edit | star | archive | discover"))
     return 1
 
 

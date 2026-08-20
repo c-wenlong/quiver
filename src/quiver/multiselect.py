@@ -149,3 +149,144 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
         sys.stdout.write("\x1b[?25h")
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
+# Tri-state picker
+# ---------------------------------------------------------------------------
+
+# A harness is in exactly one of these. Ordered so space cycles through them
+# in the direction you would say them: it's fine → I like it → I'm done with it.
+STATES = ("active", "starred", "archived")
+
+STATE_GLYPH = {
+    "active": ("dim", "·"),
+    "starred": ("neon_pink", "★"),
+    "archived": ("yellow", "▪"),
+}
+
+
+@dataclass
+class StateChoice:
+    key: str
+    label: str
+    state: str = "active"
+    about: str = ""
+
+
+STATE_FOOTER = ("  space cycle · ← → change · s star · x archive · c active · "
+                "enter save · q cancel")
+
+
+def _state_render(choices, cursor, title, prev_lines: int, height: int) -> int:
+    """Draw a window onto the list, keeping the cursor inside it.
+
+    The checkbox widget draws every row, which is fine for a fixed set of
+    columns. A registry can hold thirty-odd harnesses, and once the drawing
+    is taller than the terminal it scrolls, after which rewinding by a fixed
+    count lands in the wrong place and the widget smears down the screen.
+    So this one draws at most ``height`` rows and scrolls them itself.
+    """
+    total = len(choices)
+    view = min(height, total)
+    top = 0
+    if total > view:
+        top = max(0, min(cursor - view // 2, total - view))
+
+    counts = {s: sum(1 for ch in choices if ch.state == s) for s in STATES}
+    out = []
+    if prev_lines:
+        out.append(f"\x1b[{prev_lines}A")
+    out.append("\r\x1b[J")
+
+    tally = "  ".join(
+        f"{c(STATE_GLYPH[s][0], STATE_GLYPH[s][1])} {c('dim', f'{counts[s]} {s}')}"
+        for s in STATES
+    )
+    out.append(f"{c('bold', title)}   {tally}\r\n")
+
+    width = max((len(ch.label) for ch in choices), default=10) + 2
+    for i in range(top, top + view):
+        ch = choices[i]
+        colour, glyph = STATE_GLYPH[ch.state]
+        pointer = c("cyan", ">") if i == cursor else " "
+        body = (f"{c(colour, glyph)} {ch.label.ljust(width)}"
+                f"{c('dim', ch.state.ljust(9))}{c('dim', ch.about)}")
+        out.append(f" {pointer} {body}\r\n")
+
+    if total > view:
+        out.append(c("dim", f"  {top + 1}–{top + view} of {total}") + "\r\n")
+    out.append(c("dim", STATE_FOOTER) + "\r\n")
+
+    sys.stdout.write("".join(out))
+    sys.stdout.flush()
+    return view + 2 + (1 if total > view else 0)
+
+
+def _read_state_key(fd: int) -> str:
+    import os
+
+    ch = os.read(fd, 1)
+    if ch == b"\x1b":
+        rest = os.read(fd, 2)
+        return {b"[A": "up", b"[B": "down",
+                b"[C": "next", b"[D": "prev"}.get(rest, "escape")
+    return {
+        b" ": "next", b"\r": "enter", b"\n": "enter",
+        b"\x03": "cancel", b"q": "cancel",
+        b"k": "up", b"j": "down",
+        b"s": "starred", b"x": "archived", b"c": "active",
+        b"<": "prev", b",": "prev", b"h": "prev",
+        b">": "next", b".": "next", b"l": "next",
+    }.get(ch, "")
+
+
+def statepicker(choices: list[StateChoice], title="Select",
+                height: int | None = None) -> list[StateChoice] | None:
+    """Cycle each row through STATES. Returns the choices, or None if cancelled.
+
+    Mutates and returns the same objects, so the caller compares against the
+    states it passed in to work out what actually changed.
+    """
+    if not choices:
+        return []
+    if not _supported():
+        print(c("dim", "  not a terminal, nothing changed"))
+        return None
+
+    import shutil
+    import termios
+    import tty
+
+    if height is None:
+        # Leave room for the title, the footer, the range line, and the
+        # shell prompt that follows.
+        height = max(5, shutil.get_terminal_size(fallback=(80, 24)).lines - 5)
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    cursor, drawn = 0, 0
+    try:
+        tty.setraw(fd)
+        sys.stdout.write("\x1b[?25l")
+        while True:
+            drawn = _state_render(choices, cursor, title, drawn, height)
+            key = _read_state_key(fd)
+            if key == "cancel":
+                return None
+            if key == "enter":
+                return choices
+            if key == "up":
+                cursor = (cursor - 1) % len(choices)
+            elif key == "down":
+                cursor = (cursor + 1) % len(choices)
+            elif key in ("next", "prev"):
+                ch = choices[cursor]
+                step = 1 if key == "next" else -1
+                ch.state = STATES[(STATES.index(ch.state) + step) % len(STATES)]
+            elif key in STATES:
+                choices[cursor].state = key
+    finally:
+        sys.stdout.write("\x1b[?25h")
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        sys.stdout.flush()

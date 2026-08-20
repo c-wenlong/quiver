@@ -84,6 +84,7 @@ _NESTED_TOOL_TARGETS: dict[str, frozenset[str]] = {
 
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     "harness": [
+        ("edit", "Review every harness at once"),
         ("star", "Toggle a favourite"),
         ("archive", "Shelve a harness you have ruled out"),
         ("discover", "Scan PATH for AI coding CLIs"),
@@ -96,6 +97,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("followup", "Manage or work on a follow-up"),
     ],
     "hs": [
+        ("edit", "Review every harness at once"),
         ("star", "Toggle a favourite"),
         ("archive", "Shelve a harness you have ruled out"),
         ("discover", "Scan PATH for AI coding CLIs"),
