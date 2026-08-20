@@ -75,3 +75,82 @@ class FilterByPatternsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HubAsSourceTest(unittest.TestCase):
+    """~/.quiver/mcp.json is a sync source, never a sync target.
+
+    Data flows into the hub via `discover --apply` and out of it via `sync`.
+    Letting sync write into it would put tool-shaped configs in the one file
+    everything else reads as canonical.
+    """
+
+    def test_hub_aliases_resolve(self):
+        from quiver.mcp.cli import is_hub
+
+        for name in ("quiver", "hub", "mcp.json", "."):
+            self.assertTrue(is_hub(name), name)
+
+    def test_alias_matching_ignores_case(self):
+        from quiver.mcp.cli import is_hub
+
+        self.assertTrue(is_hub("QUIVER"))
+        self.assertTrue(is_hub("Hub"))
+
+    def test_harness_names_are_not_the_hub(self):
+        from quiver.mcp.cli import is_hub
+
+        for name in ("cursor", "claude", "codex", "opencode", ""):
+            self.assertFalse(is_hub(name), name)
+        self.assertFalse(is_hub(None))
+
+    def test_hub_format_is_canonical(self):
+        from quiver.mcp.cli import get_tool_format
+
+        self.assertEqual(get_tool_format("quiver"), "standard")
+
+    def test_resolve_tool_arg_returns_the_canonical_hub_label(self):
+        from quiver.mcp.cli import HUB_LABEL, resolve_tool_arg
+
+        for alias in ("quiver", "hub", "mcp.json", "."):
+            self.assertEqual(resolve_tool_arg({}, alias), HUB_LABEL)
+
+    def test_servers_for_source_reads_the_hub_file(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from quiver.mcp import cli
+
+        payload = {"mcpServers": {"dv__github": {"command": "gh"}}, "updated": "x"}
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "mcp.json"
+            f.write_text(json.dumps(payload))
+            with mock.patch.object(cli, "MCP_SOURCE_FILE", f):
+                self.assertEqual(cli.servers_for_source("quiver"), payload["mcpServers"])
+                self.assertEqual(cli.get_hub_servers(), payload["mcpServers"])
+
+    def test_missing_hub_file_reads_as_empty_not_an_error(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from quiver.mcp import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(cli, "MCP_SOURCE_FILE", Path(tmp) / "nope.json"):
+                self.assertEqual(cli.get_hub_servers(), {})
+
+    def test_servers_for_source_falls_through_to_a_harness(self):
+        from unittest import mock
+
+        from quiver.mcp import cli
+
+        # Raw, not canonical: --strict needs the unparsed original to spot a
+        # lossy conversion, so parsing here would defeat it.
+        with mock.patch.object(
+            cli, "get_tool_servers", return_value={"x": {}}
+        ) as raw:
+            self.assertEqual(cli.servers_for_source("cursor"), {"x": {}})
+            raw.assert_called_once_with("cursor")
