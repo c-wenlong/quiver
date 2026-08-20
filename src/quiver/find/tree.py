@@ -145,6 +145,11 @@ PRUNE_DIRS = frozenset({
     ".android", ".gradle-cache", ".sdkman",
 })
 
+# Caches that are not dot-prefixed, so a name match would be too broad:
+# "pkg" is a normal directory in a Go project layout, and only ~/go/pkg is
+# the module cache. Matched against the path relative to the scan root.
+PRUNE_RELATIVE = frozenset({"go/pkg", "Movies", "Music", "Pictures", "Public"})
+
 # Filenames a harness reads as its instructions, from INSTRUCTION_TARGETS plus
 # the project-level names that never appear in a home directory.
 AGENT_FILENAMES = frozenset(
@@ -160,9 +165,15 @@ def walk(root: Path):
     """
     import os
 
+    root = Path(root)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [d for d in dirnames if d not in PRUNE_DIRS]
-        yield Path(dirpath), dirnames, filenames
+        here = Path(dirpath)
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in PRUNE_DIRS
+            and str((here / d).relative_to(root)) not in PRUNE_RELATIVE
+        ]
+        yield here, dirnames, filenames
 
 
 def scan_agents(root: Path, home: Path | None = None) -> list[Node]:
