@@ -103,6 +103,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # Regenerable state: delete any of these and quiver rebuilds them.
 SESSION_CACHE_FILE = CACHE_DIR / "session_cache.json"
 RATE_LIMITS_CACHE_FILE = CACHE_DIR / "rate_limits_cache.json"
+SESSION_COUNTS_CACHE_FILE = CACHE_DIR / "session_counts.json"
 
 # Documented convention for the plain-text API-key directory. The actual
 # runtime path can be overridden via `swe providers --api-keys-dir=DIR`.

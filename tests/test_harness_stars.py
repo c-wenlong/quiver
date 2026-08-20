@@ -50,7 +50,7 @@ class HarnessStarsTest(unittest.TestCase):
                 raw = json.loads((Path(tmp) / ".quiver" / "config" / "stars.json").read_text())
                 self.assertEqual(raw, ["droid", "claude"])
 
-    def test_sort_tools_pins_stars_first(self):
+    def test_sort_tools_puts_starred_block_first_each_by_usage(self):
         tools = {
             "zzz": {"command": "zzz"},
             "droid": {"command": "droid"},
@@ -60,7 +60,8 @@ class HarnessStarsTest(unittest.TestCase):
         counts = {"zzz": 99, "aaa": 50, "claude": 10, "droid": 1}
         stars = ["droid", "claude"]
         ordered = [name for name, _ in _sort_tools(tools, counts, stars)]
-        self.assertEqual(ordered[:2], ["droid", "claude"])
+        # Starred block first, but ordered by usage within it, not pin order.
+        self.assertEqual(ordered[:2], ["claude", "droid"])
         # remaining sorted by usage desc
         self.assertEqual(ordered[2:], ["zzz", "aaa"])
 

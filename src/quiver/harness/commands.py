@@ -29,14 +29,18 @@ def _session_counts_100d():
 
 
 def _sort_tools(tools: dict, counts: dict[str, int], stars: list[str]):
-    """Starred first (pin order), then by 100d usage desc, then name."""
-    star_index = {name: i for i, name in enumerate(stars)}
+    """Starred first, then unstarred. Each group by 100d usage, then name.
+
+    Starred rows used to hold their pin order, which meant a favourite you had
+    not touched in months sat above one you use daily. Both groups now answer
+    the same question, "what am I actually using", with the star deciding only
+    which block you are in.
+    """
+    starred = set(stars)
 
     def key(item):
         name = item[0]
-        if name in star_index:
-            return (0, star_index[name], 0, name)
-        return (1, 0, -counts.get(name, 0), name)
+        return (0 if name in starred else 1, -counts.get(name, 0), name)
 
     return sorted(tools.items(), key=key)
 
@@ -66,6 +70,9 @@ _LINK_GLYPH = {
     "relink": ("yellow", "\u21bb"),
     "conflict": ("red", "\u2717"),
     "skipped": ("dim", "\u00b7"),
+    # Holds skills that exist nowhere else, so quiver deliberately leaves it
+    # alone. Not an error, and not a tick either.
+    "keep": ("yellow", "\u25cb"),
 }
 
 
@@ -146,8 +153,12 @@ def cmd_list(args):
         usage_view = False
     if refresh:
         from quiver.sessions.aggregator import invalidate_cache as _inv_sessions
+        from quiver.sessions.usage import invalidate_counts_cache
 
         _inv_sessions()
+        # The 100d counts cache holds for a day, so --refresh has to clear it
+        # too or the flag would silently do nothing for that column.
+        invalidate_counts_cache()
 
     tools = load_registry()
     tag_filter = args[0].lstrip("-") if args else None
@@ -159,20 +170,30 @@ def cmd_list(args):
     # override TTL with SWE_RATE_LIMITS_TTL=<seconds>)
     from quiver.harness.rate_limits import get_all_rate_limits
 
+    # Which columns will actually render, so the data behind them is fetched
+    # exactly when it is needed. Gating on the flags alone was wrong once the
+    # set became configurable: a saved AGENTS.MD column rendered every row as
+    # "no known convention" because nothing had populated the link state.
+    wanted = set(load_columns())
+    if links_view:
+        wanted |= {"agents", "skills"}
+    if usage_view:
+        wanted |= {"sess", "rate"}
+
     rate_limits = (
         get_all_rate_limits(
             use_cache=not refresh,
             tool_names={name for name in starred_set if name in tools},
         )
-        if usage_view
+        if "rate" in wanted
         else {}
     )
-    link_status = link_states() if links_view else {}
+    link_status = link_states() if wanted & {"agents", "skills"} else {}
 
     print(f"\n{c('bold', 'AI Coding Tools')}\n")
 
     table = Table(column_gap=" │ ")
-    _head = set(load_columns())
+    _head = wanted
     table.add_column("mark", "", width=2, kind="preformatted")
     table.add_column("name", "NAME", width=16, kind="text")
     if "command" in _head:
@@ -182,13 +203,6 @@ def cmd_list(args):
     if "aliases" in _head:
         table.add_column("aliases", "ALIASES", width=12, kind="list",
                          color="cyan", empty="—")
-    # Configured set, plus whatever the flags ask for on top.
-    wanted = set(load_columns())
-    if links_view:
-        wanted |= {"agents", "skills"}
-    if usage_view:
-        wanted |= {"sess", "rate"}
-
     if "sess" in wanted:
         table.add_column("sess", "100d", width=8, kind="preformatted", empty="—")
     if "rate" in wanted:

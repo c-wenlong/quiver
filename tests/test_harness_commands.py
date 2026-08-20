@@ -396,8 +396,10 @@ class CmdListSessColumnTest(unittest.TestCase):
 class CmdListSortAndFilterTest(unittest.TestCase):
     """Sort order + tag filter behaviors unchanged by the migration."""
 
-    def test_sort_order_starred_then_usage_desc_then_name(self):
+    def test_sort_order_starred_block_first_each_by_usage(self):
         # Helper-layer test — Table.add_row order follows _sort_tools' output.
+        # Starred rows sort by usage too: a favourite you have not touched in
+        # months should not sit above one you use daily.
         _setup_patches(self)
         tools = {
             "zzz": {"command": "zzz"},
@@ -408,8 +410,8 @@ class CmdListSortAndFilterTest(unittest.TestCase):
         counts = {"zzz": 99, "aaa": 50, "claude": 10, "droid": 1}
         stars = ["droid", "claude"]
         ordered = [name for name, _ in _sort_tools(tools, counts, stars)]
-        self.assertEqual(ordered[:2], ["droid", "claude"])
-        self.assertEqual(ordered[2:], ["zzz", "aaa"])
+        self.assertEqual(ordered[:2], ["claude", "droid"])   # 10 then 1
+        self.assertEqual(ordered[2:], ["zzz", "aaa"])        # 99 then 50
 
     def test_tag_filter_drops_non_matching_rows(self):
         _setup_patches(self)
