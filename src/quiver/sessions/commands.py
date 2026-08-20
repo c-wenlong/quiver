@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from quiver.console import c, cpad, truncate, visible_len
+from quiver.console import c, cpad, fit_widths, truncate, visible_len
 from quiver.sessions import failures
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.identity import launch_tool
@@ -401,6 +401,13 @@ def cmd_session(args):
     # ANSI — and ``fit="content"`` so the longest visible path drives
     # the column width. ``text`` auto-pads cells, so DIRECTORY rows
     # stay aligned without manual padding.
+    # DIRECTORY and TITLE are the only free-text columns; the rest are
+    # fixed. Their cells are pre-padded, so the budget has to be settled
+    # before any row is built.
+    _w = fit_widths(fixed=4 + 14 + 14,
+                    flex={"directory": 45, "title": 50}, gap=2)
+    dir_w, title_w = _w["directory"], _w["title"]
+
     table = Table()
     table.add_column(
         "idx", "[#]", width=4,
@@ -415,10 +422,10 @@ def cmd_session(args):
         kind="preformatted", trust_cell_width=True,
     )
     table.add_column(
-        "directory", "DIRECTORY", width=45, fit="content", kind="text",
+        "directory", "DIRECTORY", width=dir_w, max_width=dir_w, kind="text",
     )
     table.add_column(
-        "title", "TITLE/SUMMARY", width=50, max_width=50,
+        "title", "TITLE/SUMMARY", width=title_w, max_width=title_w,
         kind="preformatted", trust_cell_width=True,
     )
 
@@ -445,8 +452,8 @@ def cmd_session(args):
         # pattern generalised. TITLE has multiple visual flavours
         # (plain text OR dim fallback) so we add the pad outside cpad to
         # keep the dim wrap contiguous.
-        title_raw = _display_title(session, 50)
-        title = title_raw + " " * max(0, 50 - visible_len(title_raw))
+        title_raw = _display_title(session, title_w)
+        title = title_raw + " " * max(0, title_w - visible_len(title_raw))
         table.add_row({
             "idx": idx_cell,
             "time": cpad("cyan", t_str, 14),

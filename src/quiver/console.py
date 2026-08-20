@@ -103,3 +103,34 @@ def terminal_width(default: int = 146) -> int:
     except Exception:
         return default
     return width if width >= 60 else default
+
+
+def fit_widths(fixed: int, flex: dict[str, int], gap: int = 2,
+               minimum: int = 12, cap: int | None = None) -> dict[str, int]:
+    """Shrink long-text columns until the row fits the window.
+
+    ``fixed`` is the total width of everything that cannot move (numbers,
+    glyphs, pre-padded cells). ``flex`` maps each long-text column to the
+    width it would like. Returns what each actually gets.
+
+    Callers that pre-pad their cells have to know the width before they
+    build a row, which the table cannot tell them in time, so the budget
+    is worked out here and handed in. Room is taken from the widest
+    column first, so one long free-text field gives way before several
+    short ones, and nothing shrinks below ``minimum``: a column narrowed
+    past that carries no information, and a wrapped row is worse than a
+    truncated one because it breaks every row after it.
+    """
+    out = dict(flex)
+    if not out:
+        return out
+    if cap is None:
+        cap = terminal_width()
+    n_cols = len(out) + (1 if fixed else 0)
+    overhead = fixed + gap * max(0, n_cols - 1)
+    while sum(out.values()) + overhead > cap:
+        name = max(out, key=lambda k: out[k])
+        if out[name] <= minimum:
+            break
+        out[name] -= 1
+    return out

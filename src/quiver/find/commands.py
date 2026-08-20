@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quiver import paths
-from quiver.console import c, elide
+from quiver.console import c, elide, terminal_width, truncate
 from quiver.init.layout import skill_folder_names
 from quiver.find.tree import (
     agents_tree,
@@ -186,7 +186,7 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
              "local": "project files",
              "all": "everything"}[scope]
     print(f"\n{c('bold', title)}  {c('dim', f'--scope={scope} · {label}')}")
-    print(f"  {c('dim', 'scanning ' + _short(root, home))}\n")
+    print(f"  {c('dim', elide('scanning ' + _short(root, home), _path_budget(4)))}\n")
     if not nodes:
         print(f"  {c('dim', empty)}\n")
         return
@@ -197,8 +197,11 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
         # Plugin caches and vendored repos ship their own instruction files.
         # You never see them while coding, so name the count even when hiding
         # them: an unexpected jump here is worth a look.
-        print(f"  {c('yellow', f'{vendored} more inside harness directories')}"
-              f" {c('dim', '(plugin caches, vendored repos) — see --scope=all')}")
+        note = f"{vendored} more inside harness directories"
+        tail = "(plugin caches, vendored repos), see --scope=all"
+        if len(note) + len(tail) + 3 > terminal_width():
+            tail = "see --scope=all"
+        print(f"  {c('yellow', note)} {c('dim', tail)}")
     print()
 
 
@@ -259,6 +262,13 @@ def _skill_columns(names: list[str], indent: str = "    ", cols: int = 4,
     it is meant to sit inside. ``limit`` caps a very long list and says
     how many were left out rather than truncating silently.
     """
+    # Fit the grid to the window: drop columns first, then narrow them,
+    # so names stay readable rather than every row wrapping.
+    avail = max(20, terminal_width() - len(indent))
+    while cols > 1 and cols * width > avail:
+        cols -= 1
+    width = max(12, min(width, avail // cols))
+
     shown = names if not limit or len(names) <= limit else names[:limit]
     line: list[str] = []
     for name in shown:
@@ -311,9 +321,11 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
 
     print(f"\n  {c('bold', f'Harness roots ({len(linked)} synced)')}")
     print(f"  {c('dim', 'all resolve to ' + _short(shared, home))}")
-    cols, line = 3, []
+    root_w = 30
+    cols = max(1, (terminal_width() - 4) // root_w)
+    line: list[str] = []
     for n in linked:
-        line.append(_short(n.path, home).ljust(30))
+        line.append(_short(n.path, home).ljust(root_w))
         if len(line) == cols:
             print("    " + c("dim", "".join(line))); line = []
     if line:
@@ -326,7 +338,7 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
             print(f"  {c('dim', _branch(i, len(other)))}"
                   f"{c(colour, _short(n.path, home).ljust(30))}"
                   f"{c(colour, STATE_WORD.get(n.state, n.state).ljust(12))}"
-                  f"{c('dim', n.detail)}")
+                  f"{c('dim', elide(n.detail, _path_budget(48)))}")
             # These roots hold the only copy of what is in them, so their
             # contents are the part worth seeing.
             _skill_columns(sorted(skill_folder_names(n.path)), indent="      ",
@@ -334,8 +346,13 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
 
     summary = (f"{total} skills · {len(linked)} roots synced · "
                f"{len(other)} left alone")
-    print(f"\n  {c('dim', summary)}\n")
+    print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}\n")
     return 0
+
+
+def _path_budget(used: int = 34) -> int:
+    """Room left for a path once the fixed columns have taken theirs."""
+    return max(16, terminal_width() - used)
 
 
 PREFIX_MEANING = {
@@ -396,7 +413,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
             print(f"  {c('dim', _branch(i, len(views)))}"
                   f"{c(colour, t.name.ljust(18))}"
                   f"{c(colour, bar.ljust(9))}"
-                  f"{c('dim', _short(Path(t.path), home) if t.path else '')}")
+                  f"{c('dim', elide(_short(Path(t.path), home) if t.path else '', _path_budget()))}")
             if t.only_here:
                 print(f"      {c('yellow', 'only here: ')}"
                       f"{c('dim', ', '.join(sorted(t.only_here)[:6]))}")
@@ -436,7 +453,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
             print(f"  {c('dim', _branch(i, len(unregistered)))}"
                   f"{c('yellow', cfg.harness.ljust(18))}"
                   f"{c('dim', marks.ljust(20))}"
-                  f"{c('dim', _short(cfg.path, home))}")
+                  f"{c('dim', elide(_short(cfg.path, home), _path_budget(44)))}")
 
     if stray:
         print(f"\n  {c('bold', 'On disk but not in the hub')}")
@@ -457,7 +474,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
                f"{len(behind)} tools behind the hub")
     if stray:
         summary += f" · {len(stray)} unmanaged"
-    print(f"\n  {c('dim', summary)}\n")
+    print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}\n")
     return 0
 
 
@@ -512,14 +529,15 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") 
                 print(f"  {c('dim', bar + branch)}"
                       f"{c(colour, elide(p.name, name_w - 1).ljust(name_w))}"
                       f"{c('dim', elide(p.version or '-', ver_w - 1).ljust(ver_w))}"
-                      f"{c(colour, state.ljust(9))}{c('dim', parts)}")
+                      f"{c(colour, state.ljust(9))}"
+                      f"{c('dim', truncate(parts, _path_budget(name_w + ver_w + 17)))}")
         print()
 
     n_markets = sum(len(m) for m in tree.values())
     summary = f"{len(shown)} plugins · {n_markets} marketplaces · {len(tree)} harnesses"
     if totals:
         summary += "  ·  " + ", ".join(f"{n} {k}" for k, n in sorted(totals.items()))
-    print(f"  {c('dim', summary)}")
+    print(f"  {c('dim', elide(summary, terminal_width() - 4))}")
     if hidden:
         print(f"  {c('yellow', f'{hidden} more')} "
               f"{c('dim', 'not in this scope — see --scope=all')}")

@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, cpad, terminal_width, truncate, visible_len
+from quiver.console import c, cpad, elide, fit_widths, terminal_width, truncate, visible_len
 from quiver.harness.columns import (
     COLUMNS,
     DEFAULT_COLUMNS,
@@ -377,10 +377,12 @@ def cmd_archive(args):
         for name, e in sorted(entries.items(),
                               key=lambda kv: kv[1].get("archived_at", ""),
                               reverse=True):
+            reason_w = max(16, terminal_width() - width - 12 - 9 - 6)
+            reason = elide(e["reason"] or "no reason given", reason_w)
             print(f"  {c('dim', '▪')} {c('bold', name.ljust(width))}"
                   f"{c('dim', _fmt_when(e['archived_at']).ljust(12))}"
                   f"{c(_USAGE_COLOR.get(e['usage'], 'dim'), e['usage'].ljust(9))}"
-                  f"{c('dim', e['reason'] or 'no reason given')}")
+                  f"{c('dim', reason)}")
         print(f"\n  {c('dim', 'swe hs archive <name>   restore  ·  swe list --scope=all   show them inline')}\n")
         return 0
 
@@ -735,15 +737,21 @@ def cmd_list(args):
     n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
     n_star = sum(1 for n in tools if n in starred_set)
     hints = "swe use <name>  │  swe hs star <name>  │  swe hs archive <name>  │  swe info <name>"
-    print(c("dim", f"  {n_inst}/{len(tools)} installed  ·  {n_star} starred  ·  {hints}"))
+    # Elide the finished line, not the hints alone: the counts in front of
+    # them are part of what has to fit.
+    summary = f"  {n_inst}/{len(tools)} installed  ·  {n_star} starred  ·  {hints}"
+    print(c("dim", elide(summary, terminal_width())))
     if shown_starred:
         print(f"  {c('neon_pink', '★')} {c('dim', '= favourited (pinned top, neon border)')}")
         if archived:
             print(f"  {c('dim', '▪')} {c('dim', f'= archived ({len(archived)} hidden; --scope=all to show)')}")
 
     all_tags = sorted({t for i in tools.values() for t in i.get("tags", [])})
-    tag_str = "  ".join(c("cyan", t) for t in all_tags)
-    print(f"  {c('dim', 'tags:')}  {tag_str}\n")
+    # Elide before colouring. elide counts characters, and an ANSI escape
+    # is several of them, so eliding a coloured string cuts in the wrong
+    # place and can leave a dangling escape.
+    tag_str = elide("  ".join(all_tags), max(20, terminal_width() - 10))
+    print(f"  {c('dim', 'tags:')}  {c('cyan', tag_str)}\n")
 
 
 def cmd_star(args):
@@ -824,9 +832,13 @@ def cmd_info(args):
     # scrolled rather than got cut.
     table = Table()
     table.add_column("label", "FIELD", width=16, kind="text")
+    # VALUE holds free text (descriptions, notes, paths), so it takes what
+    # the window leaves rather than a fixed 64.
+    # 16 for FIELD, 3 for the " │ " gap, 2 for the indent the rows carry.
+    _value_w = fit_widths(fixed=16 + 2, flex={"value": 64}, gap=3)["value"]
     table.add_column(
-        "value", "VALUE", width=64,
-        kind="preformatted", trust_cell_width=True, fit="content",
+        "value", "VALUE", width=_value_w, max_width=_value_w,
+        kind="preformatted", trust_cell_width=True,
     )
 
     rows = [
@@ -842,12 +854,18 @@ def cmd_info(args):
         ("Path:", path),
     ]
     for label, val in rows:
+        # trust_cell_width means the table will not truncate this column,
+        # so a long description has to be trimmed before it goes in. Only
+        # plain values: the coloured ones are short and eliding them would
+        # cut an escape sequence in half.
+        if isinstance(val, str) and "\x1b" not in val:
+            val = elide(val, _value_w)
         table.add_row({"label": label, "value": val})
     if info.get("notes"):
         # ``Notes:`` is conditional — matches the pre-migration
         # behaviour where the optional row was only appended when
         # ``info["notes"]`` was truthy.
-        table.add_row({"label": "Notes:", "value": info["notes"]})
+        table.add_row({"label": "Notes:", "value": elide(info["notes"], _value_w)})
 
     for line in table.render():
         print(line)

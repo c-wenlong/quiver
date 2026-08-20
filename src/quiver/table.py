@@ -26,7 +26,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Literal, Union
 
-from quiver.console import c, cpad, strip_ansi, truncate, visible_len
+from quiver.console import (
+    c,
+    cpad,
+    strip_ansi,
+    terminal_width,
+    truncate,
+    visible_len,
+)
+
+# A column narrowed past this stops carrying information, so the row
+# is allowed to overflow rather than shrink it further.
+_MIN_FLEX_WIDTH = 12
 
 
 FitMode = Literal["fixed", "content", "bounded", "shrink"]
@@ -225,6 +236,7 @@ class Table:
         separator_char: str = "\u2500",
         header_style: str = "dim",
         column_gap: Union[str, int] = 2,
+        max_total_width: int | None = None,
     ):
         """Build a Table.
 
@@ -241,6 +253,11 @@ class Table:
         """
         self.separator_char = separator_char
         self.header_style = header_style
+        # None means "measure the terminal at render time". A table wider
+        # than the window wraps, and one wrapped row makes every row after
+        # it unreadable, so the width has to be a real constraint rather
+        # than the sum of whatever the columns asked for.
+        self.max_total_width = max_total_width
         self._columns: list[Column] = []
         self._rows: list[Row] = []
         if isinstance(column_gap, int):
@@ -327,6 +344,38 @@ class Table:
             else:  # "bounded"
                 upper = col.max_width if col.max_width is not None else observed
                 widths[col.name] = max(col.width, min(observed, upper))
+        return self._fit_to_terminal(widths)
+
+    # Columns that pad their own cells to an exact width cannot be narrowed
+    # here: the cell would keep its old size and every column after it would
+    # shift. Only kinds the table itself truncates can absorb the squeeze.
+    _SHRINKABLE_KINDS = ("text", "list")
+
+    def _fit_to_terminal(self, widths: Dict[str, int]) -> Dict[str, int]:
+        """Narrow flexible columns until the row fits the window.
+
+        Takes from the widest flexible column first, so one long free-text
+        field gives up room before several short ones do, and stops at
+        ``_MIN_FLEX_WIDTH`` rather than squeezing a column to nothing.
+        """
+        cap = self.max_total_width
+        if cap is None:
+            cap = terminal_width()
+        if not widths or cap <= 0:
+            return widths
+
+        gaps = self._column_gap_width * max(0, len(self._columns) - 1)
+        flexible = [col.name for col in self._columns
+                    if col.kind in self._SHRINKABLE_KINDS
+                    and not col.trust_cell_width]
+        if not flexible:
+            return widths
+
+        while sum(widths.values()) + gaps > cap:
+            name = max(flexible, key=lambda n: widths[n])
+            if widths[name] <= _MIN_FLEX_WIDTH:
+                break            # everything flexible is already at the floor
+            widths[name] -= 1
         return widths
 
     def _render_header(self, widths: Dict[str, int]) -> str:
