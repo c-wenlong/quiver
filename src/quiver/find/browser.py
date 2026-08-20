@@ -20,7 +20,7 @@ import sys
 from itertools import islice
 from pathlib import Path
 
-from quiver.console import c, elide, strip_ansi, terminal_width, truncate, visible_len
+from quiver.console import c, elide, strip_ansi, truncate, visible_len
 from quiver.find.entries import HIDE_DIRS, TEXT_SUFFIXES, Entry
 
 # Past this, reading a file to show a dozen lines costs more than the preview
@@ -191,22 +191,40 @@ def _preview(entry: Entry, limit: int) -> list[str]:
     return rows
 
 
-def _left_cell(entry: Entry, width: int, active: bool) -> str:
-    """One row of the list pane, coloured, exactly ``width`` columns wide."""
+# A filled bar rather than coloured text. A foreground-only highlight is
+# easy to lose in a pane you are not driving, and impossible to see at a
+# glance across three of them. 33 is a mid blue that stays legible under
+# both light and dark terminal themes.
+SELECT_BG = "\033[48;5;33m\033[38;5;16m"
+SELECT_DIM_BG = "\033[48;5;24m\033[38;5;253m"
+RESET = "\033[0m"
+
+
+def _left_cell(entry: Entry, width: int, active: bool, muted: bool = False) -> str:
+    """One row of a list pane, exactly ``width`` columns wide.
+
+    ``muted`` is the parent pane: it keeps a bar on the row you came
+    through, in a quieter blue, so orientation survives without competing
+    with the pane you are actually driving.
+    """
     glyph = "▸" if entry.can_descend else "·"
     detail_w = min(len(entry.detail), width // 3) if entry.detail else 0
     name_w = max(1, width - 2 - (detail_w + 1 if detail_w else 0))
     name = elide(entry.label, name_w).ljust(name_w)
+    detail = (" " + truncate(entry.detail, detail_w).rjust(detail_w)
+              if detail_w else "")
+
+    if active:
+        # The bar spans the whole cell, so it has to be built from plain
+        # text: nesting colours inside it would end the background early.
+        bar = SELECT_DIM_BG if muted else SELECT_BG
+        plain = f"{glyph} {name}{detail}"
+        return bar + plain.ljust(width) + RESET
 
     head = f"{glyph} {name}"
-    if active:
-        body = c("cyan", head)
-    elif entry.can_descend:
-        body = c("blue", head)
-    else:
-        body = head
-    if detail_w:
-        body += " " + c("dim", truncate(entry.detail, detail_w).rjust(detail_w))
+    body = c("blue", head) if entry.can_descend else head
+    if detail:
+        body += c("dim", detail)
     return body
 
 
@@ -243,8 +261,10 @@ def _pane_cell(entry: Entry | None, width: int, active: bool, dim: bool) -> str:
     """One row of a list pane, padded to width."""
     if entry is None:
         return " " * width
-    cell = _left_cell(entry, width, active)
+    cell = _left_cell(entry, width, active, muted=dim)
     if dim and not active:
+        # Only the unselected parent rows are flattened: the selected one
+        # keeps its bar, which is the whole point of showing the parent.
         cell = c("dim", strip_ansi(cell))
     return cell + " " * max(0, width - visible_len(cell))
 
@@ -341,24 +361,58 @@ def browse(roots: list[Entry], title: str = "") -> int:
         print(c("dim", "  nothing to browse"))
         return 0
 
+    import os
+    import select
     import shutil
+    import signal
     import termios
     import tty
 
-    # Room for the title, breadcrumb, range line, footer, and the shell
-    # prompt that follows.
-    height = max(5, shutil.get_terminal_size(fallback=(80, 24)).lines - 6)
-    width = terminal_width()
+    def measure() -> tuple[int, int]:
+        """Current window, re-read every frame rather than once at startup.
+
+        Asks the terminal directly rather than going through
+        shutil.get_terminal_size, which prefers the COLUMNS environment
+        variable. A resize never updates COLUMNS, so a shell that exports
+        it would pin the browser to the size it started at.
+
+        Leaves room for the title, breadcrumb, range line, footer and the
+        shell prompt that follows.
+        """
+        try:
+            size = os.get_terminal_size(fd)
+        except OSError:
+            size = shutil.get_terminal_size(fallback=(80, 24))
+        return max(5, size.lines - 6), max(40, size.columns)
+
     heading = title or "browse"
+    fd = sys.stdin.fileno()
 
     ratio = list(DEFAULT_RATIO)
     levels: list[list[Entry]] = [list(roots)]
     cursors: list[int] = [0]
     trail: list[str] = []
 
-    fd = sys.stdin.fileno()
+    # A resize arrives as SIGWINCH, but PEP 475 retries the interrupted
+    # read for us, so the handler would never be noticed by a blocking
+    # os.read. Waiting on select instead lets the loop wake on its own and
+    # notice the new size.
+    resized = [True]
+
+    def on_winch(_sig, _frame):
+        resized[0] = True
+
     saved = termios.tcgetattr(fd)
+    previous_winch = None
+    try:
+        previous_winch = signal.signal(signal.SIGWINCH, on_winch)
+    except (AttributeError, ValueError, OSError):
+        # No SIGWINCH on this platform, or not the main thread. Polling
+        # still catches the resize, just on the next tick.
+        previous_winch = None
+
     drawn = 0
+    height, width = measure()
     try:
         tty.setraw(fd)
         sys.stdout.write("\x1b[?25l")     # hide the caret while redrawing
@@ -375,6 +429,16 @@ def browse(roots: list[Entry], title: str = "") -> int:
             drawn = _render(parent, parent_cursor, entries, cursor, preview,
                             heading, crumb, drawn, height, width, ratio)
 
+            # Block on input, but wake often enough that a resize is
+            # visible immediately rather than on the next keypress.
+            while not select.select([fd], [], [], 0.2)[0]:
+                new = measure()
+                if resized[0] or new != (height, width):
+                    resized[0] = False
+                    height, width = new
+                    drawn = _render(parent, parent_cursor, entries, cursor,
+                                    preview, heading, crumb, drawn, height,
+                                    width, ratio)
             key = _read_key(fd)
             if key == "cancel":
                 return 0
@@ -420,4 +484,9 @@ def browse(roots: list[Entry], title: str = "") -> int:
         # far worse outcome than an unfinished browse.
         sys.stdout.write("\x1b[?25h")
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        if previous_winch is not None:
+            try:
+                signal.signal(signal.SIGWINCH, previous_winch)
+            except (ValueError, OSError):
+                pass
         sys.stdout.flush()
