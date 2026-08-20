@@ -29,7 +29,7 @@ from typing import Any, Callable, Dict, Literal, Union
 from quiver.console import c, cpad, strip_ansi, truncate, visible_len
 
 
-FitMode = Literal["fixed", "content", "bounded"]
+FitMode = Literal["fixed", "content", "bounded", "shrink"]
 
 # A kind is a single callable:
 #     render(value, width, **attrs) -> str
@@ -314,6 +314,14 @@ class Table:
             observed = max((visible_len(s) for s in samples), default=0)
             if col.fit == "fixed":
                 widths[col.name] = col.width
+            elif col.fit == "shrink":
+                # ``width`` as a ceiling rather than a floor. The other modes
+                # all take max(width, observed), so a column declared wide
+                # enough for the worst case stayed that wide for every table
+                # that never hit it: NAME held 16 columns for names of 11.
+                # The header still has to fit, or its label would truncate.
+                widths[col.name] = max(visible_len(col.header),
+                                       min(col.width, observed))
             elif col.fit == "content":
                 widths[col.name] = max(col.width, observed)
             else:  # "bounded"
