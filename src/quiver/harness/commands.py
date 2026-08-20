@@ -32,6 +32,13 @@ from quiver.prompt import read_line
 from quiver.table import Table
 
 
+def _broken_tools():
+    """Tools whose session count is unknown because their parser crashed."""
+    from quiver.sessions.usage import broken_tools
+
+    return broken_tools()
+
+
 def _session_counts(days=None):
     from quiver.sessions.usage import session_counts
 
@@ -157,6 +164,20 @@ def cmd_list_legend(args=None) -> int:
     The columns render as single characters with no key anywhere, so a
     reader who forgot what a yellow circle meant had nowhere to look.
     """
+    from quiver.harness.columns import load_window, window_label
+
+    label = window_label(load_window())
+    print(f"\n  {c('bold', f'{label} column')}\n")
+    print(f"  {c('green', '12'.rjust(4))}  {c('dim', f'sessions in the last {label}')}")
+    print(f"  {c('dim', '0'.rjust(4))}  {c('dim', 'the parser ran and found none')}")
+    print(f"  {c('red', '!'.rjust(4))}  {c('dim', 'the parser failed, so the count is unknown')}")
+    print(f"  {c('dim', '—'.rjust(4))}  {c('dim', 'no session parser exists for this harness yet')}")
+    print(f"\n  {c('dim', 'swe session shows what a ! actually raised.')}")
+
+    print(f"\n  {c('bold', 'Marker column')}\n")
+    print(f"  {c('neon_pink', '★'.rjust(4))}  {c('dim', 'favourited: pinned to the top, neon border')}")
+    print(f"  {c('yellow', '▪'.rjust(4))}  {c('dim', 'archived: hidden unless --scope=all or =archived')}")
+
     print(f"\n  {c('bold', 'AGENTS.MD and SKILLS glyphs')}\n")
     rows = [
         ("linked", "points at the shared copy in ~/.quiver"),
@@ -431,6 +452,7 @@ def cmd_list(args):
 
     tag_filter = args[0].lstrip("-") if args else None
     counts = _session_counts()
+    broken = _broken_tools() if "sess" in set(load_columns()) else set()
     stars = load_stars()
     starred_set = set(stars)
 
@@ -507,10 +529,17 @@ def cmd_list(args):
         # directly with the gap string itself providing the visual gap.
         desc_padded = truncate(desc_text, 36)
 
-        # Session column: 3 visual states (absent=dim em-dash,
-        # present-zero=dim digit, positive=green digit). All are
-        # right-aligned within the 8-char width.
-        if name in counts:
+        # Session column, four states. A crashed parser yields zero
+        # sessions, which used to render exactly like a harness you have
+        # genuinely never used, so a broken parser could sit unnoticed for
+        # months; that is how Cursor showed 0 while holding 84 sessions.
+        #   n   green   sessions in the window
+        #   0   dim     the parser ran and found none
+        #   !   red     the parser failed, so the count is unknown
+        #   —   dim     no session parser exists for this harness yet
+        if name in broken:
+            sess_cell = c("red", f"{'!':>8}")
+        elif name in counts:
             sess_n = counts.get(name, 0)
             sess_cell = (
                 c("green", f"{sess_n:>8}") if sess_n > 0

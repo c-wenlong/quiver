@@ -25,6 +25,19 @@ def _counts_ttl() -> float:
     return float(_COUNTS_TTL_DEFAULT)
 
 
+# Tools whose parser failed on the run behind the current counts. A crashed
+# parser yields zero sessions, which is indistinguishable from a harness you
+# genuinely have not used, so the two must not render the same.
+_CACHED_BROKEN: set[str] = set()
+
+
+def broken_tools() -> set[str]:
+    """Tools whose session count is unknown because their parser failed."""
+    from quiver.sessions import failures
+
+    return set(_CACHED_BROKEN) | set(failures.snapshot())
+
+
 def _window_key(days: int | None) -> str:
     """Cache key for a window. None means every session ever."""
     return "all" if days is None else str(int(days))
@@ -48,14 +61,26 @@ def _load_cached_counts(days: int | None) -> dict[str, int] | None:
     counts = entry.get("counts")
     if not isinstance(counts, dict):
         return None
+    broken = entry.get("broken")
+    if isinstance(broken, list):
+        # A parser that crashed produced a zero that means "unknown", not
+        # "none". Remembering which ones those were keeps a cached read as
+        # honest as a fresh one for the whole day the entry lives.
+        _CACHED_BROKEN.clear()
+        _CACHED_BROKEN.update(str(b) for b in broken)
     return {str(k): int(v) for k, v in counts.items()}
 
 
-def _save_cached_counts(days: int | None, counts: dict[str, int]) -> None:
+def _save_cached_counts(days: int | None, counts: dict[str, int],
+                        broken: set[str] | None = None) -> None:
     try:
         data = _read_cache()
         windows = dict(data.get("windows") or {})
-        windows[_window_key(days)] = {"cached_at": time.time(), "counts": counts}
+        windows[_window_key(days)] = {
+            "cached_at": time.time(),
+            "counts": counts,
+            "broken": sorted(broken or ()),
+        }
         SESSION_COUNTS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = SESSION_COUNTS_CACHE_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps({"windows": windows}), encoding="utf-8")
@@ -102,6 +127,9 @@ def session_counts(days: int | None = 100, use_cache: bool = True) -> dict[str, 
                 cached.setdefault(name, 0)
             return cached
 
+    from quiver.sessions import failures
+
+    failures.clear()
     cutoff = 0.0 if days is None else (time.time() - days * 86400) * 1000
     counts: dict[str, int] = {name: 0 for name in tracked_tool_names()}
     for session in get_all_sessions(limit=None, use_cache=True):
@@ -109,7 +137,10 @@ def session_counts(days: int | None = 100, use_cache: bool = True) -> dict[str, 
             counts[registry_tool(session.tool_name)] = (
                 counts.get(registry_tool(session.tool_name), 0) + 1
             )
-    _save_cached_counts(days, counts)
+    broke = set(failures.snapshot())
+    _CACHED_BROKEN.clear()
+    _CACHED_BROKEN.update(broke)
+    _save_cached_counts(days, counts, broke)
     return counts
 
 
