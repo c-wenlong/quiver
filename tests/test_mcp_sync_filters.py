@@ -154,3 +154,125 @@ class HubAsSourceTest(unittest.TestCase):
         ) as raw:
             self.assertEqual(cli.servers_for_source("cursor"), {"x": {}})
             raw.assert_called_once_with("cursor")
+
+
+class SecretIndirectionTest(unittest.TestCase):
+    """mcp.json stores ${NAME}; values live in a gitignored store.
+
+    Resolution happens when a harness config is written, because Claude,
+    Cursor and Antigravity launch from the Dock and never read a shell
+    profile: an unresolved reference would be sent as the literal token.
+    """
+
+    STORE = (
+        "# comment\n"
+        "\n"
+        "export MCP_NOTION_TOKEN=ntn_secretvalue123456\n"
+        'export MCP_QUOTED="quoted-value"\n'
+        "export MCP_SHORT=12345678\n"
+    )
+
+    def _home(self, tmp, body=None):
+        from pathlib import Path
+
+        home = Path(tmp)
+        (home / ".quiver" / "secrets").mkdir(parents=True)
+        (home / ".quiver" / "secrets" / ".api_keys").write_text(
+            self.STORE if body is None else body
+        )
+        return home
+
+    def test_parses_exports_comments_and_quotes(self):
+        import tempfile
+
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            s = secrets.load_secrets(self._home(tmp))
+            self.assertEqual(s["MCP_NOTION_TOKEN"], "ntn_secretvalue123456")
+            self.assertEqual(s["MCP_QUOTED"], "quoted-value")
+            self.assertEqual(len(s), 3)
+
+    def test_missing_store_is_empty_not_an_error(self):
+        import tempfile
+        from pathlib import Path
+
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(secrets.load_secrets(Path(tmp)), {})
+
+    def test_resolve_substitutes_and_leaves_shell_syntax_alone(self):
+        import tempfile
+
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            cfg = {
+                "env": {"NOTION_TOKEN": "${MCP_NOTION_TOKEN}"},
+                "headers": {"Authorization": "Bearer ${MCP_NOTION_TOKEN}"},
+                "args": ["$HOME/x", "$(gh auth token)", "${DOES_NOT_EXIST}"],
+            }
+            out = secrets.resolve(cfg, home=home)
+            self.assertEqual(out["env"]["NOTION_TOKEN"], "ntn_secretvalue123456")
+            self.assertEqual(
+                out["headers"]["Authorization"], "Bearer ntn_secretvalue123456"
+            )
+            # Shell syntax and unknown names must survive untouched.
+            self.assertEqual(out["args"][0], "$HOME/x")
+            self.assertEqual(out["args"][1], "$(gh auth token)")
+            self.assertEqual(out["args"][2], "${DOES_NOT_EXIST}")
+
+    def test_unknown_reference_is_reported_not_blanked(self):
+        import tempfile
+
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            cfg = {"env": {"A": "${MCP_NOTION_TOKEN}", "B": "${NOPE}"}}
+            self.assertEqual(secrets.unresolved_names(cfg, home=home), ["NOPE"])
+            # Blanking would authenticate as nobody and look like a server bug.
+            self.assertEqual(secrets.resolve(cfg, home=home)["env"]["B"], "${NOPE}")
+
+    def test_round_trip_is_lossless(self):
+        import tempfile
+
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            cfg = {
+                "env": {"NOTION_TOKEN": "${MCP_NOTION_TOKEN}"},
+                "headers": {"Authorization": "Bearer ${MCP_NOTION_TOKEN}"},
+            }
+            resolved = secrets.resolve(cfg, home=home)
+            self.assertEqual(secrets.redact(resolved, home=home), cfg)
+
+    def test_redact_does_not_maul_unrelated_text(self):
+        # MCP_SHORT is 8 characters. A substring replace would rewrite any
+        # value that happened to contain that number, such as a cache path.
+        import tempfile
+
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            cfg = {"env": {"API_ID": "12345678", "PATH": "/tmp/run-12345678-cache"}}
+            out = secrets.redact(cfg, home=home)
+            self.assertEqual(out["env"]["API_ID"], "${MCP_SHORT}")
+            self.assertEqual(out["env"]["PATH"], "/tmp/run-12345678-cache")
+
+    def test_redact_handles_auth_schemes(self):
+        import tempfile
+
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            for scheme in ("Bearer ", "Token ", "Basic "):
+                out = secrets.redact(
+                    {"h": scheme + "ntn_secretvalue123456"}, home=home
+                )
+                self.assertEqual(out["h"], scheme + "${MCP_NOTION_TOKEN}")

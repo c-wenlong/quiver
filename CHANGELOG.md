@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Credential indirection for the MCP hub.** `~/.quiver/mcp.json` now stores
+  `${NAME}` references; values live in `~/.quiver/secrets/.api_keys` (mode 600,
+  gitignored), so the hub itself is safe to commit. `swe mcp sync` resolves on
+  emit rather than relying on the environment, because Claude, Cursor and
+  Antigravity launch from the Dock and never read a shell profile. `swe mcp
+  discover` redacts on ingest, so reading a harness config cannot write
+  plaintext back into the hub. Names absent from the store are reported and
+  left literal rather than blanked, since an empty credential authenticates as
+  nobody and looks like a server bug.
+
 - **`--only` and `--except` accept globs on `swe mcp sync`.** Server names carry
   a category prefix, so `--only=dv__*` takes a category and `--only='*__*'`
   takes every categorised server, which is also the line between servers worth

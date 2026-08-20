@@ -10,6 +10,7 @@ from quiver.mcp.cli import (
     load_registry,
     save_json,
 )
+from quiver.mcp.secrets import redact as redact_secrets
 from quiver.paths import MCP_SOURCE_FILE
 
 MCP_SOURCE_KEY = "mcpServers"
@@ -40,7 +41,11 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
 
     by_name: dict[str, dict] = {}
     for tool in sorted(mcp_tools):
-        for name, server in get_tool_servers_canonical(tool).items():
+        # Harness configs hold real values. Swap them back to ${NAME} so
+        # discover cannot quietly undo the indirection.
+        for name, server in redact_secrets(
+            get_tool_servers_canonical(tool)
+        ).items():
             entry = by_name.setdefault(
                 name,
                 {"tools": set(), "server": server, "source_tool": tool},
