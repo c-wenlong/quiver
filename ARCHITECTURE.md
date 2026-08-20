@@ -136,6 +136,13 @@ One server may appear as both a local and a remote entry, since those are
 two ways to reach it. Two locals, or two remotes, under different names
 are the same thing filed twice, and are reported as duplicates.
 
+`swe find mcps` reads two sources deliberately. The registered config
+paths tell you how far a sync got; a walk of the harness directories
+tells you about configs nobody registered, which is where an unmanaged
+server hides. The walk covers JSON and TOML, files sitting directly in
+`$HOME` (`~/.claude.json` belongs to no harness directory), and follows
+the same vendored rule as the rest of `find`.
+
 ## Layering rules
 
 1. `console`, `table`, `paths` and `configuration` import nothing else from
