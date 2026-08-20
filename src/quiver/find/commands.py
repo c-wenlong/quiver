@@ -565,7 +565,16 @@ def cmd_find(args) -> int:
         print(f"Unknown scope: {scope or '(empty)'}. Use all, global, or local.")
         return 1
 
+    # -i turns the printed listing into a browser over the same data. It
+    # matters most for plugins: the listing says "11 skills" and gives you
+    # no way to see which, and nothing else in quiver answers that.
+    interactive = any(a in ("--interactive", "-i") for a in args)
+    args = [a for a in args if a not in ("--interactive", "-i")]
+
     topic = args[0] if args else None
+    if interactive:
+        return _browse(topic, scope)
+
     if topic in ("amd", "agents", "agents.md", "instructions"):
         return cmd_find_agents(args[1:], root_flag, scope)
     if topic in ("skills", "skill"):
@@ -586,6 +595,37 @@ def cmd_find(args) -> int:
     return 1
 
 
+BROWSE_TOPICS = {
+    "amd": "agents", "agents": "agents", "agents.md": "agents",
+    "instructions": "agents",
+    "skills": "skills", "skill": "skills",
+    "plugins": "plugins", "plugin": "plugins",
+}
+
+
+def _browse(topic: str | None, scope: str) -> int:
+    """Open the interactive browser for one resource type."""
+    from quiver.find.browser import browse
+    from quiver.find import roots as _roots
+
+    key = BROWSE_TOPICS.get(topic or "")
+    if key is None:
+        # Deliberately not defaulting to one of them: browsing is per
+        # resource, and guessing which would land you in the wrong tree.
+        print(c("red", f"  Cannot browse {topic or '(nothing)'}."))
+        print(c("dim", "  Try: swe find plugins -i  ·  skills -i  ·  amd -i"))
+        return 1
+
+    getter = {"agents": _roots.agents_roots,
+              "skills": _roots.skills_roots,
+              "plugins": _roots.plugins_roots}[key]
+    entries = getter(scope=scope)
+    if not entries:
+        print(c("dim", f"  nothing to browse for {key} at --scope={scope}"))
+        return 0
+    return browse(entries, title=f"  {key.title()}  --scope={scope}")
+
+
 def print_find_help() -> None:
     print(f"""
   {c('bold', 'swe find')} — where the shared assets live and what links to them
@@ -598,6 +638,11 @@ def print_find_help() -> None:
 
   {c('dim', 'swe mcp list gives the tool-by-server matrix once you know what')}
   {c('dim', 'you are looking for; swe find mcps answers what the hub holds.')}
+
+  {c('bold', 'Browse instead of print')}  {c('cyan', '--interactive')} / {c('cyan', '-i')}
+    Works on {c('cyan', 'amd')}, {c('cyan', 'skills')} and {c('cyan', 'plugins')}. Arrows move and descend,
+    {c('cyan', 'q')} quits. The listing says a plugin has 11 skills; this is how
+    you see which 11, and read them.
 
   {c('bold', 'Where it scans')}
     default        the current directory, recursively
