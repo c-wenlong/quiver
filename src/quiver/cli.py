@@ -17,7 +17,6 @@ from quiver.harness.commands import (
     cmd_remove,
     cmd_star,
     cmd_tags,
-    cmd_unstar,
     cmd_use,
 )
 from quiver.find import cmd_find
@@ -124,7 +123,6 @@ COMMANDS = {
     "star": cmd_star,
     "favourite": cmd_star,
     "favorite": cmd_star,
-    "unstar": cmd_unstar,
     "use": cmd_use,
     "run": cmd_use,
     "check": cmd_check,

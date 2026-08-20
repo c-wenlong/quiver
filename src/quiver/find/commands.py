@@ -6,6 +6,7 @@ from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, elide
+from quiver.init.layout import skill_folder_names
 from quiver.find.tree import (
     agents_tree,
     flat_skills,
@@ -250,6 +251,28 @@ def cmd_find_agents(args=None, root_flag: bool = False, scope: str = "global") -
     return 0
 
 
+def _skill_columns(names: list[str], indent: str = "    ", cols: int = 4,
+                   width: int = 34, limit: int = 0) -> None:
+    """Print skill names in columns under their root.
+
+    A root can hold 117 skills, so one name per line would bury the tree
+    it is meant to sit inside. ``limit`` caps a very long list and says
+    how many were left out rather than truncating silently.
+    """
+    shown = names if not limit or len(names) <= limit else names[:limit]
+    line: list[str] = []
+    for name in shown:
+        line.append(elide(name, width - 2).ljust(width))
+        if len(line) == cols:
+            print(indent + c("dim", "".join(line).rstrip()))
+            line = []
+    if line:
+        print(indent + c("dim", "".join(line).rstrip()))
+    if len(shown) < len(names):
+        rest = len(names) - len(shown)
+        print(indent + c("dim", f"... and {rest} more (swe skills <filter> to search)"))
+
+
 def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -> int:
     home = Path.home()
     root = _scan_root(root_flag)
@@ -265,6 +288,8 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
     print(f"\n{c('bold', 'Skills')}\n")
     print(f"  {c('green', _short(shared, home))}"
           f"  {c('dim', f'{len(flat)} always-on')}")
+    if flat:
+        _skill_columns(flat)
 
     # Plugins, grouped by the marketplace directory holding them.
     by_market: dict[str, list] = {}
@@ -302,6 +327,10 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
                   f"{c(colour, _short(n.path, home).ljust(30))}"
                   f"{c(colour, STATE_WORD.get(n.state, n.state).ljust(12))}"
                   f"{c('dim', n.detail)}")
+            # These roots hold the only copy of what is in them, so their
+            # contents are the part worth seeing.
+            _skill_columns(sorted(skill_folder_names(n.path)), indent="      ",
+                           limit=40)
 
     summary = (f"{total} skills · {len(linked)} roots synced · "
                f"{len(other)} left alone")

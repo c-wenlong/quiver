@@ -109,11 +109,15 @@ def _skills_fixture():
 # ``cmd_skills([])`` is the help path (prints overview). The listing
 # tests pass a non-empty args list (typically ``["ls"]`` which is a
 # pass-through that runs the listing without subcommand routing).
+SEARCH = "s"   # a filter every fixture name or path contains
+
+
 def _run_cmd_skills(args):
     """Invoke cmd_skills with an explicit args list (must be non-empty).
 
-    An empty list (``[]``) routes to ``print_skills_overview()`` which
-    is the help-text path - the tests below must NOT slide into help.
+    ``[]`` routes to the overview, and a bare ``ls`` now routes to the
+    tree view in `swe find skills`, so the table tests below pass a
+    filter: that is the search view, which is what the table renders.
     """
     if not args:
         raise ValueError(
@@ -155,17 +159,17 @@ class CmdSkillsListTest(unittest.TestCase):
         _setup_skills_patches(self)
 
     def test_header_is_name_scope_path(self):
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         for label in ("NAME", "SCOPE", "PATH"):
             self.assertIn(label, plain)
 
     def test_visible_via_column_is_gone(self):
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         self.assertNotIn("VISIBLE VIA", plain)
 
     def test_one_line_per_skill(self):
         skills = _skills_fixture()
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         body = [
             ln for ln in plain.splitlines()
             if ln.strip() and not ln.startswith("─")
@@ -175,7 +179,7 @@ class CmdSkillsListTest(unittest.TestCase):
         self.assertEqual(len(body), len(skills))
 
     def test_separator_matches_header_width(self):
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         lines = plain.splitlines()
         head = next(i for i, ln in enumerate(lines) if "NAME" in ln)
         # The header is space-padded to the full table width, so compare
@@ -183,7 +187,7 @@ class CmdSkillsListTest(unittest.TestCase):
         self.assertEqual(len(lines[head + 1]), len(lines[head]))
 
     def test_every_row_shows_its_path(self):
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         for skill in _skills_fixture():
             tail = skill["path"].rsplit("/", 2)[-2]
             self.assertIn(tail[:12], plain, f"no path shown for {skill['name']}")
@@ -193,29 +197,29 @@ class CmdSkillsListTest(unittest.TestCase):
         _setup_skills_patches(self, skills=[
             {"name": "n", "scope": "s", "path": long, "description": "",
              "visible_via": ["s"]}])
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         row = next(ln for ln in plain.splitlines() if "…" in ln)
         self.assertIn("SKILL.md", row, "the tail identifies which file")
         self.assertTrue(row.strip().startswith("n"), "the head survives too")
 
     def test_desc_flag_adds_a_line_under_the_row(self):
-        plain = strip_ansi(_run_cmd_skills(["ls", "-d"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH, "-d"]))
         self.assertIn(_skills_fixture()[0]["description"][:20], plain)
 
     def test_no_desc_line_without_the_flag(self):
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         self.assertNotIn(_skills_fixture()[0]["description"][:20], plain)
 
     def test_long_name_is_truncated_to_the_column(self):
         _setup_skills_patches(self, skills=[
             {"name": "x" * 80, "scope": "s", "path": "/p/SKILL.md",
              "description": "", "visible_via": ["s"]}])
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         row = next(ln for ln in plain.splitlines() if "x" in ln)
         self.assertLessEqual(len(row.split()[0]), NAME_W)
 
     def test_footer_points_at_find(self):
-        plain = strip_ansi(_run_cmd_skills(["ls"]))
+        plain = strip_ansi(_run_cmd_skills([SEARCH]))
         self.assertIn("swe find skills", plain)
 
 
@@ -249,3 +253,46 @@ class SupersededCommandsTest(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 cmd_skills(["tree", "--scope=all"])
             self.assertEqual(m.call_args.kwargs.get("scope"), "all")
+
+
+class BrowseIsATreeSearchIsATableTest(unittest.TestCase):
+    """`swe skills list` browses, so it renders as a tree.
+
+    A flat run of several hundred rows was the wrong shape for browsing.
+    A filter is a search, and keeps the table, because a tree cannot show
+    which of 400 skills matched.
+    """
+
+    def test_bare_list_forwards_to_the_tree_view(self):
+        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+            with redirect_stdout(io.StringIO()):
+                cmd_skills(["list"])
+            m.assert_called_once()
+            self.assertTrue(m.call_args.kwargs.get("root_flag"))
+
+    def test_bare_ls_forwards_too(self):
+        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+            with redirect_stdout(io.StringIO()):
+                cmd_skills(["ls"])
+            m.assert_called_once()
+
+    def test_a_filter_keeps_the_table(self):
+        _setup_skills_patches(self)
+        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+            plain = strip_ansi(_run_cmd_skills([SEARCH]))
+        m.assert_not_called()
+        self.assertIn("NAME", plain)
+
+    def test_list_with_a_filter_is_a_search_not_a_tree(self):
+        _setup_skills_patches(self)
+        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+            plain = strip_ansi(_run_cmd_skills(["list", SEARCH]))
+        m.assert_not_called()
+        self.assertIn("NAME", plain)
+
+    def test_desc_flag_keeps_the_table(self):
+        _setup_skills_patches(self)
+        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+            plain = strip_ansi(_run_cmd_skills([SEARCH, "-d"]))
+        m.assert_not_called()
+        self.assertIn("NAME", plain)
