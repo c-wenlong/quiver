@@ -20,6 +20,11 @@ class Choice:
     label: str
     about: str = ""
     locked: bool = False      # shown ticked, cannot be toggled
+    # A row whose label carries a value you can rotate, e.g. the session
+    # window on the counts column. cycle(value, step) -> new value.
+    value: object = None
+    cycle: object = None
+    render_value: object = None
 
 
 def _supported() -> bool:
@@ -41,16 +46,22 @@ def _read_key(fd: int) -> str:
     ch = os.read(fd, 1)
     if ch == b"\x1b":                     # escape: maybe an arrow
         rest = os.read(fd, 2)
-        return {b"[A": "up", b"[B": "down"}.get(rest, "escape")
+        return {b"[A": "up", b"[B": "down",
+                b"[C": "next", b"[D": "prev"}.get(rest, "escape")
     return {
         b" ": "space", b"\r": "enter", b"\n": "enter",
         b"\x03": "cancel", b"q": "cancel",
         b"k": "up", b"j": "down",
         b"a": "all", b"n": "none",
+        # A bare Shift is not something a terminal reports, so the rotation is
+        # bound to left/right and to < / > which are themselves shifted keys.
+        b"<": "prev", b",": "prev", b"h": "prev",
+        b">": "next", b".": "next", b"l": "next",
     }.get(ch, "")
 
 
-FOOTER = "  space toggle · a all · n none · enter save · q cancel"
+FOOTER = ("  space toggle · ← → change · a all · n none · "
+          "enter save · q cancel")
 
 
 def _render(choices, selected, cursor, title, prev_lines: int) -> int:
@@ -73,8 +84,13 @@ def _render(choices, selected, cursor, title, prev_lines: int) -> int:
     for i, ch in enumerate(choices):
         box = "[x]" if (ch.locked or ch.key in selected) else "[ ]"
         tail = c("dim", "  always shown") if ch.locked else ""
+        label = ch.label
+        if ch.cycle is not None:
+            shown = ch.render_value(ch.value) if ch.render_value else str(ch.value)
+            label = shown
+            tail = c("dim", "  ← → to change")
         pointer = c("cyan", ">") if i == cursor else " "
-        body = f"{box} {ch.label.ljust(12)} {c('dim', ch.about)}{tail}"
+        body = f"{box} {label.ljust(12)} {c('dim', ch.about)}{tail}"
         line = c("cyan", body) if i == cursor else (c("dim", body) if ch.locked else body)
         out.append(f" {pointer} {line}\r\n")
     out.append(c("dim", FOOTER) + "\r\n")
@@ -95,7 +111,6 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
         print(c("dim", "  not a terminal, nothing changed"))
         return None
 
-    import os
     import termios
     import tty
 
@@ -120,6 +135,10 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
                 ch = choices[cursor]
                 if not ch.locked:
                     chosen.symmetric_difference_update({ch.key})
+            elif key in ("prev", "next"):
+                ch = choices[cursor]
+                if ch.cycle is not None:
+                    ch.value = ch.cycle(ch.value, 1 if key == "next" else -1)
             elif key == "all":
                 chosen = {ch.key for ch in choices}
             elif key == "none":

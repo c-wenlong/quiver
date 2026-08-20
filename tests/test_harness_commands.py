@@ -96,7 +96,7 @@ def _setup_patches(testcase, *, stars=()):
             "quiver.harness.commands.load_registry",
             return_value=copy.deepcopy(_REGISTRY),
         ),
-        patch("quiver.harness.commands._session_counts_100d", return_value={
+        patch("quiver.harness.commands._session_counts", return_value={
             "claude": 42,  # positive → green
             "codex": 0,    # present-zero → dim
             # droid absent → dim em-dash

@@ -12,7 +12,11 @@ from quiver.harness.columns import (
     COLUMNS,
     DEFAULT_COLUMNS,
     load_columns,
+    load_window,
+    next_window,
     save_columns,
+    save_window,
+    window_label,
 )
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.init.layout import link_states
@@ -22,10 +26,10 @@ from quiver.prompt import read_line
 from quiver.table import Table
 
 
-def _session_counts_100d():
-    from quiver.sessions.usage import session_counts_100d
+def _session_counts(days=None):
+    from quiver.sessions.usage import session_counts
 
-    return session_counts_100d()
+    return session_counts(load_window() if days is None else days)
 
 
 def _sort_tools(tools: dict, counts: dict[str, int], stars: list[str]):
@@ -73,6 +77,9 @@ _LINK_GLYPH = {
     # Holds skills that exist nowhere else, so quiver deliberately leaves it
     # alone. Not an error, and not a tick either.
     "keep": ("yellow", "\u25cb"),
+    # A real directory whose contents are all duplicates or empty, so init can
+    # replace it with the link without losing anything.
+    "absorb": ("yellow", "\u25cb"),
 }
 
 
@@ -81,7 +88,6 @@ def _link_cell(state, label, width):
     if state is None:
         return c("dim", "\u00b7".ljust(width))
     colour, glyph = _LINK_GLYPH.get(state, ("dim", "?"))
-    text = f"{glyph} {label}" if label else glyph
     return c(colour, glyph) + " " + c("dim" if state != "linked" else "green", label) + " " * max(
         0, width - visible_len(c(colour, glyph)) - 1 - len(label)
     )
@@ -100,16 +106,30 @@ def cmd_list_edit(args=None) -> int:
         return 0
     if args and args[0] == "--reset":
         save_columns(DEFAULT_COLUMNS)
+        save_window(100)
         print(f"  {c('green', 'reset')} {c('dim', 'to ' + ', '.join(DEFAULT_COLUMNS))}")
         return 0
 
     current = load_columns()
-    choices = [Choice(col.key, col.label, col.about, col.locked) for col in COLUMNS]
+    window = load_window()
+    choices = []
+    for col in COLUMNS:
+        if col.key == "sess":
+            choices.append(Choice(
+                col.key, col.label, col.about, col.locked,
+                value=window, cycle=next_window, render_value=window_label))
+        else:
+            choices.append(Choice(col.key, col.label, col.about, col.locked))
     picked = multiselect(choices, current, title="  Columns for swe list")
     if picked is None:
         print(f"  {c('dim', 'cancelled, nothing changed')}")
         return 0
 
+    chosen_window = next(
+        (ch.value for ch in choices if ch.key == "sess"), window)
+    if chosen_window != window:
+        save_window(chosen_window)
+        print(f"  {c('green', 'window')} {c('dim', window_label(window) + ' -> ' + window_label(chosen_window))}")
     saved = save_columns(picked)
     added = [k for k in saved if k not in current]
     removed = [k for k in current if k not in saved]
@@ -162,7 +182,7 @@ def cmd_list(args):
 
     tools = load_registry()
     tag_filter = args[0].lstrip("-") if args else None
-    counts = _session_counts_100d()
+    counts = _session_counts()
     stars = load_stars()
     starred_set = set(stars)
 
@@ -204,7 +224,8 @@ def cmd_list(args):
         table.add_column("aliases", "ALIASES", width=12, kind="list",
                          color="cyan", empty="—")
     if "sess" in wanted:
-        table.add_column("sess", "100d", width=8, kind="preformatted", empty="—")
+        table.add_column("sess", window_label(load_window()), width=8,
+                         kind="preformatted", empty="—")
     if "rate" in wanted:
         table.add_column(
             "rate", "REMAINING", width=14, kind="preformatted",

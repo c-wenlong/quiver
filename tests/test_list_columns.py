@@ -254,7 +254,8 @@ class SessionCountsCacheTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.cache = Path(self.tmp.name) / "session_counts.json"
         patch = mock.patch.object(usage, "SESSION_COUNTS_CACHE_FILE", self.cache)
-        patch.start(); self.addCleanup(patch.stop)
+        patch.start()
+        self.addCleanup(patch.stop)
         self.usage = usage
 
     def _with_sessions(self, counts):
@@ -371,3 +372,144 @@ class SortOrderTest(unittest.TestCase):
     def test_a_harness_with_no_count_sorts_last_in_its_block(self):
         got = self._order({"known": 3, "unknown": 0}, [])
         self.assertEqual(got, ["known", "unknown"])
+
+
+class SessionWindowTest(unittest.TestCase):
+    """The counts column looks back over a window you can rotate.
+
+    A bare Shift is not something a terminal reports, so the rotation is bound
+    to left/right and to < / > which are themselves shifted keys.
+    """
+
+    def setUp(self):
+        self.store = {}
+        p1 = mock.patch.object(C, "load_config", lambda: dict(self.store))
+        p2 = mock.patch.object(C, "save_config", lambda cfg: self.store.update(cfg))
+        p1.start()
+        p2.start()
+        self.addCleanup(p1.stop)
+        self.addCleanup(p2.stop)
+
+    def test_default_window_is_a_hundred_days(self):
+        self.assertEqual(C.load_window(), 100)
+
+    def test_rotation_covers_every_option_and_wraps(self):
+        seen, w = [], C.SESSION_WINDOWS[0]
+        for _ in range(len(C.SESSION_WINDOWS)):
+            seen.append(w)
+            w = C.next_window(w)
+        self.assertEqual(seen, list(C.SESSION_WINDOWS))
+        self.assertEqual(w, C.SESSION_WINDOWS[0], "should wrap to the start")
+
+    def test_rotation_goes_backwards(self):
+        self.assertEqual(C.next_window(C.SESSION_WINDOWS[0], -1),
+                         C.SESSION_WINDOWS[-1])
+
+    def test_all_is_represented_as_none(self):
+        self.assertIn(None, C.SESSION_WINDOWS)
+        self.assertEqual(C.window_label(None), "All")
+        self.assertEqual(C.window_label(30), "30d")
+
+    def test_window_round_trips_through_config(self):
+        C.save_window(7)
+        self.assertEqual(C.load_window(), 7)
+        C.save_window(None)
+        self.assertIsNone(C.load_window())
+
+    def test_a_window_outside_the_rotation_falls_back(self):
+        C.save_window(9999)
+        self.assertEqual(C.load_window(), C.DEFAULT_WINDOW)
+
+    def test_a_corrupt_stored_window_falls_back(self):
+        self.store["list"] = {"session_window": "soon"}
+        self.assertEqual(C.load_window(), C.DEFAULT_WINDOW)
+
+    def test_saving_the_window_keeps_the_columns(self):
+        C.save_columns(["name", "sess"])
+        C.save_window(30)
+        self.assertIn("sess", C.load_columns())
+
+
+class WindowedCountsTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from quiver.sessions import usage
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patch = mock.patch.object(
+            usage, "SESSION_COUNTS_CACHE_FILE",
+            Path(self.tmp.name) / "session_counts.json")
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.usage = usage
+
+    def _sessions(self, ages_days):
+        import time
+
+        from quiver.sessions.models import Session
+
+        now = time.time() * 1000
+        return [Session(timestamp=now - d * 86400 * 1000, agent="A", path="/p",
+                        title="t", session_id=str(i), tool_name="claude")
+                for i, d in enumerate(ages_days)]
+
+    def test_a_narrower_window_counts_fewer(self):
+        sessions = self._sessions([1, 10, 50, 200])
+        with mock.patch.object(self.usage, "get_all_sessions", lambda *a, **k: sessions):
+            with mock.patch.object(self.usage, "tracked_tool_names", lambda: {"claude"}):
+                self.assertEqual(self.usage.session_counts(7)["claude"], 1)
+                self.assertEqual(self.usage.session_counts(30)["claude"], 2)
+                self.assertEqual(self.usage.session_counts(100)["claude"], 3)
+                self.assertEqual(self.usage.session_counts(365)["claude"], 4)
+
+    def test_all_counts_everything_however_old(self):
+        sessions = self._sessions([1, 5000])
+        with mock.patch.object(self.usage, "get_all_sessions", lambda *a, **k: sessions):
+            with mock.patch.object(self.usage, "tracked_tool_names", lambda: {"claude"}):
+                self.assertEqual(self.usage.session_counts(None)["claude"], 2)
+
+    def test_each_window_caches_separately(self):
+        # Switching 100d to 30d must not read the wider window's number.
+        sessions = self._sessions([1, 50])
+        calls = []
+
+        def get(*a, **k):
+            calls.append(1)
+            return sessions
+
+        with mock.patch.object(self.usage, "get_all_sessions", get):
+            with mock.patch.object(self.usage, "tracked_tool_names", lambda: {"claude"}):
+                self.assertEqual(self.usage.session_counts(7)["claude"], 1)
+                self.assertEqual(self.usage.session_counts(100)["claude"], 2)
+                self.assertEqual(self.usage.session_counts(7)["claude"], 1)
+        self.assertEqual(len(calls), 2, "third call should hit the 7d cache")
+
+
+class CycleRowTest(unittest.TestCase):
+    def test_a_cycling_row_shows_its_value_not_its_label(self):
+        from quiver.multiselect import _render
+
+        ch = Choice("sess", "100d", "about", value=30,
+                    cycle=C.next_window, render_value=C.window_label)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _render([ch], set(), 0, "T", 0)
+        plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", buf.getvalue())
+        self.assertIn("30d", plain)
+        self.assertIn("change", plain)
+
+    def test_left_and_right_keys_map_to_the_rotation(self):
+        import os
+
+        from quiver.multiselect import _read_key
+
+        for seq, want in ((b"\x1b[C", "next"), (b"\x1b[D", "prev"),
+                          (b">", "next"), (b"<", "prev")):
+            r, w = os.pipe()
+            os.write(w, seq)
+            os.close(w)
+            self.assertEqual(_read_key(r), want, seq)
+            os.close(r)

@@ -25,26 +25,40 @@ def _counts_ttl() -> float:
     return float(_COUNTS_TTL_DEFAULT)
 
 
-def _load_cached_counts() -> dict[str, int] | None:
+def _window_key(days: int | None) -> str:
+    """Cache key for a window. None means every session ever."""
+    return "all" if days is None else str(int(days))
+
+
+def _read_cache() -> dict:
     try:
         data = json.loads(SESSION_COUNTS_CACHE_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_cached_counts(days: int | None) -> dict[str, int] | None:
+    # Keyed by window: switching 100d to 30d must not read the old number.
+    entry = (_read_cache().get("windows") or {}).get(_window_key(days))
+    if not isinstance(entry, dict):
         return None
-    if time.time() - float(data.get("cached_at", 0)) > _counts_ttl():
+    if time.time() - float(entry.get("cached_at", 0)) > _counts_ttl():
         return None
-    counts = data.get("counts")
+    counts = entry.get("counts")
     if not isinstance(counts, dict):
         return None
     return {str(k): int(v) for k, v in counts.items()}
 
 
-def _save_cached_counts(counts: dict[str, int]) -> None:
+def _save_cached_counts(days: int | None, counts: dict[str, int]) -> None:
     try:
+        data = _read_cache()
+        windows = dict(data.get("windows") or {})
+        windows[_window_key(days)] = {"cached_at": time.time(), "counts": counts}
         SESSION_COUNTS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = SESSION_COUNTS_CACHE_FILE.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps({"cached_at": time.time(), "counts": counts}),
-            encoding="utf-8")
+        tmp.write_text(json.dumps({"windows": windows}), encoding="utf-8")
         tmp.replace(SESSION_COUNTS_CACHE_FILE)
     except OSError:
         pass
@@ -71,15 +85,16 @@ def tracked_tool_names() -> set[str]:
     return names
 
 
-def session_counts_100d(use_cache: bool = True) -> dict[str, int]:
-    """Return {registry_tool_name: count} for sessions in the past 100 days.
+def session_counts(days: int | None = 100, use_cache: bool = True) -> dict[str, int]:
+    """{registry_tool_name: count} for sessions inside ``days``.
 
-    Tools with a registered session parser are always present (count may be 0).
-    Cached for a day: computing it walks every transcript on the machine and
-    costs ~570ms, for a figure that changes by a handful per day.
+    ``days=None`` counts every session ever recorded. Tools with a registered
+    session parser are always present, count may be 0. Cached per window for a
+    day: computing it walks every transcript on the machine and costs ~500ms,
+    for a figure that changes by a handful per day.
     """
     if use_cache:
-        cached = _load_cached_counts()
+        cached = _load_cached_counts(days)
         if cached is not None:
             # A harness added since the cache was written should read 0,
             # not vanish from the table.
@@ -87,12 +102,17 @@ def session_counts_100d(use_cache: bool = True) -> dict[str, int]:
                 cached.setdefault(name, 0)
             return cached
 
-    cutoff = (time.time() - 100 * 86400) * 1000
+    cutoff = 0.0 if days is None else (time.time() - days * 86400) * 1000
     counts: dict[str, int] = {name: 0 for name in tracked_tool_names()}
     for session in get_all_sessions(limit=None, use_cache=True):
         if session.timestamp >= cutoff:
             counts[registry_tool(session.tool_name)] = (
                 counts.get(registry_tool(session.tool_name), 0) + 1
             )
-    _save_cached_counts(counts)
+    _save_cached_counts(days, counts)
     return counts
+
+
+def session_counts_100d(use_cache: bool = True) -> dict[str, int]:
+    """Backwards-compatible alias for the default window."""
+    return session_counts(100, use_cache=use_cache)

@@ -29,7 +29,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("version", "VERSION", "Installed version"),
     Column("aliases", "ALIASES", "Short aliases, e.g. cc for claude"),
     Column("inst", "INST", "Whether it is installed"),
-    Column("sess", "100d", "Sessions in the last 100 days"),
+    Column("sess", "100d", "Sessions in a window you can rotate"),
     Column("rate", "REMAINING", "Rate limit left", costly=True),
     Column("agents", "AGENTS.MD", "Is its instruction file synced to ~/.quiver"),
     Column("skills", "SKILLS", "Is its skills root synced to ~/.quiver"),
@@ -46,6 +46,51 @@ DEFAULT_COLUMNS: tuple[str, ...] = (
 
 _CONFIG_SECTION = "list"
 _CONFIG_KEY = "columns"
+_WINDOW_KEY = "session_window"
+
+# How far back the session-count column looks. None means every session ever.
+SESSION_WINDOWS: tuple[int | None, ...] = (7, 30, 100, 365, None)
+DEFAULT_WINDOW = 100
+
+
+def window_label(days: int | None) -> str:
+    return "All" if days is None else f"{days}d"
+
+
+def load_window() -> int | None:
+    """The configured session window, or the default when unset."""
+    section = (load_config() or {}).get(_CONFIG_SECTION) or {}
+    if _WINDOW_KEY not in section:
+        return DEFAULT_WINDOW
+    value = section[_WINDOW_KEY]
+    if value is None:
+        return None
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_WINDOW
+    return value if value in SESSION_WINDOWS else DEFAULT_WINDOW
+
+
+def save_window(days: int | None) -> int | None:
+    """Persist the session window, ignoring values outside the rotation."""
+    if days not in SESSION_WINDOWS:
+        days = DEFAULT_WINDOW
+    config = dict(load_config() or {})
+    section = dict(config.get(_CONFIG_SECTION) or {})
+    section[_WINDOW_KEY] = days
+    config[_CONFIG_SECTION] = section
+    save_config(config)
+    return days
+
+
+def next_window(days: int | None, step: int = 1) -> int | None:
+    """The next window in the rotation, wrapping at both ends."""
+    try:
+        i = SESSION_WINDOWS.index(days)
+    except ValueError:
+        i = SESSION_WINDOWS.index(DEFAULT_WINDOW)
+    return SESSION_WINDOWS[(i + step) % len(SESSION_WINDOWS)]
 
 
 def normalise(keys) -> list[str]:
