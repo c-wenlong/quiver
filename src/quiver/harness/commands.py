@@ -32,6 +32,22 @@ from quiver.prompt import read_line
 from quiver.table import Table
 
 
+# Least to most, so the colour tracks the ordering rather than being
+# assigned per word.
+_USAGE_COLOR = {
+    "unknown": "dim", "none": "dim", "trial": "yellow",
+    "used": "cyan", "heavy": "green",
+}
+
+
+def _usage_cell(entry, width: int = 9) -> str:
+    """How much an archived harness got used. Blank for an active one."""
+    if not entry:
+        return " " * width
+    level = entry.get("usage") or "unknown"
+    return c(_USAGE_COLOR.get(level, "dim"), level.ljust(width))
+
+
 def _broken_tools():
     """Tools whose session count is unknown because their parser crashed."""
     from quiver.sessions.usage import broken_tools
@@ -177,6 +193,15 @@ def cmd_list_legend(args=None) -> int:
     print(f"\n  {c('bold', 'Marker column')}\n")
     print(f"  {c('neon_pink', '★'.rjust(4))}  {c('dim', 'favourited: pinned to the top, neon border')}")
     print(f"  {c('yellow', '▪'.rjust(4))}  {c('dim', 'archived: hidden unless --scope=all or =archived')}")
+
+    from quiver.harness.archive import USAGE_ABOUT, USAGE_LEVELS
+
+    print(f"\n  {c('bold', 'USAGE column')}  {c('dim', '(archived harnesses only)')}\n")
+    for level in reversed(USAGE_LEVELS):
+        print(f"  {c(_USAGE_COLOR.get(level, 'dim'), level.rjust(8))}  "
+              f"{c('dim', USAGE_ABOUT[level])}")
+    print(f"\n  {c('dim', 'Derived from lifetime sessions; override with')} "
+          f"{c('cyan', 'swe hs archive <name> --usage=<level>')}")
 
     print(f"\n  {c('bold', 'AGENTS.MD and SKILLS glyphs')}\n")
     rows = [
@@ -324,7 +349,13 @@ def cmd_archive(args):
     Not a delete. `swe remove` forgets the harness, which loses the fact
     that you tried it, so it reads as untested later and gets reinstalled.
     """
-    from quiver.harness.archive import archive, load_archive, unarchive
+    from quiver.harness.archive import (
+        USAGE_LEVELS,
+        archive,
+        load_archive,
+        normalise_usage,
+        unarchive,
+    )
 
     args = list(args or [])
     entries = load_archive()
@@ -341,6 +372,7 @@ def cmd_archive(args):
                               reverse=True):
             print(f"  {c('dim', '▪')} {c('bold', name.ljust(width))}"
                   f"{c('dim', _fmt_when(e['archived_at']).ljust(12))}"
+                  f"{c(_USAGE_COLOR.get(e['usage'], 'dim'), e['usage'].ljust(9))}"
                   f"{c('dim', e['reason'] or 'no reason given')}")
         print(f"\n  {c('dim', 'swe hs archive <name>   restore  ·  swe list --scope=all   show them inline')}\n")
         return 0
@@ -353,6 +385,20 @@ def cmd_archive(args):
         print(f"\n  {c('dim', 'Archived harnesses drop out of swe list. --scope=all brings them back,')}")
         print(f"  {c('dim', 'and --scope=archived shows only those, with the date and reason.')}\n")
         return 0
+
+    # --usage=<level> overrides what the session count implies. The count is
+    # wrong in both directions: a harness with no parser reads as unknown
+    # however much you used it, and a high count can come from one long
+    # evaluation rather than real adoption.
+    usage = None
+    for a in list(args):
+        if a.startswith("--usage"):
+            usage = a.split("=", 1)[1] if "=" in a else ""
+            args.remove(a)
+    if usage is not None and normalise_usage(usage, "") == "":
+        print(c("red", f"  Unknown usage level: {usage or '(empty)'}. "
+                       f"Use {', '.join(USAGE_LEVELS)}."))
+        return 1
 
     tools = load_registry()
     key = args[0]
@@ -368,16 +414,18 @@ def cmd_archive(args):
             print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
             return 1
 
-    if name in entries and not reason:
+    if name in entries and not reason and usage is None:
         old = unarchive(name)
         print(f"  {c('green', '✓')} Restored {c('bold', name)}")
         print(f"    {c('dim', 'was archived ' + _fmt_when(old['archived_at']))}"
               f"{c('dim', ': ' + old['reason'] if old['reason'] else '')}")
         return 0
 
-    entry = archive(name, reason)
+    entry = archive(name, reason, usage=usage)
     verb = "Re-archived" if name in entries else "Archived"
-    print(f"  {c('dim', '▪')} {verb} {c('bold', name)} {c('dim', _fmt_when(entry['archived_at']))}")
+    print(f"  {c('dim', '▪')} {verb} {c('bold', name)} "
+          f"{c('dim', _fmt_when(entry['archived_at']))} "
+          f"{c(_USAGE_COLOR.get(entry['usage'], 'dim'), entry['usage'])}")
     if entry["reason"]:
         print(f"    {c('dim', entry['reason'])}")
     else:
@@ -496,6 +544,9 @@ def cmd_list(args):
     if "sess" in wanted:
         table.add_column("sess", window_label(load_window()), width=8,
                          kind="preformatted", empty="—")
+    if "usage" in wanted:
+        table.add_column("usage", "USAGE", width=9, kind="preformatted",
+                         trust_cell_width=True)
     if "rate" in wanted:
         table.add_column(
             "rate", "REMAINING", width=14, kind="preformatted",
@@ -601,6 +652,8 @@ def cmd_list(args):
                 row["skills"] = _link_cell(states.get("skills"), "skills/", 12)
         if "sess" in wanted:
             row["sess"] = sess_cell
+        if "usage" in wanted:
+            row["usage"] = _usage_cell(archived.get(name))
         if "rate" in wanted:
             row["rate"] = rate_cell
         if "desc" in wanted:
