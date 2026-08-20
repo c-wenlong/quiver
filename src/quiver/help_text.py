@@ -355,6 +355,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe find skills')}           Skills, plugins, and every harness skill root
   {c('cyan', 'swe find plugins')}          Plugins across all five plugin-capable harnesses
   {c('cyan', 'swe find mcps')}             MCP servers in the hub, and which harnesses have them
+  {c('cyan', 'swe find plugins -i')}       Browse them: arrows to move and descend, q to quit
   {c('cyan', 'swe find amd --scope=all')}  Include project and vendored files
 
 {c('bold', 'Scope')}  {c('cyan', '--scope=global|local|all')}, default global
