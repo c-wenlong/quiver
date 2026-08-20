@@ -97,7 +97,9 @@ def cmd_skills(args):
     # root discovery reaches every root on disk this list is several
     # hundred rows, so the per-skill line budget matters.
     name_w, scope_w = 30, 16
-    path_w = max(40, terminal_width() - name_w - scope_w - 8)
+    # No floor: a path that will not fit is better elided than wrapped,
+    # and elide keeps both ends so the harness and the filename survive.
+    path_w = max(16, terminal_width() - name_w - scope_w - 8)
 
     table = Table()
     table.add_column("name", "NAME", width=name_w,

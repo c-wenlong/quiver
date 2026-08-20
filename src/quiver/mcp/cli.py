@@ -29,7 +29,7 @@ import termios
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, cpad, strip_ansi, visible_len
+from quiver.console import c, cpad, strip_ansi, terminal_width, truncate, visible_len
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
@@ -584,6 +584,18 @@ def _display_tools(mcp_tools: dict) -> dict:
     }
 
 
+def _tool_header(name: str, width: int) -> str:
+    """A tool name centred in its column, trimmed to fit.
+
+    An ellipsis costs three of the few characters a narrow column has, so
+    below eight it is dropped: "claud" identifies the harness where
+    "c..." does not.
+    """
+    label = name if len(name) <= width else (
+        name[:width] if width < 8 else truncate(name, width))
+    return label.center(width)
+
+
 def cmd_list(args):
     if args and args[0] in ("-h", "--help", "help"):
         print(MCP_HELP["list"])
@@ -622,10 +634,20 @@ def cmd_list(args):
         len("SERVER"),
         max((len(s) for s in sorted_servers), default=0),
     )
+    # One column per tool, so the grid grows with the harness count rather
+    # than with any text in it. A tick needs one character; the width only
+    # exists to fit the header, so shorten headers before the row wraps.
     col_width = max(
         len("SERVER"),
         max((len(t) for t in tool_names), default=0),
     )
+    if tool_names:
+        # The gap between columns is part of the budget, and SERVER can give
+        # ground too: it is a name, and elide keeps both ends readable.
+        gap = 2
+        server_width = min(server_width, max(8, terminal_width() // 4))
+        room = terminal_width() - server_width - gap * len(tool_names) - 2
+        col_width = max(3, min(col_width, room // len(tool_names)))
 
     table = Table()
     # SERVER column: kind="text" left-aligns + pads plain server
@@ -641,7 +663,7 @@ def cmd_list(args):
     # alignment without needing a custom kind.
     for t in tool_names:
         table.add_column(
-            f"tool_{t}", t.center(col_width),
+            f"tool_{t}", _tool_header(t, col_width),
             width=col_width,
             kind="preformatted", trust_cell_width=True,
         )
@@ -697,10 +719,20 @@ def cmd_status(args):
         len("SERVER"),
         max((len(s) for s in sorted_servers), default=0),
     )
+    # One column per tool, so the grid grows with the harness count rather
+    # than with any text in it. A tick needs one character; the width only
+    # exists to fit the header, so shorten headers before the row wraps.
     col_width = max(
         len("SERVER"),
         max((len(t) for t in tool_names), default=0),
     )
+    if tool_names:
+        # The gap between columns is part of the budget, and SERVER can give
+        # ground too: it is a name, and elide keeps both ends readable.
+        gap = 2
+        server_width = min(server_width, max(8, terminal_width() // 4))
+        room = terminal_width() - server_width - gap * len(tool_names) - 2
+        col_width = max(3, min(col_width, room // len(tool_names)))
 
     # Pre-compute health strings first (they drive HEALTH width) so
     # we can include HEALTH in column-widths math. Since the union
@@ -725,7 +757,7 @@ def cmd_status(args):
     )
     for t in tool_names:
         table.add_column(
-            f"tool_{t}", t.center(col_width),
+            f"tool_{t}", _tool_header(t, col_width),
             width=col_width,
             kind="preformatted", trust_cell_width=True,
         )
