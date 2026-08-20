@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from quiver.paths import backup_tree
 from quiver.skills.discovery import discover_skills
 from quiver.skills.layout import (
     SHARED_LABEL,
@@ -40,11 +41,18 @@ def link_skill_root(
         if src_path.is_symlink():
             src_path.unlink()
         elif src_path.is_dir():
-            if any(src_path.iterdir()) and not force:
-                raise SkillLayoutError(
-                    f"{src_path} is a non-empty directory. "
-                    f"Move skills out first or pass --force (after backup)."
-                )
+            if any(src_path.iterdir()):
+                if not force:
+                    raise SkillLayoutError(
+                        f"{src_path} is a non-empty directory. "
+                        f"Move skills out first, or pass --force to back it "
+                        f"up and replace it."
+                    )
+                # --force used to rmtree with no copy anywhere, while the
+                # same decision in `swe init` backed up first. A harness
+                # root can be the only home of a skill, so deleting it
+                # unrecoverably was a real way to lose work.
+                backup_tree(src_path, home)
             shutil.rmtree(src_path)
         else:
             src_path.unlink()

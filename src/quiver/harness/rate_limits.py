@@ -213,19 +213,57 @@ def _parse_retry_after_to_seconds(ra_value) -> float | None:
         return None
 
 
+_CA_WARNED = False
+
+
+def _verified_context() -> "ssl.SSLContext | None":
+    """A context that still verifies, using certifi when the system store is bare.
+
+    Returns None when no usable CA bundle exists, which the caller must
+    treat as "give up", never as "connect anyway".
+    """
+    try:
+        import certifi
+    except ImportError:
+        return None
+    try:
+        return ssl.create_default_context(cafile=certifi.where())
+    except (OSError, ssl.SSLError):
+        return None
+
+
+def _warn_untrusted_ca() -> None:
+    """Say why usage is blank, once per process rather than once per harness."""
+    global _CA_WARNED
+    if _CA_WARNED:
+        return
+    _CA_WARNED = True
+    print(c("yellow", "  Could not verify the server certificate, so no token was sent."))
+    print(c("dim", "  Install the CA bundle: /Applications/Python\\ 3.x/Install\\ Certificates.command"))
+    print(c("dim", "  or: python3 -m pip install certifi"))
+
+
 def _fetch_json(
     req: urllib.request.Request,
     timeout: int = 5,
     on_401: Callable | None = None,
     on_http_error: Callable[[int, float | None], None] | None = None,
 ) -> dict | None:
-    """Fetch JSON from a URL, with an SSL fallback for macOS python.org builds.
+    """Fetch JSON from a URL, retrying once with a bundled CA store.
 
-    Python 3.12+ from python.org on macOS ships without system CA
-    certificates until the user runs "Install Certificates.command".
-    This causes ``urlopen`` to fail with ``SSL: CERTIFICATE_VERIFY_FAILED``.
-    As a pragmatic fallback (the connection is still encrypted, just
-    without server-cert pinning), retry with an unverified SSL context.
+    Python from python.org on macOS ships without system CA certificates
+    until the user runs "Install Certificates.command", so ``urlopen``
+    fails with ``SSL: CERTIFICATE_VERIFY_FAILED`` on a healthy connection.
+
+    This used to retry with ``verify_mode = CERT_NONE``. Every request
+    through here carries an ``Authorization: Bearer`` header, and an
+    unverified context accepts any certificate, so anyone able to
+    intercept the connection could present their own certificate and read
+    the token. The first attempt failing is exactly what an interception
+    looks like, so the fallback triggered precisely when it was least
+    safe. The retry now supplies a real CA bundle via ``certifi`` when it
+    is importable, and otherwise gives up and tells the caller how to fix
+    the trust store. Verification is never disabled.
 
     IMPORTANT: ``urllib.error.URLError`` is a subclass of ``OSError``, so
     it must be caught before ``OSError`` in the except chain or the SSL
@@ -282,10 +320,13 @@ def _fetch_json(
     except (json.JSONDecodeError, OSError, TimeoutError):
         return None
 
-    # Fallback: unverified SSL context (encrypted but no cert pinning)
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # Retry with a bundled CA store, still fully verified. Without one
+    # there is nothing safe left to try: sending the bearer token over a
+    # connection we cannot authenticate is worse than reporting no data.
+    ctx = _verified_context()
+    if ctx is None:
+        _warn_untrusted_ca()
+        return None
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
