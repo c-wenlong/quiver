@@ -513,3 +513,153 @@ class CycleRowTest(unittest.TestCase):
             os.close(w)
             self.assertEqual(_read_key(r), want, seq)
             os.close(r)
+
+
+class SessionColumnStatesTest(unittest.TestCase):
+    """Four states, because a crashed parser used to look like a real zero.
+
+    That is exactly how Cursor showed 0 while holding 84 sessions: the
+    parser raised, the count defaulted to zero, and nothing said so.
+    """
+
+    REGISTRY = {n: {"command": n, "description": "", "aliases": [], "tags": []}
+                for n in ("claude", "amp", "cursor", "kiro")}
+
+    def _render(self, counts, broken):
+        from quiver.harness import commands
+
+        with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
+             mock.patch.object(commands, "_session_counts", return_value=counts), \
+             mock.patch.object(commands, "_broken_tools", return_value=broken), \
+             mock.patch.object(commands, "load_columns", return_value=["name", "sess"]), \
+             mock.patch("quiver.harness.archive.load_archive", return_value={}):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                commands.cmd_list([])
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+        return {n: next((ln for ln in plain.splitlines() if f" {n} " in ln), "")
+                for n in self.REGISTRY}
+
+    def test_a_positive_count_shows_the_number(self):
+        rows = self._render({"claude": 111}, set())
+        self.assertIn("111", rows["claude"])
+
+    def test_a_parser_that_found_nothing_shows_zero(self):
+        rows = self._render({"amp": 0}, set())
+        self.assertIn("0", rows["amp"])
+
+    def test_a_harness_with_no_parser_shows_a_dash(self):
+        rows = self._render({"amp": 0}, set())
+        self.assertIn("—", rows["kiro"])
+
+    def test_a_broken_parser_shows_a_bang_not_a_zero(self):
+        rows = self._render({"cursor": 0}, {"cursor"})
+        self.assertIn("!", rows["cursor"])
+        self.assertNotIn("0", rows["cursor"])
+
+    def test_broken_wins_over_a_stale_positive_count(self):
+        """If the parser failed, the number it produced means nothing."""
+        rows = self._render({"cursor": 84}, {"cursor"})
+        self.assertIn("!", rows["cursor"])
+        self.assertNotIn("84", rows["cursor"])
+
+    def test_the_four_states_are_all_distinguishable(self):
+        rows = self._render({"claude": 111, "amp": 0, "cursor": 0}, {"cursor"})
+        cells = {n: r.rsplit("│", 1)[-1].strip() for n, r in rows.items()}
+        self.assertEqual(len(set(cells.values())), 4, cells)
+
+
+class BrokenCountsAreNotCachedAsZeroTest(unittest.TestCase):
+    """A failed parser's zero must not be remembered as a legitimate zero
+    for the full day the cache entry lives."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from quiver.sessions import failures, usage
+
+        self.usage = usage
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(usage, "SESSION_COUNTS_CACHE_FILE",
+                              Path(self.tmp.name) / "counts.json")
+        p.start()
+        self.addCleanup(p.stop)
+        failures.clear()
+        self.addCleanup(failures.clear)
+        usage._CACHED_BROKEN.clear()
+
+    def _count_with_failure(self):
+        from quiver.sessions import failures
+
+        def get(*a, **k):
+            failures.record("cursor", NameError("uuid_dir"))
+            return []
+
+        with mock.patch.object(self.usage, "get_all_sessions", get), \
+             mock.patch.object(self.usage, "tracked_tool_names",
+                               lambda: {"cursor", "claude"}):
+            return self.usage.session_counts(100, use_cache=True)
+
+    def test_the_failure_is_reported_alongside_the_counts(self):
+        counts = self._count_with_failure()
+        self.assertEqual(counts["cursor"], 0)
+        self.assertIn("cursor", self.usage.broken_tools())
+
+    def test_a_cached_read_still_knows_which_were_broken(self):
+        self._count_with_failure()
+        from quiver.sessions import failures
+
+        failures.clear()                      # a fresh process
+        self.usage._CACHED_BROKEN.clear()
+        with mock.patch.object(self.usage, "tracked_tool_names",
+                               lambda: {"cursor", "claude"}):
+            self.usage.session_counts(100, use_cache=True)
+        self.assertIn("cursor", self.usage.broken_tools(),
+                      "cached read forgot the parser had failed")
+
+    def test_a_clean_run_reports_nothing_broken(self):
+        with mock.patch.object(self.usage, "get_all_sessions", lambda *a, **k: []), \
+             mock.patch.object(self.usage, "tracked_tool_names", lambda: {"claude"}):
+            self.usage.session_counts(100, use_cache=False)
+        self.assertEqual(self.usage.broken_tools(), set())
+
+    def test_stale_failures_do_not_leak_into_a_later_run(self):
+        self._count_with_failure()
+        with mock.patch.object(self.usage, "get_all_sessions", lambda *a, **k: []), \
+             mock.patch.object(self.usage, "tracked_tool_names", lambda: {"claude"}):
+            self.usage.session_counts(100, use_cache=False)
+        self.assertEqual(self.usage.broken_tools(), set(),
+                         "a fixed parser still reported as broken")
+
+
+class LegendCoversEveryMarkerTest(unittest.TestCase):
+    def _legend(self):
+        from quiver.harness.commands import cmd_list_legend
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cmd_list_legend()
+        return re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+
+    def test_it_explains_all_four_session_states(self):
+        out = self._legend()
+        for phrase in ("found none", "parser failed", "no session parser"):
+            self.assertIn(phrase, out)
+
+    def test_it_explains_the_star_and_archive_markers(self):
+        out = self._legend()
+        self.assertIn("★", out)
+        self.assertIn("▪", out)
+        self.assertIn("archived", out)
+
+    def test_it_still_explains_the_link_glyphs(self):
+        out = self._legend()
+        self.assertIn("linked", out)
+        self.assertIn("conflict", out)
+
+    def test_the_session_heading_follows_the_configured_window(self):
+        with mock.patch("quiver.harness.columns.load_window", return_value=7):
+            out = self._legend()
+        self.assertIn("7d", out)
