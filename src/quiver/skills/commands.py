@@ -24,7 +24,10 @@ def _superseded_by_find(name: str, args) -> int:
     """
     from quiver.find.commands import cmd_find_skills
 
-    print(c("dim", f"\n  swe skills {name} is now swe find skills\n"))
+    if name == "list":
+        print(c("dim", "\n  swe skills <filter> searches; this is the tree view\n"))
+    else:
+        print(c("dim", f"\n  swe skills {name} is now swe find skills\n"))
     scope = "all" if any(a == "--scope=all" for a in (args or [])) else "global"
     return cmd_find_skills([], root_flag=True, scope=scope)
 
@@ -49,6 +52,14 @@ def cmd_skills(args):
         return cmd_skills_unlink(args[1:])
     if args[0] == "move":
         return cmd_skills_move(args[1:])
+
+    # Browsing is a tree; searching is a table. A bare `list` is browsing,
+    # and a flat run of several hundred rows was the wrong shape for it, so
+    # it renders through the same view as `swe find skills`. A filter or
+    # --desc is a search, and keeps the table because a tree cannot show
+    # you which of 400 skills matched.
+    if args[0] in ("list", "ls") and len(args) == 1:
+        return _superseded_by_find("list", [])
 
     show_desc = False
     filt = None

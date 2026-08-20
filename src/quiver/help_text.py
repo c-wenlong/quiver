@@ -39,28 +39,19 @@ HELP = {
   Run {c('cyan', 'swe init')} to link everything."""
     ),
     "star": (
-        "Favourite / pin a harness to the top of swe list",
+        "Toggle a harness favourite (pins it to the top of swe list)",
         f"""\
   {c('cyan', 'swe star')}                     List starred harnesses
   {c('cyan', 'swe star <name|alias>')}        Toggle star (pin + neon highlight)
-  {c('cyan', 'swe unstar <name|alias>')}      Remove star
   {c('cyan', 'swe star clear')}               Clear all stars
 
   Stars are stored in {c('dim', '~/.quiver/config/stars.json')} (separate from tools.json).
-  Starred harnesses sort above unstarred ones in {c('cyan', 'swe list')}.
+  Star again to remove it. Starred harnesses sort above the rest in {c('cyan', 'swe list')}.
 
 {c('bold', 'Examples')}
   swe star droid
   swe star df
-  swe unstar claude
   swe favourite opencode"""
-    ),
-    "unstar": (
-        "Remove a harness from favourites",
-        f"""\
-  {c('cyan', 'swe unstar <name|alias>')}      Remove star
-
-  See also: {c('cyan', 'swe star')}"""
     ),
     "info": (
         "Show full details for a tool",
@@ -458,7 +449,6 @@ COMMAND_CATEGORIES = [
         ("edit",    None),
         ("remove",  "rm"),
         ("star",    "favourite"),
-        ("unstar",  None),
         ("check",   None),
         ("harness", "discover"),
     ]),

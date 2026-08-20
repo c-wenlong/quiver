@@ -13,7 +13,6 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("edit", "Edit tool fields"),
     ("remove", "Remove a tool"),
     ("star", "Favourite a harness"),
-    ("unstar", "Remove favourite"),
     ("use", "Launch a tool"),
     ("check", "Verify installs + versions"),
     ("doctor", "Diagnose Node/PATH issues"),
@@ -35,7 +34,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
 # Commands that take a tool name/alias as their first positional argument.
 _TOOL_TARGET_COMMANDS = frozenset({
     "use", "run", "star", "favourite", "favorite",
-    "unstar", "info", "edit", "remove", "rm",
+    "info", "edit", "remove", "rm",
 })
 
 # Flags for specific commands.

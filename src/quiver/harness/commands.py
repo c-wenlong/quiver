@@ -20,7 +20,7 @@ from quiver.harness.columns import (
 )
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.init.layout import link_states
-from quiver.harness.stars import is_starred, load_stars, toggle_star, unstar
+from quiver.harness.stars import is_starred, load_stars, toggle_star
 from quiver.harness.tools import extract_version_number, is_installed, live_version
 from quiver.prompt import read_line
 from quiver.table import Table
@@ -390,7 +390,7 @@ def cmd_star(args):
         for name in orphan:
             print(f"  {c('yellow', '★')} {name}  {c('dim', '(not in registry)')}")
         print()
-        print(c("dim", "  swe star <name|alias>   toggle  ·  swe unstar <name>  remove\n"))
+        print(c("dim", "  swe star <name|alias>   toggle  ·  swe star clear   remove all\n"))
         return
 
     if args[0] in ("clear", "--clear"):
@@ -406,32 +406,20 @@ def cmd_star(args):
     key = args[0]
     name = resolve(tools, key)
     if not name:
-        print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
-        return
+        # A star can outlive its registry entry. Removing one used to need
+        # `swe unstar`, because that command fell back to the raw name
+        # while this one did not; the toggle now covers it.
+        if is_starred(key):
+            name = key
+        else:
+            print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
+            return
 
     now_starred = toggle_star(name)
     if now_starred:
         print(f"  {c('neon_pink', '★')} Starred {c('neon', name)} — pinned to top of {c('cyan', 'swe list')}")
     else:
         print(f"  {c('dim', '☆')} Unstarred {name}")
-
-
-def cmd_unstar(args):
-    if not args:
-        print(c("red", "Usage: swe unstar <name|alias>"))
-        return
-    tools = load_registry()
-    name = resolve(tools, args[0])
-    if not name:
-        # Allow unstarring orphans by raw name
-        name = args[0]
-        if not is_starred(name):
-            print(c("red", f"  Tool '{args[0]}' not found / not starred."))
-            return
-    if unstar(name):
-        print(f"  {c('green', '✓')} Unstarred '{name}'")
-    else:
-        print(c("dim", f"  '{name}' was not starred."))
 
 
 def cmd_info(args):
