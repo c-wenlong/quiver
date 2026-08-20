@@ -145,10 +145,37 @@ def cmd_list_edit(args=None) -> int:
     return 0
 
 
+def cmd_list_legend(args=None) -> int:
+    """Explain the glyphs in the AGENTS.MD and SKILLS columns.
+
+    The columns render as single characters with no key anywhere, so a
+    reader who forgot what a yellow circle meant had nowhere to look.
+    """
+    print(f"\n  {c('bold', 'AGENTS.MD and SKILLS glyphs')}\n")
+    rows = [
+        ("linked", "points at the shared copy in ~/.quiver"),
+        ("relink", "is a symlink, but aimed somewhere other than ~/.quiver"),
+        ("create", "nothing there yet; swe init would create the link"),
+        ("absorb", "a real directory, but its contents are all duplicates or empty"),
+        ("keep", "a real directory holding files that exist nowhere else, left alone"),
+        ("conflict", "a real file sits where the link should go; needs --force"),
+        ("skipped", "harness is not installed"),
+    ]
+    for state, meaning in rows:
+        colour, glyph = _LINK_GLYPH.get(state, ("dim", "?"))
+        print(f"  {c(colour, glyph)}  {c('bold', state.ljust(9))} {c('dim', meaning)}")
+    print(f"  {c('dim', '·')}  {c('bold', 'n/a'.ljust(9))} "
+          f"{c('dim', 'quiver knows no instruction filename for this harness')}")
+    print(f"\n  {c('dim', 'swe find skills -r shows the same states as words, per path.')}\n")
+    return 0
+
+
 def cmd_list(args):
     args = list(args or [])
     if args and args[0] == "edit":
         return cmd_list_edit(args[1:])
+    if args and args[0] in ("legend", "--legend", "key"):
+        return cmd_list_legend(args[1:])
 
     # Refresh aliases bypass both the session and rate-limit caches.
     refresh_flags = {"--refresh", "-r", "-n"}

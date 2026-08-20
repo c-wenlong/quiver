@@ -10,13 +10,16 @@ def print_skills_overview():
   {c('bold', 'swe skills')} — Discover, list, and manage agent skills
 
 {c('bold', 'List & search')}
-  {c('cyan', 'swe skills')}                   List skills (shows VISIBLE VIA harness scopes)
+  {c('cyan', 'swe skills')}                   One line per skill: name, root, path
   {c('cyan', 'swe skills <filter>')}          Filter by name, scope, or harness
   {c('cyan', 'swe skills -d')}                Include descriptions
-  {c('cyan', 'swe skills scope list')}        All roots with symlink kind + counts
+
+{c('bold', 'Where skills live')}
+  {c('cyan', 'swe find skills -r')}           Every root on disk, and what it links to
+  {c('cyan', 'swe find skills -r --scope=all')} Include vendored and project-local roots
+  {c('dim', 'swe skills tree and swe skills scope list now forward here.')}
 
 {c('bold', 'Layout & symlinks')}
-  {c('cyan', 'swe skills tree [--sync]')}     Tree of shared vs harness-linked roots
   {c('cyan', 'swe skills link <harness> [target]')}   Link codex/cursor/claude → shared
   {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break link; optional empty dir
   {c('cyan', 'swe skills move <name> --from A --to B')} Move a skill folder
@@ -32,7 +35,7 @@ def print_skills_overview():
   {SKILL_CATALOGS_FILE}   extra catalog paths
   {SKILL_LINKS_FILE}      recorded harness symlinks
 
-{c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')}  — topics: catalog, discover, tree, link, unlink, move
+{c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')}  — topics: catalog, discover, link, unlink, move
 """
     )
 
@@ -71,26 +74,6 @@ def print_skills_discover_help():
   {c('cyan', 'swe skills discover --all')}        Include already-registered catalogs
 
 {c('bold', 'See also')}  {c('cyan', 'swe skills catalog add .')} for manual registration
-"""
-    )
-
-
-def print_skills_tree_help():
-    print(
-        f"""
-  {c('bold', 'swe skills tree')} — Skill root layout and symlink relationships
-
-  {c('cyan', 'swe skills tree')}              Show directory vs symlink for each harness root
-  {c('cyan', 'swe skills tree --sync')}       Persist observed symlinks to skill_links.json
-  {c('cyan', 'swe skills tree --json')}       Machine-readable layout
-
-{c('bold', 'Typical layout')}
-  shared   ~/.quiver/skills          (canonical shared tree)
-  codex    ~/.codex/skills  → shared
-  claude   ~/.claude/skills → shared
-  cursor   ~/.cursor/skills → shared
-
-{c('bold', 'Records')}  {SKILL_LINKS_FILE}
 """
     )
 
@@ -144,31 +127,14 @@ def print_skills_move_help():
     )
 
 
-def print_skills_scope_help():
-    print(
-        f"""
-  {c('bold', 'swe skills scope list')} — All skill roots with symlink metadata
-
-  Shows each root's kind (directory, symlink, alias), skill count, and link target.
-  Deduped skill totals are in {c('cyan', 'swe skills')}; this command shows every
-  harness path including symlinks.
-
-{c('bold', 'See also')}  {c('cyan', 'swe skills tree')} for grouped layout
-"""
-    )
-
-
 SKILLS_HELP_TOPICS = {
     "": print_skills_overview,
     "catalog": print_skills_catalog_help,
     "catalogs": print_skills_catalog_help,
     "discover": print_skills_discover_help,
-    "tree": print_skills_tree_help,
     "link": print_skills_link_help,
     "unlink": print_skills_unlink_help,
     "move": print_skills_move_help,
-    "scope": print_skills_scope_help,
-    "scopes": print_skills_scope_help,
 }
 
 
@@ -179,7 +145,10 @@ def cmd_skills_help(args: list[str]) -> int:
     handler = SKILLS_HELP_TOPICS.get(topic)
     if handler is None:
         print(c("red", f"  Unknown skills help topic: {topic!r}"))
-        print(c("dim", "  Topics: catalog, discover, tree, link, unlink, move, scope"))
+        if topic in ("tree", "scope", "scopes"):
+            print(c("dim", "  That view is now swe find skills -r"))
+        else:
+            print(c("dim", "  Topics: catalog, discover, link, unlink, move"))
         return 1
     handler()
     return 0

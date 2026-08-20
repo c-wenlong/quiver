@@ -45,3 +45,19 @@ def rpad(text: str, width: int) -> str:
 def cpad(color: str, text: str, width: int) -> str:
     plain = strip_ansi(text)
     return c(color, plain + " " * (width - len(plain)))
+
+
+def terminal_width(default: int = 146) -> int:
+    """Usable width of the terminal, falling back when it is not a tty.
+
+    Piping to a file or a pager reports 80 from some shells and 0 from
+    others, so anything implausible falls back to the default the tables
+    were designed against.
+    """
+    import shutil
+
+    try:
+        width = shutil.get_terminal_size(fallback=(default, 24)).columns
+    except Exception:
+        return default
+    return width if width >= 60 else default

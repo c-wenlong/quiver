@@ -4,18 +4,13 @@ import sys
 from pathlib import Path
 
 from quiver.console import c, truncate
-from quiver.paths import SKILL_LINKS_FILE
 from quiver.skills.help_text import (
     print_skills_link_help,
     print_skills_move_help,
-    print_skills_tree_help,
     print_skills_unlink_help,
 )
 from quiver.skills.layout import (
     enumerate_skill_roots,
-    layout_groups,
-    load_link_records,
-    sync_link_records_from_filesystem,
 )
 from quiver.skills.link_ops import (
     SkillLayoutError,
@@ -29,102 +24,6 @@ def _tilde(path: Path, home: Path) -> str:
     text = str(path)
     home_text = str(home)
     return text.replace(home_text, "~") if text.startswith(home_text) else text
-
-
-def cmd_skills_tree(args):
-    json_out = "--json" in args
-    do_sync = "--sync" in args
-    if "-h" in args or "--help" in args:
-        print_skills_tree_help()
-        return 0
-
-    home = Path.home()
-    if do_sync:
-        synced = sync_link_records_from_filesystem(home=home)
-        if synced and not json_out:
-            print(c("dim", f"  synced link records: {', '.join(synced)}"))
-    groups = layout_groups(home=home)
-
-    if json_out:
-        import json
-
-        payload = []
-        for group in groups:
-            canonical = group["canonical"]
-            payload.append(
-                {
-                    "resolved": str(group["resolved"]) if group["resolved"] else None,
-                    "canonical": canonical.label if canonical else None,
-                    "members": [
-                        {
-                            "label": m.label,
-                            "path": str(m.path),
-                            "kind": m.kind,
-                            "link_target": str(m.link_target) if m.link_target else None,
-                            "link_target_label": m.link_target_label,
-                            "skill_count": m.skill_count,
-                            "aliases": m.aliases,
-                        }
-                        for m in group["members"]
-                    ],
-                }
-            )
-        print(json.dumps(payload, indent=2))
-        return 0
-
-    print(f"\n{c('bold', 'Skill Layout')}\n")
-    records = {r["label"]: r for r in load_link_records()}
-
-    for group in groups:
-        canonical = group["canonical"]
-        if canonical is None:
-            continue
-        resolved = group["resolved"]
-        count = canonical.skill_count
-        count_str = f"{count} skill{'s' if count != 1 else ''}" if count else "empty"
-
-        if canonical.kind == "directory":
-            header = f"{c('bold', canonical.label)}  {c('dim', _tilde(canonical.path, home))}"
-            print(f"  {header}")
-            print(f"    {c('green', 'directory')} · {count_str}")
-        elif canonical.kind == "symlink":
-            header = f"{c('bold', canonical.label)}  {c('dim', _tilde(canonical.path, home))}"
-            print(f"  {header}")
-            target = canonical.link_target_label or _tilde(canonical.link_target or Path("?"), home)
-            print(f"    {c('yellow', 'symlink')} → {c('cyan', target)} · {count_str}")
-        else:
-            print(f"  {c('bold', canonical.label)}  {c('dim', _tilde(canonical.path, home))}")
-            print(f"    {c('dim', canonical.kind)}")
-
-        linked = [m for m in group["members"] if m.label != canonical.label]
-        for member in linked:
-            if member.kind == "symlink":
-                tgt = member.link_target_label or _tilde(member.link_target or Path("?"), home)
-                print(
-                    f"    {c('cyan', member.label):<12} {c('yellow', 'symlink')} → {c('cyan', tgt)}"
-                    f"  {c('dim', _tilde(member.path, home))}"
-                )
-            elif member.kind == "directory":
-                print(
-                    f"    {c('cyan', member.label):<12} {c('green', 'alias')} of {canonical.label}"
-                    f"  {c('dim', _tilde(member.path, home))}"
-                )
-
-        if canonical.label in records:
-            updated = str(records[canonical.label].get("updated", ""))[:19]
-            if updated:
-                print(f"    {c('dim', f'recorded {updated}')}")
-
-        print()
-
-    print(
-        c(
-            "dim",
-            "  swe skills link <harness> [target]  │  swe skills unlink <harness>  │  swe skills move <name> --from A --to B",
-        )
-    )
-    print(c("dim", f"  records: {SKILL_LINKS_FILE}\n"))
-    return 0
 
 
 def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
