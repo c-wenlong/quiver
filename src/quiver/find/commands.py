@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quiver import paths
-from quiver.console import c
+from quiver.console import c, elide
 from quiver.find.tree import (
     agents_tree,
     flat_skills,
@@ -63,21 +63,6 @@ def _scan_root(root_flag: bool) -> Path:
 PATH_WIDTH = 104
 
 
-def _elide(text: str, width: int) -> str:
-    """Shorten from the middle, keeping both ends.
-
-    Truncating from the left kept the filename but threw away which harness a
-    path belonged to, so every vendored hit looked the same. Both ends carry
-    meaning: the head says whose directory it is, the tail says which file.
-    """
-    if len(text) <= width:
-        return text
-    keep = width - 1                     # one char for the ellipsis
-    head = (keep + 1) // 2               # bias to the head on an odd split
-    tail = keep - head
-    return text[:head] + "…" + (text[-tail:] if tail else "")
-
-
 def _rel(path: Path, root: Path, home: Path, width: int = PATH_WIDTH) -> str:
     """Path relative to the scan root, so a deep tree stays readable.
 
@@ -88,7 +73,7 @@ def _rel(path: Path, root: Path, home: Path, width: int = PATH_WIDTH) -> str:
         text = "./" + str(path.relative_to(root))
     except ValueError:
         text = _short(path, home)
-    return _elide(text, width).ljust(width) + " "
+    return elide(text, width).ljust(width) + " "
 
 
 # A path can be both a result and a parent of results: ~/.codex/vendor_imports/
@@ -177,7 +162,7 @@ def _render_tree(nodes, root: Path, home: Path) -> None:
         if len(line) > width:
             # Elide the label, never the indent: the branch lines carry the
             # structure and are meaningless once broken.
-            label = _elide(label, max(4, width - len(indent)))
+            label = elide(label, max(4, width - len(indent)))
             line = indent + label
         if node is None:
             print(c("dim", line))
@@ -373,8 +358,8 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") 
                 for k, n in p.components.items():
                     totals[k] = totals.get(k, 0) + n
                 print(f"  {c('dim', bar + branch)}"
-                      f"{c(colour, _elide(p.name, name_w - 1).ljust(name_w))}"
-                      f"{c('dim', _elide(p.version or '-', ver_w - 1).ljust(ver_w))}"
+                      f"{c(colour, elide(p.name, name_w - 1).ljust(name_w))}"
+                      f"{c('dim', elide(p.version or '-', ver_w - 1).ljust(ver_w))}"
                       f"{c(colour, state.ljust(9))}{c('dim', parts)}")
         print()
 

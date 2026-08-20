@@ -403,39 +403,44 @@ class ElideTest(unittest.TestCase):
     """
 
     def test_short_paths_are_untouched(self):
-        from quiver.find.commands import PATH_WIDTH, _elide
+        from quiver.console import elide
+        from quiver.find.commands import PATH_WIDTH
 
-        self.assertEqual(_elide("./.claude/CLAUDE.md", PATH_WIDTH), "./.claude/CLAUDE.md")
+        self.assertEqual(elide("./.claude/CLAUDE.md", PATH_WIDTH), "./.claude/CLAUDE.md")
 
     def test_long_paths_keep_head_and_tail(self):
-        from quiver.find.commands import PATH_WIDTH, _elide
+        from quiver.console import elide
+        from quiver.find.commands import PATH_WIDTH
 
         # Built from the constant so widening PATH_WIDTH cannot silently stop
         # exercising the elision path.
         text = "./.codex/plugins/" + "nested/" * PATH_WIDTH + "AGENTS.md"
-        out = _elide(text, PATH_WIDTH)
+        out = elide(text, PATH_WIDTH)
         self.assertEqual(len(out), PATH_WIDTH)
         self.assertIn("…", out)
         self.assertTrue(out.startswith("./.codex/plugins"), out)
         self.assertTrue(out.endswith("AGENTS.md"), out)
 
     def test_result_never_exceeds_the_width(self):
-        from quiver.find.commands import PATH_WIDTH, _elide
+        from quiver.console import elide
+        from quiver.find.commands import PATH_WIDTH
 
         for n in range(1, 200):
-            self.assertLessEqual(len(_elide("x" * n, PATH_WIDTH)), PATH_WIDTH)
+            self.assertLessEqual(len(elide("x" * n, PATH_WIDTH)), PATH_WIDTH)
 
     def test_exactly_at_width_is_not_elided(self):
-        from quiver.find.commands import PATH_WIDTH, _elide
+        from quiver.console import elide
+        from quiver.find.commands import PATH_WIDTH
 
         text = "a" * PATH_WIDTH
-        self.assertEqual(_elide(text, PATH_WIDTH), text)
+        self.assertEqual(elide(text, PATH_WIDTH), text)
 
     def test_tiny_widths_do_not_crash(self):
-        from quiver.find.commands import PATH_WIDTH, _elide
+        from quiver.console import elide
+        from quiver.find.commands import PATH_WIDTH
 
         for w in (1, 2, 3):
-            self.assertLessEqual(len(_elide("some/long/path/AGENTS.md", w)), w)
+            self.assertLessEqual(len(elide("some/long/path/AGENTS.md", w)), w)
 
     def test_rendered_column_is_the_declared_width(self):
         from quiver.find.commands import PATH_WIDTH, _rel
