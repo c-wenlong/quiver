@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`--only` and `--except` accept globs on `swe mcp sync`.** Server names carry
+  a category prefix, so `--only=dv__*` takes a category and `--only='*__*'`
+  takes every categorised server, which is also the line between servers worth
+  sharing and servers bound to one tool's own binary. A pattern that matches
+  nothing is now named instead of failing silently, so a typo no longer looks
+  identical to an empty result.
+
+### Changed
+
+- **MCP moved under `~/.quiver`.** The server checkouts moved from
+  `~/.mcp-servers` to `~/.quiver/mcp/servers` (2.7 GB, instant rename, symlink
+  left behind), and all 79 absolute path references across 5 harness configs
+  were rewritten. `mcp.json` now sits at `~/.quiver/mcp.json` rather than in
+  `config/`: it is the control plane for a subsystem, not one more settings
+  file. `mcp/servers/` is gitignored, since it is 21 nested git repos and
+  `mcp.json` records how to rebuild it.
+
 ## [0.2.7] - 2026-08-20
 
 ### Added

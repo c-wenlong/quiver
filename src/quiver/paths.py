@@ -28,6 +28,8 @@ AGENTS_BASENAME = "AGENTS.md"
 SKILLS_SUBDIR = "skills"
 CONFIG_SUBDIR = "config"
 CACHE_SUBDIR = "cache"
+MCP_SUBDIR = "mcp"
+MCP_SERVERS_SUBDIR = "servers"
 COMPLETIONS_SUBDIR = "completions"
 REPORTS_SUBDIR = "reports"
 BACKUPS_SUBDIR = "backups"
@@ -53,6 +55,26 @@ def cache_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / CACHE_SUBDIR
 
 
+def mcp_dir_for(home: Path | None = None) -> Path:
+    return quiver_dir_for(home) / MCP_SUBDIR
+
+
+def mcp_servers_dir_for(home: Path | None = None) -> Path:
+    """Where the MCP server implementations themselves live.
+
+    These are checked-out repositories and build output, ~2.7 GB across 21
+    nested git repos, so the directory is gitignored even though it sits in
+    the versioned half of the tree. Harness configs point at absolute paths
+    inside it, which is why moving it means rewriting those configs.
+    """
+    return mcp_dir_for(home) / MCP_SERVERS_SUBDIR
+
+
+def mcp_source_file_for(home: Path | None = None) -> Path:
+    """The registry of which servers exist and where they are configured."""
+    return quiver_dir_for(home) / "mcp.json"
+
+
 def backups_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / BACKUPS_SUBDIR
 
@@ -64,13 +86,15 @@ BACKUPS_DIR = backups_dir_for()
 
 CONFIG_DIR = config_dir_for()
 CACHE_DIR = cache_dir_for()
+MCP_DIR = mcp_dir_for()
+MCP_SERVERS_DIR = mcp_servers_dir_for()
 COMPLETION_DIR = QUIVER_DIR / COMPLETIONS_SUBDIR
 REPORTS_DIR = QUIVER_DIR / REPORTS_SUBDIR
 
 # Authored state: hand-edited or built up over time, worth keeping.
 REGISTRY_FILE = CONFIG_DIR / "tools.json"
 STARS_FILE = CONFIG_DIR / "stars.json"
-MCP_SOURCE_FILE = CONFIG_DIR / "mcp.json"
+MCP_SOURCE_FILE = mcp_source_file_for()
 SKILL_CATALOGS_FILE = CONFIG_DIR / "skill_catalogs.json"
 SKILL_LINKS_FILE = CONFIG_DIR / "skill_links.json"
 PROVIDERS_REGISTRY_FILE = CONFIG_DIR / "providers.json"
@@ -91,6 +115,10 @@ LEGACY_CONFIG_DIR = Path.home() / ".config" / "swe"
 GITIGNORE_BODY = """# Regenerable. Everything else here is worth versioning.
 cache/
 backups/
+
+# MCP server checkouts: ~2.7 GB of nested git repos and build output.
+# mcp.json records what they are, so this can be rebuilt from a clone.
+mcp/servers/
 """
 
 

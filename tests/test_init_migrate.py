@@ -35,7 +35,7 @@ class LayoutInvariantTest(unittest.TestCase):
         "COMPLETION_DIR", "REPORTS_DIR", "REGISTRY_FILE", "STARS_FILE",
         "MCP_SOURCE_FILE", "SKILL_CATALOGS_FILE", "SKILL_LINKS_FILE",
         "PROVIDERS_REGISTRY_FILE", "CONFIG_FILE", "SESSION_CACHE_FILE",
-        "RATE_LIMITS_CACHE_FILE",
+        "RATE_LIMITS_CACHE_FILE", "MCP_DIR", "MCP_SERVERS_DIR",
     )
 
     def test_every_path_lives_under_the_single_root(self):
@@ -57,10 +57,31 @@ class LayoutInvariantTest(unittest.TestCase):
         self.assertEqual(paths.QUIVER_DIR.parent, Path.home())
 
     def test_authored_state_sits_in_config(self):
-        for name in ("REGISTRY_FILE", "STARS_FILE", "MCP_SOURCE_FILE",
-                     "PROVIDERS_REGISTRY_FILE", "SKILL_LINKS_FILE",
-                     "SKILL_CATALOGS_FILE", "CONFIG_FILE"):
+        for name in ("REGISTRY_FILE", "STARS_FILE", "PROVIDERS_REGISTRY_FILE",
+                     "SKILL_LINKS_FILE", "SKILL_CATALOGS_FILE", "CONFIG_FILE"):
             self.assertEqual(getattr(paths, name).parent, paths.CONFIG_DIR, name)
+
+    def test_mcp_registry_sits_at_the_root_beside_agents_md(self):
+        # mcp.json is the control plane for a whole subsystem, not one more
+        # settings file, so it sits alongside AGENTS.md rather than in config/.
+        self.assertEqual(paths.MCP_SOURCE_FILE.parent, paths.QUIVER_DIR)
+        self.assertEqual(paths.MCP_SOURCE_FILE.name, "mcp.json")
+
+    def test_mcp_server_checkouts_are_gitignored(self):
+        # 2.7 GB across 21 nested git repos. Committing that would make the
+        # root unclonable, and mcp.json already records how to rebuild it.
+        self.assertEqual(paths.MCP_SERVERS_DIR.parent, paths.MCP_DIR)
+        self.assertIn("mcp/servers/", paths.GITIGNORE_BODY)
+
+    def test_mcp_helpers_and_constants_agree(self):
+        self.assertEqual(paths.mcp_dir_for(), paths.MCP_DIR)
+        self.assertEqual(paths.mcp_servers_dir_for(), paths.MCP_SERVERS_DIR)
+        self.assertEqual(paths.mcp_source_file_for(), paths.MCP_SOURCE_FILE)
+
+    def test_mcp_helpers_respect_an_explicit_home(self):
+        fake = Path("/tmp/does-not-exist-home")
+        self.assertEqual(paths.mcp_servers_dir_for(fake), fake / ".quiver" / "mcp" / "servers")
+        self.assertEqual(paths.mcp_source_file_for(fake), fake / ".quiver" / "mcp.json")
 
     def test_regenerable_state_sits_in_cache(self):
         for name in ("SESSION_CACHE_FILE", "RATE_LIMITS_CACHE_FILE"):

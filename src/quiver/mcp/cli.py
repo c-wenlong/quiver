@@ -16,6 +16,7 @@ Commands:
 Run 'swe mcp <command> help' for detailed help on each command.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -339,6 +340,27 @@ def get_tool_saver(tool_name: str):
         existing[key] = servers
         save_json(p, existing)
     return _save
+
+
+def _filter_by_patterns(servers: dict, patterns: list[str]) -> tuple[dict, list[str]]:
+    """Select servers whose name matches any pattern.
+
+    Patterns are fnmatch globs, so ``dv__*`` takes a whole category and
+    ``*__*`` takes every prefixed server. A bare name still works because a
+    string with no wildcard only matches itself.
+
+    Also returns the patterns that matched nothing, so a typo is reported
+    rather than looking identical to an empty result.
+    """
+    selected: dict = {}
+    unmatched: list[str] = []
+    for pattern in patterns:
+        hits = [k for k in servers if fnmatch.fnmatchcase(k, pattern)]
+        if not hits:
+            unmatched.append(pattern)
+        for k in hits:
+            selected[k] = servers[k]
+    return selected, unmatched
 
 
 def get_tool_servers(tool_name: str) -> dict:
@@ -683,7 +705,13 @@ def cmd_sync(args):
         return 0
 
     allowed_flags = {"--force", "--skip-conflicts", "--all", "--no-interactive", "--dry-run", "--strict", "--prune"}
-    unknown_flags = [a for a in args if a.startswith("--") and not a.startswith("--only=") and a not in allowed_flags]
+    unknown_flags = [
+        a for a in args
+        if a.startswith("--")
+        and not a.startswith("--only=")
+        and not a.startswith("--except=")
+        and a not in allowed_flags
+    ]
     if unknown_flags:
         print(f"Unknown flag(s): {', '.join(unknown_flags)}")
         return 1
@@ -700,9 +728,12 @@ def cmd_sync(args):
     prune = "--prune" in args
 
     only_flag = None
+    except_flag = None
     for a in args:
         if a.startswith("--only="):
             only_flag = [s for s in a.split("=", 1)[1].split(",") if s]
+        elif a.startswith("--except="):
+            except_flag = [s for s in a.split("=", 1)[1].split(",") if s]
 
     positional = [a for a in args if not a.startswith("--")]
 
@@ -751,10 +782,21 @@ def cmd_sync(args):
         return 0
 
     if only_flag:
-        source_servers = {k: v for k, v in source_servers.items() if k in only_flag}
+        source_servers, unmatched = _filter_by_patterns(source_servers, only_flag)
+        if unmatched:
+            print(c("yellow", f"  --only matched nothing: {', '.join(unmatched)}"))
         if not source_servers:
             print(f"No matching servers found in {source}.")
             return 0
+
+    if except_flag:
+        excluded, unmatched = _filter_by_patterns(source_servers, except_flag)
+        if unmatched:
+            print(c("yellow", f"  --except matched nothing: {', '.join(unmatched)}"))
+        source_servers = {k: v for k, v in source_servers.items() if k not in excluded}
+        if not source_servers:
+            print(f"--except removed every server from {source}.")
+            return 1
 
     server_names = sorted(source_servers.keys())
     target_server_names = set()
@@ -1158,7 +1200,8 @@ MCP_HELP = {
   {c('cyan', 'swe mcp sync <source> --all')}          Copy MCP servers source → all other MCP tools
 
 {c('bold', 'Flags')}
-  --only=a,b,...      Copy only specific server names
+  --only=a,b,...      Copy only servers matching these names or globs
+  --except=a,b,...    Skip servers matching these names or globs
   --force             Overwrite existing servers without prompting
   --skip-conflicts    Keep existing target servers on conflict
   --no-interactive    Disable interactive picker (select all)
@@ -1184,6 +1227,9 @@ MCP_HELP = {
   swe mcp sync opencode droid
   swe mcp sync opencode hermes      # unverified target → ~/.hermes/mcp.json
   swe mcp sync opencode cursor --only=dv__github,dv__linear
+  swe mcp sync opencode cursor --only=dv__*            # one category
+  swe mcp sync opencode --all --only='*__*'            # every prefixed server
+  swe mcp sync opencode --all --except=computer-use,node_repl
   swe mcp sync opencode cursor --force
   swe mcp sync opencode cursor --no-interactive --skip-conflicts
   swe mcp sync opencode cursor --dry-run
