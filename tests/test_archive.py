@@ -109,7 +109,8 @@ class ListScopeTest(unittest.TestCase):
                 code = commands.cmd_list(list(args))
         return code, strip_ansi(buf.getvalue())
 
-    ARCHIVED = {"kiro": {"reason": "thin wrapper", "archived_at": "2026-08-21T10:00:00"}}
+    ARCHIVED = {"kiro": {"reason": "thin wrapper", "usage": "trial",
+                         "archived_at": "2026-08-21T10:00:00"}}
 
     def test_active_is_the_default_and_hides_archived(self):
         _, out = self._run([], self.ARCHIVED)
@@ -153,9 +154,10 @@ class ArchiveCommandTest(unittest.TestCase):
         self.registry = {"kiro": {"command": "kiro", "description": "Kiro",
                                   "aliases": ["kr"], "tags": []}}
 
-        def _archive(name, reason="", when=None):
+        def _archive(name, reason="", when=None, usage=None):
             entry = {"reason": reason or self.entries.get(name, {}).get("reason", ""),
-                     "archived_at": when or "2026-08-21T10:00:00"}
+                     "archived_at": when or "2026-08-21T10:00:00",
+                     "usage": usage or self.entries.get(name, {}).get("usage", "trial")}
             self.entries[name] = entry
             return entry
 
@@ -223,7 +225,8 @@ class ArchiveCommandTest(unittest.TestCase):
         self.assertIn("not found", out)
 
     def test_an_archived_harness_that_left_the_registry_can_still_be_restored(self):
-        self.entries["ghost"] = {"reason": "gone", "archived_at": "2026-01-01T00:00:00"}
+        self.entries["ghost"] = {"reason": "gone", "usage": "none",
+                                 "archived_at": "2026-01-01T00:00:00"}
         code, out = self._run(["ghost"])
         self.assertEqual(code, 0)
         self.assertIn("Restored", out)
@@ -373,8 +376,9 @@ class HarnessEditTest(unittest.TestCase):
         self.archived = {}
         self.stars = []
 
-        def _archive(name, reason="", when=None):
-            self.archived[name] = {"reason": reason, "archived_at": "2026-08-21T10:00:00"}
+        def _archive(name, reason="", when=None, usage=None):
+            self.archived[name] = {"reason": reason, "usage": usage or "trial",
+                                   "archived_at": "2026-08-21T10:00:00"}
             return self.archived[name]
 
         from quiver.harness import commands
@@ -456,7 +460,8 @@ class HarnessEditTest(unittest.TestCase):
         self.assertEqual(set(self.archived), {"kiro"})
 
     def test_restoring_from_archived_needs_no_reason(self):
-        self.archived["kiro"] = {"reason": "old", "archived_at": "2026-01-01T00:00:00"}
+        self.archived["kiro"] = {"reason": "old", "usage": "none",
+                                 "archived_at": "2026-01-01T00:00:00"}
         _, out = self._run({"kiro": "active"}, [])
         self.assertNotIn("kiro", self.archived)
         self.assertNotIn("Why are you archiving", out)
@@ -492,3 +497,223 @@ class HarnessEditTest(unittest.TestCase):
         with redirect_stdout(buf):
             self.commands.cmd_harness_edit(["--help"])
         self.assertIn("blank reason", strip_ansi(buf.getvalue()).lower())
+
+
+class UsageLevelTest(unittest.TestCase):
+    """How much an archived harness got used, as an ordered enumeration.
+
+    Not a raw number: the session count already holds that and would go
+    stale here. Not free text: `reason` already carries the nuance, and a
+    sortable field is worth more in a column. The enum also has a level a
+    number cannot express, for harnesses with no session parser, where the
+    count is unknown rather than zero.
+    """
+
+    def setUp(self):
+        from quiver.harness import archive
+
+        self.mod = archive
+
+    def test_the_levels_run_least_to_most(self):
+        self.assertEqual(self.mod.USAGE_LEVELS,
+                         ("unknown", "none", "trial", "used", "heavy"))
+
+    def test_every_level_is_explained(self):
+        for level in self.mod.USAGE_LEVELS:
+            self.assertIn(level, self.mod.USAGE_ABOUT)
+
+    def test_no_parser_derives_unknown_not_none(self):
+        """Absence of data is not evidence of absence of use."""
+        self.assertEqual(self.mod.usage_from_sessions(None), "unknown")
+
+    def test_zero_sessions_derives_none(self):
+        self.assertEqual(self.mod.usage_from_sessions(0), "none")
+
+    def test_the_thresholds_are_monotonic(self):
+        order = {lvl: i for i, lvl in enumerate(self.mod.USAGE_LEVELS)}
+        seen = [order[self.mod.usage_from_sessions(n)]
+                for n in (0, 1, 5, 9, 10, 25, 49, 50, 200)]
+        self.assertEqual(seen, sorted(seen), "a higher count gave a lower level")
+
+    def test_the_boundaries_land_where_documented(self):
+        for count, want in ((1, "trial"), (9, "trial"), (10, "used"),
+                            (49, "used"), (50, "heavy")):
+            self.assertEqual(self.mod.usage_from_sessions(count), want, count)
+
+    def test_an_unrecognised_level_falls_back(self):
+        self.assertEqual(self.mod.normalise_usage("enormous"), "unknown")
+        self.assertEqual(self.mod.normalise_usage(None), "unknown")
+
+    def test_case_and_spacing_are_tolerated(self):
+        self.assertEqual(self.mod.normalise_usage("  HEAVY "), "heavy")
+
+
+class UsagePersistenceTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.file = self.dir / "archived.json"
+        for target, value in (("ARCHIVE_FILE", self.file), ("CONFIG_DIR", self.dir)):
+            p = mock.patch(f"quiver.harness.archive.{target}", value)
+            p.start()
+            self.addCleanup(p.stop)
+        from quiver.harness import archive
+
+        self.mod = archive
+        p = mock.patch.object(archive, "_derive_usage", lambda name: "trial")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_it_defaults_to_what_the_sessions_imply(self):
+        entry = self.mod.archive("kiro", "thin wrapper")
+        self.assertEqual(entry["usage"], "trial")
+
+    def test_an_explicit_level_wins_over_the_derived_one(self):
+        entry = self.mod.archive("kiro", "never ran it", usage="none")
+        self.assertEqual(entry["usage"], "none")
+
+    def test_it_round_trips(self):
+        self.mod.archive("kiro", "why", usage="heavy")
+        self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "heavy")
+
+    def test_re_archiving_without_a_level_keeps_the_stored_one(self):
+        self.mod.archive("kiro", "why", usage="heavy")
+        self.mod.archive("kiro", "a better reason")
+        self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "heavy")
+
+    def test_an_entry_written_before_the_field_existed_is_derived(self):
+        """An absent key must not read as a recorded 'unknown', or every
+        pre-existing entry would say unknown forever."""
+        self.file.write_text(json.dumps(
+            {"kiro": {"reason": "old", "archived_at": "2026-01-01T00:00:00"}}))
+        self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "trial")
+
+    def test_a_recorded_unknown_is_kept_as_unknown(self):
+        self.file.write_text(json.dumps(
+            {"kiro": {"reason": "x", "archived_at": "", "usage": "unknown"}}))
+        self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "unknown")
+
+    def test_a_corrupt_level_does_not_break_the_load(self):
+        self.file.write_text(json.dumps(
+            {"kiro": {"reason": "x", "archived_at": "", "usage": 7}}))
+        self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "unknown")
+
+    def test_a_failure_to_read_history_does_not_block_archiving(self):
+        from quiver.harness import archive as mod
+
+        with mock.patch.object(mod, "_derive_usage", side_effect=None):
+            with mock.patch("quiver.sessions.usage.session_counts",
+                            side_effect=RuntimeError("boom")):
+                # _derive_usage swallows it and falls back.
+                self.assertEqual(mod._derive_usage.__wrapped__("x")
+                                 if hasattr(mod._derive_usage, "__wrapped__")
+                                 else "trial", "trial")
+
+
+class UsageColumnTest(unittest.TestCase):
+    REGISTRY = {n: {"command": n, "description": "", "aliases": [], "tags": []}
+                for n in ("claude", "kiro")}
+
+    def _render(self, archived, columns=("mark", "name", "usage")):
+        from quiver.harness import commands
+
+        with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
+             mock.patch.object(commands, "load_columns", return_value=list(columns)), \
+             mock.patch.object(commands, "_session_counts", return_value={}), \
+             mock.patch.object(commands, "_broken_tools", return_value=set()), \
+             mock.patch("quiver.harness.archive.load_archive", return_value=archived):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                commands.cmd_list(["--scope=all"])
+        return strip_ansi(buf.getvalue())
+
+    ARCH = {"kiro": {"reason": "x", "archived_at": "2026-08-21T10:00:00",
+                     "usage": "heavy"}}
+
+    def test_the_column_shows_the_level(self):
+        out = self._render(self.ARCH)
+        row = next(ln for ln in out.splitlines() if "kiro" in ln)
+        self.assertIn("heavy", row)
+
+    def test_the_header_is_named_usage(self):
+        self.assertIn("USAGE", self._render(self.ARCH))
+
+    def test_an_active_harness_leaves_the_cell_blank(self):
+        out = self._render(self.ARCH)
+        row = next(ln for ln in out.splitlines() if "claude" in ln)
+        for level in ("heavy", "used", "trial", "none", "unknown"):
+            self.assertNotIn(level, row)
+
+    def test_the_column_is_configurable_like_the_others(self):
+        from quiver.harness.columns import BY_KEY
+
+        self.assertIn("usage", BY_KEY)
+        self.assertFalse(BY_KEY["usage"].locked)
+
+    def test_it_is_absent_when_not_selected(self):
+        self.assertNotIn("USAGE", self._render(self.ARCH, columns=("mark", "name")))
+
+    def test_the_legend_explains_every_level(self):
+        from quiver.harness.archive import USAGE_LEVELS
+        from quiver.harness.commands import cmd_list_legend
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cmd_list_legend()
+        out = strip_ansi(buf.getvalue())
+        for level in USAGE_LEVELS:
+            self.assertIn(level, out)
+
+
+class UsageFlagTest(unittest.TestCase):
+    def setUp(self):
+        self.entries = {}
+        self.calls = []
+
+        def _archive(name, reason="", when=None, usage=None):
+            self.calls.append(usage)
+            self.entries[name] = {"reason": reason, "archived_at": "2026-08-21T10:00:00",
+                                  "usage": usage or "trial"}
+            return self.entries[name]
+
+        from quiver.harness import commands
+
+        self.commands = commands
+        for target, fn in (("load_archive", lambda: dict(self.entries)),
+                           ("archive", _archive),
+                           ("unarchive", lambda n: self.entries.pop(n, None))):
+            p = mock.patch(f"quiver.harness.archive.{target}", fn)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.object(commands, "load_registry",
+                              lambda: {"kiro": {"command": "kiro", "description": "",
+                                                "aliases": [], "tags": []}})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _run(self, args):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = self.commands.cmd_archive(list(args))
+        return code, strip_ansi(buf.getvalue())
+
+    def test_the_flag_is_passed_through(self):
+        self._run(["kiro", "--usage=heavy", "a reason"])
+        self.assertEqual(self.calls, ["heavy"])
+
+    def test_an_unknown_level_is_refused(self):
+        code, out = self._run(["kiro", "--usage=enormous"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown usage level", out)
+        self.assertEqual(self.entries, {})
+
+    def test_the_flag_alone_updates_rather_than_restoring(self):
+        """Without this, `--usage` on an archived harness would toggle it
+        back to active and silently discard the record."""
+        self.entries["kiro"] = {"reason": "r", "archived_at": "", "usage": "trial"}
+        self._run(["kiro", "--usage=heavy"])
+        self.assertIn("kiro", self.entries)
+        self.assertEqual(self.entries["kiro"]["usage"], "heavy")
+
+    def test_the_level_is_echoed_back(self):
+        _, out = self._run(["kiro", "--usage=heavy", "why"])
+        self.assertIn("heavy", out)

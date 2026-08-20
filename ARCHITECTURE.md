@@ -83,7 +83,7 @@ about it:
 | file | holds |
 |---|---|
 | `config/stars.json` | favourites, in pin order |
-| `config/archived.json` | name, reason, and date archived |
+| `config/archived.json` | name, reason, date, and how much it got used |
 
 Archiving is deliberately not `swe remove`. Removing forgets the harness,
 which loses the fact that you evaluated it, so a month later it reads as

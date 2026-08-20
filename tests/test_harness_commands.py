@@ -102,6 +102,10 @@ def _setup_patches(testcase, *, stars=()):
             # droid absent → dim em-dash
         }),
         patch("quiver.harness.commands.load_stars", return_value=list(stars)),
+        # The archive is per-user state that cmd_list filters on. Without
+        # this, anything the developer had archived would drop out of the
+        # default scope and a fixture row would simply vanish.
+        patch("quiver.harness.archive.load_archive", dict),
         patch("quiver.harness.commands.is_installed", side_effect=_is_installed_false),
         patch(
             "quiver.harness.rate_limits.get_all_rate_limits",
@@ -135,11 +139,12 @@ def _row_for_tool(output, tool_name):
 
 
 def _pin_columns(test):
-    """Isolate from the user's saved column set.
+    """Isolate from the user's saved column set and archive.
 
-    `swe list` columns are configurable, so a developer who ran
+    Both are per-user state that `swe list` reads. A developer who ran
     `swe list edit` would otherwise see these tests fail against their own
-    preference rather than a real regression.
+    column preference, and anything they had archived would be filtered
+    out of the default scope, so a fixture row could simply vanish.
     """
     from unittest import mock
 

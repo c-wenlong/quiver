@@ -33,6 +33,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("rate", "REMAINING", "Rate limit left", costly=True),
     Column("agents", "AGENTS.MD", "Is its instruction file synced to ~/.quiver"),
     Column("skills", "SKILLS", "Is its skills root synced to ~/.quiver"),
+    Column("usage", "USAGE", "How much an archived harness got used"),
     Column("desc", "DESCRIPTION", "One-line description"),
 )
 
