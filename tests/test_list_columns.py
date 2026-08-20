@@ -234,3 +234,140 @@ class InteractionTest(unittest.TestCase):
         os.waitpid(pid, 0)
         text = out.decode(errors="replace")
         self.assertIn("RESULT:mark,b", text)
+
+
+class SessionCountsCacheTest(unittest.TestCase):
+    """The 100d column is cached for a day.
+
+    It used to ride the 60-second session cache, which is right for
+    `swe session` but meant `swe list` re-walked every transcript on the
+    machine once a minute for a number that moves a handful per day.
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from quiver.sessions import usage
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = Path(self.tmp.name) / "session_counts.json"
+        patch = mock.patch.object(usage, "SESSION_COUNTS_CACHE_FILE", self.cache)
+        patch.start(); self.addCleanup(patch.stop)
+        self.usage = usage
+
+    def _with_sessions(self, counts):
+        """Patch the expensive path so we can tell cached from computed."""
+        calls = []
+
+        def fake():
+            calls.append(1)
+            return dict(counts)
+
+        return calls, mock.patch.object(
+            self.usage, "tracked_tool_names", lambda: set(counts)), fake
+
+    def test_second_call_does_not_recompute(self):
+        calls = []
+
+        def sessions(*a, **k):
+            calls.append(1)
+            return []
+
+        with mock.patch.object(self.usage, "get_all_sessions", sessions):
+            self.usage.session_counts_100d()
+            self.usage.session_counts_100d()
+        self.assertEqual(len(calls), 1, "second call should hit the cache")
+
+    def test_expired_cache_recomputes(self):
+        calls = []
+
+        def sessions(*a, **k):
+            calls.append(1)
+            return []
+
+        with mock.patch.object(self.usage, "get_all_sessions", sessions):
+            self.usage.session_counts_100d()
+            with mock.patch.object(self.usage, "_counts_ttl", lambda: -1):
+                self.usage.session_counts_100d()
+        self.assertEqual(len(calls), 2)
+
+    def test_use_cache_false_bypasses(self):
+        calls = []
+
+        def sessions(*a, **k):
+            calls.append(1)
+            return []
+
+        with mock.patch.object(self.usage, "get_all_sessions", sessions):
+            self.usage.session_counts_100d()
+            self.usage.session_counts_100d(use_cache=False)
+        self.assertEqual(len(calls), 2)
+
+    def test_invalidate_forces_a_recompute(self):
+        calls = []
+
+        def sessions(*a, **k):
+            calls.append(1)
+            return []
+
+        with mock.patch.object(self.usage, "get_all_sessions", sessions):
+            self.usage.session_counts_100d()
+            self.usage.invalidate_counts_cache()
+            self.usage.session_counts_100d()
+        self.assertEqual(len(calls), 2)
+
+    def test_a_newly_added_harness_reads_zero_not_missing(self):
+        # Installing a harness should not make it vanish from the table until
+        # the day-long cache expires.
+        with mock.patch.object(self.usage, "get_all_sessions", lambda *a, **k: []):
+            with mock.patch.object(self.usage, "tracked_tool_names", lambda: {"claude"}):
+                self.usage.session_counts_100d()
+            with mock.patch.object(self.usage, "tracked_tool_names",
+                                   lambda: {"claude", "brand-new"}):
+                got = self.usage.session_counts_100d()
+        self.assertEqual(got.get("brand-new"), 0)
+
+    def test_corrupt_cache_is_ignored(self):
+        self.cache.parent.mkdir(parents=True, exist_ok=True)
+        self.cache.write_text("not json")
+        with mock.patch.object(self.usage, "get_all_sessions", lambda *a, **k: []):
+            self.assertIsInstance(self.usage.session_counts_100d(), dict)
+
+    def test_ttl_can_be_overridden_by_env(self):
+        with mock.patch.dict("os.environ", {"SWE_SESSION_COUNTS_TTL": "7"}):
+            self.assertEqual(self.usage._counts_ttl(), 7.0)
+
+    def test_a_bad_env_ttl_falls_back_to_the_default(self):
+        with mock.patch.dict("os.environ", {"SWE_SESSION_COUNTS_TTL": "soon"}):
+            self.assertEqual(self.usage._counts_ttl(), 24 * 60 * 60)
+
+
+class SortOrderTest(unittest.TestCase):
+    def _order(self, counts, stars):
+        from quiver.harness.commands import _sort_tools
+
+        tools = {n: {} for n in counts}
+        return [n for n, _ in _sort_tools(tools, counts, stars)]
+
+    def test_starred_come_first(self):
+        got = self._order({"a": 1, "b": 99}, ["a"])
+        self.assertEqual(got[0], "a")
+
+    def test_starred_are_ordered_by_usage_not_pin_order(self):
+        # The star decides which block you are in, nothing more.
+        got = self._order({"old": 1, "daily": 90}, ["old", "daily"])
+        self.assertEqual(got, ["daily", "old"])
+
+    def test_unstarred_are_ordered_by_usage(self):
+        got = self._order({"lo": 1, "hi": 90}, [])
+        self.assertEqual(got, ["hi", "lo"])
+
+    def test_equal_usage_falls_back_to_name(self):
+        got = self._order({"b": 5, "a": 5}, [])
+        self.assertEqual(got, ["a", "b"])
+
+    def test_a_harness_with_no_count_sorts_last_in_its_block(self):
+        got = self._order({"known": 3, "unknown": 0}, [])
+        self.assertEqual(got, ["known", "unknown"])
