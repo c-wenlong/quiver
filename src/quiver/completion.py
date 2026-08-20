@@ -12,7 +12,8 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("add", "Register a new tool"),
     ("edit", "Edit tool fields"),
     ("remove", "Remove a tool"),
-    ("star", "Favourite a harness"),
+    ("harness", "Registry utilities: star, archive, discover"),
+    ("hs", "Short for swe harness"),
     ("use", "Launch a tool"),
     ("check", "Verify installs + versions"),
     ("doctor", "Diagnose Node/PATH issues"),
@@ -33,13 +34,16 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
 
 # Commands that take a tool name/alias as their first positional argument.
 _TOOL_TARGET_COMMANDS = frozenset({
-    "use", "run", "star", "favourite", "favorite",
+    "use", "run",
     "info", "edit", "remove", "rm",
 })
 
 # Flags for specific commands.
 _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "list": [
+        ("--scope=active", "Hide archived harnesses (default)"),
+        ("--scope=archived", "Show only archived harnesses"),
+        ("--scope=all", "Show everything, archived marked"),
         ("--refresh", "Fetch new data"),
         ("-r", "Short for --refresh"),
         ("-n", "Fetch new data"),
@@ -72,13 +76,29 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "add": [("-i", "Interactive form"), ("--interactive", "Interactive form")],
 }
 
+# Subcommands that themselves take a tool name, e.g. `swe hs star cl<TAB>`.
+_NESTED_TOOL_TARGETS: dict[str, frozenset[str]] = {
+    "harness": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
+    "hs": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
+}
+
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
+    "harness": [
+        ("star", "Toggle a favourite"),
+        ("archive", "Shelve a harness you have ruled out"),
+        ("discover", "Scan PATH for AI coding CLIs"),
+    ],
     "report": [
         ("daily", "Report since the previous daily report"),
         ("weekly", "Report since the previous weekly report"),
         ("warnings", "Show warnings for one report manifest"),
         ("followups", "List follow-ups"),
         ("followup", "Manage or work on a follow-up"),
+    ],
+    "hs": [
+        ("star", "Toggle a favourite"),
+        ("archive", "Shelve a harness you have ruled out"),
+        ("discover", "Scan PATH for AI coding CLIs"),
     ],
     "config": [
         ("get", "Read a resolved value"),
@@ -128,6 +148,12 @@ def get_completions(words: list[str]) -> list[tuple[str, str]]:
 
     # Tool-name completion for commands that take a tool argument
     if cmd in _TOOL_TARGET_COMMANDS and len(rest) == 0:
+        return _tool_completions(partial)
+
+    # `swe hs star <tool>` — the tool name sits one level deeper than the
+    # flat commands handled above.
+    nested = _NESTED_TOOL_TARGETS.get(cmd)
+    if nested and len(rest) == 1 and rest[0] in nested:
         return _tool_completions(partial)
 
     if cmd in _SUBCOMMANDS and len(rest) == 0:

@@ -94,6 +94,7 @@ REPORTS_DIR = QUIVER_DIR / REPORTS_SUBDIR
 # Authored state: hand-edited or built up over time, worth keeping.
 REGISTRY_FILE = CONFIG_DIR / "tools.json"
 STARS_FILE = CONFIG_DIR / "stars.json"
+ARCHIVE_FILE = CONFIG_DIR / "archived.json"
 MCP_SOURCE_FILE = mcp_source_file_for()
 SKILL_CATALOGS_FILE = CONFIG_DIR / "skill_catalogs.json"
 SKILL_LINKS_FILE = CONFIG_DIR / "skill_links.json"

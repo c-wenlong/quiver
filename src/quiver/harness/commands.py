@@ -170,6 +170,88 @@ def cmd_list_legend(args=None) -> int:
     return 0
 
 
+LIST_SCOPES = ("active", "archived", "all")
+
+
+def _fmt_when(stamp: str) -> str:
+    """A stored timestamp as a plain date, or the raw value if unparseable."""
+    if not stamp:
+        return "—"
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(stamp).strftime("%Y-%m-%d")
+    except ValueError:
+        return stamp[:10]
+
+
+def cmd_archive(args):
+    """Shelve a harness you have evaluated and rejected, with the reason why.
+
+    Not a delete. `swe remove` forgets the harness, which loses the fact
+    that you tried it, so it reads as untested later and gets reinstalled.
+    """
+    from quiver.harness.archive import archive, load_archive, unarchive
+
+    args = list(args or [])
+    entries = load_archive()
+
+    if not args or args[0] in ("list", "ls"):
+        if not entries:
+            print(f"\n  {c('dim', 'nothing archived')}")
+            print(f"  {c('dim', 'swe hs archive <name> [why]   shelve a harness you have ruled out')}\n")
+            return 0
+        print(f"\n  {c('bold', f'Archived ({len(entries)})')}\n")
+        width = max(len(n) for n in entries) + 2
+        for name, e in sorted(entries.items(),
+                              key=lambda kv: kv[1].get("archived_at", ""),
+                              reverse=True):
+            print(f"  {c('dim', '▪')} {c('bold', name.ljust(width))}"
+                  f"{c('dim', _fmt_when(e['archived_at']).ljust(12))}"
+                  f"{c('dim', e['reason'] or 'no reason given')}")
+        print(f"\n  {c('dim', 'swe hs archive <name>   restore  ·  swe list --scope=all   show them inline')}\n")
+        return 0
+
+    if args[0] in ("-h", "--help", "help"):
+        print(f"\n  {c('bold', 'swe harness archive')} — shelve a harness you have ruled out\n")
+        print(f"  {c('cyan', 'swe hs archive')}                  List archived harnesses")
+        print(f"  {c('cyan', 'swe hs archive <name> [why]')}     Archive, with an optional reason")
+        print(f"  {c('cyan', 'swe hs archive <name>')}           Restore one that is archived")
+        print(f"\n  {c('dim', 'Archived harnesses drop out of swe list. --scope=all brings them back,')}")
+        print(f"  {c('dim', 'and --scope=archived shows only those, with the date and reason.')}\n")
+        return 0
+
+    tools = load_registry()
+    key = args[0]
+    reason = " ".join(args[1:]).strip()
+
+    name = resolve(tools, key)
+    if not name:
+        # An archived harness may since have left the registry; it must
+        # still be restorable by the name it was filed under.
+        if key in entries:
+            name = key
+        else:
+            print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
+            return 1
+
+    if name in entries and not reason:
+        old = unarchive(name)
+        print(f"  {c('green', '✓')} Restored {c('bold', name)}")
+        print(f"    {c('dim', 'was archived ' + _fmt_when(old['archived_at']))}"
+              f"{c('dim', ': ' + old['reason'] if old['reason'] else '')}")
+        return 0
+
+    entry = archive(name, reason)
+    verb = "Re-archived" if name in entries else "Archived"
+    print(f"  {c('dim', '▪')} {verb} {c('bold', name)} {c('dim', _fmt_when(entry['archived_at']))}")
+    if entry["reason"]:
+        print(f"    {c('dim', entry['reason'])}")
+    else:
+        print(f"    {c('dim', 'no reason given — swe hs archive ' + name + ' <why> to add one')}")
+    return 0
+
+
 def cmd_list(args):
     args = list(args or [])
     if args and args[0] == "edit":
@@ -207,7 +289,34 @@ def cmd_list(args):
         # too or the flag would silently do nothing for that column.
         invalidate_counts_cache()
 
+    # --scope mirrors swe find: active (default) hides what you shelved,
+    # archived shows only that, all shows everything with a marker.
+    scope = "active"
+    for a in list(args):
+        if a.startswith("--scope"):
+            scope = a.split("=", 1)[1] if "=" in a else ""
+            args.remove(a)
+    if scope not in LIST_SCOPES:
+        print(f"Unknown scope: {scope or '(empty)'}. Use {', '.join(LIST_SCOPES)}.")
+        return 1
+
     tools = load_registry()
+
+    from quiver.harness.archive import load_archive
+
+    archived = load_archive()
+    if scope == "active":
+        tools = {n: t for n, t in tools.items() if n not in archived}
+    elif scope == "archived":
+        tools = {n: t for n, t in tools.items() if n in archived}
+        # An archived harness can outlive its registry entry; it should
+        # still be listed under --scope=archived rather than vanishing.
+        for name in archived:
+            # No registry entry left, so there is no command to probe; the
+            # row still has to render, showing what was archived and when.
+            tools.setdefault(name, {"command": name, "description": "",
+                                    "aliases": [], "tags": []})
+
     tag_filter = args[0].lstrip("-") if args else None
     counts = _session_counts()
     stars = load_stars()
@@ -275,7 +384,7 @@ def cmd_list(args):
         if tag_filter and tag_filter not in info.get("tags", []):
             continue
 
-        installed = is_installed(info["command"])
+        installed = is_installed(info.get("command") or name)
         status = c("green", "✓") if installed else c("red", "✗")
         ver = truncate(info.get("version") or "—", 12)
         aliases = [a for a in info.get("aliases", []) if a != name]
@@ -304,6 +413,10 @@ def cmd_list(args):
             shown_starred = True
             mark_cell = c("neon_pink", " \u2605")  # 1 space + ★ = 2 visible (matches column width)
             accent = "neon"
+        elif name in archived:
+            # Only reachable under --scope=all or =archived; without a marker
+            # a shelved harness reads exactly like one still in play.
+            mark_cell = c("dim", " \u25aa")        # 1 space + ▪ = 2 visible
         else:
             mark_cell = "  "  # 2 spaces of plain indent
 
@@ -361,10 +474,12 @@ def cmd_list(args):
     print()
     n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
     n_star = sum(1 for n in tools if n in starred_set)
-    hints = "swe use <name|alias>  │  swe star <name>  │  swe info <name>  │  swe check"
+    hints = "swe use <name>  │  swe hs star <name>  │  swe hs archive <name>  │  swe info <name>"
     print(c("dim", f"  {n_inst}/{len(tools)} installed  ·  {n_star} starred  ·  {hints}"))
     if shown_starred:
         print(f"  {c('neon_pink', '★')} {c('dim', '= favourited (pinned top, neon border)')}")
+        if archived:
+            print(f"  {c('dim', '▪')} {c('dim', f'= archived ({len(archived)} hidden; --scope=all to show)')}")
 
     all_tags = sorted({t for i in tools.values() for t in i.get("tags", [])})
     tag_str = "  ".join(c("cyan", t) for t in all_tags)
@@ -380,7 +495,7 @@ def cmd_star(args):
         orphan = [s for s in load_stars() if s not in tools]
         print(f"\n{c('bold', 'Starred harnesses')}\n")
         if not stars and not orphan:
-            print(c("dim", "  None yet. Try: swe star droid\n"))
+            print(c("dim", "  None yet. Try: swe hs star droid\n"))
             return
         for i, name in enumerate(stars, 1):
             info = tools[name]
@@ -390,7 +505,7 @@ def cmd_star(args):
         for name in orphan:
             print(f"  {c('yellow', '★')} {name}  {c('dim', '(not in registry)')}")
         print()
-        print(c("dim", "  swe star <name|alias>   toggle  ·  swe star clear   remove all\n"))
+        print(c("dim", "  swe hs star <name>   toggle  ·  swe hs star clear   remove all\n"))
         return
 
     if args[0] in ("clear", "--clear"):

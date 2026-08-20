@@ -74,6 +74,22 @@ Link state is a small vocabulary shared by `swe init`, `swe list` and
 `keep` is the safety valve. It is never overwritten on a plain run, because
 absorbing it would hide the only copy of something behind the shared tree.
 
+## Standing
+
+Two decisions about a harness live outside the registry, because the
+registry describes what a harness *is* and these record what you decided
+about it:
+
+| file | holds |
+|---|---|
+| `config/stars.json` | favourites, in pin order |
+| `config/archived.json` | name, reason, and date archived |
+
+Archiving is deliberately not `swe remove`. Removing forgets the harness,
+which loses the fact that you evaluated it, so a month later it reads as
+untried and gets reinstalled. `swe list --scope` decides which standing
+you see: `active` (default), `archived`, or `all`.
+
 ## Scope
 
 A file is **global** when it sits directly in a harness root (`~/.<tool>/` or
