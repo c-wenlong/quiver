@@ -623,7 +623,7 @@ def _browse(topic: str | None, scope: str) -> int:
     if not entries:
         print(c("dim", f"  nothing to browse for {key} at --scope={scope}"))
         return 0
-    return browse(entries, title=f"  {key.title()}  --scope={scope}")
+    return browse(entries, title=f" {key.title()} --scope={scope}")
 
 
 def print_find_help() -> None:
