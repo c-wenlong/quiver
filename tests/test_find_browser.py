@@ -186,11 +186,15 @@ class ThreePaneLayoutTest(unittest.TestCase):
         return _pane_widths(width, ratio)
 
     def test_the_three_panes_fit_the_row(self):
+        """Assert the invariant, not the overhead arithmetic: the panes
+        plus the separators between them must not exceed the window."""
         from quiver.find.browser import MIN_PANE
 
+        separators = 7          # two " │ " plus the leading margin
         for width in (40, 80, 120, 200):
             p, c_, v = self._widths(width, (2, 3, 5))
-            self.assertLessEqual(p + c_ + v, max(3 * MIN_PANE, width - 9), width)
+            budget = max(3 * MIN_PANE + separators, width)
+            self.assertLessEqual(p + c_ + v + separators, budget, width)
 
     def test_no_pane_collapses_to_nothing(self):
         from quiver.find.browser import MIN_PANE
@@ -284,6 +288,18 @@ class SelectionBarTest(unittest.TestCase):
     A foreground-only highlight is easy to lose in a pane you are not
     driving, and impossible to find at a glance across three of them.
     """
+
+    def test_no_glyph_precedes_the_name(self):
+        """The bar says which row is selected and colour says which rows
+        descend, so a triangle on every line only ate the name column."""
+        from quiver.console import strip_ansi
+        from quiver.find.browser import _left_cell
+
+        for active in (True, False):
+            plain = strip_ansi(_left_cell(Entry("dv"), 20, active=active))
+            self.assertNotIn("▸", plain)
+            self.assertNotIn("·", plain)
+            self.assertTrue(plain.lstrip().startswith("dv"), plain)
 
     def test_the_selected_row_fills_its_whole_cell(self):
         from quiver.console import visible_len
