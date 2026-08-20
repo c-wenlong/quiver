@@ -22,7 +22,11 @@ STATE_COLOR = {
     "linked": "green",
     "create": "cyan",
     "relink": "yellow",
+    "absorb": "cyan",
     "conflict": "red",
+    "keep": "yellow",
+    "protected": "yellow",
+    "blocked": "red",
     "skipped": "dim",
 }
 
@@ -52,16 +56,23 @@ def _apply(status: LinkStatus, canonical: Path, home: Path, force: bool) -> str:
     """Carry out one status. Returns a short result word for the report."""
     if status.state in ("linked", "skipped"):
         return status.state
+
+    # A directory whose skills exist nowhere else is never replaced on a plain
+    # run. Absorbing it would hide the only copy behind the shared tree, and
+    # the backup would be the sole survivor. Reported instead.
+    if status.state == "keep" and not force:
+        return "protected"
     if status.state == "conflict" and not force:
         return "blocked"
 
     path = status.path
-    if status.state == "conflict":
-        _backup(path, home)
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+    if status.state in ("conflict", "absorb", "keep") and not path.is_symlink():
+        if path.exists():
+            _backup(path, home)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
     elif path.is_symlink():
         path.unlink()
 
@@ -160,13 +171,22 @@ def cmd_init(args) -> int:
     _print_section("Instructions", inst_rows, home)
     _print_section("Skills", skill_rows, home)
 
-    blocked = [r for _, r in inst_rows + skill_rows if r == "blocked"]
+    blocked = [r for _, r in inst_rows + skill_rows if r in ("blocked", "would-conflict")]
+    # check mode renders an unchanged state verbatim, so "keep" arrives as-is.
+    protected = [
+        (s_, r) for s_, r in skill_rows if r in ("protected", "keep", "would-keep")
+    ]
     changed = [r for _, r in inst_rows + skill_rows if r.startswith("would-") or r == "linked"]
     summary = (
         f"{len(changed)} linked, {len(blocked)} blocked, "
         f"edit {agents_file(home)} to change them all"
     )
     print(f"\n  {c('dim', summary)}\n")
+    if protected:
+        print(f"  {c('yellow', 'Left alone, these hold skills that exist nowhere else:')}")
+        for s_, _ in protected:
+            print(f"    {_short(s_.path, home).ljust(30)} {c('dim', s_.detail)}")
+        print(f"  {c('dim', 'Move what you want to keep into ~/.quiver/skills first, or --force.')}\n")
     if blocked:
         print(f"  {c('yellow', 'Re-run with --force to back up and replace the blocked paths.')}\n")
         return 1

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from quiver.mcp.discover import McpFinding
+from quiver.mcp.discover import MergeResult, McpFinding
 from quiver.harness.discover import HarnessFinding
 from quiver.setup.commands import cmd_setup
 from quiver.setup.wizard import (
@@ -152,7 +152,10 @@ class SetupWizardTest(unittest.TestCase):
         self.assertEqual(attention.status, "attention")
 
     @patch("quiver.setup.wizard.backup_file", return_value=Path("/tmp/mcp.json.bak"))
-    @patch("quiver.setup.wizard.apply_mcp_findings", return_value=["notion"])
+    @patch(
+    "quiver.setup.wizard.apply_mcp_findings",
+    return_value=MergeResult(added=["notion"], updated=[], orphaned=[], pruned=[]),
+)
     @patch("quiver.setup.wizard.discover_mcp_servers")
     def test_mcp_stage_applies_confirmed_findings(self, discover, apply, _backup):
         finding = McpFinding(
