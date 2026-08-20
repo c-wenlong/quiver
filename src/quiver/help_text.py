@@ -346,6 +346,29 @@ to use their own login state and environment."""
 
 {c('bold', 'Alias')}  {c('cyan', 'swe discover')} is the same as {c('cyan', 'swe harness discover')}"""
     ),
+    "find": (
+        "Show where shared assets live and what links to them",
+        f"""\
+  {c('cyan', 'swe find')}                  Both trees
+  {c('cyan', 'swe find amd')}              AGENTS.md and every harness pointing at it
+  {c('cyan', 'swe find skills')}           Skills, plugins, and every harness skill root
+  {c('cyan', 'swe find amd --scope=all')}  Include project and vendored files
+
+{c('bold', 'Scope')}  {c('cyan', '--scope=global|local|all')}, default global
+  {c('cyan', 'global')}   loaded into every harness session
+  {c('cyan', 'local')}    project files only
+  {c('cyan', 'all')}      both, plus vendored plugin and extension copies
+
+{c('bold', 'States')}
+  {c('green', 'synced')}         symlinked to the shared copy
+  {c('cyan', 'unsynced')}       a real directory that could be absorbed
+  {c('yellow', 'separate')}       holds content that exists nowhere else, left alone
+  {c('yellow', 'wrong target')}   symlink pointing somewhere unexpected
+  {c('red', 'in the way')}     a real file where a link should be
+  {c('dim', 'not installed')}  harness absent from this machine
+
+  Read-only. {c('cyan', 'swe init')} is what changes anything."""
+    ),
     "init": (
         "Create ~/.quiver and symlink every harness to it",
         f"""\
@@ -441,6 +464,7 @@ COMMAND_CATEGORIES = [
         ("models",  None),
     ]),
     ("Reference", [
+        ("find",    None),
         ("skills",  None),
         ("tags",    None),
         ("aliases", None),

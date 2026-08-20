@@ -250,7 +250,7 @@ def link_states(home: Path | None = None) -> dict[str, dict[str, str]]:
     for path in discover_skill_roots(home):
         label = skill_root_label(path, home)
         if label == "agents":
-            continue  # ~/.agents is the legacy alias, not a harness
+            continue  # ~/.config/agents is a shared dir, not a harness
         state, _ = classify_skill_root(path, home)
         out.setdefault(_registry_name(label), {})["skills"] = state
 
