@@ -90,6 +90,102 @@ def _rel(path: Path, root: Path, home: Path, width: int = PATH_WIDTH) -> str:
     return _elide(text, width).ljust(width) + " "
 
 
+def _build_trie(nodes, root: Path, home: Path) -> dict:
+    """Nest nodes by path segment. Leaves map a filename to its Node."""
+    trie: dict = {}
+    for n in nodes:
+        try:
+            parts = list(n.path.relative_to(root).parts)
+        except ValueError:
+            parts = [_short(n.path, home)]
+        cur = trie
+        for seg in parts[:-1]:
+            cur = cur.setdefault(seg, {})
+        cur[parts[-1]] = n            # a Node value marks a leaf
+    return trie
+
+
+def _collapse(trie: dict) -> dict:
+    """Fold single-child directory chains into one segment.
+
+    Without this a vendored path becomes a staircase of one-child levels:
+    plugins/ then cache/ then openai-curated/ then build-web-apps/, each on
+    its own line saying nothing. Joined, it reads as one hop.
+    """
+    out: dict = {}
+    for name, child in trie.items():
+        if not isinstance(child, dict):
+            out[name] = child
+            continue
+        child = _collapse(child)
+        while len(child) == 1:
+            only_name, only_child = next(iter(child.items()))
+            name = f"{name}/{only_name}"
+            if not isinstance(only_child, dict):
+                # A directory holding one file collapses onto a single line
+                # too, otherwise ".amp/" and "AGENTS.md" take two lines to say
+                # what ".amp/AGENTS.md" says in one.
+                out[name] = only_child
+                break
+            child = only_child
+        else:
+            out[name] = child
+    return out
+
+
+def _walk_trie(trie: dict, prefix: str = ""):
+    """Yield (indent, label, node_or_None) in display order, dirs first."""
+    # Files before subdirectories: a directory's own instruction file is the
+    # thing you are looking for, and burying it under nested branches hides it.
+    items = sorted(trie.items(),
+                   key=lambda kv: (isinstance(kv[1], dict), kv[0].lower()))
+    for i, (name, child) in enumerate(items):
+        last = i == len(items) - 1
+        branch = TREE_END if last else TREE_MID
+        if isinstance(child, dict):
+            yield prefix + branch, name + "/", None
+            yield from _walk_trie(child, prefix + ("   " if last else TREE_BAR))
+        else:
+            yield prefix + branch, name, child
+
+
+def _render_tree(nodes, root: Path, home: Path) -> None:
+    """Print nodes as a nested tree with the status column aligned."""
+    rows = list(_walk_trie(_collapse(_build_trie(nodes, root, home))))
+    if not rows:
+        return
+    # Fit the longest row when everything is short, which is the common case
+    # and means no elision at all. Only once something exceeds the cap does a
+    # percentile take over, so one deeply vendored path cannot pad every other
+    # row out to match it.
+    lengths = sorted(len(indent + label) for indent, label, _ in rows)
+    if lengths[-1] <= PATH_WIDTH:
+        width = lengths[-1]
+    else:
+        p95 = lengths[min(len(lengths) - 1, int(len(lengths) * 0.95))]
+        width = max(min(p95, PATH_WIDTH), 24)
+
+    for indent, label, node in rows:
+        line = indent + label
+        if len(line) > width:
+            # Elide the label, never the indent: the branch lines carry the
+            # structure and are meaningless once broken.
+            label = _elide(label, max(4, width - len(indent)))
+            line = indent + label
+        if node is None:
+            print(c("dim", line))
+            continue
+        colour = STATE_COLOR.get(node.state, "dim")
+        word = STATE_WORD.get(node.state, node.state)
+        extra = ""
+        if node.target:
+            extra = f" {c('dim', '-> ' + _short(node.target, home))}"
+        elif node.count:
+            extra = f" {c('dim', str(node.count) + ' skills')}"
+        print(f"{c('dim', indent)}{c(colour, label.ljust(width - len(indent)))}"
+              f"  {c(colour, word.ljust(13))}{extra}")
+
+
 def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
                  scope: str = "global") -> None:
     nodes, vendored = filter_scope(nodes, scope, home)
@@ -101,17 +197,7 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
     if not nodes:
         print(f"  {c('dim', empty)}\n")
         return
-    for i, n in enumerate(nodes):
-        colour = STATE_COLOR.get(n.state, "dim")
-        word = STATE_WORD.get(n.state, n.state)
-        extra = ""
-        if n.target:
-            extra = f" {c('dim', '-> ' + _short(n.target, home))}"
-        elif n.count:
-            extra = f" {c('dim', str(n.count) + ' skills')}"
-        print(f"  {c('dim', _branch(i, len(nodes)))}"
-              f"{c(colour, _rel(n.path, root, home))}"
-              f"{c(colour, word.ljust(13))}{extra}")
+    _render_tree(nodes, root, home)
     synced = sum(1 for n in nodes if n.state == "linked")
     print(f"\n  {c('dim', f'{len(nodes)} found · {synced} synced to the shared copy')}")
     if vendored:

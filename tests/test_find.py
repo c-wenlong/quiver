@@ -444,3 +444,116 @@ class ElideTest(unittest.TestCase):
         deep = home / ("nested/" * 12) / "AGENTS.md"
         rendered = _rel(deep, home, home)
         self.assertEqual(len(rendered), PATH_WIDTH + 1)  # +1 column separator
+
+
+class TreeRenderTest(unittest.TestCase):
+    """Paths nest instead of repeating a shared prefix on every row."""
+
+    def _rows(self, home: Path, rels):
+        from quiver.find.commands import _build_trie, _collapse, _walk_trie
+        from quiver.find.tree import Node
+
+        nodes = [Node("x", home / r, "file", "unlinked") for r in rels]
+        return list(_walk_trie(_collapse(_build_trie(nodes, home, home))))
+
+    def test_shared_prefix_appears_once(self):
+        rows = self._rows(Path("/h"), [
+            ".hermes/context/kaichenpedia/AGENTS.md",
+            ".hermes/context/kaichenpedia/CLAUDE.md",
+        ])
+        labels = [lbl for _i, lbl, _n in rows]
+        # The whole single-child chain collapses onto the directory row, so
+        # ".hermes/context/kaichenpedia/" is written once and the two files
+        # hang off it.
+        self.assertEqual(
+            labels, [".hermes/context/kaichenpedia/", "AGENTS.md", "CLAUDE.md"])
+        # The directory row carries no node; only files do.
+        self.assertIsNone(rows[0][2])
+        self.assertIsNotNone(rows[1][2])
+
+    def test_single_file_directory_collapses_to_one_row(self):
+        rows = self._rows(Path("/h"), [".amp/AGENTS.md"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][1], ".amp/AGENTS.md")
+
+    def test_single_child_directory_chain_collapses(self):
+        rows = self._rows(Path("/h"), [
+            ".codex/plugins/cache/openai/sites/AGENTS.md",
+            ".codex/plugins/cache/openai/other/AGENTS.md",
+        ])
+        labels = [lbl for _i, lbl, _n in rows]
+        self.assertEqual(labels[0], ".codex/plugins/cache/openai/")
+        self.assertEqual(sorted(labels[1:]), ["other/AGENTS.md", "sites/AGENTS.md"])
+
+    def test_files_sort_before_subdirectories(self):
+        rows = self._rows(Path("/h"), [
+            ".codex/AGENTS.md",
+            ".codex/plugins/a/AGENTS.md",
+            ".codex/plugins/b/AGENTS.md",
+        ])
+        labels = [lbl for _i, lbl, _n in rows]
+        self.assertEqual(labels[0], ".codex/")
+        self.assertEqual(labels[1], "AGENTS.md")
+
+    def test_branch_glyphs_mark_the_last_child(self):
+        rows = self._rows(Path("/h"), [".a/AGENTS.md", ".b/AGENTS.md"])
+        self.assertTrue(rows[0][0].endswith("├─ "))
+        self.assertTrue(rows[-1][0].endswith("└─ "))
+
+    def test_nesting_indents_with_a_continuation_bar(self):
+        # .codex must not be the last row, otherwise its children correctly
+        # indent with blanks rather than a continuation bar.
+        rows = self._rows(Path("/h"), [
+            ".codex/x/AGENTS.md", ".codex/y/AGENTS.md",
+            ".zz/a/AGENTS.md", ".zz/b/AGENTS.md",
+        ])
+        child = [i for i, lbl, _n in rows if lbl.startswith("x/")][0]
+        self.assertIn("│", child)
+
+    def test_last_directory_children_indent_with_blanks(self):
+        rows = self._rows(Path("/h"), [".a/AGENTS.md", ".z/x/A.md", ".z/y/A.md"])
+        child = [i for i, lbl, _n in rows if lbl.startswith("x/")][0]
+        self.assertNotIn("│", child)
+
+    def test_no_duplicate_directory_rows(self):
+        rows = self._rows(Path("/h"), [
+            ".hermes/a/AGENTS.md", ".hermes/a/CLAUDE.md", ".hermes/b/AGENTS.md",
+        ])
+        dirs = [lbl for _i, lbl, n in rows if n is None]
+        self.assertEqual(len(dirs), len(set(dirs)))
+
+
+class ColumnWidthTest(unittest.TestCase):
+    """Elide only when something genuinely overruns the cap."""
+
+    def _width(self, home: Path, rels):
+        from quiver.find.commands import (
+            PATH_WIDTH, _build_trie, _collapse, _walk_trie)
+
+        from quiver.find.tree import Node
+        nodes = [Node("x", home / r, "file", "unlinked") for r in rels]
+        rows = list(_walk_trie(_collapse(_build_trie(nodes, home, home))))
+        lengths = sorted(len(i + l) for i, l, _ in rows)
+        if lengths[-1] <= PATH_WIDTH:
+            return lengths[-1], lengths
+        p95 = lengths[min(len(lengths) - 1, int(len(lengths) * 0.95))]
+        return max(min(p95, PATH_WIDTH), 24), lengths
+
+    def test_short_rows_are_never_elided(self):
+        # Everything fits, so the column is the true max and nothing is cut.
+        home = Path("/h")
+        width, lengths = self._width(home, [
+            ".amp/skills", ".codeium/windsurf/skills", ".tabnine/agent/skills",
+        ])
+        self.assertEqual(width, lengths[-1])
+        self.assertEqual(sum(1 for x in lengths if x > width), 0)
+
+    def test_one_outlier_does_not_stretch_every_row(self):
+        from quiver.find.commands import PATH_WIDTH
+
+        home = Path("/h")
+        rels = [f".t{i}/AGENTS.md" for i in range(40)]
+        rels.append(".t0/" + "deep/" * 60 + "AGENTS.md")
+        width, lengths = self._width(home, rels)
+        self.assertLessEqual(width, PATH_WIDTH)
+        self.assertLess(width, lengths[-1])
