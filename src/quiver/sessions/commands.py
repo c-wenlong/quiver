@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quiver.console import c, cpad, truncate, visible_len
+from quiver.sessions import failures
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.identity import launch_tool
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
@@ -297,6 +298,23 @@ def _display_title(session, width: int) -> str:
     return c("dim", "-")
 
 
+def _print_parser_failures() -> None:
+    """Name any parser that crashed, so it is not mistaken for no history.
+
+    A parser that raises returns an empty list, which reads identically to a
+    harness you have never used. That is how a NameError in the cursor parser
+    hid 84 sessions.
+    """
+    broken = failures.snapshot()
+    if not broken:
+        return
+    print(c("yellow", f"  {len(broken)} parser(s) failed, "
+                      "so those harnesses show no sessions:"))
+    for tool, message in sorted(broken.items()):
+        print(f"    {c('red', tool.ljust(12))}{c('dim', message[:88])}")
+    print()
+
+
 def cmd_session(args):
     parsed = _parse_session_args(args)
     if parsed is None:
@@ -341,6 +359,7 @@ def cmd_session(args):
 
     if not sessions:
         print(c("dim", "  No sessions found."))
+        _print_parser_failures()
         print()
         return 0
 
@@ -442,4 +461,5 @@ def cmd_session(args):
     if search:
         print(c("dim", f"  filter: --search {search!r}  ·  {len(sessions)} match(es)"))
         print()
+    _print_parser_failures()
     return 0

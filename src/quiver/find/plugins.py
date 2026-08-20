@@ -162,14 +162,30 @@ def _from_cache_scan(harness: str, cache: Path) -> list[Plugin]:
     """
     if not cache.is_dir():
         return []
+
+    # grok names its marketplace directories by content hash, so 783232b6...
+    # tells you nothing. Each one carries a marketplace.json with the real
+    # name, which is what you would recognise.
+    named = {}
+    for top in cache.iterdir():
+        if not top.is_dir():
+            continue
+        for mf in sorted(top.rglob(".*-plugin/marketplace.json"))[:1] or \
+                sorted(top.glob("**/marketplace.json"))[:1]:
+            name = (_load_json(mf) or {}).get("name")
+            if name:
+                named[top.name] = name
+            break
+
     found = []
     for manifest in sorted(cache.rglob("*-plugin/plugin.json")):
         root = manifest.parent.parent
         data = _load_json(manifest) or {}
         rel = root.relative_to(cache).parts
+        market = rel[0] if len(rel) > 1 else ""
         found.append(Plugin(
             harness=harness, name=data.get("name") or root.name,
-            marketplace=rel[0] if len(rel) > 1 else "",
+            marketplace=named.get(market, market),
             version=str(data.get("version", "")),
             enabled=None, path=root, components=count_components(root),
         ))

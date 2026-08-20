@@ -24,6 +24,7 @@ from quiver.sessions.engines import (
     strip_file_uri,
 )
 from quiver.sessions.engines.jsonl_engine import event_cwd
+from quiver.sessions import failures
 from quiver.sessions.models import Session
 
 
@@ -529,19 +530,19 @@ def parse_cursor():
                                 except ValueError:
                                     pass
                             if not path:
-                                path = enc_dir
+                                path = enc_entry.path
                             sessions.append(
                                 Session(
                                     timestamp=mtime,
                                     agent="Cursor",
                                     path=path,
                                     title=title,
-                                    session_id=uuid_dir,
+                                    session_id=uuid_entry.name,
                                     tool_name="cursor",
                                 )
                             )
-        except Exception:
-            pass
+        except Exception as exc:
+            failures.record("cursor", exc)
         return sessions
 
     return parse_jsonl_projects(
