@@ -206,6 +206,9 @@ def cmd_list_legend(args=None) -> int:
               f"{c('dim', USAGE_ABOUT[level])}")
     print(f"\n  {c('dim', 'Derived from lifetime sessions; override with')} "
           f"{c('cyan', 'swe hs archive <name> --usage=<level>')}")
+    print(f"  {c('dim', 'USAGE, ARCHIVED and REASON appear only when a row is archived.')}")
+    print(f"  {c('dim', 'Turn them on with')} {c('cyan', 'swe list edit')}"
+          f"{c('dim', ', or read them with')} {c('cyan', 'swe hs archive')}{c('dim', '.')}")
 
     print(f"\n  {c('bold', 'AGENTS.MD and SKILLS glyphs')}\n")
     rows = [
@@ -582,6 +585,9 @@ def cmd_list(args):
         rendered.add("usage")
         table.add_column("usage", "USAGE", width=_USAGE_WIDTH,
                          kind="preformatted", trust_cell_width=True)
+    if "archived" in wanted and shows_usage:
+        rendered.add("archived")
+        table.add_column("archived", "ARCHIVED", width=10, kind="text")
     if "rate" in wanted:
         table.add_column(
             "rate", "REMAINING", width=14, kind="preformatted",
@@ -596,18 +602,28 @@ def cmd_list(args):
     if "inst" in wanted:
         rendered.add("inst")
         table.add_column("inst", "INST", width=4, kind="preformatted")
+    # Whichever of DESCRIPTION and REASON comes last absorbs the slack.
+    # REASON wins when both are on: in an archived view, why you shelved a
+    # harness matters more than what its vendor calls it.
+    show_reason = "reason" in wanted and shows_usage
+    used = sum(w for key, w in (
+        ("mark", 2), ("name", name_w), ("command", command_w),
+        ("version", version_w), ("aliases", aliases_w),
+        ("inst", 4), ("sess", sess_w), ("usage", _USAGE_WIDTH),
+        ("archived", 10), ("rate", 14), ("agents", 22), ("skills", 12),
+    ) if key in rendered)
+    gaps = 3 * (len(rendered) + (1 if "desc" in wanted else 0) + (1 if show_reason else 0))
+    slack = terminal_width() - used - gaps - 2
+
     if "desc" in wanted:
-        # Last column, so it absorbs whatever the others leave rather than
-        # truncating at a fixed 36 with half the terminal unused.
-        used = sum(w for key, w in (
-            ("mark", 2), ("name", name_w), ("command", command_w),
-            ("version", version_w), ("aliases", aliases_w),
-            ("inst", 4), ("sess", sess_w), ("usage", _USAGE_WIDTH),
-            ("rate", 14), ("agents", 22), ("skills", 12),
-        ) if key in rendered)
-        gaps = 3 * max(0, len(rendered))          # the " │ " between columns
-        desc_w = max(24, terminal_width() - used - gaps - 2)
+        rendered.add("desc")
+        desc_w = min(46, max(20, slack // 2)) if show_reason else max(24, slack)
         table.add_column("desc", "DESCRIPTION", width=desc_w, kind="text",
+                         fit="shrink")
+        slack -= desc_w
+    if show_reason:
+        rendered.add("reason")
+        table.add_column("reason", "REASON", width=max(24, slack), kind="text",
                          fit="shrink")
 
     shown_starred = False
@@ -699,6 +715,10 @@ def cmd_list(args):
             row["sess"] = sess_cell
         if "usage" in wanted and shows_usage:
             row["usage"] = _usage_cell(archived.get(name))
+        if "archived" in wanted and shows_usage:
+            row["archived"] = _fmt_when((archived.get(name) or {}).get("archived_at", ""))
+        if "reason" in wanted and shows_usage:
+            row["reason"] = (archived.get(name) or {}).get("reason", "")
         if "rate" in wanted:
             row["rate"] = rate_cell
         if "desc" in wanted:

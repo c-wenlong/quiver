@@ -780,3 +780,86 @@ class HarnessListRoutingTest(unittest.TestCase):
 
         flags = [n for n, _ in comp.get_completions(["hs", "list", "--sc"])]
         self.assertTrue(any(f.startswith("--scope") for f in flags), flags)
+
+
+class ReasonColumnTest(unittest.TestCase):
+    """The reason lived only in `swe hs archive`, so the table it belongs
+    to could not show you why anything was shelved."""
+
+    REGISTRY = {n: {"command": n, "version": "1", "aliases": [],
+                    "description": "d", "tags": []}
+                for n in ("claude", "kiro")}
+    ARCH = {"kiro": {"reason": "thin wrapper, no MCP support",
+                     "archived_at": "2026-08-21T10:00:00", "usage": "trial"}}
+
+    def _render(self, columns, scope="all", archived=None):
+        import re
+
+        from quiver.harness import commands
+
+        with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
+             mock.patch.object(commands, "load_columns", return_value=list(columns)), \
+             mock.patch.object(commands, "_session_counts", return_value={}), \
+             mock.patch.object(commands, "_broken_tools", return_value=set()), \
+             mock.patch("quiver.harness.archive.load_archive",
+                        return_value=self.ARCH if archived is None else archived):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                commands.cmd_list([f"--scope={scope}"])
+        return re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+
+    def test_the_reason_shows_in_the_table(self):
+        out = self._render(["mark", "name", "reason"], scope="archived")
+        self.assertIn("thin wrapper", out)
+
+    def test_the_header_is_named_reason(self):
+        self.assertIn("REASON", self._render(["mark", "name", "reason"],
+                                             scope="archived"))
+
+    def test_the_archived_date_has_its_own_column(self):
+        out = self._render(["mark", "name", "archived"], scope="archived")
+        self.assertIn("ARCHIVED", out)
+        self.assertIn("2026-08-21", out)
+
+    def test_both_are_hidden_when_nothing_is_archived(self):
+        out = self._render(["mark", "name", "reason", "archived"], archived={})
+        self.assertNotIn("REASON", out)
+        self.assertNotIn("ARCHIVED", out)
+
+    def test_an_active_row_leaves_the_reason_blank(self):
+        out = self._render(["mark", "name", "reason"], scope="all")
+        row = next(ln for ln in out.splitlines() if "claude" in ln)
+        self.assertNotIn("thin wrapper", row)
+
+    def test_a_long_reason_is_not_cut_to_nothing(self):
+        long = "because " * 12
+        out = self._render(["mark", "name", "reason"], scope="archived",
+                           archived={"kiro": {"reason": long, "usage": "none",
+                                              "archived_at": ""}})
+        self.assertIn("because because", out)
+
+    def test_reason_and_description_can_both_render(self):
+        out = self._render(["mark", "name", "reason", "desc"], scope="archived")
+        self.assertIn("REASON", out)
+        self.assertIn("DESCRIPTION", out)
+
+    def test_the_table_stays_aligned_with_both(self):
+        out = self._render(["mark", "name", "sess", "usage", "archived",
+                            "reason", "desc"], scope="archived")
+        block = []
+        started = False
+        for ln in out.splitlines():
+            if "NAME" in ln:
+                started = True
+            if started:
+                if not ln.strip():
+                    break
+                block.append(len(ln))
+        self.assertEqual(len(set(block)), 1, sorted(set(block)))
+
+    def test_they_are_ordinary_configurable_columns(self):
+        from quiver.harness.columns import BY_KEY
+
+        for key in ("reason", "archived"):
+            self.assertIn(key, BY_KEY)
+            self.assertFalse(BY_KEY[key].locked)
