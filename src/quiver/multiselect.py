@@ -50,23 +50,38 @@ def _read_key(fd: int) -> str:
     }.get(ch, "")
 
 
-def _render(choices, selected, cursor, title, first) -> None:
-    if not first:
-        # Redraw in place: one line per choice, plus title and footer.
-        sys.stdout.write(f"\x1b[{len(choices) + 3}A")
-    print(f"\r{c('bold', title)}\x1b[K")
+FOOTER = "  space toggle · a all · n none · enter save · q cancel"
+
+
+def _render(choices, selected, cursor, title, prev_lines: int) -> int:
+    """Draw the checklist, returning how many lines it wrote.
+
+    The caller feeds that count back as ``prev_lines`` so the next redraw
+    rewinds by exactly what was drawn. Counting lines from the choice list
+    instead was off by one, and once a redraw scrolls the terminal any fixed
+    count drifts, which is how the footer ended up repeating on every keypress.
+
+    Lines end with an explicit \r\n: tty.setraw clears ONLCR, so a bare \n
+    moves down without returning to column 0.
+    """
+    out = []
+    if prev_lines:
+        out.append(f"\x1b[{prev_lines}A")   # back to the top of the widget
+    out.append("\r\x1b[J")                  # and clear everything below it
+
+    out.append(c("bold", title) + "\r\n")
     for i, ch in enumerate(choices):
-        on = ch.key in selected
-        box = "[x]" if on else "[ ]"
-        if ch.locked:
-            box, tail = "[x]", c("dim", "  always shown")
-        else:
-            tail = ""
+        box = "[x]" if (ch.locked or ch.key in selected) else "[ ]"
+        tail = c("dim", "  always shown") if ch.locked else ""
         pointer = c("cyan", ">") if i == cursor else " "
         body = f"{box} {ch.label.ljust(12)} {c('dim', ch.about)}{tail}"
         line = c("cyan", body) if i == cursor else (c("dim", body) if ch.locked else body)
-        print(f"\r {pointer} {line}\x1b[K")
-    print(f"\r{c('dim', '  space toggle · a all · n none · enter save · q cancel')}\x1b[K")
+        out.append(f" {pointer} {line}\r\n")
+    out.append(c("dim", FOOTER) + "\r\n")
+
+    sys.stdout.write("".join(out))
+    sys.stdout.flush()
+    return len(choices) + 2      # title + one per choice + footer
 
 
 def multiselect(choices: list[Choice], selected=None, title="Select") -> list[str] | None:
@@ -86,13 +101,12 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
 
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
-    cursor, first = 0, True
+    cursor, drawn = 0, 0
     try:
         tty.setraw(fd)
         sys.stdout.write("\x1b[?25l")     # hide the caret while redrawing
         while True:
-            _render(choices, chosen, cursor, title, first)
-            first = False
+            drawn = _render(choices, chosen, cursor, title, drawn)
             key = _read_key(fd)
             if key == "cancel":
                 return None

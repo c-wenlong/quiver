@@ -5,6 +5,7 @@ useless, and the star is what pins your harnesses to the top.
 """
 
 import io
+import re
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -133,3 +134,103 @@ class EditCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RedrawTest(unittest.TestCase):
+    """Each redraw must rewind by exactly what it drew.
+
+    The first version counted lines from the choice list and was off by one,
+    and once a redraw scrolls the terminal any fixed count drifts. The footer
+    then reappeared on every keypress instead of being overwritten.
+    """
+
+    def _draw(self, n_choices=5, redraws=3):
+
+        from quiver.multiselect import _render
+
+        choices = [Choice("mark", "*", "locked", locked=True)]
+        choices += [Choice(f"k{i}", f"L{i}", "about") for i in range(n_choices - 1)]
+        buf = io.StringIO()
+        counts = []
+        with redirect_stdout(buf):
+            drawn = 0
+            for i in range(redraws):
+                drawn = _render(choices, {"k1"}, i % n_choices, "Title", drawn)
+                counts.append(drawn)
+        return buf.getvalue(), counts, choices
+
+    def test_line_count_is_title_plus_choices_plus_footer(self):
+        _out, counts, choices = self._draw()
+        self.assertEqual(set(counts), {len(choices) + 2})
+
+    def test_rewind_matches_what_was_drawn(self):
+        out, counts, _ = self._draw(redraws=4)
+        ups = [int(x) for x in re.findall(r"\x1b\[(\d+)A", out)]
+        # One rewind per redraw after the first, each equal to the line count.
+        self.assertEqual(len(ups), len(counts) - 1)
+        self.assertTrue(all(u == counts[0] for u in ups), ups)
+
+    def test_first_draw_does_not_rewind(self):
+        out, _counts, _ = self._draw(redraws=1)
+        self.assertEqual(re.findall(r"\x1b\[(\d+)A", out), [])
+
+    def test_every_redraw_clears_below_itself(self):
+        out, counts, _ = self._draw(redraws=3)
+        self.assertEqual(out.count("\x1b[J"), len(counts))
+
+    def test_lines_end_with_carriage_return_and_newline(self):
+        # tty.setraw clears ONLCR, so a bare \n moves down without returning
+        # to column 0 and the display staircases.
+        out, _counts, _ = self._draw()
+        self.assertEqual(re.findall(r"(?<!\r)\n", out), [])
+
+    def test_footer_is_written_once_per_draw(self):
+        from quiver.multiselect import FOOTER
+
+        out, counts, _ = self._draw(redraws=3)
+        plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", out)
+        self.assertEqual(plain.count(FOOTER.strip()), len(counts))
+
+
+class InteractionTest(unittest.TestCase):
+    """Drive the real widget through a pseudo-terminal."""
+
+    def test_arrows_space_and_enter_produce_the_right_selection(self):
+        import os
+        import pty
+        import select
+        import time
+
+        script = (
+            "import sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from quiver.multiselect import multiselect, Choice\n"
+            "cs = [Choice('mark','*','l',locked=True), Choice('a','A','aa'),\n"
+            "      Choice('b','B','bb'), Choice('c','C','cc')]\n"
+            "r = multiselect(cs, ['a'], title='T')\n"
+            "sys.stderr.write('RESULT:' + ','.join(r or []))\n"
+        ) % str(__import__("pathlib").Path(__file__).resolve().parent.parent / "src")
+
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execv("/usr/bin/env", ["env", "python3", "-c", script])
+        time.sleep(0.6)
+        # down, down (onto 'b'), toggle it on, up (onto 'a'), toggle it off, save
+        for key in (b"\x1b[B", b"\x1b[B", b" ", b"\x1b[A", b" ", b"\r"):
+            os.write(fd, key)
+            time.sleep(0.2)
+        out = b""
+        while True:
+            r, _, _ = select.select([fd], [], [], 0.6)
+            if not r:
+                break
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+        os.waitpid(pid, 0)
+        text = out.decode(errors="replace")
+        self.assertIn("RESULT:mark,b", text)
