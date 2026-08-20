@@ -134,10 +134,34 @@ def _row_for_tool(output, tool_name):
     raise AssertionError(f"No row for {tool_name!r} in output:\n{output}")
 
 
+def _pin_columns(test):
+    """Isolate from the user's saved column set.
+
+    `swe list` columns are configurable, so a developer who ran
+    `swe list edit` would otherwise see these tests fail against their own
+    preference rather than a real regression.
+    """
+    from unittest import mock
+
+    from quiver.harness import columns as _columns
+
+    patch = mock.patch.object(
+        _columns, "load_columns", lambda: list(_columns.DEFAULT_COLUMNS))
+    patch.start()
+    test.addCleanup(patch.stop)
+    patch2 = mock.patch(
+        "quiver.harness.commands.load_columns",
+        lambda: list(_columns.DEFAULT_COLUMNS))
+    patch2.start()
+    test.addCleanup(patch2.stop)
+
+
+
 class CmdListHeaderTest(unittest.TestCase):
     """Header / separator alignment invariants (the migration's main payoff)."""
 
     def setUp(self):
+        _pin_columns(self)
         _setup_patches(self)
 
     def test_header_has_nine_columns_in_order(self):
@@ -201,6 +225,7 @@ class CmdListAccentTest(unittest.TestCase):
     """Starred vs unstarred row rendering — the divergence point of the migration."""
 
     def setUp(self):
+        _pin_columns(self)
         _setup_patches(self, stars=["claude"])
 
     def test_starred_row_carries_neon_ansi_and_star_marker(self):
@@ -224,6 +249,7 @@ class CmdListRateColumnTest(unittest.TestCase):
     """The REMAINING column uses trusted widths and explicit pre-padding."""
 
     def setUp(self):
+        _pin_columns(self)
         _setup_patches(self)
 
     def test_rate_cell_renders_aligned_to_column_width(self):
@@ -297,6 +323,7 @@ class CmdListAlignmentTest(unittest.TestCase):
     """
 
     def setUp(self):
+        _pin_columns(self)
         _setup_patches(self)
 
     def test_all_rows_have_identical_total_visible_width(self):
@@ -329,6 +356,7 @@ class CmdListInstColumnTest(unittest.TestCase):
     """INST column shows the right glyph + color per installed status."""
 
     def setUp(self):
+        _pin_columns(self)
         _setup_patches(self)
 
     def test_inst_shows_red_x_for_not_installed(self):

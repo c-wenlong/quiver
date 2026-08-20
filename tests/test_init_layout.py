@@ -24,6 +24,29 @@ def _fake_home(tmp: str) -> Path:
     return home
 
 
+def _pin_columns(test):
+    """Isolate from the user's saved column set.
+
+    `swe list` columns are configurable, so a developer who ran
+    `swe list edit` would otherwise see these tests fail against their own
+    preference rather than a real regression.
+    """
+    from unittest import mock
+
+    from quiver.harness import columns as _columns
+
+    patch = mock.patch.object(
+        _columns, "load_columns", lambda: list(_columns.DEFAULT_COLUMNS))
+    patch.start()
+    test.addCleanup(patch.stop)
+    patch2 = mock.patch(
+        "quiver.harness.commands.load_columns",
+        lambda: list(_columns.DEFAULT_COLUMNS))
+    patch2.start()
+    test.addCleanup(patch2.stop)
+
+
+
 class InspectTest(unittest.TestCase):
     def test_skips_harness_that_is_not_installed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -211,6 +234,9 @@ class LinkStatesTest(unittest.TestCase):
 
 
 class ListLinksViewTest(unittest.TestCase):
+
+    def setUp(self):
+        _pin_columns(self)
     def test_links_flag_skips_the_rate_limit_fetch(self):
         from quiver.harness import commands as harness_commands
 
@@ -247,6 +273,9 @@ class ListLinksViewTest(unittest.TestCase):
 
 class ListUsageOptInTest(unittest.TestCase):
     """Usage is the only networked part of `swe list`, so it must be opt-in."""
+
+    def setUp(self):
+        _pin_columns(self)
 
     def _run(self, args):
         from quiver.harness import commands as harness_commands
