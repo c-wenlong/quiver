@@ -88,11 +88,13 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
-          use_oidc: true
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           flags: python-${{ matrix.python-version }}
           name: python-${{ matrix.python-version }}
-          fail_ci_if_error: true
+          # Coverage reporting is a nice-to-have. Codecov being unreachable
+          # should not mark a run red when every test job passed.
+          fail_ci_if_error: false
 
   package:
     name: Built wheel smoke test
