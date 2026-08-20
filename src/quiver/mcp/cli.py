@@ -33,6 +33,8 @@ from quiver.console import c, cpad, strip_ansi, visible_len
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
+from quiver.mcp.secrets import resolve as resolve_secrets
+from quiver.mcp.secrets import unresolved_names
 from quiver.paths import CONFIG_DIR, REGISTRY_FILE, MCP_SOURCE_FILE
 from quiver.mcp.formats import (
     McpFormatHandler,
@@ -406,7 +408,16 @@ def servers_for_source(name: str) -> dict:
     The hub is already canonical, and its format is declared "standard", so
     the same conversion path handles it without a special case.
     """
-    return get_hub_servers() if is_hub(name) else get_tool_servers(name)
+    if not is_hub(name):
+        return get_tool_servers(name)
+    # The hub stores ${NAME} references; a harness needs the real value to
+    # start the server, and most never expand variables themselves.
+    servers = get_hub_servers()
+    missing = unresolved_names(servers)
+    if missing:
+        print(c("yellow", "  no value in ~/.quiver/secrets/.api_keys for: "
+                          + ", ".join(missing)))
+    return resolve_secrets(servers)
 
 
 def get_tool_servers(tool_name: str) -> dict:
