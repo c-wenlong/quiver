@@ -16,6 +16,7 @@ from quiver.sessions.engines.common import (
     parse_iso_ts,
     strip_file_uri,
 )
+from quiver.sessions import failures
 from quiver.sessions.models import Session
 
 
@@ -83,8 +84,10 @@ def _parse_index(config: JsonParserConfig) -> list[Session]:
             sess = _to_session(entry, file_hint or path, config)
             if sess:
                 sessions.append(sess)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 
@@ -112,8 +115,10 @@ def _parse_files(config: JsonParserConfig) -> list[Session]:
             sess = _to_session(data, fp, config)
             if sess:
                 sessions.append(sess)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 
@@ -194,8 +199,10 @@ def _parse_nested_dirs(config: JsonParserConfig) -> list[Session]:
                             if not sess.timestamp:
                                 sess.timestamp = get_mtime(sess_dir)
                             sessions.append(sess)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 
@@ -271,8 +278,10 @@ def _parse_project_map(config: JsonParserConfig) -> list[Session]:
                 config.get_path = saved
             if sess:
                 sessions.append(sess)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 

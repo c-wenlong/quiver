@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from quiver.paths import CONFIG_DIR, SKILL_LINKS_FILE
 from quiver.skills.catalogs import load_skill_catalogs, count_skill_md
+
+
+class SkillLayoutError(Exception):
+    """A skill root could not be resolved, or an operation on one is unsafe.
+
+    Defined here rather than in link_ops so resolve_root_ref can raise it
+    without importing its own caller.
+    """
 
 SHARED_LABEL = "shared"
 # The one canonical tree. ~/.agents/skills was the pre-0.2.7 root and has been
@@ -241,6 +250,25 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
                 return label, candidate
         except OSError:
             continue
+    # A bare word that matches no known root used to become cwd/<word>, so a
+    # typo silently retargeted the command at whatever sat in the current
+    # directory. With --force that meant backing up and deleting the wrong
+    # thing. Only something that actually looks like a path is treated as one.
+    # Deliberately not "or path.exists()": a bare word that happens to match
+    # a folder in the current directory is the exact case this guards. The
+    # ref must be written as a path to be treated as one.
+    looks_like_path = (
+        ref.startswith(("/", ".", "~"))
+        or "/" in ref
+        or os.sep in ref
+    )
+    if not looks_like_path:
+        known = sorted({label for label, _ in all_skill_root_candidates(home, cwd)})
+        raise SkillLayoutError(
+            f"Unknown skill root {ref!r}. "
+            f"Pass a known root ({', '.join(known[:8])}...) "
+            f"or an explicit path like ./{ref}."
+        )
     slug = path.name or "custom"
     return slug, path
 

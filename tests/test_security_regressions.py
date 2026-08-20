@@ -185,3 +185,123 @@ class BackupTreeHardeningTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParserFailuresAreReportedTest(unittest.TestCase):
+    """A crashing parser must read as an error, not as an unused harness.
+
+    A NameError in the cursor parser hid 84 sessions for months because the
+    handler caught it, returned [], and the aggregator's safety net never
+    saw anything to catch.
+    """
+
+    def setUp(self):
+        from quiver.sessions import failures
+
+        failures.clear()
+        self.addCleanup(failures.clear)
+        self.failures = failures
+
+    def test_a_failure_inside_a_json_handler_is_recorded(self):
+        import json as _json
+
+        from quiver.sessions.engines import json_engine
+        from quiver.sessions.engines.json_engine import JsonParserConfig
+
+        d = Path(tempfile.mkdtemp())
+        idx = d / "index.json"
+        idx.write_text(_json.dumps([{"id": "1"}]))
+
+        def boom(_data):
+            raise NameError("uuid_dir")
+
+        cfg = JsonParserConfig(tool_name="demo", agent="Demo",
+                               index_path=str(idx), index_items=boom)
+        self.assertEqual(json_engine.parse_json_store(cfg), [])
+        self.assertIn("demo", self.failures.snapshot())
+
+    def test_an_escaping_failure_is_still_recorded(self):
+        from quiver.sessions.aggregator import _run_parser
+
+        def boom():
+            raise RuntimeError("escaped")
+
+        self.assertEqual(_run_parser("demo2", boom), [])
+        self.assertIn("demo2", self.failures.snapshot())
+
+    def test_no_function_level_handler_swallows_silently(self):
+        """A handler at function level ends the whole parse, so it must record.
+
+        Matched by indentation: a four-space `except` closes the function's
+        own try, while the deeper ones are per-file or per-row and are meant
+        to skip quietly. The `conn.close()` cleanup is nested and exempt.
+        """
+        import re
+
+        # The whole-tool shape exactly: a function-level handler that then
+        # hands back the session list. Deeper handlers (per file, per row)
+        # and ones returning a title or a filename list are meant to be
+        # quiet, because one bad record should not blank a harness.
+        pattern = re.compile(
+            r"^    except Exception:\n        pass\n    return sessions$", re.M
+        )
+        offenders = [
+            f.name
+            for f in Path("src/quiver/sessions/engines").glob("*.py")
+            if pattern.search(f.read_text())
+        ]
+        self.assertEqual(offenders, [], f"whole-tool failures still silent: {offenders}")
+
+
+class UnknownRootRefTest(unittest.TestCase):
+    """A bare word that is not a known root used to become cwd/<word>.
+
+    `swe skills link codx --force` would then back up and delete whatever
+    sat in the current directory under that name.
+    """
+
+    def setUp(self):
+        from quiver.skills.layout import SkillLayoutError
+
+        self.error = SkillLayoutError
+        self.home = Path(tempfile.mkdtemp())
+        (self.home / ".quiver" / "skills").mkdir(parents=True)
+        self.work = Path(tempfile.mkdtemp())
+        (self.work / "codx").mkdir()
+        self._old = os.getcwd()
+        os.chdir(self.work)
+        self.addCleanup(os.chdir, self._old)
+
+    def _resolve(self, ref):
+        from quiver.skills.layout import resolve_root_ref
+
+        return resolve_root_ref(ref, home=self.home, cwd=self.home)
+
+    def test_a_typo_is_refused(self):
+        with self.assertRaises(self.error):
+            self._resolve("codx")
+
+    def test_refused_even_when_a_matching_folder_exists_in_cwd(self):
+        self.assertTrue((self.work / "codx").exists())
+        with self.assertRaises(self.error):
+            self._resolve("codx")
+
+    def test_the_message_lists_valid_roots(self):
+        with self.assertRaises(self.error) as ctx:
+            self._resolve("codx")
+        self.assertIn("codex", str(ctx.exception))
+
+    def test_known_labels_still_resolve(self):
+        for ref in ("shared", "codex"):
+            self.assertEqual(self._resolve(ref)[0], ref)
+
+    def test_explicit_paths_still_resolve(self):
+        for ref in ("./codx", str(self.work / "codx"), "~/x/skills"):
+            self.assertTrue(self._resolve(ref)[1])
+
+    def test_link_refuses_a_typo_before_touching_anything(self):
+        from quiver.skills.link_ops import link_skill_root
+
+        with self.assertRaises(self.error):
+            link_skill_root("codx", home=self.home, cwd=self.home, force=True)
+        self.assertTrue((self.work / "codx").is_dir(), "cwd folder was touched")

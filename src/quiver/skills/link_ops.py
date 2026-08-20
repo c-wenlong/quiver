@@ -9,6 +9,7 @@ from quiver.paths import backup_tree
 from quiver.skills.discovery import discover_skills
 from quiver.skills.layout import (
     SHARED_LABEL,
+    SkillLayoutError,
     enumerate_skill_roots,
     record_symlink,
     remove_link_record,
@@ -16,8 +17,9 @@ from quiver.skills.layout import (
 )
 
 
-class SkillLayoutError(Exception):
-    pass
+# Defined in layout.py so resolve_root_ref can raise it; re-exported here
+# because this is where callers have always imported it from.
+__all__ = ["SkillLayoutError", "link_skill_root", "unlink_skill_root", "move_skill"]
 
 
 def link_skill_root(

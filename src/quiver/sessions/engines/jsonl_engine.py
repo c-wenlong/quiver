@@ -140,8 +140,10 @@ def _parse_nested(base: str, config: JsonlParserConfig) -> list[Session]:
                                         tool_name=config.tool_name,
                                     )
                                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 
@@ -161,8 +163,10 @@ def _parse_glob(base: str, config: JsonlParserConfig) -> list[Session]:
             sess = _session_from_jsonl(fp, config, "")
             if sess:
                 sessions.append(sess)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 
@@ -223,8 +227,10 @@ def _parse_session_dirs(base: str, config: JsonlParserConfig) -> list[Session]:
                                 continue
                             sess = Session(**fields)
                         sessions.append(sess)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 
@@ -268,8 +274,10 @@ def _parse_index_jsonl(base: str, config: JsonlParserConfig) -> list[Session]:
                                 sessions.append(sess)
                 except Exception:
                     pass
-    except Exception:
-        pass
+    except Exception as exc:
+        # Still caught: one broken harness must not take down the rest.
+        # Recorded so it reads as an error rather than as no history.
+        failures.record(config.tool_name, exc)
     return sessions
 
 
