@@ -188,8 +188,6 @@ class ScanTest(unittest.TestCase):
         self.json = json
 
     def _write(self, rel, payload, raw=None):
-        from pathlib import Path
-
         p = self.home / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(raw if raw is not None else self.json.dumps(payload))
