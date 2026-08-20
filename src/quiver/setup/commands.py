@@ -136,7 +136,7 @@ def cmd_setup(args):
             result = {
                 "applied": {
                     "harness": apply_findings(new_harness, min_confidence="high") if new_harness else [],
-                    "mcp": apply_mcp_findings(new_mcp) if new_mcp else [],
+                    "mcp": apply_mcp_findings(new_mcp).added if new_mcp else [],
                     "skills": apply_skills_symlink_hints(actionable_skills, home=home),
                 }
             }
@@ -162,7 +162,7 @@ def cmd_setup(args):
             tools = ", ".join(f.tools)
             print(f"  {c('green', '•')} {c('bold', f.name)}  {c('dim', f'({tools})')}")
     else:
-        print(c("green", "  ✓ No new MCP servers outside ~/.quiver/config/mcp.json."))
+        print(c("green", "  ✓ No new MCP servers outside ~/.quiver/mcp.json."))
     print()
 
     # Step 3 — skills
@@ -189,7 +189,7 @@ def cmd_setup(args):
 
     if apply:
         added_h = apply_findings(new_harness, min_confidence="high") if new_harness else []
-        added_m = apply_mcp_findings(new_mcp) if new_mcp else []
+        added_m = apply_mcp_findings(new_mcp).added if new_mcp else []
         added_s = apply_skills_symlink_hints(actionable_skills, home=home)
         parts = []
         if added_h:
@@ -210,7 +210,7 @@ def cmd_setup(args):
             return 130
         if answer in ("y", "yes"):
             added_h = apply_findings(new_harness, min_confidence="high") if new_harness else []
-            added_m = apply_mcp_findings(new_mcp) if new_mcp else []
+            added_m = apply_mcp_findings(new_mcp).added if new_mcp else []
             added_s = apply_skills_symlink_hints(actionable_skills, home=home)
             print(c("green", f"\n  ✓ Harness: {', '.join(added_h) or '—'}"))
             print(c("green", f"  ✓ MCP: {', '.join(added_m) or '—'}"))

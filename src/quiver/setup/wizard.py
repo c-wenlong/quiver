@@ -210,7 +210,7 @@ def _stage_mcp(
         return StageOutcome("mcp", SECTION_LABELS["mcp"], "skipped", f"{len(new)} available")
 
     backup = backup_file(MCP_SOURCE_FILE)
-    added = apply_mcp_findings(new)
+    added = apply_mcp_findings(new).added
     print(c("green", f"  Saved {len(added)} MCP server(s): {', '.join(added) or 'none'}"))
     return StageOutcome(
         "mcp",

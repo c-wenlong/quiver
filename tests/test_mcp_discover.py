@@ -117,7 +117,7 @@ class McpDiscoverTest(unittest.TestCase):
             ), patch("quiver.mcp.cli.get_mcp_tools") as mock_tools:
                 mock_tools.return_value = {"opencode": mcp_map["opencode"]}
                 findings = discover_mcp_servers()
-                added = apply_mcp_findings(findings)
+                added = apply_mcp_findings(findings).added
                 self.assertIn("linear", added)
                 data = json.loads(mcp_file.read_text())
                 self.assertIn("linear", data["mcpServers"])
@@ -125,3 +125,133 @@ class McpDiscoverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThreeWayMergeTest(unittest.TestCase):
+    """The hub must track harness edits, not just grow.
+
+    The original merge skipped anything already present by name, so a rotated
+    token in a harness config never reached the hub, and a later
+    `sync quiver --all` would push the stale value back out over it.
+    """
+
+    HARNESS = {
+        "keeps_same": {"command": "a"},
+        "gets_edited": {"command": "NEW"},
+        "brand_new": {"command": "fresh"},
+    }
+    HUB = {
+        "keeps_same": {"command": "a"},
+        "gets_edited": {"command": "OLD"},
+        "no_longer_anywhere": {"command": "ghost"},
+    }
+
+    def _sandbox(self, stack, hub=None):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from quiver.mcp import discover as D
+
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
+        path = Path(tmp) / "mcp.json"
+        path.write_text(json.dumps(
+            {"mcpServers": hub if hub is not None else self.HUB,
+             "updated": "2020-01-01T00:00:00"}))
+        for target, kwargs in (
+            ("MCP_SOURCE_FILE", {"new": path}),
+            ("get_mcp_tools", {"return_value": ["claude"]}),
+            ("load_registry", {"return_value": {}}),
+            ("get_tool_servers_canonical", {"return_value": self.HARNESS}),
+            ("redact_secrets", {"side_effect": lambda x: x}),
+        ):
+            stack.enter_context(patch.object(D, target, **kwargs))
+        return D, path
+
+    def test_classifies_new_changed_same_and_orphaned(self):
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            D, _ = self._sandbox(stack)
+            got = {f.name: f.status
+                   for f in D.discover_mcp_servers(include_in_source=True)}
+        self.assertEqual(got, {
+            "brand_new": "new",
+            "gets_edited": "changed",
+            "keeps_same": "in_source",
+            "no_longer_anywhere": "orphaned",
+        })
+
+    def test_in_source_is_hidden_unless_asked_for(self):
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            D, _ = self._sandbox(stack)
+            names = {f.name for f in D.discover_mcp_servers()}
+        self.assertNotIn("keeps_same", names)
+        self.assertIn("gets_edited", names)
+
+    def test_merge_adds_and_updates(self):
+        import contextlib
+        import json
+
+        with contextlib.ExitStack() as stack:
+            D, path = self._sandbox(stack)
+            res = D.apply_mcp_findings(D.discover_mcp_servers(include_in_source=True))
+            hub = json.loads(path.read_text())["mcpServers"]
+
+        self.assertEqual(res.added, ["brand_new"])
+        self.assertEqual(res.updated, ["gets_edited"])
+        # The whole point: the harness edit reached the hub.
+        self.assertEqual(hub["gets_edited"]["command"], "NEW")
+
+    def test_orphans_are_reported_but_kept(self):
+        import contextlib
+        import json
+
+        with contextlib.ExitStack() as stack:
+            D, path = self._sandbox(stack)
+            res = D.apply_mcp_findings(D.discover_mcp_servers(include_in_source=True))
+            hub = json.loads(path.read_text())["mcpServers"]
+
+        self.assertEqual(res.orphaned, ["no_longer_anywhere"])
+        self.assertEqual(res.pruned, [])
+        # An unreadable harness config looks the same as a deletion, and the
+        # hub entry carries the credentials, so removal must be deliberate.
+        self.assertIn("no_longer_anywhere", hub)
+
+    def test_prune_removes_orphans(self):
+        import contextlib
+        import json
+
+        with contextlib.ExitStack() as stack:
+            D, path = self._sandbox(stack)
+            res = D.apply_mcp_findings(
+                D.discover_mcp_servers(include_in_source=True), prune=True)
+            hub = json.loads(path.read_text())["mcpServers"]
+
+        self.assertEqual(res.pruned, ["no_longer_anywhere"])
+        self.assertNotIn("no_longer_anywhere", hub)
+
+    def test_updated_timestamp_is_refreshed_not_only_seeded(self):
+        import contextlib
+        import json
+
+        with contextlib.ExitStack() as stack:
+            D, path = self._sandbox(stack)
+            D.apply_mcp_findings(D.discover_mcp_servers(include_in_source=True))
+            stamp = json.loads(path.read_text())["updated"]
+        # setdefault only ever stamped the first write, so the file claimed to
+        # be years old while its contents had just changed.
+        self.assertNotEqual(stamp, "2020-01-01T00:00:00")
+
+    def test_no_write_when_nothing_differs(self):
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            D, path = self._sandbox(stack, hub=dict(self.HARNESS))
+            before = path.read_text()
+            res = D.apply_mcp_findings(D.discover_mcp_servers(include_in_source=True))
+            self.assertFalse(res.wrote)
+            self.assertEqual(path.read_text(), before)

@@ -10,10 +10,12 @@ from quiver.paths import MCP_SOURCE_FILE
 
 
 def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
-    opts = {"apply": False, "json": False, "all": False}
+    opts = {"apply": False, "json": False, "all": False, "prune": False}
     rest = []
     for arg in args:
-        if arg == "--apply":
+        if arg == "--prune":
+            opts["prune"] = True
+        elif arg == "--apply":
             opts["apply"] = True
         elif arg == "--json":
             opts["json"] = True
@@ -32,9 +34,10 @@ def _print_help():
   {c('bold', 'swe mcp discover')} — Find MCP servers across your AI tools
 
   {c('cyan', 'swe mcp discover')}              List servers in tool configs not in mcp.json (dry-run)
-  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.quiver/config/mcp.json
+  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.quiver/mcp.json
   {c('cyan', 'swe mcp discover --json')}       Machine-readable output
   {c('cyan', 'swe mcp discover --all')}        Include servers already in source-of-truth
+  {c('cyan', 'swe mcp discover --prune')}      Also remove hub servers no harness configures
 
 {c('bold', 'Source of truth')}  {MCP_SOURCE_FILE}
 """
@@ -75,7 +78,9 @@ def cmd_discover(args):
             print(c("dim", "  " + "─" * 90))
             for f in findings:
                 tools = ", ".join(f.tools)
-                stat = c("cyan", f.status) if f.status == "new" else c("dim", f.status)
+                colour = {"new": "cyan", "changed": "yellow",
+                          "orphaned": "red"}.get(f.status, "dim")
+                stat = c(colour, f.status)
                 summary = server_summary(f.server)
                 print(
                     f"  {c('bold', f.name):<{w_name + 9}} {tools:<{w_tools}} "
@@ -85,13 +90,30 @@ def cmd_discover(args):
             print(c("dim", "  dry-run  ·  swe mcp discover --apply  │  swe setup --apply\n"))
 
     if opts["apply"]:
-        added = apply_mcp_findings(findings)
+        result = apply_mcp_findings(findings, prune=opts["prune"])
         if opts["json"]:
-            print(json.dumps({"added": added}, indent=2))
-        elif added:
-            print(c("green", f"  ✓ Added {len(added)} server(s) to {MCP_SOURCE_FILE}: {', '.join(added)}"))
-        elif not opts["json"]:
-            print(c("dim", "  Nothing to add.\n"))
+            print(json.dumps({
+                "added": result.added,
+                "updated": result.updated,
+                "orphaned": result.orphaned,
+                "pruned": result.pruned,
+            }, indent=2))
+        else:
+            if result.added:
+                print(c("green", f"  ✓ Added {len(result.added)} server(s) to "
+                                 f"{MCP_SOURCE_FILE}: {', '.join(result.added)}"))
+            if result.updated:
+                print(c("cyan", f"  ↻ Updated {len(result.updated)} server(s) from "
+                                f"their harness config: {', '.join(result.updated)}"))
+            if result.pruned:
+                print(c("red", f"  ✗ Pruned {len(result.pruned)} orphan(s): "
+                               f"{', '.join(result.pruned)}"))
+            elif result.orphaned:
+                print(c("yellow", f"  ! {len(result.orphaned)} server(s) in the hub that "
+                                  f"no harness configures: {', '.join(result.orphaned)}"))
+                print(c("dim", "    Left in place. Pass --prune to remove them.\n"))
+            if not result.wrote and not result.orphaned:
+                print(c("dim", "  Hub already matches every harness.\n"))
     elif not opts["json"] and findings and sys.stdin.isatty() is False:
         new = [f for f in findings if f.status == "new"]
         if new:

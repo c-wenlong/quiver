@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe mcp discover --prune`.** Removes hub servers that no harness
+  configures any more. Without it they are reported and left in place.
+
 - **Credential indirection for the MCP hub.** `~/.quiver/mcp.json` now stores
   `${NAME}` references; values live in `~/.quiver/secrets/.api_keys` (mode 600,
   gitignored), so the hub itself is safe to commit. `swe mcp sync` resolves on
@@ -27,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identical to an empty result.
 
 ### Changed
+
+- **`swe mcp discover --apply` now merges three ways.** It previously skipped
+  anything already in the hub by name, so a token rotated in a harness config
+  never reached the hub and a later `sync quiver --all` pushed the stale value
+  back out over it. It now adds new servers, updates ones a harness has edited,
+  and reports servers the hub still lists that no harness configures.
 
 - **MCP moved under `~/.quiver`.** The server checkouts moved from
   `~/.mcp-servers` to `~/.quiver/mcp/servers` (2.7 GB, instant rename, symlink
@@ -510,6 +519,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   addition to the session cache).
 
 ### Fixed
+
+- **`mcp.json`'s `updated` timestamp never changed.** It used `setdefault`, so
+  only the first write was ever stamped; the file claimed to be hours older
+  than its contents.
 
 - **Deleted 331 KB of dead source from the config directory.** `mcp.py`,
   `mcp_formats.py`, `mcp_server.py`, `tests/`, `__pycache__/` and

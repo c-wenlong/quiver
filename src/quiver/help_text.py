@@ -318,7 +318,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe mcp doctor')}               Deep diagnostics
 
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for detailed help on each command
-{c('bold', 'Source of truth')}  ~/.quiver/config/mcp.json"""
+{c('bold', 'Source of truth')}  ~/.quiver/mcp.json"""
     ),
     "providers": (
         "Manage AI provider API keys and metadata",

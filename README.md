@@ -116,7 +116,7 @@ swe setup --quick            # only missing or actionable setup stages
 swe setup report             # configure coding-session report models only
 swe setup --apply            # apply safe defaults without prompting
 swe harness discover         # scan PATH for unregistered AI CLIs
-swe mcp discover             # find MCP servers not in ~/.quiver/config/mcp.json
+swe mcp discover             # find MCP servers not in ~/.quiver/mcp.json
 
 swe list                     # all registered tools, sorted by recent usage
 swe list agentic             # filter by tag
