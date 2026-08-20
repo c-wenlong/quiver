@@ -20,7 +20,13 @@ from quiver.harness.columns import (
 )
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.init.layout import link_states
-from quiver.harness.stars import is_starred, load_stars, toggle_star
+from quiver.harness.stars import (
+    is_starred,
+    load_stars,
+    star as star_name,
+    toggle_star,
+    unstar as unstar_name,
+)
 from quiver.harness.tools import extract_version_number, is_installed, live_version
 from quiver.prompt import read_line
 from quiver.table import Table
@@ -183,6 +189,112 @@ def _fmt_when(stamp: str) -> str:
         return datetime.fromisoformat(stamp).strftime("%Y-%m-%d")
     except ValueError:
         return stamp[:10]
+
+
+def cmd_harness_edit(args=None):
+    """Review every harness at once: active, starred, or archived.
+
+    The one-at-a-time commands are fine for a single decision. Going
+    through the whole registry with them means remembering which you have
+    already judged, so this puts them all on one screen.
+
+    Archiving here asks for a reason afterwards, one harness at a time. A
+    blank answer cancels that archive rather than recording a bare date:
+    an archive with no reason is the thing you cannot act on later, which
+    is the whole point of keeping the record.
+    """
+    from quiver.harness.archive import archive, load_archive, unarchive
+    from quiver.multiselect import StateChoice, statepicker
+
+    args = list(args or [])
+    if args and args[0] in ("-h", "--help", "help"):
+        print(f"\n  {c('bold', 'swe harness edit')} — review every harness at once\n")
+        print(f"  {c('dim', 'space cycles active → starred → archived · s / x / c jump straight to one')}")
+        print(f"  {c('dim', 'enter saves · q cancels · archiving then asks why, one at a time')}")
+        print(f"  {c('dim', 'A blank reason cancels that archive; the record is the point.')}\n")
+        return 0
+
+    tools = load_registry()
+    if not tools:
+        print(c("dim", "  no harnesses registered yet — try swe harness discover"))
+        return 0
+
+    starred = set(load_stars())
+    archived = load_archive()
+
+    def state_of(name):
+        if name in archived:
+            return "archived"
+        return "starred" if name in starred else "active"
+
+    counts = _session_counts()
+    choices = [
+        StateChoice(
+            key=name,
+            label=name,
+            state=state_of(name),
+            about=(archived[name]["reason"] if name in archived
+                   else f"{counts.get(name, 0)} sessions"),
+        )
+        for name in sorted(tools, key=lambda n: (-counts.get(n, 0), n))
+    ]
+    before = {ch.key: ch.state for ch in choices}
+
+    picked = statepicker(choices, title="  Harnesses")
+    if picked is None:
+        print(f"  {c('dim', 'cancelled, nothing changed')}")
+        return 0
+
+    changed = [ch for ch in picked if ch.state != before[ch.key]]
+    if not changed:
+        print(f"  {c('dim', 'no changes')}")
+        return 0
+
+    # Stars and restores apply straight away. Archives wait for a reason.
+    to_archive = []
+    for ch in changed:
+        was, now = before[ch.key], ch.state
+        if was == "archived" and now != "archived":
+            unarchive(ch.key)
+        if was == "starred" and now != "starred":
+            unstar_name(ch.key)
+        if now == "starred" and was != "starred":
+            star_name(ch.key)
+        if now == "archived":
+            to_archive.append(ch.key)
+
+    applied = [ch for ch in changed if ch.state != "archived"]
+    for ch in applied:
+        colour, glyph = ("neon_pink", "\u2605") if ch.state == "starred" else ("dim", "\u00b7")
+        print(f"  {c(colour, glyph)} {ch.key} {c('dim', '→ ' + ch.state)}")
+
+    if not to_archive:
+        return 0
+
+    print(f"\n  {c('bold', f'Why are you archiving these? ({len(to_archive)})')}")
+    print(f"  {c('dim', 'blank cancels that one — an archive with no reason is not worth keeping')}\n")
+
+    kept, skipped = [], []
+    for name in to_archive:
+        try:
+            reason = read_line(f"  {c('yellow', '▪')} {c('bold', name)}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            skipped.extend(to_archive[len(kept) + len(skipped):])
+            break
+        if not reason:
+            skipped.append(name)
+            continue
+        archive(name, reason)
+        kept.append(name)
+
+    print()
+    for name in kept:
+        print(f"  {c('yellow', '▪')} Archived {name}")
+    for name in skipped:
+        print(f"  {c('dim', '·')} {c('dim', f'{name} left active — no reason given')}")
+    print()
+    return 0
 
 
 def cmd_archive(args):
