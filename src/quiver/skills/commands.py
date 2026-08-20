@@ -2,8 +2,7 @@
 
 from pathlib import Path
 
-from quiver.console import c, cpad, terminal_width, truncate
-from quiver.find.commands import _elide
+from quiver.console import c, cpad, elide, terminal_width, truncate
 from quiver.skills.catalog_commands import cmd_skills_catalog, cmd_skills_discover
 from quiver.skills.discovery import discover_skills, skill_roots
 from quiver.skills.help_text import cmd_skills_help, print_skills_overview
@@ -103,7 +102,7 @@ def cmd_skills(args):
             "name": cpad("bold", truncate(skill["name"], name_w), name_w),
             "scope": cpad("cyan", truncate(skill["scope"], scope_w), scope_w),
             "path": cpad(
-                "dim", _elide(skill["path"].replace(home_str, "~"), path_w), path_w
+                "dim", elide(skill["path"].replace(home_str, "~"), path_w), path_w
             ),
         })
 

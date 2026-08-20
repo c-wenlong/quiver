@@ -92,15 +92,27 @@ def unlink_skill_root(
 
 
 def _find_skill_matches(name: str, scope: str, home: Path, cwd: Path) -> list[dict]:
+    """Skills in ``scope`` matching ``name``, preferring an exact name.
+
+    Substring matching alone got this wrong both ways. Asking for
+    "five-whys" when "five-whys-extended" also exists reported an
+    ambiguity even though the name given was exact, and asking for "whys"
+    quietly moved whichever single skill happened to contain it. An exact
+    name now wins outright, and the looser match only applies when nothing
+    matches exactly.
+    """
     needle = name.lower()
-    skills = discover_skills(home=home, cwd=cwd)
-    matches = [
-        s
-        for s in skills
+    skills = [
+        s for s in discover_skills(home=home, cwd=cwd)
         if s["scope"].lower() == scope.lower()
-        and (s["name"].lower() == needle or needle in s["name"].lower() or needle in s["path"].lower())
     ]
-    return matches
+    exact = [s for s in skills if s["name"].lower() == needle]
+    if exact:
+        return exact
+    return [
+        s for s in skills
+        if needle in s["name"].lower() or needle in s["path"].lower()
+    ]
 
 
 def find_skill_directory(
