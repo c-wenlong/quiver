@@ -207,9 +207,11 @@ def _left_cell(entry: Entry, width: int, active: bool, muted: bool = False) -> s
     through, in a quieter blue, so orientation survives without competing
     with the pane you are actually driving.
     """
-    glyph = "▸" if entry.can_descend else "·"
+    # No leading glyph. The bar already says which row is selected, and
+    # colour already says which rows descend, so a triangle on every line
+    # only narrows the column that holds the name.
     detail_w = min(len(entry.detail), width // 3) if entry.detail else 0
-    name_w = max(1, width - 2 - (detail_w + 1 if detail_w else 0))
+    name_w = max(1, width - 1 - (detail_w + 1 if detail_w else 0))
     name = elide(entry.label, name_w).ljust(name_w)
     detail = (" " + truncate(entry.detail, detail_w).rjust(detail_w)
               if detail_w else "")
@@ -218,11 +220,9 @@ def _left_cell(entry: Entry, width: int, active: bool, muted: bool = False) -> s
         # The bar spans the whole cell, so it has to be built from plain
         # text: nesting colours inside it would end the background early.
         bar = SELECT_DIM_BG if muted else SELECT_BG
-        plain = f"{glyph} {name}{detail}"
-        return bar + plain.ljust(width) + RESET
+        return bar + f" {name}{detail}".ljust(width) + RESET
 
-    head = f"{glyph} {name}"
-    body = c("blue", head) if entry.can_descend else head
+    body = c("blue", f" {name}") if entry.can_descend else f" {name}"
     if detail:
         body += c("dim", detail)
     return body
@@ -236,7 +236,7 @@ def _pane_widths(width: int, ratio: tuple[int, int, int]) -> tuple[int, int, int
     shows nothing useful, and a reader would rather lose the parent than
     read three columns of ellipsis.
     """
-    avail = max(3 * MIN_PANE, width - 9)   # pointer, gaps, two separators
+    avail = max(3 * MIN_PANE, width - 7)   # gaps and the two separators
     total = sum(ratio) or 1
     parent = max(MIN_PANE, avail * ratio[0] // total)
     current = max(MIN_PANE, avail * ratio[1] // total)
@@ -315,19 +315,16 @@ def _render(parent: list[Entry], parent_cursor: int,
         left = _pane_cell(p_entry, parent_w, pi == parent_cursor, dim=True)
 
         if i < total:
-            pointer = c("cyan", ">") if i == cursor else " "
             mid = _pane_cell(entries[i], current_w, i == cursor, dim=False)
         elif not total and not row:
-            pointer = " "
             mid = c("dim", "(empty)".ljust(current_w))
         else:
-            pointer = " "
             mid = " " * current_w
         mid += " " * max(0, current_w - visible_len(mid))
 
         text = preview[row] if row < len(preview) else ""
         right = c("dim", truncate(text, preview_w)) if text else ""
-        out.append(f"{left} {sep} {pointer} {mid} {sep} {right}\r\n")
+        out.append(f"{left} {sep} {mid} {sep} {right}\r\n")
 
     tail = []
     if total > view:
