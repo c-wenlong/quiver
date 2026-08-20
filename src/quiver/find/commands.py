@@ -354,7 +354,13 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
     shape once you know what you are looking for. This answers the prior
     question: what the hub holds, and which harnesses are behind it.
     """
-    from quiver.find.mcps import PREFIX_UNFILED, hub_view, tool_views
+    from quiver.find.mcps import (
+        PREFIX_UNFILED,
+        hub_view,
+        scan_configs,
+        tool_views,
+        unmanaged,
+    )
 
     home = Path.home()
     hub = hub_view()
@@ -395,6 +401,51 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
                 print(f"      {c('yellow', 'only here: ')}"
                       f"{c('dim', ', '.join(sorted(t.only_here)[:6]))}")
 
+    # The sections above read the config paths quiver has registered. This
+    # one reads the disk, which is where a config nobody registered hides.
+    configs = scan_configs(home, scope=scope)
+    stray = unmanaged(home, hub.servers, scope=scope)
+    # Compare resolved paths, not harness names: ~/.factory/mcp.json is read
+    # under the name "droid", and ~/.gemini has four config files of which
+    # quiver reads exactly one.
+    known = set()
+    for t in views:
+        if t.path:
+            try:
+                known.add(Path(t.path).expanduser().resolve())
+            except OSError:
+                pass
+    hub_path = (paths.quiver_dir_for(home) / "mcp.json").resolve()
+    known.add(hub_path)
+
+    unregistered = []
+    for cfg in configs:
+        try:
+            real = cfg.path.resolve()
+        except OSError:
+            continue
+        if real not in known:
+            unregistered.append(cfg)
+
+    if unregistered:
+        print(f"\n  {c('bold', 'Configs quiver does not read')}")
+        for i, cfg in enumerate(unregistered):
+            marks = f"{len(cfg.local)} local"
+            if cfg.remote:
+                marks += f", {len(cfg.remote)} remote"
+            print(f"  {c('dim', _branch(i, len(unregistered)))}"
+                  f"{c('yellow', cfg.harness.ljust(18))}"
+                  f"{c('dim', marks.ljust(20))}"
+                  f"{c('dim', _short(cfg.path, home))}")
+
+    if stray:
+        print(f"\n  {c('bold', 'On disk but not in the hub')}")
+        for name in sorted(stray):
+            where = ", ".join(sorted({x.harness for x in stray[name]}))
+            kind = "remote" if any(name in x.remote for x in stray[name]) else "local"
+            print(f"    {c('yellow', name.ljust(28))}"
+                  f"{c('dim', kind.ljust(8))}{c('dim', where)}")
+
     if hub.duplicates:
         print(f"\n  {c('bold', 'Same server under two names')}")
         print(f"  {c('dim', 'one local and one remote copy is fine; two of a kind is not')}")
@@ -402,8 +453,10 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
             print(f"    {c('yellow', ' == '.join(pair))}")
 
     behind = [t for t in views if len(t.present) < total]
-    summary = (f"{total} servers · {len(views)} configured tools · "
-               f"{len(behind)} behind the hub")
+    summary = (f"{total} servers · {len(configs)} configs on disk · "
+               f"{len(behind)} tools behind the hub")
+    if stray:
+        summary += f" · {len(stray)} unmanaged"
     print(f"\n  {c('dim', summary)}\n")
     return 0
 
