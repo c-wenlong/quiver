@@ -254,6 +254,40 @@ def cmd_find_agents(args=None, root_flag: bool = False, scope: str = "global") -
     return 0
 
 
+def _flow(items: list[str], indent: str = "      ", sep: str = " · ",
+          limit: int = 0, colour: str = "dim", head: str = "") -> None:
+    """Pack names onto as few lines as fit, wrapping on the real width.
+
+    A fixed grid sizes every column to the longest name in the set, so one
+    long entry pads every short one and a list of a dozen short names
+    spans four rows it does not need. Flowing them costs the alignment
+    down the columns, which nothing here was reading anyway, and buys back
+    most of the vertical space.
+    """
+    shown = items if not limit or len(items) <= limit else items[:limit]
+    if len(shown) < len(items):
+        shown = shown + [f"and {len(items) - len(shown)} more"]
+
+    # A hanging indent: the first run sits beside its label, the rest line
+    # up under it. Putting the label on a line of its own would give back
+    # a row for every group, which is what this was meant to save.
+    room = max(20, terminal_width() - len(indent))
+    prefix = head or indent
+    line: list[str] = []
+    used = 0
+    for name in shown:
+        addition = len(name) + (len(sep) if line else 0)
+        if line and used + addition > room:
+            print(prefix + c(colour, sep.join(line)))
+            prefix = indent
+            line, used = [], 0
+            addition = len(name)
+        line.append(name)
+        used += addition
+    if line:
+        print(prefix + c(colour, sep.join(line)))
+
+
 def _skill_columns(names: list[str], indent: str = "    ", cols: int = 4,
                    width: int = 34, limit: int = 0) -> None:
     """Print skill names in columns under their root.
@@ -299,7 +333,7 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
     print(f"  {c('green', _short(shared, home))}"
           f"  {c('dim', f'{len(flat)} always-on')}")
     if flat:
-        _skill_columns(flat)
+        _flow(flat, indent="    ")
 
     # Plugins, grouped by the marketplace directory holding them.
     by_market: dict[str, list] = {}
@@ -341,8 +375,7 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
                   f"{c('dim', elide(n.detail, _path_budget(48)))}")
             # These roots hold the only copy of what is in them, so their
             # contents are the part worth seeing.
-            _skill_columns(sorted(skill_folder_names(n.path)), indent="      ",
-                           limit=40)
+            _flow(sorted(skill_folder_names(n.path)), indent="      ", limit=40)
 
     summary = (f"{total} skills · {len(linked)} roots synced · "
                f"{len(other)} left alone")
@@ -393,15 +426,17 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
     print(f"  {c('green', '~/.quiver/mcp.json')}  {c('dim', f'{total} servers')}")
     for prefix in sorted(hub.by_prefix, key=lambda p: (p == PREFIX_UNFILED, p)):
         names = hub.by_prefix[prefix]
-        if prefix:
-            head = c("cyan", f"{prefix}@".ljust(8))
-            note = c("dim", PREFIX_MEANING.get(prefix, ""))
-        else:
-            head = c("yellow", "(none)".ljust(8))
-            note = c("dim", "no prefix, outside the taxonomy")
-        print(f"    {head}{note}")
-        _skill_columns([n.split("__")[-1] for n in names], indent="      ",
-                       cols=4, width=26)
+        short = [n.split("__")[-1] for n in names]
+        label = f"{prefix}@" if prefix else "(none)"
+        head = c("cyan" if prefix else "yellow", label.ljust(7))
+        # The heading shares the first line with the names it labels, so a
+        # five-prefix hub costs five lines rather than fifteen. Only when
+        # they do not fit does the run move onto its own wrapped lines.
+        _flow(short, indent="    " + " " * 7, head=f"    {head}")
+        if not prefix:
+            # The known prefixes need no gloss, you chose them. This group
+            # is the one worth naming: it is the work still to do.
+            print(f"    {' ' * 7}{c('dim', 'no prefix, outside the taxonomy')}")
 
     views = tool_views(hub.servers)
     if views:
