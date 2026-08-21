@@ -126,7 +126,10 @@ def _parse_nested(base: str, config: JsonlParserConfig) -> list[Session]:
                             sessions.append(sess)
                     elif fallback_path or config.default_path:
                         # Preserve legacy behavior: project dir with no jsonl still counts
-                        mtime = get_mtime(proj)
+                        try:
+                            mtime = name_entry.stat().st_mtime * 1000
+                        except Exception:
+                            mtime = 0.0
                         if mtime > 0:
                             path = fallback_path or config.default_path or ""
                             if path or not config.require_path:

@@ -876,7 +876,11 @@ def parse_gemini():
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
             with os.scandir(sess_dir) as name_entry_it:
                 for name_entry in name_entry_it:
-                    ts = max(ts, get_mtime(name_entry.path))
+                    try:
+                        m_time = name_entry.stat().st_mtime * 1000
+                    except Exception:
+                        m_time = 0.0
+                    ts = max(ts, m_time)
         except Exception:
             pass
         return ts or get_mtime(sess_dir)
@@ -919,7 +923,10 @@ def parse_antigravity():
                                 ".metadata.json"
                             ):
                                 continue
-                            mt = get_mtime(metadata_entry.path)
+                            try:
+                                mt = metadata_entry.stat().st_mtime * 1000
+                            except Exception:
+                                mt = 0.0
                             if mt > mtime:
                                 mtime = mt
                                 try:
@@ -929,7 +936,10 @@ def parse_antigravity():
                                 except Exception:
                                     pass
                     if mtime == 0:
-                        mtime = get_mtime(d_entry.path)
+                        try:
+                            mtime = d_entry.stat().st_mtime * 1000
+                        except Exception:
+                            mtime = 0.0
                     path = ""
                     overview_path = os.path.join(
                         d_entry.path, ".system_generated", "logs", "overview.txt"

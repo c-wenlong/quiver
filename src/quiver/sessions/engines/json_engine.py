@@ -197,7 +197,10 @@ def _parse_nested_dirs(config: JsonParserConfig) -> list[Session]:
                         if sess:
                             # Prefer mtime of session dir contents if ts is only from missing file
                             if not sess.timestamp:
-                                sess.timestamp = get_mtime(sess_dir)
+                                try:
+                                    sess.timestamp = sid_entry.stat().st_mtime * 1000
+                                except Exception:
+                                    sess.timestamp = 0.0
                             sessions.append(sess)
     except Exception as exc:
         # Still caught: one broken harness must not take down the rest.
