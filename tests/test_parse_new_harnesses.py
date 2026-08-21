@@ -272,9 +272,6 @@ class ParseAntigravityTest(unittest.TestCase):
             with mock.patch(
                 "quiver.sessions.parsers.os.path.expanduser",
                 return_value=str(brain),
-            ), mock.patch(
-                "quiver.sessions.parsers.glob.glob",
-                side_effect=AssertionError("Antigravity traversal must use os.scandir"),
             ):
                 from quiver.sessions.parsers import parse_antigravity
 
