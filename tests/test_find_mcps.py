@@ -134,10 +134,12 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("no hub yet", out)
 
-    def test_it_groups_by_prefix_and_names_the_taxonomy(self):
+    def test_it_groups_by_prefix(self):
+        """The prefixes carry no gloss: you chose them, and a word per
+        group cost horizontal room on every line."""
         code, out = self._render({"dv__github": LOCAL}, [])
         self.assertIn("dv@", out)
-        self.assertIn("development", out)
+        self.assertIn("github", out)
 
     def test_it_marks_unfiled_servers(self):
         code, out = self._render({"loose": LOCAL}, [])
@@ -278,3 +280,63 @@ class ScanTest(unittest.TestCase):
         out = unmanaged(self.home, {})
         self.assertEqual(out["stray"][0].harness, "h")
         self.assertEqual(out["stray"][0].remote, ["stray"])
+
+
+class FlowLayoutTest(unittest.TestCase):
+    """Names are packed onto lines, not laid out in a fixed grid.
+
+    A grid sizes every column to the longest name in the set, so one long
+    entry pads every short one and a dozen short names span four rows they
+    do not need. Flowing costs the alignment down the columns, which
+    nothing was reading, and buys back the vertical space.
+    """
+
+    def _lines(self, items, width, **kw):
+        from quiver.find import commands
+
+        with mock.patch.object(commands, "terminal_width", return_value=width):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                commands._flow(items, **kw)
+        return [strip_ansi(ln) for ln in buf.getvalue().splitlines()]
+
+    NAMES = ["github", "linear", "playwright", "sentry", "supabase", "vercel"]
+
+    def test_short_lists_fit_one_line(self):
+        self.assertEqual(len(self._lines(self.NAMES, 200)), 1)
+
+    def test_a_narrow_window_wraps(self):
+        self.assertGreater(len(self._lines(self.NAMES, 40)), 1)
+
+    def test_no_line_exceeds_the_window(self):
+        for width in (40, 60, 100, 200):
+            for line in self._lines(self.NAMES, width, indent="      "):
+                self.assertLessEqual(len(line), width, (width, line))
+
+    def test_every_name_survives_the_wrap(self):
+        joined = " ".join(self._lines(self.NAMES, 40))
+        for name in self.NAMES:
+            self.assertIn(name, joined)
+
+    def test_the_label_shares_the_first_line(self):
+        """Putting it on a line of its own gives back a row per group,
+        which is what the reflow was meant to save."""
+        lines = self._lines(self.NAMES, 40, indent="       ", head="  dv@  ")
+        self.assertTrue(lines[0].startswith("  dv@"))
+        self.assertIn("github", lines[0])
+
+    def test_continuation_lines_hang_under_the_label(self):
+        lines = self._lines(self.NAMES, 40, indent="       ", head="  dv@  ")
+        self.assertTrue(lines[1].startswith("       "), repr(lines[1]))
+
+    def test_a_limit_reports_what_it_dropped(self):
+        """Silent truncation reads as "that is all of them"."""
+        lines = self._lines([f"s{i}" for i in range(50)], 200, limit=10)
+        self.assertIn("40 more", " ".join(lines))
+
+    def test_an_empty_list_prints_nothing(self):
+        self.assertEqual(self._lines([], 100), [])
+
+    def test_one_very_long_name_does_not_loop(self):
+        lines = self._lines(["x" * 300], 60)
+        self.assertEqual(len(lines), 1)
