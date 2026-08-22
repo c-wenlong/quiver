@@ -305,8 +305,12 @@ def _fetch_json(
             except Exception:
                 pass
 
+    # Mitigate SSRF/LFI by restricting allowed URL schemes
+    if not req.full_url.lower().startswith(("http://", "https://")):
+        return None
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         handle_http_error(exc)
@@ -328,7 +332,7 @@ def _fetch_json(
         _warn_untrusted_ca()
         return None
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:  # nosec B310
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         handle_http_error(exc)
