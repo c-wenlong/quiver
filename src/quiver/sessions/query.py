@@ -147,17 +147,20 @@ class SessionQuery:
     def apply(self, sessions: Iterable[Session]) -> list[Session]:
         """Apply all filters, sort newest first, and apply the limit last."""
 
-        matches = [session for session in sessions if self._matches(session)]
+        # ⚡ Bolt: Cache realpath results to avoid O(N) filesystem hits
+        realpath_cache: dict[str, str] = {}
+
+        matches = [session for session in sessions if self._matches(session, realpath_cache)]
         matches.sort(key=lambda session: session.timestamp, reverse=True)
         return matches if self.limit is None else matches[: self.limit]
 
-    def _matches(self, session: Session) -> bool:
+    def _matches(self, session: Session, realpath_cache: dict[str, str]) -> bool:
         if self.start_ms is not None and self.end_ms is not None:
             if not self.start_ms <= session.timestamp <= self.end_ms:
                 return False
         if self.agent and not _matches_agent(session, self.agent):
             return False
-        if self.cwd and not _path_is_within(session.path, self.cwd):
+        if self.cwd and not _path_is_within(session.path, self.cwd, realpath_cache):
             return False
         if self.search and not _matches_search(session, self.search):
             return False
@@ -190,9 +193,15 @@ def _matches_agent(session: Session, agent: str) -> bool:
         return False
 
 
-def _path_is_within(session_path: str, cwd: str) -> bool:
-    candidate = os.path.realpath(os.path.expanduser(session_path))
-    parent = os.path.realpath(os.path.expanduser(cwd))
+def _path_is_within(session_path: str, cwd: str, realpath_cache: dict[str, str]) -> bool:
+    if session_path not in realpath_cache:
+        realpath_cache[session_path] = os.path.realpath(os.path.expanduser(session_path))
+    candidate = realpath_cache[session_path]
+
+    if cwd not in realpath_cache:
+        realpath_cache[cwd] = os.path.realpath(os.path.expanduser(cwd))
+    parent = realpath_cache[cwd]
+
     try:
         return os.path.commonpath((candidate, parent)) == parent
     except ValueError:
