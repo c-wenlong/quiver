@@ -6,3 +6,7 @@
 **Vulnerability:** Use of weak MD5 hash without specifying it is not used for security purposes (`usedforsecurity=False`), leading to potential FIPS non-compliance and security linter failures.
 **Learning:** `hashlib.md5` was used for non-cryptographic purposes (caching directory paths in Kimi sessions) but lacked the `usedforsecurity=False` flag required in Python >= 3.9 for FIPS environments.
 **Prevention:** Always add the `usedforsecurity=False` keyword argument when using `hashlib.md5` (or similar algorithms) for non-cryptographic purposes (e.g., cache keys, hashing object identities) to comply with FIPS and pass security linters like Bandit.
+## 2025-02-14 - Fix SSRF/LFI in URL fetching
+**Vulnerability:** Found `urllib.request.urlopen` calls in `src/quiver/harness/rate_limits.py` and `src/quiver/mcp/cli.py` fetching URLs without explicit scheme validation, creating Server-Side Request Forgery (SSRF) and Local File Inclusion (LFI) vulnerabilities via `file://` or custom schemes.
+**Learning:** `urllib.request.urlopen` processes `file://` schemes by default. To safely fetch remote resources, explicit validation of the requested scheme is required before making the network call. It was found that validation must be performed on the constructed `urllib.request.Request` object via `req.full_url.lower().startswith(('http://', 'https://'))` to definitively prevent bypassing via scheme case-folding (like `FILE://`).
+**Prevention:** Always validate URL schemes prior to passing them to functions capable of arbitrary schema resolution (like `urlopen`).
