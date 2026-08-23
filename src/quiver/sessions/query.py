@@ -147,18 +147,29 @@ class SessionQuery:
     def apply(self, sessions: Iterable[Session]) -> list[Session]:
         """Apply all filters, sort newest first, and apply the limit last."""
 
-        matches = [session for session in sessions if self._matches(session)]
+        # ⚡ Bolt: Cache path within checks to avoid O(N) filesystem hits
+        # when filtering many sessions that share the same base path.
+        path_cache: dict[str, bool] = {}
+
+        matches = [session for session in sessions if self._matches(session, path_cache)]
         matches.sort(key=lambda session: session.timestamp, reverse=True)
         return matches if self.limit is None else matches[: self.limit]
 
-    def _matches(self, session: Session) -> bool:
+    def _matches(self, session: Session, path_cache: dict[str, bool] | None = None) -> bool:
         if self.start_ms is not None and self.end_ms is not None:
             if not self.start_ms <= session.timestamp <= self.end_ms:
                 return False
         if self.agent and not _matches_agent(session, self.agent):
             return False
-        if self.cwd and not _path_is_within(session.path, self.cwd):
-            return False
+        if self.cwd:
+            if path_cache is not None:
+                if session.path not in path_cache:
+                    path_cache[session.path] = _path_is_within(session.path, self.cwd)
+                if not path_cache[session.path]:
+                    return False
+            else:
+                if not _path_is_within(session.path, self.cwd):
+                    return False
         if self.search and not _matches_search(session, self.search):
             return False
         return True
