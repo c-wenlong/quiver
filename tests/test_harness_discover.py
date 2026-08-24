@@ -11,7 +11,8 @@ from quiver.harness.registry import load_registry, save_registry
 def _registry_patches(config_dir: Path, registry_file: Path):
     return (
         patch("quiver.harness.registry.CONFIG_DIR", config_dir),
-        patch("quiver.harness.registry.REGISTRY_FILE", registry_file),
+        patch("quiver.harness.registry.HARNESS_FILE", registry_file),
+        patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
     )
 
 
@@ -30,11 +31,11 @@ class HarnessDiscoverTest(unittest.TestCase):
             self._make_fake_bin(bindir, "kiro-cli")
 
             config_dir = tmp_path / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
 
-            p1, p2 = _registry_patches(config_dir, registry_file)
-            with p1, p2:
+            p1, p2, p3 = _registry_patches(config_dir, registry_file)
+            with p1, p2, p3:
                 save_registry(minimal)
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
                 kiro = [f for f in findings if f.name == "kiro"]
@@ -51,11 +52,11 @@ class HarnessDiscoverTest(unittest.TestCase):
             self._make_fake_bin(bindir, "my-tool-code")
 
             config_dir = tmp_path / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
 
-            p1, p2 = _registry_patches(config_dir, registry_file)
-            with p1, p2:
+            p1, p2, p3 = _registry_patches(config_dir, registry_file)
+            with p1, p2, p3:
                 save_registry(minimal)
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
                 scanned = [f for f in findings if f.command == "my-tool-code"]
@@ -72,11 +73,11 @@ class HarnessDiscoverTest(unittest.TestCase):
             self._make_fake_bin(bindir, "kiro-cli")
 
             config_dir = tmp_path / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
 
-            p1, p2 = _registry_patches(config_dir, registry_file)
-            with p1, p2, patch("quiver.harness.discover.live_version", return_value="9.9.9"):
+            p1, p2, p3 = _registry_patches(config_dir, registry_file)
+            with p1, p2, p3, patch("quiver.harness.discover.live_version", return_value="9.9.9"):
                 save_registry(minimal)
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
                 added = apply_findings(findings, min_confidence="high")
@@ -95,10 +96,10 @@ class HarnessDiscoverTest(unittest.TestCase):
             self._make_fake_bin(bindir, "claude")
 
             config_dir = tmp_path / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
 
-            p1, p2 = _registry_patches(config_dir, registry_file)
-            with p1, p2:
+            p1, p2, p3 = _registry_patches(config_dir, registry_file)
+            with p1, p2, p3:
                 save_registry(dict(DEFAULT_TOOLS))
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
                 claude = [f for f in findings if f.name == "claude"]
@@ -112,10 +113,10 @@ class HarnessDiscoverTest(unittest.TestCase):
             self._make_fake_bin(bindir, "claude")
 
             config_dir = tmp_path / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
 
-            p1, p2 = _registry_patches(config_dir, registry_file)
-            with p1, p2:
+            p1, p2, p3 = _registry_patches(config_dir, registry_file)
+            with p1, p2, p3:
                 save_registry(dict(DEFAULT_TOOLS))
                 findings = discover_harnesses(
                     path_env=str(bindir),

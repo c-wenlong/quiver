@@ -69,7 +69,7 @@ class HarnessEditTest(unittest.TestCase):
     def test_cmd_edit_flag_mode_persists(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             config_dir.mkdir(parents=True)
             registry_file.write_text(
                 json.dumps(
@@ -85,7 +85,8 @@ class HarnessEditTest(unittest.TestCase):
                 )
             )
             with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
-                "quiver.harness.registry.REGISTRY_FILE", registry_file
+                "quiver.harness.registry.HARNESS_FILE", registry_file
+            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"
             ), patch("quiver.harness.commands.load_registry") as load, patch(
                 "quiver.harness.commands.save_registry"
             ) as save, patch("quiver.harness.commands.resolve", return_value="mastracode"):

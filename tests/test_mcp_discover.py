@@ -10,7 +10,8 @@ from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
 def _registry_patches(config_dir: Path, registry_file: Path, mcp_file: Path):
     return (
         patch("quiver.harness.registry.CONFIG_DIR", config_dir),
-        patch("quiver.harness.registry.REGISTRY_FILE", registry_file),
+        patch("quiver.harness.registry.HARNESS_FILE", registry_file),
+        patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
         patch("quiver.paths.CONFIG_DIR", config_dir),
         patch("quiver.paths.MCP_SOURCE_FILE", mcp_file),
         patch("quiver.mcp.discover.MCP_SOURCE_FILE", mcp_file),
@@ -23,7 +24,7 @@ class McpDiscoverTest(unittest.TestCase):
             tmp_path = Path(tmp)
             config_dir = tmp_path / ".quiver" / "config"
             config_dir.mkdir(parents=True)
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
             registry_file.write_text(
                 json.dumps({"opencode": {"aliases": ["oc"]}, "claude": {"aliases": ["cc"]}})
@@ -64,8 +65,8 @@ class McpDiscoverTest(unittest.TestCase):
                 },
             }
 
-            p1, p2, p3, p4, p5 = _registry_patches(config_dir, registry_file, mcp_file)
-            with p1, p2, p3, p4, p5, patch(
+            p1, p2, p3, p4, p5, p6 = _registry_patches(config_dir, registry_file, mcp_file)
+            with p1, p2, p3, p4, p5, p6, patch(
                 "quiver.mcp.cli.MCP_CONFIG_MAP", mcp_map
             ), patch("quiver.mcp.cli.get_mcp_tools") as mock_tools:
                 mock_tools.return_value = {"opencode": mcp_map["opencode"], "claude": mcp_map["claude"]}
@@ -80,7 +81,7 @@ class McpDiscoverTest(unittest.TestCase):
             tmp_path = Path(tmp)
             config_dir = tmp_path / ".quiver" / "config"
             config_dir.mkdir(parents=True)
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
             registry_file.write_text(json.dumps({"opencode": {"aliases": ["oc"]}}))
             mcp_file.write_text(json.dumps({"mcpServers": {}}, indent=2))
@@ -111,8 +112,8 @@ class McpDiscoverTest(unittest.TestCase):
                 },
             }
 
-            p1, p2, p3, p4, p5 = _registry_patches(config_dir, registry_file, mcp_file)
-            with p1, p2, p3, p4, p5, patch(
+            p1, p2, p3, p4, p5, p6 = _registry_patches(config_dir, registry_file, mcp_file)
+            with p1, p2, p3, p4, p5, p6, patch(
                 "quiver.mcp.cli.MCP_CONFIG_MAP", mcp_map
             ), patch("quiver.mcp.cli.get_mcp_tools") as mock_tools:
                 mock_tools.return_value = {"opencode": mcp_map["opencode"]}

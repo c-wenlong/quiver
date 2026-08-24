@@ -16,13 +16,17 @@ from quiver.harness.stars import (
 
 
 class HarnessStarsTest(unittest.TestCase):
+    """Star state now lives on each harness's row in harness.json (see
+    quiver.harness.registry); patch that file rather than a standalone
+    stars.json, since quiver.harness.stars is a thin shim over it."""
+
     def _patch_paths(self, tmp: str):
         config_dir = Path(tmp) / ".quiver" / "config"
-        stars_file = config_dir / "stars.json"
         return patch.multiple(
-            "quiver.harness.stars",
+            "quiver.harness.registry",
             CONFIG_DIR=config_dir,
-            STARS_FILE=stars_file,
+            HARNESS_FILE=config_dir / "harness.json",
+            TOOLS_FILE=config_dir / "tools.json",
         )
 
     def test_star_toggle_and_persist(self):
@@ -47,8 +51,11 @@ class HarnessStarsTest(unittest.TestCase):
             with self._patch_paths(tmp):
                 save_stars(["droid", "claude", "droid", ""])
                 self.assertEqual(load_stars(), ["droid", "claude"])
-                raw = json.loads((Path(tmp) / ".quiver" / "config" / "stars.json").read_text())
-                self.assertEqual(raw, ["droid", "claude"])
+                raw = json.loads(
+                    (Path(tmp) / ".quiver" / "config" / "harness.json").read_text())
+                self.assertEqual(raw["droid"]["pin"], 1)
+                self.assertEqual(raw["claude"]["pin"], 2)
+                self.assertEqual(raw["droid"]["state"], "starred")
 
     def test_sort_tools_puts_starred_block_first_each_by_usage(self):
         tools = {

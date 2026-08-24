@@ -40,7 +40,7 @@ def _print_help():
   {c('bold', 'swe harness discover')} — Find AI coding CLIs on this machine
 
   {c('cyan', 'swe harness discover')}              List installable tools not in registry (dry-run)
-  {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to tools.json
+  {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to harness.json
   {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
   {c('cyan', 'swe harness discover --all')}        Include already-registered and missing entries
@@ -128,6 +128,6 @@ def cmd_discover(args):
     elif not opts["json"] and findings and findings[0].status == "new":
         actionable = [f for f in findings if f.status == "new"]
         if actionable and not sys.stdin.isatty():
-            print(c("dim", "  Tip: pass --apply to write matches to tools.json\n"))
+            print(c("dim", "  Tip: pass --apply to write matches to harness.json\n"))
 
     return 0

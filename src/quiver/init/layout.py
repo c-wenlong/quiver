@@ -250,7 +250,7 @@ def plan(home: Path | None = None) -> tuple[list[LinkStatus], list[LinkStatus]]:
 
 
 # Quiver's harness labels are the short names each tool calls itself. The
-# registry in tools.json uses a few longer keys, so translate on the way out.
+# registry in harness.json uses a few longer keys, so translate on the way out.
 REGISTRY_ALIASES: dict[str, str] = {
     "qwen": "qwen-code",
     "vibe": "mistral-vibe",

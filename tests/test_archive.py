@@ -17,11 +17,19 @@ from quiver.console import strip_ansi
 
 
 class ArchiveStoreTest(unittest.TestCase):
+    """Archive state lives on the harness's own row in harness.json now
+    (see quiver.harness.registry), so the file patched here is that, not a
+    standalone archived.json — the shim in quiver.harness.archive is what
+    is under test."""
+
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
-        self.file = self.dir / "archived.json"
-        for target, value in (("ARCHIVE_FILE", self.file), ("CONFIG_DIR", self.dir)):
-            p = mock.patch(f"quiver.harness.archive.{target}", value)
+        self.file = self.dir / "harness.json"
+        from quiver.harness import registry
+
+        for target, value in (("HARNESS_FILE", self.file), ("CONFIG_DIR", self.dir),
+                              ("TOOLS_FILE", self.dir / "tools.json")):
+            p = mock.patch.object(registry, target, value)
             p.start()
             self.addCleanup(p.stop)
         from quiver.harness import archive
@@ -76,7 +84,8 @@ class ArchiveStoreTest(unittest.TestCase):
         self.assertEqual(self.mod.load_archive(), {})
 
     def test_a_hand_written_bare_string_is_tolerated(self):
-        self.file.write_text(json.dumps({"kiro": "typed by hand"}))
+        self.file.write_text(json.dumps(
+            {"kiro": {"state": "archived", "archived": "typed by hand"}}))
         self.assertEqual(self.mod.load_archive()["kiro"]["reason"], "typed by hand")
 
     def test_a_non_dict_file_reads_as_empty(self):
@@ -551,9 +560,12 @@ class UsageLevelTest(unittest.TestCase):
 class UsagePersistenceTest(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
-        self.file = self.dir / "archived.json"
-        for target, value in (("ARCHIVE_FILE", self.file), ("CONFIG_DIR", self.dir)):
-            p = mock.patch(f"quiver.harness.archive.{target}", value)
+        self.file = self.dir / "harness.json"
+        from quiver.harness import registry
+
+        for target, value in (("HARNESS_FILE", self.file), ("CONFIG_DIR", self.dir),
+                              ("TOOLS_FILE", self.dir / "tools.json")):
+            p = mock.patch.object(registry, target, value)
             p.start()
             self.addCleanup(p.stop)
         from quiver.harness import archive
@@ -584,17 +596,20 @@ class UsagePersistenceTest(unittest.TestCase):
         """An absent key must not read as a recorded 'unknown', or every
         pre-existing entry would say unknown forever."""
         self.file.write_text(json.dumps(
-            {"kiro": {"reason": "old", "archived_at": "2026-01-01T00:00:00"}}))
+            {"kiro": {"state": "archived",
+                     "archived": {"reason": "old", "archived_at": "2026-01-01T00:00:00"}}}))
         self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "trial")
 
     def test_a_recorded_unknown_is_kept_as_unknown(self):
         self.file.write_text(json.dumps(
-            {"kiro": {"reason": "x", "archived_at": "", "usage": "unknown"}}))
+            {"kiro": {"state": "archived",
+                     "archived": {"reason": "x", "archived_at": "", "usage": "unknown"}}}))
         self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "unknown")
 
     def test_a_corrupt_level_does_not_break_the_load(self):
         self.file.write_text(json.dumps(
-            {"kiro": {"reason": "x", "archived_at": "", "usage": 7}}))
+            {"kiro": {"state": "archived",
+                     "archived": {"reason": "x", "archived_at": "", "usage": 7}}}))
         self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "unknown")
 
     def test_a_failure_to_read_history_does_not_block_archiving(self):
