@@ -25,6 +25,7 @@ htmlcov/
 
 # Local user state — never commit these (machine-specific / may contain secrets)
 mcp.json
+harness.json
 tools.json
 providers.json
 stars.json
