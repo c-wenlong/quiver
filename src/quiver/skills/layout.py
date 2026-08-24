@@ -26,16 +26,19 @@ SHARED_LABEL = "shared"
 SHARED_REL = Path(".quiver/skills")
 
 # Harness skill roots that can be symlinked to shared or each other.
+# Labels are registry names (harness.json keys), even where the directory
+# underneath is spelled differently — qwen-code lives in ~/.qwen, mistral-vibe
+# in ~/.vibe — so drift checks and capabilities can join on one name.
 HARNESS_ROOTS: tuple[tuple[str, Path], ...] = (
     (SHARED_LABEL, SHARED_REL),
     ("cursor", Path(".cursor/skills")),
     ("codex", Path(".codex/skills")),
     ("claude", Path(".claude/skills")),
-    ("qwen", Path(".qwen/skills")),
+    ("qwen-code", Path(".qwen/skills")),
     ("forge", Path(".forge/skills")),
     ("cline", Path(".cline/skills")),
     ("kiro", Path(".kiro/skills")),
-    ("vibe", Path(".vibe/skills")),
+    ("mistral-vibe", Path(".vibe/skills")),
     ("augment", Path(".augment/skills")),
     ("continue", Path(".continue/skills")),
     ("pi", Path(".pi/skills")),

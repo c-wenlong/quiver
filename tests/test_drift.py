@@ -111,25 +111,40 @@ class RegistrySchemaTest(unittest.TestCase):
 
 
 class CodeVsDataTest(unittest.TestCase):
-    def test_registry_supported_but_table_lacks_entry(self):
+    def test_registry_extending_the_table_is_healthy(self):
+        # Capabilities-first: the registry knowing a root the fallback table
+        # lacks is the design working, not drift.
         registry = {
             "widget": {
                 "capabilities": {"plugins": {"supported": True, "root": "~/.widget/plugins"}},
             }
         }
-        findings = check_code_vs_data(registry, plugin_roots=())
-        self.assertEqual(len(findings), 1)
-        self.assertIn("widget", findings[0].message)
-        self.assertIn("has no entry for that path", findings[0].message)
+        self.assertEqual(check_code_vs_data(registry, plugin_roots=()), [])
 
-    def test_table_claims_support_registry_disagrees(self):
+    def test_registry_overriding_the_table_is_healthy(self):
+        # The fallback claiming support the registry denies is the override
+        # working: at runtime capabilities win, so nothing has drifted.
         registry = {"gadget": {"capabilities": {"plugins": {"supported": False}}}}
         findings = check_code_vs_data(
             registry, plugin_roots=(("gadget", Path(".gadget/plugins")),)
         )
+        self.assertEqual(findings, [])
+
+    def test_table_naming_unknown_harness_warns(self):
+        # A fallback entry for a harness the registry has never heard of is
+        # a stale row nothing can override — that one is real drift.
+        findings = check_code_vs_data(
+            {}, plugin_roots=(("ghost", Path(".ghost/plugins")),)
+        )
         self.assertEqual(len(findings), 1)
-        self.assertIn("gadget", findings[0].message)
-        self.assertIn("doesn't support", findings[0].message)
+        self.assertIn("ghost", findings[0].message)
+        self.assertIn("no such harness", findings[0].message)
+
+    def test_supported_without_root_warns(self):
+        registry = {"gizmo": {"capabilities": {"plugins": {"supported": True}}}}
+        findings = check_code_vs_data(registry, plugin_roots=())
+        self.assertEqual(len(findings), 1)
+        self.assertIn("records no root path", findings[0].message)
 
     def test_name_mismatch_on_shared_root_path(self):
         registry = {

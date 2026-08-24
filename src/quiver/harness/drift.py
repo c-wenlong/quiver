@@ -9,9 +9,15 @@ have quietly drifted apart:
     versa (``HELP vs DISPATCH``)
   * every ``~/.quiver/config/harness.json`` entry should have a sane shape
     (``REGISTRY SCHEMA``)
-  * the harness names/paths hardcoded in ``skills/layout.py`` and (here)
-    mirrored from ``find/plugins.py`` should still match what the registry
-    says each harness supports (``CODE-TABLE vs DATA``)
+  * the fallback tables hardcoded in ``skills/layout.py`` and
+    ``find/plugins.py`` should still *join* with the registry
+    (``CODE-TABLE vs DATA``). Since capabilities-first landed, the registry
+    is the source of truth and the tables only cover machines with no
+    registry data — so a registry entry the tables lack is healthy, and a
+    table entry the registry overrides is the design working. What still
+    counts as drift: the same path under two different names (the join
+    breaks), a table naming a harness the registry has never heard of, and
+    a supported capability recorded with no root.
   * nothing at the top level of the repo or ``~/.quiver`` should be a
     symlink pointing at a target that no longer exists (``DANGLING
     SYMLINKS``)
@@ -172,17 +178,16 @@ def check_registry_schema(registry: dict) -> list[Finding]:
 # 3. CODE-TABLE vs DATA DRIFT
 # ---------------------------------------------------------------------------
 
-# find/plugins.py's discover_plugins() reads five harnesses' plugin state,
-# each in its own on-disk format, by name — this list has to be kept in
-# sync with that function by hand. Path is each harness's plugin root,
-# relative to $HOME, matching the ``root`` field harness.json records for
-# capabilities.plugins.
+# Mirror of find/plugins.py's PLUGIN_FALLBACK — the pre-capabilities table
+# that only fires for a harness the registry has never heard of. Kept in
+# sync by hand; keyed by registry names (droid, not its ~/.factory home),
+# which is exactly what the name-mismatch check below enforces.
 PLUGIN_HARNESSES_CODE_TABLE: tuple[tuple[str, Path], ...] = (
     ("claude", Path(".claude/plugins")),
-    ("factory", Path(".factory/plugins")),
+    ("droid", Path(".factory/plugins")),
     ("codex", Path(".codex/plugins")),
     ("cursor", Path(".cursor/plugins")),
-    ("grok", Path(".grok/plugins")),
+    ("grok", Path(".grok/marketplace-cache")),
 )
 
 
@@ -192,14 +197,16 @@ def _diff_capability(
     code_table: Sequence[tuple[str, Path]],
     table_desc: str,
 ) -> list[Finding]:
-    """Compare a (name -> root relpath) code table against harness.json's
-    capabilities.<capability> entries.
+    """Check that a (name -> root relpath) fallback table still *joins* with
+    harness.json's capabilities.<capability> entries.
 
-    Joins on root path where the registry has one, which is what turns a
-    rename (droid's row now points at ~/.factory/... while the code table
-    still says "factory") into a single "name mismatch" finding instead of
-    two unrelated "missing" ones. Falls back to joining on name for
-    unsupported registry entries, which normally have no root to join on.
+    Not a set comparison: since capabilities-first, the registry is allowed
+    to know more than the table (that is capabilities doing their job), and
+    the table is allowed to claim things the registry overrides (that is
+    the fallback being overridden as designed). Neither warns. What warns
+    is anything that breaks the join itself: the same root path under two
+    different names, a supported capability with no root to join on, or a
+    table entry naming a harness the registry has never heard of.
     """
     findings: list[Finding] = []
     table_by_path = {f"~/{relpath.as_posix()}": name for name, relpath in code_table}
@@ -216,13 +223,7 @@ def _diff_capability(
 
         if supported and root:
             table_name = table_by_path.get(root)
-            if table_name is None:
-                findings.append(Finding(
-                    "warn", "code-vs-data",
-                    f"registry says {reg_name!r} supports {capability} at {root}, "
-                    f"but {table_desc} has no entry for that path",
-                ))
-            else:
+            if table_name is not None:
                 matched_table_names.add(table_name)
                 if table_name != reg_name:
                     findings.append(Finding(
@@ -230,21 +231,19 @@ def _diff_capability(
                         f"name mismatch: registry calls it {reg_name!r}, {table_desc} "
                         f"calls the harness at the same path ({root}) {table_name!r}",
                     ))
+            # No table entry for this root: fine — capabilities extend the
+            # fallback, they don't have to mirror it.
         elif supported and not root:
             findings.append(Finding(
                 "warn", "code-vs-data",
                 f"registry says {reg_name!r} supports {capability} but records no root path",
             ))
-        elif not supported and reg_name in table_names and reg_name not in matched_table_names:
-            findings.append(Finding(
-                "warn", "code-vs-data",
-                f"{table_desc} lists {reg_name!r} as {capability}-capable, "
-                f"but the registry says it doesn't support {capability}",
-            ))
 
     for name in sorted(table_names - matched_table_names):
         if name in registry:
-            continue  # already covered by the not-supported branch above
+            # The registry knows this harness; whether it agrees with the
+            # table no longer matters at runtime, capabilities win.
+            continue
         findings.append(Finding(
             "warn", "code-vs-data",
             f"{table_desc} lists {name!r} as {capability}-capable, "
