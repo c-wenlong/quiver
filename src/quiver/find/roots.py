@@ -28,10 +28,151 @@ from quiver.find.tree import (
     scope_of,
     skills_tree,
 )
+from quiver.harness.registry import is_active, load_registry_if_present
 
 SCOPE_ALL = "all"
 SCOPES = (SCOPE_GLOBAL, SCOPE_LOCAL, SCOPE_ALL)
 SCOPE_DEFAULT = SCOPE_GLOBAL
+
+# --- harness activity -------------------------------------------------
+#
+# Every `swe find` view enumerates harnesses somehow — a fixed instruction
+# target, a directory named after one, a plugin's install record — and every
+# one of those enumerations should agree on which harnesses are worth
+# showing by default. That agreement lives here, in one place, so a browser
+# root and a printed row can never say different things about the same
+# harness.
+
+HARNESS_ACTIVE = "active"
+HARNESS_ALL = "all"
+HARNESS_STATES = (HARNESS_ACTIVE, HARNESS_ALL)
+HARNESS_DEFAULT = HARNESS_ACTIVE
+
+
+def normalise_harness(harness: str) -> str:
+    """Fall back to the default rather than reject an unknown word, the
+    same policy ``_normalise`` applies to scope."""
+    return harness if harness in HARNESS_STATES else HARNESS_DEFAULT
+
+
+def _label_from_capability_root(root) -> str | None:
+    """``~/.factory/skills`` -> ``factory``, ``~/.config/opencode/skills``
+    -> ``opencode``: the directory-derived label a filesystem scan would
+    produce for a capability's root path.
+
+    Deliberately string-based rather than ``Path.expanduser()``: this runs
+    against whatever ``home`` a caller passed in (a tmp dir under test),
+    and expanding against the real machine's ``$HOME`` would silently
+    resolve against the wrong tree.
+    """
+    if not root:
+        return None
+    raw = str(root)
+    if raw.startswith("~/"):
+        raw = raw[2:]
+    elif raw.startswith("~"):
+        raw = raw[1:]
+    raw = raw.lstrip("/")
+    parts = Path(raw).parts
+    if not parts:
+        return None
+    first = parts[0]
+    if first == ".config" and len(parts) > 1:
+        return parts[1]
+    return first[1:] if first.startswith(".") else first
+
+
+def _capability_aliases(reg: dict) -> dict[str, str]:
+    """Directory-derived label -> canonical registry name, read off every
+    entry's ``capabilities.*.root``.
+
+    Exists for cases where a harness's registry key and its home directory
+    disagree: droid installs to ``~/.factory``, so a filesystem scan derives
+    the label "factory", which is not the key ``harness.json`` stores it
+    under ("droid"). Only entries that carry a capability root contribute;
+    every other harness is expected to match by identity (label == name).
+    """
+    aliases: dict[str, str] = {}
+    for name, entry in reg.items():
+        caps = entry.get("capabilities") or {}
+        for kind in ("skills", "plugins"):
+            label = _label_from_capability_root((caps.get(kind) or {}).get("root"))
+            if label and label != name:
+                aliases[label] = name
+    return aliases
+
+
+def dir_label(path: Path, home: Path) -> str | None:
+    """The harness-shaped first path segment: ``~/.claude/x`` -> "claude",
+    ``~/.config/opencode/x`` -> "opencode". None for anything not sitting
+    directly under a harness-looking directory, which includes everything
+    outside ``home`` and everything at ``home`` itself.
+    """
+    try:
+        parts = path.relative_to(home).parts
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    first = parts[0]
+    if first == ".config" and len(parts) > 1:
+        return parts[1]
+    return first[1:] if first.startswith(".") else None
+
+
+def resolve_harness(label: str | None, reg: dict, aliases: dict) -> str | None:
+    """A discovered label's canonical registry name, or None when it
+    cannot be mapped.
+
+    None is not a failure state to work around — a row that resolves to
+    nothing must never be filtered. Hiding an unrecognised row would be the
+    one silent hide this feature promises never to do; the shared quiver
+    copy and a root nobody has registered are exactly the "unknown" case
+    `swe find` exists to keep visible.
+    """
+    if not label:
+        return None
+    if label in reg:
+        return label
+    return aliases.get(label)
+
+
+def harness_filter(reg: dict, harness: str):
+    """A (visible, hidden) pair bound to one registry and one --harness flag.
+
+    ``visible(label)`` resolves the label and returns whether its row should
+    show; every archived name it rejects goes into ``hidden`` as a side
+    effect, so a caller that runs a whole list through the filter ends up
+    with both the kept rows and the exact set to report in the footer,
+    without a second pass over the same data.
+    """
+    aliases = _capability_aliases(reg)
+    hidden: set[str] = set()
+
+    def visible(label: str | None) -> bool:
+        name = resolve_harness(label, reg, aliases)
+        if name is None or harness == HARNESS_ALL:
+            return True
+        if is_active(reg[name]):
+            return True
+        hidden.add(name)
+        return False
+
+    return visible, hidden
+
+
+def harness_footer_text(hidden: int) -> str:
+    """Match the tone of `swe list`'s existing
+    '▪ = archived (23 hidden; --scope=all to show)' footer — named so it
+    hides nothing silently: every filtered view says how many and how to
+    see them anyway."""
+    word = "harness" if hidden == 1 else "harnesses"
+    return f"{hidden} archived {word} hidden; --harness=all to show"
+
+
+def _harness_footer_entry(hidden: int) -> Entry:
+    return Entry(f"⋯ {harness_footer_text(hidden)}", None, "")
+
 
 # A plugin installed outside any marketplace still needs a row to sit under.
 # cmd_find_plugins labels that case the same way.
@@ -112,7 +253,8 @@ def _by_path(node: Node) -> tuple:
     return (str(node.path), node.label)
 
 
-def agents_roots(home: Path | None = None, scope: str = "global") -> list[Entry]:
+def agents_roots(home: Path | None = None, scope: str = "global",
+                 harness: str = HARNESS_DEFAULT) -> list[Entry]:
     """Every agent-instruction file on this machine, the shared copy first.
 
     Built from ``agents_tree`` rather than ``scan_agents`` for two reasons.
@@ -123,13 +265,17 @@ def agents_roots(home: Path | None = None, scope: str = "global") -> list[Entry]
     """
     home = home or Path.home()
     scope = _normalise(scope)
+    harness = normalise_harness(harness)
+    reg = _safe(load_registry_if_present, {})
+    visible, hidden = harness_filter(reg, harness)
     canonical, nodes = _safe(
         lambda: agents_tree(home), (paths.agents_file_for(home), [])
     )
 
     out: list[Entry] = []
     # Most rows below are symlinks pointing here, so the one real file gets a
-    # row of its own instead of being something you reach by accident.
+    # row of its own instead of being something you reach by accident. It
+    # names no harness of its own, so the filter never touches it.
     if _exists(canonical) and _in_scope(canonical, scope, home):
         out.append(Entry(_short(canonical, home), canonical, "quiver, the shared copy"))
 
@@ -137,13 +283,18 @@ def agents_roots(home: Path | None = None, scope: str = "global") -> list[Entry]
     for node in sorted(shown, key=_by_path):
         if not _exists(node.path):
             continue          # harness not installed, so no file to open
+        if not visible(node.label):
+            continue          # harness archived, --harness=all to show
         word = AGENT_STATE_WORD.get(node.state, node.state)
         out.append(Entry(_short(node.path, home), node.path,
                          f"{node.label}, {word}"))
+    if hidden:
+        out.append(_harness_footer_entry(len(hidden)))
     return out
 
 
-def skills_roots(home: Path | None = None, scope: str = "global") -> list[Entry]:
+def skills_roots(home: Path | None = None, scope: str = "global",
+                 harness: str = HARNESS_DEFAULT) -> list[Entry]:
     """Every skills root on disk, with the synced ones folded into one row.
 
     Roughly 57 harness roots are symlinks to the same shared tree, so listing
@@ -154,6 +305,9 @@ def skills_roots(home: Path | None = None, scope: str = "global") -> list[Entry]
     """
     home = home or Path.home()
     scope = _normalise(scope)
+    harness = normalise_harness(harness)
+    reg = _safe(load_registry_if_present, {})
+    visible, hidden = harness_filter(reg, harness)
     shared, nodes = _safe(
         lambda: skills_tree(home), (paths.skills_dir_for(home), [])
     )
@@ -172,6 +326,12 @@ def skills_roots(home: Path | None = None, scope: str = "global") -> list[Entry]
             continue          # a root a harness has not created yet
         if node.path == shared:
             continue          # already listed above as the shared tree
+        # skill_root_label derives a label from the directory name (droid
+        # reads "factory"), which is why this goes through the same
+        # capability-aware resolver as every other view rather than
+        # indexing the registry by the label directly.
+        if not visible(node.label):
+            continue          # harness archived, --harness=all to show
         (synced if node.state == "linked" else unsynced).append(node)
 
     # Unsynced first. They hold content that exists nowhere else, and the
@@ -194,6 +354,8 @@ def skills_roots(home: Path | None = None, scope: str = "global") -> list[Entry]
         roots = _plural(len(synced), "root")
         out.append(Entry("synced roots", None,
                          f"{roots}, all resolve to {target}", children))
+    if hidden:
+        out.append(_harness_footer_entry(len(hidden)))
     return out
 
 
@@ -223,7 +385,8 @@ def _harness_detail(plugins: list[Plugin], markets: int) -> str:
     return detail
 
 
-def plugins_roots(home: Path | None = None, scope: str = "global") -> list[Entry]:
+def plugins_roots(home: Path | None = None, scope: str = "global",
+                  harness: str = HARNESS_DEFAULT) -> list[Entry]:
     """Plugins nested harness -> marketplace -> plugin, as cmd_find_plugins prints them.
 
     That nesting is the directory layout on disk, so a reader who followed the
@@ -232,23 +395,33 @@ def plugins_roots(home: Path | None = None, scope: str = "global") -> list[Entry
     """
     home = home or Path.home()
     scope = _normalise(scope)
+    harness = normalise_harness(harness)
+    reg = _safe(load_registry_if_present, {})
+    visible, hidden = harness_filter(reg, harness)
     plugins = _safe(lambda: discover_plugins(home), [])
     shown, _hidden = _safe(lambda: filter_plugins(plugins, scope), ([], 0))
 
     by_harness: dict[str, dict[str, list[Plugin]]] = {}
     for plugin in shown:
+        # discover_plugins already emits canonical registry names (droid,
+        # not the ~/.factory directory it lives in), so this is the same
+        # resolver every other view uses, just fed an already-correct label.
+        if not visible(plugin.harness):
+            continue          # harness archived, --harness=all to show
         market = plugin.marketplace or MARKET_NONE
         by_harness.setdefault(plugin.harness, {}).setdefault(market, []).append(plugin)
 
     out: list[Entry] = []
-    for harness in sorted(by_harness):
-        markets = by_harness[harness]
+    for hname in sorted(by_harness):
+        markets = by_harness[hname]
         market_rows: list[Entry] = []
         for market in sorted(markets):
             group = sorted(markets[market], key=lambda p: (p.name.lower(), p.name))
             market_rows.append(Entry(market, None, _plural(len(group), "plugin"),
                                      [_plugin_entry(p) for p in group]))
         every = [p for group in markets.values() for p in group]
-        out.append(Entry(harness, None, _harness_detail(every, len(markets)),
+        out.append(Entry(hname, None, _harness_detail(every, len(markets)),
                          market_rows))
+    if hidden:
+        out.append(_harness_footer_entry(len(hidden)))
     return out

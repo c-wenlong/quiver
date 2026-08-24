@@ -41,6 +41,19 @@ def load_registry() -> dict:
     return defaults
 
 
+def load_registry_if_present() -> dict:
+    """``load_registry()`` without its side effect of creating one.
+
+    A read-only caller — `swe find` and friends promise never to write
+    anything — must not seed ~/.quiver/config/harness.json on a machine
+    that has never run a mutating harness command just by asking what state
+    a harness is in. Returns {} rather than the seeded defaults when
+    nothing is on disk yet; a legacy tools.json with no harness.json is
+    treated the same way, since migrating it is itself a write.
+    """
+    return load_registry() if HARNESS_FILE.exists() else {}
+
+
 def save_registry(tools: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(HARNESS_FILE, "w") as f:

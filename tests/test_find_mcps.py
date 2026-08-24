@@ -8,10 +8,12 @@ prefix taxonomy and names the harnesses that have not caught up.
 import io
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from quiver.console import strip_ansi
 from quiver.find.mcps import ToolView, _kind, _signature, hub_view, prefix_of
+from quiver.harness import registry
 
 LOCAL = {"command": "npx", "args": ["thing"]}
 REMOTE = {"url": "https://example.test/mcp"}
@@ -116,14 +118,20 @@ class RenderTest(unittest.TestCase):
 
         The scan walks every harness directory, which takes over a second;
         a render test should not pay that, and should not depend on what
-        happens to be installed on the machine running it.
+        happens to be installed on the machine running it — including
+        which harnesses that machine's own harness.json has archived, now
+        that --harness=active filters views by registry state. Pointing
+        HARNESS_FILE at a path that does not exist keeps the registry
+        empty, so every harness here resolves as unknown and nothing is
+        filtered by it.
         """
         from quiver.find.commands import cmd_find_mcps
 
         with mock.patch("quiver.mcp.cli.get_hub_servers", return_value=servers), \
              mock.patch("quiver.find.mcps.tool_views", return_value=views), \
              mock.patch("quiver.find.mcps.scan_configs", return_value=list(configs)), \
-             mock.patch("quiver.find.mcps.unmanaged", return_value=stray or {}):
+             mock.patch("quiver.find.mcps.unmanaged", return_value=stray or {}), \
+             mock.patch.object(registry, "HARNESS_FILE", Path("/nonexistent/harness.json")):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = cmd_find_mcps()
