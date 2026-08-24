@@ -123,13 +123,15 @@ swe list agentic             # filter by tag
 swe list -n                  # bypass caches and refresh starred harness usage
 swe info claude              # command, version, path, tags, aliases
 swe check                    # probe installed tools and refresh versions
-swe doctor                   # diagnose Node/npm/PATH issues
+swe doctor                   # diagnose Node/npm/PATH issues, plus registry drift
+swe find                     # where shared assets live and what links to them
+swe find skills --harness=all # include archived harnesses' rows too
 
 swe use cc                   # launch Claude Code (alias for `claude`)
 swe use codex --help         # extra args are passed straight through
 
-swe star gemini              # pin a harness and enable its usage polling
-swe unstar gemini            # remove favourite
+swe harness star gemini      # pin a harness and enable its usage polling (toggle)
+swe harness archive aider "not a fit" # shelve a harness you ruled out
 swe edit claude --desc "..." # edit registry fields (or interactive mode)
 
 swe session                  # last 10 sessions across ALL agents
@@ -174,13 +176,14 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe add <name> <cmd> …` | | Register or update a tool |
 | `swe edit <name> [--field val …]` | | Edit registry fields (flags or interactive) |
 | `swe remove <name\|alias>` | `rm` | Remove from registry (does not uninstall) |
-| `swe star <name\|alias>` | `favourite` | Pin a harness to top of `swe list` with neon highlight |
-| `swe unstar <name\|alias>` | | Remove harness from favourites |
+| `swe harness star <name\|alias>` | `hs star` | Toggle a harness favourite (pins it to top of `swe list`) |
+| `swe harness archive <name\|alias> [why]` | `hs archive` | Shelve a harness you've ruled out |
 | `swe check` | | Probe live versions and refresh registry |
-| `swe doctor` | | Diagnose Node/npm/PATH issues hiding global installs |
+| `swe doctor` | | Diagnose Node/npm/PATH issues hiding global installs, plus registry/help drift |
 | `swe install <name>` | | Install a harness via npm and register it |
 | `swe harness discover [--apply]` | | Scan PATH for unregistered AI coding CLIs |
 | `swe discover [--apply]` | | Alias for `swe harness discover` |
+| `swe find [amd\|skills\|plugins\|mcps] [--scope=global\|local\|all] [--harness=active\|all]` | | Read-only view of shared assets and what links to them |
 | `swe autocomplete [zsh\|bash\|fish]` | | Generate + inject shell tab-completion |
 | `swe use <name\|alias> [args…]` | `run` | Launch a tool (replaces current process) |
 | `swe session [N] [use N] [--agent X] [--here] [date flags]` | | List or resume recent sessions |
@@ -364,7 +367,7 @@ flowchart LR
     P[MCP sync]
   end
 
-  R --> TJ["~/.quiver/config/tools.json"]
+  R --> TJ["~/.quiver/config/harness.json"]
   S --> Logs["Tool session logs\n(read-only)"]
   RP --> Logs
   RP --> Reports["~/.quiver/reports\n(manifests + follow-ups)"]
@@ -374,7 +377,7 @@ flowchart LR
   L --> Bin["Real CLI binaries\nclaude, codex, …"]
 ```
 
-- **Registry** — your tool list lives in `~/.quiver/config/tools.json`, auto-created from built-in defaults on first run. Edited by `swe add` / `remove` / `check`. Not shipped with the package (see `examples/tools.example.json`).
+- **Registry** — your tool list lives in `~/.quiver/config/harness.json`, auto-created from built-in defaults on first run. Every entry carries its own `state` (`active`, `starred`, or `archived`) instead of splitting favourites and shelved tools into separate files. Edited by `swe add` / `remove` / `check` / `swe harness star` / `swe harness archive`. Not shipped with the package (see `examples/tools.example.json`).
 - **Launching** — `swe use` resolves a name or alias and replaces the current process via `os.execvp`, so the tool behaves exactly as if you'd typed it directly.
 - **Analytics** — `swe session` and `swe models` parse each tool's on-disk logs (e.g. `~/.claude/projects`, `~/.codex/sessions`, `~/.local/share/opencode/opencode.db`). quiver **never writes** to those files.
 - **Reports** — normalizes those logs into semantic messages, filters startup noise, batches useful sessions by project, and invokes configured Claude/Codex models only after a local cost preview is approved.
@@ -396,8 +399,7 @@ manages coding harnesses, and most harness config directories are `$HOME/.<tool>
 | --- | --- | --- |
 | `AGENTS.md` | Shared instructions, symlinked into each harness under its own filename | No — created by `swe init` |
 | `skills/` | Shared skill tree, symlinked in as every harness's `skills/` | No — created by `swe init` |
-| `config/tools.json` | Your tool registry (versions for this machine) | No — auto-created |
-| `config/stars.json` | Favourited harness names | No — auto-created by `swe star` |
+| `config/harness.json` | Your tool registry (versions, aliases, and per-harness state for this machine) | No — auto-created |
 | `config/mcp.json` | MCP source of truth | No — created by `swe mcp discover --apply` |
 | `config/providers.json` | Provider metadata and key locations | No — auto-created |
 | `config/config.json` | Credential-free Quiver and report runner settings | No — created by `swe config` |
