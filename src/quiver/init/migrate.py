@@ -21,8 +21,16 @@ CACHE_FILES = (
     "claude_usage_cache.json",
 )
 CONFIG_FILES = (
+    "harness.json",
+    # tools.json / stars.json / archived.json are pre-consolidation names
+    # (see quiver.harness.registry): a machine still on the old
+    # ~/.config/swe root predates harness.json, so it can only ever have
+    # these. Recognised here so they land in config/ explicitly rather than
+    # through the "unknown, so authored" fallback below, and so that
+    # harness/registry.py's lazy migration finds them there afterwards.
     "tools.json",
     "stars.json",
+    "archived.json",
     "mcp.json",
     "skill_catalogs.json",
     "skill_links.json",

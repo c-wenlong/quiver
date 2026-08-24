@@ -5,17 +5,20 @@ fact that you evaluated it, so a month later it looks like something you
 have never tried and gets reinstalled. Archiving keeps the verdict: what
 you archived, when, and why.
 
-Stored separately from tools.json for the same reason stars are. The
-registry describes what a harness *is*; this records what you decided
-about it.
+Compatibility shim. Archive state used to live in its own file,
+archived.json, keyed by name; it now lives on each harness's own row in
+config/harness.json as `state: "archived"` plus an `archived` object holding
+reason/archived_at/usage — see `quiver.harness.registry` for the schema and
+the one place that touches the file. This module is kept, and every
+function below keeps its old signature and return shape, because `swe hs
+archive` and a handful of other callers still import it by name.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
-from quiver.paths import ARCHIVE_FILE, CONFIG_DIR
+from quiver.harness import registry as _registry
 
 # How much the harness actually got used before it was shelved. An
 # enumeration rather than a raw number for three reasons: the number
@@ -57,55 +60,56 @@ def normalise_usage(value: object, fallback: str = "unknown") -> str:
 
 
 def load_archive() -> dict[str, dict]:
-    """Map of harness name -> {"reason": str, "archived_at": iso8601}.
+    """Map of harness name -> {"reason": str, "archived_at": iso8601, "usage": str}.
 
-    A malformed file reads as empty rather than raising: an unreadable
+    A malformed registry reads as empty rather than raising: an unreadable
     archive should hide nothing, which fails toward showing you more.
     """
-    if not ARCHIVE_FILE.exists():
-        return {}
     try:
-        with open(ARCHIVE_FILE) as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+        reg = _registry.load_registry()
+    except (OSError, ValueError):
         return {}
-    if not isinstance(data, dict):
+    if not isinstance(reg, dict):
         return {}
 
     out: dict[str, dict] = {}
-    for name, entry in data.items():
-        if not isinstance(name, str) or not name:
-            continue
+    for name in _registry.archived_names(reg):
+        entry = reg[name].get("archived")
         if isinstance(entry, str):
             # Tolerate a bare reason string, in case one is hand-edited in.
-            out[name] = {"reason": entry, "archived_at": "", "usage": "unknown"}
-        elif isinstance(entry, dict):
-            # An absent key is not the same as a recorded "unknown": entries
-            # written before this field existed get the level their session
-            # history implies, rather than all reading as unknown forever.
-            level = (normalise_usage(entry["usage"]) if "usage" in entry
-                     else _derive_usage(name))
-            out[name] = {
-                "reason": str(entry.get("reason") or ""),
-                "archived_at": str(entry.get("archived_at") or ""),
-                "usage": level,
-            }
+            entry = {"reason": entry}
+        entry = entry if isinstance(entry, dict) else {}
+        out[name] = {
+            "reason": str(entry.get("reason") or ""),
+            "archived_at": str(entry.get("archived_at") or ""),
+            "usage": normalise_usage(entry.get("usage")) if "usage" in entry
+                     else _derive_usage(name),
+        }
     return out
 
 
 def save_archive(entries: dict[str, dict]) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    payload = {
-        name: {
-            "reason": str(e.get("reason") or ""),
-            "archived_at": str(e.get("archived_at") or ""),
-            "usage": normalise_usage(e.get("usage")),
-        }
-        for name, e in sorted(entries.items())
-    }
-    from quiver.paths import atomic_write_text
+    """Replace the archived set wholesale.
 
-    atomic_write_text(ARCHIVE_FILE, json.dumps(payload, indent=2) + "\n")
+    Anything currently archived but missing from ``entries`` is restored to
+    active; a name with no other registry data left after that is removed
+    outright rather than kept as an empty row.
+    """
+    reg = _registry.load_registry()
+    wanted = set(entries)
+    for name in _registry.archived_names(reg):
+        if name not in wanted:
+            _unset_archived(reg, name)
+    for name, entry in sorted(entries.items()):
+        row = reg.setdefault(name, {})
+        row["state"] = "archived"
+        row.pop("pin", None)  # archived and starred are exclusive
+        row["archived"] = {
+            "reason": str(entry.get("reason") or ""),
+            "archived_at": str(entry.get("archived_at") or ""),
+            "usage": normalise_usage(entry.get("usage")),
+        }
+    _registry.save_registry(reg)
 
 
 def is_archived(name: str, entries: dict[str, dict] | None = None) -> bool:
@@ -127,20 +131,25 @@ def archive(name: str, reason: str = "", when: str | None = None,
     harness with no parser reads as unknown however much you used it, and a
     high count can come from one long evaluation rather than real adoption.
     """
-    entries = load_archive()
+    reg = _registry.load_registry()
+    existing = reg.get(name, {}).get("archived") or {}
     entry = {
         "reason": reason.strip(),
         "archived_at": when or datetime.now().isoformat(timespec="seconds"),
         "usage": normalise_usage(usage) if usage else "",
     }
     # Keep an existing reason when re-archiving without giving a new one.
-    if not entry["reason"] and name in entries:
-        entry["reason"] = entries[name]["reason"]
+    if not entry["reason"]:
+        entry["reason"] = existing.get("reason", "")
     if not entry["usage"]:
-        entry["usage"] = (entries[name]["usage"] if name in entries
-                          else _derive_usage(name))
-    entries[name] = entry
-    save_archive(entries)
+        entry["usage"] = existing.get("usage") or _derive_usage(name)
+
+    row = dict(reg.get(name, {}))
+    row["state"] = "archived"
+    row.pop("pin", None)  # archived and starred are exclusive
+    row["archived"] = entry
+    reg[name] = row
+    _registry.save_registry(reg)
     return entry
 
 
@@ -151,12 +160,31 @@ def unarchive(name: str) -> dict | None:
     discarded. Dropping a reason and a date without saying so would make
     the record quietly unreliable.
     """
-    entries = load_archive()
-    entry = entries.pop(name, None)
-    if entry is None:
+    reg = _registry.load_registry()
+    row = reg.get(name)
+    if row is None or _registry.state_of(row) != "archived":
         return None
-    save_archive(entries)
-    return entry
+    entry = row.get("archived") or {}
+    _unset_archived(reg, name)
+    _registry.save_registry(reg)
+    return {
+        "reason": str(entry.get("reason") or ""),
+        "archived_at": str(entry.get("archived_at") or ""),
+        "usage": normalise_usage(entry.get("usage")),
+    }
+
+
+def _unset_archived(reg: dict, name: str) -> None:
+    """Drop archived state from ``name``, removing the row entirely if that
+    was the only thing it held — a bare ``{"state": ..., "archived": ...}``
+    row is nothing but archive bookkeeping for a name outside the catalog."""
+    row = reg.get(name)
+    if row is None:
+        return
+    row.pop("state", None)
+    row.pop("archived", None)
+    if not row:
+        del reg[name]
 
 
 def _derive_usage(name: str) -> str:

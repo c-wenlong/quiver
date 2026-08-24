@@ -231,7 +231,7 @@ def discover_harnesses(
 
 
 def apply_findings(findings: list[HarnessFinding], *, min_confidence: str = "high") -> list[str]:
-    """Add findings to tools.json; returns names added or updated."""
+    """Add findings to harness.json; returns names added or updated."""
     allowed = {"high": {"high", "medium", "low"}, "medium": {"medium", "low"}, "low": {"low"}}
     conf_ok = allowed.get(min_confidence, {"high"})
 

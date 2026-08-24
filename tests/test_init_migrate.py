@@ -32,7 +32,8 @@ class LayoutInvariantTest(unittest.TestCase):
 
     ALL_PATHS = (
         "AGENTS_FILE", "SKILLS_DIR", "BACKUPS_DIR", "CONFIG_DIR", "CACHE_DIR",
-        "COMPLETION_DIR", "REPORTS_DIR", "REGISTRY_FILE", "STARS_FILE",
+        "COMPLETION_DIR", "REPORTS_DIR", "HARNESS_FILE", "TOOLS_FILE", "STARS_FILE",
+        "ARCHIVE_FILE",
         "MCP_SOURCE_FILE", "SKILL_CATALOGS_FILE", "SKILL_LINKS_FILE",
         "PROVIDERS_REGISTRY_FILE", "CONFIG_FILE", "SESSION_CACHE_FILE",
         "RATE_LIMITS_CACHE_FILE", "MCP_DIR", "MCP_SERVERS_DIR",
@@ -57,7 +58,8 @@ class LayoutInvariantTest(unittest.TestCase):
         self.assertEqual(paths.QUIVER_DIR.parent, Path.home())
 
     def test_authored_state_sits_in_config(self):
-        for name in ("REGISTRY_FILE", "STARS_FILE", "PROVIDERS_REGISTRY_FILE",
+        for name in ("HARNESS_FILE", "TOOLS_FILE", "STARS_FILE", "ARCHIVE_FILE",
+                     "PROVIDERS_REGISTRY_FILE",
                      "SKILL_LINKS_FILE", "SKILL_CATALOGS_FILE", "CONFIG_FILE"):
             self.assertEqual(getattr(paths, name).parent, paths.CONFIG_DIR, name)
 

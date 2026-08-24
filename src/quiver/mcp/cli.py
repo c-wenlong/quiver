@@ -35,7 +35,7 @@ from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
 from quiver.mcp.secrets import resolve as resolve_secrets
 from quiver.mcp.secrets import unresolved_names
-from quiver.paths import atomic_write_text, CONFIG_DIR, REGISTRY_FILE, MCP_SOURCE_FILE
+from quiver.paths import atomic_write_text, CONFIG_DIR, MCP_SOURCE_FILE
 from quiver.mcp.formats import (
     McpFormatHandler,
     convert_server_between_formats,
@@ -197,7 +197,7 @@ MCP_CONFIG_MAP = {
     },
 }
 
-# Aliases for tools that aren't in tools.json registry (always-available peers).
+# Aliases for tools that aren't in the harness.json registry (always-available peers).
 _EXTRA_ALIASES = {
     "claude-desktop": "claude-desktop",
     "cd": "claude-desktop",

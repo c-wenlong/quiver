@@ -92,9 +92,18 @@ COMPLETION_DIR = QUIVER_DIR / COMPLETIONS_SUBDIR
 REPORTS_DIR = QUIVER_DIR / REPORTS_SUBDIR
 
 # Authored state: hand-edited or built up over time, worth keeping.
-REGISTRY_FILE = CONFIG_DIR / "tools.json"
-STARS_FILE = CONFIG_DIR / "stars.json"
-ARCHIVE_FILE = CONFIG_DIR / "archived.json"
+#
+# HARNESS_FILE is the one file: what each harness is (command, description,
+# aliases, tags) and what state it is in (active/starred/archived), keyed by
+# name. It replaced three separate files that used to require a join by name
+# to answer "show me everything about claude" — TOOLS_FILE, STARS_FILE and
+# ARCHIVE_FILE below are kept defined only as the source `harness/registry.py`
+# lazily migrates from on a fresh-enough install that has not been touched
+# since; nothing should open them directly.
+HARNESS_FILE = CONFIG_DIR / "harness.json"
+TOOLS_FILE = CONFIG_DIR / "tools.json"          # legacy: migration source only
+STARS_FILE = CONFIG_DIR / "stars.json"          # legacy: migration source only
+ARCHIVE_FILE = CONFIG_DIR / "archived.json"     # legacy: migration source only
 MCP_SOURCE_FILE = mcp_source_file_for()
 SKILL_CATALOGS_FILE = CONFIG_DIR / "skill_catalogs.json"
 SKILL_LINKS_FILE = CONFIG_DIR / "skill_links.json"

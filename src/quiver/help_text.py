@@ -3,7 +3,7 @@
 from quiver.console import c
 from quiver.harness.registry import load_registry
 from quiver.harness.tools import is_installed
-from quiver.paths import REGISTRY_FILE
+from quiver.paths import HARNESS_FILE
 
 HELP = {
     "list": (
@@ -46,7 +46,7 @@ HELP = {
   {c('cyan', 'swe hs star <name|alias>')}      Toggle star (pin + neon highlight)
   {c('cyan', 'swe hs star clear')}             Clear all stars
 
-  Stars are stored in {c('dim', '~/.quiver/config/stars.json')} (separate from tools.json).
+  Star state lives on the harness's own row in {c('dim', '~/.quiver/config/harness.json')}.
   Star again to remove it. Starred harnesses sort above the rest in {c('cyan', 'swe list')}.
 
 {c('bold', 'Examples')}
@@ -147,7 +147,7 @@ HELP = {
     "install": (
         "Install a harness via PATH-visible npm and register it",
         f"""\
-  {c('cyan', 'swe install <name>')}                    npm install -g + register in tools.json
+  {c('cyan', 'swe install <name>')}                    npm install -g + register in harness.json
   {c('cyan', 'swe install <name> --package <pkg>')}    Override npm package name
   {c('cyan', 'swe install <name> --command <cmd>')}    Override CLI binary name
   {c('cyan', 'swe install <name> --dry-run')}          Show what would run
@@ -341,7 +341,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe harness star <name>')}           Toggle a favourite
   {c('cyan', 'swe harness archive <name> [why]')}  Shelve one you have ruled out
   {c('cyan', 'swe harness discover')}              Scan PATH for AI coding CLIs (dry-run)
-  {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to tools.json
+  {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to harness.json
   {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
 
@@ -407,7 +407,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup check')}              Verify the resulting setup
 
   Returning-user prompts show current values; Enter keeps them. Quiver creates a
-  timestamped backup before changing tools.json, mcp.json, or config.json.
+  timestamped backup before changing harness.json, mcp.json, or config.json.
 
   {c('cyan', 'swe setup --apply')}            Apply safe discovery changes without prompts
   {c('cyan', 'swe setup --json')}             Print the discovery preview as JSON
@@ -534,5 +534,5 @@ def cmd_help(args):
         n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
     except Exception:
         pass
-    print(f"  {c('dim', 'REGISTRY')}  {REGISTRY_FILE}")
+    print(f"  {c('dim', 'REGISTRY')}  {HARNESS_FILE}")
     print(f"  {c('dim', 'TOOLS')}     {n_inst}/{n_total} installed\n")

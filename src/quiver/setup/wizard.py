@@ -22,7 +22,7 @@ from quiver.configuration import (
 from quiver.console import c
 from quiver.harness.discover import apply_findings, discover_harnesses
 from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
-from quiver.paths import MCP_SOURCE_FILE, REGISTRY_FILE
+from quiver.paths import HARNESS_FILE, MCP_SOURCE_FILE
 from quiver.prompt import read_line
 from quiver.providers.discover import discover_provider_keys
 from quiver.providers.keys import default_keys_dir
@@ -141,7 +141,7 @@ def _stage_harnesses(
     if not _ask_yes_no("Register these harnesses?", default=True, input_fn=input_fn):
         return StageOutcome("harnesses", SECTION_LABELS["harnesses"], "skipped", f"{len(new)} available")
 
-    backup = backup_file(REGISTRY_FILE)
+    backup = backup_file(HARNESS_FILE)
     added = apply_findings(new, min_confidence="high")
     print(c("green", f"  Saved {len(added)} harness(es): {', '.join(added) or 'none'}"))
     return StageOutcome(

@@ -26,10 +26,10 @@ class HarnessRegistryTest(unittest.TestCase):
     def test_load_registry_creates_defaults_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
-                "quiver.harness.registry.REGISTRY_FILE", registry_file
-            ):
+                "quiver.harness.registry.HARNESS_FILE", registry_file
+            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
                 tools = load_registry()
                 self.assertIn("claude", tools)
                 self.assertTrue(registry_file.exists())
@@ -38,7 +38,7 @@ class HarnessRegistryTest(unittest.TestCase):
     def test_save_and_reload_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".quiver" / "config"
-            registry_file = config_dir / "tools.json"
+            registry_file = config_dir / "harness.json"
             custom = dict(DEFAULT_TOOLS)
             custom["mytool"] = {
                 "command": "mytool",
@@ -48,8 +48,8 @@ class HarnessRegistryTest(unittest.TestCase):
                 "aliases": ["mt"],
             }
             with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
-                "quiver.harness.registry.REGISTRY_FILE", registry_file
-            ):
+                "quiver.harness.registry.HARNESS_FILE", registry_file
+            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
                 save_registry(custom)
                 loaded = load_registry()
                 self.assertIn("mytool", loaded)
