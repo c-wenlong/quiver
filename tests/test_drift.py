@@ -8,7 +8,8 @@ from quiver.harness.drift import (
     check_dangling_symlinks,
     check_help_vs_dispatch,
     check_registry_schema,
-    run_drift_checks,
+    _real_commands,
+    _real_help_topics,
 )
 
 
@@ -53,18 +54,14 @@ class HelpVsDispatchTest(unittest.TestCase):
         for alias in ("ls", "hs", "pv", "sk", "run", "rm", "-h", "--help", "__complete", "help"):
             self.assertFalse(any(f"'{alias}'" in m for m in messages), msg=alias)
 
-    def test_real_help_and_dispatch_do_not_crash(self):
-        # help_text.py's "find" section and src/quiver/find/* are owned by
-        # another concurrent change, so this asserts the check survives
-        # real data without crashing rather than asserting zero findings.
-        # As of this writing help_text.py's HELP dict has a "star" topic
-        # with no matching top-level command (it's a swe hs star subcommand)
-        # — a real, known bit of drift. Once the docs agent removes/fixes
-        # that topic a follow-up should tighten this to assert no findings.
-        findings = run_drift_checks()
-        self.assertIsInstance(findings, list)
-        for finding in findings:
-            self.assertIsInstance(finding, Finding)
+    def test_real_help_and_dispatch_agree(self):
+        # help_text.py's HELP topics and cli.py's COMMANDS dispatch are a
+        # pure-code invariant (no machine state involved), so this can
+        # assert zero findings rather than merely "does not crash". The
+        # dead "star" topic (a swe hs star subcommand with no matching
+        # top-level command) was the last known drift here; it is gone now.
+        findings = check_help_vs_dispatch(_real_help_topics(), _real_commands())
+        self.assertEqual(findings, [])
 
 
 class RegistrySchemaTest(unittest.TestCase):

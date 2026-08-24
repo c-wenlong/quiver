@@ -39,21 +39,6 @@ HELP = {
   {c('cyan', 'swe list legend')} prints this with each state named.
   Run {c('cyan', 'swe init')} to link everything."""
     ),
-    "star": (
-        "Toggle a harness favourite (pins it to the top of swe list)",
-        f"""\
-  {c('cyan', 'swe hs star')}                   List starred harnesses
-  {c('cyan', 'swe hs star <name|alias>')}      Toggle star (pin + neon highlight)
-  {c('cyan', 'swe hs star clear')}             Clear all stars
-
-  Star state lives on the harness's own row in {c('dim', '~/.quiver/config/harness.json')}.
-  Star again to remove it. Starred harnesses sort above the rest in {c('cyan', 'swe list')}.
-
-{c('bold', 'Examples')}
-  swe hs star droid
-  swe hs star df
-  swe favourite opencode"""
-    ),
     "info": (
         "Show full details for a tool",
         f"""\

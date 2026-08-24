@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.10] - 2026-08-25
+
+### Changed
+
+- **Harness state consolidated into one file: `config/harness.json`.**
+  `tools.json`, `stars.json`, and `archived.json` used to move together in
+  practice — starring or archiving a harness meant resolving an alias
+  against the registry and then writing a second file — and reading the
+  full picture meant loading all three and joining them by name. Every
+  entry now carries its own `state` (`"active"` | `"starred"` | `"archived"`,
+  absent means active), plus `pin` (starred, 1 = top) and an `archived`
+  object (`reason`, `archived_at`, `usage`) matching `multiselect.py`'s
+  `STATES` tuple exactly. `harness/registry.py` is the single module that
+  reads or writes the file (`load_registry`, `state_of`, `is_active`,
+  `active_names`, `starred_names`, `archived_names`,
+  `load_registry_if_present` for read-only callers); `stars.py` and
+  `archive.py` are now compatibility shims over it, so `swe hs star` /
+  `swe hs archive` and older call sites kept their signatures unmodified.
+  A fresh machine, or one upgrading from before this change, gets a lazy
+  one-time migration the first time the registry loads: the legacy files
+  are merged in and parked (never deleted) under
+  `~/.quiver/.backup/registry-migration-<date>/`.
+  - **Fixed:** default seeding used to hand out a shallow copy of
+    `DEFAULT_TOOLS`, so starring or archiving a harness on a fresh machine
+    mutated the module-level default in place for the rest of the process.
+    Seeding now deep-copies it.
+- **`swe find` filters by harness activity.** `--harness=active|all`
+  (default `active`) on `swe find` and every subview (`amd`, `skills`,
+  `plugins`, `mcps`) hides an archived harness's rows; starred still
+  counts as active. A filtered view never hides silently — it ends with a
+  dim `N archived harnesses hidden; --harness=all to show` footer. A row
+  that cannot be resolved to a harness in `harness.json` is never
+  filtered, active or not, since unknown is exactly what `swe find` exists
+  to keep visible.
+- **Capabilities-first, hardcoded tables fallback-second.** `swe find`'s
+  view of which harnesses support skills or plugins, and where, now reads
+  a harness's own `capabilities.{skills,plugins}.{supported,root}` from
+  the registry first, and only falls back to `skills/layout.py`'s
+  `HARNESS_ROOTS` / `find/plugins.py`'s `PLUGIN_FALLBACK` for a harness
+  the registry has never heard of. `HARNESS_ROOTS` labels were renamed to
+  match the registry's own names (`qwen-code`, `mistral-vibe`).
+  - **Fixed:** `swe find plugins` now covers opencode (previously invisible
+    to plugin discovery), skips grok's unsupported entry instead of
+    guessing, and labels droid's plugins by its registry name instead of
+    the `~/.factory` directory it happens to live in.
+
+### Added
+
+- **`swe doctor` catches drift.** A new `harness/drift.py` runs four
+  read-only checks on every invocation: `help_text.py`'s HELP topics
+  against `cli.py`'s COMMANDS dispatch, `harness.json` schema validation,
+  a join check between the capabilities-first fallback tables and the
+  registry, and a scan for dangling top-level symlinks in the repo root
+  and `~/.quiver`. Since capabilities-first landed, a registry entry the
+  fallback table doesn't know about (or a table entry the registry
+  overrides) is the design working, not drift — only a broken join (a name
+  mismatch, a `supported` capability missing its `root`, a table entry for
+  a harness the registry has never heard of) is reported.
+
+### Removed
+
+- **The dead top-level `star` help topic.** `swe star` was never a
+  top-level command — favouriting lives at `swe harness star` — so
+  `help_text.py`'s `HELP["star"]` topic had no matching entry in
+  `cli.py`'s `COMMANDS` and was pure drift. The `harness` help topic
+  already documents `swe harness star`.
+- Dead `demo` symlink, stale coverage artifacts, and `.jules/` session
+  notes (parked under `.archive/`, gitignored) cleaned out of the repo.
+
 ## [0.2.9] - 2026-08-20
 
 ### Fixed
