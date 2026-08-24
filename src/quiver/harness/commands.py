@@ -1332,8 +1332,22 @@ def cmd_doctor(args):
     if not orphans and env.global_bin_on_path:
         print(c("green", "    • Environment looks healthy for swe."))
     print()
+
+    from quiver.harness.drift import run_drift_checks
+
+    findings = run_drift_checks()
+    print(c("bold", "  Drift"))
+    if not findings:
+        print(c("dim", "    none detected"))
+    else:
+        for finding in findings:
+            icon, color = ("✗", "red") if finding.severity == "error" else ("!", "yellow")
+            print(f"    {c(color, icon)} [{finding.area}] {finding.message}")
+    print()
     print(c("dim", "  Related: swe check  ·  swe install <name>  ·  swe help doctor\n"))
-    return 1 if orphans or (env.global_bin and not env.global_bin_on_path) else 0
+
+    has_error_findings = any(f.severity == "error" for f in findings)
+    return 1 if orphans or (env.global_bin and not env.global_bin_on_path) or has_error_findings else 0
 
 
 def cmd_install(args):

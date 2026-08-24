@@ -30,3 +30,6 @@ providers.json
 stars.json
 session_cache.json
 completions/
+
+# .archive/ — parked, not part of the build
+.archive/
