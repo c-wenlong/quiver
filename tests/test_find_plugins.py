@@ -14,12 +14,30 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quiver.find.plugins import (
     count_components,
     discover_plugins,
     filter_plugins,
 )
+from quiver.harness import registry
+
+
+class _NoRegistry:
+    """discover_plugins() now consults harness.json's capabilities, which
+    means it would otherwise pick up whatever the machine running the tests
+    happens to have on disk. Pointing HARNESS_FILE at a path that does not
+    exist makes ``load_registry_if_present()`` return {}, the same "no
+    harness.json yet" state these tests were written against, so the five
+    hardcoded PLUGIN_FALLBACK harnesses stay unconditionally scanned."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(registry, "HARNESS_FILE",
+                                    Path("/nonexistent/harness.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
 def _plugin(root: Path, name: str, skills=(), commands=(), version="1.0.0"):
@@ -78,7 +96,7 @@ class ComponentCountTest(unittest.TestCase):
         self.assertEqual(count_components(Path("/nope/nothing")), {})
 
 
-class RegistryReadTest(unittest.TestCase):
+class RegistryReadTest(_NoRegistry, unittest.TestCase):
     def test_reads_claude_installs_and_enabled_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _claude_home(
@@ -153,7 +171,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class MarketplaceGroupingTest(unittest.TestCase):
+class MarketplaceGroupingTest(_NoRegistry, unittest.TestCase):
     """Plugins group by marketplace, mirroring the on-disk layout.
 
     ~/.quiver/plugins/dv/cloudflare, and claude's cache mirrors it at

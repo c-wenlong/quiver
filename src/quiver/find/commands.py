@@ -6,6 +6,7 @@ from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, elide, terminal_width, truncate
+from quiver.harness.registry import load_registry_if_present
 from quiver.init.layout import skill_folder_names
 from quiver.find.tree import (
     agents_tree,
@@ -17,6 +18,14 @@ from quiver.find.tree import (
 )
 from quiver.find.plugins import discover_plugins, filter_plugins
 from quiver.find.tree import filter_scope
+from quiver.find.roots import (
+    HARNESS_DEFAULT,
+    HARNESS_STATES,
+    dir_label,
+    harness_filter,
+    harness_footer_text,
+    normalise_harness,
+)
 
 # Colour by what you would do about it, not by filesystem type.
 STATE_COLOR = {
@@ -205,14 +214,14 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
     print()
 
 
-def _harness_summary(home: Path) -> None:
+def _harness_summary(home: Path, visible=lambda label: True) -> None:
     """The nine files quiver actually manages, called out from the scan noise.
 
     A recursive scan finds every AGENTS.md on the machine, most of them
     project files quiver has no business touching. This names the ones it does.
     """
     canonical, nodes = agents_tree(home)
-    live = [n for n in nodes if n.state != "skipped"]
+    live = [n for n in nodes if n.state != "skipped" and visible(n.label)]
     synced = sum(1 for n in live if n.state == "linked")
     print(f"  {c('bold', 'Managed by quiver')}  {c('dim', _short(canonical, home))}")
     for i, n in enumerate(live):
@@ -223,13 +232,19 @@ def _harness_summary(home: Path) -> None:
     print(f"\n  {c('dim', f'{synced} of {len(nodes)} harnesses synced')}\n")
 
 
-def cmd_find_agents(args=None, root_flag: bool = False, scope: str = "global") -> int:
+def cmd_find_agents(args=None, root_flag: bool = False, scope: str = "global",
+                    harness: str = HARNESS_DEFAULT) -> int:
     home = Path.home()
     root = _scan_root(root_flag)
-    _render_scan("AGENTS.md", root, scan_agents(root, home), home,
+    harness = normalise_harness(harness)
+    visible, hidden = harness_filter(load_registry_if_present(), harness)
+    nodes = [n for n in scan_agents(root, home) if visible(dir_label(n.path, home))]
+    _render_scan("AGENTS.md", root, nodes, home,
                  "no agent instruction files here", scope)
     if root_flag:
-        _harness_summary(home)
+        _harness_summary(home, visible)
+    if hidden:
+        print(f"  {c('dim', harness_footer_text(len(hidden)))}\n")
     return 0
     canonical, nodes = agents_tree(home)
     print(f"\n{c('bold', 'AGENTS.md')}\n")
@@ -317,14 +332,22 @@ def _skill_columns(names: list[str], indent: str = "    ", cols: int = 4,
         print(indent + c("dim", f"... and {rest} more (swe skills <filter> to search)"))
 
 
-def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -> int:
+def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
+                    harness: str = HARNESS_DEFAULT) -> int:
     home = Path.home()
     root = _scan_root(root_flag)
-    _render_scan("Skills", root, scan_skill_roots(root, home), home,
+    harness = normalise_harness(harness)
+    visible, hidden = harness_filter(load_registry_if_present(), harness)
+    scanned = [n for n in scan_skill_roots(root, home)
+              if visible(dir_label(n.path, home))]
+    _render_scan("Skills", root, scanned, home,
                  "no skills directories here", scope)
     if not root_flag:
+        if hidden:
+            print(f"  {c('dim', harness_footer_text(len(hidden)))}\n")
         return 0
     shared, nodes = skills_tree(home)
+    nodes = [n for n in nodes if visible(n.label)]
     plugins = plugin_tree(home)
     flat = flat_skills(home)
 
@@ -379,7 +402,10 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global") -
 
     summary = (f"{total} skills · {len(linked)} roots synced · "
                f"{len(other)} left alone")
-    print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}\n")
+    print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}")
+    if hidden:
+        print(f"  {c('dim', harness_footer_text(len(hidden)))}")
+    print()
     return 0
 
 
@@ -397,7 +423,8 @@ PREFIX_MEANING = {
 }
 
 
-def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> int:
+def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global",
+                  harness: str = HARNESS_DEFAULT) -> int:
     """Where MCP servers live, and how far the hub has reached.
 
     `swe mcp list` gives the tool-by-server matrix, which is the right
@@ -413,6 +440,8 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
     )
 
     home = Path.home()
+    harness = normalise_harness(harness)
+    visible, hidden_harnesses = harness_filter(load_registry_if_present(), harness)
     hub = hub_view()
     total = len(hub.servers)
 
@@ -438,7 +467,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
             # is the one worth naming: it is the work still to do.
             print(f"    {' ' * 7}{c('dim', 'no prefix, outside the taxonomy')}")
 
-    views = tool_views(hub.servers)
+    views = [t for t in tool_views(hub.servers) if visible(t.name)]
     if views:
         print(f"\n  {c('bold', 'Harness configs')}")
         for i, t in enumerate(views):
@@ -476,7 +505,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
             real = cfg.path.resolve()
         except OSError:
             continue
-        if real not in known:
+        if real not in known and visible(cfg.harness):
             unregistered.append(cfg)
 
     if unregistered:
@@ -509,11 +538,15 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global") -> 
                f"{len(behind)} tools behind the hub")
     if stray:
         summary += f" · {len(stray)} unmanaged"
-    print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}\n")
+    print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}")
+    if hidden_harnesses:
+        print(f"  {c('dim', harness_footer_text(len(hidden_harnesses)))}")
+    print()
     return 0
 
 
-def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") -> int:
+def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global",
+                     harness: str = HARNESS_DEFAULT) -> int:
     """Plugins across every harness that has a plugin system.
 
     Nested harness -> marketplace -> plugin, because that is the directory
@@ -521,8 +554,13 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") 
     mirrors it at ~/.claude/plugins/cache/dv/cloudflare/0.1.0.
     """
     home = Path.home()
+    harness = normalise_harness(harness)
+    visible, hidden_harnesses = harness_filter(load_registry_if_present(), harness)
     plugins = discover_plugins(home)
     shown, hidden = filter_plugins(plugins, scope)
+    # discover_plugins already emits canonical registry names, so a plugin's
+    # own .harness is what visible() resolves — same rule as every other view.
+    shown = [p for p in shown if visible(p.harness)]
 
     label = {"global": "installed and enabled",
              "local": "installed but disabled",
@@ -530,6 +568,8 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") 
     print(f"\n{c('bold', 'Plugins')}  {c('dim', f'--scope={scope} · {label}')}\n")
     if not shown:
         print(f"  {c('dim', 'none')}\n")
+        if hidden_harnesses:
+            print(f"  {c('dim', harness_footer_text(len(hidden_harnesses)))}\n")
         return 0
 
     tree: dict = {}
@@ -537,13 +577,13 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") 
         tree.setdefault(p.harness, {}).setdefault(p.marketplace or "(none)", []).append(p)
 
     totals: dict = {}
-    for harness in sorted(tree):
-        markets = tree[harness]
+    for hname in sorted(tree):
+        markets = tree[hname]
         # cursor and grok expose no install record, so say so once per harness
         # rather than implying every cached copy is active.
         unknown = all(p.enabled is None for m in markets.values() for p in m)
         note = c("dim", "  (cached; no install record)") if unknown else ""
-        print(f"  {c('bold', harness)}{note}")
+        print(f"  {c('bold', hname)}{note}")
 
         every = [p for m in markets.values() for p in m]
         name_w = min(max(len(p.name) for p in every) + 2, 34)
@@ -576,6 +616,8 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global") 
     if hidden:
         print(f"  {c('yellow', f'{hidden} more')} "
               f"{c('dim', 'not in this scope — see --scope=all')}")
+    if hidden_harnesses:
+        print(f"  {c('dim', harness_footer_text(len(hidden_harnesses)))}")
     print()
     return 0
 
@@ -600,6 +642,20 @@ def cmd_find(args) -> int:
         print(f"Unknown scope: {scope or '(empty)'}. Use all, global, or local.")
         return 1
 
+    # --harness picks up the same idea swe list's --scope already uses for
+    # archived rows: hidden by default, one flag away from showing them.
+    # Same treatment as --scope above — an unrecognised value is a hard
+    # error at the CLI, not a silent fallback, so a typo is caught here
+    # rather than quietly running as --harness=active.
+    harness = HARNESS_DEFAULT
+    for a in list(args):
+        if a.startswith("--harness"):
+            harness = a.split("=", 1)[1] if "=" in a else ""
+            args.remove(a)
+    if harness not in HARNESS_STATES:
+        print(f"Unknown harness state: {harness or '(empty)'}. Use active or all.")
+        return 1
+
     # -i turns the printed listing into a browser over the same data. It
     # matters most for plugins: the listing says "11 skills" and gives you
     # no way to see which, and nothing else in quiver answers that.
@@ -608,21 +664,21 @@ def cmd_find(args) -> int:
 
     topic = args[0] if args else None
     if interactive:
-        return _browse(topic, scope)
+        return _browse(topic, scope, harness)
 
     if topic in ("amd", "agents", "agents.md", "instructions"):
-        return cmd_find_agents(args[1:], root_flag, scope)
+        return cmd_find_agents(args[1:], root_flag, scope, harness)
     if topic in ("skills", "skill"):
-        return cmd_find_skills(args[1:], root_flag, scope)
+        return cmd_find_skills(args[1:], root_flag, scope, harness)
     if topic in ("plugins", "plugin"):
-        return cmd_find_plugins(args[1:], root_flag, scope)
+        return cmd_find_plugins(args[1:], root_flag, scope, harness)
     if topic in ("mcp", "mcps", "servers"):
-        return cmd_find_mcps(args[1:], root_flag, scope)
+        return cmd_find_mcps(args[1:], root_flag, scope, harness)
     if topic is None:
-        cmd_find_agents([], root_flag, scope)
-        cmd_find_skills([], root_flag, scope)
-        cmd_find_plugins([], root_flag, scope)
-        cmd_find_mcps([], root_flag, scope)
+        cmd_find_agents([], root_flag, scope, harness)
+        cmd_find_skills([], root_flag, scope, harness)
+        cmd_find_plugins([], root_flag, scope, harness)
+        cmd_find_mcps([], root_flag, scope, harness)
         return 0
 
     print(f"Unknown topic: {topic}")
@@ -638,7 +694,7 @@ BROWSE_TOPICS = {
 }
 
 
-def _browse(topic: str | None, scope: str) -> int:
+def _browse(topic: str | None, scope: str, harness: str = HARNESS_DEFAULT) -> int:
     """Open the interactive browser for one resource type."""
     from quiver.find.browser import browse
     from quiver.find import roots as _roots
@@ -654,7 +710,7 @@ def _browse(topic: str | None, scope: str) -> int:
     getter = {"agents": _roots.agents_roots,
               "skills": _roots.skills_roots,
               "plugins": _roots.plugins_roots}[key]
-    entries = getter(scope=scope)
+    entries = getter(scope=scope, harness=harness)
     if not entries:
         print(c("dim", f"  nothing to browse for {key} at --scope={scope}"))
         return 0

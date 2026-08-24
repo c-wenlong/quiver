@@ -350,19 +350,36 @@ to use their own login state and environment."""
     "find": (
         "Show where shared assets live and what links to them",
         f"""\
-  {c('cyan', 'swe find')}                  Every tree
-  {c('cyan', 'swe find amd')}              AGENTS.md and every harness pointing at it
-  {c('cyan', 'swe find skills')}           Skills, plugins, and every harness skill root
-  {c('cyan', 'swe find plugins')}          Plugins across all five plugin-capable harnesses
-  {c('cyan', 'swe find mcps')}             MCP servers in the hub, and which harnesses have them
-  {c('cyan', 'swe find plugins -i')}       Browse them: arrows to move and descend, q to quit
-  {c('cyan', 'swe find amd --scope=all')}  Include project and vendored files
+  {c('cyan', 'swe find')}                   Every tree
+  {c('cyan', 'swe find amd')}               AGENTS.md and every harness pointing at it
+  {c('cyan', 'swe find skills')}            Skills, plugins, and every harness skill root
+  {c('cyan', 'swe find plugins')}           Plugins across every plugin-capable harness
+  {c('cyan', 'swe find mcps')}              MCP servers in the hub, and which harnesses have them
+  {c('cyan', 'swe find plugins -i')}        Browse them: arrows to move and descend, q to quit
+  {c('cyan', 'swe find amd --scope=all')}   Include project and vendored files
+  {c('cyan', 'swe find --harness=all')}     Include archived harnesses too
 
 {c('bold', 'Scope')}  {c('cyan', '--scope=global|local|all')}, default global
   {c('cyan', 'global')}   loaded into every harness session (for plugins: installed
            and enabled; a cached copy with no install record is not)
   {c('cyan', 'local')}    project files only
   {c('cyan', 'all')}      both, plus vendored plugin and extension copies
+
+{c('bold', 'Harness activity')}  {c('cyan', '--harness=active|all')}, default active, every view
+  {c('cyan', 'active')}   hides rows whose harness is archived in harness.json
+           (starred still counts as active — it is only pinned, not shelved)
+  {c('cyan', 'all')}      shows archived harnesses' rows too
+
+  A row hidden this way is never silent about it: the listing ends with
+  {c('dim', 'N archived harnesses hidden; --harness=all to show')}. A row that cannot
+  be mapped to a harness in harness.json — the shared quiver copy, an
+  unregistered config — is never filtered, active or not: unknown is the
+  one thing {c('cyan', 'swe find')} exists to keep visible.
+
+  Which harnesses get walked, and where each one's files live, comes from
+  harness.json's own {c('cyan', 'capabilities')} first (a harness's skills root, whether
+  it supports plugins) and only falls back to a hardcoded guess for a
+  harness the registry has never heard of.
 
 {c('bold', 'States')}
   {c('green', 'synced')}         symlinked to the shared copy
