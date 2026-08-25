@@ -719,6 +719,8 @@ def _browse(topic: str | None, scope: str, harness: str = HARNESS_DEFAULT) -> in
 
 def print_find_help() -> None:
     print(f"""
+  Run this when a skill, plugin, or MCP server isn't showing up somewhere and you want to know why.
+
   {c('bold', 'swe find')} — where the shared assets live and what links to them
 
   {c('cyan', 'swe find')}              Every tree
@@ -753,6 +755,7 @@ def print_find_help() -> None:
 
   {c('bold', 'States')}
     {c('green', 'synced')}         symlinked to the shared copy
+    {c('yellow', 'own copy')}       a real file holding its own content, not a link to the shared copy
     {c('cyan', 'unsynced')}       a real directory that could be absorbed
     {c('yellow', 'separate')}       holds content that exists nowhere else, left alone
     {c('yellow', 'wrong target')}   symlink pointing somewhere unexpected
@@ -760,4 +763,6 @@ def print_find_help() -> None:
     {c('dim', 'not installed')}  harness absent from this machine
 
   {c('dim', 'swe init links what is unsynced · swe init --check previews it')}
+  {c('dim', 'These are the same five ideas swe list legend (✓ ○ ↻ ✗) and swe init')}
+  {c('dim', '(linked/create/relink/conflict) print under different names.')}
 """)
