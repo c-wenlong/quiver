@@ -69,6 +69,23 @@ def count_skills(root: Path) -> int:
     return len(skill_folder_names(root))
 
 
+def _lands_on(path: Path, target: Path | None, canonical: Path) -> bool:
+    """True when a symlink reaches ``canonical``, directly or via a chain.
+
+    One hop is the common case. The chain case is Home Manager: nix links
+    ~/.claude/CLAUDE.md into the store, and the store entry is itself an
+    out-of-store symlink back to the quiver file. Ownership-wise that IS
+    synced — quiver holds the only real content — so judge by where the
+    chain lands, not by the first hop.
+    """
+    if target == canonical:
+        return True
+    try:
+        return path.resolve() == canonical.resolve()
+    except OSError:
+        return False
+
+
 def _describe(path: Path) -> tuple[str, Path | None]:
     if path.is_symlink():
         try:
@@ -203,7 +220,7 @@ def scan_agents(root: Path, home: Path | None = None) -> list[Node]:
                 continue
             kind, target = _describe(path)
             if kind == "symlink":
-                state = "linked" if target == canonical else "relink"
+                state = "linked" if _lands_on(path, target, canonical) else "relink"
             else:
                 state = "unlinked"
             found.append(Node(fn, path, kind, state, target,
@@ -229,7 +246,7 @@ def scan_skill_roots(root: Path, home: Path | None = None) -> list[Node]:
             seen.add(path)
             kind, target = _describe(path)
             if kind == "symlink":
-                state = "linked" if target == shared else "relink"
+                state = "linked" if _lands_on(path, target, shared) else "relink"
                 count = 0
             else:
                 count = count_skills(path)
