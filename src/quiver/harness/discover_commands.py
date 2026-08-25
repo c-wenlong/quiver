@@ -39,15 +39,20 @@ def _print_help():
         f"""
   {c('bold', 'swe harness discover')} — Find AI coding CLIs on this machine
 
-  {c('cyan', 'swe harness discover')}              List installable tools not in registry (dry-run)
+  {c('cyan', 'swe harness discover')}              List tools not in the registry (dry-run)
   {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to harness.json
-  {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
+  {c('cyan', 'swe harness discover --apply-all')}  Add every match, including home-scan finds
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
   {c('cyan', 'swe harness discover --all')}        Include already-registered and missing entries
 
 {c('bold', 'How it works')}
-  Scans your PATH (plus ~/.local/bin, /opt/homebrew/bin, …) against a catalog of
-  known AI coding CLIs, then pattern-matches other likely agent binaries.
+  Two scans. PATH (plus ~/.local/bin, /opt/homebrew/bin, …) is checked against
+  a catalog of known AI coding CLIs, then pattern-matched for other likely
+  agent binaries. Then ~ and ~/.config are swept for agent-shaped homes —
+  dotdirs holding a skills/ or agents/ dir or an AGENTS.md — which catches
+  desktop apps and IDE tools that never put a binary on PATH. Home-scan finds
+  are low confidence and register as archived: known, hidden from swe list,
+  one swe hs star away if they matter.
 
 {c('bold', 'See also')}  {c('cyan', 'swe setup')} — interactive onboarding wizard
 """

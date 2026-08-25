@@ -356,7 +356,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe harness edit')}                  Review every harness at once
   {c('cyan', 'swe harness star <name>')}           Toggle a favourite
   {c('cyan', 'swe harness archive <name> [why]')}  Shelve one you have ruled out
-  {c('cyan', 'swe harness discover')}              Scan PATH for AI coding CLIs (dry-run)
+  {c('cyan', 'swe harness discover')}              Scan PATH and home dirs for AI tools (dry-run)
   {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to harness.json
   {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
@@ -466,7 +466,7 @@ to use their own login state and environment."""
   expected key file and environment variable; harness OAuth remains harness-owned."""
     ),
     "discover": (
-        "Scan PATH for unregistered AI coding CLIs",
+        "Scan PATH and home dirs for unregistered AI tools",
         f"""\
   {c('cyan', 'swe discover [--apply]')}   Alias for {c('cyan', 'swe harness discover')}
 

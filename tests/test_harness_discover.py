@@ -130,3 +130,122 @@ class HarnessDiscoverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HomeScanTest(unittest.TestCase):
+    """The ~ and ~/.config sweep for agent-shaped homes without a binary.
+
+    EXTRA_BIN_DIRS and live_version are patched out: without that, every
+    test scans the real machine's bin dirs and shells out --version per
+    find, which made this file take a minute and depend on what happens
+    to be installed.
+    """
+
+    def _setup(self, tmp_path: Path):
+        config_dir = tmp_path / ".quiver" / "config"
+        registry_file = config_dir / "harness.json"
+        return (
+            *_registry_patches(config_dir, registry_file),
+            patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
+            patch("quiver.harness.discover.live_version", lambda cmd: None),
+        )
+
+    def test_finds_dotdir_with_skills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".fancytool" / "skills").mkdir(parents=True)
+            patches = self._setup(home)
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                found = {f.name: f for f in discover_harnesses(path_env="", home=home)}
+            self.assertIn("fancytool", found)
+            self.assertEqual(found["fancytool"].source, "home_scan")
+            self.assertEqual(found["fancytool"].confidence, "low")
+
+    def test_finds_config_subdir_and_deep_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            # marker two levels down, the traycer shape
+            (home / ".config" / "newtool" / "inner" / "skills").mkdir(parents=True)
+            patches = self._setup(home)
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                found = {f.name for f in discover_harnesses(path_env="", home=home)}
+            self.assertIn("newtool", found)
+
+    def test_plain_config_dotdir_is_not_agent_shaped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            docker = home / ".dockerlike"
+            docker.mkdir()
+            (docker / "config.json").write_text("{}")
+            patches = self._setup(home)
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                found = {f.name for f in discover_harnesses(path_env="", home=home)}
+            self.assertNotIn("dockerlike", found)
+
+    def test_registered_homes_are_skipped_including_capability_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude" / "skills").mkdir(parents=True)
+            (home / ".factory" / "skills").mkdir(parents=True)  # droid's home
+            registry = {
+                "claude": dict(DEFAULT_TOOLS["claude"]),
+                "droid": {"command": "droid", "description": "", "tags": [], "aliases": [],
+                          "capabilities": {"plugins": {"supported": True,
+                                                       "root": "~/.factory/plugins"}}},
+            }
+            patches = self._setup(home)
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry(registry)
+                found = {f.name for f in discover_harnesses(path_env="", home=home)}
+            self.assertNotIn("claude", found)
+            self.assertNotIn("factory", found)
+
+    def test_backupish_names_are_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".tool.pre-bootstrap-20260101" / "skills").mkdir(parents=True)
+            patches = self._setup(home)
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                found = {f.name for f in discover_harnesses(path_env="", home=home)}
+            self.assertFalse(any("pre-bootstrap" in n for n in found))
+
+    def test_home_scan_applies_as_archived(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".fancytool" / "skills").mkdir(parents=True)
+            patches = self._setup(home)
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                findings = discover_harnesses(path_env="", home=home)
+                added = apply_findings(findings, min_confidence="low")
+                registry = load_registry()
+            self.assertIn("fancytool", added)
+            entry = registry["fancytool"]
+            self.assertEqual(entry["state"], "archived")
+            self.assertIn("reason", entry["archived"])
+
+
+class ConfidenceFloorTest(unittest.TestCase):
+    """min_confidence is a floor. The map was inverted before the home scan
+    introduced the first low-confidence source, so --apply (high) silently
+    accepted every tier."""
+
+    def test_high_floor_rejects_low_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".fancytool" / "skills").mkdir(parents=True)
+            config_dir = home / ".quiver" / "config"
+            patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
+                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                findings = discover_harnesses(path_env="", home=home)
+                added = apply_findings(findings, min_confidence="high")
+                registry = load_registry()
+            self.assertNotIn("fancytool", added)
+            self.assertNotIn("fancytool", registry)
