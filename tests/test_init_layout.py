@@ -355,3 +355,48 @@ class RateLimitNegativeCacheTest(unittest.TestCase):
                 rl, "RATE_LIMITS_CACHE_FILE", Path(tmp) / "nope.json"
             ):
                 self.assertEqual(rl._load_cached_no_data(), set())
+
+
+class ChainLandsOnCanonicalTest(unittest.TestCase):
+    """A Home-Manager-style two-hop chain (harness file -> store link ->
+    quiver file) counts as linked: quiver owns the only real content, so
+    neither init nor find should fight nix over the first hop."""
+
+    def test_two_hop_chain_reads_linked(self):
+        import tempfile
+        from quiver.init.layout import inspect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            canonical = home / ".quiver" / "AGENTS.md"
+            canonical.parent.mkdir(parents=True)
+            canonical.write_text("# canon\n")
+            store = home / "nix-store" / "hm-files"
+            store.mkdir(parents=True)
+            (store / "CLAUDE.md").symlink_to(canonical)
+            harness_dir = home / ".claude"
+            harness_dir.mkdir()
+            (harness_dir / "CLAUDE.md").symlink_to(store / "CLAUDE.md")
+
+            status = inspect("claude", Path(".claude/CLAUDE.md"), canonical, home)
+            self.assertEqual(status.state, "linked")
+
+    def test_chain_landing_elsewhere_still_relinks(self):
+        import tempfile
+        from quiver.init.layout import inspect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            canonical = home / ".quiver" / "AGENTS.md"
+            canonical.parent.mkdir(parents=True)
+            canonical.write_text("# canon\n")
+            other = home / "elsewhere.md"
+            other.write_text("# other\n")
+            middle = home / "middle.md"
+            middle.symlink_to(other)
+            harness_dir = home / ".claude"
+            harness_dir.mkdir()
+            (harness_dir / "CLAUDE.md").symlink_to(middle)
+
+            status = inspect("claude", Path(".claude/CLAUDE.md"), canonical, home)
+            self.assertEqual(status.state, "relink")

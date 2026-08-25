@@ -149,7 +149,9 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
             current = Path(path.readlink())
         except OSError:
             return "relink", "unreadable symlink"
-        return ("linked", "") if current == shared else ("relink", f"points at {current}")
+        if current == shared or _chain_lands_on(path, shared):
+            return "linked", ""
+        return "relink", f"points at {current}"
 
     if not path.is_dir():
         return "create", ""
@@ -208,6 +210,14 @@ skills_dir = _paths.skills_dir_for
 backups_dir = _paths.backups_dir_for
 
 
+def _chain_lands_on(path: Path, canonical: Path) -> bool:
+    """True when a symlink chain fully resolves to the canonical file."""
+    try:
+        return path.resolve() == canonical.resolve()
+    except OSError:
+        return False
+
+
 def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
     """Classify one target without touching the filesystem."""
     path = home / rel
@@ -222,7 +232,11 @@ def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
             current = Path(path.readlink())
         except OSError:
             return LinkStatus(label, path, "relink", "unreadable symlink")
-        if current == canonical:
+        if current == canonical or _chain_lands_on(path, canonical):
+            # The chain case is Home Manager: the harness file links into
+            # the nix store, whose entry links back out to the quiver copy.
+            # quiver still owns the only real content, so init must leave
+            # it alone rather than fight nix over the first hop.
             return LinkStatus(label, path, "linked", "")
         return LinkStatus(label, path, "relink", f"points at {current}")
 
