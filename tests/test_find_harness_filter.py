@@ -218,5 +218,25 @@ class PluginCapabilitySetTest(_RegistrySandbox):
         self.assertFalse(self.harness_file.exists())
 
 
+class InlineHelpDocumentsFlagsTest(unittest.TestCase):
+    def test_print_find_help_mentions_every_find_flag(self):
+        # swe find has TWO help surfaces: help_text.py's topic (swe find
+        # --help) and print_find_help (swe find <view> help). The --harness
+        # flag shipped documented in the first and absent from the second,
+        # and nothing caught it until a person did. Capture the inline help
+        # and require each user-facing find flag to appear in it.
+        import contextlib
+        import io
+
+        from quiver.find.commands import print_find_help
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            print_find_help()
+        text = buf.getvalue()
+        for flag in ("--scope", "--harness", "--interactive", "--root"):
+            self.assertIn(flag, text, msg=f"{flag} missing from print_find_help")
+
+
 if __name__ == "__main__":
     unittest.main()
