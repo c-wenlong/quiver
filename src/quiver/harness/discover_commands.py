@@ -121,7 +121,9 @@ def cmd_discover(args):
             print()
 
     if opts["apply"] or opts["apply_all"]:
-        min_conf = "medium" if opts["apply_all"] else "high"
+        # --apply-all means every tier, including the home scan's "low";
+        # the floor map in apply_findings treats "low" as accept-everything.
+        min_conf = "low" if opts["apply_all"] else "high"
         added = apply_findings(findings, min_confidence=min_conf)
         if opts["json"]:
             print(json.dumps({"added": added}, indent=2))
