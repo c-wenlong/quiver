@@ -30,7 +30,7 @@ def cmd_harness(args):
   {c('cyan', 'swe harness star <name>')}        Toggle a favourite (pins it to the top)
   {c('cyan', 'swe harness archive <name> [why]')}  Shelve one you have ruled out
   {c('cyan', 'swe harness archive')}            List what you archived, and why
-  {c('cyan', 'swe harness discover [flags]')}   Scan PATH for AI coding CLIs
+  {c('cyan', 'swe harness discover [flags]')}   Scan PATH and home dirs for AI tools
 
   {c('dim', 'Archiving hides it from swe list and records why — nothing is uninstalled;')}
   {c('dim', 'swe list --scope=all shows it again.')}
