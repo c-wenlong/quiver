@@ -340,19 +340,29 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
     visible, hidden = harness_filter(load_registry_if_present(), harness)
     scanned = [n for n in scan_skill_roots(root, home)
               if visible(dir_label(n.path, home))]
-    _render_scan("Skills", root, scanned, home,
-                 "no skills directories here", scope)
     if not root_flag:
+        _render_scan("Skills", root, scanned, home,
+                     "no skills directories here", scope)
         if hidden:
             print(f"  {c('dim', harness_footer_text(len(hidden)))}\n")
         return 0
+    # -r mode used to print the raw scan AND the summary below, which listed
+    # every synced root twice under two identical "Skills" headers. The scan
+    # keeps only its unique contributions here: the scope note, the vendored
+    # count, and any root found on disk that the configured table has never
+    # heard of.
+    scanned, vendored = filter_scope(scanned, scope, home)
+    scope_label = {"global": "loaded in every session",
+                   "local": "project files",
+                   "all": "everything"}[scope]
     shared, nodes = skills_tree(home)
     nodes = [n for n in nodes if visible(n.label)]
     plugins = plugin_tree(home)
     flat = flat_skills(home)
 
     total = len(flat) + sum(len(p.skills) for p in plugins)
-    print(f"\n{c('bold', 'Skills')}\n")
+    print(f"\n{c('bold', 'Skills')}  {c('dim', f'--scope={scope} · {scope_label}')}")
+    print(f"  {c('dim', elide('scanning ' + _short(root, home), _path_budget(4)))}\n")
     print(f"  {c('green', _short(shared, home))}"
           f"  {c('dim', f'{len(flat)} always-on')}")
     if flat:
@@ -376,20 +386,14 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
     linked = [n for n in nodes if n.state == "linked"]
     other = [n for n in nodes if n.state not in ("linked", "skipped")]
 
-    print(f"\n  {c('bold', f'Harness roots ({len(linked)} synced)')}")
-    print(f"  {c('dim', 'all resolve to ' + _short(shared, home))}")
-    root_w = 30
-    cols = max(1, (terminal_width() - 4) // root_w)
-    line: list[str] = []
-    for n in linked:
-        line.append(_short(n.path, home).ljust(root_w))
-        if len(line) == cols:
-            print("    " + c("dim", "".join(line))); line = []
-    if line:
-        print("    " + c("dim", "".join(line)))
+    # One line for the happy path: 40-odd identical "synced" rows say
+    # nothing a count cannot. The browser (-i) still lists each one.
+    print(f"\n  {c('bold', 'Harness roots')}")
+    if linked:
+        print(f"  {c('green', f'{len(linked)} synced')}"
+              f"  {c('dim', '-> ' + _short(shared, home) + ' · swe find skills -i to browse them')}")
 
     if other:
-        print(f"\n  {c('bold', 'Not synced')}")
         for i, n in enumerate(other):
             colour = STATE_COLOR.get(n.state, "dim")
             print(f"  {c('dim', _branch(i, len(other)))}"
@@ -400,9 +404,21 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
             # contents are the part worth seeing.
             _flow(sorted(skill_folder_names(n.path)), indent="      ", limit=40)
 
+    # Roots the disk scan found that the configured table does not know.
+    known = {n.path for n in nodes} | {shared}
+    strays = sorted(n.path for n in scanned if n.path not in known)
+    if strays:
+        print(f"  {c('yellow', f'{len(strays)} on disk but unregistered:')}"
+              f"  {c('dim', ' · '.join(_short(p, home) for p in strays[:6]))}"
+              f"{c('dim', ' …' if len(strays) > 6 else '')}")
+
     summary = (f"{total} skills · {len(linked)} roots synced · "
                f"{len(other)} left alone")
     print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}")
+    if vendored:
+        note = f"{vendored} more inside harness directories"
+        tail = "(plugin caches, vendored repos), see --scope=all"
+        print(f"  {c('yellow', note)} {c('dim', tail)}")
     if hidden:
         print(f"  {c('dim', harness_footer_text(len(hidden)))}")
     print()
