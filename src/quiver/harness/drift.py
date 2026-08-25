@@ -107,6 +107,65 @@ def _real_help_topics() -> set[str]:
     return set(_HELP_KEY_RE.findall(text))
 
 
+def check_subcommand_help(
+    help_keys: set[str], command_keys: set[str], domain: str,
+    *, whitelist: frozenset[str] = frozenset(),
+) -> list[Finding]:
+    """Same idea as help-vs-dispatch, one level down.
+
+    The top-level check compares help topics against ``swe``'s dispatch, but
+    a domain's own help dict can drift against that domain's own dispatch
+    just as silently — ``swe help mcp`` once documented four subcommands
+    (add/remove/export/import) that had been deleted from ``mcp/cli.py``'s
+    COMMANDS years of edits earlier. Dict-to-dict, so it survives restyles
+    of how the help is printed.
+    """
+    findings: list[Finding] = []
+    for key in sorted(help_keys - command_keys - whitelist):
+        findings.append(Finding(
+            "warn", "help",
+            f"swe {domain}: help documents subcommand {key!r} but its COMMANDS "
+            f"dispatch has no such entry",
+        ))
+    for key in sorted(command_keys - help_keys - whitelist):
+        findings.append(Finding(
+            "warn", "help",
+            f"swe {domain}: subcommand {key!r} is dispatchable but has no entry "
+            f"in the domain help dict",
+        ))
+    return findings
+
+
+def _real_mcp_help_and_commands() -> tuple[set[str], set[str]]:
+    from quiver.mcp.cli import COMMANDS as MCP_COMMANDS
+    from quiver.mcp.cli import MCP_HELP
+
+    return set(MCP_HELP), set(MCP_COMMANDS)
+
+
+def check_prose_mentions(
+    text: str, domain: str, command_keys: set[str],
+    *, whitelist: frozenset[str] = frozenset({"help"}),
+) -> list[Finding]:
+    """Every ``swe <domain> <sub>`` the prose mentions must be dispatchable.
+
+    The dict check above can't see this class: ``swe help mcp`` documented
+    add/remove/export/import for months after they were deleted, because
+    those lines lived in help_text.py's topic body, not in any dict.
+    Deliberately narrow — a two-word command mention is unambiguous to
+    match, whole sentences are not.
+    """
+    mentioned = set(re.findall(rf"swe {re.escape(domain)} ([a-z][a-z-]*)", text))
+    findings: list[Finding] = []
+    for sub in sorted(mentioned - command_keys - whitelist):
+        findings.append(Finding(
+            "warn", "help",
+            f"help prose mentions 'swe {domain} {sub}' but {domain}'s COMMANDS "
+            f"dispatch has no {sub!r}",
+        ))
+    return findings
+
+
 def _real_commands() -> dict:
     from quiver.cli import COMMANDS
     return COMMANDS
@@ -329,6 +388,16 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
 
     findings: list[Finding] = []
     findings += check_help_vs_dispatch(_real_help_topics(), _real_commands())
+    mcp_help, mcp_commands = _real_mcp_help_and_commands()
+    findings += check_subcommand_help(
+        mcp_help, mcp_commands, "mcp", whitelist=frozenset({"help"}),
+    )
+    help_text_path = Path(__file__).resolve().parent.parent / "help_text.py"
+    try:
+        help_text = help_text_path.read_text(encoding="utf-8")
+    except OSError:
+        help_text = ""
+    findings += check_prose_mentions(help_text, "mcp", mcp_commands)
     findings += check_registry_schema(registry)
     findings += check_code_vs_data(registry, skill_roots=_real_skill_roots())
     findings += check_dangling_symlinks(_real_symlink_dirs(repo_root, home))
