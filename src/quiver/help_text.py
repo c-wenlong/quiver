@@ -19,8 +19,13 @@ HELP = {
   {c('cyan', 'swe list edit --reset')}        Restore the default columns
   {c('cyan', 'swe list legend')}             Explain the AGENTS.MD / SKILLS glyphs
 
-  Favourited harnesses are pinned to the top with a neon border ({c('neon_pink', '★')}).
+  Starring pins a tool to the top of {c('cyan', 'swe list')} ({c('neon_pink', '★')}) and opts it into
+  rate-limit / quota fetching — the {c('cyan', '--usage')} column only polls starred
+  tools. It does not change what {c('cyan', 'swe use')}, {c('cyan', 'swe report')}, or {c('cyan', 'swe session')} do.
   Use {c('cyan', 'swe hs star <name>')} to favourite, {c('cyan', 'swe hs archive <name>')} to shelve.
+
+  Archiving hides a tool from {c('cyan', 'swe list')} and records why; nothing gets
+  uninstalled. {c('cyan', 'swe list --scope=all')} brings it back.
 
 {c('bold', 'Flags')}
   {c('cyan', '--usage')} / {c('cyan', '-u')}            Show usage. This is the only part of swe list
@@ -29,6 +34,11 @@ HELP = {
                           cache. Implied by --refresh.
   {c('cyan', '--links')} / {c('cyan', '-L')}            Show quiver link status instead of usage.
   {c('cyan', '--refresh')} / {c('cyan', '-r')} / {c('cyan', '-n')}   Bypass caches and fetch new data.
+  {c('cyan', '--scope')}=active|archived|all  Which harnesses show. Default active (archived
+                          hidden); archived shows only shelved tools; all shows both.
+  {c('dim', 'Collision: swe find also has a --scope, but it means something else there')}
+  {c('dim', '(where a file lives, not archived-visibility). In swe find, archived-')}
+  {c('dim', 'visibility is --harness=all instead.')}
 
 {c('bold', 'Link states')}
   {c('green', '✓')}  linked to ~/.quiver      {c('yellow', '○')}  nothing there yet, or safe to absorb
@@ -72,6 +82,9 @@ HELP = {
   {c('cyan', 'swe add -i')}                           Interactive form (walk each field)
   {c('cyan', 'swe add <name> -i')}                    Interactive, pre-filled name
 
+  The {c('dim', 'registry')} is one file, {c('bold', '~/.quiver/config/harness.json')}, listing every
+  tool quiver knows. Adding a tool here does not install it — it tells
+  quiver the tool exists, so {c('cyan', 'swe list')}/{c('cyan', 'swe use')}/{c('cyan', 'swe edit')} can find it.
   If the tool already exists, it updates the entry.
 
 {c('bold', 'Examples')}
@@ -105,7 +118,8 @@ HELP = {
   {c('cyan', 'swe remove <name|alias>')}      Remove by name or alias
   {c('cyan', 'swe rm <name|alias>')}          Same as remove
 
-  Does not uninstall the tool, only removes from swe registry."""
+  Does not uninstall the tool, only removes it from the registry.
+  {c('dim', 'See')} {c('cyan', 'swe help add')} {c('dim', 'for what the registry is.')}"""
     ),
     "check": (
         "Verify install status and refresh versions",
@@ -125,9 +139,17 @@ HELP = {
   Catches the common failure mode: {c('dim', 'npm install -g')} under nvm while
   interactive/non-interactive shells use Homebrew Node (tool missing from PATH).
 
+  Also runs read-only drift checks: places two parts of quiver were supposed
+  to agree and quietly did not — help text vs dispatch, registry shape,
+  hardcoded fallback tables vs harness.json, dangling symlinks. A finding
+  looks like:
+    {c('dim', "! [registry] cursor: state 'disabled' is not one of ['active', 'archived', 'starred']")}
+
 {c('bold', 'Exit codes')}
   0  healthy
-  1  off-PATH tools or global bin not on PATH"""
+  1  off-PATH tools, global bin not on PATH, or an error-severity drift
+     finding. Warn-level drift (stale help, code-table mismatches, symlink
+     notices) is printed but does not fail the exit code."""
     ),
     "install": (
         "Install a harness via PATH-visible npm and register it",
@@ -155,7 +177,7 @@ HELP = {
 {c('bold', 'Flags')}
   {c('cyan', '--agent <name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
-  {c('cyan', '--search <text>')}              Filter title/path/agent/session id (alias: -q)
+  {c('cyan', '--search <text>')}              Filter title/path/agent/session id (alias: -q, --grep)
   {c('cyan', '-d, --days <N>')}               Include today and the preceding N-1 calendar dates
   {c('cyan', '-w, --weeks <N>')}              Include the latest N times 7 calendar dates
   {c('cyan', '-s, --start <YYYY-MM-DD>')}      Inclusive range start; use together with --end
@@ -179,7 +201,8 @@ HELP = {
   {c('cyan', 'swe report daily')}              Preview and generate a daily coding-session report
   {c('cyan', 'swe report weekly')}             Preview and generate a weekly coding-session report
   {c('cyan', 'swe report warnings <manifest>')} Print warnings recorded for one specific report
-  {c('cyan', 'swe report followups')}           List open follow-ups
+  {c('cyan', 'swe report followups')}                     List open follow-ups
+  {c('cyan', 'swe report followups --status=open|done|dismissed')}  Filter by status (default open)
   {c('cyan', 'swe report followup done <id>')}  Mark a follow-up done manually
   {c('cyan', 'swe report followup work <id>')}  Resume its source or start a contextual session
 
@@ -197,6 +220,11 @@ When a report completes with warnings, Quiver prints the exact
   {c('cyan', '--here')}                        Include only the current project
   {c('cyan', '--agent <name>')}                Include only one coding harness
   {c('cyan', '--search <text>')}               Match session title/path/agent/id (alias: -q)
+
+Reports run in two passes: a cheap model summarizes each session, then a
+stronger model writes the final report from those summaries. The flags below
+pick the harness/model for each pass; leave any of them out and Quiver falls
+back to {c('cyan', 'report.session.*')} / {c('cyan', 'report.writer.*')} in {c('cyan', 'swe config')}.
 
 {c('bold', 'Runner override flags')}
   {c('cyan', '--session-harness <name>')}       Cheap summarizer harness: claude or codex
@@ -224,6 +252,11 @@ When a report completes with warnings, Quiver prints the exact
   {c('cyan', 'swe config check')}               Validate types, report setup, and secret safety
   {c('cyan', 'swe config setup report')}        Configure cheap summary and strong writer models
 
+{c('bold', 'Examples')}
+  swe config set report.session.harness claude
+  swe config get report.writer.model
+  swe config unset report.session.model
+
 Quiver never stores model credentials in this file. Claude and Codex continue
 to use their own login state and environment."""
     ),
@@ -249,8 +282,8 @@ to use their own login state and environment."""
   {c('cyan', 'swe skills list')}              Same as above
   {c('cyan', 'swe skills <filter>')}          Filter by name or scope substring
   {c('cyan', 'swe skills -d')}                Also show each skill's description
-  {c('cyan', 'swe skills scope list')}        List the scopes (roots) available with counts
-  {c('cyan', 'swe skills tree [--sync]')}     Show symlink layout between harness roots
+  {c('cyan', 'swe skills tree')}              Symlink layout — now the same view as swe find skills
+  {c('dim', 'swe skills scope list forwards to the same place; --sync is accepted but ignored.')}
   {c('cyan', 'swe skills link <harness> [target]')}   Symlink a harness root to shared/other
   {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break a harness symlink
   {c('cyan', 'swe skills move <name> --from A --to B')} Move a skill folder between roots
@@ -287,19 +320,17 @@ to use their own login state and environment."""
     "mcp": (
         "Manage MCP servers across AI tools",
         f"""\
-  {c('cyan', 'swe mcp discover [--apply]')}   Find MCP servers across tool configs
-  {c('cyan', 'swe mcp list [tool]')}          Matrix view of MCP servers across tools
-  {c('cyan', 'swe mcp status [tool]')}        List with health checks
-  {c('cyan', 'swe mcp add <name> | -A')}      Stage server(s) for sync
-  {c('cyan', 'swe mcp remove <name>')}        Remove from source of truth
-  {c('cyan', 'swe mcp sync [tool...]')}       Push staged → tools (--force, --prune, --skip-conflicts)
-  {c('cyan', 'swe mcp diff <t1> <t2>')}       Compare two tools' configs
-  {c('cyan', 'swe mcp edit <name>')}          Edit a server's config
-  {c('cyan', 'swe mcp export [--full]')}      Dump config (redacted by default)
-  {c('cyan', 'swe mcp import <file>')}        Load config into source of truth
-  {c('cyan', 'swe mcp doctor')}               Deep diagnostics
+  {c('cyan', 'swe mcp discover [--apply]')}          Find MCP servers across tool configs
+  {c('cyan', 'swe mcp list [tool]')}                 Matrix view of MCP servers across tools
+  {c('cyan', 'swe mcp status [tool]')}               List with health checks
+  {c('cyan', 'swe mcp sync <source> <target...>')}   Copy servers source → target(s) (--force, --skip-conflicts)
+  {c('cyan', 'swe mcp diff <t1> <t2>')}              Compare two tools' configs
+  {c('cyan', 'swe mcp edit <tool> <name>')}          Edit one server's config in one tool
+  {c('cyan', 'swe mcp validate [tool...]')}          Validate MCP config shape for one/all tools
+  {c('cyan', 'swe mcp doctor')}                      Deep diagnostics
 
-{c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for detailed help on each command
+{c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for details on each — flags, examples, the exact
+        model each command uses.
 {c('bold', 'Source of truth')}  ~/.quiver/mcp.json"""
     ),
     "providers": (
@@ -316,7 +347,7 @@ to use their own login state and environment."""
 
   Keys live as plain-text files in {c('bold', '~/.api_keys/')} (override
   with --api-keys-dir=DIR). quiver stores metadata only — never the
-  raw key. See `swe providers help` for masking format."""
+  raw key. Run {c('cyan', 'swe providers --help')} for full key-storage and masking details."""
     ),
     "harness": (
         "Everything about the harnesses you have",
@@ -329,12 +360,16 @@ to use their own login state and environment."""
   {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to harness.json
   {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
+  {c('cyan', 'swe harness discover --all')}        Include already-registered and missing tools too
 
 {c('bold', 'Alias')}  {c('cyan', 'swe discover')} is the same as {c('cyan', 'swe harness discover')}"""
     ),
     "find": (
         "Show where shared assets live and what links to them",
         f"""\
+  Run this when a skill, plugin, or MCP server is not showing up somewhere
+  and you want to know why.
+
   {c('cyan', 'swe find')}                   Every tree
   {c('cyan', 'swe find amd')}               AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}            Skills, plugins, and every harness skill root
@@ -350,6 +385,9 @@ to use their own login state and environment."""
   {c('cyan', 'local')}    project files only
   {c('cyan', 'all')}      both, plus vendored plugin and extension copies
 
+  {c('dim', 'Collision: swe list also has a --scope, but it means something else there')}
+  {c('dim', '(active/archived/all harness visibility, not where a file lives).')}
+
 {c('bold', 'Harness activity')}  {c('cyan', '--harness=active|all')}, default active, every view
   {c('cyan', 'active')}   hides rows whose harness is archived in harness.json
            (starred still counts as active — it is only pinned, not shelved)
@@ -362,17 +400,22 @@ to use their own login state and environment."""
   one thing {c('cyan', 'swe find')} exists to keep visible.
 
   Which harnesses get walked, and where each one's files live, comes from
-  harness.json's own {c('cyan', 'capabilities')} first (a harness's skills root, whether
-  it supports plugins) and only falls back to a hardcoded guess for a
-  harness the registry has never heard of.
+  harness.json's own {c('cyan', 'capabilities')} first — the per-harness field in
+  harness.json recording what a tool supports (skills? plugins?) and where —
+  and only falls back to a hardcoded guess for a harness the registry has
+  never heard of.
 
 {c('bold', 'States')}
   {c('green', 'synced')}         symlinked to the shared copy
   {c('cyan', 'unsynced')}       a real directory that could be absorbed
+  {c('yellow', 'own copy')}       a real (non-symlink) file, not pointing at the shared one
   {c('yellow', 'separate')}       holds content that exists nowhere else, left alone
   {c('yellow', 'wrong target')}   symlink pointing somewhere unexpected
   {c('red', 'in the way')}     a real file where a link should be
   {c('dim', 'not installed')}  harness absent from this machine
+
+  {c('dim', 'Same ideas swe list and swe init print under different names:')}
+  {c('dim', 'linked=synced, create=missing, relink=wrong target, conflict=in the way.')}
 
   Read-only. {c('cyan', 'swe init')} is what changes anything."""
     ),
@@ -382,6 +425,10 @@ to use their own login state and environment."""
   {c('cyan', 'swe init')}                    Create the layout and link all harnesses
   {c('cyan', 'swe init --check')}            Show what would change, write nothing
   {c('cyan', 'swe init --force')}            Replace real files too (backed up first)
+  {c('cyan', 'swe init --migrate')}          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
+
+  A {c('dim', 'symlink')} is a shortcut file: each harness's folder points at the one
+  real copy in ~/.quiver, so editing once updates it everywhere.
 
 {c('bold', 'What it owns')}
   ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
@@ -423,7 +470,7 @@ to use their own login state and environment."""
         f"""\
   {c('cyan', 'swe discover [--apply]')}   Alias for {c('cyan', 'swe harness discover')}
 
-  See {c('cyan', 'swe help harness')} for flags (--apply, --apply-all, --json)."""
+  See {c('cyan', 'swe help harness')} for flags (--apply, --apply-all, --json, --all)."""
     ),
     "autocomplete": (
         "Generate and inject shell completion script",
@@ -452,13 +499,14 @@ COMMAND_CATEGORIES = [
         ("install", None),
     ]),
     ("Registry", [
-        ("list",    "ls"),
-        ("info",    None),
-        ("add",     None),
-        ("edit",    None),
-        ("remove",  "rm"),
-        ("check",   None),
-        ("harness", "hs"),
+        ("list",     "ls"),
+        ("info",     None),
+        ("add",      None),
+        ("edit",     None),
+        ("remove",   "rm"),
+        ("check",    None),
+        ("harness",  "hs"),
+        ("discover", None),
     ]),
     ("Launch", [
         ("use",     "run"),
@@ -470,7 +518,7 @@ COMMAND_CATEGORIES = [
     ]),
     ("Reference", [
         ("find",    None),
-        ("skills",  None),
+        ("skills",  "sk"),
         ("tags",    None),
         ("aliases", None),
         ("providers", "pv"),
@@ -478,7 +526,7 @@ COMMAND_CATEGORIES = [
     ("MCP", [
         ("mcp",     None),
     ]),
-    ("Setup", [
+    ("Shell", [
         ("autocomplete", None),
     ]),
 ]
@@ -508,6 +556,10 @@ def cmd_help(args):
 
     # ── full help ─────────────────────────────────────────────────────────────
     print(f"\n{c('bold', 'swe')} — Central manager for AI coding CLI tools\n")
+    print("  One home for every AI coding CLI you use. Each one invents its own config")
+    print("  files; quiver gives them one shared instruction file, one skills folder,")
+    print(f"  one MCP list, one registry. quiver calls each AI coding tool (Claude Code,")
+    print(f"  Codex, Cursor…) a {c('bold', 'harness')}.\n")
     print(f"  {c('dim', 'USAGE')}  swe <command> [arguments]\n")
 
     for cat_name, cmds in COMMAND_CATEGORIES:
