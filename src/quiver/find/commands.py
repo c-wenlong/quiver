@@ -207,7 +207,13 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
         linked = [n for n in nodes if n.state == "linked"]
         shown = [n for n in nodes if n.state != "linked"]
         if linked:
-            target = next((n.target for n in linked if n.target), None)
+            # Show where the links LAND, not their first hop: a Home
+            # Manager chain's readlink is a store path, but every synced
+            # row resolves to the one shared copy.
+            try:
+                target = linked[0].path.resolve()
+            except OSError:
+                target = linked[0].target
             where = f" -> {_short(target, home)}" if target else ""
             print(f"  {c('green', f'{len(linked)} synced')}"
                   f"{c('dim', where + ' · -i browses each one')}")
