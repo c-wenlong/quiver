@@ -753,6 +753,16 @@ def print_find_help() -> None:
   repos, editor extensions) ship their own instructions and never show up
   while you code. They are counted in every view and listed under --scope=all.
 
+  {c('bold', 'Whose rows show')}  {c('cyan', '--harness=active|all')}
+    {c('cyan', 'active')}   (default) hides rows whose harness you archived
+    {c('cyan', 'all')}      shows archived harnesses' rows too
+    When anything was hidden, the output ends with
+    {c('dim', 'N archived harnesses hidden; --harness=all to show')}.
+    A row that maps to no harness is never hidden.
+
+  {c('dim', 'Two independent gates: --scope asks where a file lives, --harness asks')}
+  {c('dim', 'whose it is. (In swe list, --scope means the archived question instead.)')}
+
   {c('bold', 'States')}
     {c('green', 'synced')}         symlinked to the shared copy
     {c('yellow', 'own copy')}       a real file holding its own content, not a link to the shared copy
