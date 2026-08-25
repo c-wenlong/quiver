@@ -189,7 +189,7 @@ def _render_tree(nodes, root: Path, home: Path) -> None:
 
 
 def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
-                 scope: str = "global") -> None:
+                 scope: str = "global", collapse_synced: bool = False) -> None:
     nodes, vendored = filter_scope(nodes, scope, home)
     label = {"global": "loaded in every session",
              "local": "project files",
@@ -199,7 +199,20 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
     if not nodes:
         print(f"  {c('dim', empty)}\n")
         return
-    _render_tree(nodes, root, home)
+    shown = nodes
+    if collapse_synced:
+        # Forty rows all reading "synced -> the same place" carry no more
+        # information than their count, and they bury the rows that differ.
+        # Print the count once and keep only the interesting rows as a tree.
+        linked = [n for n in nodes if n.state == "linked"]
+        shown = [n for n in nodes if n.state != "linked"]
+        if linked:
+            target = next((n.target for n in linked if n.target), None)
+            where = f" -> {_short(target, home)}" if target else ""
+            print(f"  {c('green', f'{len(linked)} synced')}"
+                  f"{c('dim', where + ' · -i browses each one')}")
+    if shown:
+        _render_tree(shown, root, home)
     synced = sum(1 for n in nodes if n.state == "linked")
     print(f"\n  {c('dim', f'{len(nodes)} found · {synced} synced to the shared copy')}")
     if vendored:
@@ -342,7 +355,8 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
               if visible(dir_label(n.path, home))]
     if not root_flag:
         _render_scan("Skills", root, scanned, home,
-                     "no skills directories here", scope)
+                     "no skills directories here", scope,
+                     collapse_synced=root == home)
         if hidden:
             print(f"  {c('dim', harness_footer_text(len(hidden)))}\n")
         return 0
