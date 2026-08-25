@@ -253,32 +253,12 @@ def cmd_find_agents(args=None, root_flag: bool = False, scope: str = "global",
     visible, hidden = harness_filter(load_registry_if_present(), harness)
     nodes = [n for n in scan_agents(root, home) if visible(dir_label(n.path, home))]
     _render_scan("AGENTS.md", root, nodes, home,
-                 "no agent instruction files here", scope)
+                 "no agent instruction files here", scope,
+                 collapse_synced=root == home)
     if root_flag:
         _harness_summary(home, visible)
     if hidden:
         print(f"  {c('dim', harness_footer_text(len(hidden)))}\n")
-    return 0
-    canonical, nodes = agents_tree(home)
-    print(f"\n{c('bold', 'AGENTS.md')}\n")
-    print(f"  {c('green', _short(canonical, home))}"
-          f"  {c('dim', 'the one real file')}\n")
-
-    live = [n for n in nodes if n.state != "skipped"]
-    gone = [n for n in nodes if n.state == "skipped"]
-
-    for i, n in enumerate(live):
-        colour = STATE_COLOR.get(n.state, "dim")
-        arrow = f" {c('dim', '->')} {c('dim', _short(n.target, home))}" if n.target else ""
-        print(f"  {c('dim', _branch(i, len(live)))}{c(colour, _short(n.path, home).ljust(30))}"
-              f"{c(colour, STATE_WORD.get(n.state, n.state).ljust(14))}{arrow}")
-
-    if gone:
-        print(f"\n  {c('dim', 'not installed on this machine:')}")
-        print(f"  {c('dim', '  ' + ', '.join(n.label for n in gone))}")
-
-    synced = sum(1 for n in nodes if n.state == "linked")
-    print(f"\n  {c('dim', f'{synced} of {len(nodes)} harnesses synced')}\n")
     return 0
 
 
