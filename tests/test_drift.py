@@ -7,9 +7,12 @@ from quiver.harness.drift import (
     check_code_vs_data,
     check_dangling_symlinks,
     check_help_vs_dispatch,
+    check_prose_mentions,
     check_registry_schema,
+    check_subcommand_help,
     _real_commands,
     _real_help_topics,
+    _real_mcp_help_and_commands,
 )
 
 
@@ -62,6 +65,46 @@ class HelpVsDispatchTest(unittest.TestCase):
         # top-level command) was the last known drift here; it is gone now.
         findings = check_help_vs_dispatch(_real_help_topics(), _real_commands())
         self.assertEqual(findings, [])
+
+
+class SubcommandHelpTest(unittest.TestCase):
+    def test_phantom_help_entry_warns(self):
+        findings = check_subcommand_help({"sync", "export"}, {"sync"}, "mcp")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'export'", findings[0].message)
+
+    def test_undocumented_subcommand_warns(self):
+        findings = check_subcommand_help({"sync"}, {"sync", "doctor"}, "mcp")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'doctor'", findings[0].message)
+
+    def test_whitelist_and_agreement_are_silent(self):
+        findings = check_subcommand_help(
+            {"sync"}, {"sync", "help"}, "mcp", whitelist=frozenset({"help"})
+        )
+        self.assertEqual(findings, [])
+
+    def test_real_mcp_help_and_dispatch_agree(self):
+        help_keys, command_keys = _real_mcp_help_and_commands()
+        self.assertEqual(
+            check_subcommand_help(
+                help_keys, command_keys, "mcp", whitelist=frozenset({"help"})
+            ),
+            [],
+        )
+
+
+class ProseMentionsTest(unittest.TestCase):
+    def test_phantom_prose_mention_warns(self):
+        text = "run swe mcp export to save, or swe mcp sync to apply"
+        findings = check_prose_mentions(text, "mcp", {"sync"})
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'export'", findings[0].message)
+
+    def test_placeholders_and_real_commands_are_silent(self):
+        # "<command>" doesn't match the two-word pattern; real subs are fine.
+        text = "swe mcp <command> help, swe mcp sync, swe mcp help"
+        self.assertEqual(check_prose_mentions(text, "mcp", {"sync"}), [])
 
 
 class RegistrySchemaTest(unittest.TestCase):
