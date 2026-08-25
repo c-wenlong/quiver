@@ -134,7 +134,8 @@ def cmd_list_edit(args=None) -> int:
     args = list(args or [])
     if args and args[0] in ("-h", "--help", "help"):
         print(f"\n  {c('bold', 'swe list edit')} — choose the columns swe list shows\n")
-        print(f"  {c('dim', 'space toggles · a selects all · n clears · enter saves · q cancels')}")
+        print(f"  {c('dim', 'space toggles · ← → cycles a value (e.g. the session window) · a selects all')}")
+        print(f"  {c('dim', 'n clears · enter saves · q cancels')}")
         print(f"  {c('dim', 'NAME and the favourite marker are always shown.')}\n")
         return 0
     if args and args[0] == "--reset":
@@ -195,8 +196,9 @@ def cmd_list_legend(args=None) -> int:
     print(f"\n  {c('dim', 'swe session shows what a ! actually raised.')}")
 
     print(f"\n  {c('bold', 'Marker column')}\n")
-    print(f"  {c('neon_pink', '★'.rjust(4))}  {c('dim', 'favourited: pinned to the top, neon border')}")
-    print(f"  {c('yellow', '▪'.rjust(4))}  {c('dim', 'archived: hidden unless --scope=all or =archived')}")
+    print(f"  {c('neon_pink', '★'.rjust(4))}  {c('dim', 'favourited: pinned to the top, neon border, and the only tools --usage polls')}")
+    print(f"  {c('yellow', '▪'.rjust(4))}  {c('dim', 'archived: hidden from swe list, nothing uninstalled, reason recorded')}")
+    print(f"        {c('dim', '--scope=all (or =archived) shows it again')}")
 
     from quiver.harness.archive import USAGE_ABOUT, USAGE_LEVELS
 
@@ -391,8 +393,11 @@ def cmd_archive(args):
         print(f"  {c('cyan', 'swe hs archive')}                  List archived harnesses")
         print(f"  {c('cyan', 'swe hs archive <name> [why]')}     Archive, with an optional reason")
         print(f"  {c('cyan', 'swe hs archive <name>')}           Restore one that is archived")
+        print(f"  {c('cyan', 'swe hs archive <name> --usage=<level>')}  Override the guessed usage level")
         print(f"\n  {c('dim', 'Archived harnesses drop out of swe list. --scope=all brings them back,')}")
-        print(f"  {c('dim', 'and --scope=archived shows only those, with the date and reason.')}\n")
+        print(f"  {c('dim', 'and --scope=archived shows only those, with the date and reason.')}")
+        print(f"  {c('dim', 'Nothing is uninstalled — archiving only hides the row and records why.')}")
+        print(f"\n  {c('dim', '--usage levels: ' + ', '.join(USAGE_LEVELS))}\n")
         return 0
 
     # --usage=<level> overrides what the session count implies. The count is

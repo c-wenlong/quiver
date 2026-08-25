@@ -20,6 +20,8 @@ def print_providers_help() -> None:
 
   {c('cyan', 'swe providers remove <name>')}
       Remove a provider from the registry. Does not delete your key file.
+      Recorded on a removed list, so it stays gone across upgrades instead
+      of being re-added the next time defaults merge in.
 
 {c('bold', 'Key storage')}
   By default, keys live as plain-text files in {c('bold', '~/.api_keys/')}

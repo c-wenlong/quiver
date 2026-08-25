@@ -36,6 +36,7 @@ def print_skills_overview():
   {SKILL_LINKS_FILE}      recorded harness symlinks
 
 {c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')}  — topics: catalog, discover, link, unlink, move
+  {c('dim', 'help comes before the topic here — unlike swe mcp <command> help, which puts it after.')}
 """
     )
 

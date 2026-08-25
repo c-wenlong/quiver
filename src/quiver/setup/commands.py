@@ -32,7 +32,8 @@ def cmd_harness(args):
   {c('cyan', 'swe harness archive')}            List what you archived, and why
   {c('cyan', 'swe harness discover [flags]')}   Scan PATH for AI coding CLIs
 
-  {c('dim', 'Archived harnesses drop out of swe list; --scope=all brings them back.')}
+  {c('dim', 'Archiving hides it from swe list and records why — nothing is uninstalled;')}
+  {c('dim', 'swe list --scope=all shows it again.')}
 """
         )
         return 0

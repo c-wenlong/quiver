@@ -1431,7 +1431,25 @@ def cmd_help(args=None):
             return 0
         print(f"Unknown command: {cmd_name}")
         return 1
-    print(__doc__)
+    print(f"""
+  {c('bold', 'swe mcp')} — MCP server manager for AI coding tools
+
+  {c('cyan', 'swe mcp discover')}     Find MCP servers across tool configs
+  {c('cyan', 'swe mcp list')}         Matrix view of MCP servers across tools
+  {c('cyan', 'swe mcp status')}       List with health checks
+  {c('cyan', 'swe mcp sync')}         Copy servers source → target(s)
+  {c('cyan', 'swe mcp diff')}         Compare two tools' configs
+  {c('cyan', 'swe mcp edit')}         Edit one server config in one tool
+  {c('cyan', 'swe mcp validate')}     Validate MCP config shape for one/all tools
+  {c('cyan', 'swe mcp doctor')}       Deep diagnostics
+
+{c('bold', 'Examples')}
+  swe mcp list
+  swe mcp sync opencode cursor
+  swe mcp status oc
+
+  {c('dim', 'swe mcp <command> help   detailed help for one command')}
+""")
     return 0
 
 

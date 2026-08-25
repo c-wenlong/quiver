@@ -200,9 +200,16 @@ def print_init_help() -> None:
     ~/.quiver/backups/     anything replaced, timestamped
 
   {c('bold', 'States')}
-    {c('green', 'linked')}    already points at the canonical file
-    {c('cyan', 'create')}    nothing there yet, will symlink
-    {c('yellow', 'relink')}    symlink pointing somewhere else, will repoint
-    {c('red', 'conflict')}  a real file or directory, needs --force
-    {c('dim', 'skipped')}   harness not installed on this machine
+    {c('green', 'linked')}      already points at the canonical file
+    {c('cyan', 'create')}      nothing there yet, will symlink (a shortcut file pointing at the one real copy)
+    {c('yellow', 'relink')}      symlink pointing somewhere else, will repoint
+    {c('cyan', 'absorb')}      a real directory of only duplicate or empty skills, replaced with a symlink
+    {c('yellow', 'keep')}        a real directory holding skills that exist nowhere else, reported in --check plans
+    {c('red', 'conflict')}    a real file or directory, needs --force
+    {c('yellow', 'protected')}   ran without --force: a {c('bold', 'keep')} directory, left untouched
+    {c('red', 'blocked')}     ran without --force: a {c('bold', 'conflict')} path, left untouched
+    {c('dim', 'skipped')}     harness not installed on this machine
+
+  {c('dim', 'These are the same five ideas swe list legend (✓ ○ ↻ ✗) and swe init')}
+  {c('dim', '(linked/create/relink/conflict) print under different names.')}
 """)
