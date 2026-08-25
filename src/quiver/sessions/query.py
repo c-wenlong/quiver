@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 from dataclasses import dataclass
@@ -190,9 +191,16 @@ def _matches_agent(session: Session, agent: str) -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=1024)
+def _resolve_path(path: str) -> str:
+    # ⚡ Bolt: Cache realpath resolutions to avoid O(N) lstat syscalls
+    # when filtering thousands of sessions sharing base directories.
+    return os.path.realpath(os.path.expanduser(path))
+
+
 def _path_is_within(session_path: str, cwd: str) -> bool:
-    candidate = os.path.realpath(os.path.expanduser(session_path))
-    parent = os.path.realpath(os.path.expanduser(cwd))
+    candidate = _resolve_path(session_path)
+    parent = _resolve_path(cwd)
     try:
         return os.path.commonpath((candidate, parent)) == parent
     except ValueError:
