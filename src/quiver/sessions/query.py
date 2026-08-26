@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 from dataclasses import dataclass
@@ -190,9 +191,14 @@ def _matches_agent(session: Session, agent: str) -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=1024)
+def _normalize_path(path: str) -> str:
+    return os.path.realpath(os.path.expanduser(path))
+
+
 def _path_is_within(session_path: str, cwd: str) -> bool:
-    candidate = os.path.realpath(os.path.expanduser(session_path))
-    parent = os.path.realpath(os.path.expanduser(cwd))
+    candidate = _normalize_path(session_path)
+    parent = _normalize_path(cwd)
     try:
         return os.path.commonpath((candidate, parent)) == parent
     except ValueError:
