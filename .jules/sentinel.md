@@ -6,3 +6,7 @@
 **Vulnerability:** Use of weak MD5 hash without specifying it is not used for security purposes (`usedforsecurity=False`), leading to potential FIPS non-compliance and security linter failures.
 **Learning:** `hashlib.md5` was used for non-cryptographic purposes (caching directory paths in Kimi sessions) but lacked the `usedforsecurity=False` flag required in Python >= 3.9 for FIPS environments.
 **Prevention:** Always add the `usedforsecurity=False` keyword argument when using `hashlib.md5` (or similar algorithms) for non-cryptographic purposes (e.g., cache keys, hashing object identities) to comply with FIPS and pass security linters like Bandit.
+## 2024-05-24 - Threat Model Re-evaluation for Local CLI
+**Vulnerability:** Reported SSRF/LFI and URI injection vectors (e.g. B310, B608) in components like URL fetching or SQLite connections.
+**Learning:** The application is a local, single-user CLI where inputs (like mcp.json configurations or URLs) are fully user-controlled and not exposed to external attackers. As such, these reported injection vulnerabilities are security theater and do not pose a real threat.
+**Prevention:** Do not prioritize or create PRs for injection vulnerabilities (SSRF, LFI, SQL/URI injection) that rely on external attacker input in this codebase, as this contradicts the local CLI threat model.

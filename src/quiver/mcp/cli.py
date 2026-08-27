@@ -426,7 +426,7 @@ def check_server_health(name: str, cfg: dict) -> str:
         try:
             import urllib.request
             req = urllib.request.Request(url, method="HEAD")
-            urllib.request.urlopen(req, timeout=5)  # nosec B310
+            urllib.request.urlopen(req, timeout=5)
             return c("green", "✓")
         except Exception:
             return c("red", "✗ url unreachable")
@@ -455,7 +455,7 @@ def check_server_health(name: str, cfg: dict) -> str:
             try:
                 import urllib.request
                 req = urllib.request.Request(url, method="HEAD")
-                urllib.request.urlopen(req, timeout=5)  # nosec B310
+                urllib.request.urlopen(req, timeout=5)
                 return c("green", "✓")
             except Exception:
                 return c("red", "✗ url unreachable")
