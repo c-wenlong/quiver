@@ -743,8 +743,8 @@ def cmd_list(args):
     print(c("dim", elide(summary, terminal_width())))
     if shown_starred:
         print(f"  {c('neon_pink', '★')} {c('dim', '= favourited (pinned top, neon border)')}")
-        if archived:
-            print(f"  {c('dim', '▪')} {c('dim', f'= archived ({len(archived)} hidden; --scope=all to show)')}")
+    if archived:
+        print(f"  {c('dim', '▪')} {c('dim', f'= archived ({len(archived)} hidden; --scope=all to show)')}")
 
     all_tags = sorted({t for i in tools.values() for t in i.get("tags", [])})
     # Elide before colouring. elide counts characters, and an ANSI escape
