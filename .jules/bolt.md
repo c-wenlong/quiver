@@ -13,7 +13,3 @@
 ## 2026-07-31 - Over-inlining helper functions during refactor
 **Learning:** Replacing an existing helper function (like `get_mtime`) directly with native inline calls (for example, `entry.stat().st_mtime * 1000`) during an optimization (like switching to `os.scandir`) is a risky assumption. It drops fallback logic, exception handling, and potentially domain-specific behavior hidden inside the helper.
 **Action:** When performing file traversal optimizations like `os.scandir`, prefer passing `entry.path` to the existing, proven helper functions unless you have explicitly verified that inlining provides a measurable bottleneck fix and preserves all edge-case functionality exactly.
-
-## 2024-07-28 - Caching os.path.realpath in SessionQuery aggregation loops
-**Learning:** Similar to the aggregator, `SessionQuery.apply` filtering sessions by `cwd` runs `os.path.realpath` and `os.path.commonpath` for every session (via `_path_is_within`). In large codebases or with thousands of sessions, many sessions share identical paths, making repeated path normalization an O(N) architectural bottleneck.
-**Action:** When repeatedly checking `_path_is_within` in a loop (like `SessionQuery.apply`), introduce a local dictionary cache (e.g., `path_cache`) to memoize the boolean result of `_path_is_within` by session path to avoid redundant filesystem hits while safely preserving the helper function's domain logic.
