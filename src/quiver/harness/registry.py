@@ -15,12 +15,10 @@ looked at again, even if they are still sitting on disk (see
 `_migrate_from_legacy` for why).
 """
 
-import copy
 import json
 import shutil
 from datetime import datetime
 
-from quiver.harness.defaults import DEFAULT_TOOLS
 from quiver.paths import ARCHIVE_FILE, CONFIG_DIR, HARNESS_FILE, STARS_FILE, TOOLS_FILE
 
 
@@ -31,14 +29,13 @@ def load_registry() -> dict:
     if TOOLS_FILE.exists():
         return _migrate_from_legacy()
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    # Deep, not shallow: callers (star/archive) set state straight onto the
-    # entry dicts they get back, and a shallow dict(DEFAULT_TOOLS) hands out
-    # the very same nested dicts DEFAULT_TOOLS holds — mutating one in place
-    # would permanently star or archive a harness in the module-level
-    # default for the rest of the process.
-    defaults = copy.deepcopy(DEFAULT_TOOLS)
-    save_registry(defaults)
-    return defaults
+    # Empty, not seeded. This file used to be born holding eleven hardcoded
+    # entries, so a machine with three harnesses installed listed eight it
+    # did not have, each printing a version constant as though it had been
+    # probed. The registry answers "what is on this machine", which only
+    # `swe discover` can know; HARNESS_CATALOG is what it matches against.
+    save_registry({})
+    return {}
 
 
 def load_registry_if_present() -> dict:

@@ -500,6 +500,14 @@ def cmd_list(args):
     from quiver.harness.archive import load_archive
 
     archived = load_archive()
+    # A registry starts empty and fills up from what discovery finds, so a
+    # fresh install lands here with nothing to render. Say what to run
+    # instead of printing a header over an empty table.
+    if not tools and not archived:
+        print(f"\n  {c('dim', 'No harnesses registered yet.')}")
+        print(f"  {c('dim', 'Run')} {c('cyan', 'swe discover --apply')} "
+              f"{c('dim', 'to register what is installed here.')}\n")
+        return 0
     if scope == "active":
         tools = {n: t for n, t in tools.items() if n not in archived}
     elif scope == "archived":
@@ -1116,6 +1124,11 @@ def cmd_check(args):
     INFO_COL_WIDTH = 24   # "version unknown" + headroom
 
     tools = load_registry()
+    if not tools:
+        print(f"\n  {c('dim', 'No harnesses registered yet, nothing to check.')}")
+        print(f"  {c('dim', 'Run')} {c('cyan', 'swe discover --apply')} "
+              f"{c('dim', 'to register what is installed here.')}\n")
+        return 0
     updated = False
     off_path_notes: list[str] = []
     print(f"\n{c('bold', 'Checking AI tools...')}\n")
@@ -1404,10 +1417,15 @@ def cmd_install(args):
         reg_name = name.split("/")[-1]
         catalog = HARNESS_CATALOG.get(reg_name, {})
 
-    cmd_name = command or catalog.get("command") or (tools.get(reg_name, {}) or {}).get("command") or reg_name
-    desc = catalog.get("description") or (tools.get(reg_name, {}) or {}).get("description") or ""
-    tags = list(catalog.get("tags") or (tools.get(reg_name, {}) or {}).get("tags") or ["agentic", "coding"])
-    aliases = list(catalog.get("aliases") or (tools.get(reg_name, {}) or {}).get("aliases") or [])
+    # The registry wins over the catalog. An entry already on disk has been
+    # through discovery and possibly hand-editing on this machine, so the
+    # catalog's generic line is the fallback for names never seen here, not
+    # an upgrade over what is already recorded.
+    entry = tools.get(reg_name) or {}
+    cmd_name = command or entry.get("command") or catalog.get("command") or reg_name
+    desc = entry.get("description") or catalog.get("description") or ""
+    tags = list(entry.get("tags") or catalog.get("tags") or ["agentic", "coding"])
+    aliases = list(entry.get("aliases") or catalog.get("aliases") or [])
 
     print(f"\n{c('bold', 'swe install')}\n")
     print(f"  name:     {reg_name}")
