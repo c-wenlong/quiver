@@ -697,9 +697,14 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         return mock_resp
 
     def _patch_token(self, token="fake-gh-token"):
-        return patch(
-            "quiver.harness.rate_limits.subprocess.run",
-            return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
+        from unittest.mock import patch
+
+        # We must also patch shutil.which so the tests work cleanly in containers
+        # without `gh` actually installed.
+        return patch.multiple(
+            "quiver.harness.rate_limits",
+            subprocess=MagicMock(run=MagicMock(return_value=_CompletedProc(returncode=0, stdout=token + "\n"))),
+            shutil=MagicMock(which=MagicMock(return_value="/mock/path/gh")),
         )
 
     def test_fetch_copilot_success(self):
@@ -810,6 +815,9 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         with patch(
             "quiver.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=1, stdout="", stderr="not logged in"),
+        ), patch(
+            "quiver.harness.rate_limits.shutil.which",
+            return_value="/mock/path/gh",
         ):
             info = _fetch_github_copilot()
         self.assertIsNone(info)
@@ -821,6 +829,9 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         with patch(
             "quiver.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=0, stdout="  \n"),
+        ), patch(
+            "quiver.harness.rate_limits.shutil.which",
+            return_value="/mock/path/gh",
         ):
             info = _fetch_github_copilot()
         self.assertIsNone(info)
@@ -2345,6 +2356,9 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
         with patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             side_effect=[ssl_error, http_error],
+        ), patch(
+            "quiver.harness.rate_limits._verified_context",
+            return_value=MagicMock(),
         ):
             result = _fetch_json(
                 req,

@@ -81,18 +81,25 @@ class BrowseDispatchTest(unittest.TestCase):
         return code, strip_ansi(buf.getvalue())
 
     def test_each_browsable_topic_reaches_the_browser(self):
+        from quiver.find.entries import Entry
         for topic in ("plugins", "skills", "amd"):
-            with mock.patch("quiver.find.browser.browse", return_value=0) as m:
+            with mock.patch("quiver.find.roots.plugins_roots", return_value=[Entry("x")]), \
+                 mock.patch("quiver.find.roots.skills_roots", return_value=[Entry("x")]), \
+                 mock.patch("quiver.find.roots.agents_roots", return_value=[Entry("x")]), \
+                 mock.patch("quiver.find.browser.browse", return_value=0) as m:
                 code, _ = self._run([topic, "-i"])
             self.assertEqual(code, 0, topic)
             m.assert_called_once()
 
     def test_the_long_flag_works_too(self):
-        with mock.patch("quiver.find.browser.browse", return_value=0) as m:
+        from quiver.find.entries import Entry
+        with mock.patch("quiver.find.roots.plugins_roots", return_value=[Entry("x")]), \
+             mock.patch("quiver.find.browser.browse", return_value=0) as m:
             self._run(["plugins", "--interactive"])
         m.assert_called_once()
 
     def test_scope_is_passed_through(self):
+        from quiver.find.entries import Entry
         with mock.patch("quiver.find.roots.plugins_roots",
                         return_value=[Entry("x")]) as roots, \
              mock.patch("quiver.find.browser.browse", return_value=0):
