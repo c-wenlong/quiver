@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.defaults import DEFAULT_TOOLS
+from quiver.harness.catalog import HARNESS_CATALOG
 from quiver.harness.discover import apply_findings, discover_harnesses
 from quiver.harness.registry import load_registry, save_registry
 
@@ -32,7 +32,7 @@ class HarnessDiscoverTest(unittest.TestCase):
 
             config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "harness.json"
-            minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
+            minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
             with p1, p2, p3:
@@ -53,7 +53,7 @@ class HarnessDiscoverTest(unittest.TestCase):
 
             config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "harness.json"
-            minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
+            minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
             with p1, p2, p3:
@@ -74,7 +74,7 @@ class HarnessDiscoverTest(unittest.TestCase):
 
             config_dir = tmp_path / ".quiver" / "config"
             registry_file = config_dir / "harness.json"
-            minimal = {"claude": dict(DEFAULT_TOOLS["claude"])}
+            minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
             with p1, p2, p3, patch("quiver.harness.discover.live_version", return_value="9.9.9"):
@@ -100,7 +100,7 @@ class HarnessDiscoverTest(unittest.TestCase):
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
             with p1, p2, p3:
-                save_registry(dict(DEFAULT_TOOLS))
+                save_registry(dict(HARNESS_CATALOG))
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
                 claude = [f for f in findings if f.name == "claude"]
                 self.assertEqual(claude, [])
@@ -117,7 +117,7 @@ class HarnessDiscoverTest(unittest.TestCase):
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
             with p1, p2, p3:
-                save_registry(dict(DEFAULT_TOOLS))
+                save_registry(dict(HARNESS_CATALOG))
                 findings = discover_harnesses(
                     path_env=str(bindir),
                     home=tmp_path,
@@ -156,7 +156,7 @@ class HomeScanTest(unittest.TestCase):
             (home / ".fancytool" / "skills").mkdir(parents=True)
             patches = self._setup(home)
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 found = {f.name: f for f in discover_harnesses(path_env="", home=home)}
             self.assertIn("fancytool", found)
             self.assertEqual(found["fancytool"].source, "home_scan")
@@ -169,7 +169,7 @@ class HomeScanTest(unittest.TestCase):
             (home / ".config" / "newtool" / "inner" / "skills").mkdir(parents=True)
             patches = self._setup(home)
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 found = {f.name for f in discover_harnesses(path_env="", home=home)}
             self.assertIn("newtool", found)
 
@@ -181,7 +181,7 @@ class HomeScanTest(unittest.TestCase):
             (docker / "config.json").write_text("{}")
             patches = self._setup(home)
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 found = {f.name for f in discover_harnesses(path_env="", home=home)}
             self.assertNotIn("dockerlike", found)
 
@@ -191,7 +191,7 @@ class HomeScanTest(unittest.TestCase):
             (home / ".claude" / "skills").mkdir(parents=True)
             (home / ".factory" / "skills").mkdir(parents=True)  # droid's home
             registry = {
-                "claude": dict(DEFAULT_TOOLS["claude"]),
+                "claude": dict(HARNESS_CATALOG["claude"]),
                 "droid": {"command": "droid", "description": "", "tags": [], "aliases": [],
                           "capabilities": {"plugins": {"supported": True,
                                                        "root": "~/.factory/plugins"}}},
@@ -209,7 +209,7 @@ class HomeScanTest(unittest.TestCase):
             (home / ".tool.pre-bootstrap-20260101" / "skills").mkdir(parents=True)
             patches = self._setup(home)
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 found = {f.name for f in discover_harnesses(path_env="", home=home)}
             self.assertFalse(any("pre-bootstrap" in n for n in found))
 
@@ -219,7 +219,7 @@ class HomeScanTest(unittest.TestCase):
             (home / ".fancytool" / "skills").mkdir(parents=True)
             patches = self._setup(home)
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = discover_harnesses(path_env="", home=home)
                 added = apply_findings(findings, min_confidence="low")
                 registry = load_registry()
@@ -243,7 +243,7 @@ class ConfidenceFloorTest(unittest.TestCase):
                        patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
                        patch("quiver.harness.discover.live_version", lambda cmd: None))
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                save_registry({"claude": dict(DEFAULT_TOOLS["claude"])})
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = discover_harnesses(path_env="", home=home)
                 added = apply_findings(findings, min_confidence="high")
                 registry = load_registry()
