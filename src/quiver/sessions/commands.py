@@ -5,11 +5,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from quiver.console import c, cpad, fit_widths, truncate, visible_len
+from quiver.console import c, cpad, fit_widths, terminal_width, truncate, visible_len
+from quiver.markdown import render_markdown
 from quiver.sessions import failures
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.identity import launch_tool
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
+from quiver.sessions.picker import pick_session
 from quiver.sessions.query import SessionQuery, calendar_range_ms
 from quiver.table import Table
 
@@ -154,6 +156,7 @@ class _SessionArgs:
     start: str | None = None
     end: str | None = None
     limit_explicit: bool = False
+    interactive: bool = False
 
     def __iter__(self):
         # Preserve the original five-value helper contract for callers/tests.
@@ -175,12 +178,16 @@ def _parse_session_args(args: list[str]):
     start = None
     end = None
     limit_explicit = False
+    interactive = False
 
     i = 0
     while i < len(args):
         if args[i] == "use" and i + 1 < len(args) and args[i + 1].isdigit():
             use_index = int(args[i + 1])
             i += 2
+        elif args[i] in ("--interactive", "-i"):
+            interactive = True
+            i += 1
         elif args[i] == "--agent" and i + 1 < len(args):
             agent_filter = args[i + 1]
             i += 2
@@ -223,6 +230,9 @@ def _parse_session_args(args: list[str]):
         except ValueError as exc:
             print(c("red", str(exc)))
             return None
+    if interactive and use_index is not None:
+        print(c("red", "Cannot combine use <N> with --interactive"))
+        return None
     return _SessionArgs(
         limit=limit,
         agent_filter=agent_filter,
@@ -234,6 +244,7 @@ def _parse_session_args(args: list[str]):
         start=start,
         end=end,
         limit_explicit=limit_explicit,
+        interactive=interactive,
     )
 
 
@@ -321,6 +332,164 @@ def _print_parser_failures() -> None:
     print()
 
 
+def _build_session_table(sessions, reserve: int = 0) -> Table:
+    # Five-column table: IDX | LAST ACTIVE | AGENT | DIRECTORY | TITLE/SUMMARY.
+    #
+    # IDX, TIME, AGENT, TITLE all use ``kind="preformatted"`` with
+    # ``trust_cell_width=True`` because their cells ship pre-coloured
+    # ANSI (bold idx, cyan relative time, green agent, dim title
+    # fallback). Each TIME/AGENT cell is run through ``cpad`` so the
+    # rendered column visible-width never drifts below 14 (mirroring
+    # cmd_list's pre-pad pattern from the cmd_list migration).
+    # DIRECTORY uses ``kind="text"`` because paths are plain — no
+    # ANSI — and ``fit="content"`` so the longest visible path drives
+    # the column width. ``text`` auto-pads cells, so DIRECTORY rows
+    # stay aligned without manual padding.
+    # DIRECTORY and TITLE are the only free-text columns; the rest are
+    # fixed. Their cells are pre-padded, so the budget has to be settled
+    # before any row is built.
+    # ``reserve`` shrinks the fit cap so a caller that will prefix every
+    # rendered row with extra characters (the interactive picker's
+    # pointer + space) still fits the terminal after that prefix is
+    # added; the static path passes 0 and behaves exactly as before.
+    #
+    # ``fixed`` must include the two column_gap=2 gaps *between* idx,
+    # time, and agent (the "+2 +2" below), not just their own widths.
+    # fit_widths treats every column folded into ``fixed`` as a single
+    # blob and only charges one connecting gap per flex column on top
+    # of it; the gaps *inside* that blob have to be paid for up front,
+    # or the returned widths under-budget the real rendered row by
+    # exactly those two gaps (4 columns) once every time this table is
+    # built with a tight cap.
+    _w = fit_widths(fixed=4 + 2 + 14 + 2 + 14,
+                    flex={"directory": 45, "title": 50}, gap=2,
+                    cap=terminal_width() - reserve)
+    dir_w, title_w = _w["directory"], _w["title"]
+
+    table = Table()
+    table.add_column(
+        "idx", "[#]", width=4,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "time", "LAST ACTIVE", width=14,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "agent", "AGENT", width=14,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
+        "directory", "DIRECTORY", width=dir_w, max_width=dir_w, kind="text",
+    )
+    table.add_column(
+        "title", "TITLE/SUMMARY", width=title_w, max_width=title_w,
+        kind="preformatted", trust_cell_width=True,
+    )
+
+    now = time.time()
+    home_str = str(Path.home())
+    for idx, session in enumerate(sessions, start=1):
+        diff = now - (session.timestamp / 1000)
+        if diff < 60:
+            t_str = "Just now"
+        elif diff < 3600:
+            t_str = f"{int(diff / 60)}m ago"
+        elif diff < 86400:
+            t_str = f"{int(diff / 3600)}h ago"
+        else:
+            t_str = f"{int(diff / 86400)}d ago"
+
+        path = session.path.replace(home_str, "~")
+        # IDX cell: ``[BOLD<N>]`` padded to width=4. ``trust_cell_width``
+        # skips renderer pad so we manually pad for column-grid alignment.
+        bold_idx = c("bold", str(idx))
+        idx_cell = f"[{bold_idx}]" + " " * max(0, 4 - len(str(idx)) - 2)
+        # TIME/AGENT cells go through ``cpad`` (coloured + literal-space
+        # pad to width) — this is the cmd_list migration's pre-pad
+        # pattern generalised. TITLE has multiple visual flavours
+        # (italic rename, dim default, dim fallback) so we add the pad
+        # outside cpad to keep the ANSI wrap contiguous.
+        title_raw = _display_title(session, title_w)
+        title = title_raw + " " * max(0, title_w - visible_len(title_raw))
+        table.add_row({
+            "idx": idx_cell,
+            "time": cpad("cyan", t_str, 14),
+            "agent": cpad("green", session.agent, 14),
+            "directory": path,
+            "title": title,
+        })
+
+    return table
+
+
+_PREVIEW_ROLE = {
+    "human": ("cyan", "you"),
+    "assistant": ("green", "ai"),
+}
+
+
+def _session_preview(session) -> list[str]:
+    """A session's transcript as document lines for the picker's view.
+
+    Two forks share a title and a directory, so the listing cannot tell them
+    apart; the conversation can. Reads through the report readers so every
+    harness the reports can summarise can also be previewed. The import is
+    function-local because ``reports`` already imports ``sessions`` at
+    module level, and this keeps that the only direction.
+
+    Role headers and tool calls carry colour and stay one line. Message
+    bodies keep one document line per source line so the view can wrap
+    them to the terminal instead of cutting them; an assistant turn is
+    markdown, so it is rendered rather than shown as a wall of hashes and
+    asterisks.
+    """
+    from quiver.reports.transcripts import read_transcript
+
+    transcript = read_transcript(session)
+    if not transcript.readable:
+        return [f"(no preview: {transcript.error})"]
+    home_str = str(Path.home())
+    sources = ", ".join(p.replace(home_str, "~") for p in transcript.source_paths)
+    n = len(transcript.messages)
+    lines = [c("dim", f"{n} message{'' if n == 1 else 's'}")]
+    if sources:
+        # Plain so the view wraps it: the file name at the end is the part
+        # that tells two forks apart, and a cut label would lose it.
+        lines.append(sources)
+    if not transcript.messages:
+        lines.append("(no messages)")
+        return lines
+    for m in transcript.messages:
+        if m.kind == "tool" or m.role == "tool":
+            lines.append(c("dim", "  ⚙ " + " ".join(m.text.split())))
+            continue
+        colour, label = _PREVIEW_ROLE.get(m.role, ("dim", m.role or "?"))
+        lines.append("")
+        lines.append(c("bold", c(colour, label)))
+        if m.role == "assistant":
+            lines.extend(render_markdown(m.text) or [""])
+        else:
+            # A human turn is a prompt, not a document: markup in it is
+            # usually meant literally, so it goes out as typed.
+            lines.extend(m.text.splitlines() or [""])
+    return lines
+
+
+def _resume_session(session) -> int:
+    if not os.path.exists(session.path):
+        print(c("red", f"Directory not found: {session.path}"))
+        return 1
+
+    print(c("cyan", f"Resuming {session.agent} session..."))
+    os.chdir(session.path)
+
+    cmd_args = _resume_cmd_args(session)
+    from quiver.harness.commands import cmd_use
+
+    return cmd_use(cmd_args)
+
+
 def cmd_session(args):
     parsed = _parse_session_args(args)
     if parsed is None:
@@ -380,93 +549,31 @@ def cmd_session(args):
             )
             return 1
 
-        session = sessions[use_index - 1]
-        if not os.path.exists(session.path):
-            print(c("red", f"Directory not found: {session.path}"))
-            return 1
+        return _resume_session(sessions[use_index - 1])
 
-        print(c("cyan", f"Resuming {session.agent} session..."))
-        os.chdir(session.path)
-
-        cmd_args = _resume_cmd_args(session)
-        from quiver.harness.commands import cmd_use
-
-        return cmd_use(cmd_args)
+    # The picker prefixes every row with a 2-char pointer + space, so its
+    # table has to be built 2 columns narrower or the redraw wraps.
+    table = _build_session_table(sessions, reserve=2 if parsed.interactive else 0)
 
     print(f"\n{c('bold', 'Recent AI Sessions')}\n")
 
-    # Five-column table: IDX | LAST ACTIVE | AGENT | DIRECTORY | TITLE/SUMMARY.
-    #
-    # IDX, TIME, AGENT, TITLE all use ``kind="preformatted"`` with
-    # ``trust_cell_width=True`` because their cells ship pre-coloured
-    # ANSI (bold idx, cyan relative time, green agent, dim title
-    # fallback). Each TIME/AGENT cell is run through ``cpad`` so the
-    # rendered column visible-width never drifts below 14 (mirroring
-    # cmd_list's pre-pad pattern from the cmd_list migration).
-    # DIRECTORY uses ``kind="text"`` because paths are plain — no
-    # ANSI — and ``fit="content"`` so the longest visible path drives
-    # the column width. ``text`` auto-pads cells, so DIRECTORY rows
-    # stay aligned without manual padding.
-    # DIRECTORY and TITLE are the only free-text columns; the rest are
-    # fixed. Their cells are pre-padded, so the budget has to be settled
-    # before any row is built.
-    _w = fit_widths(fixed=4 + 14 + 14,
-                    flex={"directory": 45, "title": 50}, gap=2)
-    dir_w, title_w = _w["directory"], _w["title"]
+    if parsed.interactive:
+        lines = table.render()
+        header, rows = lines[:2], lines[2:]
+        # Space opens the highlighted session's transcript in a read-only
+        # view. Reading one means a glob over the harness's session root,
+        # so each row is read at most once per picker run.
+        cache: dict[int, list[str]] = {}
 
-    table = Table()
-    table.add_column(
-        "idx", "[#]", width=4,
-        kind="preformatted", trust_cell_width=True,
-    )
-    table.add_column(
-        "time", "LAST ACTIVE", width=14,
-        kind="preformatted", trust_cell_width=True,
-    )
-    table.add_column(
-        "agent", "AGENT", width=14,
-        kind="preformatted", trust_cell_width=True,
-    )
-    table.add_column(
-        "directory", "DIRECTORY", width=dir_w, max_width=dir_w, kind="text",
-    )
-    table.add_column(
-        "title", "TITLE/SUMMARY", width=title_w, max_width=title_w,
-        kind="preformatted", trust_cell_width=True,
-    )
+        def preview(index: int) -> list[str]:
+            if index not in cache:
+                cache[index] = _session_preview(sessions[index])
+            return cache[index]
 
-    now = time.time()
-    home_str = str(Path.home())
-    for idx, session in enumerate(sessions, start=1):
-        diff = now - (session.timestamp / 1000)
-        if diff < 60:
-            t_str = "Just now"
-        elif diff < 3600:
-            t_str = f"{int(diff / 60)}m ago"
-        elif diff < 86400:
-            t_str = f"{int(diff / 3600)}h ago"
-        else:
-            t_str = f"{int(diff / 86400)}d ago"
-
-        path = session.path.replace(home_str, "~")
-        # IDX cell: ``[BOLD<N>]`` padded to width=4. ``trust_cell_width``
-        # skips renderer pad so we manually pad for column-grid alignment.
-        bold_idx = c("bold", str(idx))
-        idx_cell = f"[{bold_idx}]" + " " * max(0, 4 - len(str(idx)) - 2)
-        # TIME/AGENT cells go through ``cpad`` (coloured + literal-space
-        # pad to width) — this is the cmd_list migration's pre-pad
-        # pattern generalised. TITLE has multiple visual flavours
-        # (plain text OR dim fallback) so we add the pad outside cpad to
-        # keep the dim wrap contiguous.
-        title_raw = _display_title(session, title_w)
-        title = title_raw + " " * max(0, title_w - visible_len(title_raw))
-        table.add_row({
-            "idx": idx_cell,
-            "time": cpad("cyan", t_str, 14),
-            "agent": cpad("green", session.agent, 14),
-            "directory": path,
-            "title": title,
-        })
+        choice = pick_session(rows, header=header, preview=preview)
+        if choice is None:
+            return 0
+        return _resume_session(sessions[choice])
 
     for line in table.render():
         print(line)
