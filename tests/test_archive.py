@@ -878,3 +878,60 @@ class ReasonColumnTest(unittest.TestCase):
         for key in ("reason", "archived"):
             self.assertIn(key, BY_KEY)
             self.assertFalse(BY_KEY[key].locked)
+
+
+class StatePickerMouseTest(unittest.TestCase):
+    """A wheel notch moves the cursor; it never closes the picker.
+
+    The older reader took a fixed two bytes after the Esc, so one scroll of
+    the wheel read as a cancel and left the rest of the report to come back
+    as loose letters. Both readers now go through quiver.keys.
+    """
+
+    def _drive(self, key_names, count=3):
+        from quiver.multiselect import StateChoice, statepicker
+
+        choices = [StateChoice(key=f"h{i}", label=f"h{i}") for i in range(count)]
+        out = io.StringIO()
+        stdin = mock.Mock()
+        stdin.fileno.return_value = 0
+        seen = []
+        with mock.patch("quiver.multiselect._supported", return_value=True), \
+             mock.patch("sys.stdout", out), \
+             mock.patch("sys.stdin", stdin), \
+             mock.patch("termios.tcgetattr", return_value=["saved"]), \
+             mock.patch("termios.tcsetattr",
+                        side_effect=lambda *a: seen.append(out.getvalue())), \
+             mock.patch("tty.setraw"), \
+             mock.patch("quiver.multiselect._read_state_key",
+                        side_effect=key_names):
+            result = statepicker(choices)
+        return result, out.getvalue(), seen
+
+    def test_a_wheel_report_is_a_move_rather_than_a_cancel(self):
+        import os
+
+        from quiver.multiselect import _read_state_key
+
+        for report, want in ((b"\x1b[<64;10;5M", "up"),
+                             (b"\x1b[<65;10;5M", "down")):
+            r, w = os.pipe()
+            os.write(w, report)
+            os.close(w)
+            self.assertEqual(_read_state_key(r), want, report)
+            os.close(r)
+
+        # And the loop keeps running on it, rather than returning None.
+        result, _, _ = self._drive(["down", "down", "enter"])
+        self.assertIsNotNone(result)
+
+    def test_tracking_is_on_for_the_widget_and_off_before_termios(self):
+        from quiver import keys
+
+        result, out, seen = self._drive(["enter"])
+        self.assertIsNotNone(result)
+        self.assertIn(keys.MOUSE_ON, out)
+        self.assertEqual(len(seen), 1)
+        # A shell left reporting the wheel spews escape sequences at the
+        # prompt, so the off switch has to precede the termios restore.
+        self.assertIn(keys.MOUSE_OFF, seen[0])

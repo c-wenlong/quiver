@@ -84,7 +84,7 @@ Domain packages under `src/quiver/`:
 | `setup/` | interactive onboarding wizard (the one logic module allowed to print) |
 | `history/` | backward-compatible re-exports; prefer `quiver.sessions` |
 
-Four modules at the bottom import nothing else from the project: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`. Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
+Five modules at the bottom import nothing else from the project: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`, `keys.py` (the shared terminal key reader). Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
 
 `harness/stars.py` and `harness/archive.py` are compatibility shims over `registry.py`, kept so old call sites work. Do not add new state to them.
 
@@ -107,6 +107,7 @@ Symlink status shared by `init`, `list`, and `find`: `linked`, `relink`, `create
 - **New MCP config format:** subclass `McpFormatHandler` in `mcp/formats.py` and call `register_format_handler(name, handler)`.
 - **New table:** use `table.py` (`Table`, column kinds `text`, `number`, `count_threshold`, `list`, `timestamp`, `preformatted`; custom kinds via `@register_kind`). Pre-compute rows outside the loop, pin columns once, `add_row` per item, `render` once. Do not hand-roll f-string padding.
 - **Interactive input:** use `prompt.read_line()` rather than `input()`; it restores TTY cooked mode and handles CR/LF/CRLF.
+- **Terminal key readers.** Every raw-mode widget reads keys through `keys.py::read_key(fd, letters=None, sequences=None)`. It reads a whole CSI/SS3 sequence to its final byte and treats only a bare Esc as `"escape"`; wheel reports (`\x1b[<64;x;yM`), application-cursor arrows (`\x1bOA`) and unknown sequences are mapped or ignored, never cancel. A widget supplies its own `letters` (plain bytes) and `sequences` (post-Esc bytes) maps, which win over the shared defaults, and writes `keys.MOUSE_ON` after `tty.setraw` and `keys.MOUSE_OFF` in the `finally` before `tcsetattr`. `sessions/picker.py::_read_key`, `multiselect.py::_read_key` / `_read_state_key` and `find/browser.py::_read_key` are all thin wrappers over it. A new widget must not hand-roll a reader: the two-byte version this replaced turned one wheel notch into a cancel plus a handful of stray letters.
 
 ## When adding or changing CLI commands
 
