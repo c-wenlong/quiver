@@ -18,10 +18,10 @@ Python 3.11.
         │          │        │        │          │         │
         └──────────┴────────┼────────┴──────────┴─────────┘
                             │
-              console · table · paths · configuration
+           console · table · paths · configuration · keys
 ```
 
-Four modules sit at the bottom and depend on nothing else in the project:
+Five modules sit at the bottom and depend on nothing else in the project:
 
 | module | owns |
 |---|---|
@@ -29,6 +29,7 @@ Four modules sit at the bottom and depend on nothing else in the project:
 | `console.py` | colour, padding, width, truncation |
 | `table.py` | column rendering |
 | `configuration.py` | reading and writing `config/config.json` |
+| `keys.py` | one terminal key reader for every raw-mode widget |
 
 ## The layout
 

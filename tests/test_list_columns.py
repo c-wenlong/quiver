@@ -795,3 +795,58 @@ class ListWidthTest(unittest.TestCase):
             with redirect_stdout(buf):
                 code = commands.cmd_list([])
         self.assertEqual(code, None if code is None else code)
+
+
+class MultiselectMouseTest(unittest.TestCase):
+    """A wheel notch moves the cursor; it never closes the checklist.
+
+    The older reader took a fixed two bytes after the Esc, so the tail of a
+    wheel report came back as loose letters, one of which ("<") rotates a
+    cycling row. The reader now goes through quiver.keys.
+    """
+
+    def _drive(self, key_names):
+        from quiver.multiselect import multiselect
+
+        choices = [Choice("a", "A"), Choice("b", "B")]
+        out = io.StringIO()
+        stdin = mock.Mock()
+        stdin.fileno.return_value = 0
+        seen = []
+        with mock.patch("quiver.multiselect._supported", return_value=True), \
+             mock.patch("sys.stdout", out), \
+             mock.patch("sys.stdin", stdin), \
+             mock.patch("termios.tcgetattr", return_value=["saved"]), \
+             mock.patch("termios.tcsetattr",
+                        side_effect=lambda *a: seen.append(out.getvalue())), \
+             mock.patch("tty.setraw"), \
+             mock.patch("quiver.multiselect._read_key", side_effect=key_names):
+            result = multiselect(choices, ["a"])
+        return result, out.getvalue(), seen
+
+    def test_a_wheel_report_is_a_move_rather_than_a_rotation(self):
+        import os
+
+        from quiver.multiselect import _read_key
+
+        for report, want in ((b"\x1b[<64;10;5M", "up"),
+                             (b"\x1b[<65;10;5M", "down")):
+            r, w = os.pipe()
+            os.write(w, report)
+            os.close(w)
+            self.assertEqual(_read_key(r), want, report)
+            os.close(r)
+
+        result, _, _ = self._drive(["down", "space", "enter"])
+        self.assertEqual(result, ["a", "b"])
+
+    def test_tracking_is_on_for_the_widget_and_off_before_termios(self):
+        from quiver import keys
+
+        result, out, seen = self._drive(["enter"])
+        self.assertEqual(result, ["a"])
+        self.assertIn(keys.MOUSE_ON, out)
+        self.assertEqual(len(seen), 1)
+        # A shell left reporting the wheel spews escape sequences at the
+        # prompt, so the off switch has to precede the termios restore.
+        self.assertIn(keys.MOUSE_OFF, seen[0])
