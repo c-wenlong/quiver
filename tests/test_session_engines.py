@@ -155,6 +155,166 @@ class JsonlEngineTest(unittest.TestCase):
             self.assertEqual(sessions[0].path, "/Users/test")
             self.assertIn("hi", sessions[0].title)
 
+    # --- tail title override -------------------------------------------
+
+    @staticmethod
+    def _tail_config(tmp, **overrides):
+        kwargs = dict(
+            tool_name="demo",
+            agent="Demo",
+            base_dir=tmp,
+            path_from_event=lambda d: d.get("cwd") or "",
+            title_from_event=first_user_title,
+            tail_title_from_event=lambda d: (
+                (2, d.get("customTitle") or "", "rename")
+                if d.get("type") == "custom-title"
+                else (1, d.get("aiTitle") or "", "auto")
+                if d.get("type") == "ai-title"
+                else None
+            ),
+            one_session_per_file=True,
+        )
+        kwargs.update(overrides)
+        return JsonlParserConfig(**kwargs)
+
+    @staticmethod
+    def _write_session(tmp, lines):
+        proj = Path(tmp) / "proj"
+        proj.mkdir(exist_ok=True)
+        (proj / "abc.jsonl").write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+
+    def test_tail_rename_beats_first_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_session(tmp, [
+                {"type": "session_start", "cwd": "/Users/test"},
+                {"role": "user", "content": "first prompt text"},
+                {"role": "assistant", "content": "reply"},
+                {"type": "custom-title", "customTitle": "Renamed by user"},
+                {"role": "user", "content": "second prompt"},
+            ])
+            sessions = parse_jsonl_projects(self._tail_config(tmp))
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].title, "Renamed by user")
+            self.assertEqual(sessions[0].title_source, "rename")
+
+    def test_tail_falls_back_to_first_prompt_without_title_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_session(tmp, [
+                {"type": "session_start", "cwd": "/Users/test"},
+                {"role": "user", "content": "first prompt text"},
+                {"role": "user", "content": "second prompt"},
+            ])
+            sessions = parse_jsonl_projects(self._tail_config(tmp))
+            self.assertEqual(sessions[0].title, "first prompt text")
+            self.assertEqual(sessions[0].title_source, "")
+
+    def test_tail_latest_rename_wins_and_outranks_later_ai_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_session(tmp, [
+                {"type": "session_start", "cwd": "/Users/test"},
+                {"role": "user", "content": "first prompt text"},
+                {"type": "custom-title", "customTitle": "Old name"},
+                {"type": "custom-title", "customTitle": "New name"},
+                {"type": "ai-title", "aiTitle": "Auto title after rename"},
+            ])
+            sessions = parse_jsonl_projects(self._tail_config(tmp))
+            self.assertEqual(sessions[0].title, "New name")
+            self.assertEqual(sessions[0].title_source, "rename")
+
+    def test_tail_ai_title_used_when_no_rename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_session(tmp, [
+                {"type": "session_start", "cwd": "/Users/test"},
+                {"role": "user", "content": "first prompt text"},
+                {"type": "ai-title", "aiTitle": "Auto title"},
+            ])
+            sessions = parse_jsonl_projects(self._tail_config(tmp))
+            self.assertEqual(sessions[0].title, "Auto title")
+            self.assertEqual(sessions[0].title_source, "auto")
+
+    def test_tail_window_only_reads_the_end_of_large_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            filler = [{"role": "assistant", "content": "x" * 200}] * 50
+            self._write_session(tmp, [
+                {"type": "session_start", "cwd": "/Users/test"},
+                {"role": "user", "content": "first prompt text"},
+                {"type": "custom-title", "customTitle": "Buried early rename"},
+                *filler,
+                {"type": "custom-title", "customTitle": "Recent rename"},
+                *filler[:3],
+            ])
+            small = parse_jsonl_projects(self._tail_config(tmp, tail_bytes=2048))
+            self.assertEqual(small[0].title, "Recent rename")
+            # A window too small to reach any title event falls back cleanly.
+            tiny = parse_jsonl_projects(self._tail_config(tmp, tail_bytes=64))
+            self.assertEqual(tiny[0].title, "first prompt text")
+
+    def test_tail_ignores_malformed_lines_and_callback_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            (proj / "abc.jsonl").write_text(
+                json.dumps({"type": "session_start", "cwd": "/Users/test"}) + "\n"
+                + json.dumps({"role": "user", "content": "first prompt text"}) + "\n"
+                + json.dumps({"type": "custom-title", "customTitle": "Good"}) + "\n"
+                + "{broken json\n"
+                + json.dumps({"type": "explode"}) + "\n"
+            )
+
+            def boom(d):
+                if d.get("type") == "explode":
+                    raise ValueError("bad event")
+                if d.get("type") == "custom-title":
+                    return (2, d.get("customTitle") or "", "rename")
+                return None
+
+            sessions = parse_jsonl_projects(
+                self._tail_config(tmp, tail_title_from_event=boom)
+            )
+            self.assertEqual(sessions[0].title, "Good")
+
+    def test_title_from_event_may_return_a_source_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_session(tmp, [
+                {"type": "session_start", "cwd": "/Users/test", "title": "Set by hand",
+                 "manual": True},
+                {"role": "user", "content": "first prompt text"},
+            ])
+
+            def title_from_event(d):
+                if d.get("type") == "session_start" and d.get("title"):
+                    return d["title"], ("rename" if d.get("manual") else "auto")
+                return first_user_title(d)
+
+            sessions = parse_jsonl_projects(
+                self._tail_config(tmp, title_from_event=title_from_event,
+                                  tail_title_from_event=None)
+            )
+            self.assertEqual(sessions[0].title, "Set by hand")
+            self.assertEqual(sessions[0].title_source, "rename")
+
+    def test_index_get_title_may_return_a_source_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            (proj / "index.jsonl").write_text(
+                json.dumps({"id": "s1", "cwd": "/Users/test", "title": "Named"}) + "\n"
+                + json.dumps({"id": "s2", "cwd": "/Users/test", "title": None}) + "\n"
+            )
+            (proj / "s2.jsonl").write_text(
+                json.dumps({"role": "user", "content": "prompt for s2"}) + "\n"
+            )
+            sessions = parse_jsonl_projects(JsonlParserConfig(
+                tool_name="demo", agent="Demo", base_dir=tmp, mode="index_jsonl",
+                get_title=lambda e: ((e.get("title") or ""), "rename"),
+                title_from_event=first_user_title,
+            ))
+            by_id = {s.session_id: s for s in sessions}
+            self.assertEqual(by_id["s1"].title, "Named")
+            self.assertEqual(by_id["s1"].title_source, "rename")
+            self.assertEqual(by_id["s2"].title, "prompt for s2")
+            self.assertEqual(by_id["s2"].title_source, "")
+
     def test_malformed_lines_are_skipped_and_project_path_is_a_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             proj = Path(tmp) / "project"

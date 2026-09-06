@@ -84,6 +84,7 @@ def _load_cached_sessions() -> list[Session] | None:
                 title=s["title"],
                 session_id=s["session_id"],
                 tool_name=s["tool_name"],
+                title_source=s.get("title_source", ""),
             )
             for s in raw
         ]
@@ -105,6 +106,7 @@ def _save_cached_sessions(sessions: list[Session]) -> None:
                     "title": s.title,
                     "session_id": s.session_id,
                     "tool_name": s.tool_name,
+                    "title_source": s.title_source,
                 }
                 for s in sessions
             ],
