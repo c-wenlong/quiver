@@ -80,15 +80,27 @@ class BrowseDispatchTest(unittest.TestCase):
             code = cmd_find(argv)
         return code, strip_ansi(buf.getvalue())
 
+    # The roots getters walk the real HOME, and cmd_find short-circuits to
+    # "nothing to browse" before reaching the browser when they come back
+    # empty. Tests run against a throwaway HOME, which has no plugins,
+    # skills or AGENTS.md anywhere, so dispatch has to be tested over a
+    # stubbed tree or it only passes on the author's own machine.
+    ROOT_GETTERS = {"plugins": "plugins_roots", "skills": "skills_roots",
+                    "amd": "agents_roots"}
+
     def test_each_browsable_topic_reaches_the_browser(self):
-        for topic in ("plugins", "skills", "amd"):
-            with mock.patch("quiver.find.browser.browse", return_value=0) as m:
+        for topic, getter in self.ROOT_GETTERS.items():
+            with mock.patch(f"quiver.find.roots.{getter}",
+                            return_value=[Entry("x")]), \
+                 mock.patch("quiver.find.browser.browse", return_value=0) as m:
                 code, _ = self._run([topic, "-i"])
             self.assertEqual(code, 0, topic)
             m.assert_called_once()
 
     def test_the_long_flag_works_too(self):
-        with mock.patch("quiver.find.browser.browse", return_value=0) as m:
+        with mock.patch("quiver.find.roots.plugins_roots",
+                        return_value=[Entry("x")]), \
+             mock.patch("quiver.find.browser.browse", return_value=0) as m:
             self._run(["plugins", "--interactive"])
         m.assert_called_once()
 
@@ -410,3 +422,4 @@ class ResizeTest(unittest.TestCase):
 
         source = Path("src/quiver/find/browser.py").read_text()
         self.assertIn("select.select", source)
+

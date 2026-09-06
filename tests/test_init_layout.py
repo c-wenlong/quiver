@@ -46,6 +46,25 @@ def _pin_columns(test):
     test.addCleanup(patch2.stop)
 
 
+def _seed_registry(test, names=("claude",)):
+    """Give `swe list` something to render.
+
+    harness.json ships empty now: what a machine has is only knowable by
+    looking, so `swe discover` fills it in. A test that wants a table has to
+    say which harnesses it is rendering, or it gets the empty state instead.
+    """
+    from unittest import mock
+
+    from quiver.harness.catalog import HARNESS_CATALOG
+
+    registry = {n: dict(HARNESS_CATALOG[n]) for n in names}
+    patch = mock.patch(
+        "quiver.harness.commands.load_registry", lambda: dict(registry))
+    patch.start()
+    test.addCleanup(patch.stop)
+    return registry
+
+
 
 class InspectTest(unittest.TestCase):
     def test_skips_harness_that_is_not_installed(self):
@@ -237,6 +256,8 @@ class ListLinksViewTest(unittest.TestCase):
 
     def setUp(self):
         _pin_columns(self)
+        _seed_registry(self)
+
     def test_links_flag_skips_the_rate_limit_fetch(self):
         from quiver.harness import commands as harness_commands
 
@@ -276,6 +297,7 @@ class ListUsageOptInTest(unittest.TestCase):
 
     def setUp(self):
         _pin_columns(self)
+        _seed_registry(self)
 
     def _run(self, args):
         from quiver.harness import commands as harness_commands
