@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `swe session -i` picks a session with arrow keys. Enter resumes the
+  highlighted session and space opens its full transcript in a scrollable
+  read-only view (Esc returns to the list, Enter resumes from inside it),
+  so two forks that share a title can be told apart before resuming one.
+  The mouse wheel moves the cursor in the list and scrolls the view;
+  assistant replies render their markdown (headings, emphasis, code,
+  lists, quotes, tables, links) instead of showing it raw.
+
 ## [0.2.10] - 2026-08-25
 
 ### Changed

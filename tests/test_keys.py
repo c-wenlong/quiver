@@ -183,8 +183,9 @@ class WidgetsShareItTest(unittest.TestCase):
     def test_the_three_widgets_delegate_rather_than_hand_rolling(self):
         from quiver.find import browser
         from quiver import multiselect
+        from quiver.sessions import picker
 
-        readers = [multiselect._read_key,
+        readers = [picker._read_key, multiselect._read_key,
                    multiselect._read_state_key, browser._read_key]
         for reader in readers:
             with patch.object(keys, "read_key", return_value="sentinel") as m:
@@ -194,8 +195,9 @@ class WidgetsShareItTest(unittest.TestCase):
     def test_a_wheel_notch_is_a_move_in_every_widget(self):
         from quiver.find import browser
         from quiver import multiselect
+        from quiver.sessions import picker
 
-        for reader in (multiselect._read_key,
+        for reader in (picker._read_key, multiselect._read_key,
                        multiselect._read_state_key, browser._read_key):
             r, w = os.pipe()
             os.write(w, b"\x1b[<65;10;5M")
