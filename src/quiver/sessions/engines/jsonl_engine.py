@@ -48,9 +48,21 @@ class JsonlParserConfig:
     path_from_project_dir: Callable[[str], str] | None = None
     default_path: str | None = None
     require_path: bool = True
-    # Title extraction from event stream
-    title_from_event: Callable[[dict], str] | None = None
+    # Title extraction from event stream. May return a plain string or a
+    # ``(text, source)`` pair, where source is the ``Session.title_source``
+    # label ("rename", "auto"); a plain string means source "".
+    title_from_event: Callable[[dict], str | tuple[str, str]] | None = None
     title_max_len: int = 80
+    # Late title override, read from the END of the file. Some harnesses
+    # append a rename or an auto-generated title after the first prompt; the
+    # forward scan stops at its first title hit and would never see it.
+    # Returns (priority, text, source) or None, where source is the
+    # ``Session.title_source`` label ("rename", "auto"). Highest priority
+    # wins; on a tie the line nearest the end wins. Only the last
+    # ``tail_bytes`` are read, so a multi-megabyte transcript costs one seek
+    # instead of a full pass.
+    tail_title_from_event: Callable[[dict], tuple[int, str, str] | None] | None = None
+    tail_bytes: int = 65536
     # Session id from path
     session_id_from_path: Callable[[str], str] | None = None
     # Max lines to scan per file for path/title
@@ -63,7 +75,8 @@ class JsonlParserConfig:
     # index_jsonl field extractors
     get_id: Callable[[dict], str] | None = None
     get_path: Callable[[dict], str] | None = None
-    get_title: Callable[[dict], str] | None = None
+    # get_title may also return a ``(text, source)`` pair, like title_from_event
+    get_title: Callable[[dict], str | tuple[str, str]] | None = None
     get_ts: Callable[[dict], float] | None = None
     # Resolve side session file for title enrichment: (entry, project_dir) -> path
     session_file_from_entry: Callable[[dict, str], str] | None = None
@@ -218,6 +231,7 @@ def _parse_session_dirs(base: str, config: JsonlParserConfig) -> list[Session]:
                                 "title": sess.title,
                                 "session_id": sess.session_id,
                                 "tool_name": sess.tool_name,
+                                "title_source": sess.title_source,
                             }
                             try:
                                 config.enrich_session(fields, sess_dir, proj_name)
@@ -307,14 +321,17 @@ def _session_from_index_entry(
         path = entry.get("cwd") or entry.get("path") or entry.get("directory") or ""
 
     title = ""
+    title_source = ""
     if config.get_title:
         try:
-            title = config.get_title(entry) or ""
+            title, title_source = _split_title(config.get_title(entry))
         except Exception:
             title = ""
     else:
         title = entry.get("title") or ""
     title = clean_title(str(title), config.title_max_len) if title else ""
+    if not title:
+        title_source = ""
 
     ts = 0.0
     if config.get_ts:
@@ -342,7 +359,10 @@ def _session_from_index_entry(
 
     if sess_file and os.path.exists(sess_file):
         if not title and config.title_from_event:
-            title = _title_from_jsonl(sess_file, config) or title
+            title, title_source = _title_from_jsonl(sess_file, config)
+        tail_title, tail_source = _title_from_tail(sess_file, config)
+        if tail_title:
+            title, title_source = tail_title, tail_source
         ts = max(ts, get_mtime(sess_file))
 
     if not path:
@@ -357,12 +377,23 @@ def _session_from_index_entry(
         title=title,
         session_id=sid,
         tool_name=config.tool_name,
+        title_source=title_source,
     )
 
 
-def _title_from_jsonl(fp: str, config: JsonlParserConfig) -> str:
+def _split_title(value: Any) -> tuple[str, str]:
+    """Normalise a title callback's return into ``(text, source)``."""
+    if isinstance(value, tuple):
+        text = value[0] if value else ""
+        source = value[1] if len(value) > 1 else ""
+        return str(text or ""), str(source or "")
+    return str(value or ""), ""
+
+
+def _title_from_jsonl(fp: str, config: JsonlParserConfig) -> tuple[str, str]:
+    """First title in ``fp`` via ``title_from_event``, as ``(text, source)``."""
     if not config.title_from_event:
-        return ""
+        return "", ""
     try:
         with open(fp) as f:
             for line in f:
@@ -375,14 +406,63 @@ def _title_from_jsonl(fp: str, config: JsonlParserConfig) -> str:
                 if not isinstance(data, dict):
                     continue
                 try:
-                    raw = config.title_from_event(data) or ""
+                    raw, source = _split_title(config.title_from_event(data))
                 except Exception:
-                    raw = ""
+                    raw, source = "", ""
                 if raw:
-                    return clean_title(raw, config.title_max_len)
+                    return clean_title(raw, config.title_max_len), source
     except Exception:
         pass
-    return ""
+    return "", ""
+
+
+def _title_from_tail(fp: str, config: JsonlParserConfig) -> tuple[str, str]:
+    """Best late title in the last ``config.tail_bytes`` of ``fp``.
+
+    Returns ``(title, source)``, both empty when nothing was found. Lines are
+    walked from the end; a lower-priority hit is kept only until something
+    better turns up, so the latest line at the highest priority wins.
+    """
+    if not config.tail_title_from_event:
+        return "", ""
+    try:
+        size = os.path.getsize(fp)
+        with open(fp, "rb") as f:
+            start = max(0, size - config.tail_bytes)
+            f.seek(start)
+            chunk = f.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return "", ""
+    lines = chunk.split("\n")
+    if start > 0 and lines:
+        lines = lines[1:]  # first line is a partial record
+    best_priority: int | None = None
+    best_text = ""
+    best_source = ""
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        try:
+            hit = config.tail_title_from_event(data)
+        except Exception:
+            hit = None
+        if not hit:
+            continue
+        priority, raw, source = hit
+        if not raw or (best_priority is not None and priority <= best_priority):
+            continue
+        best_priority = priority
+        best_text = raw
+        best_source = str(source or "")
+    if not best_text:
+        return "", ""
+    return clean_title(best_text, config.title_max_len), best_source
 
 
 def _list_jsonl(directory: str, config: JsonlParserConfig) -> list[str]:
@@ -425,6 +505,7 @@ def _session_from_jsonl(
 
     path = ""
     title = ""
+    title_source = ""
     try:
         with open(fp) as f:
             for i, line in enumerate(f):
@@ -443,9 +524,10 @@ def _session_from_jsonl(
                         path = ""
                 if not title and config.title_from_event:
                     try:
-                        raw = config.title_from_event(data) or ""
+                        raw, source = _split_title(config.title_from_event(data))
                         if raw:
                             title = clean_title(raw, config.title_max_len)
+                            title_source = source
                     except Exception:
                         pass
                 if path and title:
@@ -456,6 +538,10 @@ def _session_from_jsonl(
                     break
     except Exception:
         pass
+
+    tail_title, tail_source = _title_from_tail(fp, config)
+    if tail_title:
+        title, title_source = tail_title, tail_source
 
     if not path:
         path = fallback_path or config.default_path or ""
@@ -469,6 +555,7 @@ def _session_from_jsonl(
         title=title,
         session_id=sid,
         tool_name=config.tool_name,
+        title_source=title_source,
     )
 
 

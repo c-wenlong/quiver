@@ -6,6 +6,7 @@ COLORS = {
     "reset": "\033[0m",
     "bold": "\033[1m",
     "dim": "\033[2m",
+    "italic": "\033[3m",
     "green": "\033[32m",
     "red": "\033[31m",
     "yellow": "\033[33m",

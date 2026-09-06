@@ -88,6 +88,20 @@ class SessionCommandsTest(unittest.TestCase):
         text = _display_title(s, 50)
         self.assertIn("aaaaaaaa", text)
 
+    def test_display_title_renamed_is_italic_and_others_are_dim(self):
+        italic, dim = "\033[3m", "\033[2m"
+        renamed = SimpleNamespace(title="My name", session_id="x", title_source="rename")
+        text = _display_title(renamed, 50)
+        self.assertIn(italic, text)
+        self.assertNotIn(dim, text)
+        for source in ("", "auto"):
+            plain = SimpleNamespace(title="My name", session_id="x", title_source=source)
+            text = _display_title(plain, 50)
+            self.assertIn(dim, text)
+            self.assertNotIn(italic, text)
+        legacy = SimpleNamespace(title="My name", session_id="x")  # no attribute
+        self.assertIn(dim, _display_title(legacy, 50))
+
 
 if __name__ == "__main__":
     unittest.main()
