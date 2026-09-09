@@ -452,10 +452,9 @@ def _build_session_table(sessions, reserve: int = 0) -> Table:
     return table
 
 
-_PREVIEW_ROLE = {
-    "human": ("cyan", "you"),
-    "assistant": ("green", "ai"),
-}
+def _tool_run_line(count: int) -> str:
+    """One dim line standing in for a run of ``count`` tool calls."""
+    return c("dim", f"  called {count} tool{'' if count == 1 else 's'}")
 
 
 def _session_preview(session) -> list[str]:
@@ -467,11 +466,19 @@ def _session_preview(session) -> list[str]:
     function-local because ``reports`` already imports ``sessions`` at
     module level, and this keeps that the only direction.
 
-    Role headers and tool calls carry colour and stay one line. Message
-    bodies keep one document line per source line so the view can wrap
-    them to the terminal instead of cutting them; an assistant turn is
-    markdown, so it is rendered rather than shown as a wall of hashes and
-    asterisks.
+    The view is for recognising a session at a glance, so it shows the
+    conversation and not the machinery. A run of tool calls collapses to a
+    count, because their arguments are the bulkiest thing in a transcript
+    and the least useful for telling two sessions apart.
+
+    Turns carry no ``you``/``ai`` label. A prompt is marked by painting it,
+    the way a chat UI shades what you typed: the line goes out wearing
+    ``user_bg``, and the view fills each wrapped row out to the full width
+    so the slab is a block rather than a ragged tail. Anything else is the
+    assistant. Message bodies keep one document line per source line so the
+    view can wrap them to the terminal instead of cutting them, and an
+    assistant turn is markdown, so it is rendered rather than shown as a
+    wall of hashes and asterisks.
     """
     from quiver.reports.transcripts import read_transcript
 
@@ -489,19 +496,24 @@ def _session_preview(session) -> list[str]:
     if not transcript.messages:
         lines.append("(no messages)")
         return lines
+    pending_tools = 0
     for m in transcript.messages:
         if m.kind == "tool" or m.role == "tool":
-            lines.append(c("dim", "  ⚙ " + " ".join(m.text.split())))
+            pending_tools += 1
             continue
-        colour, label = _PREVIEW_ROLE.get(m.role, ("dim", m.role or "?"))
+        if pending_tools:
+            lines.append(_tool_run_line(pending_tools))
+            pending_tools = 0
         lines.append("")
-        lines.append(c("bold", c(colour, label)))
-        if m.role == "assistant":
-            lines.extend(render_markdown(m.text) or [""])
-        else:
+        if m.role == "human":
             # A human turn is a prompt, not a document: markup in it is
-            # usually meant literally, so it goes out as typed.
-            lines.extend(m.text.splitlines() or [""])
+            # usually meant literally, so it goes out as typed, painted so
+            # the eye can find where the user spoke without a label.
+            lines.extend(c("user_bg", line) for line in m.text.splitlines() or [""])
+        else:
+            lines.extend(render_markdown(m.text) or [""])
+    if pending_tools:
+        lines.append(_tool_run_line(pending_tools))
     return lines
 
 
