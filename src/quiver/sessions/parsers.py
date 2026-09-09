@@ -329,6 +329,78 @@ def parse_crush():
 # JSONL family
 # ---------------------------------------------------------------------------
 
+# A transcript that ended by handing off has the marker as its last record,
+# so a small tail is enough to find one. That is the whole test: a marker
+# sitting behind more conversation is not in the tail to begin with.
+_CLAUDE_HANDOFF_TAIL_BYTES = 8192
+
+
+def _claude_transcript_paths(base: str) -> dict[str, str]:
+    """Session id -> transcript path, across every project dir under ``base``.
+
+    A ``Session`` carries the id and the cwd but not the file it came from,
+    and the project dir name is a lossy encoding of that cwd, so the mapping
+    is read off the directory rather than reconstructed. Two scandirs and no
+    file reads.
+    """
+    out: dict[str, str] = {}
+    try:
+        with os.scandir(base) as projects:
+            for project in projects:
+                if not project.is_dir() or not project.name.startswith("-"):
+                    continue
+                with os.scandir(project.path) as entries:
+                    for entry in entries:
+                        if entry.name.endswith(".jsonl"):
+                            out[entry.name.removesuffix(".jsonl")] = entry.path
+    except Exception:
+        return out
+    return out
+
+
+def _claude_handed_off(path: str) -> str:
+    """The session ``path`` handed off to and then stopped, or "".
+
+    Claude Code can continue a session in a fresh transcript, and writes
+    ``{"type": "continued-in", "continuedInSessionId": ...}`` into the old
+    file the moment it happens. That marker alone does not end the old
+    session: work often carries on there afterwards, and both files are then
+    real, separate sessions. One machine here has both shapes, a handoff
+    with nothing after it and a handoff followed by 860 more turns.
+
+    So a session is superseded only when no user or assistant record follows
+    the marker. Records the harness writes for its own bookkeeping do not
+    count; only conversation does.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            start = max(0, size - _CLAUDE_HANDOFF_TAIL_BYTES)
+            fh.seek(start)
+            chunk = fh.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+    lines = chunk.split("\n")
+    if start > 0 and lines:
+        lines = lines[1:]  # first line is a partial record
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        kind = data.get("type")
+        if kind in ("user", "assistant"):
+            return ""  # the conversation outlived the handoff
+        if kind == "continued-in":
+            successor = data.get("continuedInSessionId")
+            return successor if isinstance(successor, str) and successor else ""
+    return ""
+
+
 def parse_claude():
     def path_from_event(data: dict) -> str:
         # cwd often only appears as raw field in early lines
@@ -352,11 +424,12 @@ def parse_claude():
             return (1, str(data.get("aiTitle") or ""), "auto")
         return None
 
-    return parse_jsonl_projects(
+    base = os.path.expanduser("~/.claude/projects/")
+    sessions = parse_jsonl_projects(
         JsonlParserConfig(
             tool_name="claude",
             agent="Claude Code",
-            base_dir=os.path.expanduser("~/.claude/projects/"),
+            base_dir=base,
             mode="nested_jsonl",
             project_filter=lambda name, _p: name.startswith("-"),
             path_from_event=path_from_event,
@@ -369,6 +442,22 @@ def parse_claude():
             require_path=True,
         )
     )
+
+    # One conversation continued across two transcripts is one session, and
+    # both files carry the same title, so listing both reads as a duplicate.
+    # The predecessor is dropped only when its successor is really on disk;
+    # otherwise the whole conversation would vanish from the listing.
+    by_id = {sess.session_id: sess for sess in sessions if sess.session_id}
+    superseded: set[str] = set()
+    for session_id, file_path in _claude_transcript_paths(base).items():
+        if session_id not in by_id:
+            continue
+        successor = _claude_handed_off(file_path)
+        if successor and successor in by_id:
+            superseded.add(session_id)
+    if not superseded:
+        return sessions
+    return [s for s in sessions if s.session_id not in superseded]
 
 
 def parse_droid():
