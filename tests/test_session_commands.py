@@ -234,7 +234,7 @@ class SessionPreviewTest(unittest.TestCase):
             title="fix the login bug", session_id="fork-a", tool_name="claude",
         )
 
-    def test_preview_is_the_whole_conversation_with_role_headers(self):
+    def test_preview_is_the_conversation_without_labels_or_tool_detail(self):
         from quiver.sessions.commands import _session_preview
 
         lines = [strip_ansi(line) for line in _session_preview(self.session)]
@@ -242,26 +242,60 @@ class SessionPreviewTest(unittest.TestCase):
             "4 messages",
             "~/.claude/projects/-work-project/fork-a.jsonl",
             "",
-            "you",
             "fix the",
             "login bug",
             "",
-            "ai",
             "Looking at auth.py now.",
-            "  ⚙ Read: auth.py",
+            "  called 1 tool",
             "",
-            "you",
             "ship it",
         ])
 
-    def test_role_headers_and_tool_lines_carry_colour_but_prompts_do_not(self):
+    def test_a_run_of_tool_calls_collapses_to_one_count(self):
+        import json
+
+        from quiver.sessions.commands import _session_preview
+
+        path = self.home / ".claude/projects/-work-project/fork-a.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in [
+            {"type": "user", "message": {"role": "user", "content": "go"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "On it."},
+                {"type": "tool_use", "name": "Read", "input": {"path": "a.py"}},
+                {"type": "tool_use", "name": "Read", "input": {"path": "b.py"}},
+                {"type": "tool_use", "name": "Edit", "input": {"path": "c.py"}},
+            ]}},
+        ]))
+        lines = [strip_ansi(line) for line in _session_preview(self.session)]
+        self.assertIn("  called 3 tools", lines)
+        self.assertEqual(1, sum(1 for line in lines if "called" in line))
+        # No argument survives: their bulk is what made the view unreadable.
+        self.assertFalse([line for line in lines if ".py" in line])
+
+    def test_a_trailing_run_of_tool_calls_is_still_counted(self):
+        import json
+
+        from quiver.sessions.commands import _session_preview
+
+        path = self.home / ".claude/projects/-work-project/fork-a.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in [
+            {"type": "user", "message": {"role": "user", "content": "go"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "name": "Read", "input": {"path": "a.py"}},
+            ]}},
+        ]))
+        lines = [strip_ansi(line) for line in _session_preview(self.session)]
+        self.assertEqual("  called 1 tool", lines[-1])
+
+    def test_a_prompt_is_painted_and_nothing_else_is(self):
+        from quiver.console import COLORS
+
         from quiver.sessions.commands import _session_preview
 
         lines = _session_preview(self.session)
-        self.assertNotIn("\x1b[", lines[1])         # source path wraps, never cut
-        self.assertIn("\x1b[", lines[3])            # "you" header
-        self.assertNotIn("\x1b[", lines[4])         # a prompt goes out as typed
-        self.assertIn("\x1b[", lines[9])            # tool line
+        self.assertNotIn("\x1b[", lines[1])                 # source path, never cut
+        painted = [strip_ansi(x) for x in lines if x.startswith(COLORS["user_bg"])]
+        self.assertEqual(["fix the", "login bug", "ship it"], painted)
 
     def test_an_assistant_body_is_rendered_as_markdown(self):
         import json
