@@ -20,6 +20,7 @@ import sys
 from itertools import islice
 from pathlib import Path
 
+from quiver import keys
 from quiver.console import c, elide, strip_ansi, truncate, visible_len
 from quiver.find.entries import HIDE_DIRS, TEXT_SUFFIXES, Entry
 from quiver.find.highlight import highlight
@@ -52,30 +53,30 @@ def _supported() -> bool:
     return True
 
 
-def _read_key(fd: int) -> str:
-    """One keypress, with arrow escape sequences collapsed to a word."""
-    import os
+# Right descends and left comes back, so the two horizontal arrows carry
+# this browser's verbs rather than the shared "left" and "right".
+ARROWS = {b"[C": "open", b"OC": "open", b"[D": "back", b"OD": "back"}
 
-    ch = os.read(fd, 1)
-    if not ch:
-        # stdin closed under us; treating that as a quit stops the loop from
-        # spinning on an endless stream of empty reads.
-        return "cancel"
-    if ch == b"\x1b":                     # escape: maybe an arrow
-        rest = os.read(fd, 2)
-        return {b"[A": "up", b"[B": "down",
-                b"[C": "open", b"[D": "back"}.get(rest, "escape")
-    return {
-        b"\r": "open", b"\n": "open",
-        b"\x03": "cancel", b"q": "cancel",
-        b"k": "up", b"j": "down",
-        b"l": "open", b"h": "back",
-        b"g": "top", b"G": "bottom",
-        # Two dividers, so two pairs. Square brackets sit next to each
-        # other and read as "push this edge left / right".
-        b"[": "wider_parent", b"]": "narrower_parent",
-        b"{": "wider_preview", b"}": "narrower_preview",
-    }.get(ch, "")
+LETTERS = {
+    b"\r": "open", b"\n": "open",
+    b"l": "open", b"h": "back",
+    b"g": "top", b"G": "bottom",
+    # Two dividers, so two pairs. Square brackets sit next to each
+    # other and read as "push this edge left / right".
+    b"[": "wider_parent", b"]": "narrower_parent",
+    b"{": "wider_preview", b"}": "narrower_preview",
+}
+
+
+def _read_key(fd: int) -> str:
+    """One keypress, with escape sequences collapsed to a word.
+
+    Thin over ``keys.read_key``, so a wheel notch scrolls the pane and an
+    unknown sequence is dropped rather than read as a cancel. Note that a
+    bare "[" is a plain byte and still resizes: only the bytes *after* an
+    Esc go through the sequence table.
+    """
+    return keys.read_key(fd, LETTERS, ARROWS)
 
 
 def _human_size(n: float) -> str:
@@ -455,7 +456,10 @@ def browse(roots: list[Entry], title: str = "") -> int:
     height, width = measure()
     try:
         tty.setraw(fd)
-        sys.stdout.write("\x1b[?25l")     # hide the caret while redrawing
+        # Caret off while redrawing, wheel on for the whole browse. The
+        # switches are writes to stdout, so the select wait below, which
+        # watches stdin, is untouched by them.
+        sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
             entries = levels[-1]
             cursor = min(cursors[-1], max(0, len(entries) - 1))
@@ -523,8 +527,10 @@ def browse(roots: list[Entry], title: str = "") -> int:
                     trail.append(entry.label)
     finally:
         # Every exit path, exception included: a shell left in raw mode is a
-        # far worse outcome than an unfinished browse.
-        sys.stdout.write("\x1b[?25h")
+        # far worse outcome than an unfinished browse. Tracking goes off
+        # before the termios restore, because a shell left reporting the
+        # wheel spews escape sequences at the prompt on every scroll.
+        sys.stdout.write(keys.MOUSE_OFF + "\x1b[?25h")
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         if previous_winch is not None:
             try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from quiver.reports.models import FollowUp
@@ -54,18 +55,25 @@ class FollowUpWorkTest(unittest.TestCase):
             choose_work_action(None, lambda _: "")
 
     def test_resume_uses_newest_referenced_session(self):
+        # A codex session id is the rollout file's stem; `codex resume` wants
+        # the thread uuid at the end of it.
+        new = "rollout-2026-09-09T14-52-42-01a084f0-b4fe-72d0-9b7b-1a5214957f73"
+        follow_up = replace(self.follow_up, source_session_ids=["old", new])
         sessions = [
             Session(100, "Claude", str(self.root), session_id="old", tool_name="claude"),
-            Session(300, "Codex", str(self.child), session_id="new", tool_name="codex"),
+            Session(300, "Codex", str(self.child), session_id=new, tool_name="codex"),
             Session(999, "Codex", str(self.root), session_id="unrelated", tool_name="codex"),
         ]
         plan = prepare_follow_up_work(
-            self.follow_up, mode="resume", session_loader=lambda: sessions
+            follow_up, mode="resume", session_loader=lambda: sessions
         )
         self.assertEqual(plan.action, "resume")
-        self.assertEqual(plan.source_session_id, "new")
+        self.assertEqual(plan.source_session_id, new)
         self.assertEqual(plan.cwd, str(self.child))
-        self.assertEqual(plan.launch_args, ("codex", "--resume", "new"))
+        self.assertEqual(
+            plan.launch_args,
+            ("codex", "resume", "01a084f0-b4fe-72d0-9b7b-1a5214957f73"),
+        )
         self.assertEqual(plan.prompt, "")
 
     def test_resume_rejects_unsupported_without_falling_back(self):

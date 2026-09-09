@@ -53,35 +53,110 @@ def parse_opencode():
     )
 
 
-def parse_copilot():
-    def enrich(conn, row, fields):
-        if fields.get("title"):
+_COPILOT_USER_NAMED_RE = re.compile(r"^user_named:\s*(true|false)\s*$", re.IGNORECASE)
+_COPILOT_NAME_RE = re.compile(r"^name:\s*(.*)$")
+_COPILOT_BLOCK_SCALAR_RE = re.compile(r"^[|>][-+]?\d*$")
+_COPILOT_YAML_MAX_LINES = 512
+
+
+def _copilot_workspace_meta(state_root: str, sid: str) -> tuple[bool, str]:
+    """Read ``user_named`` and ``name`` from a Copilot session's workspace.yaml.
+
+    Stdlib only: scans top-level lines for the two keys and stops as soon as
+    both are found. Missing file, missing key, or unreadable content all mean
+    ``(False, "")``. A ``name: |-`` block scalar is folded onto one line.
+    """
+    if not sid or not state_root:
+        return False, ""
+    path = os.path.join(state_root, sid, "workspace.yaml")
+    user_named: bool | None = None
+    name: str | None = None
+    block: list[str] | None = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for lineno, line in enumerate(fh):
+                if lineno >= _COPILOT_YAML_MAX_LINES:
+                    break
+                if block is not None:
+                    if not line.strip() or line[0] in " \t":
+                        block.append(line.strip())
+                        continue
+                    name = " ".join(part for part in block if part)
+                    block = None
+                if user_named is None:
+                    m = _COPILOT_USER_NAMED_RE.match(line)
+                    if m:
+                        user_named = m.group(1).lower() == "true"
+                        if name is not None:
+                            break
+                        continue
+                if name is None:
+                    m = _COPILOT_NAME_RE.match(line)
+                    if m:
+                        value = m.group(1).strip()
+                        if _COPILOT_BLOCK_SCALAR_RE.match(value):
+                            block = []
+                            continue
+                        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                            value = value[1:-1]
+                        name = value
+                        if user_named is not None:
+                            break
+        if block is not None and name is None:
+            name = " ".join(part for part in block if part)
+    except Exception:
+        return False, ""
+    return bool(user_named), name or ""
+
+
+def _copilot_fallback_title(conn, sid: str, fields: dict) -> None:
+    """Fill ``fields["title"]`` from the first turn, then the first checkpoint."""
+    try:
+        r = conn.execute(
+            """
+            SELECT user_message FROM turns
+            WHERE session_id = ? AND user_message IS NOT NULL AND user_message != ''
+            ORDER BY turn_index ASC LIMIT 1
+            """,
+            (sid,),
+        ).fetchone()
+        if r and r[0]:
+            fields["title"] = clean_title(r[0])
             return
+        r = conn.execute(
+            """
+            SELECT title FROM checkpoints
+            WHERE session_id = ?
+            ORDER BY checkpoint_number ASC LIMIT 1
+            """,
+            (sid,),
+        ).fetchone()
+        if r and r[0]:
+            fields["title"] = clean_title(r[0])
+    except Exception:
+        pass
+
+
+def parse_copilot():
+    state_root = os.path.expanduser("~/.copilot/session-state")
+
+    def enrich(conn, row, fields):
         sid = fields.get("session_id") or ""
+        from_summary = bool(fields.get("title"))
+        if not from_summary:
+            _copilot_fallback_title(conn, sid, fields)
         try:
-            r = conn.execute(
-                """
-                SELECT user_message FROM turns
-                WHERE session_id = ? AND user_message IS NOT NULL AND user_message != ''
-                ORDER BY turn_index ASC LIMIT 1
-                """,
-                (sid,),
-            ).fetchone()
-            if r and r[0]:
-                fields["title"] = clean_title(r[0])
-                return
-            r = conn.execute(
-                """
-                SELECT title FROM checkpoints
-                WHERE session_id = ?
-                ORDER BY checkpoint_number ASC LIMIT 1
-                """,
-                (sid,),
-            ).fetchone()
-            if r and r[0]:
-                fields["title"] = clean_title(r[0])
+            user_named, yaml_name = _copilot_workspace_meta(state_root, sid)
         except Exception:
-            pass
+            user_named, yaml_name = False, ""
+        if user_named:
+            if not from_summary and yaml_name:
+                fields["title"] = clean_title(yaml_name)
+            if fields.get("title"):
+                fields["title_source"] = "rename"
+                return
+        if from_summary:
+            fields["title_source"] = "auto"
 
     return parse_sqlite(
         SqliteParserConfig(
@@ -265,6 +340,18 @@ def parse_claude():
         msg = data.get("message") or {}
         return extract_user_text(msg.get("content"))
 
+    # `/rename` appends {"type": "custom-title", "customTitle": ...} and Claude
+    # Code's own auto-title appends {"type": "ai-title", "aiTitle": ...}, both
+    # after the first prompt and re-emitted on later turns. A rename beats the
+    # auto-title, which beats the first prompt.
+    def tail_title_from_event(data: dict) -> tuple[int, str, str] | None:
+        kind = data.get("type")
+        if kind == "custom-title":
+            return (2, str(data.get("customTitle") or ""), "rename")
+        if kind == "ai-title":
+            return (1, str(data.get("aiTitle") or ""), "auto")
+        return None
+
     return parse_jsonl_projects(
         JsonlParserConfig(
             tool_name="claude",
@@ -275,6 +362,7 @@ def parse_claude():
             path_from_event=path_from_event,
             path_from_project_dir=lambda name: path_from_encoded_dir(name, "-"),
             title_from_event=title_from_event,
+            tail_title_from_event=tail_title_from_event,
             title_max_len=50,
             # One row per jsonl so multi-chat projects all appear in swe session
             one_session_per_file=True,
@@ -289,11 +377,18 @@ def parse_droid():
             return data.get("cwd") or ""
         return ""
 
-    def title_from_event(data: dict) -> str:
+    # Line 1 is a ``session_start`` event rewritten in place. ``/rename``
+    # sets ``isSessionTitleManuallySet: true``; otherwise droid's auto-titler
+    # fills ``title`` after the first message or file edit. Older files only
+    # carry the "New Session" placeholder, which falls through to the first
+    # user prompt.
+    def title_from_event(data: dict) -> str | tuple[str, str]:
         if data.get("type") == "session_start":
-            start_title = (data.get("title") or "").strip()
+            start_title = str(data.get("title") or "").strip()
             if start_title and start_title.lower() != "new session":
-                return start_title
+                if data.get("isSessionTitleManuallySet") is True:
+                    return (start_title, "rename")
+                return (start_title, "auto")
             return ""
         if data.get("type") != "message":
             return ""
@@ -321,6 +416,188 @@ def parse_droid():
     )
 
 
+# Rollout files are named ``rollout-<iso timestamp>-<thread uuid>.jsonl``, and
+# the uuid is the id the session index and ``codex resume`` both use.
+_CODEX_ROLLOUT_ID_RE = re.compile(
+    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+    re.IGNORECASE,
+)
+
+
+def codex_thread_id(session_id: str) -> str:
+    """The thread uuid inside a codex session id, lower-cased, or "".
+
+    A codex ``Session.session_id`` is the rollout file's stem, because that
+    is what the transcript readers look a session up by. Everything else
+    codex exposes — the session index, the thread store, ``codex resume`` —
+    is keyed by the uuid at the end of it.
+    """
+    match = _CODEX_ROLLOUT_ID_RE.search(session_id or "")
+    return match.group(1).lower() if match else ""
+
+
+# Codex's auto-titler runs the moment the first turn completes: across every
+# thread on disk it landed 4-7 seconds after the thread's first name record,
+# while every observed ``/name`` came 7 minutes to 2 hours later. A minute is
+# well clear of both clusters.
+_CODEX_AUTO_TITLE_WINDOW_MS = 60_000
+
+
+def _codex_state_db() -> str:
+    """Newest ``~/.codex/state_<n>.sqlite``, or "" when codex has none.
+
+    The number in the filename is a schema version codex bumps on migration
+    and the old file is left behind, so the highest one is the live store.
+    """
+    best, best_n = "", -1
+    for path in glob.glob(os.path.expanduser("~/.codex/state_*.sqlite")):
+        match = re.search(r"state_(\d+)\.sqlite$", path)
+        if not match:
+            continue
+        version = int(match.group(1))
+        if version > best_n:
+            best, best_n = path, version
+    return best
+
+
+def _codex_thread_store() -> dict[str, tuple[str, str]]:
+    """Thread id -> ``(name, preview)`` from codex's own thread store.
+
+    ``name`` is the thread's display name, whatever wrote it. ``preview`` is
+    codex's record of the first message the *user* actually sent, which beats
+    scanning the rollout for one: a transcript's first user-role item is
+    often injected context (a plugin roster, an AGENTS.md) that the user
+    never typed, and codex knows which was which.
+
+    An empty ``preview`` means codex considers the thread empty, and its own
+    listing hides those (there are partial indexes named
+    ``idx_threads_visible_*`` filtering on ``preview <> ''``). They are
+    threads opened and never typed into, so there is no title to salvage.
+
+    An unreadable or absent store yields an empty map, which turns both the
+    naming and the hiding back off.
+    """
+    from quiver.sessions.engines.common import open_sqlite_ro
+
+    db_path = _codex_state_db()
+    if not db_path:
+        return {}
+    conn = open_sqlite_ro(db_path)
+    if conn is None:
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
+        if not {"id", "name", "preview"} <= cols:
+            return {}
+        for tid, name, preview in conn.execute(
+            "SELECT id, name, COALESCE(NULLIF(preview, ''), first_user_message) "
+            "FROM threads"
+            if "first_user_message" in cols
+            else "SELECT id, name, preview FROM threads"
+        ):
+            if not isinstance(tid, str) or not tid.strip():
+                continue
+            out[tid.strip().lower()] = (
+                name.strip() if isinstance(name, str) else "",
+                preview.strip() if isinstance(preview, str) else "",
+            )
+    except Exception:
+        return {}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return out
+
+
+def _codex_index_history() -> dict[str, tuple[list[str], float]]:
+    """Thread id -> ``(names, span_ms)`` from ``~/.codex/session_index.jsonl``.
+
+    Codex keeps thread names outside the rollout transcript and appends
+    ``{"id", "thread_name", "updated_at"}`` here every time one changes, so
+    the last record for an id is the name its TUI shows and the ones before
+    it are the names it replaced.
+
+    ``names`` drops consecutive duplicates, because codex re-emits the
+    current name on events that did not rename anything, and ``span_ms`` is
+    the wall time from a thread's first record to its last. Ids are
+    lower-cased so a lookup keyed off the rollout filename matches whatever
+    case either side wrote.
+    """
+    path = os.path.expanduser("~/.codex/session_index.jsonl")
+    names: dict[str, list[str]] = {}
+    span: dict[str, list[float]] = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                sid = entry.get("id")
+                name = entry.get("thread_name")
+                if not isinstance(sid, str) or not sid.strip():
+                    continue
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                sid = sid.strip().lower()
+                name = name.strip()
+                seq = names.setdefault(sid, [])
+                if not seq or seq[-1] != name:
+                    seq.append(name)
+                ends = span.setdefault(sid, [])
+                ts = parse_iso_ts(entry.get("updated_at")) or 0.0
+                if not ends:
+                    ends.append(ts)
+                elif len(ends) == 1:
+                    ends.append(ts)
+                else:
+                    ends[1] = ts
+    except Exception:
+        return {}
+    return {
+        sid: (seq, (span[sid][-1] - span[sid][0]) if sid in span else 0.0)
+        for sid, seq in names.items()
+    }
+
+
+def _codex_is_rename(names: list[str], span_ms: float, first_prompt: str) -> bool:
+    """Whether a codex thread's current name was typed rather than generated.
+
+    Three writers share the one ``thread_name`` field with no marker: codex
+    stamps a prefix of the first prompt when the turn starts, replaces it
+    with a generated title seconds later, and ``/name`` overwrites it
+    whenever the user asks. What separates them is that codex only ever
+    writes those two, in that order, and does so immediately:
+
+    - A sequence longer than codex's own two entries has to end in a rename.
+      When the first entry is not a prefix of the first prompt, codex skipped
+      the placeholder and its budget is one entry, not two.
+    - Codex's generated title lands within seconds of the placeholder. A last
+      record a minute or more after the first one outlived that window, so a
+      user wrote it.
+
+    Both clauses are timing and shape arguments rather than a flag codex
+    records, so this under-marks rather than over-marks: a rename that leaves
+    a single record inside the window reads as a generated title. Across the
+    threads this was calibrated on it marked every rename it claimed and
+    missed none that had a second record.
+    """
+    if not names:
+        return False
+    prompt = (first_prompt or "").strip().lower()
+    placeholder = bool(prompt) and prompt.startswith(names[0].strip().lower())
+    if len(names) > (2 if placeholder else 1):
+        return True
+    return span_ms > _CODEX_AUTO_TITLE_WINDOW_MS
+
+
 def parse_codex():
     def path_from_event(data: dict) -> str:
         if data.get("type") == "session_meta":
@@ -336,7 +613,7 @@ def parse_codex():
             return ""
         return extract_user_text(payload.get("content"))
 
-    return parse_jsonl_projects(
+    sessions = parse_jsonl_projects(
         JsonlParserConfig(
             tool_name="codex",
             agent="Codex CLI",
@@ -349,6 +626,44 @@ def parse_codex():
             require_path=True,
         )
     )
+
+    # A codex thread's name lives outside its rollout, in two places that say
+    # different halves of the truth: the store holds the current name and
+    # whether the thread was ever used, the index holds the history that says
+    # whether a name was typed or generated. Either being unreadable degrades
+    # to what the other knows, and a thread neither has heard of keeps the
+    # first-prompt title the transcript scan produced.
+    store = _codex_thread_store()
+    history = _codex_index_history()
+    if not store and not history:
+        return sessions
+
+    kept: list[Session] = []
+    for sess in sessions:
+        tid = codex_thread_id(sess.session_id)
+        stored_name, preview = store.get(tid, ("", ""))
+        # Only the store can say a thread was never used, so a thread it has
+        # never heard of is kept rather than guessed at.
+        if tid in store and not preview:
+            continue
+        names, span_ms = history.get(tid, ([], 0.0))
+        # The store holds the live name; the index is the audit trail behind
+        # it and stands in when the store has none. With no name at all,
+        # codex's own note of the first user message still beats the
+        # transcript scan, which cannot tell a typed prompt from injected
+        # context. That fallback is nobody's chosen title, so it stays
+        # unmarked however the name above it was written.
+        title = clean_title(stored_name or (names[-1] if names else ""), 80)
+        if title:
+            sess.title = title
+            if _codex_is_rename(names, span_ms, preview):
+                sess.title_source = "rename"
+        elif preview:
+            fallback = clean_title(preview, 80)
+            if fallback:
+                sess.title = fallback
+        kept.append(sess)
+    return kept
 
 
 def parse_pi():
@@ -374,6 +689,23 @@ def parse_pi():
             inner = inner[1:]
         return "/" + inner.replace("-", "/")
 
+    # `/name <name>` (and `pi --name`) appends {"type": "session_info",
+    # "name": ...} after the first prompt; it can be repeated and pi's own
+    # reader takes the latest one. Pi has no auto-titler, so every
+    # session_info name is user-set. Limitation: pi clears a name with
+    # {"name": ""}, but the engine drops empty text, so a clear that follows
+    # an earlier name still surfaces that earlier name as a rename.
+    def tail_title_from_event(data: dict) -> tuple[int, str, str] | None:
+        if data.get("type") != "session_info":
+            return None
+        name = data.get("name")
+        if not isinstance(name, str):
+            return None
+        name = name.strip()
+        if not name:
+            return None
+        return (2, name, "rename")
+
     return parse_jsonl_projects(
         JsonlParserConfig(
             tool_name="pi",
@@ -384,12 +716,35 @@ def parse_pi():
             path_from_event=path_from_event,
             path_from_project_dir=path_from_project_dir,
             title_from_event=title_from_event,
+            tail_title_from_event=tail_title_from_event,
             title_max_len=50,
             one_session_per_file=False,
             session_id_from_path=lambda fp: fp,  # historical: full path as id
             require_path=True,
         )
     )
+
+
+def _tau_index_title(entry: dict) -> tuple[str, str]:
+    """``(title, source)`` from a tau ``index.jsonl`` record.
+
+    Tau has no auto-titler: ``/name <text>`` is the only writer of a
+    record's ``title``, so a non-empty string is a user rename. The one
+    exception is ``get_or_create_default_session``, which stamps the
+    literal ``"Default session"`` on ids of the form ``default-<hash>``;
+    that placeholder yields ``("", "")`` so the transcript's first prompt
+    stands in, the same as any untitled session.
+    """
+    try:
+        title = entry.get("title")
+        sid = entry.get("id")
+    except Exception:
+        return "", ""
+    if not isinstance(title, str) or not title.strip():
+        return "", ""
+    if title == "Default session" and isinstance(sid, str) and sid.startswith("default-"):
+        return "", ""
+    return title, "rename"
 
 
 def parse_tau():
@@ -403,7 +758,7 @@ def parse_tau():
             index_basename="index.jsonl",
             get_id=lambda e: str(e.get("id") or ""),
             get_path=lambda e: e.get("cwd") or e.get("path") or "",
-            get_title=lambda e: e.get("title") or "",
+            get_title=_tau_index_title,
             get_ts=lambda e: (
                 parse_iso_ts(e.get("updated_at"))
                 or parse_iso_ts(e.get("created_at"))
@@ -424,6 +779,35 @@ def _tau_title_from_event(data: dict) -> str:
     if msg.get("role") != "user":
         return ""
     return extract_user_text(msg.get("content"))
+
+
+def _kimi_title_state(sess_dir: str) -> tuple[str, bool]:
+    """``(custom_title, title_generated)`` from a kimi session's sidecar.
+
+    kimi-cli >= 1.39 writes ``<sess_dir>/state.json`` with ``custom_title``
+    and ``title_generated``; ``/title`` (alias ``/rename``) sets both, the
+    automatic first-prompt title sets ``custom_title`` only. Older builds
+    kept the same pair as ``title`` / ``title_generated`` in
+    ``metadata.json``, which the CLI migrates away, so it is read only when
+    ``state.json`` is absent. Any unreadable or titleless file yields
+    ``("", False)`` so the first-message title stands.
+    """
+    for name, key in (("state.json", "custom_title"), ("metadata.json", "title")):
+        path = os.path.join(sess_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return "", False
+        if not isinstance(data, dict):
+            return "", False
+        title = data.get(key)
+        if not isinstance(title, str) or not title.strip():
+            return "", False
+        return title, data.get("title_generated") is True
+    return "", False
 
 
 def parse_kimi():
@@ -459,6 +843,17 @@ def parse_kimi():
     def path_from_project_dir(name: str) -> str:
         return hash_to_path.get(name, "") or ""
 
+    def enrich_session(fields: dict, sess_dir: str, proj_name: str) -> None:
+        # A rename never touches context.jsonl; it lives in the sidecar.
+        custom_title, generated = _kimi_title_state(sess_dir)
+        if not custom_title:
+            return
+        title = clean_title(custom_title)
+        if not title:
+            return
+        fields["title"] = title
+        fields["title_source"] = "rename" if generated else ""
+
     return parse_jsonl_projects(
         JsonlParserConfig(
             tool_name="kimi",
@@ -468,10 +863,129 @@ def parse_kimi():
             path_from_project_dir=path_from_project_dir,
             title_from_event=title_from_event,
             primary_files={"context.jsonl"},
+            enrich_session=enrich_session,
             require_path=False,
             default_path=os.path.expanduser("~"),
         )
     )
+
+
+def _cursor_meta(session_id: str) -> dict:
+    """The Cursor CLI's own record for a session, or {} when there is none.
+
+    The CLI writes ``~/.cursor/chats/<workspace-hash>/<session-id>/meta.json``
+    with ``cwd``, ``title``, ``createdAtMs`` and ``updatedAtMs``. The
+    workspace hash is opaque, so the file is found by scanning one level.
+    """
+    chats_dir = os.path.expanduser("~/.cursor/chats")
+    if not session_id or not os.path.isdir(chats_dir):
+        return {}
+    try:
+        with os.scandir(chats_dir) as it:
+            for entry in it:
+                meta_path = os.path.join(entry.path, session_id, "meta.json")
+                if not os.path.isfile(meta_path):
+                    continue
+                with open(meta_path) as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _tool_paths_dir(tool_paths: list[str]) -> str:
+    """A directory-shaped path from the first tool-call paths, or "".
+
+    The common prefix of two or more distinct paths is a directory by
+    construction. When the prefix is one of the paths itself (a single call,
+    or the same file repeated) it is the file the agent touched, so its parent
+    is used. Existence is checked where it can be, but a project that has
+    since moved still yields a directory rather than a file.
+    """
+    if not tool_paths:
+        return ""
+    try:
+        common = os.path.commonpath(tool_paths)
+    except ValueError:
+        return ""
+    if not common:
+        return ""
+    if os.path.isdir(common):
+        return common
+    if os.path.isfile(common) or common in tool_paths:
+        return os.path.dirname(common)
+    return common
+
+
+def _under(path: str, root: str) -> bool:
+    """True when ``path`` is ``root`` or lives inside it."""
+    if not path or not root:
+        return False
+    root = root.rstrip(os.sep)
+    return path == root or path.startswith(root + os.sep)
+
+
+def _cursor_session_dir(
+    enc_entry_path: str, tool_paths: list[str], meta: dict
+) -> str:
+    """Directory a Cursor session ran in. Never a file.
+
+    Signals in priority order:
+
+    1. ``meta["cwd"]``, recorded by the Cursor CLI in the session's meta.json.
+    2. The common prefix of the first tool-call paths, collapsed to a
+       directory. Anything under ``~/.cursor`` is the harness's own config
+       and is kept only as a last resort.
+    3. The encoded project folder name (``Users-foo-bar`` -> ``/Users/foo/bar``)
+       when that path exists. Decoding is lossy, so it is only trusted when
+       the directory is really there. An existing decoded folder outranks a
+       tool-path directory that no longer exists.
+    4. ``enc_entry_path`` itself, so nothing regresses.
+    """
+    cwd = meta.get("cwd", "") if isinstance(meta, dict) else ""
+    if isinstance(cwd, str) and cwd.strip():
+        cwd = cwd.strip()
+        if os.path.isfile(cwd):
+            cwd = os.path.dirname(cwd)
+        return cwd
+
+    cursor_home = os.path.expanduser("~/.cursor")
+    tool_dir = _tool_paths_dir(tool_paths)
+    tool_dir_is_project = bool(tool_dir) and not _under(tool_dir, cursor_home)
+    if tool_dir_is_project and os.path.isdir(tool_dir):
+        return tool_dir
+
+    decoded = path_from_encoded_dir(os.path.basename(enc_entry_path), strip_prefix="")
+    if decoded and os.path.isdir(decoded) and not _under(decoded, cursor_home):
+        return decoded
+
+    if tool_dir_is_project:
+        return tool_dir
+    if tool_dir and os.path.isdir(tool_dir):
+        return tool_dir
+    return enc_entry_path
+
+
+_CURSOR_TIMESTAMP_RE = re.compile(r"<timestamp>.*?</timestamp>", re.DOTALL)
+_CURSOR_USER_QUERY_RE = re.compile(r"</?user_query>")
+
+
+def _cursor_session_title(first_user_text: str, meta: dict) -> str:
+    """Title for a Cursor session.
+
+    Prefer the CLI's own ``title`` from ``meta.json``. Otherwise the Cursor
+    CLI wraps each stored prompt as ``<timestamp>...</timestamp>`` followed
+    by ``<user_query>...</user_query>``; drop the timestamp element with its
+    content and unwrap the query before the usual cleaning. Legacy
+    transcripts without the wrapper pass straight through ``clean_title``.
+    """
+    meta_title = meta.get("title") if isinstance(meta, dict) else None
+    if isinstance(meta_title, str) and meta_title.strip():
+        return clean_title(meta_title, 80)
+    text = _CURSOR_TIMESTAMP_RE.sub("", first_user_text or "")
+    text = _CURSOR_USER_QUERY_RE.sub("", text)
+    return clean_title(text, 80)
 
 
 def parse_cursor():
@@ -500,7 +1014,7 @@ def parse_cursor():
                             mtime = get_mtime(jsonl_path)
                             if mtime == 0:
                                 continue
-                            title = ""
+                            first_user_text = ""
                             all_paths: list[str] = []
                             try:
                                 with open(jsonl_path) as f:
@@ -510,8 +1024,8 @@ def parse_cursor():
                                         data = json.loads(line)
                                         role = data.get("role", "")
                                         content = data.get("message", {}).get("content", "")
-                                        if role == "user" and not title:
-                                            title = clean_title(extract_user_text(content), 80)
+                                        if role == "user" and not first_user_text:
+                                            first_user_text = extract_user_text(content)
                                         if isinstance(content, list):
                                             for block in content:
                                                 inp = block.get("input", {})
@@ -519,24 +1033,17 @@ def parse_cursor():
                                                     p = inp.get("path", "")
                                                     if p and p.startswith(home):
                                                         all_paths.append(p)
-                                        if title and len(all_paths) >= 5:
+                                        if first_user_text and len(all_paths) >= 5:
                                             break
                             except Exception:
                                 pass
-                            path = ""
-                            if all_paths:
-                                try:
-                                    path = os.path.commonpath(all_paths)
-                                except ValueError:
-                                    pass
-                            if not path:
-                                path = enc_entry.path
+                            meta = _cursor_meta(uuid_entry.name)
                             sessions.append(
                                 Session(
                                     timestamp=mtime,
                                     agent="Cursor",
-                                    path=path,
-                                    title=title,
+                                    path=_cursor_session_dir(enc_entry.path, all_paths, meta),
+                                    title=_cursor_session_title(first_user_text, meta),
                                     session_id=uuid_entry.name,
                                     tool_name="cursor",
                                 )
@@ -772,6 +1279,33 @@ def parse_hermes():
     )
 
 
+def _grok_flag_is_true(value) -> bool:
+    """summary.json ``title_is_manual`` is a bool; accept "true"/"1" defensively."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1")
+    return False
+
+
+def _grok_title_source(entry) -> str:
+    """"rename" for a manual /rename, "auto" for a generated title, else ""."""
+    if not isinstance(entry, dict):
+        return ""
+    generated = entry.get("generated_title")
+    summary = entry.get("session_summary")
+    title = generated or summary or ""
+    if not isinstance(title, str) or not title.strip():
+        return ""
+    if _grok_flag_is_true(entry.get("title_is_manual")):
+        return "rename"
+    if isinstance(generated, str) and generated.strip():
+        return "auto"
+    return ""
+
+
 def parse_grok():
     def path_from_parent(enc: str) -> str:
         decoded = unquote(enc)
@@ -816,6 +1350,8 @@ def parse_grok():
             ts = max(ts, get_mtime(candidate))
         if ts:
             fields["timestamp"] = ts
+        if fields.get("title"):
+            fields["title_source"] = _grok_title_source(entry)
 
     return parse_json_store(
         JsonParserConfig(
@@ -899,12 +1435,70 @@ def parse_gemini():
     )
 
 
+def _antigravity_conversation_names() -> dict[str, tuple[str, str]]:
+    """Map conversation_id -> (title, preview) from the antigravity-cli store.
+
+    ``title`` is set only by the user's ``/rename``; ``preview`` is either an
+    auto-generated title or the raw first prompt, so it cannot be told apart.
+    Reads the SQLite sidecar first and falls back to the JSON cache mirror.
+    Any failure degrades to an empty map.
+    """
+    from quiver.sessions.engines.common import open_sqlite_ro
+
+    names: dict[str, tuple[str, str]] = {}
+    db_path = os.path.expanduser("~/.gemini/antigravity-cli/conversation_summaries.db")
+    conn = open_sqlite_ro(db_path)
+    if conn is not None:
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(conversation_summaries)")}
+            if {"conversation_id", "title", "preview"} <= cols:
+                rows = conn.execute(
+                    "SELECT conversation_id, title, preview FROM conversation_summaries"
+                )
+                for cid, title, preview in rows:
+                    if not cid:
+                        continue
+                    names[str(cid)] = (
+                        clean_title(title) if isinstance(title, str) else "",
+                        clean_title(preview) if isinstance(preview, str) else "",
+                    )
+        except Exception:
+            names = {}
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if names:
+            return names
+    mirror = os.path.expanduser("~/.gemini/antigravity-cli/cache/conversation_metadata.json")
+    try:
+        with open(mirror) as f:
+            data = json.load(f)
+        convs = data.get("conversations") if isinstance(data, dict) else None
+        if isinstance(convs, dict):
+            for cid, entry in convs.items():
+                summary = entry.get("summary") if isinstance(entry, dict) else None
+                if not isinstance(summary, dict):
+                    continue
+                title = summary.get("Title")
+                preview = summary.get("Preview")
+                names[str(cid)] = (
+                    clean_title(title) if isinstance(title, str) else "",
+                    clean_title(preview) if isinstance(preview, str) else "",
+                )
+    except Exception:
+        pass
+    return names
+
+
 def parse_antigravity():
     def custom() -> list[Session]:
         sessions: list[Session] = []
         brain_dir = os.path.expanduser("~/.gemini/antigravity/brain/")
         if not os.path.exists(brain_dir):
             return sessions
+        names = _antigravity_conversation_names()
         try:
             # ⚡ Bolt: Using os.scandir to reduce stat syscalls
             with os.scandir(brain_dir) as d_entry_it:
@@ -943,6 +1537,13 @@ def parse_antigravity():
                                 path = match.group(1)
                         except Exception:
                             pass
+                    title_source = ""
+                    renamed, preview = names.get(d_entry.name, ("", ""))
+                    if renamed:
+                        title = renamed
+                        title_source = "rename"
+                    elif not title and preview:
+                        title = preview
                     if path:
                         sessions.append(
                             Session(
@@ -952,6 +1553,7 @@ def parse_antigravity():
                                 title=title,
                                 session_id="",
                                 tool_name="antigravity",
+                                title_source=title_source,
                             )
                         )
         except Exception:

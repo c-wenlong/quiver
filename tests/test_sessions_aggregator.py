@@ -107,6 +107,28 @@ class SessionsAggregatorTest(unittest.TestCase):
                 self.assertEqual(loaded[0].tool_name, "claude")
                 self.assertEqual(loaded[1].timestamp, 200)
 
+    def test_cache_keeps_title_source_and_tolerates_old_payloads(self):
+        import json
+        from quiver.sessions.aggregator import _save_cached_sessions, _load_cached_sessions
+
+        fake = [
+            Session(timestamp=100, agent="a", path="/a", title="t1", session_id="s1",
+                    tool_name="claude", title_source="rename"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_file = Path(tmp) / "session_cache.json"
+            with patch("quiver.sessions.aggregator.SESSION_CACHE_FILE", cache_file):
+                _save_cached_sessions(fake)
+                loaded = _load_cached_sessions()
+                self.assertEqual(loaded[0].title_source, "rename")
+
+                # A cache written before title_source existed still loads.
+                data = json.loads(cache_file.read_text())
+                del data["sessions"][0]["title_source"]
+                cache_file.write_text(json.dumps(data))
+                loaded = _load_cached_sessions()
+                self.assertEqual(loaded[0].title_source, "")
+
     def test_cache_expires_after_ttl(self):
         """Stale cache returns None, forcing re-parse."""
         import json

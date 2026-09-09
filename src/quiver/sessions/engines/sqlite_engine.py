@@ -33,7 +33,10 @@ class SqliteParserConfig:
     path_fallback: int | None = None
     require_path: bool = True
     default_path: str | None = None
-    # Optional row post-processor: (conn, row, session_fields_dict) -> None
+    # Optional row post-processor: (conn, row, session_fields_dict) -> None.
+    # The dict carries every Session attribute, including ``title_source``
+    # ("" | "rename" | "auto"); set it here when the row says where the
+    # title came from.
     enrich: Callable[[Any, tuple, dict], None] | None = None
     # Optional transform of raw title
     title_transform: Callable[[str], str] | None = None
@@ -76,6 +79,7 @@ def parse_sqlite(config: SqliteParserConfig) -> list[Session]:
                 "title": title,
                 "session_id": sid,
                 "tool_name": config.tool_name,
+                "title_source": "",
             }
             if config.enrich:
                 try:

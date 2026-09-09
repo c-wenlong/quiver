@@ -2342,7 +2342,15 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
         )
         observed = []
         req = urllib.request.Request("https://api.anthropic.com/api/oauth/usage")
+        # The retry is only attempted when a real CA bundle is available;
+        # without one the helper refuses to send the bearer token at all and
+        # never makes a second request. That store comes from certifi, which
+        # is not a dependency of this package, so pin it here rather than
+        # letting the assertion depend on what happens to be installed.
         with patch(
+            "quiver.harness.rate_limits._verified_context",
+            return_value=ssl.create_default_context(),
+        ), patch(
             "quiver.harness.rate_limits.urllib.request.urlopen",
             side_effect=[ssl_error, http_error],
         ):
