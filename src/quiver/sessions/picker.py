@@ -28,7 +28,7 @@ import sys
 from typing import Callable
 
 from quiver import keys
-from quiver.console import c, strip_ansi, truncate, wrap_ansi
+from quiver.console import COLORS, c, fill_ansi, strip_ansi, truncate, wrap_ansi
 
 FOOTER = "  ↑↓ move · enter resume · q quit"
 PREVIEW_HINT = " · space preview"
@@ -135,7 +135,19 @@ def _wrap(line: str, width: int) -> list[str]:
     closes any open colour at a break and re-opens it on the continuation
     line, so a bold heading or a cyan code span that wraps keeps its style
     without bleeding into the row below.
+
+    A line painted with a background is filled out to the full width, on
+    every row it wraps to. Left ragged, the shading would stop at the last
+    word and read as a highlighted phrase rather than a highlighted turn;
+    a blank line inside a prompt has to become a full bar too, or the slab
+    would be cut in half by its own paragraph breaks.
     """
+    if line.startswith(COLORS["user_bg"]):
+        bar = c("user_bg", " " * width)
+        return [
+            fill_ansi(row, width) if strip_ansi(row).strip() else bar
+            for row in wrap_ansi(line, width) or [""]
+        ]
     if not line.strip():
         return [""]
     return wrap_ansi(line, width) or [""]

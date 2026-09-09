@@ -10,7 +10,7 @@ styled run closes the run and re-opens it on the next line.
 import textwrap
 import unittest
 
-from quiver.console import c, strip_ansi, visible_len, wrap_ansi
+from quiver.console import COLORS, c, fill_ansi, lpad, strip_ansi, visible_len, wrap_ansi
 
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
@@ -137,6 +137,39 @@ class AnsiWrapTest(unittest.TestCase):
         joined = "".join(strip_ansi(line) for line in wrap_ansi(text, 7))
         self.assertEqual(joined.replace(" ", ""),
                          strip_ansi(text).replace(" ", ""))
+
+
+
+class FillAnsiTest(unittest.TestCase):
+    """Padding a styled line has to land inside the style, not after it."""
+
+    def test_padding_goes_before_the_reset_so_a_background_covers_it(self):
+        filled = fill_ansi(c("user_bg", "hi"), 10)
+        self.assertEqual(10, visible_len(filled))
+        self.assertTrue(filled.endswith(COLORS["reset"]))
+        # lpad puts the spaces outside the run, which leaves the row bare
+        # past the last word; that is the bug this exists to avoid.
+        self.assertNotEqual(strip_ansi(lpad(c("user_bg", "hi"), 10)), "")
+        self.assertIn(" " * 8 + COLORS["reset"], filled)
+
+    def test_a_plain_line_is_padded_on_the_end(self):
+        self.assertEqual("hi        ", fill_ansi("hi", 10))
+
+    def test_a_line_already_at_or_over_the_width_is_untouched(self):
+        self.assertEqual("abcdefghij", fill_ansi("abcdefghij", 10))
+        self.assertEqual("abcdefghijk", fill_ansi("abcdefghijk", 10))
+
+    def test_an_empty_styled_line_becomes_a_full_bar(self):
+        bar = fill_ansi(c("user_bg", ""), 6)
+        self.assertEqual(6, visible_len(bar))
+        self.assertEqual(" " * 6, strip_ansi(bar))
+
+    def test_it_survives_a_wrap(self):
+        # wrap_ansi re-opens the run on each continuation line, so every row
+        # can be filled independently and still close its own style.
+        rows = wrap_ansi(c("user_bg", "one two three four five"), 9)
+        for row in rows:
+            self.assertEqual(9, visible_len(fill_ansi(row, 9)))
 
 
 if __name__ == "__main__":

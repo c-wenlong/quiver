@@ -10,7 +10,7 @@ import io
 import unittest
 from unittest.mock import Mock, patch
 
-from quiver.console import c, strip_ansi, visible_len
+from quiver.console import COLORS, c, strip_ansi, visible_len
 from quiver.sessions import picker
 
 
@@ -475,6 +475,52 @@ class RestoreTest(unittest.TestCase):
         _, out, restore = drive(["enter"])
         self.assertEqual(restore.call_count, 1)
         self.assertTrue(out.endswith("\x1b[?25h"))
+
+
+
+class TranscriptWrapTest(unittest.TestCase):
+    """A painted prompt has to read as a block, not a highlighted phrase."""
+
+    WIDTH = 30
+
+    def _wrap(self, line):
+        return picker._wrap(line, self.WIDTH)
+
+    def test_a_short_prompt_still_fills_the_row(self):
+        rows = self._wrap(c("user_bg", "hi"))
+        self.assertEqual(1, len(rows))
+        self.assertEqual(self.WIDTH, visible_len(rows[0]))
+        self.assertEqual("hi" + " " * (self.WIDTH - 2), strip_ansi(rows[0]))
+
+    def test_every_wrapped_row_of_a_long_prompt_is_filled(self):
+        rows = self._wrap(c("user_bg", "word " * 20))
+        self.assertGreater(len(rows), 1)
+        for row in rows:
+            self.assertEqual(self.WIDTH, visible_len(row))
+            self.assertTrue(row.startswith(COLORS["user_bg"]), row)
+
+    def test_a_blank_line_inside_a_prompt_becomes_a_full_bar(self):
+        # Otherwise a paragraph break would cut the slab in half.
+        rows = self._wrap(c("user_bg", ""))
+        self.assertEqual(1, len(rows))
+        self.assertEqual(self.WIDTH, visible_len(rows[0]))
+        self.assertEqual(" " * self.WIDTH, strip_ansi(rows[0]))
+
+    def test_the_paint_closes_on_every_row(self):
+        # An unclosed background would bleed down the rest of the screen.
+        for row in self._wrap(c("user_bg", "word " * 20)):
+            self.assertTrue(row.endswith(COLORS["reset"]), repr(row))
+
+    def test_unpainted_lines_are_left_ragged(self):
+        rows = self._wrap("an assistant sentence")
+        self.assertEqual(["an assistant sentence"], rows)
+
+    def test_a_blank_unpainted_line_stays_blank(self):
+        self.assertEqual([""], self._wrap(""))
+
+    def test_a_styled_but_unpainted_line_is_not_filled(self):
+        row = self._wrap(c("cyan", "code span"))[0]
+        self.assertEqual(len("code span"), visible_len(row))
 
 
 if __name__ == "__main__":

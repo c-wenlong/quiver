@@ -1,5 +1,6 @@
 """Terminal output helpers (ANSI colors, padding, truncation)."""
 
+import os
 import re
 
 COLORS = {
@@ -16,6 +17,12 @@ COLORS = {
     "neon": "\033[38;5;51m",
     "neon_pink": "\033[38;5;201m",
     "neon_green": "\033[38;5;118m",
+    # A quiet block behind the user's own turns in the transcript view, the
+    # way a chat UI shades what you typed. Grey 238 on the xterm ramp reads
+    # as a soft slab on a dark terminal without competing with the text;
+    # SWE_USER_BG overrides it with a raw SGR for a light terminal, where a
+    # dark slab would need to go the other way (e.g. "\033[48;5;253m").
+    "user_bg": os.environ.get("SWE_USER_BG") or "\033[48;5;238m",
 }
 
 
@@ -67,6 +74,24 @@ def elide(text: str, width: int) -> str:
     head = (keep + 1) // 2               # bias to the head on an odd split
     tail = keep - head
     return text[:head] + "\u2026" + (text[-tail:] if tail else "")
+
+
+def fill_ansi(text: str, width: int) -> str:
+    """Pad ``text`` out to ``width`` *inside* its own styling.
+
+    ``lpad`` appends the padding after the trailing reset, which is right for
+    a plain cell and wrong for a background: the slab would stop at the last
+    word and leave the rest of the row bare. The spaces have to land before
+    the reset to be painted, which is what makes a highlighted line cover the
+    full width even when the sentence does not fill it.
+    """
+    pad = width - visible_len(text)
+    if pad <= 0:
+        return text
+    reset = COLORS["reset"]
+    if text.endswith(reset):
+        return text[: -len(reset)] + " " * pad + reset
+    return text + " " * pad
 
 
 def strip_ansi(text: str) -> str:
