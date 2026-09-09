@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from quiver.console import c, truncate
+from quiver.console import c, elide
 from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
 from quiver.skills.help_text import print_skills_catalog_help, print_skills_discover_help
 from quiver.skills.catalogs import (
@@ -173,7 +173,7 @@ def cmd_skills_discover(args):
                 stat = c("cyan", f.status) if f.status == "new" else c("dim", f.status)
                 print(
                     f"  {c('bold', f.label):<{w_label + 9}} {f.source:<{w_src}} "
-                    f"{stat:<{w_stat + 9}} {f.skill_count:>{w_count}}  {c('dim', truncate(path, 52))}"
+                    f"{stat:<{w_stat + 9}} {f.skill_count:>{w_count}}  {c('dim', elide(path, 52))}"
                 )
             print()
             print(

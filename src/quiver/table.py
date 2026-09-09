@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, Literal, Union
 from quiver.console import (
     c,
     cpad,
+    elide,
     strip_ansi,
     terminal_width,
     truncate,
@@ -103,7 +104,7 @@ def _kind(name: str) -> tuple[KindRenderFn, KindTruncateFn]:
 
 
 def _register_default_kinds() -> None:
-    """The six built-in kinds documented in the design plan."""
+    """The seven built-in kinds documented in the design plan."""
 
     @register_kind("text")
     def _text(value, width, attrs):
@@ -117,6 +118,17 @@ def _register_default_kinds() -> None:
         plain = strip_ansi(raw)
         truncated = truncate(plain, width)
         return truncated + " " * max(width - visible_len(truncated), 0)
+
+    @register_kind("path")
+    def _path(value, width, attrs):
+        # ``text``, but shortened from the middle. A filesystem path carries
+        # its meaning at both ends: the head says whose tree it is, the tail
+        # says which project. Cutting from the right leaves every row in the
+        # same workspace looking identical, so a column of paths that share a
+        # long prefix becomes unreadable exactly when it matters most.
+        plain = strip_ansi("" if value is None else str(value))
+        shortened = elide(plain, width)
+        return shortened + " " * max(width - visible_len(shortened), 0)
 
     @register_kind("number")
     def _number(value, width, attrs):
@@ -349,7 +361,7 @@ class Table:
     # Columns that pad their own cells to an exact width cannot be narrowed
     # here: the cell would keep its old size and every column after it would
     # shift. Only kinds the table itself truncates can absorb the squeeze.
-    _SHRINKABLE_KINDS = ("text", "list")
+    _SHRINKABLE_KINDS = ("text", "path", "list")
 
     def _fit_to_terminal(self, widths: Dict[str, int]) -> Dict[str, int]:
         """Narrow flexible columns until the row fits the window.

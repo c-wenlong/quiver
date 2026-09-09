@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from quiver.console import c, truncate
+from quiver.console import c, elide
 from quiver.harness.discover import apply_findings, discover_harnesses
 
 
@@ -104,7 +104,7 @@ def cmd_discover(args):
             print(c("dim", "  " + "─" * 90))
             home = str(Path.home())
             for f in findings:
-                path = truncate(f.path.replace(home, "~") if f.path else "—", 48)
+                path = elide(f.path.replace(home, "~") if f.path else "—", 48)
                 conf = c("green", f.confidence) if f.confidence == "high" else c("yellow", f.confidence)
                 stat = c("cyan", f.status) if f.status == "new" else c("dim", f.status)
                 print(

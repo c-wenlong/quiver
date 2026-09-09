@@ -53,7 +53,10 @@ class JsonParserConfig:
     require_path: bool = True
     default_path: str | None = None
     title_max_len: int = 80
-    # Optional enrichment with side files (fields, entry, file_or_dir)
+    # Optional enrichment with side files (fields, entry, file_or_dir).
+    # ``fields`` carries every Session attribute, including
+    # ``title_source`` ("" | "rename" | "auto"); set it here when the store
+    # says where the title came from.
     enrich: Callable[[dict, Any, str], None] | None = None
     skip_basenames: set[str] = field(default_factory=set)
 
@@ -380,6 +383,7 @@ def _to_session(entry: Any, file_path: str, config: JsonParserConfig) -> Session
         "title": title,
         "session_id": sid,
         "tool_name": config.tool_name,
+        "title_source": "",
     }
     if config.enrich:
         try:

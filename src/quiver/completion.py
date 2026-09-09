@@ -55,6 +55,8 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--start", "Range start date"), ("-s", "Short for --start"),
         ("--end", "Range end date"), ("-e", "Short for --end"),
         ("--agent", "Filter by agent"), ("--here", "Current project only"),
+        ("--interactive", "Pick a session with arrow keys"),
+        ("-i", "Short for --interactive"),
     ],
     "report": [
         ("--days", "Override with N calendar days"), ("-d", "Short for --days"),

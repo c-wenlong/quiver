@@ -173,6 +173,7 @@ HELP = {
   {c('cyan', 'swe session')}                  Show last 10 sessions
   {c('cyan', 'swe session <N>')}              Show last N sessions
   {c('cyan', 'swe session use <N>')}          Resume session #N
+  {c('cyan', 'swe session -i')}               Pick with arrow keys; space reads a transcript, Enter resumes
 
 {c('bold', 'Flags')}
   {c('cyan', '--agent <name>')}               Filter by agent (claude, codex, opencode, droid, ...)
@@ -182,11 +183,13 @@ HELP = {
   {c('cyan', '-w, --weeks <N>')}              Include the latest N times 7 calendar dates
   {c('cyan', '-s, --start <YYYY-MM-DD>')}      Inclusive range start; use together with --end
   {c('cyan', '-e, --end <YYYY-MM-DD>')}        Inclusive range end; use together with --start
+  {c('cyan', '-i, --interactive')}            Pick with arrow keys; Enter resumes, space opens the transcript
 
 {c('bold', 'Examples')}
   swe session
   swe session 20
   swe session use 3
+  swe session -i
   swe session --agent claude
   swe session --here
   swe session -d 5

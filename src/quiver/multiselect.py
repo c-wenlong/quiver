@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 
+from quiver import keys
 from quiver.console import c
 
 
@@ -39,25 +40,26 @@ def _supported() -> bool:
     return True
 
 
-def _read_key(fd: int) -> str:
-    """One keypress, with arrow escape sequences collapsed to a word."""
-    import os
+# Left and right rotate the value on a cycling row, so they get names this
+# widget acts on rather than the shared "left" and "right".
+ARROWS = {b"[C": "next", b"OC": "next", b"[D": "prev", b"OD": "prev"}
 
-    ch = os.read(fd, 1)
-    if ch == b"\x1b":                     # escape: maybe an arrow
-        rest = os.read(fd, 2)
-        return {b"[A": "up", b"[B": "down",
-                b"[C": "next", b"[D": "prev"}.get(rest, "escape")
-    return {
-        b" ": "space", b"\r": "enter", b"\n": "enter",
-        b"\x03": "cancel", b"q": "cancel",
-        b"k": "up", b"j": "down",
-        b"a": "all", b"n": "none",
-        # A bare Shift is not something a terminal reports, so the rotation is
-        # bound to left/right and to < / > which are themselves shifted keys.
-        b"<": "prev", b",": "prev", b"h": "prev",
-        b">": "next", b".": "next", b"l": "next",
-    }.get(ch, "")
+CHECK_LETTERS = {
+    b"a": "all", b"n": "none",
+    # A bare Shift is not something a terminal reports, so the rotation is
+    # bound to left/right and to < / > which are themselves shifted keys.
+    b"<": "prev", b",": "prev", b"h": "prev",
+    b">": "next", b".": "next", b"l": "next",
+}
+
+
+def _read_key(fd: int) -> str:
+    """One keypress, with escape sequences collapsed to a word.
+
+    Thin over ``keys.read_key``, so a wheel notch arrives as a move and an
+    unknown sequence is dropped instead of read as a cancel.
+    """
+    return keys.read_key(fd, CHECK_LETTERS, ARROWS)
 
 
 FOOTER = ("  space toggle · ← → change · a all · n none · "
@@ -119,7 +121,9 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
     cursor, drawn = 0, 0
     try:
         tty.setraw(fd)
-        sys.stdout.write("\x1b[?25l")     # hide the caret while redrawing
+        # Caret off while redrawing, wheel on so a scroll moves the cursor
+        # instead of arriving as loose bytes the reader has to drop.
+        sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
             drawn = _render(choices, chosen, cursor, title, drawn)
             key = _read_key(fd)
@@ -145,8 +149,10 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
                 chosen = {ch.key for ch in choices if ch.locked}
     finally:
         # Every exit path, exception included: a shell left in raw mode is a
-        # far worse outcome than a mis-picked column.
-        sys.stdout.write("\x1b[?25h")
+        # far worse outcome than a mis-picked column. Tracking goes off before
+        # the termios restore, because a shell left reporting the wheel spews
+        # escape sequences at the prompt on every scroll.
+        sys.stdout.write(keys.MOUSE_OFF + "\x1b[?25h")
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         sys.stdout.flush()
 
@@ -223,22 +229,18 @@ def _state_render(choices, cursor, title, prev_lines: int, height: int) -> int:
     return view + 2 + (1 if total > view else 0)
 
 
-def _read_state_key(fd: int) -> str:
-    import os
+# Space cycles here rather than toggling, so it overrides the shared "space".
+STATE_LETTERS = {
+    b" ": "next",
+    b"s": "starred", b"x": "archived", b"c": "active",
+    b"<": "prev", b",": "prev", b"h": "prev",
+    b">": "next", b".": "next", b"l": "next",
+}
 
-    ch = os.read(fd, 1)
-    if ch == b"\x1b":
-        rest = os.read(fd, 2)
-        return {b"[A": "up", b"[B": "down",
-                b"[C": "next", b"[D": "prev"}.get(rest, "escape")
-    return {
-        b" ": "next", b"\r": "enter", b"\n": "enter",
-        b"\x03": "cancel", b"q": "cancel",
-        b"k": "up", b"j": "down",
-        b"s": "starred", b"x": "archived", b"c": "active",
-        b"<": "prev", b",": "prev", b"h": "prev",
-        b">": "next", b".": "next", b"l": "next",
-    }.get(ch, "")
+
+def _read_state_key(fd: int) -> str:
+    """One keypress for the tri-state picker. See ``_read_key``."""
+    return keys.read_key(fd, STATE_LETTERS, ARROWS)
 
 
 def statepicker(choices: list[StateChoice], title="Select",
@@ -268,7 +270,7 @@ def statepicker(choices: list[StateChoice], title="Select",
     cursor, drawn = 0, 0
     try:
         tty.setraw(fd)
-        sys.stdout.write("\x1b[?25l")
+        sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
             drawn = _state_render(choices, cursor, title, drawn, height)
             key = _read_state_key(fd)
@@ -287,6 +289,6 @@ def statepicker(choices: list[StateChoice], title="Select",
             elif key in STATES:
                 choices[cursor].state = key
     finally:
-        sys.stdout.write("\x1b[?25h")
+        sys.stdout.write(keys.MOUSE_OFF + "\x1b[?25h")
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         sys.stdout.flush()
