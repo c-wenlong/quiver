@@ -17,7 +17,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.parsers import parse_claude
+from quiver.sessions.parsers import (
+    _claude_handed_off,
+    _claude_transcript_paths,
+    parse_claude,
+)
 
 REAL_EXPANDUSER = os.path.expanduser
 PROJECT = "-Users-kaichen-project"
@@ -51,6 +55,11 @@ class ClaudeHandoffTest(unittest.TestCase):
             projects = Path(tmp) / "projects"
             project_dir = projects / PROJECT
             project_dir.mkdir(parents=True)
+            # Claude Code's projects root holds more than project dirs, and a
+            # project dir holds more than transcripts. Both are walked here,
+            # so both decoys stay in every fixture.
+            (projects / "not-a-project").mkdir()
+            (project_dir / "notes.txt").write_text("ignore me")
             for session_id, records in transcripts.items():
                 with open(project_dir / f"{session_id}.jsonl", "w") as f:
                     for rec in records:
@@ -153,6 +162,47 @@ class ClaudeHandoffTest(unittest.TestCase):
         self.assertEqual("Login fix", got["new"].title)
         self.assertEqual("auto", got["new"].title_source)
         self.assertEqual(CWD, got["new"].path)
+
+
+class ClaudeHandoffEdgeCaseTest(unittest.TestCase):
+    """The tail read has to survive whatever is actually in these files."""
+
+    def test_unreadable_project_root_yields_no_paths(self):
+        self.assertEqual({}, _claude_transcript_paths("/nonexistent/projects"))
+
+    def test_unreadable_transcript_is_not_treated_as_a_handoff(self):
+        self.assertEqual("", _claude_handed_off("/nonexistent/session.jsonl"))
+
+    def test_marker_at_the_end_of_a_file_past_the_tail_window(self):
+        # The tail read starts mid-record on any file over 8KB, so the first
+        # line of the chunk is a fragment and has to be dropped.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "big.jsonl"
+            with open(path, "w") as f:
+                f.write(json.dumps(_user("x" * 20000)) + "\n")
+                f.write(json.dumps(_continued_in("next")) + "\n")
+            self.assertEqual("next", _claude_handed_off(str(path)))
+
+    def test_malformed_and_non_dict_records_in_the_tail_are_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.jsonl"
+            with open(path, "w") as f:
+                f.write(json.dumps(_user("hello")) + "\n")
+                f.write(json.dumps(_continued_in("next")) + "\n")
+                f.write("not json at all\n")
+                f.write("[1, 2, 3]\n")
+                f.write("\n")
+            self.assertEqual("next", _claude_handed_off(str(path)))
+
+    def test_a_tail_of_pure_bookkeeping_is_not_a_handoff(self):
+        # Neither conversation nor a marker in the window: nothing to say.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.jsonl"
+            with open(path, "w") as f:
+                f.write(json.dumps(_user("hello")) + "\n")
+                for _ in range(200):
+                    f.write(json.dumps({"type": "cost-state", "pad": "y" * 100}) + "\n")
+            self.assertEqual("", _claude_handed_off(str(path)))
 
 
 if __name__ == "__main__":
