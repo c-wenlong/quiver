@@ -107,8 +107,63 @@ class TableAnsiSafetyTest(unittest.TestCase):
 
 class TableRegisteredKindsTest(unittest.TestCase):
     def test_default_kinds_registered(self):
-        expected = {"text", "number", "count_threshold", "list", "timestamp", "preformatted"}
+        expected = {"text", "path", "number", "count_threshold", "list",
+                    "timestamp", "preformatted"}
         self.assertTrue(expected.issubset(set(registered_kinds())))
+
+
+class TablePathKindTest(unittest.TestCase):
+    """``path`` is ``text`` cut from the middle instead of the right.
+
+    Rows in a path column tend to share a long prefix, so cutting from the
+    right renders whole runs of them identical. Both ends carry meaning: the
+    head says whose tree it is, the tail says which project.
+    """
+
+    LONG = "~/Desktop/Work/Cortex AI/Engineering/cortex-ai/toolbox"
+
+    def _cell(self, value, width, kind="path"):
+        t = Table()
+        t.add_column("p", "PATH", width=width, max_width=width, kind=kind, fit="fixed")
+        t.add_row({"p": value})
+        return strip_ansi(t.render()[2])
+
+    def test_keeps_both_ends(self):
+        cell = self._cell(self.LONG, 30)
+        self.assertTrue(cell.startswith("~/Desktop/"), cell)
+        self.assertTrue(cell.rstrip().endswith("toolbox"), cell)
+        self.assertIn("\u2026", cell)
+
+    def test_text_kind_loses_the_tail_where_path_keeps_it(self):
+        as_text = self._cell(self.LONG, 30, kind="text")
+        self.assertTrue(as_text.startswith("~/Desktop/"), as_text)
+        self.assertNotIn("toolbox", as_text)
+
+    def test_two_paths_sharing_a_prefix_stay_distinguishable(self):
+        a = self._cell("~/Desktop/Work/Cortex AI/Engineering/cortex-ai", 30)
+        b = self._cell("~/Desktop/Work/Cortex AI/Engineering/toolbox", 30)
+        self.assertNotEqual(a, b)
+
+    def test_short_path_is_untouched(self):
+        self.assertEqual("~/src", self._cell("~/src", 30).rstrip())
+
+    def test_cell_is_padded_to_the_column_width(self):
+        for width in (12, 30, 60):
+            self.assertEqual(width, visible_len(self._cell(self.LONG, width)))
+
+    def test_none_renders_empty(self):
+        self.assertEqual("", self._cell(None, 20).strip())
+
+    def test_ansi_in_the_value_is_stripped_before_cutting(self):
+        # Escapes are removed before the middle cut, so the width math sees
+        # visible characters and no half-escape can leak into the next cell.
+        t = Table()
+        t.add_column("p", "PATH", width=30, max_width=30, kind="path", fit="fixed")
+        t.add_row({"p": c("red", self.LONG)})
+        cell = t.render()[2]
+        self.assertNotIn("\x1b", cell)
+        self.assertEqual(30, visible_len(cell))
+        self.assertEqual(self._cell(self.LONG, 30), cell)
 
 
 class TableCustomKindTest(unittest.TestCase):
