@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- One Claude Code conversation continued across two transcripts is listed
+  once, not twice. Claude Code can carry a session into a fresh file and
+  records `continued-in` in the old one; both then carry the same title, so
+  the listing showed a duplicate row. The predecessor is dropped only when
+  no conversation follows the handoff and the successor really exists, so a
+  session that forked and then kept going still counts as two.
 - `swe session use <n>` resumes a codex session again. It ran
   `codex --resume <rollout stem>`; codex has no `--resume` option and its
   `resume` subcommand wants the thread uuid, so every codex resume failed
