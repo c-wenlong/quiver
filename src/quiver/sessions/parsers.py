@@ -416,6 +416,188 @@ def parse_droid():
     )
 
 
+# Rollout files are named ``rollout-<iso timestamp>-<thread uuid>.jsonl``, and
+# the uuid is the id the session index and ``codex resume`` both use.
+_CODEX_ROLLOUT_ID_RE = re.compile(
+    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+    re.IGNORECASE,
+)
+
+
+def codex_thread_id(session_id: str) -> str:
+    """The thread uuid inside a codex session id, lower-cased, or "".
+
+    A codex ``Session.session_id`` is the rollout file's stem, because that
+    is what the transcript readers look a session up by. Everything else
+    codex exposes — the session index, the thread store, ``codex resume`` —
+    is keyed by the uuid at the end of it.
+    """
+    match = _CODEX_ROLLOUT_ID_RE.search(session_id or "")
+    return match.group(1).lower() if match else ""
+
+
+# Codex's auto-titler runs the moment the first turn completes: across every
+# thread on disk it landed 4-7 seconds after the thread's first name record,
+# while every observed ``/name`` came 7 minutes to 2 hours later. A minute is
+# well clear of both clusters.
+_CODEX_AUTO_TITLE_WINDOW_MS = 60_000
+
+
+def _codex_state_db() -> str:
+    """Newest ``~/.codex/state_<n>.sqlite``, or "" when codex has none.
+
+    The number in the filename is a schema version codex bumps on migration
+    and the old file is left behind, so the highest one is the live store.
+    """
+    best, best_n = "", -1
+    for path in glob.glob(os.path.expanduser("~/.codex/state_*.sqlite")):
+        match = re.search(r"state_(\d+)\.sqlite$", path)
+        if not match:
+            continue
+        version = int(match.group(1))
+        if version > best_n:
+            best, best_n = path, version
+    return best
+
+
+def _codex_thread_store() -> dict[str, tuple[str, str]]:
+    """Thread id -> ``(name, preview)`` from codex's own thread store.
+
+    ``name`` is the thread's display name, whatever wrote it. ``preview`` is
+    codex's record of the first message the *user* actually sent, which beats
+    scanning the rollout for one: a transcript's first user-role item is
+    often injected context (a plugin roster, an AGENTS.md) that the user
+    never typed, and codex knows which was which.
+
+    An empty ``preview`` means codex considers the thread empty, and its own
+    listing hides those (there are partial indexes named
+    ``idx_threads_visible_*`` filtering on ``preview <> ''``). They are
+    threads opened and never typed into, so there is no title to salvage.
+
+    An unreadable or absent store yields an empty map, which turns both the
+    naming and the hiding back off.
+    """
+    from quiver.sessions.engines.common import open_sqlite_ro
+
+    db_path = _codex_state_db()
+    if not db_path:
+        return {}
+    conn = open_sqlite_ro(db_path)
+    if conn is None:
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
+        if not {"id", "name", "preview"} <= cols:
+            return {}
+        for tid, name, preview in conn.execute(
+            "SELECT id, name, COALESCE(NULLIF(preview, ''), first_user_message) "
+            "FROM threads"
+            if "first_user_message" in cols
+            else "SELECT id, name, preview FROM threads"
+        ):
+            if not isinstance(tid, str) or not tid.strip():
+                continue
+            out[tid.strip().lower()] = (
+                name.strip() if isinstance(name, str) else "",
+                preview.strip() if isinstance(preview, str) else "",
+            )
+    except Exception:
+        return {}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return out
+
+
+def _codex_index_history() -> dict[str, tuple[list[str], float]]:
+    """Thread id -> ``(names, span_ms)`` from ``~/.codex/session_index.jsonl``.
+
+    Codex keeps thread names outside the rollout transcript and appends
+    ``{"id", "thread_name", "updated_at"}`` here every time one changes, so
+    the last record for an id is the name its TUI shows and the ones before
+    it are the names it replaced.
+
+    ``names`` drops consecutive duplicates, because codex re-emits the
+    current name on events that did not rename anything, and ``span_ms`` is
+    the wall time from a thread's first record to its last. Ids are
+    lower-cased so a lookup keyed off the rollout filename matches whatever
+    case either side wrote.
+    """
+    path = os.path.expanduser("~/.codex/session_index.jsonl")
+    names: dict[str, list[str]] = {}
+    span: dict[str, list[float]] = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                sid = entry.get("id")
+                name = entry.get("thread_name")
+                if not isinstance(sid, str) or not sid.strip():
+                    continue
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                sid = sid.strip().lower()
+                name = name.strip()
+                seq = names.setdefault(sid, [])
+                if not seq or seq[-1] != name:
+                    seq.append(name)
+                ends = span.setdefault(sid, [])
+                ts = parse_iso_ts(entry.get("updated_at")) or 0.0
+                if not ends:
+                    ends.append(ts)
+                elif len(ends) == 1:
+                    ends.append(ts)
+                else:
+                    ends[1] = ts
+    except Exception:
+        return {}
+    return {
+        sid: (seq, (span[sid][-1] - span[sid][0]) if sid in span else 0.0)
+        for sid, seq in names.items()
+    }
+
+
+def _codex_is_rename(names: list[str], span_ms: float, first_prompt: str) -> bool:
+    """Whether a codex thread's current name was typed rather than generated.
+
+    Three writers share the one ``thread_name`` field with no marker: codex
+    stamps a prefix of the first prompt when the turn starts, replaces it
+    with a generated title seconds later, and ``/name`` overwrites it
+    whenever the user asks. What separates them is that codex only ever
+    writes those two, in that order, and does so immediately:
+
+    - A sequence longer than codex's own two entries has to end in a rename.
+      When the first entry is not a prefix of the first prompt, codex skipped
+      the placeholder and its budget is one entry, not two.
+    - Codex's generated title lands within seconds of the placeholder. A last
+      record a minute or more after the first one outlived that window, so a
+      user wrote it.
+
+    Both clauses are timing and shape arguments rather than a flag codex
+    records, so this under-marks rather than over-marks: a rename that leaves
+    a single record inside the window reads as a generated title. Across the
+    threads this was calibrated on it marked every rename it claimed and
+    missed none that had a second record.
+    """
+    if not names:
+        return False
+    prompt = (first_prompt or "").strip().lower()
+    placeholder = bool(prompt) and prompt.startswith(names[0].strip().lower())
+    if len(names) > (2 if placeholder else 1):
+        return True
+    return span_ms > _CODEX_AUTO_TITLE_WINDOW_MS
+
+
 def parse_codex():
     def path_from_event(data: dict) -> str:
         if data.get("type") == "session_meta":
@@ -431,7 +613,7 @@ def parse_codex():
             return ""
         return extract_user_text(payload.get("content"))
 
-    return parse_jsonl_projects(
+    sessions = parse_jsonl_projects(
         JsonlParserConfig(
             tool_name="codex",
             agent="Codex CLI",
@@ -444,6 +626,44 @@ def parse_codex():
             require_path=True,
         )
     )
+
+    # A codex thread's name lives outside its rollout, in two places that say
+    # different halves of the truth: the store holds the current name and
+    # whether the thread was ever used, the index holds the history that says
+    # whether a name was typed or generated. Either being unreadable degrades
+    # to what the other knows, and a thread neither has heard of keeps the
+    # first-prompt title the transcript scan produced.
+    store = _codex_thread_store()
+    history = _codex_index_history()
+    if not store and not history:
+        return sessions
+
+    kept: list[Session] = []
+    for sess in sessions:
+        tid = codex_thread_id(sess.session_id)
+        stored_name, preview = store.get(tid, ("", ""))
+        # Only the store can say a thread was never used, so a thread it has
+        # never heard of is kept rather than guessed at.
+        if tid in store and not preview:
+            continue
+        names, span_ms = history.get(tid, ([], 0.0))
+        # The store holds the live name; the index is the audit trail behind
+        # it and stands in when the store has none. With no name at all,
+        # codex's own note of the first user message still beats the
+        # transcript scan, which cannot tell a typed prompt from injected
+        # context. That fallback is nobody's chosen title, so it stays
+        # unmarked however the name above it was written.
+        title = clean_title(stored_name or (names[-1] if names else ""), 80)
+        if title:
+            sess.title = title
+            if _codex_is_rename(names, span_ms, preview):
+                sess.title_source = "rename"
+        elif preview:
+            fallback = clean_title(preview, 80)
+            if fallback:
+                sess.title = fallback
+        kept.append(sess)
+    return kept
 
 
 def parse_pi():
