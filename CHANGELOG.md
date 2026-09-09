@@ -17,6 +17,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assistant replies render their markdown (headings, emphasis, code,
   lists, quotes, tables, links) instead of showing it raw.
 
+### Changed
+
+- **Codex sessions read their real titles.** A codex thread's name lives
+  outside its rollout transcript, so `swe session` used to title every
+  codex row from the transcript's first user-role item, which is usually
+  context codex injected (a plugin roster, an AGENTS.md) rather than
+  anything you typed. Titles now come from codex's own thread store
+  (`~/.codex/state_<n>.sqlite`), falling back to `session_index.jsonl`
+  and then to the transcript. A `/name` you typed renders in bright
+  italic like a Claude rename, inferred from the name history's shape
+  and timing since codex records no flag for it. Threads codex considers
+  empty — opened, never typed into, which its own listing hides — no
+  longer appear.
+- `swe session` sizes its IDX, LAST ACTIVE and AGENT columns to the rows
+  on screen instead of a fixed 4/14/14, so the listing carries no dead
+  columns. A three-digit index no longer overflows its cell and shifts
+  every column after it.
+- Directory columns shorten from the middle (`~/Desktop/Work/…/toolbox`)
+  rather than the right. Paths in a listing tend to share a long prefix,
+  and cutting the tail made whole runs of rows look identical.
+
+### Fixed
+
+- `swe session use <n>` resumes a codex session again. It ran
+  `codex --resume <rollout stem>`; codex has no `--resume` option and its
+  `resume` subcommand wants the thread uuid, so every codex resume failed
+  on argument parsing.
+
 ## [0.2.10] - 2026-08-25
 
 ### Changed
