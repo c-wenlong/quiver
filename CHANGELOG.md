@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The transcript view shows the conversation, not the machinery.** A run
+  of tool calls collapses to `called 12 tools` instead of listing each one,
+  since their arguments were the bulk of the view and the least use for
+  telling two sessions apart. The `you` / `ai` labels are gone: a prompt is
+  marked by shading it, full width on every row it wraps to, the way a chat
+  UI shades what you typed. Set `SWE_USER_BG` to a raw SGR sequence to
+  change the shade for a light terminal (e.g. `\033[48;5;253m`).
 - **Codex sessions read their real titles.** A codex thread's name lives
   outside its rollout transcript, so `swe session` used to title every
   codex row from the transcript's first user-role item, which is usually
