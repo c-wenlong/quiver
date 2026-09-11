@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Devin sessions in `swe session`.** The Devin CLI's `sessions.db` is
+  parsed: hidden rows are skipped, an empty title falls back to the first
+  prompt of the session, an inline `/rename` marks the title as a rename,
+  and `swe session` resumes with `devin --resume <id>`. The transcript
+  view walks the session's main chain so a streamed reply appears once,
+  and tool results are labelled with the call they answer.
+- **Devin usage in `swe list`.** A starred Devin harness shows the more
+  used of its daily and weekly quota (`1d` / `7d`) with the reset time,
+  read through Windsurf's seat-management RPC with the key from
+  `~/.local/share/devin/credentials.toml`. Credit-based plans show
+  `remaining/total` prompt credits instead.
 - **Cursor usage in `swe list`.** A starred Cursor harness now shows how
   much of the current billing cycle's included usage is gone, labelled
   `auto` (total usage, the figure Cursor quotes for Auto mode) or `api`

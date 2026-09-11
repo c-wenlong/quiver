@@ -2056,6 +2056,194 @@ def _register_cursor() -> None:
     register("cursor", fetch)
 
 
+# ---------------------------------------------------------------------------
+# Devin fetcher
+# ---------------------------------------------------------------------------
+
+_DEVIN_CREDENTIALS_PATH = "~/.local/share/devin/credentials.toml"
+_DEVIN_DEFAULT_API_SERVER = "https://server.codeium.com"
+_DEVIN_USER_STATUS_RPC = (
+    "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
+)
+
+# Devin's quota windows as they appear under ``userStatus.planStatus``:
+# (remaining-percent field, reset field, column label). The most-used
+# window is surfaced, as for Claude.
+_DEVIN_WINDOWS: tuple[tuple[str, str, str], ...] = (
+    ("dailyQuotaRemainingPercent", "dailyQuotaResetAtUnix", "1d"),
+    ("weeklyQuotaRemainingPercent", "weeklyQuotaResetAtUnix", "7d"),
+)
+
+
+def _read_devin_credentials() -> tuple[str, str] | None:
+    """Return ``(api_key, api_server_url)`` from Devin's credentials file.
+
+    The CLI is Cognition's Windsurf-backed agent, so the key is named
+    ``windsurf_api_key`` and the server is Windsurf's. The file is TOML;
+    ``tomllib`` is stdlib from 3.11 and ``tomli`` is this package's one
+    dependency below that.
+    """
+    path = os.path.expanduser(_DEVIN_CREDENTIALS_PATH)
+    try:
+        with open(path, "rb") as file:
+            raw = file.read()
+    except OSError:
+        return None
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10
+        import tomli as tomllib
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    key = data.get("windsurf_api_key")
+    if not isinstance(key, str) or not key.strip():
+        return None
+    server = data.get("api_server_url")
+    if not isinstance(server, str) or not server.strip():
+        server = _DEVIN_DEFAULT_API_SERVER
+    return key.strip(), server.strip().rstrip("/")
+
+
+def _devin_unix_to_epoch(value) -> float:
+    """Reset times arrive as decimal-string epoch seconds."""
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, str):
+        value = value.strip()
+        if not value.isdigit():
+            return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number) or number <= 0:
+        return 0.0
+    return number / 1000 if number > 100_000_000_000 else number
+
+
+def _parse_devin_status(data: dict) -> RateLimitInfo | None:
+    """Surface the more exhausted of Devin's daily and weekly quotas.
+
+    Quota plans report each window as a remaining percentage. A plan on
+    prompt credits instead reports ``availablePromptCredits`` against
+    ``planInfo.monthlyPromptCredits`` (``-1`` means unlimited), which is
+    shown as ``remaining/total`` with the plan end as the reset.
+    """
+    status = data.get("userStatus")
+    plan = status.get("planStatus") if isinstance(status, dict) else None
+    if not isinstance(plan, dict):
+        return None
+    info = plan.get("planInfo") if isinstance(plan.get("planInfo"), dict) else {}
+    plan_name = info.get("planName")
+    plan_type = (
+        plan_name.strip().lower() if isinstance(plan_name, str) and plan_name.strip()
+        else "—"
+    )
+
+    best_label = ""
+    best_used = -1.0
+    best_reset = 0.0
+    for remaining_field, reset_field, label in _DEVIN_WINDOWS:
+        remaining = plan.get(remaining_field)
+        if isinstance(remaining, bool):
+            continue
+        try:
+            remaining = float(remaining)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(remaining):
+            continue
+        used = 100.0 - remaining
+        if used > best_used:
+            best_used = used
+            best_label = label
+            best_reset = _devin_unix_to_epoch(plan.get(reset_field))
+    if best_used >= 0:
+        used_percent = int(round(min(100.0, max(0.0, best_used))))
+        return RateLimitInfo(
+            tool_name="devin",
+            used_percent=used_percent,
+            limit_reached=best_used >= 100,
+            reset_at=best_reset,
+            plan_type=plan_type,
+            window_seconds=86400 if best_label == "1d" else 604800,
+            window=best_label,
+        )
+
+    try:
+        total = float(info.get("monthlyPromptCredits"))
+        remaining = float(plan.get("availablePromptCredits"))
+    except (TypeError, ValueError):
+        return None
+    if not (
+        math.isfinite(total) and math.isfinite(remaining)
+        and total > 0 and 0 <= remaining <= total
+    ):
+        return None
+    used_percent = int(round((1.0 - remaining / total) * 100.0))
+    return RateLimitInfo(
+        tool_name="devin",
+        used_percent=used_percent,
+        limit_reached=remaining <= 0,
+        reset_at=_parse_iso8601_to_epoch(plan.get("planEnd")),
+        plan_type=plan_type,
+        window_seconds=0,
+        remaining_units=remaining,
+        total_units=total,
+    )
+
+
+def _warn_devin_401() -> None:
+    import sys
+    print(
+        "Devin usage endpoint rejected the API key. Run `devin auth login` "
+        "to renew ~/.local/share/devin/credentials.toml.",
+        file=sys.stderr,
+    )
+
+
+def _fetch_devin() -> RateLimitInfo | None:
+    """Read Devin's quota through Windsurf's seat-management RPC."""
+    credentials = _read_devin_credentials()
+    if credentials is None:
+        return None
+    api_key, server = credentials
+    # The key travels in the body, not a header: this is a Connect RPC
+    # and the server rejects a request without the client metadata block
+    # ("invalid_argument"), so the fields the CLI itself sends are kept.
+    body = json.dumps({
+        "metadata": {
+            "api_key": api_key,
+            "ide_name": "devin",
+            "ide_version": __version__,
+            "extension_version": __version__,
+        },
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        server + _DEVIN_USER_STATUS_RPC,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": f"quiver/{__version__}",
+        },
+    )
+    data = _fetch_json(request, on_401=_warn_devin_401)
+    return _parse_devin_status(data) if isinstance(data, dict) else None
+
+
+def _register_devin() -> None:
+    """Register the Devin quota fetcher."""
+
+    def fetch() -> RateLimitInfo | None:
+        return _fetch_devin()
+
+    register("devin", fetch)
+
+
 # Register built-in fetchers at import time
 _register_codex()
 _register_github_copilot()
@@ -2064,6 +2252,7 @@ _register_droid()
 _register_antigravity()
 _register_freebuff()
 _register_cursor()
+_register_devin()
 
 
 # ---------------------------------------------------------------------------

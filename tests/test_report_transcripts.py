@@ -397,6 +397,88 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertTrue(transcript.readable)
         self.assertEqual([m.text for m in transcript.messages], ["Fix the build", "Build fixed"])
 
+    def _devin_db(self, head, nodes):
+        db = self.home / ".local/share/devin/cli/sessions.db"
+        db.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, main_chain_id INTEGER)")
+        conn.execute(
+            "CREATE TABLE message_nodes (row_id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, "
+            "node_id INTEGER, parent_node_id INTEGER, chat_message TEXT)"
+        )
+        conn.execute("INSERT INTO sessions VALUES (?, ?)", ("devin-1", head))
+        for node_id, parent, message in nodes:
+            conn.execute(
+                "INSERT INTO message_nodes (session_id, node_id, parent_node_id, chat_message) VALUES (?, ?, ?, ?)",
+                ("devin-1", node_id, parent, json.dumps(message)),
+            )
+        conn.commit()
+        conn.close()
+
+    _DEVIN_NODES = [
+        (0, None, {"message_id": "m0", "role": "system", "content": "You are Devin"}),
+        (1, 0, {"message_id": "m1", "role": "user", "content": "Fix the build",
+                "metadata": {"is_user_input": True}}),
+        # A streamed reply is stored again as it grows; both versions hang
+        # off the same parent and only the last one is on the main chain.
+        (2, 1, {"message_id": "m2", "role": "assistant", "content": "Build fi"}),
+        (3, 1, {"message_id": "m2", "role": "assistant", "content": "Build fixed",
+                "tool_calls": [{"id": "read_1", "name": "read",
+                                "arguments": {"file_path": "/work/a.py"}, "kind": "function"}],
+                "thinking": {"thinking": "private"}}),
+        (4, 3, {"message_id": "m3", "role": "tool", "content": "print('ok')", "tool_call_id": "read_1"}),
+    ]
+
+    def test_devin_walks_main_chain_and_labels_tool_results(self):
+        self._devin_db(4, self._DEVIN_NODES)
+
+        transcript = read_transcript(_session("devin", "devin-1"))
+
+        self.assertTrue(transcript.readable, transcript.error)
+        self.assertEqual(
+            [(m.role, m.text) for m in transcript.messages],
+            [
+                ("human", "Fix the build"),
+                ("assistant", "Build fixed"),
+                ("tool", "read: /work/a.py"),
+                ("tool", "read: print('ok')"),
+            ],
+        )
+
+    def test_devin_without_a_head_walks_the_chain_from_the_newest_node(self):
+        self._devin_db(None, self._DEVIN_NODES)
+
+        transcript = read_transcript(_session("devin", "devin-1"))
+
+        self.assertTrue(transcript.readable, transcript.error)
+        self.assertEqual(
+            [m.text for m in transcript.messages],
+            ["Fix the build", "Build fixed", "read: /work/a.py", "read: print('ok')"],
+        )
+
+    def test_devin_without_a_head_never_merges_competing_branches(self):
+        """Distinct messages on an abandoned branch must stay out, in any order."""
+        self._devin_db(None, [
+            (0, None, {"message_id": "m0", "role": "system", "content": "You are Devin"}),
+            (1, 0, {"message_id": "m1", "role": "user", "content": "Fix the build"}),
+            (2, 1, {"message_id": "m2", "role": "assistant", "content": "Attempt A, abandoned"}),
+            (3, 1, {"message_id": "m3", "role": "assistant", "content": "Attempt B"}),
+            (4, 2, {"message_id": "m4", "role": "user", "content": "Stray reply on the old branch"}),
+            (5, 3, {"message_id": "m5", "role": "user", "content": "Ship it"}),
+        ])
+
+        transcript = read_transcript(_session("devin", "devin-1"))
+
+        self.assertEqual(
+            [m.text for m in transcript.messages],
+            ["Fix the build", "Attempt B", "Ship it"],
+        )
+
+    def test_devin_store_missing_is_unreadable_not_an_error(self):
+        transcript = read_transcript(_session("devin", "devin-1"))
+        self.assertFalse(transcript.readable)
+        self.assertIn("Devin store not found", transcript.error)
+
     def test_tau_uses_index_path_when_filename_does_not_match_session_id(self):
         project = self.home / ".tau/sessions/project"
         transcript_path = project / "custom-name.jsonl"
