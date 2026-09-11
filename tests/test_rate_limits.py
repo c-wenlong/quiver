@@ -1,5 +1,7 @@
+import base64
 import copy
 import json
+import sqlite3
 import os
 import tempfile
 import time
@@ -1722,6 +1724,7 @@ class CopilotRegistrationTest(unittest.TestCase):
         self.assertIn("droid", _FETCHERS)
         self.assertIn("antigravity", _FETCHERS)
         self.assertIn("freebuff", _FETCHERS)
+        self.assertIn("cursor", _FETCHERS)
 
 
 class DroidFetcherTest(unittest.TestCase):
@@ -2512,6 +2515,240 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(observed, [(429, 90.0)])
+
+
+class CursorFetcherTest(unittest.TestCase):
+    """Test the Cursor included-usage fetcher with mocked HTTP."""
+
+    _SAMPLE_RESPONSE = {
+        "billingCycleStart": "1786511793000",
+        "billingCycleEnd": "1789190193000",
+        "planUsage": {
+            "totalSpend": 12557,
+            "includedSpend": 2000,
+            "limit": 2000,
+            "autoPercentUsed": 40.7,
+            "apiPercentUsed": 100,
+            "totalPercentUsed": 50.228,
+        },
+        "enabled": True,
+        "displayMessage": "You've hit your usage limit",
+    }
+
+    @staticmethod
+    def _jwt(claims: dict) -> str:
+        def part(raw: bytes) -> str:
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        return ".".join((
+            part(b'{"alg":"HS256","typ":"JWT"}'),
+            part(json.dumps(claims).encode()),
+            "signature",
+        ))
+
+    def _token(self, **overrides) -> str:
+        claims = {"sub": "google-oauth2|user_01TEST", "exp": 9_999_999_999}
+        claims.update(overrides)
+        return self._jwt(claims)
+
+    def _state_db(self, directory: str, token: str | None) -> str:
+        path = os.path.join(directory, "state.vscdb")
+        connection = sqlite3.connect(path)
+        connection.execute("CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB)")
+        if token is not None:
+            connection.execute(
+                "INSERT INTO ItemTable VALUES (?, ?)",
+                ("cursorAuth/accessToken", token),
+            )
+        connection.commit()
+        connection.close()
+        return path
+
+    def test_parser_surfaces_the_more_exhausted_bucket(self):
+        from quiver.harness.rate_limits import _parse_cursor_usage
+
+        info = _parse_cursor_usage(self._SAMPLE_RESPONSE)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.tool_name, "cursor")
+        self.assertEqual(info.used_percent, 100)
+        self.assertTrue(info.limit_reached)
+        self.assertEqual(info.window, "api")
+        self.assertEqual(info.reset_at, 1789190193.0)
+        self.assertEqual(info.window_seconds, 2678400)
+
+    def test_parser_reports_total_usage_when_named_models_are_lower(self):
+        """The auto label carries totalPercentUsed, the dashboard's own figure."""
+        from quiver.harness.rate_limits import _parse_cursor_usage
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        data["planUsage"]["apiPercentUsed"] = 10
+        data["planUsage"]["autoPercentUsed"] = 99
+
+        info = _parse_cursor_usage(data)
+
+        self.assertEqual(info.window, "auto")
+        self.assertEqual(info.used_percent, 50)
+        self.assertFalse(info.limit_reached)
+
+    def test_parser_skips_unusable_buckets(self):
+        from quiver.harness.rate_limits import _parse_cursor_usage
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        data["planUsage"]["apiPercentUsed"] = "n/a"
+        self.assertEqual(_parse_cursor_usage(data).window, "auto")
+
+        data["planUsage"]["totalPercentUsed"] = None
+        self.assertIsNone(_parse_cursor_usage(data))
+
+        self.assertIsNone(_parse_cursor_usage({"planUsage": "missing"}))
+        self.assertIsNone(_parse_cursor_usage({}))
+
+    def test_parser_tolerates_missing_cycle_bounds(self):
+        from quiver.harness.rate_limits import _parse_cursor_usage
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        del data["billingCycleStart"]
+        data["billingCycleEnd"] = "soon"
+
+        info = _parse_cursor_usage(data)
+
+        self.assertEqual(info.reset_at, 0.0)
+        self.assertEqual(info.window_seconds, 0)
+        self.assertEqual(info.reset_in_human, "—")
+
+    def test_millisecond_epoch_parsing(self):
+        from quiver.harness.rate_limits import _cursor_ms_to_epoch
+
+        self.assertEqual(_cursor_ms_to_epoch("1789190193000"), 1789190193.0)
+        self.assertEqual(_cursor_ms_to_epoch(1789190193000), 1789190193.0)
+        self.assertEqual(_cursor_ms_to_epoch(1789190193), 1789190193.0)
+        self.assertEqual(_cursor_ms_to_epoch(True), 0.0)
+        self.assertEqual(_cursor_ms_to_epoch("-5"), 0.0)
+        self.assertEqual(_cursor_ms_to_epoch(None), 0.0)
+        self.assertEqual(_cursor_ms_to_epoch(float("inf")), 0.0)
+
+    def test_session_cookie_is_sub_and_token_url_encoded(self):
+        from quiver.harness.rate_limits import (
+            _cursor_session_cookie, _cursor_token_claims,
+        )
+
+        token = self._token()
+        claims = _cursor_token_claims(token)
+        cookie = _cursor_session_cookie(token, claims)
+
+        self.assertEqual(claims["sub"], "google-oauth2|user_01TEST")
+        self.assertTrue(cookie.startswith("WorkosCursorSessionToken="))
+        self.assertIn("google-oauth2%7Cuser_01TEST%3A%3A", cookie)
+        self.assertNotIn("|", cookie)
+        self.assertIsNone(_cursor_session_cookie(token, {}))
+        self.assertIsNone(_cursor_token_claims("not-a-jwt"))
+        self.assertIsNone(_cursor_token_claims("a.!!!.c"))
+
+    def test_state_db_token_is_read_read_only(self):
+        from quiver.harness.rate_limits import _read_cursor_state_token
+
+        token = self._token()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._state_db(tmp, token)
+            missing = os.path.join(tmp, "absent", "state.vscdb")
+            with patch(
+                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                (missing, path),
+            ):
+                self.assertEqual(_read_cursor_state_token(), token)
+
+    def test_state_db_without_token_falls_back_to_keychain(self):
+        from quiver.harness.rate_limits import _get_cursor_access_token
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._state_db(tmp, None)
+            with patch(
+                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                (path,),
+            ), patch(
+                "quiver.harness.rate_limits.shutil.which",
+                return_value="/usr/bin/security",
+            ), patch(
+                "quiver.harness.rate_limits.subprocess.run",
+                return_value=MagicMock(returncode=0, stdout="kc-token\n"),
+            ) as run:
+                self.assertEqual(_get_cursor_access_token(), "kc-token")
+            args = run.call_args[0][0]
+            self.assertEqual(args[:2], ["security", "find-generic-password"])
+            self.assertIn("cursor-access-token", args)
+
+    def test_no_token_anywhere_returns_none(self):
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+            (os.path.join(tmp, "state.vscdb"),),
+        ), patch(
+            "quiver.harness.rate_limits.shutil.which", return_value=None,
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            self.assertIsNone(_fetch_cursor())
+        fetch.assert_not_called()
+
+    def test_expired_token_reports_auth_required_without_a_request(self):
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token",
+            return_value=self._token(exp=1_000_000_000),
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            info = _fetch_cursor()
+
+        self.assertEqual(info.plan_type, "auth-required")
+        self.assertIn("re-login", info.format_column())
+        fetch.assert_not_called()
+
+    def test_fetch_posts_with_cookie_and_first_party_origin(self):
+        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+
+        token = self._token()
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token",
+            return_value=token,
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            return_value=self._SAMPLE_RESPONSE,
+        ) as fetch:
+            info = _fetch_cursor()
+
+        self.assertEqual(info.used_percent, 100)
+        self.assertEqual(info.window, "api")
+        request = fetch.call_args[0][0]
+        self.assertEqual(request.full_url, _CURSOR_USAGE_URL)
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.data, b"{}")
+        self.assertEqual(request.get_header("Origin"), "https://cursor.com")
+        self.assertIn("WorkosCursorSessionToken=", request.get_header("Cookie"))
+        self.assertIn(token, request.get_header("Cookie"))
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_fetch_failure_reports_no_reading(self):
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token",
+            return_value=self._token(),
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json", return_value=None,
+        ):
+            self.assertIsNone(_fetch_cursor())
+
+    def test_column_labels_the_bucket(self):
+        from quiver.harness.rate_limits import _parse_cursor_usage
+        from quiver.console import strip_ansi
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        data["planUsage"]["apiPercentUsed"] = 30
+        info = _parse_cursor_usage(data)
+        with patch(
+            "quiver.harness.rate_limits.time.time",
+            return_value=1789190193.0 - 3 * 3600,
+        ):
+            self.assertEqual(strip_ansi(info.format_column()), "50% auto: 3h0m")
 
 
 class VerifiedContextTest(unittest.TestCase):

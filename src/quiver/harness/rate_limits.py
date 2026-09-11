@@ -28,11 +28,13 @@ import json
 import math
 import os
 import shutil
+import sqlite3
 import ssl
 import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, asdict
 from typing import Callable, Iterable
@@ -1821,6 +1823,239 @@ def _register_freebuff() -> None:
     register("freebuff", fetch)
 
 
+# ---------------------------------------------------------------------------
+# Cursor fetcher
+# ---------------------------------------------------------------------------
+
+_CURSOR_USAGE_URL = "https://cursor.com/api/dashboard/get-current-period-usage"
+
+# Where the Cursor editor keeps its session tokens, per platform. The
+# ``ItemTable`` row ``cursorAuth/accessToken`` is the same session JWT the
+# ``cursor-agent`` CLI stores in the macOS keychain, so either source works.
+_CURSOR_STATE_DB_CANDIDATES: tuple[str, ...] = (
+    "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+    "~/.config/Cursor/User/globalStorage/state.vscdb",
+    "~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
+)
+
+# The two figures Cursor's dashboard quotes, as payload field and column
+# label. ``totalPercentUsed`` is what the dashboard reports when Auto is the
+# selected model (its ``autoModelSelectedDisplayMessage`` says "You've used
+# 50% of your included total usage" against ``totalPercentUsed: 50.2``);
+# ``autoPercentUsed`` is that bucket's own share and is never shown to the
+# user, so it is deliberately not here. ``apiPercentUsed`` is the figure
+# for a named model. The most-used of the two is surfaced, as for Claude.
+_CURSOR_BUCKETS: tuple[tuple[str, str], ...] = (
+    ("totalPercentUsed", "auto"),
+    ("apiPercentUsed", "api"),
+)
+
+
+def _read_cursor_state_token() -> str | None:
+    """Return the editor's session token from its ``state.vscdb`` store."""
+    for candidate in _CURSOR_STATE_DB_CANDIDATES:
+        path = os.path.expanduser(candidate)
+        if not os.path.isfile(path):
+            continue
+        uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
+        try:
+            connection = sqlite3.connect(uri, uri=True, timeout=1.0)
+        except sqlite3.Error:
+            continue
+        try:
+            row = connection.execute(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                ("cursorAuth/accessToken",),
+            ).fetchone()
+        except sqlite3.Error:
+            continue
+        finally:
+            connection.close()
+        if not row:
+            continue
+        value = row[0]
+        if isinstance(value, bytes):
+            try:
+                value = value.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _read_cursor_keychain_token() -> str | None:
+    """Return the ``cursor-agent`` CLI's session token from the keychain."""
+    if not shutil.which("security"):
+        return None
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password",
+             "-s", "cursor-access-token", "-a", "cursor-user", "-w"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    token = (result.stdout or "").strip()
+    return token or None
+
+
+def _get_cursor_access_token() -> str | None:
+    """Editor store first (a file read, every platform), then the CLI's
+    keychain entry on macOS."""
+    return _read_cursor_state_token() or _read_cursor_keychain_token()
+
+
+def _cursor_token_claims(token: str) -> dict | None:
+    """Decode the JWT payload without verifying it; only ``sub`` and
+    ``exp`` are read, and the server still checks the signature."""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except (IndexError, ValueError):
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+def _cursor_session_cookie(token: str, claims: dict) -> str | None:
+    """Cursor's dashboard authenticates with ``WorkosCursorSessionToken``,
+    whose value is ``<sub>::<jwt>`` URL-encoded. A bearer header is
+    rejected with 401, so this is the only way in."""
+    sub = claims.get("sub")
+    if not isinstance(sub, str) or not sub:
+        return None
+    value = urllib.parse.quote(f"{sub}::{token}", safe="")
+    return f"WorkosCursorSessionToken={value}"
+
+
+def _cursor_ms_to_epoch(value) -> float:
+    """Cursor sends epoch milliseconds as decimal strings; accept a bare
+    number too. ``bool`` is excluded because it subclasses ``int``."""
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, str):
+        value = value.strip()
+        if not value.isdigit():
+            return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number) or number <= 0:
+        return 0.0
+    return number / 1000 if number > 100_000_000_000 else number
+
+
+def _parse_cursor_usage(data: dict) -> RateLimitInfo | None:
+    """Surface the more exhausted of Cursor's two included-usage figures."""
+    plan = data.get("planUsage")
+    if not isinstance(plan, dict):
+        return None
+    best_label = ""
+    best_percent = -1.0
+    for field, label in _CURSOR_BUCKETS:
+        try:
+            percent = float(plan.get(field))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(percent):
+            continue
+        if percent > best_percent:
+            best_percent = percent
+            best_label = label
+    if best_percent < 0:
+        return None
+
+    reset_at = _cursor_ms_to_epoch(data.get("billingCycleEnd"))
+    cycle_start = _cursor_ms_to_epoch(data.get("billingCycleStart"))
+    window_seconds = (
+        int(reset_at - cycle_start)
+        if reset_at and cycle_start and reset_at > cycle_start
+        else 0
+    )
+    used_percent = int(round(min(100.0, max(0.0, best_percent))))
+    return RateLimitInfo(
+        tool_name="cursor",
+        used_percent=used_percent,
+        limit_reached=best_percent >= 100,
+        reset_at=reset_at,
+        plan_type="—",
+        window_seconds=window_seconds,
+        window=best_label,
+    )
+
+
+def _warn_cursor_401() -> None:
+    import sys
+    print(
+        "Cursor usage endpoint returned 401. Sign in to the Cursor app or "
+        "run `cursor-agent login` to renew the session.",
+        file=sys.stderr,
+    )
+
+
+def _fetch_cursor() -> RateLimitInfo | None:
+    """Read the current billing period's included usage for Cursor."""
+    token = _get_cursor_access_token()
+    if not token:
+        return None
+    claims = _cursor_token_claims(token)
+    if claims is None:
+        return None
+
+    expires_at = claims.get("exp")
+    if (
+        isinstance(expires_at, (int, float))
+        and not isinstance(expires_at, bool)
+        and expires_at <= time.time()
+    ):
+        # Neither token source can be refreshed from here; the app or the
+        # CLI has to log in again. Say so instead of sending a dead token.
+        return RateLimitInfo(
+            tool_name="cursor",
+            used_percent=0,
+            limit_reached=False,
+            reset_at=0.0,
+            plan_type="auth-required",
+            window_seconds=0,
+        )
+
+    cookie = _cursor_session_cookie(token, claims)
+    if cookie is None:
+        return None
+    request = urllib.request.Request(
+        _CURSOR_USAGE_URL,
+        data=b"{}",
+        method="POST",
+        headers={
+            "Cookie": cookie,
+            # The dashboard API refuses any POST without a first-party
+            # Origin ("Invalid origin for state-changing request", 403),
+            # even though this call only reads.
+            "Origin": "https://cursor.com",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": f"quiver/{__version__}",
+        },
+    )
+    data = _fetch_json(request, on_401=_warn_cursor_401)
+    return _parse_cursor_usage(data) if isinstance(data, dict) else None
+
+
+def _register_cursor() -> None:
+    """Register the Cursor included-usage fetcher."""
+
+    def fetch() -> RateLimitInfo | None:
+        return _fetch_cursor()
+
+    register("cursor", fetch)
+
+
 # Register built-in fetchers at import time
 _register_codex()
 _register_github_copilot()
@@ -1828,6 +2063,7 @@ _register_claude()
 _register_droid()
 _register_antigravity()
 _register_freebuff()
+_register_cursor()
 
 
 # ---------------------------------------------------------------------------

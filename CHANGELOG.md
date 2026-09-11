@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cursor usage in `swe list`.** A starred Cursor harness now shows how
+  much of the current billing cycle's included usage is gone, labelled
+  `auto` (total usage, the figure Cursor quotes for Auto mode) or `api`
+  (named models), whichever is more exhausted, with the cycle end as the
+  reset. The session token comes from the editor's `state.vscdb` on any
+  platform or from the `cursor-agent` keychain entry on macOS; an expired
+  token shows `re-login` instead of a blank cell.
 - `swe session -i` picks a session with arrow keys. Enter resumes the
   highlighted session and space opens its full transcript in a scrollable
   read-only view (Esc returns to the list, Enter resumes from inside it),
