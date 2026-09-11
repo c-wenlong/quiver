@@ -53,7 +53,12 @@ class SslVerificationTest(unittest.TestCase):
                 raise ImportError(name)
             return real(name, *a, **k)
 
-        with mock.patch("builtins.__import__", no_certifi):
+        # The OS trust store is tried before certifi, so hide it too or the
+        # machine's own /etc/ssl/cert.pem satisfies the lookup.
+        with mock.patch("builtins.__import__", no_certifi), mock.patch(
+            "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES",
+            ("/nonexistent/cert.pem",),
+        ):
             self.assertIsNone(
                 _verified_context(),
                 "must return None (give up) rather than an unverified context",
