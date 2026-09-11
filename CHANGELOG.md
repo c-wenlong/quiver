@@ -47,6 +47,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Usage columns work again on a Python with no CA store.** A python.org
+  build on macOS trusts no certificates and `certifi` is not a dependency,
+  so since the insecure retry was removed every usage fetch failed TLS
+  verification: Codex showed `—` and Claude kept showing whatever it had
+  last read. The retry now uses the operating system's own bundle
+  (`/etc/ssl/cert.pem` on macOS, the usual Linux paths), still verified,
+  and falls back to `certifi` only when that is missing.
+- **Claude no longer shows a weeks-old reading as current.** When its
+  fetch failed for any reason the Claude fetcher returned its last reading
+  from `claude_usage_cache.json`, which the aggregator then dated to that
+  moment, so a 7d figure from three weeks earlier displayed as fresh with
+  a reset of `now`. The reading is now dated, dropped after 24h, and only
+  reused inside a 429 cooldown; every other failure reports no reading so
+  the aggregator's own dated 24h fallback applies.
+
 - One Claude Code conversation continued across two transcripts is listed
   once, not twice. Claude Code can carry a session into a fresh file and
   records `continued-in` in the old one; both then carry the same title, so

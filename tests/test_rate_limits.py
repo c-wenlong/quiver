@@ -1196,6 +1196,157 @@ class ClaudeFetcherTest(unittest.TestCase):
         finally:
             tmp.cleanup()
 
+    def test_failed_fetch_without_cooldown_reports_no_reading(self):
+        """A TLS / network / 401 failure must not resurface the last reading.
+
+        The aggregator dates whatever a fetcher returns to the moment it was
+        returned, so handing back the previous reading here made a weeks-old
+        figure display as current for as long as the failure lasted. The
+        aggregator's own 24h fallback shows the last value with its real age.
+        """
+        from quiver.harness.rate_limits import (
+            _claude_credential_fingerprint, _fetch_claude,
+        )
+
+        tmp, patches = self._linux_creds_file()
+        cache_file = Path(tmp.name) / "rate_limits_cache.json"
+        claude_cache = cache_file.with_name("claude_usage_cache.json")
+        claude_cache.write_text(json.dumps({
+            "info": {
+                "tool_name": "claude", "used_percent": 46,
+                "limit_reached": False, "reset_at": time.time() - 3600,
+                "plan_type": "—", "window_seconds": 0, "window": "7d",
+            },
+            "retry_at": 0.0,
+            "credential_fingerprint": _claude_credential_fingerprint(
+                "fake-claude-token"),
+            "fetched_at": time.time() - 7200,
+        }))
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+                return_value=None,
+            ) as fetch:
+                info = _fetch_claude()
+            self.assertIsNone(info)
+            fetch.assert_called_once()
+        finally:
+            tmp.cleanup()
+
+    def test_cooldown_drops_reading_older_than_a_day(self):
+        """A 429 cooldown never shows a figure the aggregator would refuse."""
+        from quiver.harness.rate_limits import (
+            _claude_credential_fingerprint, _fetch_claude,
+        )
+
+        tmp, patches = self._linux_creds_file()
+        cache_file = Path(tmp.name) / "rate_limits_cache.json"
+        claude_cache = cache_file.with_name("claude_usage_cache.json")
+        claude_cache.write_text(json.dumps({
+            "info": {
+                "tool_name": "claude", "used_percent": 46,
+                "limit_reached": False, "reset_at": 0.0,
+                "plan_type": "—", "window_seconds": 0, "window": "7d",
+            },
+            "retry_at": time.time() + 3600,
+            "credential_fingerprint": _claude_credential_fingerprint(
+                "fake-claude-token"),
+            "fetched_at": time.time() - 90000,
+        }))
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+            ) as fetch:
+                info = _fetch_claude()
+            self.assertIsNone(info)
+            fetch.assert_not_called()
+        finally:
+            tmp.cleanup()
+
+    def test_state_saved_before_fetched_at_existed_is_not_reused(self):
+        """A state file from before readings were dated cannot be aged."""
+        from quiver.harness.rate_limits import _fetch_claude
+
+        tmp, patches = self._linux_creds_file()
+        cache_file = Path(tmp.name) / "rate_limits_cache.json"
+        claude_cache = cache_file.with_name("claude_usage_cache.json")
+        claude_cache.write_text(json.dumps({
+            "info": {
+                "tool_name": "claude", "used_percent": 46,
+                "limit_reached": False, "reset_at": 0.0,
+                "plan_type": "—", "window_seconds": 0, "window": "7d",
+            },
+            "retry_at": 0.0,
+            "credential_fingerprint": "whatever",
+        }))
+
+        def rate_limited(req, on_rate_limited=None):
+            on_rate_limited(120)
+            return None
+
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+                side_effect=rate_limited,
+            ):
+                info = _fetch_claude()
+            self.assertIsNone(info)
+            saved = json.loads(claude_cache.read_text())
+            self.assertIsNone(saved["info"])
+            self.assertGreater(saved["retry_at"], time.time())
+        finally:
+            tmp.cleanup()
+
+    def test_cooldown_keeps_the_reading_its_original_date(self):
+        """Re-saving the last reading on a 429 must not make it younger."""
+        from quiver.harness.rate_limits import _fetch_claude
+
+        tmp, patches = self._linux_creds_file()
+        cache_file = Path(tmp.name) / "rate_limits_cache.json"
+        claude_cache = cache_file.with_name("claude_usage_cache.json")
+
+        def rate_limited(req, on_rate_limited=None):
+            on_rate_limited(120)
+            return None
+
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+                return_value=self._SAMPLE_RESPONSE,
+            ):
+                _fetch_claude()
+            first_fetched_at = json.loads(claude_cache.read_text())["fetched_at"]
+            self.assertGreater(first_fetched_at, 0)
+
+            with patches[0], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                cache_file,
+            ), patch(
+                "quiver.harness.rate_limits._fetch_claude_url",
+                side_effect=rate_limited,
+            ), patch(
+                "quiver.harness.rate_limits.time.time",
+                return_value=first_fetched_at + 600,
+            ):
+                stale = _fetch_claude()
+            self.assertEqual(stale.used_percent, 85)
+            saved = json.loads(claude_cache.read_text())
+            self.assertEqual(saved["fetched_at"], first_fetched_at)
+        finally:
+            tmp.cleanup()
+
     def test_macos_keychain_path(self):
         """macOS keychain credentials can fetch Claude subscription usage."""
         from quiver.harness.rate_limits import _fetch_claude
@@ -2361,6 +2512,83 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(observed, [(429, 90.0)])
+
+
+class VerifiedContextTest(unittest.TestCase):
+    """``_verified_context`` finds a CA bundle without needing certifi.
+
+    A python.org build on macOS ships no certificates, and certifi is not a
+    dependency of this package, so for three weeks every usage fetch on such
+    a machine failed TLS verification: Codex went blank and Claude kept
+    showing its last reading. The OS trust store is always there.
+    """
+
+    def test_uses_os_bundle_when_certifi_is_missing(self):
+        from quiver.harness.rate_limits import _verified_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = os.path.join(tmp, "cert.pem")
+            Path(bundle).write_text("")
+            missing = os.path.join(tmp, "absent.pem")
+            sentinel = object()
+            with patch.dict("sys.modules", {"certifi": None}), patch(
+                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES",
+                (missing, bundle),
+            ), patch(
+                "quiver.harness.rate_limits.ssl.create_default_context",
+                return_value=sentinel,
+            ) as make:
+                self.assertIs(_verified_context(), sentinel)
+            make.assert_called_once_with(cafile=bundle)
+
+    def test_os_bundle_wins_over_certifi(self):
+        from quiver.harness.rate_limits import _ca_bundle_candidates
+        import types
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os_bundle = os.path.join(tmp, "cert.pem")
+            certifi_bundle = os.path.join(tmp, "cacert.pem")
+            for path in (os_bundle, certifi_bundle):
+                Path(path).write_text("")
+            fake = types.SimpleNamespace(where=lambda: certifi_bundle)
+            with patch.dict("sys.modules", {"certifi": fake}), patch(
+                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES",
+                (os_bundle,),
+            ):
+                self.assertEqual(
+                    _ca_bundle_candidates(), [os_bundle, certifi_bundle],
+                )
+
+    def test_gives_up_without_any_bundle(self):
+        from quiver.harness.rate_limits import _verified_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, "absent.pem")
+            with patch.dict("sys.modules", {"certifi": None}), patch(
+                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES", (missing,),
+            ), patch(
+                "quiver.harness.rate_limits.ssl.create_default_context",
+            ) as make:
+                self.assertIsNone(_verified_context())
+            make.assert_not_called()
+
+    def test_unreadable_bundle_falls_through_to_the_next(self):
+        from quiver.harness.rate_limits import _verified_context
+        import ssl
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "bad.pem")
+            good = os.path.join(tmp, "good.pem")
+            for path in (bad, good):
+                Path(path).write_text("")
+            sentinel = object()
+            with patch.dict("sys.modules", {"certifi": None}), patch(
+                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES", (bad, good),
+            ), patch(
+                "quiver.harness.rate_limits.ssl.create_default_context",
+                side_effect=[ssl.SSLError("no start line"), sentinel],
+            ):
+                self.assertIs(_verified_context(), sentinel)
 
 
 class DroidHTTPDiagnosticTest(unittest.TestCase):
