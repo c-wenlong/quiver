@@ -445,7 +445,7 @@ class TranscriptReaderTest(unittest.TestCase):
             ],
         )
 
-    def test_devin_without_a_head_keeps_the_last_version_of_each_message(self):
+    def test_devin_without_a_head_walks_the_chain_from_the_newest_node(self):
         self._devin_db(None, self._DEVIN_NODES)
 
         transcript = read_transcript(_session("devin", "devin-1"))
@@ -454,6 +454,24 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertEqual(
             [m.text for m in transcript.messages],
             ["Fix the build", "Build fixed", "read: /work/a.py", "read: print('ok')"],
+        )
+
+    def test_devin_without_a_head_never_merges_competing_branches(self):
+        """Distinct messages on an abandoned branch must stay out, in any order."""
+        self._devin_db(None, [
+            (0, None, {"message_id": "m0", "role": "system", "content": "You are Devin"}),
+            (1, 0, {"message_id": "m1", "role": "user", "content": "Fix the build"}),
+            (2, 1, {"message_id": "m2", "role": "assistant", "content": "Attempt A, abandoned"}),
+            (3, 1, {"message_id": "m3", "role": "assistant", "content": "Attempt B"}),
+            (4, 2, {"message_id": "m4", "role": "user", "content": "Stray reply on the old branch"}),
+            (5, 3, {"message_id": "m5", "role": "user", "content": "Ship it"}),
+        ])
+
+        transcript = read_transcript(_session("devin", "devin-1"))
+
+        self.assertEqual(
+            [m.text for m in transcript.messages],
+            ["Fix the build", "Attempt B", "Ship it"],
         )
 
     def test_devin_store_missing_is_unreadable_not_an_error(self):
