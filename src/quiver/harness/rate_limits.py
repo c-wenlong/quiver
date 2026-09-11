@@ -160,6 +160,11 @@ def _env_cache_ttl(default: float = 300.0) -> float:
 # with ``SWE_RATE_LIMITS_TTL=<seconds>``.
 _CACHE_TTL = _env_cache_ttl()
 
+# How long a provider's last successful reading may stand in for a failed
+# fetch. Shared by the aggregator's outage fallback and the Claude
+# fetcher's 429 cooldown so neither can show a figure older than a day.
+_STALE_CACHE_TTL = 24 * 60 * 60
+
 # Registry: tool_name → fetcher callable
 RateLimitFetcher = Callable[[], RateLimitInfo | None]
 _FETCHERS: dict[str, RateLimitFetcher] = {}
@@ -216,20 +221,51 @@ def _parse_retry_after_to_seconds(ra_value) -> float | None:
 _CA_WARNED = False
 
 
+# CA bundles the operating system ships, in the order they are tried when
+# Python's own default store is empty. A python.org build on macOS has no
+# certificates of its own, but the OS trust store at ``/etc/ssl/cert.pem``
+# is always there; the rest cover the common Linux distributions.
+_SYSTEM_CA_BUNDLES: tuple[str, ...] = (
+    "/etc/ssl/cert.pem",                     # macOS, BSD, Alpine
+    "/etc/ssl/certs/ca-certificates.crt",    # Debian, Ubuntu, Arch
+    "/etc/pki/tls/certs/ca-bundle.crt",      # RHEL, Fedora, CentOS
+    "/etc/ssl/ca-bundle.pem",                # openSUSE
+)
+
+
+def _ca_bundle_candidates() -> list[str]:
+    """CA bundle files worth trying, existing ones only, OS store first.
+
+    certifi comes last: it is not a dependency of this package, so on
+    most machines the OS bundle is the only one present, and when both
+    exist the OS store is what every other tool on the machine trusts.
+    """
+    found = [path for path in _SYSTEM_CA_BUNDLES if os.path.isfile(path)]
+    try:
+        import certifi
+    except ImportError:
+        return found
+    try:
+        bundle = certifi.where()
+    except Exception:
+        return found
+    if bundle and os.path.isfile(bundle):
+        found.append(bundle)
+    return found
+
+
 def _verified_context() -> "ssl.SSLContext | None":
-    """A context that still verifies, using certifi when the system store is bare.
+    """A context that still verifies, from the OS trust store or certifi.
 
     Returns None when no usable CA bundle exists, which the caller must
     treat as "give up", never as "connect anyway".
     """
-    try:
-        import certifi
-    except ImportError:
-        return None
-    try:
-        return ssl.create_default_context(cafile=certifi.where())
-    except (OSError, ssl.SSLError):
-        return None
+    for cafile in _ca_bundle_candidates():
+        try:
+            return ssl.create_default_context(cafile=cafile)
+        except (OSError, ssl.SSLError):
+            continue
+    return None
 
 
 def _warn_untrusted_ca() -> None:
@@ -238,7 +274,8 @@ def _warn_untrusted_ca() -> None:
     if _CA_WARNED:
         return
     _CA_WARNED = True
-    print(c("yellow", "  Could not verify the server certificate, so no token was sent."))
+    print(c("yellow", "  Could not verify the server certificate, so no token was sent."
+                      " Usage for every starred harness is blank until this is fixed."))
     print(c("dim", "  Install the CA bundle: /Applications/Python\\ 3.x/Install\\ Certificates.command"))
     print(c("dim", "  or: python3 -m pip install certifi"))
 
@@ -816,30 +853,49 @@ def _claude_credential_fingerprint(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _load_claude_state() -> tuple[RateLimitInfo | None, float, str]:
+def _load_claude_state() -> tuple[RateLimitInfo | None, float, str, float]:
+    """Return ``(info, retry_at, credential_fingerprint, fetched_at)``.
+
+    ``info`` is the last successful reading and ``fetched_at`` when it was
+    taken. A reading older than ``_STALE_CACHE_TTL``, or one saved before
+    ``fetched_at`` was recorded, comes back as ``None``: the fetcher must
+    never hand the aggregator a figure it cannot date, because the
+    aggregator stamps whatever a fetcher returns as read just now.
+    """
     try:
         raw = json.loads(_claude_cache_file().read_text())
         info_raw = raw.get("info")
         info = RateLimitInfo(**info_raw) if isinstance(info_raw, dict) else None
         retry_at = float(raw.get("retry_at") or 0)
         fingerprint = raw.get("credential_fingerprint") or ""
-        return info, retry_at, str(fingerprint)
+        fetched_at = float(raw.get("fetched_at") or 0)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return None, 0.0, ""
+        return None, 0.0, "", 0.0
+    if not fetched_at or time.time() - fetched_at > _STALE_CACHE_TTL:
+        info = None
+        fetched_at = 0.0
+    return info, retry_at, str(fingerprint), fetched_at
 
 
 def _save_claude_state(
     info: RateLimitInfo | None,
     retry_at: float = 0.0,
     credential_fingerprint: str = "",
+    fetched_at: float | None = None,
 ) -> None:
+    """Persist the last reading. ``fetched_at`` defaults to now when
+    ``info`` is a fresh reading; pass the loaded value through when
+    re-saving an old one alongside a 429 cooldown."""
     path = _claude_cache_file()
+    if fetched_at is None:
+        fetched_at = time.time() if info is not None else 0.0
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({
             "info": asdict(info) if info is not None else None,
             "retry_at": retry_at,
             "credential_fingerprint": credential_fingerprint,
+            "fetched_at": fetched_at,
         }))
     except OSError:
         pass
@@ -875,7 +931,9 @@ def _fetch_claude() -> RateLimitInfo | None:
         )
 
     credential_fingerprint = _claude_credential_fingerprint(token)
-    stale_info, retry_at, cooldown_fingerprint = _load_claude_state()
+    stale_info, retry_at, cooldown_fingerprint, fetched_at = (
+        _load_claude_state()
+    )
     if (
         retry_at > time.time()
         and cooldown_fingerprint == credential_fingerprint
@@ -895,13 +953,25 @@ def _fetch_claude() -> RateLimitInfo | None:
     data = _fetch_claude_url(req, on_rate_limited=retry_after.append)
     if not isinstance(data, dict):
         if retry_after:
+            # Anthropic is throttling the endpoint: back off, and keep the
+            # last reading visible for the cooldown since it is at most a
+            # day old (``_load_claude_state`` already dropped anything
+            # older).
             wait = retry_after[-1] if retry_after[-1] is not None else 300.0
             _save_claude_state(
                 stale_info,
                 time.time() + max(60.0, wait),
                 credential_fingerprint,
+                fetched_at=fetched_at,
             )
-        return stale_info
+            return stale_info
+        # Any other failure (TLS, 401, timeout, network) is reported as no
+        # reading. The aggregator's own 24h fallback then shows the last
+        # good value with its real age. Returning ``stale_info`` here made
+        # a three-week-old figure display as current for as long as the
+        # failure lasted, because the aggregator dates a fetcher's return
+        # value to the moment it was returned.
+        return None
 
     best_window_key = ""
     best_utilization = -1.0
@@ -1836,7 +1906,6 @@ def invalidate_cache() -> None:
 # ---------------------------------------------------------------------------
 
 _RATE_LIMIT_FETCH_DEADLINE = 2.0
-_STALE_CACHE_TTL = 24 * 60 * 60
 
 
 def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
