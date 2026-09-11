@@ -37,6 +37,7 @@ _RESUME_FLAGS = {
     "pi": lambda sid: ["--session", sid] if sid else [],
     "droid": lambda sid: ["--resume", sid] if sid else [],
     "copilot": lambda sid: ["--resume", sid] if sid else [],
+    "devin": lambda sid: ["--resume", sid] if sid else [],
     "freebuff": lambda sid: ["--continue", sid] if sid else [],
 }
 

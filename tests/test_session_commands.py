@@ -27,6 +27,9 @@ class SessionCommandsTest(unittest.TestCase):
         s = SimpleNamespace(tool_name="droid", session_id="abc", agent="Droid")
         self.assertEqual(_resume_cmd_args(s), ["droid", "--resume", "abc"])
 
+        s = SimpleNamespace(tool_name="devin", session_id="bald-trust", agent="Devin")
+        self.assertEqual(_resume_cmd_args(s), ["devin", "--resume", "bald-trust"])
+
         s = SimpleNamespace(tool_name="antigravity", session_id="x", agent="Antigravity")
         with patch("builtins.print"):
             args = _resume_cmd_args(s)
