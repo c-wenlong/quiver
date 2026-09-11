@@ -175,6 +175,85 @@ def parse_copilot():
     )
 
 
+_DEVIN_DB = "~/.local/share/devin/cli/sessions.db"
+# ``/rename <name>`` and ``/rename-chat <name>`` both rename; with no
+# argument the name is typed into a prompt that ``prompt_history`` never
+# sees, so only an inline name can be matched against the title.
+_DEVIN_RENAME_RE = re.compile(r"^/rename(?:-chat)?(?:\s+(.*?))?\s*$", re.S)
+
+
+def parse_devin():
+    """Devin CLI sessions from ``~/.local/share/devin/cli/sessions.db``.
+
+    ``sessions.title`` is filled either by Devin's auto-titler or by the
+    user's ``/rename``; both write the same column. The only on-disk
+    discriminator is ``prompt_history``, which records every prompt the
+    user typed, ``/rename <name>`` included. A session whose latest
+    inline ``/rename`` argument matches the title is a rename; a title
+    that differs from the first prompt without one is the auto-titler's;
+    a title equal to the first prompt (Devin's default) has no provenance.
+    A rename typed into the interactive prompt leaves no argument on disk
+    and so reads as auto, which under-marks rather than over-marks.
+
+    ``prompt_history`` also holds prompts typed at the REPL before the
+    session existed (``/usage``, ``/login-status``); only rows stamped at
+    or after ``created_at`` belong to the session.
+    """
+
+    def enrich(conn, row, fields):
+        sid = fields.get("session_id")
+        if not sid:
+            return
+        created_at = row[4] if len(row) > 4 else None
+        if not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
+            created_at = 0
+        prompts = conn.execute(
+            "SELECT content FROM prompt_history "
+            "WHERE session_id = ? AND is_shell = 0 AND timestamp >= ? "
+            "ORDER BY timestamp, id",
+            (sid, created_at),
+        ).fetchall()
+        first_prompt = ""
+        renamed_to = ""
+        for (content,) in prompts:
+            text = str(content or "")
+            match = _DEVIN_RENAME_RE.match(text)
+            if match:
+                renamed_to = clean_title(match.group(1) or "")
+                continue
+            if not first_prompt and text.strip():
+                first_prompt = clean_title(text)
+        title = fields.get("title") or ""
+        if not title and first_prompt:
+            fields["title"] = title = first_prompt
+        if not title:
+            return
+        if renamed_to and renamed_to == title:
+            fields["title_source"] = "rename"
+        elif first_prompt and title != first_prompt:
+            fields["title_source"] = "auto"
+
+    return parse_sqlite(
+        SqliteParserConfig(
+            tool_name="devin",
+            agent="Devin",
+            db_path=os.path.expanduser(_DEVIN_DB),
+            query="""
+                SELECT id, working_directory, title, last_activity_at, created_at
+                FROM sessions
+                WHERE hidden = 0
+            """,
+            session_id=0,
+            path=1,
+            title=2,
+            updated=3,
+            created=4,
+            require_path=True,
+            enrich=enrich,
+        )
+    )
+
+
 def parse_forge():
     def enrich(conn, row, fields):
         if fields.get("title"):

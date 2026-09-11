@@ -653,6 +653,96 @@ def _read_copilot(session: Session) -> NormalizedTranscript:
     return transcript
 
 
+@register_reader("devin")
+def _read_devin(session: Session) -> NormalizedTranscript:
+    """Devin keeps each turn as a JSON ``chat_message`` in ``message_nodes``.
+
+    The nodes form a forest: a streamed assistant reply is stored again
+    each time it grows, as a sibling under the same parent, and the
+    session's ``main_chain_id`` points at the head of the chain that holds
+    the final version of every message. Walking parents from that head
+    gives one node per message; without a head (an older row) the nodes
+    are read in order with the last version of each ``message_id`` kept.
+
+    System rows carry rules, environment and tool catalogues, never the
+    conversation, so they are dropped. An assistant row's ``tool_calls``
+    become tool messages, and a ``tool`` row's output is labelled with the
+    name of the call it answers (``tool_call_id`` joins the two).
+    """
+    path = Path(os.path.expanduser("~/.local/share/devin/cli/sessions.db"))
+    conn = _open_ro(path)
+    if conn is None:
+        return _unreadable(session, "Devin store not found", [path])
+    transcript = _new(session, [path])
+    call_names: dict[str, str] = {}
+    try:
+        head_row = conn.execute(
+            "SELECT main_chain_id FROM sessions WHERE id = ?", (session.session_id,),
+        ).fetchone()
+        head = head_row[0] if head_row else None
+        nodes: dict[int, tuple[int | None, str]] = {}
+        for node_id, parent_id, raw in conn.execute(
+            "SELECT node_id, parent_node_id, chat_message FROM message_nodes "
+            "WHERE session_id = ? ORDER BY node_id",
+            (session.session_id,),
+        ):
+            nodes[node_id] = (parent_id, raw)
+        ordered: list[str] = []
+        if head in nodes:
+            seen: set[int] = set()
+            cursor: int | None = head
+            while cursor in nodes and cursor not in seen:
+                seen.add(cursor)
+                parent_id, raw = nodes[cursor]
+                ordered.append(raw)
+                cursor = parent_id
+            ordered.reverse()
+        else:
+            latest: dict[str, str] = {}
+            for node_id in sorted(nodes):
+                raw = nodes[node_id][1]
+                try:
+                    message_id = str(json.loads(raw).get("message_id") or node_id)
+                except (TypeError, AttributeError, json.JSONDecodeError):
+                    message_id = str(node_id)
+                latest.pop(message_id, None)
+                latest[message_id] = raw
+            ordered = list(latest.values())
+        for raw in ordered:
+            try:
+                record = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict):
+                continue
+            role = _role(record.get("role"))
+            if role == "tool":
+                label = call_names.get(str(record.get("tool_call_id") or ""), "tool result")
+                msg = _tool_message(label, output=record.get("content"))
+                if msg:
+                    transcript.messages.append(msg)
+                continue
+            if role not in {"human", "assistant"}:
+                continue
+            msg = _message(role, record.get("content"))
+            if msg:
+                transcript.messages.append(msg)
+            for call in record.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                name = call.get("name")
+                if call.get("id") and name:
+                    call_names[str(call["id"])] = str(name)
+                msg = _tool_message(name, call.get("arguments"))
+                if msg:
+                    transcript.messages.append(msg)
+    except sqlite3.Error as exc:
+        return _unreadable(session, f"SQLite schema error: {exc}", [path])
+    finally:
+        conn.close()
+    return transcript
+
+
 @register_reader("forge")
 def _read_forge(session: Session) -> NormalizedTranscript:
     path = Path(os.path.expanduser("~/.forge/.forge.db"))
@@ -710,6 +800,6 @@ EXPECTED_READER_TOOLS = frozenset(
     {
         "opencode", "claude", "gemini", "antigravity", "codex", "pi", "cursor",
         "freebuff", "droid", "copilot", "continue", "crush", "amp", "kimi",
-        "hermes", "grok", "cline", "forge", "mimo", "tau",
+        "hermes", "grok", "cline", "forge", "mimo", "tau", "devin",
     }
 )
