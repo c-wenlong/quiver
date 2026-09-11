@@ -1725,6 +1725,7 @@ class CopilotRegistrationTest(unittest.TestCase):
         self.assertIn("antigravity", _FETCHERS)
         self.assertIn("freebuff", _FETCHERS)
         self.assertIn("cursor", _FETCHERS)
+        self.assertIn("devin", _FETCHERS)
 
 
 class DroidFetcherTest(unittest.TestCase):
@@ -2749,6 +2750,159 @@ class CursorFetcherTest(unittest.TestCase):
             return_value=1789190193.0 - 3 * 3600,
         ):
             self.assertEqual(strip_ansi(info.format_column()), "50% auto: 3h0m")
+
+
+class DevinFetcherTest(unittest.TestCase):
+    """Test the Devin quota fetcher (Windsurf seat-management RPC)."""
+
+    _SAMPLE_RESPONSE = {
+        "userStatus": {
+            "pro": True,
+            "planStatus": {
+                "planInfo": {
+                    "planName": "Teams",
+                    "monthlyPromptCredits": -1,
+                    "billingStrategy": "BILLING_STRATEGY_QUOTA",
+                },
+                "planStart": "2026-08-15T04:26:26Z",
+                "planEnd": "2026-09-15T04:26:26Z",
+                "availablePromptCredits": -1,
+                "dailyQuotaRemainingPercent": 100,
+                "weeklyQuotaRemainingPercent": 96,
+                "dailyQuotaResetAtUnix": "1789200000",
+                "weeklyQuotaResetAtUnix": "1789286400",
+            },
+        },
+    }
+
+    def test_parser_surfaces_the_more_used_window(self):
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        info = _parse_devin_status(self._SAMPLE_RESPONSE)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.tool_name, "devin")
+        self.assertEqual(info.used_percent, 4)
+        self.assertEqual(info.window, "7d")
+        self.assertEqual(info.reset_at, 1789286400.0)
+        self.assertEqual(info.window_seconds, 604800)
+        self.assertEqual(info.plan_type, "teams")
+        self.assertFalse(info.limit_reached)
+
+    def test_parser_picks_daily_when_it_is_the_tighter_window(self):
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        data["userStatus"]["planStatus"]["dailyQuotaRemainingPercent"] = 0
+
+        info = _parse_devin_status(data)
+
+        self.assertEqual(info.window, "1d")
+        self.assertEqual(info.used_percent, 100)
+        self.assertTrue(info.limit_reached)
+        self.assertEqual(info.reset_at, 1789200000.0)
+        self.assertEqual(info.window_seconds, 86400)
+
+    def test_parser_falls_back_to_prompt_credits(self):
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        plan = data["userStatus"]["planStatus"]
+        del plan["dailyQuotaRemainingPercent"]
+        del plan["weeklyQuotaRemainingPercent"]
+        plan["availablePromptCredits"] = 125
+        plan["planInfo"]["monthlyPromptCredits"] = 500
+
+        info = _parse_devin_status(data)
+
+        self.assertEqual(info.remaining_units, 125)
+        self.assertEqual(info.total_units, 500)
+        self.assertEqual(info.used_percent, 75)
+        self.assertEqual(info.window, "")
+        self.assertEqual(info.reset_at, 1789446386.0)
+
+    def test_parser_rejects_unusable_payloads(self):
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        self.assertIsNone(_parse_devin_status({}))
+        self.assertIsNone(_parse_devin_status({"userStatus": {"planStatus": "nope"}}))
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        plan = data["userStatus"]["planStatus"]
+        plan["dailyQuotaRemainingPercent"] = True
+        plan["weeklyQuotaRemainingPercent"] = "n/a"
+        # Unlimited credits (-1) and no quota windows: nothing to show.
+        self.assertIsNone(_parse_devin_status(data))
+
+    def test_credentials_come_from_the_toml_file(self):
+        from quiver.harness.rate_limits import _read_devin_credentials
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "credentials.toml")
+            Path(path).write_text(
+                'windsurf_api_key = "sk-test"\n'
+                'api_server_url = "https://server.example.com/"\n'
+                'devin_api_url = "https://api.devin.ai"\n'
+            )
+            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+                self.assertEqual(
+                    _read_devin_credentials(), ("sk-test", "https://server.example.com"),
+                )
+            Path(path).write_text('windsurf_api_key = "sk-test"\n')
+            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+                self.assertEqual(
+                    _read_devin_credentials(), ("sk-test", "https://server.codeium.com"),
+                )
+            Path(path).write_text('api_server_url = "https://server.example.com"\n')
+            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+                self.assertIsNone(_read_devin_credentials())
+            Path(path).write_text("not = = toml")
+            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+                self.assertIsNone(_read_devin_credentials())
+            with patch(
+                "quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH",
+                os.path.join(tmp, "absent.toml"),
+            ):
+                self.assertIsNone(_read_devin_credentials())
+
+    def test_fetch_posts_the_key_in_the_rpc_metadata(self):
+        from quiver.harness.rate_limits import _fetch_devin
+
+        with patch(
+            "quiver.harness.rate_limits._read_devin_credentials",
+            return_value=("sk-test", "https://server.example.com"),
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            return_value=self._SAMPLE_RESPONSE,
+        ) as fetch:
+            info = _fetch_devin()
+
+        self.assertEqual(info.used_percent, 4)
+        request = fetch.call_args[0][0]
+        self.assertEqual(
+            request.full_url,
+            "https://server.example.com/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+        )
+        self.assertEqual(request.get_method(), "POST")
+        body = json.loads(request.data.decode())
+        self.assertEqual(body["metadata"]["api_key"], "sk-test")
+        self.assertEqual(body["metadata"]["ide_name"], "devin")
+        self.assertEqual(request.get_header("Content-type"), "application/json")
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_fetch_without_credentials_or_on_failure_reports_nothing(self):
+        from quiver.harness.rate_limits import _fetch_devin
+
+        with patch(
+            "quiver.harness.rate_limits._read_devin_credentials", return_value=None,
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            self.assertIsNone(_fetch_devin())
+        fetch.assert_not_called()
+
+        with patch(
+            "quiver.harness.rate_limits._read_devin_credentials",
+            return_value=("sk-test", "https://server.example.com"),
+        ), patch("quiver.harness.rate_limits._fetch_json", return_value=None):
+            self.assertIsNone(_fetch_devin())
 
 
 class VerifiedContextTest(unittest.TestCase):

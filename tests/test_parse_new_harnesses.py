@@ -54,6 +54,131 @@ class ParseCopilotTest(unittest.TestCase):
             self.assertEqual(sessions[0].session_id, "s1")
 
 
+_DEVIN_SCHEMA = """
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    working_directory TEXT NOT NULL,
+    backend_type TEXT NOT NULL,
+    model TEXT NOT NULL,
+    agent_mode TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_activity_at INTEGER NOT NULL,
+    title TEXT,
+    main_chain_id INTEGER,
+    hidden INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE prompt_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    session_id TEXT NOT NULL,
+    is_shell INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+class ParseDevinTest(unittest.TestCase):
+    """Devin CLI sessions.db: titles, provenance from prompt_history, hidden rows."""
+
+    def _parse(self, sessions, prompts):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "sessions.db"
+            conn = sqlite3.connect(db)
+            conn.executescript(_DEVIN_SCHEMA)
+            conn.executemany(
+                "INSERT INTO sessions VALUES (?, ?, 'windsurf', 'swe-2', 'normal', ?, ?, ?, NULL, ?)",
+                sessions,
+            )
+            conn.executemany(
+                "INSERT INTO prompt_history (content, timestamp, session_id, is_shell) VALUES (?, ?, ?, ?)",
+                prompts,
+            )
+            conn.commit()
+            conn.close()
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=lambda p: str(db) if p.endswith("devin/cli/sessions.db") else p,
+            ):
+                from quiver.sessions.parsers import parse_devin
+
+                return {s.session_id: s for s in parse_devin()}
+
+    def test_reads_sessions_with_seconds_timestamps_and_skips_hidden(self):
+        found = self._parse(
+            [
+                ("shown", "/tmp/proj", 1789116383, 1789116437, "Create a connection string", 0),
+                ("hidden", "/tmp/proj", 1789116383, 1789116437, "gone", 1),
+            ],
+            [],
+        )
+        self.assertEqual(set(found), {"shown"})
+        s = found["shown"]
+        self.assertEqual(s.tool_name, "devin")
+        self.assertEqual(s.agent, "Devin")
+        self.assertEqual(s.path, "/tmp/proj")
+        self.assertEqual(s.title, "Create a connection string")
+        self.assertEqual(s.timestamp, 1789116437000.0)
+
+    def test_title_falls_back_to_first_prompt_of_the_session(self):
+        found = self._parse(
+            [("s1", "/tmp/proj", 1000, 1010, "", 0)],
+            [
+                ("/usage", 990, "s1", 0),            # typed before the session existed
+                ("ls -la", 1000, "s1", 1),           # shell mode, not a prompt
+                ("fix the login bug", 1000, "s1", 0),
+                ("and the logout one", 1005, "s1", 0),
+            ],
+        )
+        self.assertEqual(found["s1"].title, "fix the login bug")
+        self.assertEqual(found["s1"].title_source, "")
+
+    def test_title_equal_to_first_prompt_has_no_provenance(self):
+        found = self._parse(
+            [("s1", "/tmp/proj", 1000, 1010, "/exi", 0)],
+            [("/login-status", 995, "s1", 0), ("/exi", 1000, "s1", 0), ("/exit", 1003, "s1", 0)],
+        )
+        self.assertEqual(found["s1"].title, "/exi")
+        self.assertEqual(found["s1"].title_source, "")
+
+    def test_title_differing_from_first_prompt_is_auto(self):
+        found = self._parse(
+            [("s1", "/tmp/proj", 1000, 1010, "CloudSQL table comparison", 0)],
+            [("check on my cloudsql db and compare two tables", 1000, "s1", 0)],
+        )
+        self.assertEqual(found["s1"].title_source, "auto")
+
+    def test_inline_rename_matching_title_is_rename(self):
+        found = self._parse(
+            [
+                ("s1", "/tmp/proj", 1000, 1010, "agent-dropdown-sort", 0),
+                ("s2", "/tmp/proj", 1000, 1010, "agent-dropdown-sort", 0),
+            ],
+            [
+                ("sort the dropdown", 1000, "s1", 0),
+                ("/rename agent-dropdown-sort", 1005, "s1", 0),
+                ("sort the dropdown", 1000, "s2", 0),
+                ("/rename-chat agent-dropdown-sort", 1005, "s2", 0),
+            ],
+        )
+        self.assertEqual(found["s1"].title_source, "rename")
+        self.assertEqual(found["s2"].title_source, "rename")
+
+    def test_interactive_rename_without_argument_under_marks_as_auto(self):
+        found = self._parse(
+            [("s1", "/tmp/proj", 1000, 1010, "db-conn", 0)],
+            [("use gcloud to build a connection string", 1000, "s1", 0), ("/rename-chat ", 1005, "s1", 0)],
+        )
+        self.assertEqual(found["s1"].title_source, "auto")
+
+    def test_rename_command_is_never_the_title(self):
+        found = self._parse(
+            [("s1", "/tmp/proj", 1000, 1010, "", 0)],
+            [("/rename first", 1000, "s1", 0), ("real prompt", 1001, "s1", 0)],
+        )
+        self.assertEqual(found["s1"].title, "real prompt")
+        self.assertEqual(found["s1"].title_source, "")
+
+
 class ParseContinueTest(unittest.TestCase):
     def test_reads_sessions_json_index(self):
         with tempfile.TemporaryDirectory() as tmp:
