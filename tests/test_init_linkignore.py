@@ -4,6 +4,7 @@ A harness can keep its own skills or instructions by listing its path. The
 plan still sees the path, stamps it ``ignored``, and nothing acts on it.
 """
 
+import contextlib
 import io
 import re
 import tempfile
@@ -14,6 +15,7 @@ from unittest import mock
 
 from quiver.init import commands as init_commands
 from quiver.init.layout import (
+    LinkIgnoreError,
     is_linkignored,
     link_states,
     linkignore_file,
@@ -58,6 +60,15 @@ class LoadTest(unittest.TestCase):
             )
 
 
+    def test_unreadable_file_raises_rather_than_failing_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            linkignore_file(home).mkdir()  # a directory cannot be read as text
+            with self.assertRaises(LinkIgnoreError) as ctx:
+                load_linkignore(home)
+            self.assertIn(".linkignore", str(ctx.exception))
+
+
 class MatchTest(unittest.TestCase):
     def test_exact_wildcard_and_parent_matches(self):
         home = Path("/h")
@@ -95,6 +106,16 @@ class PlanTest(unittest.TestCase):
             self.assertEqual(by_label["codex"].state, "ignored")
             self.assertEqual(by_label["claude"].state, "create")
 
+    def test_link_states_warns_and_continues_on_unreadable_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            linkignore_file(home).mkdir()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                states = link_states(home)
+            self.assertEqual(states["claude"]["agents"], "create")
+            self.assertIn("cannot read", err.getvalue())
+
     def test_link_states_carries_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -127,6 +148,20 @@ class CmdInitTest(unittest.TestCase):
             self.assertNotIn("exist nowhere else", out)
             self.assertNotIn("Left alone", out)
             self.assertEqual(list((home / ".quiver/backups").iterdir()), [])
+
+    def test_unreadable_ignore_file_stops_init_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            agents = home / ".agents/skills"
+            _skill(agents, "only-here")
+            linkignore_file(home).mkdir()
+
+            code, out = self._run(home, ["--force"])
+            self.assertEqual(code, 1)
+            self.assertIn("cannot read", out)
+            self.assertFalse(agents.is_symlink(), "nothing may be replaced")
+            self.assertFalse((home / ".claude/CLAUDE.md").exists(), "nothing may be linked")
+            self.assertFalse((home / ".quiver/backups").exists())
 
     def test_force_still_respects_ignore(self):
         with tempfile.TemporaryDirectory() as tmp:

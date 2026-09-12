@@ -225,12 +225,24 @@ SEED_LINKIGNORE = """# Paths swe init leaves alone, one per line, relative to yo
 """
 
 
+class LinkIgnoreError(OSError):
+    """~/.quiver/.linkignore exists but cannot be read.
+
+    Deliberately not swallowed: a plan built without the user's ignore list
+    would let ``swe init --force`` replace exactly the paths they asked it to
+    leave alone. A missing file is the normal case and means no patterns.
+    """
+
+
 def load_linkignore(home: Path | None = None) -> list[str]:
     """Patterns from ~/.quiver/.linkignore, normalised to home-relative form."""
+    path = linkignore_file(home)
     try:
-        text = linkignore_file(home).read_text(encoding="utf-8")
-    except OSError:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return []
+    except OSError as exc:
+        raise LinkIgnoreError(f"cannot read {path}: {exc.strerror or exc}") from exc
     patterns: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -297,15 +309,20 @@ def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
     return LinkStatus(label, path, "create", "")
 
 
-def plan(home: Path | None = None) -> tuple[list[LinkStatus], list[LinkStatus]]:
+def plan(
+    home: Path | None = None, patterns: list[str] | None = None
+) -> tuple[list[LinkStatus], list[LinkStatus]]:
     """Return (instruction statuses, skill statuses) for the current machine.
 
     A path listed in ~/.quiver/.linkignore is still in the plan, as
     ``ignored``, so the report can say it was seen and deliberately left out.
-    Nothing acts on that state.
+    Nothing acts on that state. ``patterns`` lets a caller that has already
+    loaded (and validated) the ignore file pass it in; otherwise it is read
+    here and an unreadable file raises ``LinkIgnoreError``.
     """
     home = home or Path.home()
-    patterns = load_linkignore(home)
+    if patterns is None:
+        patterns = load_linkignore(home)
     instructions = []
     for label, rel in INSTRUCTION_TARGETS:
         if is_linkignored(home / rel, home, patterns):
@@ -346,7 +363,16 @@ def link_states(home: Path | None = None) -> dict[str, dict[str, str]]:
     home = home or Path.home()
     out: dict[str, dict[str, str]] = {}
 
-    instructions, skills = plan(home)
+    # A read-only listing should not die on a bad ignore file, but it must
+    # not pretend the file is empty either: say so, then show real states.
+    try:
+        patterns = load_linkignore(home)
+    except LinkIgnoreError as exc:
+        import sys
+
+        print(f"warning: {exc}; showing link states without it", file=sys.stderr)
+        patterns = []
+    instructions, skills = plan(home, patterns)
     for status in instructions:
         out.setdefault(_registry_name(status.label), {})["agents"] = status.state
 
