@@ -213,10 +213,7 @@ def _parse(path: Path) -> dict:
     if not any(k in text for k in SERVER_KEYS):
         return {}
     if path.suffix == ".toml":
-        try:
-            import tomllib
-        except ImportError:  # pragma: no cover - 3.10 only
-            import tomli as tomllib
+        import tomllib
         try:
             return _servers_in(tomllib.loads(text))
         except Exception:
