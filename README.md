@@ -82,6 +82,21 @@ If you juggle more than one AI coding agent you end up with a mess:
 
 ## Install
 
+**Requirements:** Python 3.11+, and nothing else. The core CLI has **no
+third-party runtime dependencies** at all. The MCP history server is the only
+extra that adds a real dependency, and you opt into it.
+
+> **On Python 3.10?** `v0.2.9` is the last release that runs on it; the floor
+> moved to 3.11 afterwards. Pin that tag:
+>
+> ```bash
+> pipx install git+https://github.com/c-wenlong/quiver.git@v0.2.9
+> ```
+>
+> Check with `python3 --version`. Ubuntu 22.04 LTS ships 3.10, so it needs the
+> pin or a newer interpreter. Debian 12 (3.11), Ubuntu 24.04 (3.12) and current
+> Fedora and Homebrew are all fine as they are.
+
 ### pipx (recommended)
 
 ```bash
@@ -124,10 +139,6 @@ Exposes recent sessions as an MCP tool (requires the `server` extra):
 pip install -e ".[server]"
 python -m quiver.mcp_server
 ```
-
-**Requirements:** Python 3.11+. The core CLI has **no third-party runtime
-dependencies** at all. The MCP history server is the only extra that adds a real
-dependency, and you opt into it.
 
 ## Quick start
 
