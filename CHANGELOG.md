@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hook scripts in `swe init`.** `~/.quiver/hooks/<harness>/` holds one
+  harness's hook scripts, and `swe init` links each file into that harness's
+  hooks directory: `capabilities.hooks.root` from `harness.json`, else
+  `~/.claude/hooks` for claude and `~/.factory/hooks` for droid. Hooks are
+  per harness, never shared, and opt-in by the directory existing. Scripts
+  are linked one by one so installer-owned siblings are left alone, and
+  `.linkignore` applies to the destination. A plain copy with identical bytes
+  is absorbed into a link. `swe init` prints a third `Hooks` line and `swe
+  doctor` checks `HOOK_FALLBACK` against the registry. Only the file is
+  linked: declaring the hook in the harness's settings is left to whatever
+  manages that file.
 - **Community files and supply-chain hygiene.** `CODE_OF_CONDUCT.md`
   (Contributor Covenant 2.1), `SUPPORT.md`, `.github/CODEOWNERS`,
   `.editorconfig`, and a weekly Dependabot schedule for GitHub Actions. Every
