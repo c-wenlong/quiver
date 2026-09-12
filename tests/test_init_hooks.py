@@ -18,6 +18,7 @@ from quiver.harness.drift import check_code_vs_data
 from quiver.init import commands as init_commands
 from quiver.init.hooks import (
     HOOK_FALLBACK,
+    INSIDE_QUIVER_DETAIL,
     NO_ROOT_DETAIL,
     UNSUPPORTED_DETAIL,
     hook_root,
@@ -165,6 +166,52 @@ class PlanHooksTest(unittest.TestCase):
             _registry(home, {"codex": {"capabilities": {"hooks": {"supported": True, "root": "~/.codex/hooks"}}}})
             [status] = plan_hooks(home)
             self.assertEqual((status.state, status.path), ("create", home / ".codex/hooks/notify.sh"))
+
+
+class HookRootSafetyTest(unittest.TestCase):
+    def test_root_inside_quiver_is_skipped_and_source_survives(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            src = _hook(home, "claude", "guard.py", "keep me\n")
+            _registry(home, {"claude": {"capabilities": {"hooks": {"supported": True, "root": "~/.quiver/hooks/claude"}}}})
+            [status] = plan_hooks(home)
+            self.assertEqual((status.state, status.detail), ("skipped", INSIDE_QUIVER_DETAIL))
+            out = StringIO()
+            with mock.patch.object(Path, "home", staticmethod(lambda: home)), redirect_stdout(out):
+                init_commands.cmd_init([])
+            self.assertFalse(src.is_symlink())
+            self.assertEqual(src.read_text(), "keep me\n")
+
+    def test_hard_link_to_the_source_is_never_absorbed(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            src = _hook(home, "claude", "guard.py")
+            (home / ".claude/hooks").mkdir()
+            os.link(src, home / ".claude/hooks/guard.py")
+            [status] = plan_hooks(home)
+            self.assertEqual(status.state, "skipped")
+
+    def test_root_directly_under_home_must_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _hook(home, "claude", "guard.py")
+            _registry(home, {"claude": {"capabilities": {"hooks": {"supported": True, "root": "~/elsewhere"}}}})
+            [status] = plan_hooks(home)
+            self.assertEqual((status.state, status.detail), ("skipped", "harness not installed"))
+            (home / "elsewhere").mkdir()
+            [status] = plan_hooks(home)
+            self.assertEqual(status.state, "create")
+
+    def test_deep_root_counts_its_own_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".config/opencode").mkdir(parents=True)
+            _hook(home, "opencode", "guard.ts")
+            _registry(home, {"opencode": {"capabilities": {"hooks": {"supported": True, "root": "~/.config/opencode/hooks"}}}})
+            [status] = plan_hooks(home)
+            self.assertEqual(status.state, "create")
 
 
 class InitHooksTest(unittest.TestCase):

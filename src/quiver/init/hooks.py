@@ -51,6 +51,7 @@ _SKIP_NAMES = frozenset({"__pycache__", "node_modules"})
 
 NO_ROOT_DETAIL = "no hooks root, set capabilities.hooks.root in harness.json"
 UNSUPPORTED_DETAIL = "harness.json says this harness has no hooks"
+INSIDE_QUIVER_DETAIL = "hooks root is inside ~/.quiver, would link a script to itself"
 
 
 def load_registry(home: Path) -> dict:
@@ -117,7 +118,28 @@ def _same_bytes(a: Path, b: Path) -> bool:
         return False
 
 
-def classify_hook(label: str, dest: Path, source: Path) -> LinkStatus:
+def _installed(root: Path, home: Path) -> bool:
+    """Whether the harness that owns ``root`` is on this machine.
+
+    The root itself counts, and so does its parent (``~/.claude`` for
+    ``~/.claude/hooks``), since a hooks directory is often absent until the
+    first hook. Home is not a parent that counts: a root directly under it
+    says nothing about any harness, so it must exist already.
+    """
+    if root.is_dir():
+        return True
+    return root.parent != home and root.parent.is_dir()
+
+
+def _inside(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def classify_hook(label: str, dest: Path, source: Path, home: Path) -> LinkStatus:
     """Classify one hook destination without touching the filesystem.
 
     Differs from ``layout.inspect`` in two ways. The harness counts as
@@ -127,7 +149,7 @@ def classify_hook(label: str, dest: Path, source: Path) -> LinkStatus:
     link should be is exactly how edits end up in an unversioned file, and
     replacing it loses nothing.
     """
-    if not dest.parent.parent.is_dir():
+    if not _installed(dest.parent, home):
         return LinkStatus(label, dest, "skipped", "harness not installed", source)
 
     if dest.is_symlink():
@@ -144,6 +166,14 @@ def classify_hook(label: str, dest: Path, source: Path) -> LinkStatus:
         return LinkStatus(label, dest, "relink", f"points at {current}", source)
 
     if dest.exists():
+        try:
+            itself = dest.samefile(source)
+        except OSError:
+            itself = False
+        if itself:
+            # The same file reached another way (a hard link, a symlinked
+            # parent). Replacing it would delete the source.
+            return LinkStatus(label, dest, "skipped", INSIDE_QUIVER_DETAIL, source)
         if _same_bytes(dest, source):
             return LinkStatus(label, dest, "absorb", "identical copy", source)
         kind = "directory" if dest.is_dir() else "file"
@@ -185,9 +215,14 @@ def plan_hooks(
                 # which scripts are waiting on a harness.json entry.
                 statuses.append(LinkStatus(name, source, "skipped", why, source))
                 continue
+            if _inside(root, _paths.quiver_dir_for(home)):
+                # A root inside ~/.quiver would make the destination the
+                # source itself: "absorbing" it deletes the only copy.
+                statuses.append(LinkStatus(name, source, "skipped", INSIDE_QUIVER_DETAIL, source))
+                continue
             dest = root / source.name
             if is_linkignored(dest, home, patterns):
                 statuses.append(LinkStatus(name, dest, "ignored", IGNORED_DETAIL, source))
             else:
-                statuses.append(classify_hook(name, dest, source))
+                statuses.append(classify_hook(name, dest, source, home))
     return statuses
