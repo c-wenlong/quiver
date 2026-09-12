@@ -120,7 +120,7 @@ Link state is a small vocabulary shared by `swe init`, `swe list` and
 | `absorb` | a real directory whose contents are all duplicates or empty |
 | `keep` | a real directory holding files that exist nowhere else |
 | `conflict` | a real file where the link should go |
-| `skipped` | harness not installed |
+| `skipped` | harness not installed; `swe init` lists it only when `harness.json` has the harness |
 | `ignored` | listed in `~/.quiver/.linkignore`, never touched or counted |
 
 `keep` is the safety valve. It is never overwritten on a plain run, because
@@ -204,7 +204,9 @@ capability that overrides it is the design working too. What is *not*
 healthy: the same path filed under two different names (the join between
 table and registry breaks), a `supported: true` capability with no `root`
 to join on, or a table entry naming a harness the registry has never
-heard of. `swe doctor`'s code-vs-data check (see Drift, below) enforces
+heard of while its root exists on this machine. A row for a harness that
+is neither registered nor installed is the table covering someone else's
+setup, so it stays quiet. `swe doctor`'s code-vs-data check (see Drift, below) enforces
 exactly that distinction.
 
 ## Scope

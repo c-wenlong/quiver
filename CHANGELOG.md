@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Uninstalled, unregistered harnesses stay out of the report.** `swe init`
+  no longer lists an instruction target as `skipped` when the harness is
+  neither installed nor in `harness.json`, so removing a harness you stopped
+  using leaves no trace in the output. `swe doctor` likewise stops warning
+  about a fallback-table row for such a harness; it still warns when that
+  harness's root exists on disk.
+
 - **Python floor raised from 3.10 to 3.11, and the CLI is now dependency-free.**
   `tomli` was the single runtime dependency and existed only to backfill
   `tomllib` below 3.11, so it is gone from `pyproject.toml` and from the Nix

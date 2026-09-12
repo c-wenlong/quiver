@@ -8,7 +8,7 @@ from pathlib import Path
 
 from quiver.console import c
 from quiver.paths import backup_tree
-from quiver.init.hooks import plan_hooks
+from quiver.init.hooks import load_registry, plan_hooks
 from quiver.init.migrate import apply_migration, plan_migration, write_gitignore
 from quiver.init.layout import (
     LinkIgnoreError,
@@ -21,6 +21,7 @@ from quiver.init.layout import (
     load_linkignore,
     plan,
     quiver_dir,
+    registry_name,
     skills_dir,
 )
 
@@ -213,6 +214,14 @@ def cmd_init(args) -> int:
         write_gitignore(home)
 
     instructions, skills = plan(home, patterns)
+    # An uninstalled harness the registry does not know is noise: quiver can
+    # link it, but this machine never asked. A registered one still shows as
+    # skipped, since that tells you something you set up is missing.
+    registry = load_registry(home)
+    instructions = [
+        s for s in instructions
+        if not (s.state == "skipped" and registry_name(s.label) not in registry)
+    ]
     hooks = plan_hooks(home, patterns)
 
     if check_only:
