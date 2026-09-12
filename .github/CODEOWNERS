@@ -1,0 +1,7 @@
+# Every path in this repository is owned by the maintainer.
+# GitHub requests a review from the owner on any pull request that touches a
+# matching path.  A single-maintainer repo needs exactly one rule.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+* @c-wenlong

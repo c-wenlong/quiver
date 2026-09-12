@@ -21,12 +21,12 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
 
 # Full test suite (unittest is the canonical runner; CI uses exactly this)
-python -m unittest discover -s tests -p 'test_*.py'
+python3 -m unittest discover -s tests -p 'test_*.py'
 
 # One file / one test method
-python -m unittest tests.test_table
-python -m unittest tests.test_table -k render
-python -m unittest tests.test_rate_limits.TestClass.test_method
+python3 -m unittest tests.test_table
+python3 -m unittest tests.test_table -k render
+python3 -m unittest tests.test_rate_limits.TestClass.test_method
 
 # Coverage, as CI runs it (floor is 69%, configured in .coveragerc)
 test_home="$(mktemp -d)"
@@ -60,7 +60,7 @@ Required steps for any feature that adds files or changes `cmd_*` handlers:
 
 1. **Write tests** and run `python -m unittest discover -s tests -p 'test_*.py'`.
 2. **Reinstall the package** with `pip install -e .` (or `pipx install --force git+...` for pipx installs). With an editable install new files are picked up automatically, but a stale non-editable install won't see them until you reinstall.
-3. **Verify e2e** by running the actual `swe <command>` against a temp HOME, not just `PYTHONPATH=src python -m quiver.cli <command>`. CI's smoke step runs `swe list`, `swe session`, `swe models`, `swe skills`, `swe mcp list`, `swe providers list`, and `swe __complete list` this way.
+3. **Verify e2e** by running the actual `swe <command>` against a temp HOME, not just `PYTHONPATH=src python -m quiver.cli <command>`. CI does the same in three separate jobs — a built wheel installed into a clean venv, the Nix derivation's output, and a macOS run — each exercising the installed binary against a `mktemp -d` home. Read `.github/workflows/ci.yml` for the exact commands rather than assuming; that list gets trimmed from time to time.
 4. **Open a PR**, one concern per PR, with a clear description of what changed and why.
 
 Common pitfall: if a feature works with `PYTHONPATH=src python -m quiver.cli` but not with the installed `swe` command, the installed copy is stale (likely a non-editable install). Re-run `pip install -e .` to switch to editable mode and sync with the source tree.
@@ -84,7 +84,7 @@ Domain packages under `src/quiver/`:
 | `setup/` | interactive onboarding wizard (the one logic module allowed to print) |
 | `history/` | backward-compatible re-exports; prefer `quiver.sessions` |
 
-Five modules at the bottom import nothing else from the project: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`, `keys.py` (the shared terminal key reader). Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
+Five modules form the bottom layer and never import a domain package: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`, `keys.py` (the shared terminal key reader). They are ordered among themselves — `console.py` and `keys.py` import nothing from the project at all, `paths.py` takes only the constants in `quiver/__init__.py`, `table.py` imports `console`, `configuration.py` imports `paths`. Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
 
 `harness/stars.py` and `harness/archive.py` are compatibility shims over `registry.py`, kept so old call sites work. Do not add new state to them.
 

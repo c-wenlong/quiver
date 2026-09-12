@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Community files and supply-chain hygiene.** `CODE_OF_CONDUCT.md`
+  (Contributor Covenant 2.1), `SUPPORT.md`, `.github/CODEOWNERS`,
+  `.editorconfig`, and a weekly Dependabot schedule for GitHub Actions. Every
+  action in CI is pinned to a full commit SHA with the version as a trailing
+  comment, and both workflows start from `permissions: contents: read`. A
+  `release.yml` workflow builds the sdist and wheel on a `v*` tag, checks the
+  tag against `project.version`, runs `twine check`, smoke-tests the wheel,
+  and attaches both files to the GitHub release. Publishing to PyPI stays
+  commented out because the name `quiver` belongs to another project.
 - **A `flake.nix` in the repo.** `nix run github:c-wenlong/quiver` builds
   and runs `swe` with no clone, and `packages.default` is a flake input any
   nix-darwin or Home Manager config can consume. The build runs the whole
@@ -49,6 +58,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs audited against the code.** README: the `swe list` sample, the
+  commands table, the quick start, the supported-tools list (now the 24 the
+  catalog recognises), the skills layout (`~/.quiver/skills`), and the
+  config paths were all re-derived from the source; a duplicated
+  `swe providers` heading that carried a copy of the mcp table is gone, the
+  `#contributing` nav link now lands on a real section, and the stdlib-only
+  badge says `3.11+` because 3.10 pulls in the `tomli` backport.
+  ARCHITECTURE.md drops `swe mcp export`/`import` (never existed), corrects
+  the `~/.quiver/.gitignore` body, and restates the bottom layer's import
+  order. CONTRIBUTING.md rebuilds the project layout table from the real
+  tree, points MCP handlers at `mcp/formats.py`, and stops linking the
+  disabled Discussions tab. SECURITY.md names `0.2.x`, the real secret
+  paths under `~/.quiver`, and the fact that private vulnerability
+  reporting is not on yet. `docs/COVERAGE.md` is re-measured at 77.2%
+  combined over 1,695 tests. `pyproject.toml` uses the PEP 639
+  `license = "MIT"` form with `license-files`.
 - **`swe init` prints counts by default.** Every run used to list all sixty-odd
   harness paths, one row each, when nearly all of them read `linked`. The
   default is now one tally per section (`Instructions  9 linked`,

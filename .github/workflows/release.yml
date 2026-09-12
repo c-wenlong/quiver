@@ -1,0 +1,155 @@
+# Release pipeline.
+#
+# Builds an sdist and a wheel from a `v*` tag, checks the metadata renders,
+# and attaches both files to the matching GitHub release.
+#
+# It does NOT create the release and it does NOT merge or tag anything: the
+# maintainer publishes the release by hand, and this workflow only attaches
+# artifacts to it.  Run order is therefore: push the tag, write the release,
+# then this job (re-run it if the release did not exist yet when the tag
+# landed).
+#
+# PyPI publishing is written out below but commented off.  See the note above
+# the `publish-to-pypi` job.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets the maintainer rebuild and re-attach after publishing the release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist and wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tooling
+        run: python3 -m pip install --upgrade build twine
+
+      - name: Check the tag matches the version in pyproject.toml
+        # A tag that disagrees with `project.version` ships a file whose name
+        # does not match the release it hangs off.  pyproject has run ahead of
+        # the tag before, so this is a real guard, not a formality.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          declared="$(python3 -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "tag=$tag pyproject=$declared"
+          if [ "$tag" != "$declared" ]; then
+            echo "::error::Tag v$tag does not match pyproject.toml version $declared"
+            exit 1
+          fi
+
+      - name: Build
+        run: python3 -m build
+
+      - name: Check the built metadata
+        run: python3 -m twine check --strict dist/*
+
+      - name: Install the built wheel and run it
+        run: |
+          python3 -m venv /tmp/relcheck
+          /tmp/relcheck/bin/pip install dist/quiver-*.whl
+          test_home="$(mktemp -d)"
+          HOME="$test_home" /tmp/relcheck/bin/swe --help
+          HOME="$test_home" /tmp/relcheck/bin/swe list
+
+      - name: Upload the distributions as a workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  attach-to-release:
+    name: Attach artifacts to the GitHub release
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      # Only this job gets a writable token, and only for release assets.
+      contents: write
+
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload to the release, if one exists
+        # Deliberately does not create the release.  If the maintainer has not
+        # written the notes yet, this leaves a notice and the files stay on the
+        # workflow run; re-running the workflow afterwards attaches them.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            echo "Attached $(ls dist | tr '\n' ' ')to release $TAG"
+          else
+            echo "::notice::No published GitHub release for $TAG yet. Publish the release, then re-run this workflow to attach the artifacts."
+          fi
+
+  # ---------------------------------------------------------------------------
+  # PyPI publishing — BLOCKED, not yet possible.
+  #
+  # The name `quiver` on PyPI already belongs to an unrelated package (Casey
+  # Davidson's direction-field plotting library, last released as 0.1):
+  #   https://pypi.org/project/quiver/
+  # So this project cannot publish under `project.name = "quiver"`.  Uncomment
+  # the job below only after BOTH of these are done:
+  #
+  #   1. Pick a free distribution name (`quiver-cli` and `quiver-swe` were both
+  #      unclaimed at the time of writing) and set it as `project.name` in
+  #      pyproject.toml.  `[project.scripts] swe` stays as it is, so the command
+  #      the user types does not change.
+  #   2. Register a PyPI *pending* trusted publisher for it, which needs no
+  #      secret and no API token:
+  #        pypi.org -> your account -> Publishing -> GitHub Actions
+  #        PyPI Project Name: <the new name>
+  #        Owner: c-wenlong   Repository: quiver
+  #        Workflow name: release.yml   Environment name: pypi
+  #      Then create a GitHub environment also called `pypi`
+  #      (Settings -> Environments -> New environment).
+  #      Docs: https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
+  #
+  # Attestations are generated automatically for trusted-publisher uploads, so
+  # nothing extra is needed for Scorecard's Signed-Releases check.
+  #
+  # publish-to-pypi:
+  #   name: Publish to PyPI
+  #   needs: [build]
+  #   if: startsWith(github.ref, 'refs/tags/v')
+  #   runs-on: ubuntu-latest
+  #   environment:
+  #     name: pypi
+  #     url: https://pypi.org/p/<distribution-name>
+  #   permissions:
+  #     # Mandatory for trusted publishing; nothing else is needed.
+  #     id-token: write
+  #   steps:
+  #     - name: Download the distributions
+  #       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+  #       with:
+  #         name: dist
+  #         path: dist/
+  #
+  #     - name: Publish
+  #       uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+  # ---------------------------------------------------------------------------
