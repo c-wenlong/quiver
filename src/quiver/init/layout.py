@@ -355,7 +355,7 @@ REGISTRY_ALIASES: dict[str, str] = {
 }
 
 
-def _registry_name(label: str) -> str:
+def registry_name(label: str) -> str:
     return REGISTRY_ALIASES.get(label, label)
 
 
@@ -380,11 +380,11 @@ def link_states(home: Path | None = None) -> dict[str, dict[str, str]]:
         patterns = []
     instructions, skills = plan(home, patterns)
     for status in instructions:
-        out.setdefault(_registry_name(status.label), {})["agents"] = status.state
+        out.setdefault(registry_name(status.label), {})["agents"] = status.state
 
     for status in skills:
         if status.label == "agents":
             continue  # ~/.config/agents is a shared dir, not a harness
-        out.setdefault(_registry_name(status.label), {})["skills"] = status.state
+        out.setdefault(registry_name(status.label), {})["skills"] = status.state
 
     return out

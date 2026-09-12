@@ -255,6 +255,7 @@ def _diff_capability(
     capability: str,
     code_table: Sequence[tuple[str, Path]],
     table_desc: str,
+    home: Path | None = None,
 ) -> list[Finding]:
     """Check that a (name -> root relpath) fallback table still *joins* with
     harness.json's capabilities.<capability> entries.
@@ -266,6 +267,11 @@ def _diff_capability(
     is anything that breaks the join itself: the same root path under two
     different names, a supported capability with no root to join on, or a
     table entry naming a harness the registry has never heard of.
+
+    With ``home``, that last warning also needs the table's root to exist on
+    this machine. A fallback row for a harness that is neither registered nor
+    installed is the table covering someone else's machine, and removing a
+    harness you stopped using should not leave ``swe doctor`` complaining.
     """
     findings: list[Finding] = []
     table_by_path = {f"~/{relpath.as_posix()}": name for name, relpath in code_table}
@@ -303,6 +309,9 @@ def _diff_capability(
             # The registry knows this harness; whether it agrees with the
             # table no longer matters at runtime, capabilities win.
             continue
+        relpath = dict(code_table)[name]
+        if home is not None and not (home / relpath).exists():
+            continue
         findings.append(Finding(
             "warn", "code-vs-data",
             f"{table_desc} lists {name!r} as {capability}-capable, "
@@ -318,6 +327,7 @@ def check_code_vs_data(
     skill_roots: Sequence[tuple[str, Path]] = (),
     plugin_roots: Sequence[tuple[str, Path]] = PLUGIN_HARNESSES_CODE_TABLE,
     hook_roots: Sequence[tuple[str, Path]] = (),
+    home: Path | None = None,
 ) -> list[Finding]:
     """Compare code-side "what a harness supports" tables against harness.json.
 
@@ -325,11 +335,12 @@ def check_code_vs_data(
     HARNESS_ROOTS); ``plugin_roots`` defaults to the hardcoded
     PLUGIN_HARNESSES_CODE_TABLE above, but can be overridden for tests.
     ``hook_roots`` defaults to nothing (callers pass init/hooks.py's
-    HOOK_FALLBACK).
+    HOOK_FALLBACK). ``home`` silences a table row for a harness this
+    machine has neither registered nor installed.
     """
-    findings = _diff_capability(registry, "skills", skill_roots, "skills/layout.py's HARNESS_ROOTS")
-    findings += _diff_capability(registry, "plugins", plugin_roots, "find/plugins.py's plugin-capable harnesses")
-    findings += _diff_capability(registry, "hooks", hook_roots, "init/hooks.py's HOOK_FALLBACK")
+    findings = _diff_capability(registry, "skills", skill_roots, "skills/layout.py's HARNESS_ROOTS", home)
+    findings += _diff_capability(registry, "plugins", plugin_roots, "find/plugins.py's plugin-capable harnesses", home)
+    findings += _diff_capability(registry, "hooks", hook_roots, "init/hooks.py's HOOK_FALLBACK", home)
     return findings
 
 
@@ -410,7 +421,7 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
     findings += check_prose_mentions(help_text, "mcp", mcp_commands)
     findings += check_registry_schema(registry)
     findings += check_code_vs_data(
-        registry, skill_roots=_real_skill_roots(), hook_roots=_real_hook_roots(),
+        registry, skill_roots=_real_skill_roots(), hook_roots=_real_hook_roots(), home=home,
     )
     findings += check_dangling_symlinks(_real_symlink_dirs(repo_root, home))
     return findings
