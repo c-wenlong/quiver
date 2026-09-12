@@ -7,14 +7,10 @@ Launch and list-count keys may differ when a product is a mode of another CLI.
 from __future__ import annotations
 
 # tool_name → registry/launch key used by `swe use` / `swe list`
-LAUNCH_TOOL: dict[str, str] = {
-    "antigravity": "gemini",
-}
+LAUNCH_TOOL: dict[str, str] = {}
 
 # tool_name → registry key for 100d session counts in `swe list`
-COUNT_TO_REGISTRY: dict[str, str] = {
-    "antigravity": "gemini",
-}
+COUNT_TO_REGISTRY: dict[str, str] = {}
 
 
 def launch_tool(tool_name: str) -> str:

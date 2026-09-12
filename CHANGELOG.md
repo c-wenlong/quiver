@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Kimi, Mimo, Tau and Antigravity support.** Their session parsers,
+  transcript readers and `swe session` resume entries are gone, as are the
+  Antigravity rate-limit fetcher (a loopback RPC to the running app) and its
+  `gemini` launch mapping, and the Kimi and Mimo `swe discover` catalog
+  entries. The Kimi and Mimo API providers stay, since those are model APIs
+  rather than harnesses. Session parsers now cover 15 tools and discovery
+  recognises 21.
 - **Amp and Hermes support.** Their session parsers, transcript readers,
   `swe discover` catalog entry, instruction target (`~/.amp/AGENTS.md`),
   seeded skills root and `swe list` filename are gone. Session parsers now

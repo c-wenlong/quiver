@@ -1,4 +1,4 @@
-"""Unit tests for newly added session parsers (copilot, continue, crush, kimi, grok)."""
+"""Unit tests for newly added session parsers (copilot, continue, crush, grok)."""
 
 import json
 import sqlite3
@@ -272,79 +272,6 @@ class ParseCrushTest(unittest.TestCase):
             self.assertEqual(sessions[0].session_id, "sess1")
 
 
-class ParseKimiTest(unittest.TestCase):
-    def test_md5_path_lookup_and_context(self):
-        import hashlib
-
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            work_path = "/Users/test/code"
-            digest = hashlib.md5(work_path.encode()).hexdigest()
-            sessions_root = home / "sessions"
-            sess_dir = sessions_root / digest / "sid-1"
-            sess_dir.mkdir(parents=True)
-            (sess_dir / "context.jsonl").write_text(
-                "\n".join(
-                    [
-                        json.dumps({"role": "_system_prompt", "content": "You are Kimi"}),
-                        json.dumps({"role": "user", "content": "refactor the parser"}),
-                    ]
-                )
-            )
-            (home / "kimi.json").write_text(
-                json.dumps({"work_dirs": [{"path": work_path, "kaos": "local"}]})
-            )
-
-            def expand(p: str) -> str:
-                if p.endswith("kimi.json"):
-                    return str(home / "kimi.json")
-                if p.endswith("sessions"):
-                    return str(sessions_root)
-                return p
-
-            with mock.patch("quiver.sessions.parsers.os.path.expanduser", side_effect=expand):
-                from quiver.sessions.parsers import parse_kimi
-
-                sessions = parse_kimi()
-            self.assertEqual(len(sessions), 1)
-            self.assertEqual(sessions[0].tool_name, "kimi")
-            self.assertEqual(sessions[0].path, work_path)
-            self.assertIn("refactor", sessions[0].title)
-
-
-class ParseAntigravityTest(unittest.TestCase):
-    def test_reads_metadata_and_overview_without_glob_traversal(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            brain = Path(tmp) / "brain"
-            session_dir = brain / "session-1"
-            logs_dir = session_dir / ".system_generated" / "logs"
-            logs_dir.mkdir(parents=True)
-            (session_dir / "session.metadata.json").write_text(
-                json.dumps({"summary": "Repair session discovery"}),
-                encoding="utf-8",
-            )
-            (logs_dir / "overview.txt").write_text(
-                '{"Cwd":"\\"/Users/test/project\\""}',
-                encoding="utf-8",
-            )
-
-            with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
-                return_value=str(brain),
-            ), mock.patch(
-                "quiver.sessions.parsers.glob.glob",
-                side_effect=AssertionError("Antigravity traversal must use os.scandir"),
-            ):
-                from quiver.sessions.parsers import parse_antigravity
-
-                sessions = parse_antigravity()
-
-            self.assertEqual(len(sessions), 1)
-            self.assertEqual(sessions[0].tool_name, "antigravity")
-            self.assertEqual(sessions[0].path, "/Users/test/project")
-            self.assertEqual(sessions[0].title, "Repair session discovery")
-
-
 class ParseGrokTest(unittest.TestCase):
     def test_reads_encoded_cwd_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -476,135 +403,6 @@ class ParseForgeTest(unittest.TestCase):
             self.assertEqual(sessions[0].session_id, "c1")
 
 
-class ParseMimoTest(unittest.TestCase):
-    def test_reads_mimocode_db(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db = Path(tmp) / "mimocode.db"
-            conn = sqlite3.connect(db)
-            conn.executescript(
-                """
-                CREATE TABLE project (
-                    id TEXT PRIMARY KEY,
-                    worktree TEXT,
-                    vcs TEXT,
-                    name TEXT,
-                    icon_url TEXT,
-                    icon_color TEXT,
-                    time_created INTEGER,
-                    time_updated INTEGER,
-                    time_initialized INTEGER,
-                    sandboxes TEXT,
-                    commands TEXT
-                );
-                CREATE TABLE session (
-                    id TEXT PRIMARY KEY,
-                    project_id TEXT,
-                    parent_id TEXT,
-                    slug TEXT,
-                    directory TEXT,
-                    title TEXT,
-                    version TEXT,
-                    share_url TEXT,
-                    summary_additions INTEGER,
-                    summary_deletions INTEGER,
-                    summary_files INTEGER,
-                    summary_diffs TEXT,
-                    revert TEXT,
-                    permission TEXT,
-                    time_created INTEGER,
-                    time_updated INTEGER,
-                    time_compacting INTEGER,
-                    time_archived INTEGER,
-                    workspace_id TEXT,
-                    context_from TEXT,
-                    context_watermark TEXT,
-                    last_checkpoint_message_id TEXT
-                );
-                CREATE TABLE part (
-                    id TEXT PRIMARY KEY,
-                    message_id TEXT,
-                    session_id TEXT,
-                    time_created INTEGER,
-                    time_updated INTEGER,
-                    data TEXT
-                );
-                INSERT INTO project (id, worktree, time_created, time_updated)
-                VALUES ('p1', '/tmp/proj', 1000, 2000);
-                INSERT INTO session (id, project_id, directory, title, time_created, time_updated)
-                VALUES ('ses_1', 'p1', '/tmp/proj', 'hello', 1000, 2000);
-                """
-            )
-            conn.commit()
-            conn.close()
-
-            with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
-                side_effect=lambda p: str(db) if p.endswith("mimocode.db") else p,
-            ):
-                from quiver.sessions.parsers import parse_mimo
-
-                sessions = parse_mimo()
-            self.assertEqual(len(sessions), 1)
-            self.assertEqual(sessions[0].tool_name, "mimo")
-            self.assertEqual(sessions[0].path, "/tmp/proj")
-            self.assertEqual(sessions[0].title, "hello")
-
-
-class ParseTauTest(unittest.TestCase):
-    def test_reads_index_jsonl(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            proj = base / "home-2bddf4"
-            proj.mkdir()
-            sid = "sess-abc"
-            sess_file = proj / f"{sid}.jsonl"
-            sess_file.write_text(
-                "\n".join(
-                    [
-                        json.dumps(
-                            {
-                                "type": "session_info",
-                                "cwd": "/Users/test",
-                                "timestamp": 1784324840.1,
-                            }
-                        ),
-                        json.dumps(
-                            {
-                                "type": "message",
-                                "timestamp": 1784324840.3,
-                                "message": {"role": "user", "content": "version"},
-                            }
-                        ),
-                    ]
-                )
-            )
-            (proj / "index.jsonl").write_text(
-                json.dumps(
-                    {
-                        "id": sid,
-                        "path": str(sess_file),
-                        "cwd": "/Users/test",
-                        "title": None,
-                        "created_at": 1784324840.3,
-                        "updated_at": 1784324840.3,
-                    }
-                )
-                + "\n"
-            )
-
-            with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
-                side_effect=lambda p: str(base) if p.endswith("sessions") else p,
-            ):
-                from quiver.sessions.parsers import parse_tau
-
-                sessions = parse_tau()
-            self.assertEqual(len(sessions), 1)
-            self.assertEqual(sessions[0].tool_name, "tau")
-            self.assertEqual(sessions[0].path, "/Users/test")
-            self.assertEqual(sessions[0].title, "version")
-
-
 class TrackedCountsTest(unittest.TestCase):
     def test_session_counts_includes_zero_for_tracked(self):
         from quiver.sessions.usage import session_counts_100d, tracked_tool_names
@@ -613,7 +411,6 @@ class TrackedCountsTest(unittest.TestCase):
         self.assertIn("copilot", tracked)
         self.assertIn("grok", tracked)
         self.assertIn("cline", tracked)
-        self.assertIn("tau", tracked)
         counts = session_counts_100d()
         for name in tracked:
             self.assertIn(name, counts)

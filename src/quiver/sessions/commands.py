@@ -44,15 +44,11 @@ _RESUME_FLAGS = {
 _LIMITED_RESUME = frozenset(
     {
         "gemini",
-        "antigravity",
         "continue",
         "crush",
-        "kimi",
         "grok",
         "cline",
         "forge",
-        "mimo",
-        "tau",
         "cursor",
     }
 )
@@ -292,7 +288,7 @@ def _resume_cmd_args(session) -> list[str]:
     if builder:
         cmd_args.extend(builder(session.session_id))
     elif session.tool_name in _LIMITED_RESUME:
-        if session.tool_name in ("gemini", "antigravity"):
+        if session.tool_name == "gemini":
             print(
                 c(
                     "yellow",

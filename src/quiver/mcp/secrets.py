@@ -5,7 +5,7 @@ Credentials are not, so the hub stores ``${NAME}`` references and the values
 live in ``~/.quiver/secrets/.api_keys``, mode 600 and gitignored.
 
 Resolution happens when a harness config is written, not by exporting to the
-environment: Claude, Cursor and Antigravity launch from the Dock and never
+environment: Claude and Cursor launch from the Dock and never
 read a shell profile, so an unresolved reference would reach the server as a
 literal token string.
 

@@ -10,7 +10,6 @@ Currently supported:
   - Copilot     (api.github.com/copilot_internal/user, OAuth via `gh` CLI token)
   - Claude      (api.anthropic.com/api/oauth/usage, OAuth from Claude Code creds)
   - Droid       (api.factory.ai/api/billing/limits, FACTORY_API_KEY / keychain)
-  - Antigravity (running app/CLI's loopback RetrieveUserQuotaSummary RPC)
   - Freebuff    (codebuff.com free-session status, local Freebuff auth token)
 
 These interfaces are internal/undocumented — they work today because the
@@ -1533,187 +1532,6 @@ def _register_droid() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Antigravity fetcher
-# ---------------------------------------------------------------------------
-
-_ANTIGRAVITY_QUOTA_ROUTE = (
-    "/exa.language_server_pb.LanguageServerService/"
-    "RetrieveUserQuotaSummary"
-)
-_ANTIGRAVITY_RPC_TIMEOUT = 0.35
-
-
-def _antigravity_csrf_tokens() -> dict[str, str]:
-    """Return Antigravity CSRF tokens keyed by language-server PID."""
-    try:
-        result = subprocess.run(
-            ["ps", "-ww", "-axo", "pid=,command="],
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return {}
-    if result.returncode != 0:
-        return {}
-
-    tokens: dict[str, str] = {}
-    for line in (result.stdout or "").splitlines():
-        pid, separator, command = line.strip().partition(" ")
-        if not separator or not pid.isdigit() or "--csrf_token" not in command:
-            continue
-        args = command.split()
-        for index, arg in enumerate(args):
-            if arg == "--csrf_token" and index + 1 < len(args):
-                tokens[pid] = args[index + 1]
-                break
-            if arg.startswith("--csrf_token="):
-                tokens[pid] = arg.split("=", 1)[1]
-                break
-    return tokens
-
-
-def _antigravity_rpc_endpoints() -> list[tuple[str, str]]:
-    """Return loopback listeners and per-process CSRF tokens."""
-    lsof = shutil.which("lsof")
-    if not lsof:
-        return []
-    try:
-        result = subprocess.run(
-            [lsof, "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return []
-    if result.returncode != 0:
-        return []
-
-    listeners: list[tuple[str, str]] = []
-    current_pid = ""
-    is_antigravity = False
-    for line in (result.stdout or "").splitlines():
-        if line.startswith("p"):
-            current_pid = line[1:]
-            is_antigravity = False
-        elif line.startswith("c"):
-            command = line[1:].lower()
-            is_antigravity = (
-                command == "agy"
-                or "antigravity" in command
-                or command.startswith("language_server")
-            )
-        elif line.startswith("n") and is_antigravity:
-            address = line[1:]
-            if address.startswith("[::1]:"):
-                port = address.rsplit(":", 1)[-1]
-            else:
-                try:
-                    host, port = address.rsplit(":", 1)
-                except ValueError:
-                    continue
-                if host not in ("127.0.0.1", "localhost", "::1"):
-                    continue
-            if not port.isdigit():
-                continue
-            url = f"http://127.0.0.1:{port}"
-            if all(existing_url != url for existing_url, _pid in listeners):
-                listeners.append((url, current_pid))
-
-    tokens = _antigravity_csrf_tokens()
-    return [(url, tokens.get(pid, "")) for url, pid in listeners]
-
-
-def _parse_antigravity_quota(data: dict) -> RateLimitInfo | None:
-    """Select the currently most restrictive Antigravity quota bucket."""
-    response = data.get("response")
-    if not isinstance(response, dict):
-        return None
-    groups = response.get("groups")
-    if not isinstance(groups, list):
-        return None
-
-    candidates: list[tuple[float, str, float]] = []
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        buckets = group.get("buckets")
-        if not isinstance(buckets, list):
-            continue
-        for bucket in buckets:
-            if not isinstance(bucket, dict):
-                continue
-            window = str(bucket.get("window") or "")
-            window_label = {"weekly": "7d", "5h": "5h"}.get(window)
-            if not window_label:
-                continue
-            try:
-                remaining = float(bucket.get("remainingFraction"))
-            except (TypeError, ValueError):
-                continue
-            remaining = min(1.0, max(0.0, remaining))
-            used = (1.0 - remaining) * 100.0
-            reset_at = _parse_iso8601_to_epoch(bucket.get("resetTime"))
-            candidates.append((used, window_label, reset_at))
-
-    if not candidates:
-        return None
-
-    # Highest utilization wins. At equal non-exhausted utilization, the 5h
-    # window is the useful default; if both are exhausted, the weekly reset is
-    # the longer-lived gate and therefore the actionable one to display.
-    def rank(candidate: tuple[float, str, float]) -> tuple[float, int]:
-        used, window, _reset = candidate
-        preferred = window == ("7d" if used >= 100 else "5h")
-        return used, int(preferred)
-
-    used, window, reset_at = max(candidates, key=rank)
-    used_percent = int(round(used))
-    return RateLimitInfo(
-        tool_name="antigravity",
-        used_percent=used_percent,
-        limit_reached=used >= 100,
-        reset_at=reset_at,
-        plan_type="—",
-        window_seconds=0,
-        window=window,
-    )
-
-
-def _fetch_antigravity() -> RateLimitInfo | None:
-    """Read quota from a running Antigravity app or CLI over loopback."""
-    for base_url, csrf_token in _antigravity_rpc_endpoints()[:8]:
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": f"quiver/{__version__}",
-        }
-        if csrf_token:
-            headers["X-Codeium-Csrf-Token"] = csrf_token
-        req = urllib.request.Request(
-            base_url + _ANTIGRAVITY_QUOTA_ROUTE,
-            data=b"{}",
-            headers=headers,
-        )
-        data = _fetch_json(req, timeout=_ANTIGRAVITY_RPC_TIMEOUT)
-        if isinstance(data, dict):
-            info = _parse_antigravity_quota(data)
-            if info is not None:
-                return info
-    return None
-
-
-def _register_antigravity() -> None:
-    """Register the Antigravity loopback rate limit fetcher."""
-
-    def fetch() -> RateLimitInfo | None:
-        return _fetch_antigravity()
-
-    register("antigravity", fetch)
-
-
-# ---------------------------------------------------------------------------
 # Freebuff fetcher
 # ---------------------------------------------------------------------------
 
@@ -2250,7 +2068,6 @@ _register_codex()
 _register_github_copilot()
 _register_claude()
 _register_droid()
-_register_antigravity()
 _register_freebuff()
 _register_cursor()
 _register_devin()
@@ -2280,8 +2097,8 @@ def _load_cached_no_data() -> set[str]:
 
     Without this a provider that never reports usage counts as a permanent
     cache miss: it is absent from ``limits``, so every call re-runs its
-    fetcher. For providers that shell out (antigravity spawns two
-    subprocesses) that cost lands on every ``swe list``. Remembering the
+    fetcher. For providers that shell out, that cost lands on every
+    ``swe list``. Remembering the
     negative answer for the same TTL keeps the miss to once per window.
     """
     try:
