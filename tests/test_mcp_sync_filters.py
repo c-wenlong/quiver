@@ -160,7 +160,7 @@ class SecretIndirectionTest(unittest.TestCase):
     """mcp.json stores ${NAME}; values live in a gitignored store.
 
     Resolution happens when a harness config is written, because Claude,
-    Cursor and Antigravity launch from the Dock and never read a shell
+    Cursor launch from the Dock and never read a shell
     profile: an unresolved reference would be sent as the literal token.
     """
 

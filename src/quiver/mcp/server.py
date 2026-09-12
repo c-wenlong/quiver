@@ -27,7 +27,7 @@ def get_recent_sessions(limit: int = 10, agent: str = None, directory_path: str 
     
     Args:
         limit: Number of sessions to return (default 10)
-        agent: Filter by a specific agent (e.g., 'claude', 'opencode', 'gemini', 'antigravity')
+        agent: Filter by a specific agent (e.g., 'claude', 'opencode', 'gemini')
         directory_path: Filter to only show sessions that occurred within this absolute directory path or its subdirectories.
     """
     sessions = get_all_sessions(limit=limit, agent=agent, cwd=directory_path)

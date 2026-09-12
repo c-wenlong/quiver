@@ -75,7 +75,7 @@ If you juggle more than one AI coding agent you end up with a mess:
 | **Models** | Aggregate model usage parsed read-only from each tool's session logs |
 | **Skills** | Discover, list, catalog, symlink, and move skills across harness roots |
 | **MCP sync** | Inspect, compare, validate, and copy MCP servers between tools |
-| **Rate limits** | Remaining quota + reset countdown for starred Codex, Copilot, Claude, Droid, Antigravity, Freebuff, Cursor, and Devin harnesses |
+| **Rate limits** | Remaining quota + reset countdown for starred Codex, Copilot, Claude, Droid, Freebuff, Cursor, and Devin harnesses |
 | **Favourites** | Pin harnesses to the top of `swe list` and opt them into usage polling |
 | **Autocomplete** | Shell tab-completion for zsh, bash, and fish (tool names, aliases, tags, flags) |
 | **Providers** | Manage API keys and metadata for 27 built-in LLM providers, plus your own |
@@ -447,14 +447,14 @@ The MCP subsystem also reads/writes each tool's native config (e.g. `~/.claude.j
 
 ## Supported tools
 
-`swe discover` recognises **23 AI coding CLIs** on sight: Claude Code, Codex, Gemini
-CLI, GitHub Copilot CLI, Cursor CLI, opencode, Kimi, Qwen Code, Mistral Vibe,
-Mimo, Crush, Cline, Goose, Aider, Continue, pi, Forge, Factory Droid, Augment, Kiro,
+`swe discover` recognises **21 AI coding CLIs** on sight: Claude Code, Codex, Gemini
+CLI, GitHub Copilot CLI, Cursor CLI, opencode, Qwen Code, Mistral Vibe,
+Crush, Cline, Goose, Aider, Continue, pi, Forge, Factory Droid, Augment, Kiro,
 Blackbox, Freebuff, and Ollama. That is a recognition table, not a seed — nothing is
 written to your registry until discovery finds the binary on PATH. Register anything
 else by hand with `swe add`.
 
-Session parsers currently cover **19 tools**: opencode, Claude Code, Gemini/Antigravity, Codex, Cursor, pi, Freebuff, Droid, Copilot, Continue, Crush, Kimi, Grok, Cline, Forge, Mimo, Tau, and Devin. Parsers are built on three reusable family engines (SQLite, JSONL, JSON) with declarative per-tool configs. Model analytics cover opencode, Claude Code, Codex, and Freebuff.
+Session parsers currently cover **15 tools**: opencode, Claude Code, Gemini, Codex, Cursor, pi, Freebuff, Droid, Copilot, Continue, Crush, Grok, Cline, Forge, and Devin. Parsers are built on three reusable family engines (SQLite, JSONL, JSON) with declarative per-tool configs. Model analytics cover opencode, Claude Code, Codex, and Freebuff.
 
 ## Development
 

@@ -50,12 +50,6 @@ HARNESS_CATALOG: dict[str, dict] = {
         "tags": ["agentic", "coding", "subscription"],
         "aliases": ["cs"],
     },
-    "kimi": {
-        "command": "kimi",
-        "description": "Moonshot's, Ctrl-X drops to a real shell without leaving the session",
-        "tags": ["agentic", "coding", "byok"],
-        "aliases": ["ki"],
-    },
     "qwen-code": {
         "command": "qwen",
         "description": "Alibaba's Gemini CLI fork, drive it from Telegram or WeChat",
@@ -67,12 +61,6 @@ HARNESS_CATALOG: dict[str, dict] = {
         "description": "Mistral's, own 24B Apache weights, runs offline on one GPU",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["mv"],
-    },
-    "mimo": {
-        "command": "mimo",
-        "description": "Xiaomi's, distils finished sessions into reusable skills",
-        "tags": ["agentic", "coding", "byok"],
-        "aliases": ["mm"],
     },
 
     # Open source and model-agnostic.

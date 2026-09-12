@@ -8,7 +8,6 @@ from quiver.paths import SESSION_CACHE_FILE
 from quiver.sessions import failures
 from quiver.sessions.models import Session
 from quiver.sessions.parsers import (
-    parse_antigravity,
     parse_claude,
     parse_cline,
     parse_codex,
@@ -22,11 +21,8 @@ from quiver.sessions.parsers import (
     parse_freebuff,
     parse_gemini,
     parse_grok,
-    parse_kimi,
-    parse_mimo,
     parse_opencode,
     parse_pi,
-    parse_tau,
 )
 
 # (parser_fn, agent_filter_keys)
@@ -34,7 +30,6 @@ PARSER_REGISTRY: list[tuple[str, callable, tuple[str, ...]]] = [
     ("opencode", parse_opencode, ("opencode", "oc")),
     ("claude", parse_claude, ("claude", "cc")),
     ("gemini", parse_gemini, ("gemini", "gg")),
-    ("antigravity", parse_antigravity, ("antigravity", "ag")),
     ("codex", parse_codex, ("codex", "cx")),
     ("pi", parse_pi, ("pi",)),
     ("cursor", parse_cursor, ("cursor", "cs")),
@@ -44,12 +39,9 @@ PARSER_REGISTRY: list[tuple[str, callable, tuple[str, ...]]] = [
     ("devin", parse_devin, ("devin", "dv")),
     ("continue", parse_continue, ("continue", "cn", "ct")),
     ("crush", parse_crush, ("crush", "cr")),
-    ("kimi", parse_kimi, ("kimi", "ki")),
     ("grok", parse_grok, ("grok", "gk")),
     ("cline", parse_cline, ("cline", "cl")),
     ("forge", parse_forge, ("forge", "fc")),
-    ("mimo", parse_mimo, ("mimo",)),
-    ("tau", parse_tau, ("tau",)),
 ]
 
 # Cache TTL in seconds (60s default)

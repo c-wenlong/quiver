@@ -396,39 +396,9 @@ for _name, _root, _patterns in (
     ("droid", "~/.factory/sessions", ("*.jsonl",)),
     ("codex", "~/.codex/sessions", ("*.jsonl",)),
     ("pi", "~/.pi/agent/sessions", ("*.jsonl",)),
-    ("kimi", "~/.kimi/sessions", ("context.jsonl", "*.jsonl")),
     ("cursor", "~/.cursor/projects", ("*.jsonl",)),
 ):
     READER_REGISTRY[_name] = _jsonl_reader(_root, _patterns)
-
-
-@register_reader("tau")
-def _read_tau(session: Session) -> NormalizedTranscript:
-    root = Path(os.path.expanduser("~/.tau/sessions"))
-    path: Path | None = None
-    for index in root.glob("*/index.jsonl") if root.exists() else ():
-        try:
-            with index.open(encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    entry = json.loads(line)
-                    if str(entry.get("id") or "") != session.session_id:
-                        continue
-                    candidate = entry.get("path")
-                    path = Path(candidate) if candidate else index.parent / f"{session.session_id}.jsonl"
-                    if not path.is_absolute():
-                        path = index.parent / path
-                    break
-        except (OSError, json.JSONDecodeError):
-            continue
-        if path:
-            break
-    if path is None or not path.exists():
-        path = _find_session_file(root, session.session_id)
-    if path is None:
-        return _unreadable(session, "Tau transcript not found")
-    transcript = _new(session, [path])
-    transcript.messages = _read_jsonl(path)
-    return transcript
 
 
 @register_reader("freebuff")
@@ -489,20 +459,6 @@ def _read_cline(session: Session) -> NormalizedTranscript:
     return transcript
 
 
-def _file_json_reader(root: str, filename: Callable[[Session], str]) -> Reader:
-    def read(session: Session) -> NormalizedTranscript:
-        path = Path(os.path.expanduser(root)) / filename(session)
-        if not path.exists():
-            return _unreadable(session, "JSON transcript not found")
-        transcript = _new(session, [path])
-        transcript.messages = _read_json_messages(path)
-        return transcript
-
-    return read
-
-
-
-
 @register_reader("gemini")
 def _read_gemini(session: Session) -> NormalizedTranscript:
     index = Path(os.path.expanduser("~/.gemini/projects.json"))
@@ -519,59 +475,6 @@ def _read_gemini(session: Session) -> NormalizedTranscript:
     transcript = _new(session, [path])
     transcript.messages = _read_json_messages(path)
     return transcript
-
-
-@register_reader("antigravity")
-def _read_antigravity(session: Session) -> NormalizedTranscript:
-    root = Path(os.path.expanduser("~/.gemini/antigravity/brain"))
-    directories = [p for p in root.iterdir() if p.is_dir()] if root.exists() else []
-    if session.session_id:
-        directories = [p for p in directories if p.name == session.session_id]
-    if not directories:
-        return _unreadable(session, "Antigravity brain session not found")
-    directory = min(directories, key=lambda p: abs((p.stat().st_mtime * 1000) - session.timestamp))
-    paths = list(directory.glob("*.metadata.json"))
-    overview = directory / ".system_generated/logs/overview.txt"
-    if overview.exists():
-        paths.append(overview)
-    transcript = _new(session, paths)
-    for path in paths:
-        try:
-            if path.suffix == ".json":
-                data = json.loads(path.read_text(encoding="utf-8"))
-                transcript.messages.extend(_messages_from_record(data))
-            elif path.name == "overview.txt":
-                text = path.read_text(encoding="utf-8", errors="replace")
-                transcript.messages.extend(_antigravity_overview_messages(text))
-        except (OSError, json.JSONDecodeError):
-            continue
-    return transcript
-
-
-def _antigravity_overview_messages(text: str) -> list[NormalizedMessage]:
-    messages: list[NormalizedMessage] = []
-    field_re = re.compile(
-        r'"(?P<field>Prompt|Response|Message)":"(?P<content>(?:\\.|[^"\\])*)"'
-    )
-    for line in text.splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            record = None
-        if isinstance(record, dict) and record.get("content") is not None:
-            source = str(record.get("source") or "").upper()
-            role = "human" if source.startswith("USER") else "assistant" if source == "MODEL" else ""
-            msg = _message(role, record.get("content"), timestamp=record.get("created_at"))
-            if msg:
-                messages.append(msg)
-                continue
-        for match in field_re.finditer(line):
-            decoded = json.loads(f'"{match.group("content")}"')
-            role = "human" if match.group("field") == "Prompt" else "assistant"
-            msg = _message(role, decoded)
-            if msg:
-                messages.append(msg)
-    return messages
 
 
 def _open_ro(path: Path) -> sqlite3.Connection | None:
@@ -623,11 +526,6 @@ def _sqlite_json_parts(session: Session, db_path: str) -> NormalizedTranscript:
 @register_reader("opencode")
 def _read_opencode(session: Session) -> NormalizedTranscript:
     return _sqlite_json_parts(session, "~/.local/share/opencode/opencode.db")
-
-
-@register_reader("mimo")
-def _read_mimo(session: Session) -> NormalizedTranscript:
-    return _sqlite_json_parts(session, "~/.local/share/mimocode/mimocode.db")
 
 
 @register_reader("copilot")
@@ -787,8 +685,8 @@ def _read_crush(session: Session) -> NormalizedTranscript:
 
 EXPECTED_READER_TOOLS = frozenset(
     {
-        "opencode", "claude", "gemini", "antigravity", "codex", "pi", "cursor",
-        "freebuff", "droid", "copilot", "continue", "crush", "kimi",
-        "grok", "cline", "forge", "mimo", "tau", "devin",
+        "opencode", "claude", "gemini", "codex", "pi", "cursor",
+        "freebuff", "droid", "copilot", "continue", "crush",
+        "grok", "cline", "forge", "devin",
     }
 )
