@@ -6,12 +6,31 @@ on:
   pull_request:
     branches: [main]
 
+# A new push to a PR branch makes the in-flight run for that branch
+# obsolete.  Cancel it instead of letting two full suites race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Endpoints of the supported range only (requires-python = ">=3.10").
+        # Every version-sensitive path in the source splits at 3.10 vs 3.11+,
+        # so the two endpoints cover both sides of each:
+        #   - the tomllib/tomli import fork (mcp/codex_io.py,
+        #     harness/rate_limits.py, find/mcps.py) — 3.10 takes the `tomli`
+        #     polyfill, 3.11+ takes stdlib `tomllib`;
+        #   - ISO-8601 parsing (harness/rate_limits.py
+        #     `_parse_iso8601_to_epoch`, sessions/engines/common.py) — only
+        #     3.10 raises on fractional seconds combined with an offset and
+        #     so only 3.10 executes the fallback branch.
+        # Nothing branches on a version strictly between the endpoints, which
+        # is why 3.11 and 3.12 ran byte-for-byte what 3.13 ran.  Add a leg
+        # back the moment something does.
+        python-version: ["3.10", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +76,12 @@ jobs:
           python -m unittest discover -s tests -p 'test_*.py' -v
 
   coverage:
+    # Both endpoints, deliberately.  .coveragerc turns on branch coverage and
+    # the 3.10-only arms of the tomli import fork and of the ISO-8601 parsing
+    # fallback in harness/rate_limits.py are reachable on no other leg.  The
+    # `test` job runs those branches but measures nothing, so dropping this
+    # leg would let a 3.10-only path lose its tests with the report still
+    # green.  Keep one leg per side of the 3.10/3.11+ split.
     name: Coverage (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
@@ -146,6 +171,11 @@ jobs:
         run: nix flake check --print-build-logs
 
   macos-smoke:
+    # Kept deliberately.  The source hardcodes Darwin-only locations that no
+    # Linux runner can ever reach: the Claude Desktop config under
+    # ~/Library/Application Support (mcp/cli.py), the Cursor state.vscdb path
+    # and libcrypto.dylib (harness/rate_limits.py), and the Homebrew npm probe
+    # in harness/path_health.py — the very module this job's test covers.
     name: macOS path and entry-point smoke test
     runs-on: macos-latest
 
