@@ -1,4 +1,5 @@
 import io
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -476,3 +477,21 @@ class CmdInitViewTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertRegex(out, r"\d+ would-create")
             self.assertNotIn(".codex/skills", out)
+
+    def test_check_conflict_is_blocked_not_linked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            (home / ".claude/CLAUDE.md").write_text("hand written\n")
+            code, out = self._run(home, ["--check"])
+            self.assertEqual(code, 1)
+            plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
+            self.assertIn("1 would-conflict", plain)
+            total = re.search(r"(\d+) linked, (\d+) blocked", plain)
+            self.assertEqual(int(total.group(2)), 1)
+            # The total counts only what is or would become a link; the
+            # conflict tallied in the section must not also count as linked.
+            sections = plain.split(" linked, ")[0]
+            expected = sum(
+                int(n) for n in re.findall(r"(\d+) (?:linked|would-create|would-relink|would-absorb)", sections)
+            )
+            self.assertEqual(int(total.group(1)), expected)
