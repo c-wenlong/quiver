@@ -124,6 +124,27 @@ jobs:
           HOME="$test_home" /tmp/quiver-wheel/bin/swe config --help
           HOME="$test_home" /tmp/quiver-wheel/bin/swe report --help
 
+  nix:
+    name: Nix flake build and check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Build the package (runs the unittest suite in the sandbox)
+        run: nix build --print-build-logs
+
+      - name: Exercise the built binary
+        run: |
+          test_home="$(mktemp -d)"
+          HOME="$test_home" ./result/bin/swe --help
+          HOME="$test_home" ./result/bin/swe init --check
+
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+
   macos-smoke:
     name: macOS path and entry-point smoke test
     runs-on: macos-latest
