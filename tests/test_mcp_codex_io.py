@@ -12,10 +12,7 @@ import pathlib
 import tempfile
 import unittest
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
-    import tomli as tomllib
+import tomllib
 
 from quiver.mcp.codex_io import (
     apply_merges,

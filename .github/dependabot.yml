@@ -1,8 +1,8 @@
 # Dependabot configuration.
 # https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
 #
-# Only `github-actions` is watched.  The `swe` CLI is stdlib-only: the sole
-# runtime dependency is `tomli`, and only on Python < 3.11.  Every declared
+# Only `github-actions` is watched.  The `swe` CLI is stdlib-only: it declares
+# no runtime dependencies at all.  Every declared
 # requirement in pyproject.toml is an open floor (`>=`), so a `pip` ecosystem
 # entry would have nothing to raise a pull request about — there is no lockfile
 # and no upper bound to bump.  Add a `pip` block if a pinned dependency ever

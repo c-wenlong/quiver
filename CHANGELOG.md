@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Python floor raised from 3.10 to 3.11, and the CLI is now dependency-free.**
+  `tomli` was the single runtime dependency and existed only to backfill
+  `tomllib` below 3.11, so it is gone from `pyproject.toml` and from the Nix
+  flake, and the three `try: import tomllib / except: import tomli` forks in
+  `mcp/codex_io.py`, `harness/rate_limits.py` and `find/mcps.py` collapse to a
+  plain import. The CI test matrix moves to 3.11 and 3.13 and coverage drops to
+  a single leg, taking CI from 7 check runs to 6. Users on 3.10 should stay on
+  the previous release; Ubuntu 22.04 ships 3.10, while Debian 12 and Ubuntu
+  24.04 ship 3.11 and 3.12 respectively.
+
+  One behaviour improves: a timestamp carrying nanosecond precision, such as
+  `2026-08-01T00:00:00.123456789Z`, used to lose its fractional part entirely
+  on 3.10 and now truncates to microseconds.
+
+  The block in `_parse_iso8601_to_epoch` labelled "Python 3.10 fallback" was
+  **not** removed, because the label was wrong. It salvages a malformed
+  fractional part sitting next to a timezone offset, `fromisoformat` rejects
+  those strings on every supported interpreter, and deleting it would turn a
+  recoverable reset time into `0.0`. Its comments now say what it really does
+  and 14 new tests pin the behaviour.
+
 ### Added
 
 - **Hook scripts in `swe init`.** `~/.quiver/hooks/<harness>/` holds one
