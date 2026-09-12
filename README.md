@@ -87,6 +87,23 @@ pipx install git+https://github.com/c-wenlong/quiver.git
 swe --help
 ```
 
+### Nix
+
+`nix run github:c-wenlong/quiver -- --help` works one-off. To install, add
+the flake as an input and put the package on your list:
+
+```nix
+inputs.quiver = {
+  url = "github:c-wenlong/quiver";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+# then, in home.packages or environment.systemPackages:
+inputs.quiver.packages.${system}.default
+```
+
+The build runs the test suite, so `nix build` is also the fastest full check
+of a clone. `nix develop` opens a shell with `src/` on `PYTHONPATH`.
+
 ### From source
 
 ```bash

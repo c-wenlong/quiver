@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `flake.nix` in the repo.** `nix run github:c-wenlong/quiver` builds
+  and runs `swe` with no clone, and `packages.default` is a flake input any
+  nix-darwin or Home Manager config can consume. The build runs the whole
+  unittest suite inside the sandbox, so `nix flake check` doubles as the
+  test gate; CI runs it on every push. Three tests now mock or skip what
+  the sandbox cannot provide (`gh`, `git`, and a hyphen-free temp dir).
 - **`~/.quiver/.linkignore`.** A gitignore-style list of paths `swe init`
   must leave alone: one home-relative pattern per line, `#` comments, `*`
   wildcards, and a directory name covers everything under it. A matching

@@ -39,6 +39,11 @@ class CursorSessionDirTest(unittest.TestCase):
 
     def _encoded_project_entry(self) -> str:
         """An enc_entry_path whose basename decodes (slashes only) to self.project."""
+        # The encoding turns every "/" into "-" and decoding reverses all of
+        # them, so a real path containing "-" cannot round-trip. A nix build
+        # runs under /nix/var/nix/builds/nix-<pid>-<n>, which is exactly that.
+        if "-" in str(self.project):
+            self.skipTest("temp dir contains '-', which the encoding cannot round-trip")
         name = str(self.project).lstrip("/").replace("/", "-")
         entry = self.cursor_home / "projects" / name
         entry.mkdir(parents=True, exist_ok=True)
