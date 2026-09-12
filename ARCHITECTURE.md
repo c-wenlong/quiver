@@ -43,6 +43,7 @@ half never mix:
   AGENTS.md          canonical instructions, symlinked into every harness
   .linkignore        paths `swe init` must leave alone
   skills/            the shared skill tree, symlinked into every skills root
+  hooks/<harness>/   hook scripts, each file symlinked into that harness only
   config/            registry (harness.json), catalogs, link records (versioned)
   secrets/.api_keys  credential values, mode 600           (NOT gitignored)
   mcp.json           server definitions, ${REF} placeholders    (versioned)
@@ -92,6 +93,21 @@ each name, so editing one changes all of them.
 
 The same trick covers skills: one tree at `~/.quiver/skills`, symlinked into
 every harness's `skills/` directory.
+
+Hooks do not fit that shape, so they get their own. A Claude Code Stop hook
+and a Codex hook speak different contracts and most harnesses have none, so
+nothing is shared: `~/.quiver/hooks/<harness>/` holds one harness's scripts,
+named by its `harness.json` key, and a harness only takes part once that
+directory exists. Each script is linked on its own into the harness's hooks
+directory rather than linking the directory, because installers keep their
+own scripts beside it (herdr writes into `~/.claude/hooks`). The destination
+is `capabilities.hooks.root`, then `init/hooks.py`'s `HOOK_FALLBACK`.
+
+Only the file is linked. Declaring the hook (event, matcher, timeout in
+`~/.claude/settings.json`, `~/.codex/hooks.json`) stays with whatever manages
+that file, which on a Nix machine is a read-only link into the store. A plain
+file at the destination with the same bytes as the source is `absorb`, not
+`linked`: it is a copy, and edits to it would never reach the versioned one.
 
 Link state is a small vocabulary shared by `swe init`, `swe list` and
 `swe find`:
@@ -171,13 +187,13 @@ see: `active` (default), `archived`, or `all`.
 
 ## Capabilities-first
 
-Two hardcoded tables predate the registry knowing about capabilities:
+Hardcoded tables predate the registry knowing about capabilities:
 `skills/layout.py`'s `HARNESS_ROOTS` (which harness's skills root lives
-where) and `find/plugins.py`'s `PLUGIN_FALLBACK` (which harnesses support
-plugins, and where their install record lives). Both are now fallbacks,
-not sources of truth. A harness entry's own
-`capabilities.skills.{supported,root}` or `capabilities.plugins.{...}`
-wins whenever the registry has one; the table only fires for a harness the
+where), `find/plugins.py`'s `PLUGIN_FALLBACK` (which harnesses support
+plugins, and where their install record lives), and `init/hooks.py`'s
+`HOOK_FALLBACK` (where hook scripts go). All are fallbacks, not sources of
+truth. A harness entry's own `capabilities.skills.{supported,root}`,
+`capabilities.plugins.{...}` or `capabilities.hooks.{...}` wins whenever the registry has one; the table only fires for a harness the
 registry has never heard of, or for a machine with no registry data at
 all.
 

@@ -3,7 +3,7 @@
 Everything quiver owns lives under one root, ``~/.quiver``. That root holds two
 kinds of thing and they are separated so the whole directory can be a git repo:
 
-  authored     AGENTS.md, .linkignore, skills/, config/   worth versioning
+  authored     AGENTS.md, .linkignore, skills/, hooks/, config/   worth versioning
   regenerable  cache/, backups/              gitignored
 
 The root sits in ``$HOME`` rather than ``$HOME/.config`` on purpose. Quiver's
@@ -27,6 +27,7 @@ QUIVER_DIRNAME = f".{DATA_DIR_NAME}"
 AGENTS_BASENAME = "AGENTS.md"
 LINKIGNORE_BASENAME = ".linkignore"
 SKILLS_SUBDIR = "skills"
+HOOKS_SUBDIR = "hooks"
 CONFIG_SUBDIR = "config"
 CACHE_SUBDIR = "cache"
 MCP_SUBDIR = "mcp"
@@ -51,6 +52,11 @@ def linkignore_file_for(home: Path | None = None) -> Path:
 
 def skills_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / SKILLS_SUBDIR
+
+
+def hooks_dir_for(home: Path | None = None) -> Path:
+    """Harness hook scripts, one subdirectory per harness registry name."""
+    return quiver_dir_for(home) / HOOKS_SUBDIR
 
 
 def config_dir_for(home: Path | None = None) -> Path:
@@ -89,6 +95,7 @@ QUIVER_DIR = quiver_dir_for()
 AGENTS_FILE = agents_file_for()
 LINKIGNORE_FILE = linkignore_file_for()
 SKILLS_DIR = skills_dir_for()
+HOOKS_DIR = hooks_dir_for()
 BACKUPS_DIR = backups_dir_for()
 
 CONFIG_DIR = config_dir_for()

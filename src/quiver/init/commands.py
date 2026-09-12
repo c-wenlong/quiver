@@ -8,6 +8,7 @@ from pathlib import Path
 
 from quiver.console import c
 from quiver.paths import backup_tree
+from quiver.init.hooks import plan_hooks
 from quiver.init.migrate import apply_migration, plan_migration, write_gitignore
 from quiver.init.layout import (
     LinkIgnoreError,
@@ -212,15 +213,18 @@ def cmd_init(args) -> int:
         write_gitignore(home)
 
     instructions, skills = plan(home, patterns)
+    hooks = plan_hooks(home, patterns)
 
     if check_only:
         inst_rows = [(s, "would-" + s.state if s.changed else s.state) for s in instructions]
         skill_rows = [(s, "would-" + s.state if s.changed else s.state) for s in skills]
+        hook_rows = [(s, "would-" + s.state if s.changed else s.state) for s in hooks]
     else:
         inst_rows = [
             (s, _apply(s, agents_file(home), home, force)) for s in instructions
         ]
         skill_rows = [(s, _apply(s, skills_dir(home), home, force)) for s in skills]
+        hook_rows = [(s, _apply(s, s.source, home, force)) for s in hooks]
 
     header = "Quiver layout" + (c("dim", "  (check only, nothing written)") if check_only else "")
     print(f"\n{c('bold', header)}")
@@ -231,17 +235,19 @@ def cmd_init(args) -> int:
     if full:
         _print_section("Instructions", inst_rows, home)
         _print_section("Skills", skill_rows, home)
+        _print_section("Hooks", hook_rows, home)
     else:
-        _print_summary([("Instructions", inst_rows), ("Skills", skill_rows)])
+        _print_summary(
+            [("Instructions", inst_rows), ("Skills", skill_rows), ("Hooks", hook_rows)]
+        )
 
-    blocked = [
-        (s_, r) for s_, r in inst_rows + skill_rows if r in ("blocked", "would-conflict")
-    ]
+    everything = inst_rows + skill_rows + hook_rows
+    blocked = [(s_, r) for s_, r in everything if r in ("blocked", "would-conflict")]
     # check mode renders an unchanged state verbatim, so "keep" arrives as-is.
     protected = [
         (s_, r) for s_, r in skill_rows if r in ("protected", "keep", "would-keep")
     ]
-    linked = [r for _, r in inst_rows + skill_rows if r in _LINKED_RESULTS]
+    linked = [r for _, r in everything if r in _LINKED_RESULTS]
     summary = (
         f"{len(linked)} linked, {len(blocked)} blocked, "
         f"edit {agents_file(home)} to change them all"
@@ -278,6 +284,10 @@ def print_init_help() -> None:
     ~/.quiver/AGENTS.md    one instruction file, linked in under each
                            harness's own name (CLAUDE.md, QWEN.md, CRUSH.md...)
     ~/.quiver/skills/      one skill tree, linked in as every harness's skills/
+    ~/.quiver/hooks/       hook scripts, one folder per harness (hooks/claude/),
+                           each script linked into that harness's hooks dir.
+                           Only the file: declaring the hook in the harness's
+                           settings stays with you.
     ~/.quiver/.linkignore  paths to leave alone, one gitignore-style pattern
                            per line (.agents/skills, .agents, .config/*/AGENTS.md)
     ~/.quiver/backups/     anything replaced, timestamped
