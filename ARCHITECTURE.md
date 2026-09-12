@@ -10,7 +10,7 @@ Python 3.11.
 ## The shape
 
 ```
-                         cli.py  (dispatch, 177 lines)
+                         cli.py  (dispatch only)
                             │
         ┌──────────┬────────┼────────┬──────────┬─────────┐
         │          │        │        │          │         │
@@ -21,7 +21,10 @@ Python 3.11.
            console · table · paths · configuration · keys
 ```
 
-Five modules sit at the bottom and depend on nothing else in the project:
+Five modules form the bottom layer. None of them may import a domain
+package; among themselves the order is fixed — `table` imports `console`,
+`configuration` imports `paths`, and `paths` takes only the constants in
+`quiver/__init__.py`:
 
 | module | owns |
 |---|---|
@@ -38,11 +41,15 @@ half never mix:
 
 ```
 ~/.quiver/
-  AGENTS.md          canonical instructions, symlinked into 9 harnesses
-  skills/            the shared skill tree, symlinked into 57 roots
+  AGENTS.md          canonical instructions, symlinked into every harness
+  .linkignore        paths `swe init` must leave alone
+  skills/            the shared skill tree, symlinked into every skills root
   config/            registry (harness.json), catalogs, link records (versioned)
-  secrets/.api_keys  credential values, mode 600               (gitignored)
+  secrets/.api_keys  credential values, mode 600           (NOT gitignored)
   mcp.json           server definitions, ${REF} placeholders    (versioned)
+  mcp/servers/       server checkouts, ~2.7 GB of nested repos (gitignored)
+  reports/           generated daily and weekly reports
+  completions/       generated shell completion scripts
   cache/             sessions, rate limits, counts             (gitignored)
   backups/           pre-overwrite copies                      (gitignored)
 ```
@@ -71,8 +78,12 @@ does it support plugins, where do its skills live — is a question for
 `.gitignore` enforces the boundary mechanically: `harness.json`, `mcp.json`,
 `tools.json`, `providers.json`, `stars.json`, and the caches are all listed,
 so a machine's actual state can never land in this repo by accident.
-`~/.quiver` carries its own `.gitignore` (`cache/`, `backups/`, `secrets/`)
-and its own git history, independent of this one.
+`~/.quiver` carries its own `.gitignore` — written by `swe init` from
+`paths.GITIGNORE_BODY`, and listing `cache/`, `backups/` and `mcp/servers/` —
+plus its own git history, independent of this one. Note what that list does
+*not* cover: `secrets/.api_keys` holds resolved credential values, and it is
+**not** ignored, so an operator versioning `~/.quiver` has to add `secrets/`
+by hand before the first commit.
 
 ## The core idea: one file, many names
 
@@ -307,16 +318,16 @@ it.
 
 ```
 swe <verb>                          top level: shortcuts only
-  list · info · add · edit · remove · use · check · install
+  list · info · add · edit · remove · use · check · doctor · install
   discover                          alias for `swe harness discover`
 
 swe <domain> <verb>                 domains: everything else
   harness    star · archive · discover · list · edit
-  mcp        discover · sync · diff · doctor · export · import
+  mcp        discover · list · status · sync · diff · edit · validate · doctor
   find       amd · skills · plugins · mcps
   providers  list · info · add · remove
   report     daily · weekly · followups · warnings
-  skills     tree · link · unlink · move · discover · catalog
+  skills     list · tree · link · unlink · move · discover · catalog · scope
   session    use
   config     get · set · unset · edit · check · setup
 ```
@@ -334,8 +345,9 @@ was the leftover of an earlier layout where that boundary did not exist.
 
 ## Layering rules
 
-1. `console`, `table`, `paths` and `configuration` import nothing else from
-   the project.
+1. `console`, `table`, `paths`, `configuration` and `keys` are the bottom
+   layer and never import a domain package. Among themselves the order is
+   fixed: `table` imports `console`, `configuration` imports `paths`.
 2. Command modules own presentation. Logic modules mostly do not print;
    `setup/wizard.py` is the deliberate exception (it is an interactive
    flow), and `harness/rate_limits.py` prints diagnostics from inside

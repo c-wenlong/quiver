@@ -1,0 +1,30 @@
+# Dependabot configuration.
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+#
+# Only `github-actions` is watched.  The `swe` CLI is stdlib-only: the sole
+# runtime dependency is `tomli`, and only on Python < 3.11.  Every declared
+# requirement in pyproject.toml is an open floor (`>=`), so a `pip` ecosystem
+# entry would have nothing to raise a pull request about — there is no lockfile
+# and no upper bound to bump.  Add a `pip` block if a pinned dependency ever
+# lands.
+#
+# The workflows pin actions to full commit SHAs.  Dependabot understands that
+# form and rewrites both the SHA and the trailing `# vN` version comment.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # "/" means .github/workflows/, not the repository root.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    # One pull request for all action bumps rather than one per action.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "ci"
