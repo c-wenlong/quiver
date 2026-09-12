@@ -54,6 +54,11 @@ class InitUnregisteredTest(unittest.TestCase):
             out = _init(_home(tmp, {"qwen-code": {}}))
             self.assertRegex(out, r"skipped\s+~/\.qwen/QWEN\.md")
 
+    def test_configured_alias_counts_as_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = _init(_home(tmp, {"gemini-cli": {"aliases": ["gemini"]}}))
+            self.assertRegex(out, r"skipped\s+~/\.gemini/GEMINI\.md")
+
     def test_installed_but_unregistered_target_is_still_linked(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp, {})

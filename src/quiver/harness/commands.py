@@ -93,7 +93,6 @@ _AGENTS_FILENAMES = {
     "crush": "CRUSH.md",
     "opencode": "AGENTS.md",
     "droid": "AGENTS.md",
-    "amp": "AGENTS.md",
 }
 
 

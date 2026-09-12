@@ -14,7 +14,7 @@ def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple
     The harness roots come from the same filesystem scan that backs
     ``swe find skills``, so the two commands cannot disagree about where
     skills live. Before this shared a hardcoded list of eight paths, it
-    missed roots like ~/.pane/skills and ~/.hermes/skills entirely.
+    missed roots like ~/.pane/skills and ~/.zcode/skills entirely.
 
     Three kinds of root that scan does not reach are added here: plugin
     caches (a level deeper than a harness root), directories whose name is

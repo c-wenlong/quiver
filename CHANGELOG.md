@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Amp and Hermes support.** Their session parsers, transcript readers,
+  `swe discover` catalog entry, instruction target (`~/.amp/AGENTS.md`),
+  seeded skills root and `swe list` filename are gone. Session parsers now
+  cover 19 tools and discovery recognises 23.
+
 ### Changed
 
 - **Uninstalled, unregistered harnesses stay out of the report.** `swe init`

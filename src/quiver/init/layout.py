@@ -31,7 +31,6 @@ INSTRUCTION_TARGETS: tuple[tuple[str, Path], ...] = (
     ("crush", Path(".config/crush/CRUSH.md")),
     ("opencode", Path(".config/opencode/AGENTS.md")),
     ("droid", Path(".factory/AGENTS.md")),
-    ("amp", Path(".amp/AGENTS.md")),
 )
 
 # Skill roots are discovered rather than listed. A hardcoded list goes stale
@@ -51,7 +50,6 @@ SKILL_SEED_ROOTS: tuple[Path, ...] = (
     Path(".qwen/skills"),
     Path(".factory/skills"),
     Path(".copilot/skills"),
-    Path(".amp/skills"),
     Path(".config/opencode/skills"),
     Path(".config/crush/skills"),
 )
