@@ -32,7 +32,8 @@ Always say which OS, which Python (`python3 -V`), and which version of quiver (`
 
 ## 4. Security problems do not go in an issue
 
-Report them privately. See [SECURITY.md](SECURITY.md).
+Do not put vulnerability details in an issue. [SECURITY.md](SECURITY.md) has the
+reporting route, including what to do while private reporting is not yet enabled.
 
 ## Response times
 

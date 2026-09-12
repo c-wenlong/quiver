@@ -18,9 +18,11 @@ describing it.
 GitHub's [private vulnerability reporting](https://github.com/c-wenlong/quiver/security/advisories/new)
 is the preferred channel, but it is **not enabled on this repository yet** — the
 link only works once a maintainer turns it on under Settings → Code security.
-Until then, open a public issue saying only that you have found a security
-problem and asking for a private channel. Hold the details back until one
-exists.
+Until it is, open a public issue titled `Security: request for private contact`
+that contains **no details of the vulnerability** — not the affected command,
+not the file, not a reproduction. A maintainer will reply on that issue with a
+private channel to send the details to. Once the form above is enabled this
+section will point at it and nothing else.
 
 Include, once you have somewhere private to send it:
 
