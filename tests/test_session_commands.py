@@ -30,9 +30,16 @@ class SessionCommandsTest(unittest.TestCase):
         self.assertEqual(_resume_cmd_args(s), ["devin", "--resume", "bald-trust"])
 
         s = SimpleNamespace(tool_name="gemini", session_id="x", agent="Gemini")
-        with patch("builtins.print"):
+        with patch("builtins.print") as note:
             args = _resume_cmd_args(s)
         self.assertEqual(args, ["gemini"])
+        self.assertIn("/resume", note.call_args[0][0])
+
+        s = SimpleNamespace(tool_name="grok", session_id="x", agent="Grok")
+        with patch("builtins.print") as note:
+            args = _resume_cmd_args(s)
+        self.assertEqual(args, ["grok"])
+        self.assertIn("launching in session directory", note.call_args[0][0])
 
     def test_parse_search_flag(self):
         parsed = _parse_session_args(["20", "--search", "login"])
