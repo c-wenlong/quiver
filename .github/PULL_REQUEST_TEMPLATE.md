@@ -11,10 +11,12 @@
 
 ## Checklist
 
-- [ ] Tests pass locally (`python -m unittest discover -s tests`)
+- [ ] Tests pass against a throwaway `$HOME` — `HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'`
+- [ ] Reinstalled (`pip install -e .`) and verified the real `swe` binary, not just `PYTHONPATH=src`
 - [ ] Core CLI remains stdlib-only (optional deps go in `[project.optional-dependencies]`)
-- [ ] No user state committed (`tools.json`, `mcp.json`, machine paths)
-- [ ] README / help text updated if user-facing behavior changed
+- [ ] No user state committed (`harness.json`, `mcp.json`, machine paths)
+- [ ] Help text updated if a command changed — `swe doctor` fails on help/dispatch drift
+- [ ] One concern per PR
 
 ## Test plan
 

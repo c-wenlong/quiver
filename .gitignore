@@ -38,7 +38,3 @@ completions/
 # Nix build output
 result
 result-*
-
-# Nix build output
-result
-result-*

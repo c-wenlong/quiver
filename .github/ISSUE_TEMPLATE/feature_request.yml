@@ -34,12 +34,17 @@ body:
     id: area
     attributes:
       label: Area
+      description: Which part of the CLI does this touch?
       options:
-        - Registry / launch
-        - Sessions
-        - Models analytics
-        - Skills discovery
-        - MCP sync
+        - Registry / launch (swe list, info, add, edit, use, check)
+        - Sessions (swe session)
+        - Model analytics (swe models)
+        - Reports (swe report)
+        - Skills (swe skills)
+        - MCP (swe mcp)
+        - Providers (swe providers)
+        - Find / linking (swe find, swe init)
+        - Config and setup (swe config, swe setup)
         - Docs / DX
         - Other
     validations:
