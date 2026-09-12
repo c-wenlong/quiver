@@ -50,12 +50,6 @@ HARNESS_CATALOG: dict[str, dict] = {
         "tags": ["agentic", "coding", "subscription"],
         "aliases": ["cs"],
     },
-    "amp": {
-        "command": "amp",
-        "description": "Sourcegraph's, multiplayer threads, pay per token with no rationing",
-        "tags": ["agentic", "coding", "subscription"],
-        "aliases": ["ap"],
-    },
     "kimi": {
         "command": "kimi",
         "description": "Moonshot's, Ctrl-X drops to a real shell without leaving the session",

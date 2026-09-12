@@ -447,14 +447,14 @@ The MCP subsystem also reads/writes each tool's native config (e.g. `~/.claude.j
 
 ## Supported tools
 
-`swe discover` recognises **24 AI coding CLIs** on sight: Claude Code, Codex, Gemini
-CLI, GitHub Copilot CLI, Cursor CLI, opencode, Amp, Kimi, Qwen Code, Mistral Vibe,
+`swe discover` recognises **23 AI coding CLIs** on sight: Claude Code, Codex, Gemini
+CLI, GitHub Copilot CLI, Cursor CLI, opencode, Kimi, Qwen Code, Mistral Vibe,
 Mimo, Crush, Cline, Goose, Aider, Continue, pi, Forge, Factory Droid, Augment, Kiro,
 Blackbox, Freebuff, and Ollama. That is a recognition table, not a seed — nothing is
 written to your registry until discovery finds the binary on PATH. Register anything
 else by hand with `swe add`.
 
-Session parsers currently cover **21 tools**: opencode, Claude Code, Gemini/Antigravity, Codex, Cursor, pi, Freebuff, Droid, Copilot, Continue, Crush, Amp, Kimi, Hermes, Grok, Cline, Forge, Mimo, Tau, and Devin. Parsers are built on three reusable family engines (SQLite, JSONL, JSON) with declarative per-tool configs. Model analytics cover opencode, Claude Code, Codex, and Freebuff.
+Session parsers currently cover **19 tools**: opencode, Claude Code, Gemini/Antigravity, Codex, Cursor, pi, Freebuff, Droid, Copilot, Continue, Crush, Kimi, Grok, Cline, Forge, Mimo, Tau, and Devin. Parsers are built on three reusable family engines (SQLite, JSONL, JSON) with declarative per-tool configs. Model analytics cover opencode, Claude Code, Codex, and Freebuff.
 
 ## Development
 

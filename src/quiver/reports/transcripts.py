@@ -501,8 +501,6 @@ def _file_json_reader(root: str, filename: Callable[[Session], str]) -> Reader:
     return read
 
 
-READER_REGISTRY["amp"] = _file_json_reader("~/.local/share/amp/threads", lambda s: f"{s.session_id}.json")
-READER_REGISTRY["hermes"] = _file_json_reader("~/.hermes/sessions", lambda s: f"{s.session_id}.json" if s.session_id.startswith("session_") else f"session_{s.session_id}.json")
 
 
 @register_reader("gemini")
@@ -790,7 +788,7 @@ def _read_crush(session: Session) -> NormalizedTranscript:
 EXPECTED_READER_TOOLS = frozenset(
     {
         "opencode", "claude", "gemini", "antigravity", "codex", "pi", "cursor",
-        "freebuff", "droid", "copilot", "continue", "crush", "amp", "kimi",
-        "hermes", "grok", "cline", "forge", "mimo", "tau", "devin",
+        "freebuff", "droid", "copilot", "continue", "crush", "kimi",
+        "grok", "cline", "forge", "mimo", "tau", "devin",
     }
 )

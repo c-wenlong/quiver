@@ -71,7 +71,7 @@ class InspectTest(unittest.TestCase):
     def test_skips_harness_that_is_not_installed(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)
-            status = inspect("amp", Path(".amp/AGENTS.md"), agents_file(home), home)
+            status = inspect("gemini", Path(".gemini/GEMINI.md"), agents_file(home), home)
             self.assertEqual(status.state, "skipped")
             self.assertFalse(status.changed)
 
@@ -244,8 +244,8 @@ class LinkStatesTest(unittest.TestCase):
 
     def test_uninstalled_harness_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home = _fake_home(tmp)  # no ~/.amp
-            self.assertEqual(link_states(home)["amp"]["agents"], "skipped")
+            home = _fake_home(tmp)  # no ~/.gemini
+            self.assertEqual(link_states(home)["gemini"]["agents"], "skipped")
 
     def test_legacy_agents_alias_is_not_a_harness(self):
         with tempfile.TemporaryDirectory() as tmp:
