@@ -19,8 +19,7 @@ from quiver.sessions.models import Session
 
 
 class SessionCommandsTest(unittest.TestCase):
-    def test_antigravity_launches_gemini(self):
-        self.assertEqual(_launch_tool_name("antigravity"), "gemini")
+    def test_launch_tool_defaults_to_tool_name(self):
         self.assertEqual(_launch_tool_name("droid"), "droid")
 
     def test_resume_flags(self):
@@ -30,10 +29,17 @@ class SessionCommandsTest(unittest.TestCase):
         s = SimpleNamespace(tool_name="devin", session_id="bald-trust", agent="Devin")
         self.assertEqual(_resume_cmd_args(s), ["devin", "--resume", "bald-trust"])
 
-        s = SimpleNamespace(tool_name="antigravity", session_id="x", agent="Antigravity")
-        with patch("builtins.print"):
+        s = SimpleNamespace(tool_name="gemini", session_id="x", agent="Gemini")
+        with patch("builtins.print") as note:
             args = _resume_cmd_args(s)
         self.assertEqual(args, ["gemini"])
+        self.assertIn("/resume", note.call_args[0][0])
+
+        s = SimpleNamespace(tool_name="grok", session_id="x", agent="Grok")
+        with patch("builtins.print") as note:
+            args = _resume_cmd_args(s)
+        self.assertEqual(args, ["grok"])
+        self.assertIn("launching in session directory", note.call_args[0][0])
 
     def test_parse_search_flag(self):
         parsed = _parse_session_args(["20", "--search", "login"])
