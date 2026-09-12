@@ -661,6 +661,23 @@ class _CompletedProc:
         self.stderr = stderr
 
 
+class _Both:
+    """Enter two patches as one context manager."""
+
+    def __init__(self, *patches):
+        self._patches = patches
+
+    def __enter__(self):
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+        return False
+
+
 class GitHubCopilotFetcherTest(unittest.TestCase):
     """Test the Copilot /copilot_internal/user fetcher with mocked subprocess + HTTP."""
 
@@ -699,10 +716,15 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         return mock_resp
 
     def _patch_token(self, token="fake-gh-token"):
-        return patch(
+        # Cover the whole `gh auth token` call: the fetcher first asks
+        # shutil.which for gh, so a machine (or a nix sandbox) without the
+        # CLI would otherwise return None before the mocked run is reached.
+        which = patch("quiver.harness.rate_limits.shutil.which", return_value="/usr/bin/gh")
+        run = patch(
             "quiver.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
         )
+        return _Both(which, run)
 
     def test_fetch_copilot_success(self):
         from quiver.harness.rate_limits import _fetch_github_copilot
