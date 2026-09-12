@@ -211,9 +211,17 @@ class InteractionTest(unittest.TestCase):
             "sys.stderr.write('RESULT:' + ','.join(r or []))\n"
         ) % str(__import__("pathlib").Path(__file__).resolve().parent.parent / "src")
 
+        import sys
+
         pid, fd = pty.fork()
         if pid == 0:
-            os.execv("/usr/bin/env", ["env", "python3", "-c", script])
+            # The running interpreter, not /usr/bin/env: a nix build sandbox
+            # has no /usr/bin. And never fall through on a failed exec, or
+            # the child carries on running this very test suite in the pty.
+            try:
+                os.execv(sys.executable, [sys.executable, "-c", script])
+            finally:
+                os._exit(127)
         time.sleep(0.6)
         # down, down (onto 'b'), toggle it on, up (onto 'a'), toggle it off, save
         for key in (b"\x1b[B", b"\x1b[B", b" ", b"\x1b[A", b" ", b"\r"):
