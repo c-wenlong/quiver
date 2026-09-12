@@ -6,12 +6,25 @@ on:
   pull_request:
     branches: [main]
 
+# A new push to a PR branch makes the in-flight run for that branch
+# obsolete.  Cancel it instead of letting two full suites race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Endpoints of the supported range only (requires-python = ">=3.10").
+        # The one version-gated thing in the source is the tomllib/tomli
+        # import fork (mcp/codex_io.py, harness/rate_limits.py, find/mcps.py),
+        # and that fork is binary: 3.10 takes the `tomli` polyfill, every
+        # later version takes stdlib `tomllib`.  3.11 and 3.12 therefore ran
+        # byte-for-byte the same paths as 3.13.  Add a leg back the moment
+        # some code branches on a version between the endpoints.
+        python-version: ["3.10", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -57,11 +70,12 @@ jobs:
           python -m unittest discover -s tests -p 'test_*.py' -v
 
   coverage:
-    name: Coverage (Python ${{ matrix.python-version }})
+    # One interpreter is enough.  This job's product is the fail_under gate
+    # in .coveragerc plus the Codecov upload, and neither varies by Python
+    # version — the line-by-line suite it measures is already run on both
+    # endpoints by `test`.
+    name: Coverage
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.13"]
     permissions:
       contents: read
       id-token: write
@@ -69,10 +83,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
 
       - name: Install package and coverage tooling
         run: pip install -e ".[test]"
@@ -90,8 +104,8 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
-          flags: python-${{ matrix.python-version }}
-          name: python-${{ matrix.python-version }}
+          flags: python-3.13
+          name: python-3.13
           # Coverage reporting is a nice-to-have. Codecov being unreachable
           # should not mark a run red when every test job passed.
           fail_ci_if_error: false
@@ -146,6 +160,11 @@ jobs:
         run: nix flake check --print-build-logs
 
   macos-smoke:
+    # Kept deliberately.  The source hardcodes Darwin-only locations that no
+    # Linux runner can ever reach: the Claude Desktop config under
+    # ~/Library/Application Support (mcp/cli.py), the Cursor state.vscdb path
+    # and libcrypto.dylib (harness/rate_limits.py), and the Homebrew npm probe
+    # in harness/path_health.py — the very module this job's test covers.
     name: macOS path and entry-point smoke test
     runs-on: macos-latest
 
