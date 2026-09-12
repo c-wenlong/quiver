@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`swe init` prints counts by default.** Every run used to list all sixty-odd
+  harness paths, one row each, when nearly all of them read `linked`. The
+  default is now one tally per section (`Instructions  9 linked`,
+  `Skills  57 linked, 1 protected`), the total, and then only the paths that
+  need a decision: directories left alone because their skills exist nowhere
+  else, and paths blocked by a real file. `swe init --full` prints the
+  per-path listing as before.
 - **The transcript view shows the conversation, not the machinery.** A run
   of tool calls collapses to `called 12 tools` instead of listing each one,
   since their arguments were the bulk of the view and the least use for

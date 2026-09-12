@@ -426,6 +426,7 @@ to use their own login state and environment."""
         "Create ~/.quiver and symlink every harness to it",
         f"""\
   {c('cyan', 'swe init')}                    Create the layout and link all harnesses
+  {c('cyan', 'swe init --full')}             List every path, not just the counts
   {c('cyan', 'swe init --check')}            Show what would change, write nothing
   {c('cyan', 'swe init --force')}            Replace real files too (backed up first)
   {c('cyan', 'swe init --migrate')}          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
