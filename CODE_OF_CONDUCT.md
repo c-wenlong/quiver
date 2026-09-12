@@ -59,13 +59,11 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement through
-[GitHub's private vulnerability reporting form][report] for this repository,
-which delivers a private message visible only to the maintainer. If that form is
-unavailable, contact the maintainer through the channels listed on their
+reported to the community leaders responsible for enforcement through the
+private contact route described in [SECURITY.md](SECURITY.md), which is the one
+place that says how to reach a maintainer privately. Failing that, contact the
+maintainer through the channels listed on their
 [GitHub profile](https://github.com/c-wenlong).
-
-[report]: https://github.com/c-wenlong/quiver/security/advisories/new
 
 All complaints will be reviewed and investigated promptly and fairly.
 
