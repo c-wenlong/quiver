@@ -1349,7 +1349,7 @@ MCP_HELP = {
   swe mcp sync oc cursor
   swe mcp sync opencode --all
   swe mcp sync opencode droid
-  swe mcp sync opencode kimi        # unverified target → ~/.kimi/mcp.json
+  swe mcp sync opencode myagent     # unverified target → ~/.myagent/mcp.json
   swe mcp sync quiver --all --only='*__*'              # hub → everything
   swe mcp sync quiver cursor --only=dv__*              # hub → one tool
   swe mcp sync opencode cursor --only=dv__github,dv__linear

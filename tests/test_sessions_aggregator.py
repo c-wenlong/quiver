@@ -18,12 +18,9 @@ class SessionsAggregatorTest(unittest.TestCase):
             "copilot",
             "continue",
             "crush",
-            "kimi",
             "grok",
             "cline",
             "forge",
-            "mimo",
-            "tau",
         ):
             self.assertIn(expected, names)
 

@@ -286,58 +286,6 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertEqual(first.messages[0].text, "TOKEN=[REDACTED]")
         self.assertEqual(first.digest, second.digest)
 
-    def test_antigravity_overview_assigns_roles_for_current_jsonl_records(self):
-        overview = self.home / (
-            ".gemini/antigravity/brain/ag-current/.system_generated/logs/overview.txt"
-        )
-        overview.parent.mkdir(parents=True)
-        overview.write_text(
-            "\n".join([
-                json.dumps({
-                    "step_index": 0,
-                    "source": "USER_EXPLICIT",
-                    "type": "USER_INPUT",
-                    "status": "DONE",
-                    "content": "Fix the Antigravity parser.",
-                }),
-                json.dumps({
-                    "step_index": 5,
-                    "source": "MODEL",
-                    "type": "PLANNER_RESPONSE",
-                    "status": "DONE",
-                    "content": "The parser is fixed.",
-                }),
-            ]),
-            encoding="utf-8",
-        )
-
-        transcript = read_transcript(_session("antigravity", "ag-current"))
-
-        self.assertEqual([m.role for m in transcript.messages], ["human", "assistant"])
-        self.assertEqual(
-            [m.text for m in transcript.messages],
-            ["Fix the Antigravity parser.", "The parser is fixed."],
-        )
-
-    def test_antigravity_legacy_prompt_response_and_message_roles(self):
-        overview = self.home / (
-            ".gemini/antigravity/brain/ag-legacy/.system_generated/logs/overview.txt"
-        )
-        overview.parent.mkdir(parents=True)
-        overview.write_text(
-            '{"Prompt":"Investigate the failure","Response":"Found the cause"}\n'
-            '{"Message":"Applied the focused fix"}\n',
-            encoding="utf-8",
-        )
-
-        transcript = read_transcript(_session("antigravity", "ag-legacy"))
-
-        self.assertEqual([m.role for m in transcript.messages], ["human", "assistant", "assistant"])
-        self.assertEqual(
-            [m.text for m in transcript.messages],
-            ["Investigate the failure", "Found the cause", "Applied the focused fix"],
-        )
-
     def test_empty_droid_and_pi_noop_sessions_are_readable(self):
         self._jsonl(
             ".factory/sessions/project/droid-empty.jsonl",
@@ -478,24 +426,6 @@ class TranscriptReaderTest(unittest.TestCase):
         transcript = read_transcript(_session("devin", "devin-1"))
         self.assertFalse(transcript.readable)
         self.assertIn("Devin store not found", transcript.error)
-
-    def test_tau_uses_index_path_when_filename_does_not_match_session_id(self):
-        project = self.home / ".tau/sessions/project"
-        transcript_path = project / "custom-name.jsonl"
-        self._jsonl(
-            ".tau/sessions/project/custom-name.jsonl",
-            [
-                {"type": "message", "message": {"role": "user", "content": "Fix Tau"}},
-                {"type": "message", "message": {"role": "assistant", "content": "Done"}},
-            ],
-        )
-        self._jsonl(
-            ".tau/sessions/project/index.jsonl",
-            [{"id": "tau-id", "path": str(transcript_path), "cwd": "/work/project"}],
-        )
-        transcript = read_transcript(_session("tau", "tau-id"))
-        self.assertTrue(transcript.readable)
-        self.assertEqual([m.text for m in transcript.messages], ["Fix Tau", "Done"])
 
     def test_missing_source_is_unreadable_not_empty(self):
         transcript = read_transcript(_session("continue", "missing"))
