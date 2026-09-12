@@ -6,7 +6,7 @@ Instructions for any coding agent working in this repository.
 
 `quiver` is a Python package whose console entry point is `swe`. It manages the AI coding CLIs on a machine (Claude Code, Codex, Gemini, Cursor, opencode, ...): one registry, one shared instruction file and skills tree symlinked into every harness, cross-agent session history, MCP config sync, rate limits, and coding-session reports.
 
-The core CLI is stdlib-only. `tomli` is the single dependency and only on Python < 3.11. Optional extras: `server` (FastMCP session server via `python -m quiver.mcp_server`) and `test` (coverage). Python floor is 3.10 and CI runs 3.10 through 3.13.
+The core CLI is stdlib-only. `tomli` is the single dependency and only on Python < 3.11. Optional extras: `server` (FastMCP session server via `python -m quiver.mcp_server`) and `test` (coverage). Python floor is 3.10 and CI runs the endpoints, 3.10 and 3.13 — every version-sensitive path in the source splits at 3.10 vs 3.11+ (the `tomli` import fork, the ISO-8601 parsing fallback in `harness/rate_limits.py`), so nothing branches strictly between them.
 
 Deeper references, read before touching the relevant area:
 
