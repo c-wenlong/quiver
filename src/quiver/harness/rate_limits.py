@@ -2084,9 +2084,8 @@ def _read_devin_credentials() -> tuple[str, str] | None:
     """Return ``(api_key, api_server_url)`` from Devin's credentials file.
 
     The CLI is Cognition's Windsurf-backed agent, so the key is named
-    ``windsurf_api_key`` and the server is Windsurf's. The file is TOML;
-    ``tomllib`` is stdlib from 3.11 and ``tomli`` is this package's one
-    dependency below that.
+    ``windsurf_api_key`` and the server is Windsurf's. The file is TOML,
+    read with stdlib ``tomllib``.
     """
     path = os.path.expanduser(_DEVIN_CREDENTIALS_PATH)
     try:

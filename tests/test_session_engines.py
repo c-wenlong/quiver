@@ -61,12 +61,15 @@ class CommonHelpersTest(unittest.TestCase):
         rather than hardcoding a literal that would be wrong on any
         runner outside UTC.  Do not "fix" the number: fix the TZ.
         """
-        with patch.dict(os.environ, {"TZ": "UTC"}):
-            time.tzset()
-            try:
-                self.assertEqual(parse_iso_ts("2026-08-01T00:00:00"), 1785542400000.0)
-            finally:
+        try:
+            with patch.dict(os.environ, {"TZ": "UTC"}):
                 time.tzset()
+                self.assertEqual(parse_iso_ts("2026-08-01T00:00:00"), 1785542400000.0)
+        finally:
+            # patch.dict has restored the real TZ by now; this tzset call
+            # has to come AFTER it, or the process keeps UTC and every
+            # later local-time-sensitive test becomes order-dependent.
+            time.tzset()
 
     def test_parse_iso_ts_numeric_unit_detection(self):
         """The magnitude of a number decides how it is scaled.
