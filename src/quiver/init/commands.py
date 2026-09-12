@@ -12,8 +12,10 @@ from quiver.init.migrate import apply_migration, plan_migration, write_gitignore
 from quiver.init.layout import (
     LinkStatus,
     SEED_AGENTS_MD,
+    SEED_LINKIGNORE,
     agents_file,
     backups_dir,
+    linkignore_file,
     plan,
     quiver_dir,
     skills_dir,
@@ -29,6 +31,7 @@ STATE_COLOR = {
     "protected": "yellow",
     "blocked": "red",
     "skipped": "dim",
+    "ignored": "dim",
 }
 
 
@@ -46,7 +49,7 @@ def _backup(path: Path, home: Path) -> Path:
 
 def _apply(status: LinkStatus, canonical: Path, home: Path, force: bool) -> str:
     """Carry out one status. Returns a short result word for the report."""
-    if status.state in ("linked", "skipped"):
+    if status.state in ("linked", "skipped", "ignored"):
         return status.state
 
     # A directory whose skills exist nowhere else is never replaced on a plain
@@ -80,7 +83,7 @@ _LINKED_RESULTS = frozenset({"linked", "would-create", "would-relink", "would-ab
 # Order the per-section tallies read in: settled first, then work to do.
 _TALLY_ORDER = (
     "linked", "create", "relink", "absorb", "keep", "protected",
-    "conflict", "blocked", "skipped",
+    "conflict", "blocked", "skipped", "ignored",
 )
 
 
@@ -149,6 +152,11 @@ def _ensure_scaffold(home: Path, check_only: bool) -> list[str]:
         notes.append("seed AGENTS.md")
         if not check_only:
             agents.write_text(SEED_AGENTS_MD, encoding="utf-8")
+    ignore = linkignore_file(home)
+    if not ignore.exists():
+        notes.append("seed .linkignore")
+        if not check_only:
+            ignore.write_text(SEED_LINKIGNORE, encoding="utf-8")
     return notes
 
 
@@ -228,7 +236,8 @@ def cmd_init(args) -> int:
     print(f"\n  {c('dim', summary)}\n")
     if protected:
         _print_paths("Left alone, these hold skills that exist nowhere else:", protected, home)
-        print(f"  {c('dim', 'Move what you want to keep into ~/.quiver/skills first, or --force.')}\n")
+        print(f"  {c('dim', 'Move what you want to keep into ~/.quiver/skills first, or --force.')}")
+        print(f"  {c('dim', 'To leave one alone for good, list it in ~/.quiver/.linkignore.')}\n")
     # The full view already paints every blocked row red; the summary only
     # has counts, so it names the paths the user has to do something about.
     if blocked and not full:
@@ -256,6 +265,8 @@ def print_init_help() -> None:
     ~/.quiver/AGENTS.md    one instruction file, linked in under each
                            harness's own name (CLAUDE.md, QWEN.md, CRUSH.md...)
     ~/.quiver/skills/      one skill tree, linked in as every harness's skills/
+    ~/.quiver/.linkignore  paths to leave alone, one gitignore-style pattern
+                           per line (.agents/skills, .agents, .config/*/AGENTS.md)
     ~/.quiver/backups/     anything replaced, timestamped
 
   {c('bold', 'States')}
@@ -268,6 +279,7 @@ def print_init_help() -> None:
     {c('yellow', 'protected')}   ran without --force: a {c('bold', 'keep')} directory, left untouched
     {c('red', 'blocked')}     ran without --force: a {c('bold', 'conflict')} path, left untouched
     {c('dim', 'skipped')}     harness not installed on this machine
+    {c('dim', 'ignored')}     listed in .linkignore, never touched or counted
 
   {c('dim', 'These are the same five ideas swe list legend (✓ ○ ↻ ✗) and swe init')}
   {c('dim', '(linked/create/relink/conflict) print under different names.')}

@@ -399,6 +399,7 @@ manages coding harnesses, and most harness config directories are `$HOME/.<tool>
 | --- | --- | --- |
 | `AGENTS.md` | Shared instructions, symlinked into each harness under its own filename | No — created by `swe init` |
 | `skills/` | Shared skill tree, symlinked in as every harness's `skills/` | No — created by `swe init` |
+| `.linkignore` | Paths `swe init` leaves alone, one gitignore-style pattern per line | No — seeded by `swe init` |
 | `config/harness.json` | Your tool registry (versions, aliases, and per-harness state for this machine) | No — auto-created |
 | `config/mcp.json` | MCP source of truth | No — created by `swe mcp discover --apply` |
 | `config/providers.json` | Provider metadata and key locations | No — auto-created |

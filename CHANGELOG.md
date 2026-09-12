@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`~/.quiver/.linkignore`.** A gitignore-style list of paths `swe init`
+  must leave alone: one home-relative pattern per line, `#` comments, `*`
+  wildcards, and a directory name covers everything under it. A matching
+  path shows as `ignored` in `swe init` and as a dim dash in `swe list`,
+  and is never linked, backed up, or counted as left alone. `swe init` seeds
+  the file with a commented example so the option is discoverable.
 - **Devin sessions in `swe session`.** The Devin CLI's `sessions.db` is
   parsed: hidden rows are skipped, an empty title falls back to the first
   prompt of the session, an inline `/rename` marks the title as a rename,

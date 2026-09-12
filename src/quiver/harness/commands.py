@@ -113,6 +113,8 @@ _LINK_GLYPH = {
     # A real directory whose contents are all duplicates or empty, so init can
     # replace it with the link without losing anything.
     "absorb": ("yellow", "\u25cb"),
+    # Listed in ~/.quiver/.linkignore: the user asked init to leave it alone.
+    "ignored": ("dim", "\u2013"),
 }
 
 
@@ -221,6 +223,7 @@ def cmd_list_legend(args=None) -> int:
         ("keep", "a real directory holding files that exist nowhere else, left alone"),
         ("conflict", "a real file sits where the link should go; needs --force"),
         ("skipped", "harness is not installed"),
+        ("ignored", "listed in ~/.quiver/.linkignore, left alone on purpose"),
     ]
     for state, meaning in rows:
         colour, glyph = _LINK_GLYPH.get(state, ("dim", "?"))
