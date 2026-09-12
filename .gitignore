@@ -34,3 +34,11 @@ completions/
 
 # .archive/ — parked, not part of the build
 .archive/
+
+# Nix build output
+result
+result-*
+
+# Nix build output
+result
+result-*
