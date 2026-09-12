@@ -8,7 +8,6 @@ from quiver.paths import SESSION_CACHE_FILE
 from quiver.sessions import failures
 from quiver.sessions.models import Session
 from quiver.sessions.parsers import (
-    parse_amp,
     parse_antigravity,
     parse_claude,
     parse_cline,
@@ -23,7 +22,6 @@ from quiver.sessions.parsers import (
     parse_freebuff,
     parse_gemini,
     parse_grok,
-    parse_hermes,
     parse_kimi,
     parse_mimo,
     parse_opencode,
@@ -46,9 +44,7 @@ PARSER_REGISTRY: list[tuple[str, callable, tuple[str, ...]]] = [
     ("devin", parse_devin, ("devin", "dv")),
     ("continue", parse_continue, ("continue", "cn", "ct")),
     ("crush", parse_crush, ("crush", "cr")),
-    ("amp", parse_amp, ("amp", "ap")),
     ("kimi", parse_kimi, ("kimi", "ki")),
-    ("hermes", parse_hermes, ("hermes", "hs")),
     ("grok", parse_grok, ("grok", "gk")),
     ("cline", parse_cline, ("cline", "cl")),
     ("forge", parse_forge, ("forge", "fc")),

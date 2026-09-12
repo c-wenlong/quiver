@@ -218,9 +218,14 @@ def cmd_init(args) -> int:
     # link it, but this machine never asked. A registered one still shows as
     # skipped, since that tells you something you set up is missing.
     registry = load_registry(home)
+    registered = set(registry) | {
+        alias
+        for entry in registry.values() if isinstance(entry, dict)
+        for alias in entry.get("aliases") or []
+    }
     instructions = [
         s for s in instructions
-        if not (s.state == "skipped" and registry_name(s.label) not in registry)
+        if not (s.state == "skipped" and registry_name(s.label) not in registered)
     ]
     hooks = plan_hooks(home, patterns)
 

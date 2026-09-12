@@ -44,7 +44,7 @@ class AgentsTreeTest(unittest.TestCase):
             self.assertEqual(by["claude"].kind, "symlink")
             self.assertEqual(by["codex"].state, "create")
             # A harness with no config dir is absent, not broken.
-            self.assertEqual(by["amp"].state, "skipped")
+            self.assertEqual(by["gemini"].state, "skipped")
 
     def test_symlink_target_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -485,9 +485,9 @@ class TreeRenderTest(unittest.TestCase):
         self.assertIsNotNone(rows[1][2])
 
     def test_single_file_directory_collapses_to_one_row(self):
-        rows = self._rows(Path("/h"), [".amp/AGENTS.md"])
+        rows = self._rows(Path("/h"), [".gemini/GEMINI.md"])
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][1], ".amp/AGENTS.md")
+        self.assertEqual(rows[0][1], ".gemini/GEMINI.md")
 
     def test_single_child_directory_chain_collapses(self):
         rows = self._rows(Path("/h"), [
@@ -556,7 +556,7 @@ class ColumnWidthTest(unittest.TestCase):
         # Everything fits, so the column is the true max and nothing is cut.
         home = Path("/h")
         width, lengths = self._width(home, [
-            ".amp/skills", ".codeium/windsurf/skills", ".tabnine/agent/skills",
+            ".pi/skills", ".codeium/windsurf/skills", ".tabnine/agent/skills",
         ])
         self.assertEqual(width, lengths[-1])
         self.assertEqual(sum(1 for x in lengths if x > width), 0)
