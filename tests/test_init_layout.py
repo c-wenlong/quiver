@@ -1,4 +1,5 @@
 import io
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -422,3 +423,75 @@ class ChainLandsOnCanonicalTest(unittest.TestCase):
 
             status = inspect("claude", Path(".claude/CLAUDE.md"), canonical, home)
             self.assertEqual(status.state, "relink")
+
+
+class CmdInitViewTest(unittest.TestCase):
+    """The default view is a tally per section; --full lists every path."""
+
+    def _run(self, home: Path, args):
+        with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = init_commands.cmd_init(args)
+            return code, buf.getvalue()
+
+    def test_default_prints_counts_not_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            self._run(home, [])
+            code, out = self._run(home, [])
+            self.assertEqual(code, 0)
+            self.assertNotIn(".claude/CLAUDE.md", out)
+            self.assertNotIn(".codex/skills", out)
+            self.assertIn("Instructions", out)
+            self.assertIn("Skills", out)
+            self.assertRegex(out, r"Instructions\S*\s+\S*\d+ linked")
+            self.assertIn("swe init --full", out)
+
+    def test_full_lists_every_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            self._run(home, [])
+            code, out = self._run(home, ["--full"])
+            self.assertEqual(code, 0)
+            self.assertIn(".claude/CLAUDE.md", out)
+            self.assertIn(".codex/skills", out)
+            self.assertNotIn("swe init --full", out)
+
+    def test_default_still_names_blocked_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            target = home / ".claude/CLAUDE.md"
+            target.write_text("hand written\n")
+            code, out = self._run(home, [])
+            self.assertEqual(code, 1)
+            self.assertIn("1 blocked", out)
+            self.assertIn("Blocked", out)
+            self.assertIn(".claude/CLAUDE.md", out)
+            self.assertNotIn(".codex/skills", out)
+
+    def test_check_tallies_would_states(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            code, out = self._run(home, ["--check"])
+            self.assertEqual(code, 0)
+            self.assertRegex(out, r"\d+ would-create")
+            self.assertNotIn(".codex/skills", out)
+
+    def test_check_conflict_is_blocked_not_linked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            (home / ".claude/CLAUDE.md").write_text("hand written\n")
+            code, out = self._run(home, ["--check"])
+            self.assertEqual(code, 1)
+            plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
+            self.assertIn("1 would-conflict", plain)
+            total = re.search(r"(\d+) linked, (\d+) blocked", plain)
+            self.assertEqual(int(total.group(2)), 1)
+            # The total counts only what is or would become a link; the
+            # conflict tallied in the section must not also count as linked.
+            sections = plain.split(" linked, ")[0]
+            expected = sum(
+                int(n) for n in re.findall(r"(\d+) (?:linked|would-create|would-relink|would-absorb)", sections)
+            )
+            self.assertEqual(int(total.group(1)), expected)

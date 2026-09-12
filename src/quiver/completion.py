@@ -28,6 +28,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("mcp", "Manage MCP servers"),
     ("harness", "Harness registry utils"),
     ("setup", "Onboarding wizard"),
+    ("init", "Create ~/.quiver and link every harness"),
     ("config", "View or update configuration"),
     ("autocomplete", "Generate shell completion"),
 ]
@@ -68,6 +69,13 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--session-model", "Cheap summarizer model"),
         ("--writer-harness", "Final writer harness"),
         ("--writer-model", "Final writer model"),
+    ],
+    "init": [
+        ("--full", "List every path, not just the counts"),
+        ("--check", "Show what would change, write nothing"),
+        ("-n", "Short for --check"),
+        ("--force", "Replace real files too (backed up first)"),
+        ("--migrate", "Move a pre-0.2.7 ~/.config/swe into ~/.quiver"),
     ],
     "setup": [
         ("--quick", "Only missing or actionable stages"),
