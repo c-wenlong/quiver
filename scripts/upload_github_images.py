@@ -7,7 +7,7 @@ to the repo name is your GitHub account avatar (github.com/settings/profile).
 What you CAN set per repo:
   Settings → Social preview  (link unfurls on Slack, Twitter, etc.)
 
-The README mascot (assets/mascot.png) is what visitors see on the repo page.
+The README mascot (assets/icon.png) is what visitors see on the repo page.
 """
 
 import sys
@@ -20,7 +20,7 @@ SETTINGS = f"https://github.com/{REPO}/settings"
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     social = root / "assets" / "social-preview.png"
-    mascot = root / "assets" / "mascot.png"
+    mascot = root / "assets" / "icon.png"
 
     if not social.is_file():
         print(f"Missing: {social}", file=sys.stderr)
