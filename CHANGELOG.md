@@ -15,9 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flake, and the three `try: import tomllib / except: import tomli` forks in
   `mcp/codex_io.py`, `harness/rate_limits.py` and `find/mcps.py` collapse to a
   plain import. The CI test matrix moves to 3.11 and 3.13 and coverage drops to
-  a single leg, taking CI from 7 check runs to 6. Users on 3.10 should stay on
-  the previous release; Ubuntu 22.04 ships 3.10, while Debian 12 and Ubuntu
-  24.04 ship 3.11 and 3.12 respectively.
+  a single leg, taking CI from 7 check runs to 6. Users on 3.10 should pin `v0.2.9`,
+  the last release that runs on it: `pipx install
+  git+https://github.com/c-wenlong/quiver.git@v0.2.9`. Ubuntu 22.04 LTS ships
+  3.10, while Debian 12 and Ubuntu 24.04 ship 3.11 and 3.12 respectively.
 
   One behaviour improves: a timestamp carrying nanosecond precision, such as
   `2026-08-01T00:00:00.123456789Z`, used to lose its fractional part entirely
