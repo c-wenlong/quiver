@@ -95,9 +95,17 @@ Link state is a small vocabulary shared by `swe init`, `swe list` and
 | `keep` | a real directory holding files that exist nowhere else |
 | `conflict` | a real file where the link should go |
 | `skipped` | harness not installed |
+| `ignored` | listed in `~/.quiver/.linkignore`, never touched or counted |
 
 `keep` is the safety valve. It is never overwritten on a plain run, because
 absorbing it would hide the only copy of something behind the shared tree.
+
+`ignored` is the opt-out. `~/.quiver/.linkignore` holds home-relative
+patterns (`fnmatch`, `*` crosses `/`, naming a directory covers its
+contents), and `init/layout.plan` stamps every matching target with that
+state before classifying it. `swe init` and `swe list` show it; `swe find`
+still reports the path's real state, since it is an inventory rather than a
+plan.
 
 ## Registry: harness.json
 

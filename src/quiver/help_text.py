@@ -438,6 +438,8 @@ to use their own login state and environment."""
   ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
                         own name (CLAUDE.md, QWEN.md, CRUSH.md, GEMINI.md)
   ~/.quiver/skills/     one skill tree, linked in as every harness's skills/
+  ~/.quiver/.linkignore paths to leave alone, one gitignore-style pattern per
+                        line, e.g. .agents/skills or .config/*/AGENTS.md
   ~/.quiver/backups/    anything replaced, timestamped
 
 {c('bold', 'States')}
@@ -445,7 +447,8 @@ to use their own login state and environment."""
   {c('cyan', 'create')}    nothing there yet, will symlink
   {c('yellow', 'relink')}    symlink pointing elsewhere, will repoint
   {c('red', 'conflict')}  a real file or directory, needs --force
-  {c('dim', 'skipped')}   harness not installed on this machine"""
+  {c('dim', 'skipped')}   harness not installed on this machine
+  {c('dim', 'ignored')}   listed in .linkignore, never touched or counted"""
     ),
     "setup": (
         "Sectioned setup wizard for Quiver",
