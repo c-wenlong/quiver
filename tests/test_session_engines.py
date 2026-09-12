@@ -4,8 +4,10 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from quiver.sessions.engines.common import (
     clean_title,
@@ -28,6 +30,92 @@ class CommonHelpersTest(unittest.TestCase):
         self.assertAlmostEqual(parse_iso_ts(1_700_000_000), 1_700_000_000_000, delta=1)
         self.assertAlmostEqual(parse_iso_ts(1_700_000_000_000), 1_700_000_000_000, delta=1)
         self.assertGreater(parse_iso_ts("2026-07-01T12:00:00Z"), 0)
+
+    def test_parse_iso_ts_iso_strings_exact(self):
+        """Exact epoch-milliseconds for every offset-bearing spelling.
+
+        Characterization written ahead of the Python 3.10 -> 3.11 floor
+        bump; confirmed identical on real 3.10.17 and 3.12.8 before
+        being committed.  Naive input is deliberately absent here, see
+        ``test_parse_iso_ts_naive_uses_local_time``.
+        """
+        base_ms = 1785542400000.0  # 2026-08-01T00:00:00Z, via calendar.timegm
+        cases = [
+            ("Z bare", "2026-08-01T00:00:00Z", base_ms),
+            ("explicit UTC offset", "2026-08-01T00:00:00+00:00", base_ms),
+            ("negative offset", "2026-07-31T20:00:00-04:00", base_ms),
+            ("ms with Z", "2026-08-01T00:00:00.123Z", 1785542400123.0),
+            ("us with offset", "2026-08-01T00:00:00.123456+00:00", 1785542400123.456),
+        ]
+        for label, raw, expected in cases:
+            with self.subTest(label=label, raw=raw):
+                self.assertEqual(parse_iso_ts(raw), expected)
+
+    def test_parse_iso_ts_naive_uses_local_time(self):
+        """A naive string is read as LOCAL time, not UTC.
+
+        Unlike ``harness.rate_limits._parse_iso8601_to_epoch``, which
+        forces UTC on a naive value, this function lets ``.timestamp()``
+        apply the machine timezone.  The expected number is therefore
+        machine-dependent, so this test pins TZ=UTC for the duration
+        rather than hardcoding a literal that would be wrong on any
+        runner outside UTC.  Do not "fix" the number: fix the TZ.
+        """
+        with patch.dict(os.environ, {"TZ": "UTC"}):
+            time.tzset()
+            try:
+                self.assertEqual(parse_iso_ts("2026-08-01T00:00:00"), 1785542400000.0)
+            finally:
+                time.tzset()
+
+    def test_parse_iso_ts_numeric_unit_detection(self):
+        """The magnitude of a number decides how it is scaled.
+
+        Boundaries are exclusive, so a value sitting exactly on 1e12
+        is scaled as seconds rather than treated as milliseconds. That
+        is current behaviour, pinned here so the floor bump cannot move
+        it unnoticed; it is not an endorsement.
+        """
+        cases = [
+            ("seconds", 1_700_000_000, 1_700_000_000_000.0),
+            ("seconds as float", 1_700_000_000.5, 1_700_000_000_500.0),
+            ("milliseconds", 1_700_000_000_000, 1_700_000_000_000.0),
+            ("nanoseconds", 170_000_000_000_000_000, 170_000_000_000.0),
+            ("below the seconds cutoff", 500, 500.0),
+            ("negative passes through", -100, -100.0),
+            ("exactly 1e12 scales as seconds", 1e12, 1e15),
+            ("digit string", "1700000000", 1_700_000_000_000.0),
+            ("one-dot numeric string", "1700000000.5", 1_700_000_000_500.0),
+        ]
+        for label, raw, expected in cases:
+            with self.subTest(label=label, raw=raw):
+                self.assertEqual(parse_iso_ts(raw), expected)
+
+    def test_parse_iso_ts_unreadable_values_are_zero(self):
+        """Anything unreadable becomes 0.0 rather than raising."""
+        cases = [
+            ("None", None),
+            ("empty string", ""),
+            ("whitespace", "   "),
+            ("garbage text", "not-a-date"),
+            ("two-dot numeric string", "1700000000.123.456"),
+            ("malformed fraction", "2026-08-01T00:00:00.abc+00:00"),
+            ("empty list", []),
+            ("empty dict", {}),
+        ]
+        for label, raw in cases:
+            with self.subTest(label=label, raw=raw):
+                self.assertEqual(parse_iso_ts(raw), 0.0)
+
+    def test_parse_iso_ts_booleans_are_not_guarded(self):
+        """``True`` becomes 1.0 because bool is an int subclass.
+
+        Documented, not endorsed: no isinstance-bool guard exists here,
+        so a boolean silently becomes a timestamp-shaped number. Pinned
+        so the floor bump is not blamed if someone later adds a guard.
+        """
+        self.assertEqual(parse_iso_ts(True), 1.0)
+        self.assertEqual(parse_iso_ts(False), 0.0)
 
     def test_clean_title_and_user_text(self):
         self.assertEqual(clean_title("<task>hi there</task>"), "hi there")

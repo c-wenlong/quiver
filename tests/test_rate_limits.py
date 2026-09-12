@@ -2,6 +2,7 @@ import base64
 import copy
 import json
 import sqlite3
+import sys
 import os
 import tempfile
 import time
@@ -1048,6 +1049,133 @@ class CopilotDerivationTest(unittest.TestCase):
         )
         self.assertEqual(used, 0)
         self.assertFalse(reached)
+
+
+class Iso8601ParseTest(unittest.TestCase):
+    """Exact characterization of ``_parse_iso8601_to_epoch``.
+
+    Written ahead of the Python 3.10 -> 3.11 floor bump so the same
+    assertions can be re-run afterwards and prove behaviour did not
+    move.  Every expectation here is an exact literal derived from
+    ``calendar.timegm``, not from the function under test, and was
+    confirmed identical on real 3.10.17 and 3.12.8 interpreters before
+    being committed.  The older sibling tests in ``CopilotDerivationTest``
+    use ``delta=86400`` and so cannot detect a parsing regression at all;
+    these can.
+    """
+
+    BASE = 1785542400.0  # 2026-08-01T00:00:00Z, via calendar.timegm
+
+    def test_equivalent_spellings_are_exact(self):
+        """Every spelling of the same instant must give the same float."""
+        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+
+        cases = [
+            ("Z with milliseconds", "2026-08-01T00:00:00.000Z"),
+            ("Z bare", "2026-08-01T00:00:00Z"),
+            ("explicit UTC offset", "2026-08-01T00:00:00+00:00"),
+            ("naive, treated as UTC", "2026-08-01T00:00:00"),
+            ("date only", "2026-08-01"),
+            ("no seconds", "2026-08-01T00:00"),
+            ("space instead of T", "2026-08-01 00:00:00+00:00"),
+            ("negative offset", "2026-07-31T20:00:00-04:00"),
+            ("half-hour offset", "2026-08-01T05:30:00+05:30"),
+        ]
+        for label, raw in cases:
+            with self.subTest(label=label, raw=raw):
+                self.assertEqual(_parse_iso8601_to_epoch(raw), self.BASE)
+
+    def test_fractional_seconds_are_preserved(self):
+        """Sub-second precision must survive, offset or not."""
+        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+
+        cases = [
+            ("ms with offset", "2026-08-01T00:00:00.123+00:00", 1785542400.123),
+            ("us with offset", "2026-08-01T00:00:00.123456+00:00", 1785542400.123456),
+            ("ms with Z", "2026-08-01T00:00:00.123Z", 1785542400.123),
+            ("naive fractional", "2026-08-01T00:00:00.500", 1785542400.5),
+            ("fractional, negative offset", "2026-07-31T19:00:00.500-05:00", 1785542400.5),
+        ]
+        for label, raw, expected in cases:
+            with self.subTest(label=label, raw=raw):
+                self.assertEqual(_parse_iso8601_to_epoch(raw), expected)
+
+    def test_malformed_fraction_with_offset_is_salvaged(self):
+        """A garbage fraction next to an offset degrades to the second.
+
+        This is what the block labelled "Python 3.10 fallback" in
+        ``rate_limits.py`` actually does, and it fires on every
+        interpreter, not just 3.10: native ``fromisoformat`` rejects
+        these strings on 3.12 exactly as it does on 3.10.  The arm is
+        therefore load-bearing and must survive the floor bump.  Without
+        it each of these returns 0.0 instead, which reads as "no reset
+        time known" and would silently blank a rate-limit countdown.
+        """
+        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+
+        cases = [
+            ("non-digit fraction", "2026-08-01T00:00:00.abc+00:00"),
+            ("second stray dot", "2026-08-01T00:00:00.12.34+00:00"),
+            ("empty fraction", "2026-08-01T00:00:00.+00:00"),
+        ]
+        for label, raw in cases:
+            with self.subTest(label=label, raw=raw):
+                self.assertEqual(_parse_iso8601_to_epoch(raw), self.BASE)
+
+    def test_malformed_fraction_without_offset_is_rejected(self):
+        """No offset means no anchor to retry against, so 0.0."""
+        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+
+        self.assertEqual(_parse_iso8601_to_epoch("2026-08-01T00:00:00.abc"), 0.0)
+
+    @unittest.skipIf(
+        sys.version_info < (3, 11),
+        "3.10 discards an over-precise fraction; 3.11+ truncates it to microseconds",
+    )
+    def test_over_precise_fraction_keeps_microseconds(self):
+        """Nanosecond input keeps microsecond precision on 3.11 and up.
+
+        This is the ONE input shape whose result moves across the 3.10
+        boundary, and it moves in our favour.  On 3.10 native
+        ``fromisoformat`` rejects a 9-digit fraction, the salvage arm
+        strips it, and the value lands on the whole second.  From 3.11
+        the fraction parses and is truncated to microseconds instead.
+
+        The skip above exists only while 3.10 is still supported.  Once
+        the floor is 3.11 it can go, and the assertion runs everywhere.
+        """
+        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+
+        for raw in (
+            "2026-08-01T00:00:00.123456789+00:00",
+            "2026-08-01T00:00:00.123456789Z",
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(_parse_iso8601_to_epoch(raw), 1785542400.123456)
+
+    def test_unparseable_and_absent_values_are_zero(self):
+        """Anything we cannot read becomes 0.0, never an exception."""
+        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+
+        cases = [
+            ("None", None),
+            ("empty string", ""),
+            ("whitespace", "   "),
+            ("integer zero", 0),
+            ("float zero", 0.0),
+            ("False", False),
+            ("True", True),
+            ("bare integer", 12345),
+            ("garbage text", "not-a-date"),
+            ("impossible month", "2026-13-01T00:00:00Z"),
+            ("empty list", []),
+            ("empty dict", {}),
+            ("populated list", [1, 2]),
+            ("populated dict", {"a": 1}),
+        ]
+        for label, raw in cases:
+            with self.subTest(label=label, raw=raw):
+                self.assertEqual(_parse_iso8601_to_epoch(raw), 0.0)
 
 
 class ClaudeFetcherTest(unittest.TestCase):
