@@ -1,4 +1,4 @@
-"""Unit tests for newly added session parsers (copilot, continue, crush, amp, kimi, hermes, grok)."""
+"""Unit tests for newly added session parsers (copilot, continue, crush, kimi, grok)."""
 
 import json
 import sqlite3
@@ -272,39 +272,6 @@ class ParseCrushTest(unittest.TestCase):
             self.assertEqual(sessions[0].session_id, "sess1")
 
 
-class ParseAmpTest(unittest.TestCase):
-    def test_reads_thread_with_messages(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            thread = {
-                "id": "T-1",
-                "created": 1720000000000,
-                "env": {
-                    "initial": {
-                        "trees": [{"uri": "file:///Users/test/project"}]
-                    }
-                },
-                "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "hello amp"}]}
-                ],
-            }
-            (base / "T-1.json").write_text(json.dumps(thread))
-            # empty placeholder should still be skipped when no env and no msgs
-            (base / "empty.json").write_text(json.dumps({"id": "empty"}))
-
-            with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
-                side_effect=lambda p: str(base) if p.endswith("threads") else p,
-            ):
-                from quiver.sessions.parsers import parse_amp
-
-                sessions = parse_amp()
-            self.assertEqual(len(sessions), 1)
-            self.assertEqual(sessions[0].tool_name, "amp")
-            self.assertEqual(sessions[0].path, "/Users/test/project")
-            self.assertIn("hello", sessions[0].title)
-
-
 class ParseKimiTest(unittest.TestCase):
     def test_md5_path_lookup_and_context(self):
         import hashlib
@@ -343,39 +310,6 @@ class ParseKimiTest(unittest.TestCase):
             self.assertEqual(sessions[0].tool_name, "kimi")
             self.assertEqual(sessions[0].path, work_path)
             self.assertIn("refactor", sessions[0].title)
-
-
-class ParseHermesTest(unittest.TestCase):
-    def test_reads_session_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            (base / "session_abc.json").write_text(
-                json.dumps(
-                    {
-                        "session_id": "abc",
-                        "session_start": "2026-07-01T10:00:00",
-                        "last_updated": "2026-07-01T11:00:00",
-                        "platform": "cli",
-                        "messages": [
-                            {"role": "user", "content": "summarize the README"},
-                            {"role": "assistant", "content": "ok"},
-                        ],
-                    }
-                )
-            )
-            (base / "request_dump_x.json").write_text("{}")
-
-            with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
-                side_effect=lambda p: str(base) if p.endswith("sessions") else p,
-            ):
-                from quiver.sessions.parsers import parse_hermes
-
-                sessions = parse_hermes()
-            self.assertEqual(len(sessions), 1)
-            self.assertEqual(sessions[0].tool_name, "hermes")
-            self.assertIn("README", sessions[0].title)
-            self.assertEqual(sessions[0].session_id, "abc")
 
 
 class ParseAntigravityTest(unittest.TestCase):
@@ -677,7 +611,6 @@ class TrackedCountsTest(unittest.TestCase):
 
         tracked = tracked_tool_names()
         self.assertIn("copilot", tracked)
-        self.assertIn("hermes", tracked)
         self.assertIn("grok", tracked)
         self.assertIn("cline", tracked)
         self.assertIn("tau", tracked)
