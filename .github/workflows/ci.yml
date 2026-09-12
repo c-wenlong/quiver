@@ -145,6 +145,7 @@ jobs:
       - name: nix flake check
         run: nix flake check --print-build-logs
 
+  macos-smoke:
     name: macOS path and entry-point smoke test
     runs-on: macos-latest
 
