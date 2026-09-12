@@ -9,7 +9,7 @@ description = "Central manager for AI coding CLI tools — one command to launch
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{ name = "kaichen", email = "c-wenlong@users.noreply.github.com" }]
 keywords = ["ai", "cli", "coding-agents", "llm", "developer-tools", "mcp", "claude", "codex", "cursor"]
 classifiers = [
@@ -21,7 +21,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -29,9 +28,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities",
 ]
-dependencies = [
-    "tomli>=2.0.1; python_version < '3.11'",
-]
+# The core CLI is stdlib-only. tomllib is stdlib from 3.11, which is
+# the floor, so there is nothing left to declare here.
+dependencies = []
 
 [project.optional-dependencies]
 # `mcp_server.py` exposes session history as a FastMCP server; only needed if

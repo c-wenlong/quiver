@@ -14,8 +14,8 @@ quiver
   <a href="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml"><img src="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://app.codecov.io/gh/c-wenlong/quiver"><img src="https://codecov.io/gh/c-wenlong/quiver/graph/badge.svg?branch=main" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
-  <img src="https://img.shields.io/badge/deps-stdlib--only%20(3.11%2B)-brightgreen.svg" alt="stdlib only on Python 3.11+">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <img src="https://img.shields.io/badge/deps-stdlib--only-brightgreen.svg" alt="stdlib only">
 </p>
 
 <p align="center">
@@ -125,10 +125,9 @@ pip install -e ".[server]"
 python -m quiver.mcp_server
 ```
 
-**Requirements:** Python 3.10+. On 3.11 and up the core CLI has **no third-party runtime
-dependencies** at all. On 3.10 it pulls in exactly one, `tomli`, which is the standard
-library's own `tomllib` backported — nothing else, on any version. The MCP history server
-is the only extra that adds a real dependency, and you opt into it.
+**Requirements:** Python 3.11+. The core CLI has **no third-party runtime
+dependencies** at all. The MCP history server is the only extra that adds a real
+dependency, and you opt into it.
 
 ## Quick start
 

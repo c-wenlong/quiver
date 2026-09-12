@@ -30,7 +30,7 @@ The line and branch rows above come from `coverage json -o cov.json`, whose
 `covered_branches` / `num_branches` separately.
 
 CI enforces a 69% combined regression floor (`fail_under` in `.coveragerc`) and
-uploads reports from Python 3.10 and 3.13 to Codecov. Codecov also reports
+uploads a report from Python 3.13 to Codecov. Codecov also reports
 project movement and patch coverage. The floor is a backstop; it is not the
 target.
 

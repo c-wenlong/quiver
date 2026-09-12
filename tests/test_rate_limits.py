@@ -974,10 +974,9 @@ class CopilotDerivationTest(unittest.TestCase):
     def test_parse_iso8601_all_variants(self):
         """All five accepted formats must yield the same epoch.
 
-        Crucially this locks in the Python 3.10 fallback path: variant
-        ``'...+00:00'`` (with fractional seconds) is rejected by
-        ``datetime.fromisoformat`` on 3.10 and only succeeds because
-        the fallback strips the fractional part.
+        Kept as a smoke check only.  The ``delta=86400`` below is a full
+        day of slack, so this cannot detect a parsing regression;
+        ``Iso8601ParseTest`` pins the exact values instead.
         """
         from quiver.harness.rate_limits import _parse_iso8601_to_epoch
 
@@ -986,7 +985,7 @@ class CopilotDerivationTest(unittest.TestCase):
             "2026-08-01T00:00:00.000Z",        # microseconds + Z (live API)
             "2026-08-01T00:00:00Z",            # no fractional
             "2026-08-01T00:00:00+00:00",       # explicit offset, naive base
-            "2026-08-01T00:00:00.123+00:00",   # microseconds + offset (3.10!)
+            "2026-08-01T00:00:00.123+00:00",   # microseconds + offset
             "2026-08-01T00:00:00",             # naive → UTC
         ):
             self.assertAlmostEqual(
@@ -1128,21 +1127,17 @@ class Iso8601ParseTest(unittest.TestCase):
 
         self.assertEqual(_parse_iso8601_to_epoch("2026-08-01T00:00:00.abc"), 0.0)
 
-    @unittest.skipIf(
-        sys.version_info < (3, 11),
-        "3.10 discards an over-precise fraction; 3.11+ truncates it to microseconds",
-    )
     def test_over_precise_fraction_keeps_microseconds(self):
-        """Nanosecond input keeps microsecond precision on 3.11 and up.
+        """Nanosecond input keeps microsecond precision.
 
-        This is the ONE input shape whose result moves across the 3.10
-        boundary, and it moves in our favour.  On 3.10 native
-        ``fromisoformat`` rejects a 9-digit fraction, the salvage arm
-        strips it, and the value lands on the whole second.  From 3.11
-        the fraction parses and is truncated to microseconds instead.
+        This was the ONE input shape whose result moved across the
+        3.10 boundary, and it moved in our favour.  On 3.10 native
+        ``fromisoformat`` rejected a 9-digit fraction, the salvage arm
+        stripped it, and the value landed on the whole second.  From
+        3.11 the fraction parses and is truncated to microseconds.
 
-        The skip above exists only while 3.10 is still supported.  Once
-        the floor is 3.11 it can go, and the assertion runs everywhere.
+        The floor is now 3.11, so this ran gated on the interpreter
+        before the bump and runs unconditionally after it.
         """
         from quiver.harness.rate_limits import _parse_iso8601_to_epoch
 

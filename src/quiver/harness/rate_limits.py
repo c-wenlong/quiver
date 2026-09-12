@@ -433,8 +433,7 @@ def _fetch_codex() -> RateLimitInfo | None:
     if isinstance(reset_at, str):
         # Codex's API returns reset_at as a numeric epoch today, but
         # fall back to ISO 8601 via the shared helper in case the
-        # field ever arrives as a string. This also benefits from the
-        # helper's Python 3.10 microseconds+offset support.
+        # field ever arrives as a string.
         reset_at = _parse_iso8601_to_epoch(reset_at)
     elif isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
         # ``bool`` subclasses ``int`` in Python — guard explicitly so a
@@ -562,10 +561,8 @@ def _decorate_copilot_plan_type(plan_type: str, access_sku: str) -> str:
 def _parse_iso8601_to_epoch(value) -> float:
     """Parse an ISO 8601 timestamp string into an epoch float, or 0.0.
 
-    Compatible with Python 3.10+, which doesn't accept fractional
-    seconds combined with a timezone offset in ``datetime.fromisoformat``
-    (that was added in 3.11). Returns 0.0 for any unparseable or falsy
-    input so a bad timestamp never breaks the whole ``swe list`` run.
+    Returns 0.0 for any unparseable or falsy input so a bad timestamp
+    never breaks the whole ``swe list`` run.
 
     Naïve timestamps (no timezone designator) are treated as UTC to
     keep semantics consistent with offset-bearing variants — otherwise
@@ -577,8 +574,12 @@ def _parse_iso8601_to_epoch(value) -> float:
         2026-08-01T00:00:00.000Z          # microseconds + Z (live API)
         2026-08-01T00:00:00Z              # no fractional
         2026-08-01T00:00:00+00:00         # explicit offset, naive base
-        2026-08-01T00:00:00.123+00:00     # microseconds + offset (3.10+)
+        2026-08-01T00:00:00.123+00:00     # microseconds + offset
         2026-08-01T00:00:00               # naive (treated as UTC)
+
+    A malformed fractional part next to a timezone offset is salvaged
+    to whole-second precision rather than discarded, see the retry at
+    the bottom of the function.
     """
     if not value:
         return 0.0
@@ -602,10 +603,14 @@ def _parse_iso8601_to_epoch(value) -> float:
     except ValueError:
         pass
 
-    # Python 3.10 fallback: when the string has fractional seconds AND a
-    # timezone offset, strip the fractional part and retry. The date
-    # hyphens occupy positions 4 and 7 — the first sign character at
-    # position >= 10 is the genuine tz separator.
+    # Salvage pass. When the string carries BOTH a fractional part that
+    # `fromisoformat` refuses and a timezone offset, drop the fraction
+    # and retry, so a garbled sub-second field costs us precision
+    # rather than the whole timestamp. Reachable on every supported
+    # interpreter: a non-numeric fraction ("...00.abc+00:00") or a
+    # second stray dot is rejected by `fromisoformat` on all of them.
+    # The date hyphens occupy positions 4 and 7, so the first sign
+    # character at position >= 10 is the genuine tz separator.
     if "." not in s:
         return 0.0
     tail = s[10:]
@@ -2089,10 +2094,7 @@ def _read_devin_credentials() -> tuple[str, str] | None:
             raw = file.read()
     except OSError:
         return None
-    try:
-        import tomllib
-    except ImportError:  # Python 3.10
-        import tomli as tomllib
+    import tomllib
     try:
         data = tomllib.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):

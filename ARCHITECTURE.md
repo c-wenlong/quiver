@@ -4,8 +4,7 @@ Quiver (`swe`) is a manager for AI coding CLIs. It unifies the things those
 CLIs each invented separately: instruction files, skills, plugins, MCP servers,
 session history and rate limits.
 
-The CLI is stdlib-only. `tomli` is the single dependency, and only below
-Python 3.11.
+The CLI is stdlib-only, with no runtime dependencies at all.
 
 ## The shape
 

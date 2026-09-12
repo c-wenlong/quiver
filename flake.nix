@@ -36,9 +36,9 @@
 
           build-system = with pkgs.python3Packages; [ hatchling ];
 
-          # The core CLI is stdlib-only. tomli backfills tomllib on 3.10.
-          dependencies = lib.optionals (pkgs.python3.pythonOlder "3.11")
-            [ pkgs.python3Packages.tomli ];
+          # The core CLI is stdlib-only, with no runtime dependencies at
+          # all: tomllib is stdlib from 3.11, which is the floor.
+          dependencies = [ ];
 
           # The suite runs under unittest, not pytest: tests/conftest.py is a
           # pytest-only fixture and is never imported here. Every command

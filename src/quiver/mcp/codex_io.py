@@ -41,10 +41,7 @@ from pathlib import Path
 
 from quiver.paths import atomic_write_text
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
-    import tomli as tomllib
+import tomllib
 
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 
