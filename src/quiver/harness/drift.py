@@ -317,15 +317,19 @@ def check_code_vs_data(
     *,
     skill_roots: Sequence[tuple[str, Path]] = (),
     plugin_roots: Sequence[tuple[str, Path]] = PLUGIN_HARNESSES_CODE_TABLE,
+    hook_roots: Sequence[tuple[str, Path]] = (),
 ) -> list[Finding]:
     """Compare code-side "what a harness supports" tables against harness.json.
 
     ``skill_roots`` defaults to nothing (callers pass skills/layout.py's
     HARNESS_ROOTS); ``plugin_roots`` defaults to the hardcoded
     PLUGIN_HARNESSES_CODE_TABLE above, but can be overridden for tests.
+    ``hook_roots`` defaults to nothing (callers pass init/hooks.py's
+    HOOK_FALLBACK).
     """
     findings = _diff_capability(registry, "skills", skill_roots, "skills/layout.py's HARNESS_ROOTS")
     findings += _diff_capability(registry, "plugins", plugin_roots, "find/plugins.py's plugin-capable harnesses")
+    findings += _diff_capability(registry, "hooks", hook_roots, "init/hooks.py's HOOK_FALLBACK")
     return findings
 
 
@@ -335,6 +339,12 @@ def _real_skill_roots() -> Sequence[tuple[str, Path]]:
     # SHARED_LABEL isn't a harness — it's the cross-harness shared skills
     # dir — so it has no capabilities.skills entry to join against.
     return [(label, relpath) for label, relpath in HARNESS_ROOTS if label != SHARED_LABEL]
+
+
+def _real_hook_roots() -> Sequence[tuple[str, Path]]:
+    from quiver.init.hooks import HOOK_FALLBACK
+
+    return list(HOOK_FALLBACK.items())
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +409,8 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
         help_text = ""
     findings += check_prose_mentions(help_text, "mcp", mcp_commands)
     findings += check_registry_schema(registry)
-    findings += check_code_vs_data(registry, skill_roots=_real_skill_roots())
+    findings += check_code_vs_data(
+        registry, skill_roots=_real_skill_roots(), hook_roots=_real_hook_roots(),
+    )
     findings += check_dangling_symlinks(_real_symlink_dirs(repo_root, home))
     return findings

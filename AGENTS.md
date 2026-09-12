@@ -78,7 +78,7 @@ Domain packages under `src/quiver/`:
 | `skills/` | SKILL.md discovery, catalogs, harness symlink layout (`HARNESS_ROOTS` fallback table) |
 | `mcp/` | hub `~/.quiver/mcp.json`, per-tool format handlers in `formats.py`, sync/diff/validate/doctor, `${NAME}` secret refs |
 | `find/` | read-only views of shared assets (`amd`, `skills`, `plugins`, `mcps`), `PLUGIN_FALLBACK` table |
-| `init/` | writes the shared `AGENTS.md` and skills tree, symlinks them into each harness, migrates the old `~/.config/swe` root |
+| `init/` | writes the shared `AGENTS.md` and skills tree, symlinks them and per-harness hook scripts (`hooks.py`) into each harness, migrates the old `~/.config/swe` root |
 | `reports/` | daily/weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API key file lookup |
 | `setup/` | interactive onboarding wizard (the one logic module allowed to print) |
