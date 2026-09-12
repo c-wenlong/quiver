@@ -73,6 +73,10 @@ def _apply(status: LinkStatus, canonical: Path, home: Path, force: bool) -> str:
     return "linked"
 
 
+# Results that count as linked in the total: already a link, or a check-mode
+# plan that would become one. would-conflict and would-keep are not links.
+_LINKED_RESULTS = frozenset({"linked", "would-create", "would-relink", "would-absorb"})
+
 # Order the per-section tallies read in: settled first, then work to do.
 _TALLY_ORDER = (
     "linked", "create", "relink", "absorb", "keep", "protected",
@@ -216,9 +220,9 @@ def cmd_init(args) -> int:
     protected = [
         (s_, r) for s_, r in skill_rows if r in ("protected", "keep", "would-keep")
     ]
-    changed = [r for _, r in inst_rows + skill_rows if r.startswith("would-") or r == "linked"]
+    linked = [r for _, r in inst_rows + skill_rows if r in _LINKED_RESULTS]
     summary = (
-        f"{len(changed)} linked, {len(blocked)} blocked, "
+        f"{len(linked)} linked, {len(blocked)} blocked, "
         f"edit {agents_file(home)} to change them all"
     )
     print(f"\n  {c('dim', summary)}\n")
