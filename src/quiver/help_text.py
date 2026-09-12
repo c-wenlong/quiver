@@ -438,6 +438,9 @@ to use their own login state and environment."""
   ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
                         own name (CLAUDE.md, QWEN.md, CRUSH.md, GEMINI.md)
   ~/.quiver/skills/     one skill tree, linked in as every harness's skills/
+  ~/.quiver/hooks/      hook scripts, one folder per harness (hooks/claude/),
+                        each script linked into that harness's hooks dir;
+                        declaring the hook in its settings stays with you
   ~/.quiver/.linkignore paths to leave alone, one gitignore-style pattern per
                         line, e.g. .agents/skills or .config/*/AGENTS.md
   ~/.quiver/backups/    anything replaced, timestamped

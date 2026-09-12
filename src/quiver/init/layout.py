@@ -190,6 +190,10 @@ class LinkStatus:
     path: Path
     state: str  # linked | create | relink | conflict | skipped | ignored
     detail: str = ""
+    # What the link should point at, when that differs per path. Hooks
+    # need it: every hook script is its own canonical file, where every
+    # instruction file shares AGENTS.md and every skill root shares skills/.
+    source: Path | None = None
 
     # "absorb" replaces a real directory whose contents are all duplicates or
     # empty, so nothing is lost. "keep" is a directory holding skills that
@@ -209,6 +213,7 @@ quiver_dir = _paths.quiver_dir_for
 agents_file = _paths.agents_file_for
 linkignore_file = _paths.linkignore_file_for
 skills_dir = _paths.skills_dir_for
+hooks_dir = _paths.hooks_dir_for
 backups_dir = _paths.backups_dir_for
 
 IGNORED_DETAIL = "listed in ~/.quiver/.linkignore"
@@ -222,6 +227,7 @@ SEED_LINKIGNORE = """# Paths swe init leaves alone, one per line, relative to yo
 #   .agents/skills          leave that one skills directory alone
 #   .agents                 leave the whole harness alone
 #   .config/*/AGENTS.md     every instruction file under ~/.config
+#   .claude/hooks/guard.py  one hook script
 """
 
 
