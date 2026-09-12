@@ -12,6 +12,7 @@ noise, and guessing wrong is worse than skipping.
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -187,7 +188,7 @@ class LinkStatus:
 
     label: str
     path: Path
-    state: str  # linked | create | relink | conflict | skipped
+    state: str  # linked | create | relink | conflict | skipped | ignored
     detail: str = ""
 
     # "absorb" replaces a real directory whose contents are all duplicates or
@@ -206,8 +207,57 @@ class LinkStatus:
 
 quiver_dir = _paths.quiver_dir_for
 agents_file = _paths.agents_file_for
+linkignore_file = _paths.linkignore_file_for
 skills_dir = _paths.skills_dir_for
 backups_dir = _paths.backups_dir_for
+
+IGNORED_DETAIL = "listed in ~/.quiver/.linkignore"
+
+SEED_LINKIGNORE = """# Paths swe init leaves alone, one per line, relative to your home.
+# Same idea as .gitignore: blank lines and # comments are skipped, * is a
+# wildcard (and crosses /), and naming a directory covers everything in it.
+# An ignored path is reported as "ignored" and never linked or counted as
+# left alone, so a harness can keep its own skills and instructions.
+#
+#   .agents/skills          leave that one skills directory alone
+#   .agents                 leave the whole harness alone
+#   .config/*/AGENTS.md     every instruction file under ~/.config
+"""
+
+
+def load_linkignore(home: Path | None = None) -> list[str]:
+    """Patterns from ~/.quiver/.linkignore, normalised to home-relative form."""
+    try:
+        text = linkignore_file(home).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    patterns: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("~/"):
+            line = line[2:]
+        line = line.strip("/")
+        if line:
+            patterns.append(line)
+    return patterns
+
+
+def is_linkignored(path: Path, home: Path, patterns: list[str]) -> bool:
+    """True when ``path`` or any directory above it matches a pattern."""
+    if not patterns:
+        return False
+    try:
+        rel = path.relative_to(home)
+    except ValueError:
+        return False
+    candidates = [rel.as_posix()] + [p.as_posix() for p in rel.parents if p.as_posix() != "."]
+    return any(
+        fnmatch.fnmatchcase(candidate, pattern)
+        for candidate in candidates
+        for pattern in patterns
+    )
 
 
 def _chain_lands_on(path: Path, canonical: Path) -> bool:
@@ -248,15 +298,26 @@ def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
 
 
 def plan(home: Path | None = None) -> tuple[list[LinkStatus], list[LinkStatus]]:
-    """Return (instruction statuses, skill statuses) for the current machine."""
+    """Return (instruction statuses, skill statuses) for the current machine.
+
+    A path listed in ~/.quiver/.linkignore is still in the plan, as
+    ``ignored``, so the report can say it was seen and deliberately left out.
+    Nothing acts on that state.
+    """
     home = home or Path.home()
-    instructions = [
-        inspect(label, rel, agents_file(home), home)
-        for label, rel in INSTRUCTION_TARGETS
-    ]
+    patterns = load_linkignore(home)
+    instructions = []
+    for label, rel in INSTRUCTION_TARGETS:
+        if is_linkignored(home / rel, home, patterns):
+            instructions.append(LinkStatus(label, home / rel, "ignored", IGNORED_DETAIL))
+        else:
+            instructions.append(inspect(label, rel, agents_file(home), home))
     skills = []
     for path in discover_skill_roots(home):
-        state, detail = classify_skill_root(path, home)
+        if is_linkignored(path, home, patterns):
+            state, detail = "ignored", IGNORED_DETAIL
+        else:
+            state, detail = classify_skill_root(path, home)
         skills.append(
             LinkStatus(skill_root_label(path, home), path, state, detail)
         )
@@ -285,16 +346,13 @@ def link_states(home: Path | None = None) -> dict[str, dict[str, str]]:
     home = home or Path.home()
     out: dict[str, dict[str, str]] = {}
 
-    for label, rel in INSTRUCTION_TARGETS:
-        name = _registry_name(label)
-        state = inspect(label, rel, agents_file(home), home).state
-        out.setdefault(name, {})["agents"] = state
+    instructions, skills = plan(home)
+    for status in instructions:
+        out.setdefault(_registry_name(status.label), {})["agents"] = status.state
 
-    for path in discover_skill_roots(home):
-        label = skill_root_label(path, home)
-        if label == "agents":
+    for status in skills:
+        if status.label == "agents":
             continue  # ~/.config/agents is a shared dir, not a harness
-        state, _ = classify_skill_root(path, home)
-        out.setdefault(_registry_name(label), {})["skills"] = state
+        out.setdefault(_registry_name(status.label), {})["skills"] = status.state
 
     return out
