@@ -10,12 +10,14 @@ from quiver.console import c
 from quiver.paths import backup_tree
 from quiver.init.migrate import apply_migration, plan_migration, write_gitignore
 from quiver.init.layout import (
+    LinkIgnoreError,
     LinkStatus,
     SEED_AGENTS_MD,
     SEED_LINKIGNORE,
     agents_file,
     backups_dir,
     linkignore_file,
+    load_linkignore,
     plan,
     quiver_dir,
     skills_dir,
@@ -179,6 +181,17 @@ def cmd_init(args) -> int:
         return 1
 
     home = Path.home()
+
+    # Read the ignore list before anything is written. An unreadable file
+    # must stop the run: a plan built without it would let --force replace
+    # the very paths the user listed to protect.
+    try:
+        patterns = load_linkignore(home)
+    except LinkIgnoreError as exc:
+        print(c("red", f"  {exc}"))
+        print(c("dim", "  Fix or remove ~/.quiver/.linkignore, then run swe init again."))
+        return 1
+
     scaffold = _ensure_scaffold(home, check_only)
 
     # An old ~/.quiver/ is reported whenever it exists, so a machine that
@@ -198,7 +211,7 @@ def cmd_init(args) -> int:
     if not check_only:
         write_gitignore(home)
 
-    instructions, skills = plan(home)
+    instructions, skills = plan(home, patterns)
 
     if check_only:
         inst_rows = [(s, "would-" + s.state if s.changed else s.state) for s in instructions]
