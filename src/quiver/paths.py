@@ -28,6 +28,7 @@ AGENTS_BASENAME = "AGENTS.md"
 LINKIGNORE_BASENAME = ".linkignore"
 SKILLS_SUBDIR = "skills"
 HOOKS_SUBDIR = "hooks"
+PLUGINS_SUBDIR = "plugins"
 CONFIG_SUBDIR = "config"
 CACHE_SUBDIR = "cache"
 MCP_SUBDIR = "mcp"
@@ -57,6 +58,11 @@ def skills_dir_for(home: Path | None = None) -> Path:
 def hooks_dir_for(home: Path | None = None) -> Path:
     """Harness hook scripts, one subdirectory per harness registry name."""
     return quiver_dir_for(home) / HOOKS_SUBDIR
+
+
+def plugins_dir_for(home: Path | None = None) -> Path:
+    """The user's own plugin marketplaces, one subdirectory per marketplace."""
+    return quiver_dir_for(home) / PLUGINS_SUBDIR
 
 
 def config_dir_for(home: Path | None = None) -> Path:

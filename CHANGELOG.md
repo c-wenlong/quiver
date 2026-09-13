@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Plugin drift in `swe find plugins`.** Claude Code and Codex run a cached
+  copy of each `~/.quiver/plugins` plugin, so edits there never reach them
+  until they reinstall. A `Drift` line now counts, per harness, marketplaces
+  that were never registered, plugins never installed, installed copies whose
+  files differ from the source, and plugins disabled in one harness while
+  enabled in the other. `--full` lists each finding with the command that
+  fixes it. Read-only, covers claude and codex, and skips plugins sourced
+  from git.
 - **Hook scripts in `swe init`.** `~/.quiver/hooks/<harness>/` holds one
   harness's hook scripts, and `swe init` links each file into that harness's
   hooks directory: `capabilities.hooks.root` from `harness.json`, else
