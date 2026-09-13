@@ -17,6 +17,7 @@ from unittest import mock
 from quiver.console import strip_ansi, visible_len
 from quiver.find import commands as fc
 from quiver.find.mcps import ToolView
+from quiver.find.plugin_drift import Finding
 from quiver.find.summary import Group, tally
 from quiver.harness import registry
 
@@ -174,6 +175,65 @@ class PluginsSummaryTest(_FindHome):
         out = self.run_find("plugins", "--full")
         self.assertFull(out)
         self.assertIn("dv/", out)
+
+
+class PluginDriftTest(_FindHome):
+    """The drift section in `swe find plugins`, over stubbed findings."""
+
+    findings = [
+        Finding("codex", "learning", "learning", "stale",
+                "installed 0.2.0 vs source 0.2.4, 3 files differ",
+                "codex plugin remove learning@learning && codex plugin add learning@learning"),
+        Finding("claude", "design", "", "unregistered",
+                "~/.quiver/plugins/design is not a claude marketplace",
+                "claude plugin marketplace add ~/.quiver/plugins/design"),
+    ]
+
+    def stub(self, sources=True, findings=None):
+        found = self.findings if findings is None else findings
+        for target, value in (("quiver_plugins", [object()] if sources else []),
+                              ("plugin_drift", list(found))):
+            p = mock.patch.object(fc, target, return_value=value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_summary_tallies_drift_by_kind_naming_harness_and_plugin(self):
+        self.stub()
+        out = self.run_find("plugins")
+        self.assertIn("Drift   1 unregistered (claude design), 1 stale (codex learning@learning)", out)
+
+    def test_summary_says_none_when_every_copy_matches(self):
+        self.stub(findings=[])
+        out = self.run_find("plugins")
+        self.assertIn(f"Drift   {fc.DRIFT_NONE}", out)
+
+    def test_no_quiver_plugins_means_no_drift_section(self):
+        self.stub(sources=False)
+        out = self.run_find("plugins")
+        self.assertNotIn("Drift", out)
+
+    def test_full_lists_each_finding_with_its_fix(self):
+        self.stub()
+        out = self.run_find("plugins", "--full")
+        self.assertIn("where ~/.quiver/plugins has not reached a harness", out)
+        self.assertIn("learning@learning", out)
+        self.assertIn("codex plugin remove learning@learning && codex plugin add learning@learning", out)
+        self.assertIn("claude plugin marketplace add ~/.quiver/plugins/design", out)
+
+    def test_archived_harness_findings_are_hidden(self):
+        self.stub()
+        reg = self.home / "harness.json"
+        reg.write_text(json.dumps({"codex": {"state": "archived"}}))
+        with mock.patch.object(registry, "HARNESS_FILE", reg):
+            out = self.run_find("plugins")
+        self.assertIn("1 unregistered (claude design)", out)
+        self.assertNotIn("codex learning@learning", out)
+
+    def test_drift_shows_even_when_no_plugin_is_installed(self):
+        self.stub()
+        with mock.patch.object(fc, "discover_plugins", return_value=[]):
+            out = self.run_find("plugins")
+        self.assertIn("1 unregistered (claude design)", out)
 
 
 class McpsSummaryTest(_FindHome):

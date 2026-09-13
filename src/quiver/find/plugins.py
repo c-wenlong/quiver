@@ -64,7 +64,10 @@ class Plugin:
 def _load_json(path: Path):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    # ValueError, not just JSONDecodeError: a file that is not valid UTF-8
+    # raises UnicodeDecodeError from read_text, which JSONDecodeError does not
+    # cover. RecursionError is json's answer to absurdly deep nesting.
+    except (OSError, ValueError, RecursionError):
         return None
 
 
