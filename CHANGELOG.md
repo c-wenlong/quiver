@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`swe find` prints counts by default; `--full` prints the tree.** Every
+  view (`amd`, `skills`, `plugins`, `mcps`, and bare `swe find`) now opens
+  with the same short summary `swe init` gives: one bold line per section
+  with a count per state and the harnesses in it, such as
+  `Harness roots  6 synced (claude, codex, …), 1 on disk but unregistered (codeium)`.
+  Name lists shorten to fit the terminal; counts never do. Footers for
+  vendored files, scope-hidden plugins and archived harnesses stay, and each
+  view ends with `swe find <topic> --full lists every path.` (one hint for
+  bare `swe find`, echoing `-r`, `--scope` and `--harness` when given).
+  `--full` prints exactly what `swe find` printed before, and combines with
+  every other flag. `swe skills tree`, `swe skills list` and
+  `swe skills scope list` still draw the full tree.
+
 - **Uninstalled, unregistered harnesses stay out of the report.** `swe init`
   no longer lists an instruction target as `skipped` when the harness is
   neither installed nor in `harness.json`, so removing a harness you stopped

@@ -373,11 +373,12 @@ to use their own login state and environment."""
   Run this when a skill, plugin, or MCP server is not showing up somewhere
   and you want to know why.
 
-  {c('cyan', 'swe find')}                   Every tree
+  {c('cyan', 'swe find')}                   Counts for every view below
   {c('cyan', 'swe find amd')}               AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}            Skills, plugins, and every harness skill root
   {c('cyan', 'swe find plugins')}           Plugins across every plugin-capable harness
   {c('cyan', 'swe find mcps')}              MCP servers in the hub, and which harnesses have them
+  {c('cyan', 'swe find skills --full')}     List every path, not just the counts
   {c('cyan', 'swe find plugins -i')}        Browse them: arrows to move and descend, q to quit
   {c('cyan', 'swe find amd --scope=all')}   Include project and vendored files
   {c('cyan', 'swe find --harness=all')}     Include archived harnesses too
