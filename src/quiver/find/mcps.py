@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from quiver.init.layout import _looks_like_backup
+
 
 @dataclass
 class HubView:
@@ -147,6 +149,14 @@ SCAN_PRUNE = frozenset({
 SCAN_MAX_DEPTH = 3
 SCAN_MAX_BYTES = 4_000_000
 
+# Directories holding copies of configs rather than configs. A harness folder
+# dragged to the Trash, or a snapshot `swe init` took before cleaning up,
+# still parses as a full server table, and reporting it buries the one stray
+# server that is really live under two dozen that are not. Matched on a
+# directory's own name at any depth, alongside `_looks_like_backup` for the
+# `.bak` / `pre-bootstrap` style names the skills scan already skips.
+SCAN_SNAPSHOT_DIRS = frozenset({".Trash", "Trash", "backups", "backup"})
+
 
 # A config one level deeper than a harness root belongs to something the
 # harness vendored (an editor extension, a synced-state file) rather than to
@@ -235,6 +245,10 @@ def _harness_of(path: Path, home: Path) -> str:
     return first.lstrip(".").removesuffix(".json").removesuffix(".toml")
 
 
+def _is_snapshot(name: str) -> bool:
+    return name in SCAN_SNAPSHOT_DIRS or _looks_like_backup(name)
+
+
 def scan_configs(home: Path | None = None, scope: str = "all") -> list[FoundConfig]:
     """Every MCP config on disk, not only the paths quiver has registered.
 
@@ -263,22 +277,25 @@ def scan_configs(home: Path | None = None, scope: str = "all") -> list[FoundConf
     # Configs living directly in $HOME, like ~/.claude.json, are not inside
     # any harness directory and a directory walk alone would miss them.
     for entry in home.glob(".*"):
-        if entry.is_file() and entry.suffix in (".json", ".toml"):
+        if (entry.is_file() and entry.suffix in (".json", ".toml")
+                and not _looks_like_backup(entry.name)):
             take(entry)
 
     roots = [p for p in home.glob(".*") if p.is_dir()]
     roots += [p for p in (home / ".config").glob("*") if p.is_dir()]
     for root in roots:
-        if root.name in SCAN_PRUNE or root.name == ".mcp-servers":
+        if (root.name in SCAN_PRUNE or root.name == ".mcp-servers"
+                or _is_snapshot(root.name)):
             continue
         base_depth = len(root.parts)
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
             here = Path(dirpath)
             if len(here.parts) - base_depth >= SCAN_MAX_DEPTH:
                 dirnames[:] = []
-            dirnames[:] = [d for d in dirnames if d not in SCAN_PRUNE]
+            dirnames[:] = [d for d in dirnames
+                           if d not in SCAN_PRUNE and not _is_snapshot(d)]
             for name in filenames:
-                if name.endswith((".json", ".toml")):
+                if name.endswith((".json", ".toml")) and not _looks_like_backup(name):
                     take(here / name)
 
     if scope == "global":

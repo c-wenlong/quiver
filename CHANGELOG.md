@@ -186,6 +186,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe find mcps` no longer reports copies of configs as unmanaged.** The
+  disk scan read harness folders in `~/.Trash` and snapshots under
+  `~/.quiver/backups` as live configs, so every server in those copies
+  showed up under "Configs quiver does not read" and "On disk but not in
+  the hub". It now skips `.Trash`, `Trash`, `backups` and `backup`
+  directories at any depth, plus the `.bak` / `.backup` / `.old` /
+  `pre-bootstrap` names the skills scan already treats as snapshots.
 - **Usage columns work again on a Python with no CA store.** A python.org
   build on macOS trusts no certificates and `certifi` is not a dependency,
   so since the insecure retry was removed every usage fetch failed TLS
