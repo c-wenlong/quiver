@@ -134,7 +134,7 @@ class RenderTest(unittest.TestCase):
              mock.patch.object(registry, "HARNESS_FILE", Path("/nonexistent/harness.json")):
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = cmd_find_mcps()
+                code = cmd_find_mcps(full=True)
         return code, strip_ansi(buf.getvalue())
 
     def test_an_empty_hub_says_so_rather_than_printing_a_blank_tree(self):
