@@ -159,7 +159,8 @@ swe list -n                  # bypass caches and refresh starred harness usage
 swe info claude              # command, version, path, tags, aliases
 swe check                    # probe installed tools and refresh versions
 swe doctor                   # diagnose Node/npm/PATH issues, plus registry drift
-swe find                     # where shared assets live and what links to them
+swe find                     # where shared assets live and what links to them, as counts
+swe find plugins --full      # every plugin row, not just the counts
 swe find skills --harness=all # include archived harnesses' rows too
 
 swe use cc                   # launch Claude Code (alias for `claude`)
@@ -222,7 +223,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe install <name>` | | Install a harness via npm and register it |
 | `swe harness discover [--apply\|--apply-all] [--json] [--all]` | | Scan PATH and home dirs for unregistered AI coding CLIs |
 | `swe discover [--apply]` | | Alias for `swe harness discover` |
-| `swe find [amd\|skills\|plugins\|mcps] [--scope=global\|local\|all] [--harness=active\|all]` | | Read-only view of shared assets and what links to them |
+| `swe find [amd\|skills\|plugins\|mcps] [--full] [--scope=global\|local\|all] [--harness=active\|all]` | | Read-only view of shared assets and what links to them |
 | `swe autocomplete [zsh\|bash\|fish]` | | Generate + inject shell tab-completion |
 | `swe use <name\|alias> [args…]` | `run` | Launch a tool (replaces current process) |
 | `swe session [N] [use N] [-i] [--agent X] [--here] [--search T] [date flags]` | | List, browse, or resume recent sessions |

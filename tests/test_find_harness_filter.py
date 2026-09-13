@@ -234,7 +234,7 @@ class InlineHelpDocumentsFlagsTest(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             print_find_help()
         text = buf.getvalue()
-        for flag in ("--scope", "--harness", "--interactive", "--root"):
+        for flag in ("--scope", "--harness", "--interactive", "--root", "--full"):
             self.assertIn(flag, text, msg=f"{flag} missing from print_find_help")
 
 

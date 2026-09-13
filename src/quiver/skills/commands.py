@@ -29,7 +29,9 @@ def _superseded_by_find(name: str, args) -> int:
     else:
         print(c("dim", f"\n  swe skills {name} is now swe find skills\n"))
     scope = "all" if any(a == "--scope=all" for a in (args or [])) else "global"
-    return cmd_find_skills([], root_flag=True, scope=scope)
+    # full: "this is the tree view" is the promise above, and the forwarded
+    # commands always drew every root, so they skip find's count summary.
+    return cmd_find_skills([], root_flag=True, scope=scope, full=True)
 
 
 def cmd_skills(args):

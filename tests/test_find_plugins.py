@@ -188,7 +188,7 @@ class MarketplaceGroupingTest(_NoRegistry, unittest.TestCase):
         with mock.patch.object(Path, "home", staticmethod(lambda: home)):
             buf = io.StringIO()
             with redirect_stdout(buf):
-                fc.cmd_find_plugins([], False, scope)
+                fc.cmd_find_plugins([], False, scope, full=True)
         import re
         return re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
 
