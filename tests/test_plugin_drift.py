@@ -326,6 +326,41 @@ class DisabledHereTest(_FakeHome, unittest.TestCase):
         self.assertEqual(self.kinds(), [("codex", "stale"), ("codex", "disabled-here")])
 
 
+class FixQuotingTest(_FakeHome, unittest.TestCase):
+    """Names come from a marketplace.json anyone can write, and every fix is
+    meant to be pasted into a shell, so a hostile name must stay one word."""
+
+    def test_shell_metacharacters_in_a_name_are_quoted(self):
+        import shlex
+
+        self.manifest["plugins"][0]["name"] = "tool; touch pwned"
+        self._write_manifest()
+        [claude, codex] = sorted(
+            (f for f in self.drift() if f.kind == "not-installed"), key=lambda f: f.harness)
+        self.assertEqual(shlex.split(claude.fix),
+                         ["claude", "plugin", "install", "tool; touch pwned@mk"])
+        self.assertEqual(shlex.split(codex.fix),
+                         ["codex", "plugin", "add", "tool; touch pwned@mk"])
+
+    def test_codex_enable_key_is_valid_toml_for_any_name(self):
+        import tomllib
+
+        self.manifest["plugins"][0]["name"] = 'to"ol'
+        self._write_manifest()
+        ref = 'to"ol@mk'
+        self.settings = {"enabledPlugins": {ref: True}}
+        self.installed["plugins"] = {ref: self.installed["plugins"]["tool@mk"]}
+        self._write_claude()
+        shutil.copytree(self.codex_copy, self.codex_copy.parent.parent / 'to"ol' / "1.0.0")
+        _write(self.home / ".codex" / "config.toml",
+               f'[marketplaces.mk]\nsource_type = "local"\nsource = "{self.market}"\n\n'
+               f'[plugins."to\\"ol@mk"]\nenabled = false\n')
+        [finding] = [f for f in self.drift() if f.kind == "disabled-here"]
+        edit = finding.fix.removeprefix("set ").removesuffix(" in ~/.codex/config.toml")
+        self.assertEqual(tomllib.loads(edit.replace("] enabled", "]\nenabled")),
+                         {"plugins": {ref: {"enabled": True}}})
+
+
 class MalformedRecordsTest(_FakeHome, unittest.TestCase):
     def test_malformed_known_marketplaces(self):
         _write(self.home / ".claude" / "plugins" / "known_marketplaces.json", "{oops")

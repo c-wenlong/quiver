@@ -257,9 +257,9 @@ def _claude(home: Path) -> _Harness | None:
     return _Harness(
         name="claude", registered=registered, enabled=enabled, install=install,
         fix_register=lambda d: f"claude plugin marketplace add {shlex.quote(str(d))}",
-        fix_install=lambda ref: f"claude plugin install {ref}",
-        fix_update=lambda ref: f"claude plugin update {ref}",
-        fix_enable=lambda ref: f"claude plugin enable {ref}",
+        fix_install=lambda ref: f"claude plugin install {shlex.quote(ref)}",
+        fix_update=lambda ref: f"claude plugin update {shlex.quote(ref)}",
+        fix_enable=lambda ref: f"claude plugin enable {shlex.quote(ref)}",
     )
 
 
@@ -314,12 +314,13 @@ def _codex(home: Path) -> _Harness | None:
     return _Harness(
         name="codex", registered=registered, enabled=enabled, install=install,
         fix_register=lambda d: f"codex plugin marketplace add {shlex.quote(str(d))}",
-        fix_install=lambda ref: f"codex plugin add {ref}",
+        fix_install=lambda ref: f"codex plugin add {shlex.quote(ref)}",
         # codex plugin has add, list, marketplace and remove, and no update
         # verb, so a refresh is a reinstall.
-        fix_update=lambda ref: f"codex plugin remove {ref} && codex plugin add {ref}",
+        fix_update=lambda ref: f"codex plugin remove {shlex.quote(ref)} && codex plugin add {shlex.quote(ref)}",
         # Nor is there an enable verb; the flag lives only in config.toml.
-        fix_enable=lambda ref: f'set [plugins."{ref}"] enabled = true in ~/.codex/config.toml',
+        # json.dumps yields a valid TOML basic-string key for any name.
+        fix_enable=lambda ref: f"set [plugins.{json.dumps(ref)}] enabled = true in ~/.codex/config.toml",
     )
 
 
