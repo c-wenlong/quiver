@@ -274,6 +274,44 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(len(self._scan()), 1)
         self.assertTrue(real.exists())
 
+    def test_a_harness_folder_in_the_trash_is_not_a_config(self):
+        """A harness dragged to the Trash still parses as a full server
+        table; reporting it buries the live strays under dead copies."""
+        self._write(".Trash/harness-leftovers-20260913-b/.copilot/mcp-config.json",
+                    {"mcpServers": {"a": LOCAL}})
+        self.assertEqual(self._scan(scope="all"), [])
+
+    def test_quiver_backups_are_not_configs(self):
+        self._write(".quiver/backups/cleanup-20260824-b/claude.json",
+                    {"mcpServers": {"a": LOCAL}})
+        self._write(".quiver/backups/cleanup-20260824-b/mcp.json",
+                    {"mcpServers": {"b": REMOTE}})
+        self.assertEqual(self._scan(scope="all"), [])
+
+    def test_the_live_hub_next_to_its_backups_is_still_found(self):
+        live = self._write(".quiver/mcp.json", {"mcpServers": {"a": LOCAL}})
+        self._write(".quiver/backups/x/mcp.json", {"mcpServers": {"a": LOCAL}})
+        self.assertEqual([c.path for c in self._scan(scope="all")], [live])
+
+    def test_backup_named_snapshots_are_skipped(self):
+        """Same names the skills scan already treats as snapshots."""
+        self._write(".hermes.pre-bootstrap-20260730-110640/mcp.json",
+                    {"mcpServers": {"a": LOCAL}})
+        self._write(".h/old.bak/mcp.json", {"mcpServers": {"a": LOCAL}})
+        self._write(".h/mcp.bak.json", {"mcpServers": {"a": LOCAL}})
+        self._write(".claude.backup.json", {"mcpServers": {"a": LOCAL}})
+        self.assertEqual(self._scan(scope="all"), [])
+
+    def test_unmanaged_ignores_servers_only_in_snapshots(self):
+        from quiver.find.mcps import unmanaged
+
+        self._write(".Trash/old/.copilot/mcp-config.json",
+                    {"mcpServers": {"rf__lazyweb": REMOTE}})
+        self._write(".quiver/backups/c/claude.json",
+                    {"mcpServers": {"rf__lazyweb": REMOTE}})
+        self._write(".h/mcp.json", {"mcpServers": {"stray": LOCAL}})
+        self.assertEqual(sorted(unmanaged(self.home, {})), ["stray"])
+
     def test_unmanaged_lists_only_what_the_hub_lacks(self):
         from quiver.find.mcps import unmanaged
 
