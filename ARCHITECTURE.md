@@ -232,6 +232,16 @@ directories behind them.
 
 ## Find: the harness activity filter
 
+`swe find plugins` also reports plugin drift. Claude Code and Codex register
+a `~/.quiver/plugins` marketplace in place but run an installed cached copy,
+so an edit under `~/.quiver` reaches neither until it reinstalls.
+`find/plugin_drift.py` compares each locally sourced plugin with both
+harnesses' registration, install record or cache, and enable state, and
+returns findings of four kinds (`unregistered`, `not-installed`, `stale`,
+`disabled-here`), each with a fix command. It never writes: registration
+lives in `~/.claude/settings.json` (often Nix-managed) and
+`~/.codex/config.toml` (rewritten by Codex), which quiver must not edit.
+
 Every `swe find` view prints section tallies by default, the same shape as
 `swe init`'s summary, and `--full` prints the tree with one row per path.
 The tally helper lives in `find/summary.py`; each view's summary reads only

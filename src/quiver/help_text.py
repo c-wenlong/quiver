@@ -376,7 +376,8 @@ to use their own login state and environment."""
   {c('cyan', 'swe find')}                   Counts for every view below
   {c('cyan', 'swe find amd')}               AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}            Skills, plugins, and every harness skill root
-  {c('cyan', 'swe find plugins')}           Plugins across every plugin-capable harness
+  {c('cyan', 'swe find plugins')}           Plugins across every plugin-capable harness, and
+                             where ~/.quiver/plugins drifted from claude and codex
   {c('cyan', 'swe find mcps')}              MCP servers in the hub, and which harnesses have them
   {c('cyan', 'swe find skills --full')}     List every path, not just the counts
   {c('cyan', 'swe find plugins -i')}        Browse them: arrows to move and descend, q to quit

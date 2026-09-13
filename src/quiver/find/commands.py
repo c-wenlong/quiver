@@ -16,6 +16,7 @@ from quiver.find.tree import (
     scan_skill_roots,
     skills_tree,
 )
+from quiver.find.plugin_drift import KINDS as DRIFT_KINDS, plugin_drift, quiver_plugins
 from quiver.find.plugins import discover_plugins, filter_plugins
 from quiver.find.summary import Group, plural, print_sections
 from quiver.find.tree import filter_scope
@@ -775,7 +776,59 @@ def _plugin_state(p) -> str:
     return "enabled" if p.enabled else "disabled"
 
 
-def _summarise_plugins(tree: dict) -> None:
+# How each drift kind reads in a tally, and its colour. unregistered is red:
+# nothing from that marketplace can reach the harness at all.
+DRIFT_WORD = {
+    "unregistered": ("unregistered", "red"),
+    "not-installed": ("not installed", "yellow"),
+    "stale": ("stale", "yellow"),
+    "disabled-here": ("disabled here", "yellow"),
+}
+DRIFT_TITLE = "Drift"
+DRIFT_NONE = "none, claude and codex run what ~/.quiver/plugins holds"
+
+
+def _quiver_drift(home: Path, visible) -> list | None:
+    """Drift findings for this view, or None when ~/.quiver/plugins is empty.
+
+    None and [] differ on purpose: a machine with no quiver plugins has no
+    drift section at all, one whose plugins all match says so.
+    """
+    if not quiver_plugins(home):
+        return None
+    return [f for f in plugin_drift(home) if visible(f.harness)]
+
+
+def _drift_groups(drift: list) -> list[Group]:
+    groups = []
+    for kind in DRIFT_KINDS:
+        hits = [f for f in drift if f.kind == kind]
+        word, colour = DRIFT_WORD[kind]
+        groups.append(Group(len(hits), word, colour, [f"{f.harness} {f.ref}" for f in hits]))
+    return groups
+
+
+def _render_drift_full(drift: list) -> None:
+    """Every drift finding with the command that fixes it."""
+    print(f"  {c('bold', DRIFT_TITLE)}  {c('dim', 'where ~/.quiver/plugins has not reached a harness')}")
+    if not drift:
+        print(f"  {c('dim', DRIFT_NONE)}\n")
+        return
+    ref_w = min(max(len(f.ref) for f in drift) + 2, 34)
+    for i, f in enumerate(drift):
+        last = i == len(drift) - 1
+        word, colour = DRIFT_WORD[f.kind]
+        print(f"  {c('dim', TREE_END if last else TREE_MID)}"
+              f"{c('bold', f.harness.ljust(8))}"
+              f"{c(colour, elide(f.ref, ref_w - 1).ljust(ref_w))}"
+              f"{c(colour, word.ljust(15))}"
+              f"{c('dim', elide(f.detail, _path_budget(ref_w + 29)))}")
+        bar = "   " if last else TREE_BAR
+        print(f"  {c('dim', bar)}{c('cyan', f.fix)}")
+    print()
+
+
+def _summarise_plugins(tree: dict, drift: list | None = None) -> None:
     """One tally line per harness for `swe find plugins`.
 
     Rendering only: it takes the harness -> marketplace -> plugins tree that
@@ -795,6 +848,8 @@ def _summarise_plugins(tree: dict) -> None:
             names = sorted(p.name for p in every if _plugin_state(p) == state)
             groups.append(Group(len(names), state, colour, names))
         sections.append((hname, groups, "none"))
+    if drift is not None:
+        sections.append((DRIFT_TITLE, _drift_groups(drift), DRIFT_NONE))
     print_sections(sections)
     print()
 
@@ -848,6 +903,7 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global",
     # discover_plugins already emits canonical registry names, so a plugin's
     # own .harness is what visible() resolves — same rule as every other view.
     shown = [p for p in shown if visible(p.harness)]
+    drift = _quiver_drift(home, visible)
 
     label = {"global": "installed and enabled",
              "local": "installed but disabled",
@@ -855,6 +911,14 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global",
     print(f"\n{c('bold', 'Plugins')}  {c('dim', f'--scope={scope} · {label}')}\n")
     if not shown:
         print(f"  {c('dim', 'none')}\n")
+        if drift is not None:
+            # Nothing installed is exactly when an unregistered marketplace
+            # is worth naming, so the drift section does not wait on plugins.
+            if full:
+                _render_drift_full(drift)
+            else:
+                print_sections([(DRIFT_TITLE, _drift_groups(drift), DRIFT_NONE)])
+                print()
         if hidden_harnesses:
             print(f"  {c('dim', harness_footer_text(len(hidden_harnesses)))}\n")
         return 0
@@ -865,8 +929,10 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global",
 
     if full:
         _render_plugins_full(tree)
+        if drift is not None:
+            _render_drift_full(drift)
     else:
-        _summarise_plugins(tree)
+        _summarise_plugins(tree, drift)
 
     totals: dict = {}
     for p in shown:
@@ -1007,6 +1073,13 @@ def print_find_help() -> None:
     Every view prints one line of counts per section by default, naming the
     harnesses in each state, the way swe init does. {c('cyan', '--full')} prints the
     whole tree instead, one row per path. Works with every flag below.
+
+  {c('bold', 'Plugin drift')}  in {c('cyan', 'swe find plugins')}
+    Claude Code and Codex run a cached copy of each plugin, not the one in
+    ~/.quiver/plugins. The Drift line counts marketplaces a harness never
+    registered, plugins it never installed, copies that differ from the
+    source, and plugins disabled in one harness but enabled in the other.
+    {c('cyan', '--full')} lists each one with the command that fixes it. Read-only.
 
   {c('dim', 'swe mcp list gives the tool-by-server matrix once you know what')}
   {c('dim', 'you are looking for; swe find mcps answers what the hub holds.')}
