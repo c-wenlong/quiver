@@ -115,6 +115,16 @@ class AgentsSummaryTest(_FindHome):
         self.assertIn("Other files        none here", out)
         self.assertSummary(out, "swe find amd -r --full lists every path.")
 
+    def test_root_flag_hides_an_archived_absent_harness(self):
+        reg = self.home / "harness.json"
+        reg.write_text(json.dumps({"cursor": {"state": "archived"}}))
+        with mock.patch.object(registry, "HARNESS_FILE", reg):
+            out = self.run_find("amd", "-r")
+        self.assertNotIn("cursor", out.split("Other files")[0])
+        with mock.patch.object(registry, "HARNESS_FILE", reg):
+            out = self.run_find("amd", "-r", "--harness=all")
+        self.assertIn("cursor", out)
+
     def test_full_prints_the_tree(self):
         out = self.run_find("amd", "-r", "--full")
         self.assertFull(out)

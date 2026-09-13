@@ -345,7 +345,7 @@ def _summarise_agents(root: Path, nodes, home: Path, scope: str,
         # Same filter _harness_summary applies, in the same order, so the
         # archived-hidden footer counts the same harnesses in both views.
         live = [n for n in managed if n.state != "skipped" and visible(n.label)]
-        absent = [n for n in managed if n.state == "skipped"]
+        absent = [n for n in managed if n.state == "skipped" and visible(n.label)]
         # skipped sorts last, so "not installed" closes the tally.
         groups = _state_groups(live + absent, lambda n: n.label)
         sections.append(("Managed by quiver", groups, "none"))
