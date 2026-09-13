@@ -232,6 +232,11 @@ directories behind them.
 
 ## Find: the harness activity filter
 
+Every `swe find` view prints section tallies by default, the same shape as
+`swe init`'s summary, and `--full` prints the tree with one row per path.
+The tally helper lives in `find/summary.py`; each view's summary reads only
+the data its full view already computes.
+
 `swe find` and every one of its subviews (`amd`, `skills`, `plugins`,
 `mcps`) take `--harness=active|all`, default `active`. `active` hides rows
 belonging to an archived harness; starred still counts as active, since

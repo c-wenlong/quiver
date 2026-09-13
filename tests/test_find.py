@@ -131,7 +131,7 @@ class CmdFindTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
-            code, out = self._run(home, ["amd", "--root"])
+            code, out = self._run(home, ["amd", "--root", "--full"])
             self.assertEqual(code, 0)
             self.assertIn("AGENTS.md", out)
             self.assertIn("synced", out)
@@ -149,7 +149,7 @@ class CmdFindTest(unittest.TestCase):
             plug = home / ".quiver" / "plugins" / "dv" / "eng"
             (plug / ".claude-plugin").mkdir(parents=True)
             _skill(plug / "skills", "tdd")
-            code, out = self._run(home, ["skills", "--root"])
+            code, out = self._run(home, ["skills", "--root", "--full"])
             self.assertEqual(code, 0)
             self.assertIn("dv@", out)
             self.assertIn("eng", out)
