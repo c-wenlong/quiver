@@ -47,6 +47,20 @@ from quiver.paths import RATE_LIMITS_CACHE_FILE
 # Data model
 # ---------------------------------------------------------------------------
 
+# One-glyph pie: five fill steps, colour does the fine-grained work on a
+# red→green xterm ramp (196 = red, 226 = yellow, 46 = green).
+_PIE_GLYPHS = "○◔◑◕●"
+_PIE_RAMP = (196, 202, 208, 214, 220, 226, 190, 154, 118, 46)
+
+
+def _pie(remaining_percent: int) -> str:
+    """A one-cell pie glyph, red when empty through green when full."""
+    remaining_percent = max(0, min(100, remaining_percent))
+    glyph = _PIE_GLYPHS[round(remaining_percent / 25)]
+    code = _PIE_RAMP[round(remaining_percent / 100 * (len(_PIE_RAMP) - 1))]
+    return f"\033[38;5;{code}m{glyph}\033[0m"
+
+
 @dataclass
 class RateLimitInfo:
     """Normalised rate limit data for a single tool."""
@@ -110,27 +124,26 @@ class RateLimitInfo:
                     else f"{value:.1f}".rstrip("0").rstrip(".")
                 )
 
-            pct = (
+            tail = (
                 f"{compact(float(self.remaining_units))}/"
                 f"{compact(float(self.total_units))}"
             )
+            reset = self.reset_in_human
+            # Unit quotas still carry a reset (Devin's planEnd,
+            # Freebuff's resetAt), so it rides the tail when known.
+            if reset != "—":
+                tail += f" {reset}"
         else:
-            pct = f"{remaining}%"
-        if self.limit_reached or remaining == 0:
-            pct_str = c("red", pct)
-        elif remaining <= 20:
-            pct_str = c("yellow", pct)
-        else:
-            pct_str = c("green", pct)
-        reset = self.reset_in_human
-        if self.window:
-            # Compact form (`5h`, `7d`, `7ds`) keeps the column width
-            # budget intact while letting the user tell which window
-            # the figure came from. Examples:
-            #     20% 5h:3h12m  ← most-restrictive is the 5h rolling
-            #      9% 7d:4d3h   ← most-restrictive is the weekly
-            return f"{pct_str} {c('dim', self.window + ':')} {c('dim', reset)}"
-        return f"{pct_str} {c('dim', reset)}"
+            reset = self.reset_in_human
+            # Compact form (`5h`, `7d`, `7ds`) keeps the column narrow
+            # while letting the user tell which window the pie is
+            # drawn from. Examples:
+            #     ◔ 5h:3h12m  ← most-restrictive is the 5h rolling
+            #     ○ 7d:4d3h   ← most-restrictive is the weekly
+            tail = f"{self.window}:{reset}" if self.window else reset
+        # No special case for limit_reached / remaining == 0: the glyph
+        # is already a red empty circle at that end of the ramp.
+        return f"{_pie(remaining)} {c('dim', tail)}"
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +733,7 @@ _BETA_VERSIONS: dict[str, str] = {
 # Compact abbreviations for the three Claude windows coming off the wire
 # (`five_hour`, `seven_day`, `seven_day_sonnet`). `format_column()`
 # surfaces the most-restrictive window's abbreviation so users can tell
-# the 5h from the 7d at a glance inside the 14-char pre-padded column.
+# the 5h from the 7d at a glance inside the narrow quota column.
 _CLAUDE_WINDOWS: dict[str, str] = {
     "five_hour": "5h",
     "seven_day": "7d",
@@ -1448,7 +1461,7 @@ def _fetch_droid() -> RateLimitInfo | None:
     reports 100% used. The average alone must not mask a cutoff.
 
     Single-endpoint strategy (no second call to /subscription/usage or
-    /app/auth/me): the REMAINING column budget is unforgiving and we already
+    /app/auth/me): the QUOTA column budget is unforgiving and we already
     know the user has droid installed + authenticated. Plan type is
     intentionally default ``"—"`` to mirror Claude's behaviour — the
     web-app quota dashboard exposes plan tier if the user wants it.
