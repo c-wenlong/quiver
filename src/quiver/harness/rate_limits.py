@@ -100,6 +100,8 @@ class RateLimitInfo:
             return c("dim", "no-sub")
         if self.plan_type == "auth-required":
             return c("red", "re-login")
+        if self.plan_type == "timeout":
+            return c("yellow", "…")
         remaining = self.remaining_percent
         if self.remaining_units is not None and self.total_units is not None:
             def compact(value: float) -> str:
@@ -2198,10 +2200,10 @@ def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
         usable: dict[str, dict] = {}
         usable_timestamps: dict[str, float] = {}
         for name, raw in limits.items():
-            # Authentication failures are transient status, not a successful
-            # usage reading. A forced refresh after login must be able to
-            # replace or remove this marker immediately.
-            if raw.get("plan_type") == "auth-required":
+            # Transient statuses (auth failure, timed-out fetch) are not
+            # usage readings. A forced refresh must be able to replace or
+            # remove these markers immediately.
+            if raw.get("plan_type") in ("auth-required", "timeout"):
                 continue
             try:
                 provider_updated_at = float(timestamps.get(name, cached_at))
@@ -2305,8 +2307,25 @@ def get_all_rate_limits(
         elif tool_name in completed:
             # Ran to completion and produced nothing. Distinct from a worker
             # that hit the deadline, which is absent from ``completed`` and
-            # should be retried rather than remembered as empty.
+            # gets a timeout marker below rather than an empty record.
             empty_fetchers.add(tool_name)
+        elif tool_name not in result:
+            # Missed the deadline: remember a marker so the cell reads …
+            # instead of looking like a provider with nothing to report.
+            # Cached for the normal TTL but excluded from the 24h stale
+            # fallback, so a forced refresh retries it for real. A stale
+            # reading already in ``result`` stays authoritative.
+            marker = RateLimitInfo(
+                tool_name=tool_name,
+                used_percent=0,
+                limit_reached=False,
+                reset_at=0.0,
+                plan_type="timeout",
+                window_seconds=0,
+            )
+            result[tool_name] = marker
+            raw_cache[tool_name] = asdict(marker)
+            cache_updated_at[tool_name] = time.time()
 
     # Cache an empty result only when no recent successful snapshot exists.
     # Partial outages retain each provider's last known value for up to 24h.

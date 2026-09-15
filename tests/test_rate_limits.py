@@ -100,6 +100,12 @@ class RateLimitInfoTest(unittest.TestCase):
         )
         self.assertIn("re-login", info.format_column())
 
+    def test_format_column_timeout(self):
+        info = self._make_info(
+            0, False, 0, plan_type="timeout", window_seconds=0,
+        )
+        self.assertIn("…", info.format_column())
+
 
 class RateLimitCacheTest(unittest.TestCase):
     def test_cache_roundtrip(self):
@@ -492,6 +498,152 @@ class RateLimitRegistryTest(unittest.TestCase):
             _FETCHERS.update(saved)
 
         self.assertNotIn("codex", result)
+
+    def test_slow_fetcher_records_timeout_marker(self):
+        """A worker still running at the deadline leaves a timeout marker."""
+        import threading
+
+        saved = _FETCHERS.copy()
+        release = threading.Event()
+
+        def slow_fetch():
+            release.wait(timeout=5.0)
+            return None
+
+        _FETCHERS.clear()
+        register("slow-tool", slow_fetch)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                0.05,
+                create=True,
+            ):
+                result = get_all_rate_limits(use_cache=False)
+                payload = json.loads(
+                    (Path(tmp) / "rate_limits_cache.json").read_text())
+        finally:
+            release.set()
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(result["slow-tool"].plan_type, "timeout")
+        self.assertEqual(
+            payload["limits"]["slow-tool"]["plan_type"], "timeout")
+
+    def test_timeout_marker_served_from_cache(self):
+        """A fresh cached marker answers without re-running the fetcher."""
+        saved = _FETCHERS.copy()
+        fetcher = MagicMock(side_effect=AssertionError("fetcher ran"))
+        _FETCHERS.clear()
+        register("slow-tool", fetcher)
+        marker = {
+            "slow-tool": {
+                "tool_name": "slow-tool",
+                "used_percent": 0,
+                "limit_reached": False,
+                "reset_at": 0.0,
+                "plan_type": "timeout",
+                "window_seconds": 0,
+                "window": "",
+            }
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+                _save_cached(marker)
+                result = get_all_rate_limits(use_cache=True)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(result["slow-tool"].plan_type, "timeout")
+        fetcher.assert_not_called()
+
+    def test_timeout_marker_not_served_as_stale_fallback(self):
+        """The 24h outage fallback skips markers; only real readings carry."""
+        raw = {
+            "slow-tool": {
+                "tool_name": "slow-tool",
+                "used_percent": 0,
+                "limit_reached": False,
+                "reset_at": 0.0,
+                "plan_type": "timeout",
+                "window_seconds": 0,
+                "window": "",
+            },
+            "codex": {
+                "tool_name": "codex",
+                "used_percent": 42,
+                "limit_reached": False,
+                "reset_at": time.time() + 3600,
+                "plan_type": "plus",
+                "window_seconds": 604800,
+                "window": "",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+            Path(tmp) / "rate_limits_cache.json",
+        ):
+            from quiver.harness.rate_limits import (
+                _load_stale_cached,
+                _save_cached,
+            )
+            _save_cached(raw)
+            usable, _timestamps = _load_stale_cached()
+
+        self.assertNotIn("slow-tool", usable)
+        self.assertIn("codex", usable)
+
+    def test_stale_value_beats_timeout_marker(self):
+        """A provider's last reading still outranks a fresh timeout marker."""
+        import threading
+
+        saved = _FETCHERS.copy()
+        release = threading.Event()
+
+        def slow_fetch():
+            release.wait(timeout=5.0)
+            return None
+
+        _FETCHERS.clear()
+        register("codex", slow_fetch)
+        stale = {
+            "codex": {
+                "tool_name": "codex",
+                "used_percent": 42,
+                "limit_reached": False,
+                "reset_at": time.time() + 3600,
+                "plan_type": "plus",
+                "window_seconds": 604800,
+                "window": "",
+            }
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                0.05,
+                create=True,
+            ):
+                from quiver.harness.rate_limits import _save_cached
+                _save_cached(stale)
+                result = get_all_rate_limits(use_cache=False)
+        finally:
+            release.set()
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(result["codex"].used_percent, 42)
+        self.assertEqual(result["codex"].plan_type, "plus")
 
 
 class CodexFetcherTest(unittest.TestCase):

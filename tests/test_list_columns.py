@@ -672,6 +672,12 @@ class LegendCoversEveryMarkerTest(unittest.TestCase):
             out = self._legend()
         self.assertIn("7d", out)
 
+    def test_it_explains_the_remaining_column_glyphs(self):
+        out = self._legend()
+        self.assertIn("REMAINING", out)
+        self.assertIn("re-login", out)
+        self.assertIn("…", out)
+
 
 class ShrinkFitTest(unittest.TestCase):
     """`width` as a ceiling rather than a floor.

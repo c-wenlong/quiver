@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the skills root's directory-derived label to the harness's registry key;
   before, that root reported under a `factory` label no registry entry
   matched, so an archived droid was still touched.
+- **A rate-limit fetch that misses the 2s deadline now shows `…` instead of
+  a blank dash.** The worker used to leave no trace, so `swe list -n`
+  retried every run and a slow provider read exactly like a harness with no
+  usage endpoint. The marker is cached for the normal TTL (so a plain
+  `swe list` stays fast), excluded from the 24h stale fallback, and retried
+  for real on `swe list -n`. `swe list legend` now explains the REMAINING
+  column.
 
 ### Removed
 
