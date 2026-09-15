@@ -359,6 +359,19 @@ class TablePreformattedKindTest(unittest.TestCase):
         # verbatim means the cell keeps exactly the width it shipped.
         self.assertLess(visible_len(out[-1]), visible_len(out[1]))
 
+    def test_oversized_cell_is_cut_ansi_safe_in_a_capped_column(self):
+        # fixed (or bounded at max_width) cannot grow, so a too-long cell
+        # is truncated rather than left to push the rest of the row out.
+        t = Table()
+        t.add_column("a", "A", width=6, fit="fixed", kind="preformatted")
+        t.add_column("b", "B", width=4, fit="fixed")
+        t.add_row({"a": c("green", "toolongvalue"), "b": "x"})
+        out = t.render()
+        self.assertEqual(visible_len(out[-1]), visible_len(out[1]))
+        self.assertEqual("toolon", strip_ansi(out[-1])[:6])
+        # The cut cell is closed with a reset so green cannot bleed into b.
+        self.assertIn("\x1b[0m", out[-1])
+
 
 class TableMissingKeysTest(unittest.TestCase):
     def test_missing_known_key_renders_empty_marker(self):

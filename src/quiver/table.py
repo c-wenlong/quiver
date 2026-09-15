@@ -34,6 +34,7 @@ from quiver.console import (
     terminal_width,
     truncate,
     visible_len,
+    wrap_ansi,
 )
 
 # A column narrowed past this stops carrying information, so the row
@@ -180,11 +181,16 @@ def _register_default_kinds() -> None:
         # The cell ships its own ANSI colouring, so it passes through
         # untouched - but it is still padded out to the column width so
         # every row lands the same gap. ``right=True`` puts the pad in
-        # front (right-aligned numbers); a cell wider than the column
-        # keeps its width and the column grows around it instead.
+        # front (right-aligned numbers). A cell wider than the settled
+        # column (fixed width, or a bounded max_width cap) is cut
+        # ANSI-safe rather than left to push the rest of the row out.
         s = str(value)
+        if width <= 0:
+            return ""
         gap = width - visible_len(s)
-        if gap <= 0:
+        if gap < 0:
+            return wrap_ansi(s, width)[0]
+        if gap == 0:
             return s
         if attrs.get("right"):
             return " " * gap + s
