@@ -186,6 +186,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `swe session use <n>` resumes a Cursor session again. It treated
+  Cursor as limited-resume and launched a bare `cursor-agent` in the
+  session directory; `cursor-agent --resume <chatId>` takes the same
+  UUID `parse_cursor` already stores as the session id.
 - **`swe find mcps` no longer reports copies of configs as unmanaged.** The
   disk scan read harness folders in `~/.Trash` and snapshots under
   `~/.quiver/backups` as live configs, so every server in those copies
