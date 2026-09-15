@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe list` columns no longer drift when a field's content outgrows
+  its declared width.** `preformatted` cells are now padded to the
+  settled column width, and `cmd_list` stopped hand-padding each cell.
 - **`~/.factory/skills` now maps to the `droid` registry row in `swe list`
   and `swe init`.** A `factory` -> `droid` alias in `REGISTRY_ALIASES` joins
   the skills root's directory-derived label to the harness's registry key;

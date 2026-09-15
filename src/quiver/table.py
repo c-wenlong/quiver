@@ -177,9 +177,18 @@ def _register_default_kinds() -> None:
 
     @register_kind("preformatted")
     def _preformatted(value, width, attrs):
-        # The cell hands us a pre-padded / pre-colored ANSI string that
-        # already carries its own width. Pass it through.
-        return str(value)
+        # The cell ships its own ANSI colouring, so it passes through
+        # untouched - but it is still padded out to the column width so
+        # every row lands the same gap. ``right=True`` puts the pad in
+        # front (right-aligned numbers); a cell wider than the column
+        # keeps its width and the column grows around it instead.
+        s = str(value)
+        gap = width - visible_len(s)
+        if gap <= 0:
+            return s
+        if attrs.get("right"):
+            return " " * gap + s
+        return s + " " * gap
 
 
 _register_default_kinds()
@@ -415,12 +424,14 @@ class Table:
         renderable: list[str] = []
         for i, col in enumerate(self._columns):
             value = _cell_value(col, row)
-            # ``trust_cell_width`` (or the preformatted kind) means the
-            # cell has *already* been padded inside its own renderer
-            # (e.g. ``RateLimitInfo.format_column`` ships a self-coloured,
-            # width-aligned string). Skipping the column-width pad keeps
-            # bounds intact and avoids double-wrapping existing ANSI.
-            if col.trust_cell_width or col.kind == "preformatted":
+            # ``trust_cell_width`` means the cell has *already* been
+            # padded inside its own renderer (e.g. a ``cpad`` cell that
+            # ships self-coloured AND width-aligned), so it passes
+            # through verbatim. Every other column - preformatted
+            # included - goes through its kind's render function, which
+            # pads to the settled column width; without that pad a
+            # short cell shifts every column to its right.
+            if col.trust_cell_width:
                 cell_text = str(value)
             else:
                 render_fn, _ = _kind(col.kind)
