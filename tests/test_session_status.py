@@ -471,6 +471,18 @@ class CodexStatusTest(StatusTestBase):
         self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
         self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
 
+    def test_reasoning_tail_still_finds_the_prompt_behind_it(self):
+        # A reasoning item carries no turn state; the fallback must walk
+        # past it to the user message rather than stop at unknown.
+        self._write_codex(self.STEM, [
+            _codex_msg("user", "do it"),
+            _codex_item("reasoning", summary=[]),
+        ])
+        fresh = _session("codex", self.STEM, age_s=0)
+        stale = _session("codex", self.STEM, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
     def test_no_event_msg_tool_output_tail_is_midturn(self):
         # The tool answered and the model has not replied yet.
         self._write_codex(self.STEM, [
