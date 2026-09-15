@@ -27,14 +27,14 @@ def _session(agent="Codex CLI", age_ms=0, title="a title", now_ms=1_700_000_000_
     )
 
 
-def _render(sessions, reserve=0, cap=WIDE, now_ms=1_700_000_000_000):
+def _render(sessions, reserve=0, cap=WIDE, now_ms=1_700_000_000_000, statuses=None):
     with patch("quiver.sessions.commands.time.time", return_value=now_ms / 1000.0), \
          patch("quiver.sessions.commands.terminal_width", return_value=cap), \
          patch("quiver.table.terminal_width", return_value=cap):
-        return _build_session_table(sessions, reserve=reserve).render()
+        return _build_session_table(sessions, reserve=reserve, statuses=statuses).render()
 
 
-LABELS = ("[#]", "LAST ACTIVE", "AGENT", "DIRECTORY", "TITLE/SUMMARY")
+LABELS = ("[#]", "LAST ACTIVE", "AGENT", "ST", "DIRECTORY", "TITLE/SUMMARY")
 
 
 def _widths(header):
@@ -82,10 +82,25 @@ class SessionTableWidthTest(unittest.TestCase):
     def test_tightening_narrows_the_row(self):
         # The old layout charged a fixed 4 + 14 + 14 for IDX, LAST ACTIVE and
         # AGENT; one Codex row needs 3 + 11 + 9, so the whole row is 9
-        # columns shorter with the free-text columns unchanged.
+        # columns shorter with the free-text columns unchanged. The ST
+        # glyph column was added since, costing its 2-char header + 2 gap.
         lines = _render([_session("Codex CLI")])
         old = 4 + 2 + 14 + 2 + 14 + 2 + 45 + 2 + 50
-        self.assertEqual(old - 9, visible_len(lines[0]))
+        self.assertEqual(old - 9 + 2 + len("ST"), visible_len(lines[0]))
+
+    def test_explicit_status_renders_its_glyph_in_colour(self):
+        lines = _render([_session()], statuses=["followup"])
+        header = strip_ansi(lines[0])
+        self.assertIn("ST", header)
+        # followup is a yellow "?"; the cell is cpad'd to the column width.
+        self.assertIn("\033[33m? ", lines[2])
+        # The column is a single glyph padded to the 2-char header.
+        self.assertEqual(len("ST"), _widths(header)["ST"])
+
+    def test_status_column_floors_at_its_header(self):
+        lines = _render([_session()], statuses=[""])
+        self.assertEqual(len("ST"), _widths(lines[0])["ST"])
+        self.assertIn(" - ", strip_ansi(lines[2]))
 
     def test_every_row_matches_the_header_width(self):
         lines = _render([_session("GitHub Copilot", age_ms=3 * 86_400_000),

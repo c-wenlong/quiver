@@ -13,6 +13,7 @@ from quiver.sessions.identity import launch_tool
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
 from quiver.sessions.picker import pick_session
 from quiver.sessions.query import SessionQuery, calendar_range_ms
+from quiver.sessions.status import session_statuses
 from quiver.table import Table
 
 def _codex_resume_args(session_id: str) -> list[str]:
@@ -352,8 +353,31 @@ def _relative_time(diff: float) -> str:
     return f"{int(diff / 86400)}d ago"
 
 
-def _build_session_table(sessions, reserve: int = 0) -> Table:
-    # Five-column table: IDX | LAST ACTIVE | AGENT | DIRECTORY | TITLE/SUMMARY.
+# status -> (glyph, colour, legend label), in legend order. Glyphs are
+# single-width on purpose: a real emoji is two columns and the grid would
+# drift. UNKNOWN rows show "-" and never appear in the legend.
+_STATUS_GLYPHS = {
+    "active": ("●", "green", "active"),
+    "done": ("✓", "dim", "done"),
+    "followup": ("?", "yellow", "followup"),
+    "error": ("✗", "red", "error"),
+    "interrupted": ("■", "blue", "interrupted"),
+}
+
+
+def _status_legend(statuses) -> str | None:
+    """The one-line key for the ST column, or None when nothing is known."""
+    if not any(statuses):
+        return None
+    parts = [
+        f"{c(colour, glyph)} {c('dim', label)}"
+        for glyph, colour, label in _STATUS_GLYPHS.values()
+    ]
+    return "  " + "  ·  ".join(parts)
+
+
+def _build_session_table(sessions, reserve: int = 0, statuses=None) -> Table:
+    # Six-column table: IDX | LAST ACTIVE | AGENT | ST | DIRECTORY | TITLE/SUMMARY.
     #
     # IDX, TIME, AGENT, TITLE all use ``kind="preformatted"`` with
     # ``trust_cell_width=True`` because their cells ship pre-coloured
@@ -373,6 +397,11 @@ def _build_session_table(sessions, reserve: int = 0) -> Table:
     # pointer + space) still fits the terminal after that prefix is
     # added; the static path passes 0 and behaves exactly as before.
     #
+    # ``statuses`` is one label per session, same order; callers pass the
+    # values they already computed for the rows shown, otherwise they are
+    # probed here.
+    if statuses is None:
+        statuses = session_statuses(sessions)
     # IDX, TIME and AGENT are sized to what this run actually holds
     # rather than to a worst case, so the row carries no dead columns:
     # a listing of Codex and Claude rows spent 14 columns on an AGENT
@@ -387,6 +416,7 @@ def _build_session_table(sessions, reserve: int = 0) -> Table:
     idx_w = max(len("[#]"), len(f"[{len(sessions)}]"))
     time_w = max([len("LAST ACTIVE")] + [len(s) for s in stamps])
     agent_w = max([len("AGENT")] + [len(a) for a in agents])
+    status_w = max(len("ST"), 1)
 
     # ``fixed`` must include the two column_gap=2 gaps *between* idx,
     # time, and agent (the "+2 +2" below), not just their own widths.
@@ -396,7 +426,7 @@ def _build_session_table(sessions, reserve: int = 0) -> Table:
     # or the returned widths under-budget the real rendered row by
     # exactly those two gaps (4 columns) once every time this table is
     # built with a tight cap.
-    _w = fit_widths(fixed=idx_w + 2 + time_w + 2 + agent_w,
+    _w = fit_widths(fixed=idx_w + 2 + time_w + 2 + agent_w + 2 + status_w,
                     flex={"directory": 45, "title": 50}, gap=2,
                     cap=terminal_width() - reserve)
     dir_w, title_w = _w["directory"], _w["title"]
@@ -415,6 +445,10 @@ def _build_session_table(sessions, reserve: int = 0) -> Table:
         kind="preformatted", trust_cell_width=True,
     )
     table.add_column(
+        "status", "ST", width=status_w,
+        kind="preformatted", trust_cell_width=True,
+    )
+    table.add_column(
         "directory", "DIRECTORY", width=dir_w, max_width=dir_w, kind="path",
     )
     table.add_column(
@@ -423,7 +457,9 @@ def _build_session_table(sessions, reserve: int = 0) -> Table:
     )
 
     home_str = str(Path.home())
-    for idx, (session, t_str, agent) in enumerate(zip(sessions, stamps, agents), start=1):
+    for idx, (session, t_str, agent, status) in enumerate(
+        zip(sessions, stamps, agents, statuses), start=1
+    ):
         path = session.path.replace(home_str, "~")
         # IDX cell: ``[BOLD<N>]`` padded to the column. ``trust_cell_width``
         # skips renderer pad so we manually pad for column-grid alignment.
@@ -436,10 +472,12 @@ def _build_session_table(sessions, reserve: int = 0) -> Table:
         # outside cpad to keep the ANSI wrap contiguous.
         title_raw = _display_title(session, title_w)
         title = title_raw + " " * max(0, title_w - visible_len(title_raw))
+        glyph, colour, _ = _STATUS_GLYPHS.get(status, ("-", "dim", ""))
         table.add_row({
             "idx": idx_cell,
             "time": cpad("cyan", t_str, time_w),
             "agent": cpad("green", agent, agent_w),
+            "status": cpad(colour, glyph, status_w),
             "directory": path,
             "title": title,
         })
@@ -589,9 +627,16 @@ def cmd_session(args):
 
     # The picker prefixes every row with a 2-char pointer + space, so its
     # table has to be built 2 columns narrower or the redraw wraps.
-    table = _build_session_table(sessions, reserve=2 if parsed.interactive else 0)
+    statuses = session_statuses(sessions)
+    table = _build_session_table(
+        sessions, reserve=2 if parsed.interactive else 0, statuses=statuses
+    )
 
-    print(f"\n{c('bold', 'Recent AI Sessions')}\n")
+    print(f"\n{c('bold', 'Recent AI Sessions')}")
+    legend = _status_legend(statuses)
+    if legend:
+        print(legend)
+    print()
 
     if parsed.interactive:
         lines = table.render()

@@ -67,6 +67,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A status column in `swe session`.** A two-wide `ST` column after AGENT
+  shows where each conversation stands as a single glyph, with a legend
+  line under the title: `●` active (agent generating now), `✓` done
+  (turn finished), `?` followup (finished turn that ends by asking the
+  user something), `✗` error (API or agent-loop failure) and `■`
+  interrupted (stopped mid-turn, nothing alive). Claude Code is read
+  from the transcript tail plus the `~/.claude/sessions` pid registry and
+  `~/.claude/jobs` state files, Cursor from its terminal `turn_ended`
+  record, and Devin from the head row of the session's main chain; every
+  other harness shows `-`. The followup signal is a regex port of Claude
+  Code's own `claude agents` needs-input heuristic, deliberately
+  under-matching.
+
 - **Plugin drift in `swe find plugins`.** Claude Code and Codex run a cached
   copy of each `~/.quiver/plugins` plugin, so edits there never reach them
   until they reinstall. A `Drift` line now counts, per harness, marketplaces
