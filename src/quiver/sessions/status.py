@@ -336,7 +336,7 @@ def _probe_codex(session: Session, ctx: dict):
                     return "finished", _codex_message_text(payload)
                 if role in ("user", "developer"):
                     return "midturn", ""
-                return None, ""
+                continue
             if kind in (
                 "function_call",
                 "custom_tool_call",
@@ -346,7 +346,8 @@ def _probe_codex(session: Session, ctx: dict):
                 "custom_tool_call_output",
             ):
                 return "midturn", ""
-            return None, ""  # reasoning and friends: widen the window
+            # Reasoning and other state-free items are skipped, not
+            # decisive; an earlier message or call may still classify.
         return None, ""
 
     return _walk_tail(path, walk)
