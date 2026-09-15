@@ -2,6 +2,7 @@ import base64
 import copy
 import json
 import sqlite3
+import subprocess
 import sys
 import os
 import tempfile
@@ -1349,6 +1350,51 @@ class ClaudeFetcherTest(unittest.TestCase):
         self.assertEqual(
             run.call_args.kwargs["timeout"], _CLAUDE_KEYCHAIN_TIMEOUT)
         self.assertLess(_CLAUDE_KEYCHAIN_TIMEOUT, _RATE_LIMIT_FETCH_DEADLINE)
+
+    def test_keychain_timeout_does_not_promote_stale_file(self):
+        """A timed-out Keychain lookup is unknown, not absent."""
+        from quiver.harness.rate_limits import (
+            _fetch_claude, _get_claude_oauth_credentials,
+        )
+
+        tmp, patches = self._linux_creds_file(expiresAt=1)
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.shutil.which",
+                return_value="/usr/bin/security",
+            ), patch(
+                "quiver.harness.rate_limits.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd="security", timeout=1.0),
+            ), patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp.name) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits.urllib.request.urlopen",
+            ) as request:
+                self.assertIsNone(_get_claude_oauth_credentials())
+                self.assertIsNone(_fetch_claude())
+            request.assert_not_called()
+        finally:
+            tmp.cleanup()
+
+    def test_keychain_os_error_still_falls_back_to_file(self):
+        """A Keychain that errors outright still lets the file win."""
+        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+
+        tmp, patches = self._linux_creds_file()
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits.shutil.which",
+                return_value="/usr/bin/security",
+            ), patch(
+                "quiver.harness.rate_limits.subprocess.run",
+                side_effect=OSError(),
+            ):
+                oauth = _get_claude_oauth_credentials()
+            self.assertEqual(oauth["accessToken"], "fake-claude-token")
+        finally:
+            tmp.cleanup()
 
     def test_expired_file_without_keychain_is_kept(self):
         """The only known credential is still returned so it can age out."""
