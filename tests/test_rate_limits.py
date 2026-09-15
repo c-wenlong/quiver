@@ -67,6 +67,14 @@ class RateLimitInfoTest(unittest.TestCase):
         self.assertIn("○", col)
         self.assertIn("\x1b[38;5;196m", col)
 
+    def test_format_column_limit_reached_forces_empty_pie(self):
+        """limit_reached at a partial fill still draws the empty red pie."""
+        info = self._make_info(40, True, 3600)
+        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+            col = info.format_column()
+        self.assertIn("○", col)
+        self.assertIn("38;5;196", col)
+
     def test_format_column_pie_keeps_window_tail(self):
         """A claude-style info renders the pie plus the window:reset tail."""
         info = RateLimitInfo(

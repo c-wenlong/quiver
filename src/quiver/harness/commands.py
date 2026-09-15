@@ -606,6 +606,7 @@ def cmd_list(args):
     if "archived" in wanted and shows_usage:
         rendered.add("archived")
         table.add_column("archived", "ARCHIVED", width=10, kind="text")
+
     if "rate" in wanted:
         table.add_column("rate", "QUOTA", width=5, kind="preformatted")
     if "agents" in wanted:
@@ -625,7 +626,7 @@ def cmd_list(args):
         ("mark", 2), ("name", name_w), ("command", command_w),
         ("version", version_w), ("aliases", aliases_w),
         ("inst", 4), ("sess", len(_sess_label)), ("usage", _USAGE_WIDTH),
-        ("archived", 10), ("rate", 14), ("agents", 22), ("skills", 12),
+        ("archived", 10), ("rate", 5), ("agents", 22), ("skills", 12),
     ) if key in rendered)
     gaps = 3 * (len(rendered) + (1 if "desc" in wanted else 0) + (1 if show_reason else 0))
     slack = terminal_width() - used - gaps - 2
