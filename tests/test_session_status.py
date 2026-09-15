@@ -169,6 +169,52 @@ class StatusTestBase(unittest.TestCase):
             for rec in records:
                 fh.write(json.dumps(rec) + "\n")
 
+    def _write_opencode_db(self, sessions, messages, parts=()):
+        d = os.path.join(self.home, ".local", "share", "opencode")
+        os.makedirs(d, exist_ok=True)
+        conn = sqlite3.connect(os.path.join(d, "opencode.db"))
+        conn.execute(
+            "CREATE TABLE session (id TEXT PRIMARY KEY, "
+            "time_created INTEGER, time_updated INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, "
+            "time_created INTEGER, time_updated INTEGER, data TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, "
+            "session_id TEXT, time_created INTEGER, time_updated INTEGER, "
+            "data TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO session (id, time_created, time_updated) "
+            "VALUES (?, ?, ?)",
+            sessions,
+        )
+        conn.executemany(
+            "INSERT INTO message "
+            "(id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?)",
+            messages,
+        )
+        conn.executemany(
+            "INSERT INTO part "
+            "(id, message_id, session_id, time_created, time_updated, "
+            "data) VALUES (?, ?, ?, ?, ?, ?)",
+            parts,
+        )
+        conn.commit()
+        conn.close()
+
+    def _write_pi(self, name, records):
+        d = os.path.join(self.home, ".pi", "agent", "sessions", "--proj--")
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, name + ".jsonl")
+        with open(path, "w") as fh:
+            for rec in records:
+                fh.write(json.dumps(rec) + "\n")
+        return path
+
 
 class ClaudeStatusTest(StatusTestBase):
     def test_done_when_last_record_is_plain_end_turn(self):
@@ -345,6 +391,21 @@ class DevinStatusTest(StatusTestBase):
     def _mk(self, role, **kw):
         return json.dumps({"role": role, **kw})
 
+    def _write_lock(self, sid, contents):
+        d = os.path.join(
+            self.home, ".local", "share", "devin", "cli", "session_locks"
+        )
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sid + ".lock"), "w") as fh:
+            fh.write(contents)
+
+    def _tool_head_db(self, sid):
+        self._write_devin_db(
+            [(sid, "n2")],
+            [("n1", None, sid, self._mk("assistant", tool_calls=[{"id": "t"}])),
+             ("n2", "n1", sid, self._mk("tool", tool_call_id="t", content="out"))],
+        )
+
     def test_done_when_head_is_plain_assistant(self):
         self._write_devin_db(
             [("d1", "n2")],
@@ -390,6 +451,29 @@ class DevinStatusTest(StatusTestBase):
         s5 = _session("devin", "d5", age_s=9999)
         self.assertEqual(DONE, session_status(s4, now=NOW))
         self.assertEqual(FOLLOWUP, session_status(s5, now=NOW))
+
+    def test_live_lock_pid_counts_as_active(self):
+        self._tool_head_db("d6")
+        self._write_lock("d6", str(os.getpid()))
+        s = _session("devin", "d6", age_s=9999)
+        self.assertEqual(ACTIVE, session_status(s, now=NOW))
+
+    def test_dead_lock_pid_is_interrupted(self):
+        self._tool_head_db("d7")
+        self._write_lock("d7", str(2 ** 22))
+        s = _session("devin", "d7", age_s=9999)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
+    def test_missing_lock_file_is_interrupted(self):
+        self._tool_head_db("d8")
+        s = _session("devin", "d8", age_s=9999)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
+    def test_non_integer_lock_contents_is_interrupted(self):
+        self._tool_head_db("d9")
+        self._write_lock("d9", "not-a-pid\n")
+        s = _session("devin", "d9", age_s=9999)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
 
 
 class CodexStatusTest(StatusTestBase):
@@ -541,6 +625,189 @@ class CodexStatusTest(StatusTestBase):
         )
         s = _session("codex", self.STEM, age_s=9999)
         self.assertEqual(DONE, session_status(s, now=NOW))
+
+
+def _oc_msg(mid, sid, role, finish=None, created=1):
+    data = {"role": role}
+    if finish is not None:
+        data["finish"] = finish
+    return (mid, sid, created, created, json.dumps(data))
+
+
+def _oc_part(pid, mid, sid, data, created=1):
+    return (pid, mid, sid, created, created, json.dumps(data))
+
+
+class OpencodeStatusTest(StatusTestBase):
+    def _write(self, sid, messages, parts=()):
+        self._write_opencode_db([(sid, 1, 1)], messages, parts)
+
+    def test_done_on_assistant_stop_with_text_part(self):
+        self._write(
+            "o1",
+            [_oc_msg("m1", "o1", "user", created=1),
+             _oc_msg("m2", "o1", "assistant", finish="stop", created=2)],
+            [_oc_part("p1", "m2", "o1", {"type": "text", "text": "Done."})],
+        )
+        s = _session("opencode", "o1", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_followup_on_question_text_part(self):
+        self._write(
+            "o2",
+            [_oc_msg("m1", "o2", "assistant", finish="stop")],
+            [_oc_part("p1", "m1", "o2",
+                      {"type": "text",
+                       "text": "Which model should I use?"})],
+        )
+        s = _session("opencode", "o2", age_s=9999)
+        self.assertEqual(FOLLOWUP, session_status(s, now=NOW))
+
+    def test_error_on_finish_error(self):
+        self._write("o3", [_oc_msg("m1", "o3", "assistant", finish="error")])
+        s = _session("opencode", "o3", age_s=9999)
+        self.assertEqual(ERROR, session_status(s, now=NOW))
+
+    def test_tool_calls_finish_is_midturn(self):
+        self._write(
+            "o4", [_oc_msg("m1", "o4", "assistant", finish="tool-calls")]
+        )
+        fresh = _session("opencode", "o4", age_s=0)
+        stale = _session("opencode", "o4", age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_missing_finish_is_midturn(self):
+        self._write("o5", [_oc_msg("m1", "o5", "assistant")])
+        fresh = _session("opencode", "o5", age_s=0)
+        stale = _session("opencode", "o5", age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_user_head_is_midturn(self):
+        self._write(
+            "o6",
+            [_oc_msg("m1", "o6", "assistant", finish="stop", created=1),
+             _oc_msg("m2", "o6", "user", created=2)],
+        )
+        fresh = _session("opencode", "o6", age_s=0)
+        stale = _session("opencode", "o6", age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_finished_text_comes_only_from_the_last_message(self):
+        # The earlier assistant message's question part belongs to a turn
+        # the user already answered; the last message has no text part.
+        self._write(
+            "o7",
+            [_oc_msg("m1", "o7", "assistant", finish="stop", created=1),
+             _oc_msg("m2", "o7", "user", created=2),
+             _oc_msg("m3", "o7", "assistant", finish="stop", created=3)],
+            [_oc_part("p1", "m1", "o7",
+                      {"type": "text",
+                       "text": "Which model should I use?"})],
+        )
+        s = _session("opencode", "o7", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_newest_text_part_wins(self):
+        # The newest text part asks a question; an older non-question
+        # text part and a non-text part sit behind it. Newest-first wins.
+        self._write(
+            "o8",
+            [_oc_msg("m1", "o8", "assistant", finish="stop")],
+            [_oc_part("p1", "m1", "o8",
+                      {"type": "text", "text": "All set."}, created=1),
+             _oc_part("p2", "m1", "o8",
+                      {"type": "step-finish", "reason": "stop"},
+                      created=2),
+             _oc_part("p3", "m1", "o8",
+                      {"type": "text",
+                       "text": "Which model should I use?"}, created=3)],
+        )
+        s = _session("opencode", "o8", age_s=9999)
+        self.assertEqual(FOLLOWUP, session_status(s, now=NOW))
+
+    def test_session_without_messages_is_unknown(self):
+        self._write("o9", [])
+        s = _session("opencode", "o9", age_s=9999)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+    def test_missing_db_is_unknown(self):
+        s = _session("opencode", "o10", age_s=9999)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+
+def _pi_msg(role, texts=None, tool_call=False):
+    content = [{"type": "text", "text": t} for t in texts or []]
+    if tool_call:
+        content.append({"type": "toolCall", "id": "c1", "name": "bash"})
+    return {"type": "message", "message": {"role": role, "content": content}}
+
+
+class PiStatusTest(StatusTestBase):
+    def test_done_on_trailing_assistant_text(self):
+        path = self._write_pi("p1", [
+            {"type": "session", "cwd": "/tmp/proj"},
+            _pi_msg("user", ["do it"]),
+            _pi_msg("assistant", ["Shipped."]),
+        ])
+        s = _session("pi", path, age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_followup_on_trailing_question(self):
+        path = self._write_pi("p2", [
+            _pi_msg("assistant", ["Which file should I edit?"]),
+        ])
+        s = _session("pi", path, age_s=9999)
+        self.assertEqual(FOLLOWUP, session_status(s, now=NOW))
+
+    def test_midturn_on_trailing_tool_call(self):
+        path = self._write_pi("p3", [
+            _pi_msg("user", ["do it"]),
+            _pi_msg("assistant", tool_call=True),
+        ])
+        fresh = _session("pi", path, age_s=0)
+        stale = _session("pi", path, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_empty_assistant_content_is_midturn(self):
+        # Pi appends a placeholder assistant record when a reply starts;
+        # one at the tail means the reply never landed.
+        path = self._write_pi("p4", [
+            _pi_msg("user", ["do it"]),
+            _pi_msg("assistant"),
+        ])
+        fresh = _session("pi", path, age_s=0)
+        stale = _session("pi", path, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_tool_result_tail_is_midturn(self):
+        path = self._write_pi("p5", [
+            _pi_msg("user", ["do it"]),
+            _pi_msg("assistant", tool_call=True),
+            _pi_msg("toolResult", ["tool output"]),
+        ])
+        fresh = _session("pi", path, age_s=0)
+        stale = _session("pi", path, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_bookkeeping_only_is_unknown(self):
+        path = self._write_pi("p6", [
+            {"type": "session", "cwd": "/tmp/proj"},
+            {"type": "session_info", "name": "mine"},
+            {"type": "model_change", "modelId": "x"},
+            {"type": "thinking_level_change", "thinkingLevel": "off"},
+        ])
+        s = _session("pi", path, age_s=0)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+    def test_missing_transcript_is_unknown(self):
+        s = _session("pi", os.path.join(self.home, "nope.jsonl"), age_s=0)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
 
 
 class MiscStatusTest(StatusTestBase):
