@@ -1,10 +1,13 @@
 """Per-session status for ``swe session``: where each conversation stands.
 
-Four harnesses carry enough on-disk state to say more than "a session
+Six harnesses carry enough on-disk state to say more than "a session
 existed": Claude Code (transcript tail, live-pid registry, bg-job state),
 Cursor (terminal ``turn_ended`` record), Devin (main-chain head row in
-its SQLite store) and Codex (decisive ``event_msg`` in the rollout tail,
-with a ``response_item`` fallback). Every other harness shows ``-``.
+its SQLite store, plus the ``session_locks`` pid files for liveness),
+Codex (decisive ``event_msg`` in the rollout tail, with a
+``response_item`` fallback), OpenCode (last ``message`` row's ``finish``
+field in its SQLite store) and Pi (the trailing ``message`` record in the
+JSONL transcript). Every other harness shows ``-``.
 
 ``followup`` is the label for a finished turn that ends by asking the user
 something. Claude Code's own ``claude agents`` derives its blocked /
@@ -228,6 +231,40 @@ def _probe_cursor(session: Session, ctx: dict):
     return _walk_tail(hits[0], walk)
 
 
+def _pid_alive(pid: int) -> bool:
+    """True when ``pid`` still names a running process."""
+    if pid < 1:
+        # kill(0, 0) would signal this process's own group.
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # alive, just not ours to signal
+    except OSError:
+        return False
+
+
+def _devin_lock_alive(session_id: str) -> bool:
+    """True when the session's ``session_locks`` pid is still running.
+
+    ``devin acp`` writes ``~/.local/share/devin/cli/session_locks/<id>.lock``
+    holding its decimal pid for as long as the session process runs.
+    """
+    path = os.path.join(
+        os.path.expanduser("~/.local/share/devin/cli/session_locks"),
+        session_id + ".lock",
+    )
+    try:
+        with open(path, encoding="utf-8") as fh:
+            pid = int(fh.read().strip())
+    except Exception:
+        return False
+    return _pid_alive(pid)
+
+
 def _probe_devin(session: Session, ctx: dict):
     """(phase, text) from the session's main-chain head message."""
     conn = ctx.get("devin_conn")
@@ -353,11 +390,108 @@ def _probe_codex(session: Session, ctx: dict):
     return _walk_tail(path, walk)
 
 
+def _probe_opencode(session: Session, ctx: dict):
+    """(phase, text) from the session's last ``message`` row.
+
+    The drizzle schema keeps the payload in a JSON ``data`` column: a
+    ``user`` head means the model has not replied, an assistant ``finish``
+    of ``tool-calls`` (or none at all) is a turn still running, ``error``
+    is a failure and any other value closes the turn. The reply text
+    lives in the message's ``part`` rows, newest first.
+    """
+    conn = ctx.get("opencode_conn")
+    if conn is None:
+        return None, ""
+    sid = session.session_id
+    row = conn.execute(
+        "SELECT id, data FROM message WHERE session_id = ? "
+        "ORDER BY time_created DESC, id DESC LIMIT 1",
+        (sid,),
+    ).fetchone()
+    if not row:
+        return None, ""
+    msg = json.loads(row[1])
+    role = msg.get("role")
+    if role == "user":
+        return "midturn", ""
+    if role != "assistant":
+        return None, ""
+    finish = msg.get("finish")
+    if finish == "error":
+        return "error", ""
+    if not finish or finish == "tool-calls":
+        return "midturn", ""
+    # "stop" or any other non-empty finish: the turn closed. Only this
+    # message's own parts may carry its final text.
+    text = ""
+    for (pdata,) in conn.execute(
+        "SELECT data FROM part WHERE message_id = ? AND session_id = ? "
+        "ORDER BY time_created DESC LIMIT 8",
+        (row[0], sid),
+    ):
+        try:
+            part = json.loads(pdata)
+        except Exception:
+            continue
+        if part.get("type") == "text" and part.get("text"):
+            text = part["text"]
+            break
+    return "finished", text
+
+
+def _probe_pi(session: Session, ctx: dict):
+    """(phase, text) from the transcript's trailing ``message`` record.
+
+    A pi ``Session.session_id`` is the transcript's full path. Message
+    records carry ``message.role`` and a ``content`` block list; every
+    other record type (``session``, ``session_info``, ``model_change``,
+    ``thinking_level_change``, ...) is bookkeeping and says nothing about
+    where the turn stands. Pi appends an empty-content assistant record
+    when a reply starts, so one at the tail means the reply never landed.
+    There is no error or abort signal.
+    """
+    path = session.session_id
+    if not path or not os.path.isfile(path):
+        return None, ""
+
+    def walk(records):
+        for rec in reversed(records):
+            if rec.get("type") != "message":
+                continue
+            msg = rec.get("message") or {}
+            role = msg.get("role")
+            if role == "assistant":
+                content = msg.get("content")
+                blocks = content if isinstance(content, list) else []
+                if any(
+                    isinstance(b, dict) and b.get("type") == "toolCall"
+                    for b in blocks
+                ):
+                    return "midturn", ""
+                texts = [
+                    str(b.get("text") or "")
+                    for b in blocks
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ]
+                if texts:
+                    return "finished", "\n".join(texts)
+                # Empty-content placeholder: the reply never landed.
+                return "midturn", ""
+            if role in ("toolResult", "user"):
+                return "midturn", ""
+            # Other roles carry no turn state; keep walking.
+        return None, ""
+
+    return _walk_tail(path, walk)
+
+
 _PROBES = {
     "claude": _probe_claude,
     "codex": _probe_codex,
     "cursor": _probe_cursor,
     "devin": _probe_devin,
+    "opencode": _probe_opencode,
+    "pi": _probe_pi,
 }
 
 
@@ -376,15 +510,8 @@ def _claude_live_session_ids() -> set:
         sid, pid = data.get("sessionId"), data.get("pid")
         if not sid or not isinstance(pid, int):
             continue
-        try:
-            os.kill(pid, 0)
+        if _pid_alive(pid):
             out.add(sid)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            out.add(sid)  # alive, just not ours to signal
-        except OSError:
-            pass
     return out
 
 
@@ -414,17 +541,29 @@ def _open_devin_db() -> sqlite3.Connection | None:
         return None
 
 
+def _open_opencode_db() -> sqlite3.Connection | None:
+    path = os.path.expanduser("~/.local/share/opencode/opencode.db")
+    try:
+        return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except Exception:
+        return None
+
+
 def session_statuses(sessions: list[Session], now: float | None = None) -> list[str]:
     """One status label per session, same order as the input."""
     if now is None:
         now = time.time()
     # The per-call snapshots every claude row shares: the live-pid
-    # registry and the bg-job table. The Devin DB likewise opens once.
+    # registry and the bg-job table. The Devin and OpenCode DBs likewise
+    # open once.
     ctx = {
         "claude_live": _claude_live_session_ids(),
         "claude_jobs": _claude_job_states(),
         "devin_conn": _open_devin_db()
         if any(s.tool_name == "devin" for s in sessions)
+        else None,
+        "opencode_conn": _open_opencode_db()
+        if any(s.tool_name == "opencode" for s in sessions)
         else None,
     }
     try:
@@ -433,12 +572,13 @@ def session_statuses(sessions: list[Session], now: float | None = None) -> list[
             out.append(_one_status(session, now, ctx))
         return out
     finally:
-        conn = ctx.get("devin_conn")
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        for key in ("devin_conn", "opencode_conn"):
+            conn = ctx.get(key)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def _one_status(session: Session, now: float, ctx: dict) -> str:
@@ -457,6 +597,8 @@ def _one_status(session: Session, now: float, ctx: dict) -> str:
         alive = now - session.timestamp / 1000 < ACTIVE_WINDOW_S
         if session.tool_name == "claude":
             alive = alive or session.session_id in ctx["claude_live"]
+        elif session.tool_name == "devin":
+            alive = alive or _devin_lock_alive(session.session_id)
         return ACTIVE if alive else INTERRUPTED
     if phase == "finished":
         if session.tool_name == "claude":
