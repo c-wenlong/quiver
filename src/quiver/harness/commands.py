@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from quiver.console import c, cpad, elide, fit_widths, terminal_width, truncate, visible_len
+from quiver.console import c, cpad, elide, fit_widths, terminal_width, truncate
 from quiver.harness.columns import (
     COLUMNS,
     DEFAULT_COLUMNS,
@@ -44,12 +44,12 @@ _USAGE_COLOR = {
 _USAGE_WIDTH = max(len(x) for x in _USAGE_COLOR)
 
 
-def _usage_cell(entry, width: int = _USAGE_WIDTH) -> str:
+def _usage_cell(entry) -> str:
     """How much an archived harness got used. Blank for an active one."""
     if not entry:
-        return " " * width
+        return ""
     level = entry.get("usage") or "unknown"
-    return c(_USAGE_COLOR.get(level, "dim"), level.ljust(width))
+    return c(_USAGE_COLOR.get(level, "dim"), level)
 
 
 def _broken_tools():
@@ -117,14 +117,12 @@ _LINK_GLYPH = {
 }
 
 
-def _link_cell(state, label, width):
-    """Render one link column: glyph plus what it links, padded to width."""
+def _link_cell(state, label):
+    """Render one link column: glyph plus what it links."""
     if state is None:
-        return c("dim", "\u00b7".ljust(width))
+        return c("dim", "\u00b7")
     colour, glyph = _LINK_GLYPH.get(state, ("dim", "?"))
-    return c(colour, glyph) + " " + c("dim" if state != "linked" else "green", label) + " " * max(
-        0, width - visible_len(c(colour, glyph)) - 1 - len(label)
-    )
+    return c(colour, glyph) + " " + c("dim" if state != "linked" else "green", label)
 
 
 
@@ -532,12 +530,7 @@ def cmd_list(args):
     tag_filter = args[0].lstrip("-") if args else None
     counts = _session_counts()
     broken = _broken_tools() if "sess" in set(load_columns()) else set()
-    # Right-aligned numbers are padded by hand, so the column cannot use
-    # fit="shrink"; size it here from the widest value it will actually
-    # hold instead of reserving room for five figures.
     _sess_label = window_label(load_window())
-    sess_w = max(len(_sess_label),
-                 max((len(str(v)) for v in counts.values()), default=1))
     # USAGE is only ever filled in for an archived harness, so in the
     # default active scope it rendered as a wholly blank column.
     shows_usage = any(n in archived for n in tools)
@@ -603,19 +596,18 @@ def cmd_list(args):
                          color="cyan", empty="—", fit="shrink")
     if "sess" in wanted:
         rendered.add("sess")
-        table.add_column("sess", _sess_label, width=sess_w,
-                         kind="preformatted", empty="—")
+        table.add_column("sess", _sess_label, width=len(_sess_label),
+                         kind="preformatted", right=True, empty="—")
     if "usage" in wanted and shows_usage:
         rendered.add("usage")
         table.add_column("usage", "USAGE", width=_USAGE_WIDTH,
-                         kind="preformatted", trust_cell_width=True)
+                         kind="preformatted")
     if "archived" in wanted and shows_usage:
         rendered.add("archived")
         table.add_column("archived", "ARCHIVED", width=10, kind="text")
     if "rate" in wanted:
         table.add_column(
             "rate", "REMAINING", width=14, kind="preformatted",
-            trust_cell_width=True,
         )
     if "agents" in wanted:
         rendered.add("agents")
@@ -633,7 +625,7 @@ def cmd_list(args):
     used = sum(w for key, w in (
         ("mark", 2), ("name", name_w), ("command", command_w),
         ("version", version_w), ("aliases", aliases_w),
-        ("inst", 4), ("sess", sess_w), ("usage", _USAGE_WIDTH),
+        ("inst", 4), ("sess", len(_sess_label)), ("usage", _USAGE_WIDTH),
         ("archived", 10), ("rate", 14), ("agents", 22), ("skills", 12),
     ) if key in rendered)
     gaps = 3 * (len(rendered) + (1 if "desc" in wanted else 0) + (1 if show_reason else 0))
@@ -674,15 +666,12 @@ def cmd_list(args):
         #   !   red     the parser failed, so the count is unknown
         #   —   dim     no session parser exists for this harness yet
         if name in broken:
-            sess_cell = c("red", f"{'!':>{sess_w}}")
+            sess_cell = c("red", "!")
         elif name in counts:
             sess_n = counts.get(name, 0)
-            sess_cell = (
-                c("green", f"{sess_n:>{sess_w}}") if sess_n > 0
-                else c("dim", f"{sess_n:>{sess_w}}")
-            )
+            sess_cell = c("green", str(sess_n)) if sess_n > 0 else c("dim", "0")
         else:
-            sess_cell = c("dim", f"{'—':>{sess_w}}")
+            sess_cell = c("dim", "—")
 
         favourited = name in starred_set
         accent = None
@@ -697,27 +686,13 @@ def cmd_list(args):
         else:
             mark_cell = "  "  # 2 spaces of plain indent
 
-        # Inst cell: padded status glyph (visible_width(status)=1).
-        inst_cell = status + " " * max(0, 4 - visible_len(status))
-
-        # Remaining cell: format_column returns its own ANSI-coloured string
-        # but its visible width is variable ("70% —" = 5 chars vs
-        # "100% 5d18h" = 10 chars). With trust_cell_width=True the
-        # Table does NOT pad to the column width, so rows with longer
-        # quota content would push INST/DESCRIPTION columns right and
-        # break the grid. Pre-pad to the column width (14) here so the
-        # remaining cell is exactly 14 visible chars regardless of payload
-        # — the actual character gap remains _column_gap_str (" | ").
-        rate_cell_width = 14
+        # Remaining cell: format_column returns its own ANSI-coloured
+        # string of variable visible width ("70% —" = 5 chars vs
+        # "100% 5d18h" = 10). The preformatted kind pads each cell to the
+        # settled column width, so a longer payload widens the column
+        # once instead of pushing INST/DESCRIPTION right on that row.
         rl = rate_limits.get(name)
-        rate_cell = (
-            "".join((
-                rl.format_column(),
-                " " * max(0, rate_cell_width - visible_len(rl.format_column())),
-            ))
-            if rl else
-            c("dim", "—") + " " * max(0, rate_cell_width - visible_len(c("dim", "—")))
-        )
+        rate_cell = rl.format_column() if rl else c("dim", "—")
 
         row = {"mark": mark_cell, "name": name}
         if "command" in wanted:
@@ -727,14 +702,14 @@ def cmd_list(args):
         if "aliases" in wanted:
             row["aliases"] = aliases
         if "inst" in wanted:
-            row["inst"] = inst_cell
+            row["inst"] = status
         if "agents" in wanted or "skills" in wanted:
             states = link_status.get(name, {})
             if "agents" in wanted:
                 row["agents"] = _link_cell(
-                    states.get("agents"), _AGENTS_FILENAMES.get(name, ""), 22)
+                    states.get("agents"), _AGENTS_FILENAMES.get(name, ""))
             if "skills" in wanted:
-                row["skills"] = _link_cell(states.get("skills"), "skills/", 12)
+                row["skills"] = _link_cell(states.get("skills"), "skills/")
         if "sess" in wanted:
             row["sess"] = sess_cell
         if "usage" in wanted and shows_usage:

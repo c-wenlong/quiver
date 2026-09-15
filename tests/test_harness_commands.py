@@ -16,10 +16,13 @@ Tests below pin the structural invariants the new layout must hold:
 4. Starred rows carry the neon accent ANSI + the ``★`` marker;
    unstarred rows do NOT carry the neon accent on plain-text cells
    but DO carry cyan aliases (via ``list`` kind color attr).
-5. ``trust_cell_width=True`` is wired on the REMAINING column. cmd_list
-   pre-pads every rate cell to the column width (14) so the
-   visible-border gap lands at exactly the same column offset
-   regardless of format_column()'s variable output width.
+5. ``preformatted`` cells are padded to the settled column width by the
+   Table itself — cmd_list no longer hand-pads, so the visible-border
+   gap lands at the same column offset regardless of
+   format_column()'s variable output width, and a cell wider than the
+   declared width grows the column once instead of shifting its
+   neighbours. ``trust_cell_width=True`` remains the verbatim opt-out
+   for cells that pre-pad themselves.
 6. INST shows green ``✓`` or red ``✗`` (preformatted).
 7. SESS shows the three states: dim em-dash (absent), dim zero
    (present-zero), green (positive).
@@ -39,6 +42,7 @@ from unittest.mock import patch
 from quiver.console import c, strip_ansi, visible_len
 from quiver.harness.commands import _sort_tools, cmd_aliases, cmd_check, cmd_info, cmd_list, cmd_tags
 from quiver.harness.rate_limits import RateLimitInfo
+from quiver.table import Table
 
 
 def _run_cmd_list(args=None):
@@ -225,6 +229,38 @@ class CmdListHeaderTest(unittest.TestCase):
             f"starred ({starred_offset}) and unstarred ({unstarred_offset}) "
             f"tool-name offsets diverge")
 
+    def _assert_body_rows_align(self, output):
+        """Every row between the separator and the trailing blank line
+        must have the separator's visible length — the invariant the
+        self-aligning columns exist to keep."""
+        lines = output.split("\n")
+        hdr_idx = next(
+            i for i, raw in enumerate(lines)
+            if all(label in strip_ansi(raw) for label in ("NAME", "COMMAND", "VERSION"))
+        )
+        sep_len = visible_len(lines[hdr_idx + 1])
+        for offset, line in enumerate(lines[hdr_idx + 2:], start=hdr_idx + 2):
+            if not strip_ansi(line).strip():
+                break  # the blank line after the last row ends the table
+            self.assertEqual(sep_len, visible_len(line),
+                f"row {offset} width {visible_len(line)} != separator "
+                f"width {sep_len}: {strip_ansi(line)!r}")
+
+    def test_every_body_row_matches_the_separator_width(self):
+        # The fixture already varies cell widths: claude=42, codex=0,
+        # droid has no count at all (dim em-dash).
+        self._assert_body_rows_align(_run_cmd_list())
+
+    def test_rows_stay_aligned_when_a_count_outgrows_the_column(self):
+        # A 5-digit count is wider than the "100d" header floor, so the
+        # sess column grows around it; every other row must still land
+        # on the same separators instead of drifting right.
+        with patch(
+            "quiver.harness.commands._session_counts",
+            return_value={"claude": 10000, "codex": 0},
+        ):
+            self._assert_body_rows_align(_run_cmd_list())
+
 
 class CmdListAccentTest(unittest.TestCase):
     """Starred vs unstarred row rendering — the divergence point of the migration."""
@@ -251,7 +287,7 @@ class CmdListAccentTest(unittest.TestCase):
 
 
 class CmdListRateColumnTest(unittest.TestCase):
-    """The REMAINING column uses trusted widths and explicit pre-padding."""
+    """The REMAINING column self-aligns: Table pads each preformatted cell."""
 
     def setUp(self):
         _pin_columns(self)
@@ -261,25 +297,24 @@ class CmdListRateColumnTest(unittest.TestCase):
         """Regression guard for the user's "rows with usage info misaligned" complaint.
 
         RateLimitInfo.format_column() returns a variable-width string
-        — e.g. "70% \u2014" is 5 chars, "100% 8d23h" is 10. With
-        trust_cell_width=True the Table does NOT pad the cell, so
-        rows with longer rate payloads would push the visible-border
-        gap " \u2502 " rightward and break column alignment. cmd_list
-        pre-pads every rate cell to the column width (14) so the gap
-        lands at exactly rate_start + 14 regardless of payload.
+        — e.g. "70% \u2014" is 5 chars, "100% 8d23h" is 10. The
+        ``preformatted`` kind pads the cell to the settled column
+        width, so rows with longer rate payloads keep the visible-border
+        gap " \u2502 " at exactly rate_start + 14 instead of
+        shifting right and breaking column alignment.
         """
         output = _run_cmd_list()
         codex_row = _row_for_tool(output, "codex")
         plain = strip_ansi(codex_row)
         # Span [rate_start, rate_start+14) must have visible length 14
-        # — the pre-pad closes the gap between "70% \u2014" (5 chars)
+        # — the column pad closes the gap between "70% \u2014" (5 chars)
         # and the column width.
         rate_cell_width = 14
         rate_start = plain.find("70%")
         self.assertGreaterEqual(rate_start, 0, "rate cell content not found")
         self.assertEqual(rate_cell_width, visible_len(plain[rate_start:rate_start + rate_cell_width]),
             f"rate cell spans {visible_len(plain[rate_start:rate_start+rate_cell_width])} "
-            f"chars, expected {rate_cell_width} (= cmd_list's pre-pad column width)")
+            f"chars, expected {rate_cell_width} (= the settled column width)")
         # Beyond the rate cell is the visible-border gap " \u2502 ".
         self.assertEqual(
             plain[rate_start + rate_cell_width: rate_start + rate_cell_width + 3], " \u2502 ",
@@ -287,44 +322,53 @@ class CmdListRateColumnTest(unittest.TestCase):
             f"{plain[rate_start+rate_cell_width:rate_start+rate_cell_width+5]!r}",
         )
 
-    def test_rate_cell_pre_pad_math_holds_for_any_payload(self):
-        """Pre-pad normalises every rate cell payload to exactly 14 visible chars.
+    def test_table_pads_any_rate_payload_to_the_column(self):
+        """Whatever format_column emits, the row lands on the grid.
 
-        Locks the cmd_list pre-pad contract: regardless of payload
+        Locks the self-aligning contract: regardless of payload
         (em-dash, plain digits, ANSI-coloured dim/green/red/yellow,
-        multi-byte chars), the post-pad cell must have visible_len 14.
+        multi-byte chars, or one wider than the declared 14), the
+        ``preformatted`` kind pads to the settled column width — and a
+        payload past it grows the column once for every row instead of
+        shifting one row's remaining cells right.
         """
-        for label, payload in [
-            ("dim_em_dash", c("dim", "—")),
-            ("green_pct_only", c("green", "30%")),
-            ("format_column_30pct", RateLimitInfo(
+        payloads = [
+            c("dim", "—"),
+            c("green", "30%"),
+            RateLimitInfo(
                 tool_name="codex", used_percent=30, limit_reached=False,
                 reset_at=0, plan_type="plus", window_seconds=0,
-            ).format_column()),
-            ("format_column_100pct", RateLimitInfo(
+            ).format_column(),
+            RateLimitInfo(
                 tool_name="codex", used_percent=100, limit_reached=False,
                 reset_at=0, plan_type="plus", window_seconds=0,
-            ).format_column()),
-            ("format_column_reached", RateLimitInfo(
+            ).format_column(),
+            RateLimitInfo(
                 tool_name="codex", used_percent=100, limit_reached=True,
                 reset_at=0, plan_type="plus", window_seconds=0,
-            ).format_column()),
-        ]:
-            rate_cell_width = 14
-            pre_padded = payload + " " * max(0, rate_cell_width - visible_len(payload))
-            self.assertEqual(
-                rate_cell_width, visible_len(pre_padded),
-                f"{label}: payload {payload!r} pre-padded to "
-                f"{visible_len(pre_padded)} chars (expected {rate_cell_width})",
-            )
+            ).format_column(),
+            c("red", "x" * 20),  # wider than the declared width
+        ]
+        t = Table(column_gap=" │ ")
+        t.add_column("rate", "REMAINING", width=14, kind="preformatted")
+        t.add_column("tail", "TAIL", width=4, kind="text")
+        for payload in payloads:
+            t.add_row({"rate": payload, "tail": "x"})
+        lines = t.render()
+        sep_len = visible_len(lines[1])
+        # The 20-char payload grew the column past its declared 14.
+        self.assertGreater(sep_len, 14 + 3 + 4)
+        for line in lines[2:]:
+            self.assertEqual(sep_len, visible_len(line),
+                f"row drifted to {visible_len(line)}: {strip_ansi(line)!r}")
 
 
 class CmdListAlignmentTest(unittest.TestCase):
     """Regression guard: every body row must share the same visible width.
 
     This was the user's complaint about rows with actual usage info
-    being misaligned. Pre-pad the rate cell to column width, then
-    assert no row drifts from the header width.
+    being misaligned. The preformatted kind now pads each cell to the
+    column width; assert no row drifts from the header width.
     """
 
     def setUp(self):
