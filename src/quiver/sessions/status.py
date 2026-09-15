@@ -233,6 +233,9 @@ def _probe_cursor(session: Session, ctx: dict):
 
 def _pid_alive(pid: int) -> bool:
     """True when ``pid`` still names a running process."""
+    if pid < 1:
+        # kill(0, 0) would signal this process's own group.
+        return False
     try:
         os.kill(pid, 0)
         return True
