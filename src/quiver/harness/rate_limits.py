@@ -728,7 +728,8 @@ _CLAUDE_WINDOWS: dict[str, str] = {
 # The aggregator stops waiting for a fetcher after
 # ``_RATE_LIMIT_FETCH_DEADLINE`` (2s). A Keychain prompt that hangs must
 # not eat that budget, so the lookup gives up well inside it and the
-# file credential, if any, stands in.
+# fetch reports no reading for this window rather than promoting a
+# possibly stale file.
 _CLAUDE_KEYCHAIN_TIMEOUT = 1.0
 
 
@@ -766,7 +767,9 @@ def _read_claude_keychain_credentials() -> dict | None:
             text=True,
             timeout=_CLAUDE_KEYCHAIN_TIMEOUT,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    # TimeoutExpired propagates: the caller must not read a slow
+    # Keychain as an empty one.
+    except OSError:
         return None
     if result.returncode != 0:
         return None
@@ -809,16 +812,21 @@ def _get_claude_oauth_credentials() -> dict | None:
     for the rate-limit TTL, so the subprocess cost is one call per
     window.
 
-    Returns ``None`` if neither source is reachable / parseable. Both
-    paths silently degrade: a missing credentials file or missing
+    A Keychain timeout yields ``None`` rather than the file: the lookup
+    failed, so the file's freshness is unknown. ``None`` is also the
+    answer if neither source is reachable / parseable. Both paths
+    silently degrade: a missing credentials file or missing
     ``security`` binary should never break ``swe list`` rendering.
     """
-    candidates = [
-        creds for creds in (
-            _read_claude_credentials_file(),
-            _read_claude_keychain_credentials(),
-        ) if creds
-    ]
+    file_creds = _read_claude_credentials_file()
+    try:
+        keychain_creds = _read_claude_keychain_credentials()
+    except subprocess.TimeoutExpired:
+        # Unknown, not absent. Promoting the file here would make a stale
+        # token authoritative, so report no reading for this window; the
+        # aggregator keeps the last good value for up to 24h.
+        return None
+    candidates = [creds for creds in (file_creds, keychain_creds) if creds]
     return max(candidates, key=_claude_expires_at_seconds) if candidates else None
 
 
