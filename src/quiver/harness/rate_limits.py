@@ -725,12 +725,17 @@ _CLAUDE_WINDOWS: dict[str, str] = {
     "seven_day_sonnet": "7ds",
 }
 
+# The aggregator stops waiting for a fetcher after
+# ``_RATE_LIMIT_FETCH_DEADLINE`` (2s). A Keychain prompt that hangs must
+# not eat that budget, so the lookup gives up well inside it and the
+# file credential, if any, stands in.
+_CLAUDE_KEYCHAIN_TIMEOUT = 1.0
+
 
 def _read_claude_credentials_file() -> dict | None:
     """The ``claudeAiOauth`` mapping from ``~/.claude/.credentials.json``,
     if it has a str ``accessToken``."""
-    # Portable file path. Always tried first because it's free (no
-    # subprocess) and works identically on macOS + Linux + WSL.
+    # Portable file path, works identically on macOS + Linux + WSL.
     creds_path = os.path.expanduser("~/.claude/.credentials.json")
     if os.path.exists(creds_path):
         try:
@@ -759,7 +764,7 @@ def _read_claude_keychain_credentials() -> dict | None:
              "-l", "Claude Code-credentials", "-w"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_CLAUDE_KEYCHAIN_TIMEOUT,
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -794,23 +799,26 @@ def _claude_expires_at_seconds(oauth: dict) -> float:
 def _get_claude_oauth_credentials() -> dict | None:
     """Return Claude Code's OAuth credential mapping from the best source.
 
-    The portable file (``~/.claude/.credentials.json``) wins when its
-    token is still valid — it is free (no subprocess) and works
-    identically on macOS + Linux + WSL. Otherwise whichever source has
-    the later ``expiresAt`` is used, because Claude Code on macOS
-    refreshes the Keychain entry and leaves the file behind, so a stale
-    file must not shadow a fresh Keychain login. On a tie (e.g. neither
-    source records ``expiresAt``) the file keeps its preference.
+    Both sources are read and the one with the later ``expiresAt``
+    wins; on a tie (e.g. neither records ``expiresAt``) the file keeps
+    its preference since it comes first. Claude Code on macOS refreshes
+    the Keychain entry and leaves the file behind, and a re-login or
+    account switch has to win even while the old file token is still
+    unexpired. The Keychain reader is a no-op off macOS
+    (``shutil.which("security")`` is ``None``), and the result is cached
+    for the rate-limit TTL, so the subprocess cost is one call per
+    window.
 
     Returns ``None`` if neither source is reachable / parseable. Both
     paths silently degrade: a missing credentials file or missing
     ``security`` binary should never break ``swe list`` rendering.
     """
-    file_creds = _read_claude_credentials_file()
-    if file_creds and _claude_expires_at_seconds(file_creds) > time.time():
-        return file_creds
-    keychain_creds = _read_claude_keychain_credentials()
-    candidates = [c for c in (file_creds, keychain_creds) if c]
+    candidates = [
+        creds for creds in (
+            _read_claude_credentials_file(),
+            _read_claude_keychain_credentials(),
+        ) if creds
+    ]
     return max(candidates, key=_claude_expires_at_seconds) if candidates else None
 
 
