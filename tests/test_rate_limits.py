@@ -1294,18 +1294,61 @@ class ClaudeFetcherTest(unittest.TestCase):
         finally:
             tmp.cleanup()
 
-    def test_valid_file_does_not_probe_keychain(self):
-        """An unexpired file token stays the fast path — no subprocess."""
+    def test_fresher_keychain_beats_valid_file(self):
+        """A newer Keychain login wins even over an unexpired file token."""
         from quiver.harness.rate_limits import _get_claude_oauth_credentials
 
         tmp, patches = self._linux_creds_file()
         try:
-            with patches[0], patches[1] as keychain:
+            with patches[0], patch(
+                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                return_value={
+                    "accessToken": "kc-token",
+                    "expiresAt": 9_999_999_999_999 + 1_000,
+                },
+            ):
                 oauth = _get_claude_oauth_credentials()
-            self.assertEqual(oauth["accessToken"], "fake-claude-token")
-            keychain.assert_not_called()
+            self.assertEqual(oauth["accessToken"], "kc-token")
         finally:
             tmp.cleanup()
+
+    def test_valid_file_beats_older_keychain(self):
+        """An older Keychain entry never shadows a fresher file token."""
+        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+
+        tmp, patches = self._linux_creds_file()
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                return_value={
+                    "accessToken": "kc-token",
+                    "expiresAt": 9_999_999_999_998,
+                },
+            ):
+                oauth = _get_claude_oauth_credentials()
+            self.assertEqual(oauth["accessToken"], "fake-claude-token")
+        finally:
+            tmp.cleanup()
+
+    def test_keychain_lookup_timeout_is_inside_aggregator_deadline(self):
+        """A hanging Keychain prompt must not eat the 2s fetch budget."""
+        from quiver.harness.rate_limits import (
+            _CLAUDE_KEYCHAIN_TIMEOUT,
+            _RATE_LIMIT_FETCH_DEADLINE,
+            _read_claude_keychain_credentials,
+        )
+
+        creds_json = json.dumps({"claudeAiOauth": {"accessToken": "kc-token"}})
+        with patch("quiver.harness.rate_limits.shutil.which",
+                   return_value="/usr/bin/security"), \
+             patch("quiver.harness.rate_limits.subprocess.run",
+                   return_value=_CompletedProc(returncode=0, stdout=creds_json)
+                   ) as run:
+            oauth = _read_claude_keychain_credentials()
+        self.assertEqual(oauth["accessToken"], "kc-token")
+        self.assertEqual(
+            run.call_args.kwargs["timeout"], _CLAUDE_KEYCHAIN_TIMEOUT)
+        self.assertLess(_CLAUDE_KEYCHAIN_TIMEOUT, _RATE_LIMIT_FETCH_DEADLINE)
 
     def test_expired_file_without_keychain_is_kept(self):
         """The only known credential is still returned so it can age out."""
