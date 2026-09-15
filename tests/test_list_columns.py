@@ -115,6 +115,32 @@ class EditCommandTest(unittest.TestCase):
         saved.assert_not_called()
         self.assertIn("cancelled", out)
 
+    def _run_with_store(self, args, picked):
+        """Run cmd_list_edit against an in-memory config store.
+
+        wraps= pins cmd_list_edit's save_columns binding to the real
+        function regardless of what other tests have patched, while the
+        load_config/save_config patches keep the write off disk.
+        """
+        from quiver.harness import commands as H
+
+        store = {}
+        with mock.patch.object(C, "load_config", lambda: dict(store)), \
+                mock.patch.object(C, "save_config", lambda cfg: store.update(cfg)), \
+                mock.patch.object(H, "save_columns", wraps=C.save_columns):
+            return self._run(args, picked=picked)
+
+    def test_saving_rate_column_prints_the_network_note(self):
+        code, out = self._run_with_store([], list(C.DEFAULT_COLUMNS) + ["rate"])
+        self.assertEqual(code, 0)
+        self.assertIn("saved", out)
+        self.assertIn("QUOTA fetches over the network", out)
+
+    def test_saving_without_rate_skips_the_note(self):
+        code, out = self._run_with_store([], list(C.DEFAULT_COLUMNS))
+        self.assertEqual(code, 0)
+        self.assertNotIn("fetches over the network", out)
+
     def test_reset_restores_the_default(self):
         from quiver.harness import commands as H
 
