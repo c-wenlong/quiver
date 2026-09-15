@@ -13,6 +13,7 @@ noise, and guessing wrong is worse than skipping.
 from __future__ import annotations
 
 import fnmatch
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -215,6 +216,32 @@ hooks_dir = _paths.hooks_dir_for
 backups_dir = _paths.backups_dir_for
 
 IGNORED_DETAIL = "listed in ~/.quiver/.linkignore"
+ARCHIVED_DETAIL = "archived in harness.json"
+
+
+def load_registry(home: Path) -> dict:
+    """harness.json under ``home``, read-only; {} when absent or unreadable.
+
+    Not ``harness.registry.load_registry``: that resolves the file against the
+    real home at import time and seeds one when it is missing, and init must
+    neither read the wrong machine's registry in a test nor write one here.
+    """
+    path = _paths.config_dir_for(home) / "harness.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def archived_names(registry: dict) -> set[str]:
+    """Registry keys marked ``archived``, plus their aliases."""
+    names: set[str] = set()
+    for key, entry in registry.items():
+        if isinstance(entry, dict) and entry.get("state") == "archived":
+            names.add(key)
+            names.update(entry.get("aliases") or [])
+    return names
 
 SEED_LINKIGNORE = """# Paths swe init leaves alone, one per line, relative to your home.
 # Same idea as .gitignore: blank lines and # comments are skipped, * is a
@@ -313,8 +340,45 @@ def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
     return LinkStatus(label, path, "create", "")
 
 
+def _instruction_targets(registry: dict) -> list[tuple[str, Path]]:
+    """Instruction targets: the built-in table overlaid by harness.json.
+
+    A ``capabilities.instructions.file`` entry (``~/``-relative) adds a target
+    labelled by its registry key, and replaces a tuple entry for the same
+    harness, so a harness that reads ``AGENTS.md`` where the table guessed
+    ``CLAUDE.md`` ends up with exactly one target: the right one.
+    """
+    targets = list(INSTRUCTION_TARGETS)
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        caps = entry.get("capabilities") or {}
+        file = (caps.get("instructions") or {}).get("file")
+        if not (isinstance(file, str) and file.startswith("~/")):
+            continue
+        targets = [t for t in targets if registry_name(t[0]) != key]
+        targets.append((key, Path(file[2:])))
+    return targets
+
+
+def _archived_override(status: LinkStatus, archived: set[str]) -> None:
+    """Archived means unmanaged: anything init would change becomes ignored.
+
+    A path already ``linked`` or ``skipped`` keeps its state (init never
+    unlinks), and a ``.linkignore`` ignore is applied before this, so its
+    own detail wins.
+    """
+    if (
+        status.state in ("create", "relink", "absorb", "keep", "conflict")
+        and registry_name(status.label) in archived
+    ):
+        status.state, status.detail = "ignored", ARCHIVED_DETAIL
+
+
 def plan(
-    home: Path | None = None, patterns: list[str] | None = None
+    home: Path | None = None,
+    patterns: list[str] | None = None,
+    registry: dict | None = None,
 ) -> tuple[list[LinkStatus], list[LinkStatus]]:
     """Return (instruction statuses, skill statuses) for the current machine.
 
@@ -322,26 +386,33 @@ def plan(
     ``ignored``, so the report can say it was seen and deliberately left out.
     Nothing acts on that state. ``patterns`` lets a caller that has already
     loaded (and validated) the ignore file pass it in; otherwise it is read
-    here and an unreadable file raises ``LinkIgnoreError``.
+    here and an unreadable file raises ``LinkIgnoreError``. ``registry`` is
+    the harness.json dict: it supplies extra instruction targets and marks
+    archived harnesses unmanaged; ``None`` loads it read-only.
     """
     home = home or Path.home()
     if patterns is None:
         patterns = load_linkignore(home)
+    if registry is None:
+        registry = load_registry(home)
+    archived = archived_names(registry)
     instructions = []
-    for label, rel in INSTRUCTION_TARGETS:
+    for label, rel in _instruction_targets(registry):
         if is_linkignored(home / rel, home, patterns):
             instructions.append(LinkStatus(label, home / rel, "ignored", IGNORED_DETAIL))
         else:
-            instructions.append(inspect(label, rel, agents_file(home), home))
+            status = inspect(label, rel, agents_file(home), home)
+            _archived_override(status, archived)
+            instructions.append(status)
     skills = []
     for path in discover_skill_roots(home):
         if is_linkignored(path, home, patterns):
             state, detail = "ignored", IGNORED_DETAIL
         else:
             state, detail = classify_skill_root(path, home)
-        skills.append(
-            LinkStatus(skill_root_label(path, home), path, state, detail)
-        )
+        status = LinkStatus(skill_root_label(path, home), path, state, detail)
+        _archived_override(status, archived)
+        skills.append(status)
     return instructions, skills
 
 
@@ -350,6 +421,7 @@ def plan(
 REGISTRY_ALIASES: dict[str, str] = {
     "qwen": "qwen-code",
     "vibe": "mistral-vibe",
+    "factory": "droid",  # droid's config dir is ~/.factory
 }
 
 

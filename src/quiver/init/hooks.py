@@ -25,7 +25,6 @@ then ``HOOK_FALLBACK`` for a harness the registry does not describe.
 from __future__ import annotations
 
 import filecmp
-import json
 from pathlib import Path
 
 from quiver import paths as _paths
@@ -35,6 +34,7 @@ from quiver.init.layout import (
     hooks_dir,
     is_linkignored,
     load_linkignore,
+    load_registry,  # re-exported: lives in layout.py, which hooks imports
 )
 
 # Where a harness keeps hook scripts, relative to home, for a harness whose
@@ -52,21 +52,6 @@ _SKIP_NAMES = frozenset({"__pycache__", "node_modules"})
 NO_ROOT_DETAIL = "no hooks root, set capabilities.hooks.root in harness.json"
 UNSUPPORTED_DETAIL = "harness.json says this harness has no hooks"
 INSIDE_QUIVER_DETAIL = "hooks root is inside ~/.quiver, would link a script to itself"
-
-
-def load_registry(home: Path) -> dict:
-    """harness.json under ``home``, read-only; {} when absent or unreadable.
-
-    Not ``harness.registry.load_registry``: that resolves the file against the
-    real home at import time and seeds one when it is missing, and init must
-    neither read the wrong machine's registry in a test nor write one here.
-    """
-    path = _paths.config_dir_for(home) / "harness.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def _expand_root(root: str, home: Path) -> Path:
