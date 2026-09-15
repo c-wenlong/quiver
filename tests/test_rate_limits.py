@@ -1193,8 +1193,10 @@ class ClaudeFetcherTest(unittest.TestCase):
         """Build a Linux-style credentials file and return (tmpdir, patches).
 
         Patches ``os.path.expanduser`` so ``~/.claude/.credentials.json``
-        resolves to the temp file. The temp directory must be cleaned up
-        by the caller (``finally`` + ``tmp.cleanup()``).
+        resolves to the temp file, and neutralises the Keychain reader so
+        an expired file token can never reach the real ``security``
+        binary. The temp directory must be cleaned up by the caller
+        (``finally`` + ``tmp.cleanup()``).
         """
         tmp = tempfile.TemporaryDirectory()
         creds_path = Path(tmp.name) / "creds.json"
@@ -1213,6 +1215,10 @@ class ClaudeFetcherTest(unittest.TestCase):
                     else p
                 ),
             ),
+            patch(
+                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                return_value=None,
+            ),
         ]
         return tmp, patches
 
@@ -1222,7 +1228,7 @@ class ClaudeFetcherTest(unittest.TestCase):
 
         tmp, patches = self._linux_creds_file()
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
@@ -1249,16 +1255,13 @@ class ClaudeFetcherTest(unittest.TestCase):
             info = _fetch_claude()
         self.assertIsNone(info)
 
-    def test_expired_credentials_without_refresh_token_request_relogin(self):
-        """Known-expired, non-refreshable auth is shown instead of a blank."""
+    def test_expired_credentials_request_relogin(self):
+        """A known-expired token is shown as re-login, never fetched."""
         from quiver.harness.rate_limits import _fetch_claude
 
-        tmp, patches = self._linux_creds_file(
-            refreshToken="",
-            expiresAt=1,
-        )
+        tmp, patches = self._linux_creds_file(expiresAt=1)
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
@@ -1272,6 +1275,91 @@ class ClaudeFetcherTest(unittest.TestCase):
         self.assertIn("re-login", info.format_column())
         request.assert_not_called()
 
+    def test_fresher_keychain_beats_expired_file(self):
+        """A fresh Keychain login wins over a stale credentials file."""
+        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+
+        tmp, patches = self._linux_creds_file(token="file-token", expiresAt=1)
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                return_value={
+                    "accessToken": "kc-token",
+                    "refreshToken": "y",
+                    "expiresAt": 9_999_999_999_999,
+                },
+            ):
+                oauth = _get_claude_oauth_credentials()
+            self.assertEqual(oauth["accessToken"], "kc-token")
+        finally:
+            tmp.cleanup()
+
+    def test_valid_file_does_not_probe_keychain(self):
+        """An unexpired file token stays the fast path — no subprocess."""
+        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+
+        tmp, patches = self._linux_creds_file()
+        try:
+            with patches[0], patches[1] as keychain:
+                oauth = _get_claude_oauth_credentials()
+            self.assertEqual(oauth["accessToken"], "fake-claude-token")
+            keychain.assert_not_called()
+        finally:
+            tmp.cleanup()
+
+    def test_expired_file_without_keychain_is_kept(self):
+        """The only known credential is still returned so it can age out."""
+        from quiver.harness.rate_limits import (
+            _fetch_claude, _get_claude_oauth_credentials,
+        )
+
+        tmp, patches = self._linux_creds_file(expiresAt=1)
+        try:
+            with patches[0], patches[1], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp.name) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits.urllib.request.urlopen",
+            ) as request:
+                oauth = _get_claude_oauth_credentials()
+                self.assertEqual(oauth["accessToken"], "fake-claude-token")
+                info = _fetch_claude()
+            self.assertEqual(info.plan_type, "auth-required")
+            request.assert_not_called()
+        finally:
+            tmp.cleanup()
+
+    def test_expired_keychain_and_fresher_file_prefers_file(self):
+        """Between two expired sources the later expiresAt wins."""
+        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+
+        tmp, patches = self._linux_creds_file(
+            token="file-token", expiresAt=1_000)
+        try:
+            with patches[0], patch(
+                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                return_value={"accessToken": "kc-token", "expiresAt": 1},
+            ):
+                oauth = _get_claude_oauth_credentials()
+            self.assertEqual(oauth["accessToken"], "file-token")
+        finally:
+            tmp.cleanup()
+
+    def test_claude_expires_at_seconds_accepts_ms_and_seconds(self):
+        """expiresAt normalises milliseconds and seconds, 0.0 on junk."""
+        from quiver.harness.rate_limits import _claude_expires_at_seconds
+
+        self.assertEqual(
+            _claude_expires_at_seconds({"expiresAt": 1_700_000_000_000}),
+            1_700_000_000.0,
+        )
+        self.assertEqual(
+            _claude_expires_at_seconds({"expiresAt": 1_700_000_000}),
+            1_700_000_000.0,
+        )
+        self.assertEqual(_claude_expires_at_seconds({}), 0.0)
+        self.assertEqual(_claude_expires_at_seconds({"expiresAt": "junk"}), 0.0)
+
     def test_rate_limit_reuses_last_reading_during_retry_after(self):
         """A 429 keeps Claude visible and suppresses calls during cooldown."""
         from quiver.harness.rate_limits import _fetch_claude
@@ -1279,7 +1367,7 @@ class ClaudeFetcherTest(unittest.TestCase):
         tmp, patches = self._linux_creds_file()
         cache_file = Path(tmp.name) / "rate_limits_cache.json"
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1292,7 +1380,7 @@ class ClaudeFetcherTest(unittest.TestCase):
                 on_rate_limited(120)
                 return None
 
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1301,7 +1389,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             ):
                 stale = _fetch_claude()
 
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1329,7 +1417,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             "credential_fingerprint": "old-token-fingerprint",
         }))
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1370,7 +1458,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             "fetched_at": time.time() - 7200,
         }))
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1404,7 +1492,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             "fetched_at": time.time() - 90000,
         }))
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1438,7 +1526,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             return None
 
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1466,7 +1554,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             return None
 
         try:
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
@@ -1477,7 +1565,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             first_fetched_at = json.loads(claude_cache.read_text())["fetched_at"]
             self.assertGreater(first_fetched_at, 0)
 
-            with patches[0], patch(
+            with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
