@@ -432,9 +432,16 @@ to use their own login state and environment."""
   {c('cyan', 'swe init --check')}            Show what would change, write nothing
   {c('cyan', 'swe init --force')}            Replace real files too (backed up first)
   {c('cyan', 'swe init --migrate')}          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
+  {c('cyan', 'swe init --yes')}              Register every new harness without asking
+                               (also the non-terminal default)
 
   A {c('dim', 'symlink')} is a shortcut file: each harness's folder points at the one
   real copy in ~/.quiver, so editing once updates it everywhere.
+
+{c('bold', 'New harnesses')}
+  Found via their skills folder. Ticked ones are registered and linked,
+  instructions included; unticked ones are archived in harness.json and
+  left alone. {c('cyan', 'swe hs')} archives or stars them later.
 
 {c('bold', 'What it owns')}
   ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
@@ -453,7 +460,8 @@ to use their own login state and environment."""
   {c('yellow', 'relink')}    symlink pointing elsewhere, will repoint
   {c('red', 'conflict')}  a real file or directory, needs --force
   {c('dim', 'skipped')}   harness not installed on this machine
-  {c('dim', 'ignored')}   listed in .linkignore, never touched or counted"""
+  {c('dim', 'ignored')}   listed in .linkignore or archived in harness.json,
+               never touched or counted"""
     ),
     "setup": (
         "Sectioned setup wizard for Quiver",

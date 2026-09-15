@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`swe init` offers to manage harnesses it discovers.** A skills root the
+  registry has never heard of now opens a checklist: ticked harnesses get an
+  active `harness.json` entry with `capabilities.skills.root` and an
+  instruction file (AGENTS.md by default, or another filename, or skip) that
+  init links in the same run; unticked ones are archived and left alone.
+  `--yes` registers everything without asking, which is also what a
+  non-terminal run does. `--check` only notes how many new harnesses it
+  would ask about. A home still on legacy `tools.json` is told to run
+  `swe list` once first, since writing `harness.json` early would skip the
+  lazy migration. Instruction targets are now registry-driven: an entry's
+  `capabilities.instructions.file` wins over the built-in table.
+
+### Changed
+
+- **Archived means unmanaged in `swe init`.** Instructions, skills and hook
+  scripts belonging to an archived harness that init would have created,
+  relinked, absorbed or flagged are now reported `ignored` ("archived in
+  harness.json") instead, so archiving a harness stops init from touching
+  its config. A path already linked stays linked — init never unlinks —
+  and `.linkignore` still wins when both apply.
+
+### Fixed
+
+- **`~/.factory/skills` now maps to the `droid` registry row in `swe list`
+  and `swe init`.** A `factory` -> `droid` alias in `REGISTRY_ALIASES` joins
+  the skills root's directory-derived label to the harness's registry key;
+  before, that root reported under a `factory` label no registry entry
+  matched, so an archived droid was still touched.
+
 ### Removed
 
 - **Kimi, Mimo, Tau and Antigravity support.** Their session parsers,
