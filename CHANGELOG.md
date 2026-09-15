@@ -113,10 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interrupted (stopped mid-turn, nothing alive). Claude Code is read
   from the transcript tail plus the `~/.claude/sessions` pid registry and
   `~/.claude/jobs` state files, Cursor from its terminal `turn_ended`
-  record, Devin from the head row of the session's main chain, and Codex
+  record, Devin from the head row of the session's main chain plus the
+  `session_locks` pid files a running `devin acp` leaves behind, Codex
   from the rollout tail's decisive `event_msg` (`task_complete`,
-  `turn_aborted`, `task_started`) with a `response_item` fallback; every
-  other harness shows `-`. The followup signal is a regex port of Claude
+  `turn_aborted`, `task_started`) with a `response_item` fallback,
+  OpenCode from the last message row's `finish` field in `opencode.db`,
+  and Pi from the transcript's trailing `message` record; every other
+  harness shows `-`. The followup signal is a regex port of Claude
   Code's own `claude agents` needs-input heuristic, deliberately
   under-matching.
 
