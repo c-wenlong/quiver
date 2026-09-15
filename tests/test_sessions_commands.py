@@ -7,7 +7,7 @@ the pre-Table era. These tests pin the new structural invariants:
 
 1. cmd_models — 3-column (default) / 4-column (--by-tool) layout with
    a ``count_threshold`` MSGS column that auto-colours green at 100+.
-2. cmd_session — 5-column listing with mixed ``preformatted``+trust cells
+2. cmd_session — 6-column listing with mixed ``preformatted``+trust cells
    (bold idx, cyan relative-time, green agent, dim title fallback) and
    one ``text`` cell (path with ``fit="content"`` for auto-width).
 
@@ -301,10 +301,10 @@ def _run_cmd_session(args):
 class CmdSessionMigrationTest(unittest.TestCase):
     """Tabular contract for cmd_session listing."""
 
-    def test_list_renders_five_columns_in_header(self):
+    def test_list_renders_six_columns_in_header(self):
         output, _ = _run_cmd_session([])
         plain = strip_ansi(output)
-        for label in ("[#]", "LAST ACTIVE", "AGENT", "DIRECTORY", "TITLE/SUMMARY"):
+        for label in ("[#]", "LAST ACTIVE", "AGENT", "ST", "DIRECTORY", "TITLE/SUMMARY"):
             self.assertIn(label, plain, f"header label {label!r} missing")
 
     def test_separator_visible_length_matches_header(self):
@@ -313,7 +313,7 @@ class CmdSessionMigrationTest(unittest.TestCase):
         hdr_idx = next(
             i for i, raw in enumerate(lines)
             if all(lbl in strip_ansi(raw) for lbl in (
-                "[#]", "LAST ACTIVE", "AGENT", "DIRECTORY", "TITLE/SUMMARY"
+                "[#]", "LAST ACTIVE", "AGENT", "ST", "DIRECTORY", "TITLE/SUMMARY"
             ))
         )
         sep_dashes = strip_ansi(lines[hdr_idx + 1]).count("\u2500")
@@ -329,7 +329,7 @@ class CmdSessionMigrationTest(unittest.TestCase):
         hdr_idx = next(
             i for i, raw in enumerate(lines)
             if all(lbl in strip_ansi(raw) for lbl in (
-                "[#]", "LAST ACTIVE", "AGENT", "DIRECTORY", "TITLE/SUMMARY"
+                "[#]", "LAST ACTIVE", "AGENT", "ST", "DIRECTORY", "TITLE/SUMMARY"
             ))
         )
         expected_width = visible_len(lines[hdr_idx])
