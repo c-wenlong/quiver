@@ -30,7 +30,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("aliases", "ALIASES", "Short aliases, e.g. cc for claude"),
     Column("inst", "INST", "Whether it is installed"),
     Column("sess", "100d", "Sessions in a window you can rotate"),
-    Column("rate", "REMAINING", "Rate limit left", costly=True),
+    Column("rate", "QUOTA", "Rate limit left", costly=True),
     Column("agents", "AGENTS.MD", "Is its instruction file synced to ~/.quiver"),
     Column("skills", "SKILLS", "Is its skills root synced to ~/.quiver"),
     Column("usage", "USAGE", "How much an archived harness got used"),
