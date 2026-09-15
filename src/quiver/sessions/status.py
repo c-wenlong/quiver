@@ -31,7 +31,10 @@ UNKNOWN = ""
 # A mid-turn session touched within this many seconds counts as generating.
 ACTIVE_WINDOW_S = 120
 
-_TAIL_BYTES = 65536
+# Tail-read windows tried in order: a decisive record larger than the
+# window is dropped as the partial first line, so a small window alone can
+# leave the probe seeing nothing. ``_walk_tail`` widens until it decides.
+_TAIL_WINDOWS = (65536, 1 << 20, 16 << 20)
 
 _DISCLAIMER_RE = re.compile(
     r"\bnothing (?:needed|required) from you\b"
@@ -82,8 +85,8 @@ def needs_followup(text: str) -> bool:
     )
 
 
-def _tail_records(path: str, tail_bytes: int = _TAIL_BYTES) -> list[dict]:
-    """JSON objects from the last ``tail_bytes`` of a JSONL file, in order."""
+def _tail_records(path: str, tail_bytes: int) -> tuple[list[dict], bool]:
+    """(JSON objects from the file's tail in order, window-covers-file)."""
     size = os.path.getsize(path)
     with open(path, "rb") as fh:
         start = max(0, size - tail_bytes)
@@ -102,7 +105,25 @@ def _tail_records(path: str, tail_bytes: int = _TAIL_BYTES) -> list[dict]:
             continue
         if isinstance(data, dict):
             out.append(data)
-    return out
+    return out, start == 0
+
+
+def _walk_tail(path: str, walk):
+    """Run ``walk(records)`` over widening tail windows until it decides.
+
+    ``walk`` returns ``(phase, text)``; a ``None`` phase means "nothing
+    decisive in this window". The walk may simply have missed the decisive
+    record because it sits beyond the window, so an indecisive result on a
+    partial window retries with the next size up. A complete window (the
+    whole file was read) is authoritative and stops the loop.
+    """
+    result = (None, "")
+    for tail_bytes in _TAIL_WINDOWS:
+        records, complete = _tail_records(path, tail_bytes)
+        result = walk(records)
+        if result[0] is not None or complete:
+            break
+    return result
 
 
 def _blocks_text(blocks) -> str:
@@ -119,45 +140,49 @@ def _probe_claude(session: Session, ctx: dict):
     hits = glob.glob(os.path.join(root, "*", session.session_id + ".jsonl"))
     if not hits:
         return None, ""
-    for rec in reversed(_tail_records(hits[0])):
-        kind = rec.get("type")
-        if kind == "assistant":
-            if rec.get("isApiErrorMessage"):
-                return "error", ""
-            msg = rec.get("message") or {}
-            content = msg.get("content")
-            blocks = content if isinstance(content, list) else []
-            if msg.get("stop_reason") == "tool_use" or any(
-                isinstance(b, dict) and b.get("type") == "tool_use"
-                for b in blocks
-            ):
-                return "midturn", ""
-            # A record with no text blocks and no tool_use (e.g. a
-            # thinking-only record carrying end_turn) is still finished.
-            return "finished", _blocks_text(blocks)
-        if kind == "user":
-            msg = rec.get("message") or {}
-            content = msg.get("content")
-            if isinstance(content, list):
-                if any(
-                    isinstance(b, dict) and b.get("type") == "tool_result"
-                    for b in content
+
+    def walk(records):
+        for rec in reversed(records):
+            kind = rec.get("type")
+            if kind == "assistant":
+                if rec.get("isApiErrorMessage"):
+                    return "error", ""
+                msg = rec.get("message") or {}
+                content = msg.get("content")
+                blocks = content if isinstance(content, list) else []
+                if msg.get("stop_reason") == "tool_use" or any(
+                    isinstance(b, dict) and b.get("type") == "tool_use"
+                    for b in blocks
                 ):
                     return "midturn", ""
-                text = _blocks_text(content)
-            else:
-                text = content if isinstance(content, str) else ""
-            if "[Request interrupted by user" in text:
-                return "aborted", ""
-            # Slash-command bookkeeping the model does not answer.
-            if (
-                rec.get("isMeta")
-                or "<command-name>" in text
-                or "<local-command-" in text
-            ):
-                continue
-            return "midturn", ""  # a prompt awaiting the model
-    return None, ""
+                # A record with no text blocks and no tool_use (e.g. a
+                # thinking-only record carrying end_turn) is still finished.
+                return "finished", _blocks_text(blocks)
+            if kind == "user":
+                msg = rec.get("message") or {}
+                content = msg.get("content")
+                if isinstance(content, list):
+                    if any(
+                        isinstance(b, dict) and b.get("type") == "tool_result"
+                        for b in content
+                    ):
+                        return "midturn", ""
+                    text = _blocks_text(content)
+                else:
+                    text = content if isinstance(content, str) else ""
+                if "[Request interrupted by user" in text:
+                    return "aborted", ""
+                # Slash-command bookkeeping the model does not answer.
+                if (
+                    rec.get("isMeta")
+                    or "<command-name>" in text
+                    or "<local-command-" in text
+                ):
+                    continue
+                return "midturn", ""  # a prompt awaiting the model
+        return None, ""
+
+    return _walk_tail(hits[0], walk)
 
 
 def _probe_cursor(session: Session, ctx: dict):
@@ -169,32 +194,37 @@ def _probe_cursor(session: Session, ctx: dict):
     )
     if not hits:
         return None, ""
-    records = _tail_records(hits[0])
-    if not records:
-        return None, ""
-    last = records[-1]
-    if last.get("type") != "turn_ended":
-        # An assistant or user record with no turn_ended after it means
-        # the turn never closed.
-        if last.get("role") in ("user", "assistant"):
-            return "midturn", ""
-        return None, ""
-    status = last.get("status")
-    if status == "error":
-        return "error", ""
-    if status == "aborted":
-        return "aborted", ""
-    # success: walk back to the nearest assistant record that has text;
-    # tool_use-only records are skipped for text purposes.
-    for rec in reversed(records[:-1]):
-        if rec.get("role") != "assistant":
-            continue
-        msg = rec.get("message") or {}
-        blocks = msg.get("content")
-        text = _blocks_text(blocks if isinstance(blocks, list) else [])
-        if text:
-            return "finished", text
-    return "finished", ""
+    def walk(records):
+        if not records:
+            return None, ""
+        last = records[-1]
+        if last.get("type") != "turn_ended":
+            # An assistant or user record with no turn_ended after it
+            # means the turn never closed.
+            if last.get("role") in ("user", "assistant"):
+                return "midturn", ""
+            return None, ""
+        status = last.get("status")
+        if status == "error":
+            return "error", ""
+        if status == "aborted":
+            return "aborted", ""
+        # success: walk back to the nearest assistant record that has
+        # text, but no further than this turn's own boundary — a
+        # tool_use-only turn does not inherit the previous turn's text.
+        for rec in reversed(records[:-1]):
+            if rec.get("type") == "turn_ended" or rec.get("role") == "user":
+                break
+            if rec.get("role") != "assistant":
+                continue
+            msg = rec.get("message") or {}
+            blocks = msg.get("content")
+            text = _blocks_text(blocks if isinstance(blocks, list) else [])
+            if text:
+                return "finished", text
+        return "finished", ""
+
+    return _walk_tail(hits[0], walk)
 
 
 def _probe_devin(session: Session, ctx: dict):

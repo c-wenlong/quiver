@@ -233,6 +233,29 @@ class ClaudeStatusTest(StatusTestBase):
         self.assertEqual(DONE, session_status(s, now=NOW))
 
 
+    def test_huge_decisive_record_is_not_lost_to_the_window(self):
+        # A >64KiB tool_result lands as the partial first line of the
+        # smallest window; _walk_tail must widen until the walk decides.
+        big = _user(tool_result=True)
+        big["message"]["content"] = [
+            {"type": "tool_result", "content": "x" * 100_000}
+        ]
+        self._write_claude("big1", [_assistant("ok"), big])
+        s = _session("claude", "big1", age_s=0)
+        self.assertEqual(ACTIVE, session_status(s, now=NOW))
+
+    def test_huge_decisive_record_with_trailing_bookkeeping(self):
+        big = _user(tool_result=True)
+        big["message"]["content"] = [
+            {"type": "tool_result", "content": "x" * 100_000}
+        ]
+        self._write_claude(
+            "big2", [_assistant("ok"), big, {"type": "last-prompt"}]
+        )
+        s = _session("claude", "big2", age_s=0)
+        self.assertEqual(ACTIVE, session_status(s, now=NOW))
+
+
 class CursorStatusTest(StatusTestBase):
     def test_done_after_turn_ended_success(self):
         self._write_cursor(
@@ -270,6 +293,20 @@ class CursorStatusTest(StatusTestBase):
         )
         s = _session("cursor", "c4", age_s=9999)
         self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
+    def test_text_scan_stops_at_the_previous_turn_boundary(self):
+        # The finished turn produced no text; the earlier turn's question
+        # belongs to a turn the user already answered.
+        self._write_cursor(
+            "c6",
+            [_cursor_assistant("Which db do you want?"),
+             {"type": "turn_ended", "status": "success"},
+             {"role": "user", "message": {"content": [{"type": "text", "text": "postgres"}]}},
+             _cursor_assistant(tool_use=True),
+             {"type": "turn_ended", "status": "success"}],
+        )
+        s = _session("cursor", "c6", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
 
     def test_midturn_when_last_record_is_assistant(self):
         self._write_cursor("c5", [_cursor_assistant(tool_use=True)])
@@ -347,6 +384,29 @@ class MiscStatusTest(StatusTestBase):
             [DONE, UNKNOWN, ERROR],
             session_statuses(sessions, now=NOW),
         )
+
+
+class TailRecordsTest(unittest.TestCase):
+    def test_small_file_is_complete(self):
+        from quiver.sessions.status import _tail_records
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+            fh.write(json.dumps({"a": 1}) + "\n" + json.dumps({"b": 2}) + "\n")
+            path = fh.name
+        records, complete = _tail_records(path, 65536)
+        self.assertTrue(complete)
+        self.assertEqual([{"a": 1}, {"b": 2}], records)
+
+    def test_large_file_is_incomplete_and_drops_partial_first_line(self):
+        from quiver.sessions.status import _tail_records
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+            fh.write(json.dumps({"head": "x" * 500}) + "\n")
+            fh.write(json.dumps({"tail": 1}) + "\n")
+            path = fh.name
+        records, complete = _tail_records(path, 64)
+        self.assertFalse(complete)
+        self.assertEqual([{"tail": 1}], records)
 
 
 class StatusLegendTest(unittest.TestCase):
