@@ -141,9 +141,10 @@ class RateLimitInfo:
             #     ◔ 5h:3h12m  ← most-restrictive is the 5h rolling
             #     ○ 7d:4d3h   ← most-restrictive is the weekly
             tail = f"{self.window}:{reset}" if self.window else reset
-        # No special case for limit_reached / remaining == 0: the glyph
-        # is already a red empty circle at that end of the ramp.
-        return f"{_pie(remaining)} {c('dim', tail)}"
+        # Blocked trumps the percentage when a provider derives the two
+        # independently (Droid averages budgets, Copilot derives it
+        # separately): a reached limit renders the empty red pie.
+        return f"{_pie(0 if self.limit_reached else remaining)} {c('dim', tail)}"
 
 
 # ---------------------------------------------------------------------------
