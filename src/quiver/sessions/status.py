@@ -1,9 +1,10 @@
 """Per-session status for ``swe session``: where each conversation stands.
 
-Three harnesses carry enough on-disk state to say more than "a session
+Four harnesses carry enough on-disk state to say more than "a session
 existed": Claude Code (transcript tail, live-pid registry, bg-job state),
-Cursor (terminal ``turn_ended`` record) and Devin (main-chain head row in
-its SQLite store). Every other harness shows ``-``.
+Cursor (terminal ``turn_ended`` record), Devin (main-chain head row in
+its SQLite store) and Codex (decisive ``event_msg`` in the rollout tail,
+with a ``response_item`` fallback). Every other harness shows ``-``.
 
 ``followup`` is the label for a finished turn that ends by asking the user
 something. Claude Code's own ``claude agents`` derives its blocked /
@@ -266,8 +267,94 @@ def _probe_devin(session: Session, ctx: dict):
     return None, ""
 
 
+# Rollout files sit at ``~/.codex/sessions/Y/M/D/rollout-<iso>-<uuid>.jsonl``
+# and a codex ``Session.session_id`` is that file's stem, so the date in
+# the stem reconstructs the path directly; the glob is only a fallback for
+# a file that was moved.
+_CODEX_ROLLOUT_DATE_RE = re.compile(r"rollout-(\d{4})-(\d{2})-(\d{2})T")
+
+
+def _codex_rollout_path(session_id: str) -> str:
+    root = os.path.expanduser("~/.codex/sessions")
+    match = _CODEX_ROLLOUT_DATE_RE.match(session_id or "")
+    if match:
+        path = os.path.join(
+            root, match.group(1), match.group(2), match.group(3),
+            session_id + ".jsonl",
+        )
+        if os.path.exists(path):
+            return path
+    hits = glob.glob(os.path.join(root, "*", "*", "*", session_id + ".jsonl"))
+    return hits[0] if hits else ""
+
+
+def _codex_message_text(payload: dict) -> str:
+    blocks = payload.get("content")
+    return "\n".join(
+        str(b.get("text") or "")
+        for b in (blocks if isinstance(blocks, list) else [])
+        if isinstance(b, dict) and b.get("type") == "output_text"
+    )
+
+
+def _probe_codex(session: Session, ctx: dict):
+    """(phase, text) from the rollout tail's decisive ``event_msg``.
+
+    ``task_complete`` closes a turn (its ``last_agent_message`` is the
+    final assistant text), ``turn_aborted`` marks an interrupt and
+    ``task_started`` opens one; every other event_msg is bookkeeping.
+    A window with no decisive event falls back to the last response_item.
+    Codex records no error signal in the rollout.
+    """
+    path = _codex_rollout_path(session.session_id)
+    if not path:
+        return None, ""
+
+    def walk(records):
+        for rec in reversed(records):
+            if rec.get("type") != "event_msg":
+                continue
+            payload = rec.get("payload") or {}
+            kind = payload.get("type")
+            if kind == "task_complete":
+                text = payload.get("last_agent_message")
+                return "finished", text if isinstance(text, str) else ""
+            if kind == "turn_aborted":
+                return "aborted", ""
+            if kind == "task_started":
+                return "midturn", ""
+            # token_count, item_completed, agent_message and friends are
+            # bookkeeping that says nothing about where the turn stands.
+        for rec in reversed(records):
+            if rec.get("type") != "response_item":
+                continue
+            payload = rec.get("payload") or {}
+            kind = payload.get("type")
+            if kind == "message":
+                role = payload.get("role")
+                if role == "assistant":
+                    return "finished", _codex_message_text(payload)
+                if role in ("user", "developer"):
+                    return "midturn", ""
+                return None, ""
+            if kind in (
+                "function_call",
+                "custom_tool_call",
+                # A tool output as the last item means the tool answered
+                # and the model has not replied yet: still mid-turn.
+                "function_call_output",
+                "custom_tool_call_output",
+            ):
+                return "midturn", ""
+            return None, ""  # reasoning and friends: widen the window
+        return None, ""
+
+    return _walk_tail(path, walk)
+
+
 _PROBES = {
     "claude": _probe_claude,
+    "codex": _probe_codex,
     "cursor": _probe_cursor,
     "devin": _probe_devin,
 }

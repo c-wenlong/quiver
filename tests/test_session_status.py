@@ -5,9 +5,11 @@
 aliveness check never depends on wall clock.
 """
 
+import glob
 import io
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -79,6 +81,21 @@ def _cursor_assistant(text=None, tool_use=False):
     return {"role": "assistant", "message": {"content": content}}
 
 
+def _codex_event(kind, **payload):
+    return {"type": "event_msg", "payload": {"type": kind, **payload}}
+
+
+def _codex_item(kind, **payload):
+    return {"type": "response_item", "payload": {"type": kind, **payload}}
+
+
+def _codex_msg(role, text):
+    block = "output_text" if role == "assistant" else "input_text"
+    return _codex_item(
+        "message", role=role, content=[{"type": block, "text": text}]
+    )
+
+
 class StatusTestBase(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp()
@@ -141,6 +158,16 @@ class StatusTestBase(unittest.TestCase):
         )
         conn.commit()
         conn.close()
+
+    def _write_codex(self, stem, records, date=None):
+        if date is None:
+            m = re.match(r"rollout-(\d{4})-(\d{2})-(\d{2})T", stem)
+            date = m.groups() if m else ("1970", "01", "01")
+        d = os.path.join(self.home, ".codex", "sessions", *date)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, stem + ".jsonl"), "w") as fh:
+            for rec in records:
+                fh.write(json.dumps(rec) + "\n")
 
 
 class ClaudeStatusTest(StatusTestBase):
@@ -365,9 +392,148 @@ class DevinStatusTest(StatusTestBase):
         self.assertEqual(FOLLOWUP, session_status(s5, now=NOW))
 
 
+class CodexStatusTest(StatusTestBase):
+    STEM = (
+        "rollout-2026-09-14T11-11-42-"
+        "01a09de6-1111-2222-3333-444444444444"
+    )
+
+    def test_done_on_task_complete(self):
+        self._write_codex(self.STEM, [
+            _codex_event("task_started", turn_id="t1"),
+            _codex_msg("assistant", "All merged."),
+            _codex_event("token_count"),
+            _codex_event("task_complete", last_agent_message="All merged."),
+        ])
+        s = _session("codex", self.STEM, age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_followup_on_task_complete_question(self):
+        self._write_codex(self.STEM, [
+            _codex_event("task_started", turn_id="t1"),
+            _codex_event(
+                "task_complete",
+                last_agent_message="Which repo should I target?",
+            ),
+        ])
+        s = _session("codex", self.STEM, age_s=9999)
+        self.assertEqual(FOLLOWUP, session_status(s, now=NOW))
+
+    def test_interrupted_on_turn_aborted(self):
+        self._write_codex(self.STEM, [
+            _codex_event("task_started", turn_id="t1"),
+            _codex_event("turn_aborted", reason="interrupted"),
+        ])
+        s = _session("codex", self.STEM, age_s=0)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
+    def test_task_started_is_midturn_resolved_by_freshness(self):
+        self._write_codex(self.STEM, [
+            _codex_event("task_started", turn_id="t1"),
+        ])
+        fresh = _session("codex", self.STEM, age_s=0)
+        stale = _session("codex", self.STEM, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_bookkeeping_after_task_started_is_still_midturn(self):
+        # token_count / item_completed carry no turn state; the reverse
+        # walk must pass them and land on task_started.
+        self._write_codex(self.STEM, [
+            _codex_event("task_started", turn_id="t1"),
+            _codex_msg("assistant", "working"),
+            _codex_event("token_count"),
+            _codex_event("item_completed", item={"type": "AgentMessage"}),
+        ])
+        fresh = _session("codex", self.STEM, age_s=0)
+        stale = _session("codex", self.STEM, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_no_event_msg_falls_back_to_assistant_item(self):
+        self._write_codex(self.STEM, [
+            {"type": "session_meta", "payload": {"id": "x"}},
+            _codex_msg("user", "do it"),
+            _codex_msg("assistant", "Done."),
+        ])
+        s = _session("codex", self.STEM, age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_no_event_msg_function_call_tail_is_midturn(self):
+        self._write_codex(self.STEM, [
+            _codex_msg("user", "do it"),
+            _codex_item(
+                "function_call", name="shell", arguments="{}", call_id="c1"
+            ),
+        ])
+        fresh = _session("codex", self.STEM, age_s=0)
+        stale = _session("codex", self.STEM, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_no_event_msg_tool_output_tail_is_midturn(self):
+        # The tool answered and the model has not replied yet.
+        self._write_codex(self.STEM, [
+            _codex_msg("user", "do it"),
+            _codex_item(
+                "function_call", name="shell", arguments="{}", call_id="c1"
+            ),
+            _codex_item(
+                "function_call_output", call_id="c1", output="ok"
+            ),
+        ])
+        fresh = _session("codex", self.STEM, age_s=0)
+        stale = _session("codex", self.STEM, age_s=600)
+        self.assertEqual(ACTIVE, session_status(fresh, now=NOW))
+        self.assertEqual(INTERRUPTED, session_status(stale, now=NOW))
+
+    def test_session_meta_only_is_unknown(self):
+        self._write_codex(self.STEM, [
+            {"type": "session_meta", "payload": {"id": "x"}},
+        ])
+        s = _session("codex", self.STEM, age_s=0)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+    def test_missing_rollout_is_unknown(self):
+        s = _session("codex", self.STEM, age_s=0)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+    def test_date_dir_is_used_directly_without_globbing(self):
+        self._write_codex(self.STEM, [
+            _codex_event("task_complete", last_agent_message="All merged."),
+        ])
+        # A different stem under another date dir must never be picked up.
+        self._write_codex(
+            "rollout-2026-01-01T00-00-00-"
+            "ffffffff-0000-0000-0000-000000000000",
+            [_codex_event("turn_aborted")],
+        )
+        real_glob = glob.glob
+
+        def no_codex_glob(pattern, *args, **kw):
+            if ".codex" in pattern:
+                raise AssertionError("codex probe globbed: " + pattern)
+            return real_glob(pattern, *args, **kw)
+
+        s = _session("codex", self.STEM, age_s=9999)
+        with patch.object(glob, "glob", side_effect=no_codex_glob):
+            self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_glob_fallback_finds_a_misplaced_rollout(self):
+        # The file's date dir does not match the date in its own stem
+        # (it was moved), so the direct path misses and the glob finds it.
+        self._write_codex(
+            self.STEM,
+            [_codex_event("task_complete", last_agent_message="All merged.")],
+            date=("2001", "02", "03"),
+        )
+        s = _session("codex", self.STEM, age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+
 class MiscStatusTest(StatusTestBase):
     def test_unknown_tool_shows_unknown(self):
-        s = _session("codex", "x")
+        s = _session("gemini", "x")
         self.assertEqual(UNKNOWN, session_status(s, now=NOW))
 
     def test_statuses_returns_one_label_per_input_in_order(self):
@@ -377,7 +543,7 @@ class MiscStatusTest(StatusTestBase):
         )
         sessions = [
             _session("claude", "m1", age_s=9999),
-            _session("codex", "x"),
+            _session("gemini", "x"),
             _session("cursor", "m2", age_s=9999),
         ]
         self.assertEqual(
