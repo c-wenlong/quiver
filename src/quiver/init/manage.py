@@ -10,7 +10,6 @@ Printing and prompting stay in ``commands.py``.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -155,10 +154,5 @@ def register(
         registry[label] = entry
     config_dir.mkdir(parents=True, exist_ok=True)
     target = config_dir / "harness.json"
-    tmp = config_dir / "harness.json.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(registry, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, target)
+    _paths.atomic_write_text(target, json.dumps(registry, indent=2))
     return registry

@@ -194,7 +194,7 @@ class InteractivePickerTest(unittest.TestCase):
             root.mkdir(parents=True)
             registry = manage.register(home, {}, {"foo": (root, None)}, {})
             cfg = home / ".quiver" / "config"
-            self.assertFalse((cfg / "harness.json.tmp").exists())
+            self.assertEqual([p for p in cfg.iterdir() if p.name.endswith(".tmp")], [])
             self.assertEqual(
                 json.loads((cfg / "harness.json").read_text()), registry
             )
