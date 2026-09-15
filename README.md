@@ -40,14 +40,14 @@ $ swe list --usage
 
 AI Coding Tools
 
-   │ NAME     │ COMMAND  │ VERSION    │ ALIASES │ 100d │ REMAINING      │ INST │ DESCRIPTION
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ★ │ claude   │ claude   │ 2.1.126    │ cc      │  412 │ 68% 5h: 3h12m  │ ✓    │ Claude Code by Anthropic — agentic coding in the terminal
- ★ │ codex    │ codex    │ 0.133.0    │ cx      │  288 │ 42% 5d19h      │ ✓    │ OpenAI Codex CLI
-   │ cursor   │ agent    │ 2026.06.24 │ cs      │    4 │ —              │ ✓    │ Cursor CLI — AI-powered editor agent
-   │ droid    │ droid    │ 0.24.0     │ df      │   31 │ —              │ ✓    │ Factory Droid CLI
-   │ gemini   │ gemini   │ 0.35.1     │ gg      │   12 │ —              │ ✓    │ Gemini CLI by Google
-   │ opencode │ opencode │ 1.17.11    │ oc      │   96 │ —              │ ✓    │ opencode — open source terminal agent
+   │ NAME     │ COMMAND  │ VERSION    │ ALIASES │ 100d │ QUOTA      │ INST │ DESCRIPTION
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ★ │ claude   │ claude   │ 2.1.126    │ cc      │  412 │ ◕ 5h:3h12m │ ✓    │ Claude Code by Anthropic — agentic coding in the terminal
+ ★ │ codex    │ codex    │ 0.133.0    │ cx      │  288 │ ◑ 5d19h    │ ✓    │ OpenAI Codex CLI
+   │ cursor   │ agent    │ 2026.06.24 │ cs      │    4 │ —          │ ✓    │ Cursor CLI — AI-powered editor agent
+   │ droid    │ droid    │ 0.24.0     │ df      │   31 │ —          │ ✓    │ Factory Droid CLI
+   │ gemini   │ gemini   │ 0.35.1     │ gg      │   12 │ —          │ ✓    │ Gemini CLI by Google
+   │ opencode │ opencode │ 1.17.11    │ oc      │   96 │ —          │ ✓    │ opencode — open source terminal agent
 
   6/6 installed  ·  2 starred  ·  swe use <name>  │  swe hs star <name>  │  swe hs archive <name>  │  swe info <name>
   ★ = favourited (pinned top, neon border)

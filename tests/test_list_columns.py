@@ -87,7 +87,7 @@ class MultiselectTest(unittest.TestCase):
             self.assertTrue(col.about, f"{col.key} has no description")
 
     def test_costly_columns_are_flagged(self):
-        # REMAINING is the only one that reaches the network, and the editor
+        # QUOTA is the only one that reaches the network, and the editor
         # warns about it after saving.
         costly = [c.key for c in C.COLUMNS if c.costly]
         self.assertEqual(costly, ["rate"])
@@ -672,9 +672,10 @@ class LegendCoversEveryMarkerTest(unittest.TestCase):
             out = self._legend()
         self.assertIn("7d", out)
 
-    def test_it_explains_the_remaining_column_glyphs(self):
+    def test_it_explains_the_quota_column_glyphs(self):
         out = self._legend()
-        self.assertIn("REMAINING", out)
+        self.assertIn("QUOTA", out)
+        self.assertIn("●◕◑◔○", out)
         self.assertIn("re-login", out)
         self.assertIn("…", out)
 

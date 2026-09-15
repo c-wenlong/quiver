@@ -172,7 +172,7 @@ def cmd_list_edit(args=None) -> int:
     if removed:
         print(f"  {c('dim', '- ' + ', '.join(removed))}")
     if "rate" in saved:
-        note = ("REMAINING fetches over the network, so swe list will be "
+        note = ("QUOTA fetches over the network, so swe list will be "
                 "slower on a cold cache")
         print(f"  {c('yellow', 'note')} {c('dim', note)}")
     return 0
@@ -211,8 +211,9 @@ def cmd_list_legend(args=None) -> int:
     print(f"  {c('dim', 'Turn them on with')} {c('cyan', 'swe list edit')}"
           f"{c('dim', ', or read them with')} {c('cyan', 'swe hs archive')}{c('dim', '.')}")
 
-    print(f"\n  {c('bold', 'REMAINING column')}  {c('dim', '(starred harnesses only)')}\n")
-    print(f"  {c('green', '85%'.ljust(8))} {c('dim', 'share of the tightest quota window left; the dim tail is its reset countdown')}")
+    print(f"\n  {c('bold', 'QUOTA column')}  {c('dim', '(starred harnesses only)')}\n")
+    print(f"  {'●◕◑◔○'}   {c('dim', 'share of the tightest quota window left, green when full to red when empty')}")
+    print(f"          {c('dim', 'the dim tail is the window and its reset countdown (5h / 7d / 7ds for claude)')}")
     print(f"  {c('dim', 'no-sub'.ljust(8))} {c('dim', 'the endpoint is not polled for this tool (e.g. no subscription)')}")
     print(f"  {c('red', 're-login'.ljust(8))} {c('dim', 'token expired; sign in to the harness again')}")
     print(f"  {c('yellow', '…'.ljust(8))} {c('dim', 'the fetch did not finish inside the 2s deadline; swe list -n retries it')}")
@@ -606,9 +607,7 @@ def cmd_list(args):
         rendered.add("archived")
         table.add_column("archived", "ARCHIVED", width=10, kind="text")
     if "rate" in wanted:
-        table.add_column(
-            "rate", "REMAINING", width=14, kind="preformatted",
-        )
+        table.add_column("rate", "QUOTA", width=5, kind="preformatted")
     if "agents" in wanted:
         rendered.add("agents")
         table.add_column("agents", "AGENTS.MD", width=22, kind="preformatted")
@@ -686,11 +685,12 @@ def cmd_list(args):
         else:
             mark_cell = "  "  # 2 spaces of plain indent
 
-        # Remaining cell: format_column returns its own ANSI-coloured
-        # string of variable visible width ("70% —" = 5 chars vs
-        # "100% 5d18h" = 10). The preformatted kind pads each cell to the
-        # settled column width, so a longer payload widens the column
-        # once instead of pushing INST/DESCRIPTION right on that row.
+        # Quota cell: format_column returns a one-glyph pie on the
+        # red→green ramp plus a dim tail, of variable visible width
+        # ("◕ —" = 3 chars, "◔ 7ds:2d4h" = 9). The preformatted kind
+        # pads each cell to the settled column width, so a longer
+        # payload widens the column once instead of pushing
+        # INST/DESCRIPTION right on that row.
         rl = rate_limits.get(name)
         rate_cell = rl.format_column() if rl else c("dim", "—")
 

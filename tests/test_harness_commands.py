@@ -184,7 +184,7 @@ class CmdListHeaderTest(unittest.TestCase):
             if all(label in strip_ansi(raw) for label in ("NAME", "COMMAND", "VERSION"))
         )
         header = strip_ansi(lines[hdr_idx])
-        for label in ("NAME", "COMMAND", "VERSION", "ALIASES", "100d", "REMAINING", "INST", "DESCRIPTION"):
+        for label in ("NAME", "COMMAND", "VERSION", "ALIASES", "100d", "QUOTA", "INST", "DESCRIPTION"):
             self.assertIn(label, header, f"missing {label!r} in header: {header!r}")
         self.assertEqual(header.count("NAME"), 1)
         self.assertEqual(header.count("COMMAND"), 1)
@@ -287,7 +287,7 @@ class CmdListAccentTest(unittest.TestCase):
 
 
 class CmdListRateColumnTest(unittest.TestCase):
-    """The REMAINING column self-aligns: Table pads each preformatted cell."""
+    """The QUOTA column self-aligns: Table pads each preformatted cell."""
 
     def setUp(self):
         _pin_columns(self)
@@ -297,44 +297,47 @@ class CmdListRateColumnTest(unittest.TestCase):
         """Regression guard for the user's "rows with usage info misaligned" complaint.
 
         RateLimitInfo.format_column() returns a variable-width string
-        — e.g. "70% \u2014" is 5 chars, "100% 8d23h" is 10. The
-        ``preformatted`` kind pads the cell to the settled column
-        width, so rows with longer rate payloads keep the visible-border
-        gap " \u2502 " at exactly rate_start + 14 instead of
-        shifting right and breaking column alignment.
+        — a ramp-coloured pie glyph plus a dim tail, e.g. "◕ \u2014"
+        is 3 chars, "◔ 7ds:2d4h" is 9. The ``preformatted`` kind pads
+        the cell to the settled column width, so rows with longer rate
+        payloads keep the visible-border gap " \u2502 " at exactly
+        rate_start + rate_w instead of shifting right and breaking
+        column alignment.
         """
         output = _run_cmd_list()
         codex_row = _row_for_tool(output, "codex")
         plain = strip_ansi(codex_row)
-        # Span [rate_start, rate_start+14) must have visible length 14
-        # — the column pad closes the gap between "70% \u2014" (5 chars)
-        # and the column width.
-        rate_cell_width = 14
-        rate_start = plain.find("70%")
+        # The codex fixture (30% used, no window, no reset) renders
+        # "◕ —" = 3 chars, so the QUOTA header's 5 sets the width.
+        # Span [rate_start, rate_start+5) must have visible length 5 —
+        # the column pad closes the gap between "◕ —" (3 chars) and
+        # the column width.
+        rate_w = 5
+        rate_start = plain.find("◕")
         self.assertGreaterEqual(rate_start, 0, "rate cell content not found")
-        self.assertEqual(rate_cell_width, visible_len(plain[rate_start:rate_start + rate_cell_width]),
-            f"rate cell spans {visible_len(plain[rate_start:rate_start+rate_cell_width])} "
-            f"chars, expected {rate_cell_width} (= the settled column width)")
+        self.assertEqual(rate_w, visible_len(plain[rate_start:rate_start + rate_w]),
+            f"rate cell spans {visible_len(plain[rate_start:rate_start+rate_w])} "
+            f"chars, expected {rate_w} (= the settled column width)")
         # Beyond the rate cell is the visible-border gap " \u2502 ".
         self.assertEqual(
-            plain[rate_start + rate_cell_width: rate_start + rate_cell_width + 3], " \u2502 ",
+            plain[rate_start + rate_w: rate_start + rate_w + 3], " \u2502 ",
             f"rate column hasn't the documented column width: "
-            f"{plain[rate_start+rate_cell_width:rate_start+rate_cell_width+5]!r}",
+            f"{plain[rate_start+rate_w:rate_start+rate_w+5]!r}",
         )
 
     def test_table_pads_any_rate_payload_to_the_column(self):
         """Whatever format_column emits, the row lands on the grid.
 
         Locks the self-aligning contract: regardless of payload
-        (em-dash, plain digits, ANSI-coloured dim/green/red/yellow,
-        multi-byte chars, or one wider than the declared 14), the
-        ``preformatted`` kind pads to the settled column width — and a
-        payload past it grows the column once for every row instead of
-        shifting one row's remaining cells right.
+        (em-dash, pie glyph plus dim tail, ANSI colour, multi-byte
+        chars, or one wider than the declared 5), the ``preformatted``
+        kind pads to the settled column width — and a payload past it
+        grows the column once for every row instead of shifting one
+        row's remaining cells right.
         """
         payloads = [
             c("dim", "—"),
-            c("green", "30%"),
+            c("red", "re-login"),
             RateLimitInfo(
                 tool_name="codex", used_percent=30, limit_reached=False,
                 reset_at=0, plan_type="plus", window_seconds=0,
@@ -347,17 +350,21 @@ class CmdListRateColumnTest(unittest.TestCase):
                 tool_name="codex", used_percent=100, limit_reached=True,
                 reset_at=0, plan_type="plus", window_seconds=0,
             ).format_column(),
+            RateLimitInfo(
+                tool_name="claude", used_percent=85, limit_reached=False,
+                reset_at=0, plan_type="—", window_seconds=0, window="7ds",
+            ).format_column(),
             c("red", "x" * 20),  # wider than the declared width
         ]
         t = Table(column_gap=" │ ")
-        t.add_column("rate", "REMAINING", width=14, kind="preformatted")
+        t.add_column("rate", "QUOTA", width=5, kind="preformatted")
         t.add_column("tail", "TAIL", width=4, kind="text")
         for payload in payloads:
             t.add_row({"rate": payload, "tail": "x"})
         lines = t.render()
         sep_len = visible_len(lines[1])
-        # The 20-char payload grew the column past its declared 14.
-        self.assertGreater(sep_len, 14 + 3 + 4)
+        # The 20-char payload grew the column past its declared 5.
+        self.assertGreater(sep_len, 5 + 3 + 4)
         for line in lines[2:]:
             self.assertEqual(sep_len, visible_len(line),
                 f"row drifted to {visible_len(line)}: {strip_ansi(line)!r}")

@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`swe list` quota column is a pie glyph now.** REMAINING becomes QUOTA:
+  `○◔◑◕●` show the tightest window's share left on a red→green ramp (green
+  = full), followed by the dim reset countdown, so the column is ~5-10
+  chars instead of 14. `swe list legend` explains it.
 - **Archived means unmanaged in `swe init`.** Instructions, skills and hook
   scripts belonging to an archived harness that init would have created,
   relinked, absorbed or flagged are now reported `ignored` ("archived in
