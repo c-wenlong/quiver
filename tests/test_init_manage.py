@@ -16,6 +16,8 @@ from pathlib import Path
 from unittest import mock
 
 from quiver.init import commands as init_commands
+from quiver.init import manage
+from quiver.init.hooks import plan_hooks
 from quiver.init.layout import link_states, plan
 
 
@@ -160,6 +162,43 @@ class InteractivePickerTest(unittest.TestCase):
                 [p.name for p in (home / ".foo").iterdir()], ["skills"]
             )
 
+    def test_bad_filename_reasks_once_then_defaults(self):
+        for bad in (".", "..", "a/b"):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
+                home = _home(tmp)
+                (home / ".foo" / "skills").mkdir(parents=True)
+                out, _ = _init(home, ["--full"], supported=True,
+                               chosen=["foo"], lines=[bad, ""])
+                self.assertIn("just a filename such as AGENTS.md", out)
+                entry = _registry(home)["foo"]
+                self.assertEqual(
+                    entry["capabilities"]["instructions"]["file"],
+                    "~/.foo/AGENTS.md",
+                )
+
+    def test_register_refuses_bad_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".foo" / "skills"
+            root.mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                manage.register(home, {}, {"foo": (root, "..")}, {})
+            self.assertFalse(
+                (home / ".quiver" / "config" / "harness.json").exists()
+            )
+
+    def test_register_writes_atomically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".foo" / "skills"
+            root.mkdir(parents=True)
+            registry = manage.register(home, {}, {"foo": (root, None)}, {})
+            cfg = home / ".quiver" / "config"
+            self.assertFalse((cfg / "harness.json.tmp").exists())
+            self.assertEqual(
+                json.loads((cfg / "harness.json").read_text()), registry
+            )
+
     def test_eof_defaults_to_agents_md(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -217,6 +256,48 @@ class ArchivedMeansUnmanagedTest(unittest.TestCase):
             (home / ".factory" / "skills").symlink_to(shared)
             out, _ = _init(home, ["--check", "--full"])
             self.assertRegex(out, r"linked\s+~/\.factory/skills")
+
+    def test_archived_hook_is_ignored_not_linked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp, {"droid": {"state": "archived", "aliases": []}})
+            hooks = home / ".quiver" / "hooks" / "droid"
+            hooks.mkdir(parents=True)
+            (hooks / "x.sh").write_text("#!/bin/sh\n")
+            (home / ".factory").mkdir()
+            statuses = plan_hooks(home)
+            self.assertEqual(len(statuses), 1)
+            self.assertEqual(statuses[0].state, "ignored")
+            self.assertEqual(statuses[0].detail, "archived in harness.json")
+            out, _ = _init(home, ["--full"])
+            self.assertFalse((home / ".factory" / "hooks" / "x.sh").exists())
+
+    def test_archived_hook_already_linked_stays_linked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp, {"droid": {"state": "archived", "aliases": []}})
+            hooks = home / ".quiver" / "hooks" / "droid"
+            hooks.mkdir(parents=True)
+            (hooks / "x.sh").write_text("#!/bin/sh\n")
+            dest = home / ".factory" / "hooks"
+            dest.mkdir(parents=True)
+            (dest / "x.sh").symlink_to(hooks / "x.sh")
+            statuses = plan_hooks(home)
+            self.assertEqual(statuses[0].state, "linked")
+
+    def test_archived_entry_with_string_alias_marks_root_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp, {"gone": {"state": "archived", "aliases": "foo"}})
+            (home / ".foo" / "skills").mkdir(parents=True)
+            out, _ = _init(home, ["--check", "--full"])
+            self.assertRegex(out, r"ignored\s+~/\.foo/skills\s+archived in harness\.json")
+
+
+class StringAliasTest(unittest.TestCase):
+    def test_string_alias_counts_as_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp, {"bar": {"aliases": "foo"}})
+            (home / ".foo" / "skills").mkdir(parents=True)
+            _, picker = _init(home, ["--full"], supported=True, chosen=[])
+            self.assertFalse(picker.called)
 
 
 class RegistryDrivenTargetsTest(unittest.TestCase):

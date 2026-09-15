@@ -10,12 +10,31 @@ Printing and prompting stay in ``commands.py``.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
 
 from quiver import paths as _paths
-from quiver.init.layout import INSTRUCTION_TARGETS, LinkStatus, registry_name
+from quiver.init.layout import (
+    INSTRUCTION_TARGETS,
+    LinkStatus,
+    aliases_of,
+    registry_name,
+)
+
+
+def _valid_filename(value: str) -> bool:
+    """True only for a plain filename: no separators, no dot aliases.
+
+    ``.`` or ``..`` would resolve the instruction target to the harness
+    directory itself, which ``--force`` would then back up and delete.
+    """
+    return (
+        bool(value)
+        and value not in (".", "..")
+        and not any(ch in value for ch in ("/", "\\", "\0"))
+    )
 
 
 def new_harnesses(skills: list[LinkStatus], registry: dict) -> list[LinkStatus]:
@@ -35,8 +54,7 @@ def new_harnesses(skills: list[LinkStatus], registry: dict) -> list[LinkStatus]:
     known = set(registry) | {
         alias
         for entry in registry.values()
-        if isinstance(entry, dict)
-        for alias in entry.get("aliases") or []
+        for alias in aliases_of(entry)
     }
     known |= {registry_name(label) for label, _ in INSTRUCTION_TARGETS}
     found: dict[str, LinkStatus] = {}
@@ -116,6 +134,8 @@ def register(
             "skills": {"supported": True, "root": home_relative(root, home)},
         }
         if filename is not None:
+            if not _valid_filename(filename):
+                raise ValueError(f"invalid instruction filename: {filename!r}")
             capabilities["instructions"] = {
                 "file": home_relative(instruction_target(root, filename), home),
             }
@@ -134,6 +154,11 @@ def register(
         }
         registry[label] = entry
     config_dir.mkdir(parents=True, exist_ok=True)
-    with open(config_dir / "harness.json", "w", encoding="utf-8") as f:
+    target = config_dir / "harness.json"
+    tmp = config_dir / "harness.json.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(registry, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, target)
     return registry

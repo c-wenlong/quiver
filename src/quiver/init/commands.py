@@ -12,6 +12,7 @@ from quiver.paths import backup_tree
 from quiver.prompt import read_line
 from quiver.init.hooks import load_registry, plan_hooks
 from quiver.init.manage import (
+    _valid_filename,
     home_relative,
     legacy_registry_pending,
     new_harnesses,
@@ -24,6 +25,7 @@ from quiver.init.layout import (
     SEED_AGENTS_MD,
     SEED_LINKIGNORE,
     agents_file,
+    aliases_of,
     backups_dir,
     linkignore_file,
     load_linkignore,
@@ -175,13 +177,13 @@ def _ensure_scaffold(home: Path, check_only: bool) -> list[str]:
 def _instruction_filename(label: str) -> str | None:
     """Ask which filename one managed harness reads; None means no link."""
     value = ""
-    for attempt in range(2):  # a "/" answer gets one re-ask, then the default
+    for attempt in range(2):  # a bad name gets one re-ask, then the default
         if attempt:
-            print(c("dim", "  just the filename, no slashes"))
+            print(c("dim", "  just a filename such as AGENTS.md"))
         value = read_line(f"  {label} [AGENTS.md]: ").strip()
-        if "/" not in value:
+        if not value or _valid_filename(value):
             break
-    if "/" in value or not value:
+    if not _valid_filename(value):
         return "AGENTS.md"
     if value.lower() in ("skip", "none", "-"):
         return None
@@ -315,8 +317,8 @@ def cmd_init(args) -> int:
 
     registered = set(registry) | {
         alias
-        for entry in registry.values() if isinstance(entry, dict)
-        for alias in entry.get("aliases") or []
+        for entry in registry.values()
+        for alias in aliases_of(entry)
     }
     instructions = [
         s for s in instructions

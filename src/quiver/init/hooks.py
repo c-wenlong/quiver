@@ -31,6 +31,8 @@ from quiver import paths as _paths
 from quiver.init.layout import (
     IGNORED_DETAIL,
     LinkStatus,
+    archived_names,
+    archived_override,
     hooks_dir,
     is_linkignored,
     load_linkignore,
@@ -183,6 +185,7 @@ def plan_hooks(
         patterns = load_linkignore(home)
     if registry is None:
         registry = load_registry(home)
+    archived = archived_names(registry)
 
     root_dir = hooks_dir(home)
     if not root_dir.is_dir():
@@ -209,5 +212,9 @@ def plan_hooks(
             if is_linkignored(dest, home, patterns):
                 statuses.append(LinkStatus(name, dest, "ignored", IGNORED_DETAIL, source))
             else:
-                statuses.append(classify_hook(name, dest, source, home))
+                # An archived harness is unmanaged: leave its hooks alone
+                # too. A hook already linked stays linked, as for skills.
+                status = classify_hook(name, dest, source, home)
+                archived_override(status, archived)
+                statuses.append(status)
     return statuses

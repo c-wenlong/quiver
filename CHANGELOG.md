@@ -23,12 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Archived means unmanaged in `swe init`.** A path belonging to an
-  archived harness that init would have created, relinked, absorbed or
-  flagged is now reported `ignored` ("archived in harness.json") instead,
-  so archiving a harness stops init from touching its config. A path
-  already linked stays linked — init never unlinks — and `.linkignore`
-  still wins when both apply.
+- **Archived means unmanaged in `swe init`.** Instructions, skills and hook
+  scripts belonging to an archived harness that init would have created,
+  relinked, absorbed or flagged are now reported `ignored` ("archived in
+  harness.json") instead, so archiving a harness stops init from touching
+  its config. A path already linked stays linked — init never unlinks —
+  and `.linkignore` still wins when both apply.
 
 ### Fixed
 

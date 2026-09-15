@@ -234,13 +234,29 @@ def load_registry(home: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def aliases_of(entry) -> list[str]:
+    """A registry entry's aliases, tolerant of a hand-edited string.
+
+    ``"aliases": "foo"`` in a hand-edited harness.json would otherwise be
+    iterated as characters; treat it as one alias, and drop non-strings.
+    """
+    if not isinstance(entry, dict):
+        return []
+    aliases = entry.get("aliases")
+    if isinstance(aliases, str):
+        return [aliases]
+    if isinstance(aliases, (list, tuple)):
+        return [a for a in aliases if isinstance(a, str)]
+    return []
+
+
 def archived_names(registry: dict) -> set[str]:
     """Registry keys marked ``archived``, plus their aliases."""
     names: set[str] = set()
     for key, entry in registry.items():
         if isinstance(entry, dict) and entry.get("state") == "archived":
             names.add(key)
-            names.update(entry.get("aliases") or [])
+            names.update(aliases_of(entry))
     return names
 
 SEED_LINKIGNORE = """# Paths swe init leaves alone, one per line, relative to your home.
@@ -361,7 +377,7 @@ def _instruction_targets(registry: dict) -> list[tuple[str, Path]]:
     return targets
 
 
-def _archived_override(status: LinkStatus, archived: set[str]) -> None:
+def archived_override(status: LinkStatus, archived: set[str]) -> None:
     """Archived means unmanaged: anything init would change becomes ignored.
 
     A path already ``linked`` or ``skipped`` keeps its state (init never
@@ -402,7 +418,7 @@ def plan(
             instructions.append(LinkStatus(label, home / rel, "ignored", IGNORED_DETAIL))
         else:
             status = inspect(label, rel, agents_file(home), home)
-            _archived_override(status, archived)
+            archived_override(status, archived)
             instructions.append(status)
     skills = []
     for path in discover_skill_roots(home):
@@ -411,7 +427,7 @@ def plan(
         else:
             state, detail = classify_skill_root(path, home)
         status = LinkStatus(skill_root_label(path, home), path, state, detail)
-        _archived_override(status, archived)
+        archived_override(status, archived)
         skills.append(status)
     return instructions, skills
 
