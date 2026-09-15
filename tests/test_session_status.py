@@ -475,6 +475,13 @@ class DevinStatusTest(StatusTestBase):
         s = _session("devin", "d9", age_s=9999)
         self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
 
+    def test_zero_lock_pid_is_interrupted(self):
+        # kill(0, 0) probes this process's own group, not a devin pid.
+        self._tool_head_db("d10")
+        self._write_lock("d10", "0\n")
+        s = _session("devin", "d10", age_s=9999)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
 
 class CodexStatusTest(StatusTestBase):
     STEM = (
