@@ -222,6 +222,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `codex --resume <rollout stem>`; codex has no `--resume` option and its
   `resume` subcommand wants the thread uuid, so every codex resume failed
   on argument parsing.
+- **Claude usage no longer reads a stale `~/.claude/.credentials.json` over
+  a fresh Keychain login.** On macOS Claude Code refreshes the Keychain
+  entry and leaves the file behind, so an expired file token shadowed the
+  valid one and the usage endpoint 401'd until the file was deleted. quiver
+  now takes whichever source has the later `expiresAt`, and an expired
+  token renders `re-login` whether or not a refresh token is present,
+  since quiver cannot refresh it.
 
 ## [0.2.10] - 2026-08-25
 

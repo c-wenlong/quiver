@@ -725,24 +725,18 @@ _CLAUDE_WINDOWS: dict[str, str] = {
     "seven_day_sonnet": "7ds",
 }
 
+# The aggregator stops waiting for a fetcher after
+# ``_RATE_LIMIT_FETCH_DEADLINE`` (2s). A Keychain prompt that hangs must
+# not eat that budget, so the lookup gives up well inside it and the
+# fetch reports no reading for this window rather than promoting a
+# possibly stale file.
+_CLAUDE_KEYCHAIN_TIMEOUT = 1.0
 
-def _get_claude_oauth_credentials() -> dict | None:
-    """Return Claude Code's OAuth credential mapping from the best source.
 
-    Order of resolution (first hit wins):
-      1. Portable file path — ``~/.claude/.credentials.json`` direct
-         JSON file. Same shape as the macOS Keychain value and works
-         on Linux / docker / WSL identically.
-      2. macOS Keychain — ``security find-generic-password -l "Claude
-         Code-credentials"`` returns the credential JSON as the
-         password field.
-
-    Returns ``None`` if neither source is reachable / parseable. Both
-    paths silently degrade: a missing credentials file or missing
-    ``security`` binary should never break ``swe list`` rendering.
-    """
-    # 1. Portable file path. Always tried first because it's free (no
-    #    subprocess) and works identically on macOS + Linux + WSL.
+def _read_claude_credentials_file() -> dict | None:
+    """The ``claudeAiOauth`` mapping from ``~/.claude/.credentials.json``,
+    if it has a str ``accessToken``."""
+    # Portable file path, works identically on macOS + Linux + WSL.
     creds_path = os.path.expanduser("~/.claude/.credentials.json")
     if os.path.exists(creds_path):
         try:
@@ -755,9 +749,14 @@ def _get_claude_oauth_credentials() -> dict | None:
             if isinstance(oauth, dict):
                 if isinstance(oauth.get("accessToken"), str):
                     return oauth
+    return None
 
-    # 2. macOS Keychain. ``security`` ships with macOS; check via
-    #    shutil.which to avoid FileNotFoundError on non-Apple platforms.
+
+def _read_claude_keychain_credentials() -> dict | None:
+    """The ``claudeAiOauth`` mapping from the macOS Keychain, if it has a
+    str ``accessToken``."""
+    # macOS Keychain. ``security`` ships with macOS; check via
+    # shutil.which to avoid FileNotFoundError on non-Apple platforms.
     if not shutil.which("security"):
         return None
     try:
@@ -766,9 +765,11 @@ def _get_claude_oauth_credentials() -> dict | None:
              "-l", "Claude Code-credentials", "-w"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_CLAUDE_KEYCHAIN_TIMEOUT,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    # TimeoutExpired propagates: the caller must not read a slow
+    # Keychain as an empty one.
+    except OSError:
         return None
     if result.returncode != 0:
         return None
@@ -785,6 +786,48 @@ def _get_claude_oauth_credentials() -> dict | None:
     if not isinstance(oauth, dict):
         return None
     return oauth if isinstance(oauth.get("accessToken"), str) else None
+
+
+def _claude_expires_at_seconds(oauth: dict) -> float:
+    """``expiresAt`` as epoch seconds; accepts ms or s, 0.0 when
+    missing/unparseable."""
+    expires_at = oauth.get("expiresAt")
+    try:
+        expires_at = float(expires_at)
+        return expires_at / 1000 if expires_at > 100_000_000_000 else expires_at
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _get_claude_oauth_credentials() -> dict | None:
+    """Return Claude Code's OAuth credential mapping from the best source.
+
+    Both sources are read and the one with the later ``expiresAt``
+    wins; on a tie (e.g. neither records ``expiresAt``) the file keeps
+    its preference since it comes first. Claude Code on macOS refreshes
+    the Keychain entry and leaves the file behind, and a re-login or
+    account switch has to win even while the old file token is still
+    unexpired. The Keychain reader is a no-op off macOS
+    (``shutil.which("security")`` is ``None``), and the result is cached
+    for the rate-limit TTL, so the subprocess cost is one call per
+    window.
+
+    A Keychain timeout yields ``None`` rather than the file: the lookup
+    failed, so the file's freshness is unknown. ``None`` is also the
+    answer if neither source is reachable / parseable. Both paths
+    silently degrade: a missing credentials file or missing
+    ``security`` binary should never break ``swe list`` rendering.
+    """
+    file_creds = _read_claude_credentials_file()
+    try:
+        keychain_creds = _read_claude_keychain_credentials()
+    except subprocess.TimeoutExpired:
+        # Unknown, not absent. Promoting the file here would make a stale
+        # token authoritative, so report no reading for this window; the
+        # aggregator keeps the last good value for up to 24h.
+        return None
+    candidates = [creds for creds in (file_creds, keychain_creds) if creds]
+    return max(candidates, key=_claude_expires_at_seconds) if candidates else None
 
 
 def _get_claude_access_token() -> str | None:
@@ -914,19 +957,10 @@ def _fetch_claude() -> RateLimitInfo | None:
     if not token:
         return None
 
-    expires_at = oauth.get("expiresAt")
-    try:
-        expires_at = float(expires_at)
-        expires_at_seconds = (
-            expires_at / 1000 if expires_at > 100_000_000_000 else expires_at
-        )
-    except (TypeError, ValueError):
-        expires_at_seconds = 0.0
-    if (
-        expires_at_seconds
-        and expires_at_seconds <= time.time()
-        and not oauth.get("refreshToken")
-    ):
+    # quiver never refreshes tokens, so an expired token always 401s
+    # even when a refreshToken sits next to it.
+    expires_at_seconds = _claude_expires_at_seconds(oauth)
+    if expires_at_seconds and expires_at_seconds <= time.time():
         return RateLimitInfo(
             tool_name="claude",
             used_percent=0,
