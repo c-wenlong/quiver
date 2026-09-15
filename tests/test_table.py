@@ -305,6 +305,74 @@ class TableRowAccentTest(unittest.TestCase):
         self.assertIn("okay", strip_ansi(out[-1]))
 
 
+class TablePreformattedKindTest(unittest.TestCase):
+    """``preformatted`` cells ship their own ANSI, and the table pads them
+    to the settled column width so every row lands the same gap.
+
+    ``trust_cell_width=True`` is the verbatim opt-out for cells that
+    pre-pad themselves (``cpad`` output); everything else is normalized.
+    """
+
+    def test_short_cell_is_padded_to_the_column_width(self):
+        t = Table()
+        t.add_column("a", "A", width=8, fit="fixed", kind="preformatted")
+        t.add_column("b", "B", width=4, fit="fixed")
+        t.add_row({"a": c("green", "hi"), "b": "x"})
+        out = t.render()
+        # The painted cell still fills its column, so the row's visible
+        # length equals the separator's (8 + 2-gap + 4 = 14).
+        self.assertEqual(visible_len(out[-1]), visible_len(out[1]))
+        self.assertEqual("hi      ", strip_ansi(out[-1])[:8])
+
+    def test_right_attr_pads_on_the_left(self):
+        t = Table()
+        t.add_column("a", "A", width=6, fit="fixed",
+                     kind="preformatted", right=True)
+        t.add_row({"a": c("green", "42")})
+        out = t.render()
+        self.assertEqual("    42", strip_ansi(out[-1]))
+
+    def test_cell_longer_than_declared_width_grows_the_column(self):
+        # Bounded fit with no max_width lets the longest cell set the
+        # width; the short row is padded up to it so both rows align.
+        t = Table()
+        t.add_column("a", "A", width=4, kind="preformatted")
+        t.add_column("b", "B", width=4, fit="fixed")
+        t.add_row({"a": "ab", "b": "x"})
+        t.add_row({"a": c("red", "a" * 9), "b": "y"})
+        out = t.render()
+        self.assertEqual(visible_len(out[1]), visible_len(out[2]),
+            f"short row drifted: {strip_ansi(out[2])!r}")
+        self.assertEqual(visible_len(out[2]), visible_len(out[3]))
+        self.assertEqual("ab" + " " * 7, strip_ansi(out[2])[:9])
+
+    def test_trust_cell_width_stays_verbatim(self):
+        t = Table()
+        t.add_column("a", "A", width=10, fit="fixed",
+                     kind="preformatted", trust_cell_width=True)
+        t.add_column("b", "B", width=4, fit="fixed")
+        raw = c("green", "hi")
+        t.add_row({"a": raw, "b": "x"})
+        out = t.render()
+        self.assertTrue(out[-1].startswith(raw))
+        # No pad was added, so the row is narrower than the separator -
+        # verbatim means the cell keeps exactly the width it shipped.
+        self.assertLess(visible_len(out[-1]), visible_len(out[1]))
+
+    def test_oversized_cell_is_cut_ansi_safe_in_a_capped_column(self):
+        # fixed (or bounded at max_width) cannot grow, so a too-long cell
+        # is truncated rather than left to push the rest of the row out.
+        t = Table()
+        t.add_column("a", "A", width=6, fit="fixed", kind="preformatted")
+        t.add_column("b", "B", width=4, fit="fixed")
+        t.add_row({"a": c("green", "toolongvalue"), "b": "x"})
+        out = t.render()
+        self.assertEqual(visible_len(out[-1]), visible_len(out[1]))
+        self.assertEqual("toolon", strip_ansi(out[-1])[:6])
+        # The cut cell is closed with a reset so green cannot bleed into b.
+        self.assertIn("\x1b[0m", out[-1])
+
+
 class TableMissingKeysTest(unittest.TestCase):
     def test_missing_known_key_renders_empty_marker(self):
         t = Table()
