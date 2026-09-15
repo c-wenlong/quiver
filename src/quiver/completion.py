@@ -76,6 +76,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("-n", "Short for --check"),
         ("--force", "Replace real files too (backed up first)"),
         ("--migrate", "Move a pre-0.2.7 ~/.config/swe into ~/.quiver"),
+        ("--yes", "Register every new harness without asking"),
     ],
     "setup": [
         ("--quick", "Only missing or actionable stages"),
