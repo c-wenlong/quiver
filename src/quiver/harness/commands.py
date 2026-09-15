@@ -181,7 +181,7 @@ def cmd_list_edit(args=None) -> int:
 
 
 def cmd_list_legend(args=None) -> int:
-    """Explain the glyphs in the AGENTS.MD and SKILLS columns.
+    """Explain the glyphs used by the swe list columns.
 
     The columns render as single characters with no key anywhere, so a
     reader who forgot what a yellow circle meant had nowhere to look.
@@ -212,6 +212,13 @@ def cmd_list_legend(args=None) -> int:
     print(f"  {c('dim', 'USAGE, ARCHIVED and REASON appear only when a row is archived.')}")
     print(f"  {c('dim', 'Turn them on with')} {c('cyan', 'swe list edit')}"
           f"{c('dim', ', or read them with')} {c('cyan', 'swe hs archive')}{c('dim', '.')}")
+
+    print(f"\n  {c('bold', 'REMAINING column')}  {c('dim', '(starred harnesses only)')}\n")
+    print(f"  {c('green', '85%'.ljust(8))} {c('dim', 'share of the tightest quota window left; the dim tail is its reset countdown')}")
+    print(f"  {c('dim', 'no-sub'.ljust(8))} {c('dim', 'the endpoint is not polled for this tool (e.g. no subscription)')}")
+    print(f"  {c('red', 're-login'.ljust(8))} {c('dim', 'token expired; sign in to the harness again')}")
+    print(f"  {c('yellow', '…'.ljust(8))} {c('dim', 'the fetch did not finish inside the 2s deadline; swe list -n retries it')}")
+    print(f"  {c('dim', '—'.ljust(8))} {c('dim', 'no usage endpoint, or it returned nothing')}")
 
     print(f"\n  {c('bold', 'AGENTS.MD and SKILLS glyphs')}\n")
     rows = [

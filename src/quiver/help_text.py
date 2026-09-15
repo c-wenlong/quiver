@@ -17,7 +17,7 @@ HELP = {
   {c('cyan', 'swe list -n')}                  Fetch new session and rate-limit data
   {c('cyan', 'swe list edit')}                Choose which columns to show
   {c('cyan', 'swe list edit --reset')}        Restore the default columns
-  {c('cyan', 'swe list legend')}             Explain the AGENTS.MD / SKILLS glyphs
+  {c('cyan', 'swe list legend')}             Explain the swe list column glyphs
 
   Starring pins a tool to the top of {c('cyan', 'swe list')} ({c('neon_pink', '★')}) and opts it into
   rate-limit / quota fetching — the {c('cyan', '--usage')} column only polls starred
