@@ -293,11 +293,13 @@ def get_mcp_tools(registry: dict) -> dict:
 
 
 def _strip_jsonc(text: str) -> str:
-    """Drop ``//`` and ``/* */`` comments, preserving string contents.
+    """Drop ``//`` and ``/* */`` comments and trailing commas.
 
     A ``.jsonc`` file that fails to parse reads as ``{}`` and a later
     write would emit only the synced slice, dropping every other key.
-    Stripping comments on read keeps the rest of the file intact.
+    Comments and trailing commas are the whole of the JSONC extension;
+    stripping both keeps the rest of the file intact. String contents
+    (``https://``, ``,}``) are preserved in both passes.
     """
     out: list[str] = []
     i, n = 0, len(text)
@@ -324,6 +326,37 @@ def _strip_jsonc(text: str) -> str:
             while i + 1 < n and text[i : i + 2] != "*/":
                 i += 1
             i += 2
+        else:
+            out.append(ch)
+            i += 1
+
+    text = "".join(out)
+    out = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif ch == '"':
+                in_str = False
+            i += 1
+        elif ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+        elif ch == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
+                i += 1  # trailing comma: drop it
+            else:
+                out.append(ch)
+                i += 1
         else:
             out.append(ch)
             i += 1
