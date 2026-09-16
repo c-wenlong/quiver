@@ -502,7 +502,14 @@ def _cline_last_assistant_text(session_id: str) -> str:
     if not isinstance(messages, list):
         return ""
     for msg in reversed(messages):
-        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role == "user":
+            # A user reply is the turn boundary: earlier assistant text
+            # belongs to a turn the user already answered.
+            break
+        if role != "assistant":
             continue
         text = _blocks_text(msg.get("content") or [])
         if text:
