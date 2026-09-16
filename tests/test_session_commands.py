@@ -30,6 +30,13 @@ class SessionCommandsTest(unittest.TestCase):
         self.assertEqual(_resume_cmd_args(s), ["devin", "--resume", "bald-trust"])
 
         s = SimpleNamespace(
+            tool_name="cline", session_id="1789471031317_jp2hv", agent="Cline"
+        )
+        self.assertEqual(
+            _resume_cmd_args(s), ["cline", "--id", "1789471031317_jp2hv"]
+        )
+
+        s = SimpleNamespace(
             tool_name="cursor",
             session_id="ba1ee2f1-e819-4932-abb5-252dce580dac",
             agent="Cursor",
