@@ -859,6 +859,32 @@ class ClineStatusTest(StatusTestBase):
         s = _session("cline", "c11", age_s=9999)
         self.assertEqual(DONE, session_status(s, now=NOW))
 
+    def test_finished_scans_past_noise_for_last_text(self):
+        # Non-dict records, non-assistant roles and text-less assistant
+        # blocks are skipped on the walk back to real text.
+        self._write_cline(
+            "c12", "waiting",
+            messages=[
+                self._msg("assistant", "Ship it?"),
+                self._msg("user", "go"),
+                {"role": "assistant",
+                 "content": [{"type": "thinking", "thinking": "hmm"}]},
+                "not-a-record",
+            ],
+        )
+        s = _session("cline", "c12", age_s=9999)
+        self.assertEqual(FOLLOWUP, session_status(s, now=NOW))
+
+    def test_waiting_with_no_assistant_text_is_done(self):
+        self._write_cline("c13", "waiting", messages=[self._msg("user", "hi")])
+        s = _session("cline", "c13", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_pid_liveness_tolerates_missing_meta(self):
+        from quiver.sessions.status import _cline_pid_alive
+
+        self.assertFalse(_cline_pid_alive("nonexistent"))
+
 
 def _pi_msg(role, texts=None, tool_call=False):
     content = [{"type": "text", "text": t} for t in texts or []]
