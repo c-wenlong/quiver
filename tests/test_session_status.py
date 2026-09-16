@@ -773,6 +773,93 @@ class KiloStatusTest(StatusTestBase):
         self.assertEqual(UNKNOWN, session_status(s, now=NOW))
 
 
+class ClineStatusTest(StatusTestBase):
+    """Cline 3.x session metadata carries status/pid lifecycle fields."""
+
+    def _write_cline(self, sid, status, pid=None, messages=None):
+        d = os.path.join(self.home, ".cline", "data", "sessions", sid)
+        os.makedirs(d, exist_ok=True)
+        meta = {"session_id": sid, "status": status}
+        if pid is not None:
+            meta["pid"] = pid
+        with open(os.path.join(d, sid + ".json"), "w") as fh:
+            json.dump(meta, fh)
+        if messages is not None:
+            with open(os.path.join(d, sid + ".messages.json"), "w") as fh:
+                json.dump({"sessionId": sid, "messages": messages}, fh)
+
+    def _msg(self, role, *texts):
+        return {
+            "role": role,
+            "content": [{"type": "text", "text": t} for t in texts],
+        }
+
+    def test_done_on_completed_with_signoff(self):
+        self._write_cline(
+            "c1", "completed",
+            messages=[self._msg("user", "hi"), self._msg("assistant", "Done.")],
+        )
+        s = _session("cline", "c1", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_followup_on_waiting_with_question(self):
+        self._write_cline(
+            "c2", "waiting",
+            messages=[self._msg("assistant", "Which branch should I use?")],
+        )
+        s = _session("cline", "c2", age_s=9999)
+        self.assertEqual(FOLLOWUP, session_status(s, now=NOW))
+
+    def test_done_on_waiting_without_question(self):
+        self._write_cline(
+            "c3", "waiting", messages=[self._msg("assistant", "All set.")]
+        )
+        s = _session("cline", "c3", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_error_on_failed(self):
+        self._write_cline("c4", "failed")
+        s = _session("cline", "c4", age_s=9999)
+        self.assertEqual(ERROR, session_status(s, now=NOW))
+
+    def test_interrupted_on_canceled_and_paused(self):
+        for sid, status in (("c5", "canceled"), ("c6", "paused")):
+            self._write_cline(sid, status)
+            s = _session("cline", sid, age_s=9999)
+            self.assertEqual(INTERRUPTED, session_status(s, now=NOW), status)
+
+    def test_active_on_running_with_live_pid_despite_age(self):
+        # started_at never advances, so an old running session needs the
+        # pid liveness check to read as active rather than interrupted.
+        self._write_cline("c7", "running", pid=os.getpid())
+        s = _session("cline", "c7", age_s=9999)
+        self.assertEqual(ACTIVE, session_status(s, now=NOW))
+
+    def test_interrupted_on_running_with_dead_pid(self):
+        self._write_cline("c8", "running", pid=2 ** 22)
+        s = _session("cline", "c8", age_s=9999)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
+    def test_active_on_streaming_with_fresh_timestamp(self):
+        self._write_cline("c9", "streaming")
+        s = _session("cline", "c9", age_s=0)
+        self.assertEqual(ACTIVE, session_status(s, now=NOW))
+
+    def test_unknown_on_missing_metadata(self):
+        s = _session("cline", "gone", age_s=0)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+    def test_unknown_on_unrecognized_status(self):
+        self._write_cline("c10", "hibernating")
+        s = _session("cline", "c10", age_s=9999)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+    def test_idle_without_messages_file_is_done(self):
+        self._write_cline("c11", "idle")
+        s = _session("cline", "c11", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+
 def _pi_msg(role, texts=None, tool_call=False):
     content = [{"type": "text", "text": t} for t in texts or []]
     if tool_call:

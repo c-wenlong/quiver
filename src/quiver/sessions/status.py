@@ -1,13 +1,15 @@
 """Per-session status for ``swe session``: where each conversation stands.
 
-Six harnesses carry enough on-disk state to say more than "a session
+Seven harnesses carry enough on-disk state to say more than "a session
 existed": Claude Code (transcript tail, live-pid registry, bg-job state),
 Cursor (terminal ``turn_ended`` record), Devin (main-chain head row in
 its SQLite store, plus the ``session_locks`` pid files for liveness),
 Codex (decisive ``event_msg`` in the rollout tail, with a
 ``response_item`` fallback), OpenCode (last ``message`` row's ``finish``
-field in its SQLite store) and Pi (the trailing ``message`` record in the
-JSONL transcript). Every other harness shows ``-``.
+field in its SQLite store), Kilo (same drizzle schema, ``kilo.db``),
+Cline (the ``status``/``pid`` lifecycle fields in the session metadata
+file) and Pi (the trailing ``message`` record in the JSONL transcript).
+Every other harness shows ``-``.
 
 ``followup`` is the label for a finished turn that ends by asking the user
 something. Claude Code's own ``claude agents`` derives its blocked /
@@ -444,6 +446,97 @@ def _probe_kilo(session: Session, ctx: dict):
     return _probe_opencode(session, {"opencode_conn": ctx.get("kilo_conn")})
 
 
+# Cline 3.x session metadata (``data/sessions/<id>/<id>.json``) carries a
+# ``status`` lifecycle field. ``waiting`` means blocked on user input, so
+# it joins the finished phases: the last assistant text decides between
+# followup and done. ``paused`` is a user-initiated stop, closer to an
+# interrupt than to a finished turn.
+_CLINE_PHASES = {
+    "running": "midturn",
+    "streaming": "midturn",
+    "waiting": "finished",
+    "idle": "finished",
+    "completed": "finished",
+    "failed": "error",
+    "paused": "aborted",
+    "canceled": "aborted",
+    "cancelled": "aborted",
+}
+
+
+def _cline_meta_path(session_id: str) -> str:
+    return os.path.join(
+        os.path.expanduser("~/.cline/data/sessions"),
+        session_id,
+        session_id + ".json",
+    )
+
+
+def _cline_pid_alive(session_id: str) -> bool:
+    """True when the session metadata's ``pid`` still names a process.
+
+    ``started_at`` never moves past session start, so the timestamp
+    window alone would call every turn older than two minutes dead;
+    the recorded pid is the real liveness signal.
+    """
+    try:
+        with open(_cline_meta_path(session_id), encoding="utf-8") as fh:
+            pid = json.load(fh).get("pid")
+    except Exception:
+        return False
+    return isinstance(pid, int) and _pid_alive(pid)
+
+
+def _cline_last_assistant_text(session_id: str) -> str:
+    path = os.path.join(
+        os.path.expanduser("~/.cline/data/sessions"),
+        session_id,
+        session_id + ".messages.json",
+    )
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return ""
+    messages = data.get("messages") if isinstance(data, dict) else None
+    if not isinstance(messages, list):
+        return ""
+    for msg in reversed(messages):
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        text = _blocks_text(msg.get("content") or [])
+        if text:
+            return text
+    return ""
+
+
+def _probe_cline(session: Session, ctx: dict):
+    """(phase, text) from the session metadata's ``status`` field.
+
+    Cline 3.x stamps ``running``/``streaming`` mid-turn, ``waiting`` when
+    blocked on user input, ``idle``/``completed`` on a closed turn and
+    ``failed``/``canceled``/``paused`` on terminal stops. Closed and
+    blocked phases tail the messages file for the final assistant text
+    so ``needs_followup`` can tell a question from a sign-off. Legacy
+    ``taskHistory.json`` sessions have no metadata file and stay unknown.
+    """
+    try:
+        with open(
+            _cline_meta_path(session.session_id), encoding="utf-8"
+        ) as fh:
+            meta = json.load(fh)
+    except Exception:
+        return None, ""
+    if not isinstance(meta, dict):
+        return None, ""
+    phase = _CLINE_PHASES.get(meta.get("status"))
+    if phase is None:
+        return None, ""
+    if phase == "finished":
+        return "finished", _cline_last_assistant_text(session.session_id)
+    return phase, ""
+
+
 def _probe_pi(session: Session, ctx: dict):
     """(phase, text) from the transcript's trailing ``message`` record.
 
@@ -492,6 +585,7 @@ def _probe_pi(session: Session, ctx: dict):
 
 _PROBES = {
     "claude": _probe_claude,
+    "cline": _probe_cline,
     "codex": _probe_codex,
     "cursor": _probe_cursor,
     "devin": _probe_devin,
@@ -616,6 +710,8 @@ def _one_status(session: Session, now: float, ctx: dict) -> str:
             alive = alive or session.session_id in ctx["claude_live"]
         elif session.tool_name == "devin":
             alive = alive or _devin_lock_alive(session.session_id)
+        elif session.tool_name == "cline":
+            alive = alive or _cline_pid_alive(session.session_id)
         return ACTIVE if alive else INTERRUPTED
     if phase == "finished":
         if session.tool_name == "claude":
