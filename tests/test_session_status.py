@@ -860,13 +860,12 @@ class ClineStatusTest(StatusTestBase):
         self.assertEqual(DONE, session_status(s, now=NOW))
 
     def test_finished_scans_past_noise_for_last_text(self):
-        # Non-dict records, non-assistant roles and text-less assistant
-        # blocks are skipped on the walk back to real text.
+        # Non-dict records and text-less assistant blocks are skipped on
+        # the walk back to real text.
         self._write_cline(
             "c12", "waiting",
             messages=[
                 self._msg("assistant", "Ship it?"),
-                self._msg("user", "go"),
                 {"role": "assistant",
                  "content": [{"type": "thinking", "thinking": "hmm"}]},
                 "not-a-record",
@@ -874,6 +873,21 @@ class ClineStatusTest(StatusTestBase):
         )
         s = _session("cline", "c12", age_s=9999)
         self.assertEqual(FOLLOWUP, session_status(s, now=NOW))
+
+    def test_answered_question_is_not_followup(self):
+        # The user replied after the question, so the earlier assistant
+        # text belongs to an answered turn and must not leak through.
+        self._write_cline(
+            "c12b", "waiting",
+            messages=[
+                self._msg("assistant", "Ship it?"),
+                self._msg("user", "go"),
+                {"role": "assistant",
+                 "content": [{"type": "thinking", "thinking": "hmm"}]},
+            ],
+        )
+        s = _session("cline", "c12b", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
 
     def test_waiting_with_no_assistant_text_is_done(self):
         self._write_cline("c13", "waiting", messages=[self._msg("user", "hi")])
