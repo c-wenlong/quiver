@@ -191,8 +191,12 @@ class RateLimitCacheTest(unittest.TestCase):
     def test_cache_expiry(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "rate_limits_cache.json"
-            with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
-                from quiver.harness.rate_limits import _save_cached, _load_cached, _CACHE_TTL
+            # _CACHE_TTL is bound once at import, so an ambient
+            # SWE_RATE_LIMITS_TTL (e.g. "inf") would leak into the expiry
+            # check; pin the module constant to keep the test hermetic.
+            with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file), \
+                    patch("quiver.harness.rate_limits._CACHE_TTL", 300.0):
+                from quiver.harness.rate_limits import _save_cached, _load_cached
 
                 raw = {
                     "codex": {
@@ -207,7 +211,7 @@ class RateLimitCacheTest(unittest.TestCase):
                 # Write with an old timestamp
                 cache_file.parent.mkdir(parents=True, exist_ok=True)
                 cache_file.write_text(
-                    json.dumps({"cached_at": time.time() - _CACHE_TTL - 10, "limits": raw})
+                    json.dumps({"cached_at": time.time() - 310, "limits": raw})
                 )
                 loaded = _load_cached()
                 self.assertIsNone(loaded)
