@@ -279,7 +279,7 @@ class ListLinksViewTest(unittest.TestCase):
 
         self.assertIn("AGENTS.MD", out)
         self.assertIn("SKILLS", out)
-        self.assertNotIn("REMAINING", out)
+        self.assertNotIn("QUOTA", out)
 
     def test_default_view_shows_neither_usage_nor_links(self):
         from quiver.harness import commands as harness_commands
@@ -289,7 +289,7 @@ class ListLinksViewTest(unittest.TestCase):
             harness_commands.cmd_list([])
         out = buf.getvalue()
         self.assertNotIn("AGENTS.MD", out)
-        self.assertNotIn("REMAINING", out)
+        self.assertNotIn("QUOTA", out)
         self.assertIn("DESCRIPTION", out)
 
 
@@ -320,13 +320,13 @@ class ListUsageOptInTest(unittest.TestCase):
     def test_plain_list_never_fetches_rate_limits(self):
         calls, out = self._run([])
         self.assertEqual(calls, [])
-        self.assertNotIn("REMAINING", out)
+        self.assertNotIn("QUOTA", out)
         self.assertIn("DESCRIPTION", out)
 
     def test_usage_flag_fetches(self):
         calls, out = self._run(["--usage"])
         self.assertEqual(len(calls), 1)
-        self.assertIn("REMAINING", out)
+        self.assertIn("QUOTA", out)
         self.assertIn("100d", out)
 
     def test_short_usage_flag(self):
@@ -337,13 +337,13 @@ class ListUsageOptInTest(unittest.TestCase):
         calls, out = self._run(["--refresh"])
         self.assertEqual(len(calls), 1)
         self.assertFalse(calls[0][1]["use_cache"], "refresh must bypass the cache")
-        self.assertIn("REMAINING", out)
+        self.assertIn("QUOTA", out)
 
     def test_links_wins_over_usage_and_stays_offline(self):
         calls, out = self._run(["--links", "--usage"])
         self.assertEqual(calls, [])
         self.assertIn("AGENTS.MD", out)
-        self.assertNotIn("REMAINING", out)
+        self.assertNotIn("QUOTA", out)
 
     def test_tag_filter_still_works_alongside_flags(self):
         _, out = self._run(["--usage", "agentic"])

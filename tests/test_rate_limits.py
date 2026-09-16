@@ -38,24 +38,81 @@ class RateLimitInfoTest(unittest.TestCase):
                 window_seconds=window_seconds,
             )
 
-    def test_format_column_green(self):
+    def test_format_column_pie_over_half(self):
         info = self._make_info(30, False, 3600)  # 1h ahead
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        self.assertIn("70%", col)
+        self.assertIn("◕", col)      # 70% remaining → three-quarter pie
         self.assertIn("1h0m", col)
+        self.assertNotIn("%", col)
 
-    def test_format_column_yellow_threshold(self):
+    def test_format_column_pie_low_fill(self):
         info = self._make_info(85, False, 7200)  # 2h ahead
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        self.assertIn("15%", col)
+        self.assertIn("◔", col)      # 15% remaining → quarter pie
+        self.assertIn("2h0m", col)
 
-    def test_format_column_red_when_reached(self):
+    def test_format_column_pie_full_green(self):
+        info = self._make_info(0, False, 3600)
+        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+            col = info.format_column()
+        self.assertIn("●", col)
+        self.assertIn("\x1b[38;5;46m", col)
+
+    def test_format_column_pie_empty_red(self):
         info = self._make_info(100, True, 503753)
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        self.assertIn("0%", col)
+        self.assertIn("○", col)
+        self.assertIn("\x1b[38;5;196m", col)
+
+    def test_format_column_limit_reached_forces_empty_pie(self):
+        """limit_reached at a partial fill still draws the empty red pie."""
+        info = self._make_info(40, True, 3600)
+        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+            col = info.format_column()
+        self.assertIn("○", col)
+        self.assertIn("38;5;196", col)
+
+    def test_format_column_pie_keeps_window_tail(self):
+        """A claude-style info renders the pie plus the window:reset tail."""
+        info = RateLimitInfo(
+            tool_name="claude",
+            used_percent=30,
+            limit_reached=False,
+            reset_at=self._NOW + 2 * 86400 + 4 * 3600,
+            plan_type="—",
+            window_seconds=604800,
+            window="7d",
+        )
+        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+            col = info.format_column()
+        from quiver.console import strip_ansi
+        plain = strip_ansi(col)
+        self.assertEqual(plain, "◕ 7d:2d4h")
+        self.assertIn("7d:", plain)
+        self.assertNotIn("%", plain)
+
+    def test_format_column_units_path_pie(self):
+        """remaining_units/total_units shows the pie plus the units tail."""
+        info = RateLimitInfo(
+            tool_name="devin",
+            used_percent=88,
+            limit_reached=False,
+            reset_at=0,
+            plan_type="—",
+            window_seconds=0,
+            remaining_units=173,
+            total_units=1500,
+        )
+        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+            col = info.format_column()
+        from quiver.console import strip_ansi
+        plain = strip_ansi(col)
+        self.assertIn("173/1500", plain)
+        self.assertTrue(plain[0] in "○◔◑◕●", plain)
+        self.assertNotIn("%", plain)
 
     def test_remaining_percent_is_clamped(self):
         self.assertEqual(self._make_info(-5, False, 0).remaining_percent, 100)
@@ -75,8 +132,8 @@ class RateLimitInfoTest(unittest.TestCase):
         with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
         self.assertIn("3/4", col)
-        self.assertIn("1h0m", col)
         self.assertNotIn("75%", col)
+        self.assertIn("1h0m", col)
 
     def test_reset_in_human_days(self):
         info = self._make_info(50, False, 5 * 86400 + 3600)  # 5d1h ahead
@@ -1897,9 +1954,10 @@ class ClaudeFetcherTest(unittest.TestCase):
                    return_value=RateLimitInfoTest._NOW):
             col = info.format_column()
         # Window label MUST appear; reset countdown MUST appear.
-        self.assertIn("7ds", col)
+        self.assertIn("7ds:", col)
         self.assertIn("5h0m", col)
-        self.assertIn("15%", col)
+        self.assertIn("◔", col)  # 15% remaining → quarter pie
+        self.assertNotIn("%", col)
 
     def test_format_column_without_window_shows_remaining(self):
         """A provider without a window label still shows remaining quota."""
@@ -1917,7 +1975,8 @@ class ClaudeFetcherTest(unittest.TestCase):
             col = info.format_column()
         # No window marker; the colons that mark the window prefix must not appear.
         self.assertNotIn(":", col.replace("—", ""))
-        self.assertIn("70%", col)
+        self.assertIn("◕", col)  # 70% remaining → three-quarter pie
+        self.assertNotIn("%", col)
 
 
 class FreebuffFetcherTest(unittest.TestCase):
@@ -3088,7 +3147,7 @@ class CursorFetcherTest(unittest.TestCase):
             "quiver.harness.rate_limits.time.time",
             return_value=1789190193.0 - 3 * 3600,
         ):
-            self.assertEqual(strip_ansi(info.format_column()), "50% auto: 3h0m")
+            self.assertEqual(strip_ansi(info.format_column()), "◑ auto:3h0m")
 
 
 class DevinFetcherTest(unittest.TestCase):
