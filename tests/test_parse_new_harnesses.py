@@ -331,6 +331,8 @@ class ParseClineTest(unittest.TestCase):
             def expand(p: str) -> str:
                 if p.endswith("taskHistory.json"):
                     return str(state / "taskHistory.json")
+                if p.endswith("data/sessions"):
+                    return str(base / "data" / "sessions")
                 return p
 
             with mock.patch("quiver.sessions.parsers.os.path.expanduser", side_effect=expand):
@@ -341,6 +343,53 @@ class ParseClineTest(unittest.TestCase):
             self.assertEqual(sessions[0].tool_name, "cline")
             self.assertEqual(sessions[0].path, "/tmp/downloads")
             self.assertEqual(sessions[0].title, "Hello")
+
+    def test_reads_session_dirs(self):
+        # Cline 3.x: data/sessions/<id>/<id>.json beside a
+        # <id>.messages.json transcript; only the metadata file counts.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            sess_dir = base / "data" / "sessions" / "1789471031317_jp2hv"
+            sess_dir.mkdir(parents=True)
+            (sess_dir / "1789471031317_jp2hv.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "session_id": "1789471031317_jp2hv",
+                        "source": "vscode",
+                        "started_at": "2026-09-15T11:17:11.371Z",
+                        "cwd": "/work/project",
+                        "prompt": "hello!",
+                        "metadata": {"title": "hello!"},
+                    }
+                )
+            )
+            (sess_dir / "1789471031317_jp2hv.messages.json").write_text(
+                json.dumps(
+                    {
+                        "sessionId": "1789471031317_jp2hv",
+                        "messages": [{"role": "user", "content": []}],
+                    }
+                )
+            )
+
+            def expand(p: str) -> str:
+                if p.endswith("data/sessions"):
+                    return str(base / "data" / "sessions")
+                if p.endswith("taskHistory.json"):
+                    return str(base / "data" / "state" / "taskHistory.json")
+                return p
+
+            with mock.patch("quiver.sessions.parsers.os.path.expanduser", side_effect=expand):
+                from quiver.sessions.parsers import parse_cline
+
+                sessions = parse_cline()
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].tool_name, "cline")
+            self.assertEqual(sessions[0].session_id, "1789471031317_jp2hv")
+            self.assertEqual(sessions[0].path, "/work/project")
+            self.assertEqual(sessions[0].title, "hello!")
+            self.assertGreater(sessions[0].timestamp, 0)
 
 
 class ParseForgeTest(unittest.TestCase):

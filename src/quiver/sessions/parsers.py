@@ -1130,7 +1130,29 @@ def parse_continue():
 
 
 def parse_cline():
-    return parse_json_store(
+    # Cline 3.x writes one directory per session under data/sessions:
+    # <id>.json holds metadata (session_id, started_at, cwd, prompt,
+    # metadata.title) and <id>.messages.json holds the transcript — the
+    # "session_id" key separates the two. Older installs keep a
+    # taskHistory.json index under data/state, so read both.
+    sessions = parse_json_store(
+        JsonParserConfig(
+            tool_name="cline",
+            agent="Cline",
+            mode="files",
+            base_dir=os.path.expanduser("~/.cline/data/sessions"),
+            file_glob="*/*.json",
+            include=lambda e, _f: isinstance(e, dict) and "session_id" in e,
+            get_id=lambda e, _f: str(e.get("session_id") or ""),
+            get_path=lambda e, _f: e.get("cwd") or e.get("workspace_root") or "",
+            get_title=lambda e, _f: (
+                (e.get("metadata") or {}).get("title") or e.get("prompt") or ""
+            ),
+            get_ts=lambda e, _f: parse_iso_ts(e.get("started_at")),
+            require_path=True,
+        )
+    )
+    sessions += parse_json_store(
         JsonParserConfig(
             tool_name="cline",
             agent="Cline",
@@ -1144,6 +1166,7 @@ def parse_cline():
             require_path=True,
         )
     )
+    return sessions
 
 
 def _grok_flag_is_true(value) -> bool:
