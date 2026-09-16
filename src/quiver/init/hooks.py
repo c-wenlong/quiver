@@ -45,6 +45,7 @@ from quiver.init.layout import (
 # name (droid, not its ~/.factory home), like the plugin fallback.
 HOOK_FALLBACK: dict[str, Path] = {
     "claude": Path(".claude/hooks"),
+    "cline": Path(".cline/hooks"),
     "droid": Path(".factory/hooks"),
 }
 

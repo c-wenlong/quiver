@@ -182,6 +182,13 @@ MCP_CONFIG_MAP = {
         "label": "opencode",
         "format": "opencode",
     },
+    "kilo": {
+        # Kilo is an opencode fork: same mcp schema in its own config.
+        "path": Path.home() / ".config" / "kilo" / "kilo.jsonc",
+        "key": "mcp",
+        "label": "Kilo",
+        "format": "opencode",
+    },
     "codex": {
         "path": Path.home() / ".codex" / "config.toml",
         "key": "mcp_servers",
@@ -285,10 +292,54 @@ def get_mcp_tools(registry: dict) -> dict:
 # ── JSON helpers ──────────────────────────────────────────────────────
 
 
+def _strip_jsonc(text: str) -> str:
+    """Drop ``//`` and ``/* */`` comments, preserving string contents.
+
+    A ``.jsonc`` file that fails to parse reads as ``{}`` and a later
+    write would emit only the synced slice, dropping every other key.
+    Stripping comments on read keeps the rest of the file intact.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif ch == '"':
+                in_str = False
+            i += 1
+        elif ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+        elif ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+        elif ch == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and text[i : i + 2] != "*/":
+                i += 1
+            i += 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def load_json(path: Path) -> dict:
     try:
-        return json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+        text = path.read_text()
+    except FileNotFoundError:
+        return {}
+    if path.suffix == ".jsonc":
+        text = _strip_jsonc(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
         return {}
 
 

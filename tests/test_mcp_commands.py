@@ -360,5 +360,58 @@ class CmdStatusEmptyTest(McpMatrixFixtureMixin, unittest.TestCase):
         self.assertNotIn("servers across", output)
 
 
+class KiloMcpConfigTest(unittest.TestCase):
+    """Kilo keeps opencode's mcp schema in ~/.config/kilo/kilo.jsonc."""
+
+    def test_kilo_descriptor_uses_opencode_format(self):
+        cfg = cli_mod.get_tool_config("kilo")
+        self.assertEqual(cfg["key"], "mcp")
+        self.assertEqual(cfg["format"], "opencode")
+        self.assertEqual(cfg["path"].name, "kilo.jsonc")
+
+    def test_load_json_strips_jsonc_comments(self):
+        from quiver.mcp.cli import load_json
+
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "kilo.jsonc"
+            p.write_text(
+                '{\n'
+                '  // user comment\n'
+                '  "mcp": {\n'
+                '    "srv": { /* inline */ "command": ["echo"], '
+                '"url": "https://x.test//deep" }\n'
+                "  }\n"
+                "}\n"
+            )
+            data = load_json(p)
+        self.assertEqual(data["mcp"]["srv"]["url"], "https://x.test//deep")
+        self.assertEqual(data["mcp"]["srv"]["command"], ["echo"])
+
+    def test_load_json_leaves_plain_json_alone(self):
+        from quiver.mcp.cli import load_json
+
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "mcp.json"
+            p.write_text('{"a": "b"} // trailing comment')
+            # A .json file with junk still fails to parse: no stripping.
+            self.assertEqual(load_json(p), {})
+
+    def test_jsonc_round_trip_preserves_other_keys(self):
+        from quiver.mcp.cli import get_tool_loader, get_tool_saver
+
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "kilo.jsonc"
+            p.write_text(
+                '{\n  "$schema": "https://app.kilo.ai/config.json",\n'
+                '  // keep me\n  "theme": "dark"\n}\n'
+            )
+            saver = get_tool_saver("kilo")
+            saver({"srv": {"type": "local", "command": ["echo"],
+                           "enabled": True}}, p)
+            data = json.loads(p.read_text())
+        self.assertEqual(data["theme"], "dark")
+        self.assertIn("srv", data["mcp"])
+
+
 if __name__ == "__main__":
     unittest.main()
