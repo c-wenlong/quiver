@@ -59,7 +59,7 @@ def new_harnesses(skills: list[LinkStatus], registry: dict) -> list[LinkStatus]:
     }
     known |= {registry_name(label) for label in HARNESS_SIGNATURES}
     known |= {
-        registry_name(skill_root_label(sig.skills))
+        registry_name(skill_root_label(sig.skills, registry=registry))
         for sig in HARNESS_SIGNATURES.values()
         if sig.skills is not None
     }
