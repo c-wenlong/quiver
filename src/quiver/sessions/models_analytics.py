@@ -62,34 +62,53 @@ def _scan_jsonl_models(path: str, max_lines: int) -> dict[tuple[str, str], int]:
     return seen
 
 
+def _drizzle_model_counts(db_path: str) -> dict[tuple[str, str], int]:
+    """Model counts from an opencode-schema ``message`` table.
+
+    Kilo is an opencode fork: kilo.db has the same ``message.data`` JSON
+    with ``model.providerID``/``model.modelID``.
+    """
+    seen: dict[tuple[str, str], int] = {}
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT json_extract(data, '$.model.providerID'),
+                   json_extract(data, '$.model.modelID'),
+                   COUNT(*)
+            FROM message
+            WHERE json_extract(data, '$.model.modelID') IS NOT NULL
+            GROUP BY 1, 2
+            """
+        )
+        for provider, model, cnt in cur.fetchall():
+            if model:
+                seen[(provider or "", model)] = cnt
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+    return seen
+
+
 def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
     """Return raw model counts keyed by tool name."""
     raw: dict[str, dict[tuple[str, str], int]] = {}
 
     db_path = os.path.expanduser("~/.local/share/opencode/opencode.db")
     if os.path.exists(db_path):
-        conn = None
-        try:
-            conn = sqlite3.connect(db_path)
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT json_extract(data, '$.model.providerID'),
-                       json_extract(data, '$.model.modelID'),
-                       COUNT(*)
-                FROM message
-                WHERE json_extract(data, '$.model.modelID') IS NOT NULL
-                GROUP BY 1, 2
-                """
-            )
-            for provider, model, cnt in cur.fetchall():
-                if model:
-                    raw.setdefault("opencode", {})[(provider or "", model)] = cnt
-        except Exception:
-            pass
-        finally:
-            if conn is not None:
-                conn.close()
+        seen = _drizzle_model_counts(db_path)
+        if seen:
+            raw["opencode"] = seen
+
+    kilo_db = os.path.expanduser("~/.local/share/kilo/kilo.db")
+    if os.path.exists(kilo_db):
+        seen = _drizzle_model_counts(kilo_db)
+        if seen:
+            raw["kilo"] = seen
 
     claude_dir = os.path.expanduser("~/.claude/projects/")
     if os.path.exists(claude_dir):

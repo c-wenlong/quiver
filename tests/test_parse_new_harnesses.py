@@ -392,6 +392,65 @@ class ParseClineTest(unittest.TestCase):
             self.assertGreater(sessions[0].timestamp, 0)
 
 
+class ParseKiloTest(unittest.TestCase):
+    def test_reads_opencode_schema_db(self):
+        # Kilo is an opencode fork: kilo.db keeps session/workspace with
+        # the same drizzle columns — time_updated epoch-ms, directory,
+        # and a workspace join for empty directories.
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kilo.db"
+            conn = sqlite3.connect(db)
+            conn.execute(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, "
+                "workspace_id TEXT, directory TEXT, title TEXT, "
+                "time_created INTEGER, time_updated INTEGER)"
+            )
+            conn.execute(
+                "CREATE TABLE workspace (id TEXT PRIMARY KEY, directory TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)",
+                ("ses_1", "w1", "", "fix the flake", 1783582327217, 1783582330279),
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)",
+                ("ses_2", None, "/work/app", "add tests", 1783582328000, 1783582331000),
+            )
+            conn.execute(
+                "INSERT INTO workspace VALUES (?, ?)", ("w1", "/work/monorepo")
+            )
+            conn.commit()
+            conn.close()
+
+            def expand(p: str) -> str:
+                if p.endswith("kilo.db"):
+                    return str(db)
+                return p
+
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser", side_effect=expand
+            ):
+                from quiver.sessions.parsers import parse_kilo
+
+                sessions = parse_kilo()
+            self.assertEqual(len(sessions), 2)
+            by_id = {s.session_id: s for s in sessions}
+            self.assertEqual(by_id["ses_1"].path, "/work/monorepo")
+            self.assertEqual(by_id["ses_1"].title, "fix the flake")
+            self.assertEqual(by_id["ses_1"].tool_name, "kilo")
+            self.assertEqual(by_id["ses_1"].timestamp, 1783582330279)
+            self.assertEqual(by_id["ses_2"].path, "/work/app")
+
+    def test_missing_db_returns_empty(self):
+        with mock.patch(
+            "quiver.sessions.parsers.os.path.expanduser",
+            side_effect=lambda p: "/nonexistent/kilo.db" if "kilo" in p else p,
+        ):
+            from quiver.sessions.parsers import parse_kilo
+
+            self.assertEqual(parse_kilo(), [])
+
+
 class ParseForgeTest(unittest.TestCase):
     def test_reads_conversations_db(self):
         with tempfile.TemporaryDirectory() as tmp:

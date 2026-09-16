@@ -327,6 +327,27 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertEqual([m.role for m in transcript.messages], ["human", "tool"])
         self.assertIn("OK", transcript.messages[1].text)
 
+    def test_kilo_sqlite_reader_preserves_text_and_tool_activity(self):
+        # Kilo is an opencode fork: same message/part drizzle schema.
+        db = self.home / ".local/share/kilo/kilo.db"
+        db.parent.mkdir(parents=True)
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);"
+            "CREATE TABLE part (message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);"
+        )
+        conn.execute("INSERT INTO message VALUES (?, ?, ?, ?)", ("m1", "k-1", 1, json.dumps({"role": "user"})))
+        conn.execute("INSERT INTO message VALUES (?, ?, ?, ?)", ("m2", "k-1", 2, json.dumps({"role": "assistant"})))
+        conn.execute("INSERT INTO part VALUES (?, ?, ?, ?)", ("m1", "k-1", 1, json.dumps({"type": "text", "text": "Run the suite"})))
+        conn.execute("INSERT INTO part VALUES (?, ?, ?, ?)", ("m2", "k-1", 2, json.dumps({"type": "text", "text": "All green"})))
+        conn.commit()
+        conn.close()
+
+        transcript = read_transcript(_session("kilo", "k-1"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(
+            [m.text for m in transcript.messages], ["Run the suite", "All green"])
+
     def test_forge_unwraps_typed_text_envelopes_and_drops_system_messages(self):
         db = self.home / ".forge/.forge.db"
         db.parent.mkdir(parents=True)
