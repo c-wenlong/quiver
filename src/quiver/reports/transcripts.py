@@ -443,8 +443,47 @@ def _read_continue(session: Session) -> NormalizedTranscript:
     return transcript
 
 
+_CLINE_USER_INPUT_RE = re.compile(r"</?user_input\b[^>]*>", re.IGNORECASE)
+
+
 @register_reader("cline")
 def _read_cline(session: Session) -> NormalizedTranscript:
+    """Cline transcripts: 3.x sessions dir, then the legacy tasks layout.
+
+    The CLI writes ``data/sessions/<id>/<id>.messages.json`` — a ``messages``
+    list of ``{role, content: [{type: text|thinking, ...}], ts}`` where user
+    text arrives wrapped in ``<user_input mode="…">`` (unwrapped here, so
+    secret redaction still sees the inner text). The VS Code extension kept
+    per-task dirs at ``data/tasks/<id>/`` instead.
+    """
+    sess_dir = Path(os.path.expanduser(
+        f"~/.cline/data/sessions/{session.session_id}"))
+    messages_path = sess_dir / f"{session.session_id}.messages.json"
+    if not messages_path.exists():
+        candidates = sorted(sess_dir.glob("*.messages.json"))
+        if candidates:
+            messages_path = candidates[0]
+    if messages_path.exists():
+        transcript = _new(session, [messages_path])
+        try:
+            data = json.loads(messages_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return _unreadable(
+                session, f"Cline transcript error: {exc}", [messages_path])
+        for record in data.get("messages") or []:
+            if not isinstance(record, dict):
+                continue
+            content = record.get("content")
+            if isinstance(content, list):
+                content = [
+                    {**block, "text": _CLINE_USER_INPUT_RE.sub("", block["text"])}
+                    if isinstance(block, dict) and isinstance(block.get("text"), str)
+                    else block
+                    for block in content
+                ]
+            transcript.messages.extend(_messages_from_content(
+                _role(record.get("role")), content, record.get("ts")))
+        return transcript
     root = Path(os.path.expanduser(f"~/.cline/data/tasks/{session.session_id}"))
     paths = [root / "api_conversation_history.json", root / "ui_messages.json"]
     existing = [path for path in paths if path.exists()]
