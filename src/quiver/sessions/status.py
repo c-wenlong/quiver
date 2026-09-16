@@ -439,6 +439,11 @@ def _probe_opencode(session: Session, ctx: dict):
     return "finished", text
 
 
+def _probe_kilo(session: Session, ctx: dict):
+    """Kilo is an opencode fork: same drizzle schema, different db path."""
+    return _probe_opencode(session, {"opencode_conn": ctx.get("kilo_conn")})
+
+
 def _probe_pi(session: Session, ctx: dict):
     """(phase, text) from the transcript's trailing ``message`` record.
 
@@ -491,6 +496,7 @@ _PROBES = {
     "cursor": _probe_cursor,
     "devin": _probe_devin,
     "opencode": _probe_opencode,
+    "kilo": _probe_kilo,
     "pi": _probe_pi,
 }
 
@@ -549,6 +555,14 @@ def _open_opencode_db() -> sqlite3.Connection | None:
         return None
 
 
+def _open_kilo_db() -> sqlite3.Connection | None:
+    path = os.path.expanduser("~/.local/share/kilo/kilo.db")
+    try:
+        return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except Exception:
+        return None
+
+
 def session_statuses(sessions: list[Session], now: float | None = None) -> list[str]:
     """One status label per session, same order as the input."""
     if now is None:
@@ -565,6 +579,9 @@ def session_statuses(sessions: list[Session], now: float | None = None) -> list[
         "opencode_conn": _open_opencode_db()
         if any(s.tool_name == "opencode" for s in sessions)
         else None,
+        "kilo_conn": _open_kilo_db()
+        if any(s.tool_name == "kilo" for s in sessions)
+        else None,
     }
     try:
         out = []
@@ -572,7 +589,7 @@ def session_statuses(sessions: list[Session], now: float | None = None) -> list[
             out.append(_one_status(session, now, ctx))
         return out
     finally:
-        for key in ("devin_conn", "opencode_conn"):
+        for key in ("devin_conn", "opencode_conn", "kilo_conn"):
             conn = ctx.get(key)
             if conn is not None:
                 try:

@@ -21,6 +21,7 @@ class SessionsAggregatorTest(unittest.TestCase):
             "grok",
             "cline",
             "forge",
+            "kilo",
         ):
             self.assertIn(expected, names)
 

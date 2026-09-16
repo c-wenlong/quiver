@@ -598,7 +598,7 @@ def cmd_help(args):
     print(f"    {c('cyan', 'swe skills help <topic>')} Per-topic skills help\n")
 
     print(f"  {c('dim', 'ALIASES')}   cc=claude  gg=gemini  cx=codex  cp=copilot  oc=opencode")
-    print(f"  {'':>14}fc=forge  df=droid  olla=ollama  cs=cursor  cl=cline\n")
+    print(f"  {'':>14}fc=forge  df=droid  olla=ollama  cs=cursor  cl=cline  ki=kilo\n")
 
     n_inst = 0
     n_total = 0
