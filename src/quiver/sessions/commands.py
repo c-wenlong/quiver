@@ -42,6 +42,7 @@ _RESUME_FLAGS = {
     "devin": lambda sid: ["--resume", sid] if sid else [],
     "freebuff": lambda sid: ["--continue", sid] if sid else [],
     "cursor": lambda sid: ["--resume", sid] if sid else [],
+    "cline": lambda sid: ["--id", sid] if sid else [],
 }
 
 _LIMITED_RESUME = frozenset(
@@ -50,7 +51,6 @@ _LIMITED_RESUME = frozenset(
         "continue",
         "crush",
         "grok",
-        "cline",
         "forge",
     }
 )
