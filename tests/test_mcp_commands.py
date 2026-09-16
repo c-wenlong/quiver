@@ -387,6 +387,21 @@ class KiloMcpConfigTest(unittest.TestCase):
         self.assertEqual(data["mcp"]["srv"]["url"], "https://x.test//deep")
         self.assertEqual(data["mcp"]["srv"]["command"], ["echo"])
 
+    def test_load_json_strips_jsonc_trailing_commas(self):
+        from quiver.mcp.cli import load_json
+
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "kilo.jsonc"
+            p.write_text(
+                '{\n'
+                '  "mcp": { "a": {"command": ["x",],}, },\n'
+                '  "s": "keep ,} this",\n'
+                "}\n"
+            )
+            data = load_json(p)
+        self.assertEqual(data["mcp"]["a"]["command"], ["x"])
+        self.assertEqual(data["s"], "keep ,} this")
+
     def test_load_json_leaves_plain_json_alone(self):
         from quiver.mcp.cli import load_json
 
