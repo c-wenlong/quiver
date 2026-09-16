@@ -284,6 +284,7 @@ class DriftHooksTest(unittest.TestCase):
     def test_fallback_table_joins_with_registry_names(self):
         reg = {
             "claude": {"capabilities": {"hooks": {"supported": True, "root": "~/.claude/hooks"}}},
+            "cline": {},
             "droid": {},
         }
         findings = check_code_vs_data(reg, plugin_roots=(), hook_roots=list(HOOK_FALLBACK.items()))
