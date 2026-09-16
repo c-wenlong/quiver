@@ -75,6 +75,9 @@ class _FindHome(unittest.TestCase):
             mock.patch.object(Path, "cwd", staticmethod(lambda: self.home)),
             mock.patch.object(registry, "HARNESS_FILE", Path("/nonexistent/harness.json")),
             mock.patch("quiver.console.terminal_width", return_value=200),
+            # find.commands holds its own top-level terminal_width
+            # binding, so pinning console alone never reached cmd_find.
+            mock.patch("quiver.find.commands.terminal_width", return_value=200),
             mock.patch("quiver.mcp.cli.get_hub_servers", return_value=dict(self.hub)),
             mock.patch("quiver.find.mcps.tool_views", return_value=list(self.views)),
             mock.patch("quiver.find.mcps.scan_configs", return_value=[]),
