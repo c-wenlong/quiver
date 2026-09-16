@@ -22,38 +22,123 @@ from quiver import paths as _paths
 # The layout itself is defined in quiver.paths so runtime code and this
 # module cannot drift apart. Only the harness target maps live here.
 
-# (harness label, path relative to home)
-INSTRUCTION_TARGETS: tuple[tuple[str, Path], ...] = (
-    ("claude", Path(".claude/CLAUDE.md")),
-    ("codex", Path(".codex/AGENTS.md")),
-    ("cursor", Path(".cursor/AGENTS.md")),
-    ("gemini", Path(".gemini/GEMINI.md")),
-    ("qwen", Path(".qwen/QWEN.md")),
-    ("crush", Path(".config/crush/CRUSH.md")),
-    ("opencode", Path(".config/opencode/AGENTS.md")),
-    ("droid", Path(".factory/AGENTS.md")),
+@dataclass(frozen=True)
+class HarnessSignature:
+    """One known harness: where it reads shared assets and what proves it is
+    installed.
+
+    ``evidence`` is an any-of list of home-relative paths; a target's own
+    parent counts implicitly, so most entries only name the harness's home.
+    Evidence is a separate field because it can live away from the targets:
+    kilo proves itself with ~/.config/kilo or ~/.local/share/kilo while its
+    skills root is ~/.kilo/skills, and cline CLI leaves only ~/.cline/data
+    on first run. A "does the skills parent exist" test misses both shapes,
+    as does the skills/ glob below.
+    """
+
+    skills: Path | None = None
+    instructions: Path | None = None
+    evidence: tuple[Path, ...] = ()
+
+
+# Keyed by the label init prints for the harness. Registry keys can differ
+# (qwen -> qwen-code); REGISTRY_ALIASES translates on the way out.
+HARNESS_SIGNATURES: dict[str, HarnessSignature] = {
+    "claude": HarnessSignature(
+        skills=Path(".claude/skills"),
+        instructions=Path(".claude/CLAUDE.md"),
+        evidence=(Path(".claude"),),
+    ),
+    "codex": HarnessSignature(
+        skills=Path(".codex/skills"),
+        instructions=Path(".codex/AGENTS.md"),
+        evidence=(Path(".codex"),),
+    ),
+    "cursor": HarnessSignature(
+        skills=Path(".cursor/skills"),
+        instructions=Path(".cursor/AGENTS.md"),
+        evidence=(Path(".cursor"),),
+    ),
+    "gemini": HarnessSignature(
+        skills=Path(".gemini/skills"),
+        instructions=Path(".gemini/GEMINI.md"),
+        evidence=(Path(".gemini"),),
+    ),
+    "qwen": HarnessSignature(
+        skills=Path(".qwen/skills"),
+        instructions=Path(".qwen/QWEN.md"),
+        evidence=(Path(".qwen"),),
+    ),
+    "crush": HarnessSignature(
+        skills=Path(".config/crush/skills"),
+        instructions=Path(".config/crush/CRUSH.md"),
+        evidence=(Path(".config/crush"),),
+    ),
+    "opencode": HarnessSignature(
+        skills=Path(".config/opencode/skills"),
+        instructions=Path(".config/opencode/AGENTS.md"),
+        evidence=(Path(".config/opencode"), Path(".local/share/opencode")),
+    ),
+    "droid": HarnessSignature(
+        skills=Path(".factory/skills"),
+        instructions=Path(".factory/AGENTS.md"),
+        evidence=(Path(".factory"),),
+    ),
+    "copilot": HarnessSignature(
+        skills=Path(".copilot/skills"),
+        evidence=(Path(".copilot"),),
+    ),
+    "cline": HarnessSignature(
+        skills=Path(".cline/skills"),
+        # The cross-tool standard file: docs.cline.bot lists
+        # ~/.agents/AGENTS.md as the global instructions cline reads, and
+        # its own rules dir (~/Documents/Cline/Rules) is a directory of
+        # files, which one symlinked file cannot stand in for.
+        instructions=Path(".agents/AGENTS.md"),
+        evidence=(Path(".cline"), Path("Documents/Cline")),
+    ),
+    "kilo": HarnessSignature(
+        # Confirmed in the installed binary and kilo.ai/docs: global skills
+        # at ~/.kilo/skills, global instructions at ~/.config/kilo/AGENTS.md.
+        # Neither directory is made on install — config lives in
+        # ~/.config/kilo, session data in ~/.local/share/kilo — so evidence
+        # is what the CLI actually creates.
+        skills=Path(".kilo/skills"),
+        instructions=Path(".config/kilo/AGENTS.md"),
+        evidence=(Path(".kilo"), Path(".config/kilo"), Path(".local/share/kilo")),
+    ),
+}
+
+
+def _signature_installed(sig: HarnessSignature, home: Path) -> bool:
+    """True when any evidence path exists, or the skills root's parent does.
+
+    The implicit parent rule keeps the old seed behaviour: a harness that
+    already made its config dir counts as installed even when the skills
+    dir inside it does not exist yet. Only the skills parent can imply a
+    harness — instruction files may live in shared locations (cline reads
+    ``~/.agents/AGENTS.md``, and ``~/.agents`` was quiver's own pre-0.2.7
+    root, so a leftover proves nothing about cline) — so a signature with
+    no skills root must name its evidence explicitly.
+    """
+    marks = list(sig.evidence)
+    if sig.skills is not None:
+        marks.append(sig.skills.parent)
+    return any((home / rel).exists() for rel in marks)
+
+
+# (label, path) view of the signature table, kept for `swe find`'s agents
+# tree and the AGENT_FILENAMES set built from it there.
+INSTRUCTION_TARGETS: tuple[tuple[str, Path], ...] = tuple(
+    (label, sig.instructions)
+    for label, sig in HARNESS_SIGNATURES.items()
+    if sig.instructions is not None
 )
 
-# Skill roots are discovered rather than listed. A hardcoded list goes stale
-# the moment a new harness is installed, and each one creates its own
-# skills/ directory on first run. Scanning finds ~60 where a list found 14.
+# Skill roots beyond signatures are still discovered, not listed: a harness
+# quiver has no signature for still creates its own skills/ directory on
+# first run, and the scan finds it. ~60 roots where a fixed list found 14.
 SKILL_SCAN_GLOBS: tuple[str, ...] = (".*/skills", ".config/*/skills")
-
-# Discovery only finds roots that exist. A harness installed but never run has
-# no skills/ yet, and linking it up front is the difference between skills
-# working on first launch and not. These are seeded when their parent dir
-# exists, which is the same "is it installed" test discovery uses.
-SKILL_SEED_ROOTS: tuple[Path, ...] = (
-    Path(".claude/skills"),
-    Path(".codex/skills"),
-    Path(".cursor/skills"),
-    Path(".gemini/skills"),
-    Path(".qwen/skills"),
-    Path(".factory/skills"),
-    Path(".copilot/skills"),
-    Path(".config/opencode/skills"),
-    Path(".config/crush/skills"),
-)
 
 # Directories that look like harness config but are not.
 SKILL_SCAN_EXCLUDE: tuple[str, ...] = (
@@ -66,21 +151,30 @@ def _looks_like_backup(name: str) -> bool:
     return any(m in name for m in ("pre-bootstrap", ".bak", ".backup", ".old"))
 
 
-def discover_skill_roots(home: Path | None = None) -> list[Path]:
+def discover_skill_roots(
+    home: Path | None = None, registry: dict | None = None
+) -> list[Path]:
     """Every skills/ directory a harness might read, one level into a dotdir.
 
-    Deliberately not a full recursive walk: project-level .cursor/skills lives
-    all over Desktop and is none of quiver's business. Only the shared root
-    itself is excluded, since it is the link target rather than a target.
+    Three sources: signature roots for known harnesses whose evidence is on
+    disk, the shallow glob for harnesses quiver has no signature for, and
+    roots harness.json declares — a ``capabilities.skills.root`` need not be
+    glob-shaped (``~/.pi/agent/skills`` is two levels down). Deliberately
+    not a full recursive walk: project-level .cursor/skills lives all over
+    Desktop and is none of quiver's business. Only the shared root itself
+    is excluded, since it is the link target rather than a target.
     """
     home = home or Path.home()
+    if registry is None:
+        registry = load_registry(home)
     shared = skills_dir(home)
     found: list[Path] = []
 
-    for rel in SKILL_SEED_ROOTS:
-        candidate = home / rel
-        if candidate.parent.is_dir() and candidate not in found:
-            found.append(candidate)
+    for sig in HARNESS_SIGNATURES.values():
+        if sig.skills is not None and _signature_installed(sig, home):
+            candidate = home / sig.skills
+            if candidate not in found:
+                found.append(candidate)
 
     for pattern in SKILL_SCAN_GLOBS:
         for path in home.glob(pattern):
@@ -95,11 +189,70 @@ def discover_skill_roots(home: Path | None = None) -> list[Path]:
                 pass
             if path not in found:
                 found.append(path)
+
+    declared = _registry_skill_roots(registry, home)
+    for path in declared:
+        if path not in found:
+            found.append(path)
+
+    disabled = _skills_disabled(registry)
+    if disabled:
+        # The registry wins over inference: supported: false keeps a root
+        # out however it was found — declared, signature or glob.
+        found = [
+            path
+            for path in found
+            if declared.get(path) not in disabled
+            and registry_name(skill_root_label(path, home, registry))
+            not in disabled
+        ]
+
     return sorted(found)
 
 
-def skill_root_label(path: Path, home: Path | None = None) -> str:
-    """`~/.config/opencode/skills` -> `opencode`, `~/.qwen/skills` -> `qwen`."""
+def _registry_skill_roots(registry: dict, home: Path) -> dict[Path, str]:
+    """``capabilities.skills.root`` paths -> the registry key declaring them."""
+    roots: dict[Path, str] = {}
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        skills = (entry.get("capabilities") or {}).get("skills")
+        if not isinstance(skills, dict):
+            continue
+        root = skills.get("root")
+        if isinstance(root, str) and root.startswith("~/"):
+            roots[home / root[2:]] = key
+    return roots
+
+
+def _skills_disabled(registry: dict) -> set[str]:
+    """Registry keys (and their aliases) with ``skills.supported: false``."""
+    disabled: set[str] = set()
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        skills = (entry.get("capabilities") or {}).get("skills")
+        if isinstance(skills, dict) and skills.get("supported") is False:
+            disabled.add(key)
+            disabled.update(aliases_of(entry))
+    return disabled
+
+
+def skill_root_label(
+    path: Path, home: Path | None = None, registry: dict | None = None
+) -> str:
+    """`~/.config/opencode/skills` -> `opencode`, `~/.qwen/skills` -> `qwen`.
+
+    A registry-declared root keeps its registry key rather than the parent
+    dirname — ``~/.pi/agent/skills`` is ``pi``, never ``agent`` — so picker
+    claims and archived overrides join on the name harness.json uses.
+    """
+    home = home or Path.home()
+    if registry is None:
+        registry = load_registry(home)
+    key = _registry_skill_roots(registry, home).get(path)
+    if key is not None:
+        return key
     owner = path.parent.name
     return owner[1:] if owner.startswith(".") else owner
 
@@ -356,15 +509,28 @@ def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
     return LinkStatus(label, path, "create", "")
 
 
-def _instruction_targets(registry: dict) -> list[tuple[str, Path]]:
-    """Instruction targets: the built-in table overlaid by harness.json.
+def _instruction_targets(registry: dict, home: Path) -> list[tuple[str, Path, bool]]:
+    """(label, home-relative target, installed) per instruction file.
 
-    A ``capabilities.instructions.file`` entry (``~/``-relative) adds a target
-    labelled by its registry key, and replaces a tuple entry for the same
-    harness, so a harness that reads ``AGENTS.md`` where the table guessed
-    ``CLAUDE.md`` ends up with exactly one target: the right one.
+    Signature rows come first, marked installed when the harness's evidence
+    is on disk, so a missing parent reads ``create`` rather than ``skipped``
+    — evidence, not the file's own directory, is the install test (kilo's
+    AGENTS.md lives in ~/.config/kilo but so does its whole config; cline's
+    sits in ~/.agents, which nothing else made). A
+    ``capabilities.instructions.file`` entry (``~/``-relative) adds a target
+    labelled by its registry key, and replaces a signature entry for the
+    same harness, so a harness that reads ``AGENTS.md`` where the table
+    guessed ``CLAUDE.md`` ends up with exactly one target: the right one.
+    Registry rows are never marked installed: a declared file on a machine
+    the harness left behind is skipped noise, not a reason to recreate it.
     """
-    targets = list(INSTRUCTION_TARGETS)
+    targets: list[tuple[str, Path, bool]] = []
+    seen: set[Path] = set()
+    for label, sig in HARNESS_SIGNATURES.items():
+        if sig.instructions is None or sig.instructions in seen:
+            continue
+        seen.add(sig.instructions)
+        targets.append((label, sig.instructions, _signature_installed(sig, home)))
     for key, entry in registry.items():
         if not isinstance(entry, dict):
             continue
@@ -373,7 +539,7 @@ def _instruction_targets(registry: dict) -> list[tuple[str, Path]]:
         if not (isinstance(file, str) and file.startswith("~/")):
             continue
         targets = [t for t in targets if registry_name(t[0]) != key]
-        targets.append((key, Path(file[2:])))
+        targets.append((key, Path(file[2:]), False))
     return targets
 
 
@@ -413,20 +579,24 @@ def plan(
         registry = load_registry(home)
     archived = archived_names(registry)
     instructions = []
-    for label, rel in _instruction_targets(registry):
+    for label, rel, installed in _instruction_targets(registry, home):
         if is_linkignored(home / rel, home, patterns):
             instructions.append(LinkStatus(label, home / rel, "ignored", IGNORED_DETAIL))
         else:
             status = inspect(label, rel, agents_file(home), home)
+            if status.state == "skipped" and installed:
+                # Evidence says the harness is here; only the directory is
+                # missing, and init creates that anyway.
+                status = LinkStatus(label, home / rel, "create", "")
             archived_override(status, archived)
             instructions.append(status)
     skills = []
-    for path in discover_skill_roots(home):
+    for path in discover_skill_roots(home, registry):
         if is_linkignored(path, home, patterns):
             state, detail = "ignored", IGNORED_DETAIL
         else:
             state, detail = classify_skill_root(path, home)
-        status = LinkStatus(skill_root_label(path, home), path, state, detail)
+        status = LinkStatus(skill_root_label(path, home, registry), path, state, detail)
         archived_override(status, archived)
         skills.append(status)
     return instructions, skills
