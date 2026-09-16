@@ -68,7 +68,9 @@ class McpDiscoverTest(unittest.TestCase):
             p1, p2, p3, p4, p5, p6 = _registry_patches(config_dir, registry_file, mcp_file)
             with p1, p2, p3, p4, p5, p6, patch(
                 "quiver.mcp.cli.MCP_CONFIG_MAP", mcp_map
-            ), patch("quiver.mcp.cli.get_mcp_tools") as mock_tools:
+            ), patch("quiver.mcp.discover.get_mcp_tools") as mock_tools:
+                # discover_mcp_servers calls get_mcp_tools through its own
+                # module binding, so the patch lives on mcp.discover.
                 mock_tools.return_value = {"opencode": mcp_map["opencode"], "claude": mcp_map["claude"]}
                 findings = discover_mcp_servers()
                 notion = [f for f in findings if f.name == "notion"]
@@ -115,7 +117,7 @@ class McpDiscoverTest(unittest.TestCase):
             p1, p2, p3, p4, p5, p6 = _registry_patches(config_dir, registry_file, mcp_file)
             with p1, p2, p3, p4, p5, p6, patch(
                 "quiver.mcp.cli.MCP_CONFIG_MAP", mcp_map
-            ), patch("quiver.mcp.cli.get_mcp_tools") as mock_tools:
+            ), patch("quiver.mcp.discover.get_mcp_tools") as mock_tools:
                 mock_tools.return_value = {"opencode": mcp_map["opencode"]}
                 findings = discover_mcp_servers()
                 added = apply_mcp_findings(findings).added
