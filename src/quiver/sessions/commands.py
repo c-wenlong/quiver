@@ -33,6 +33,7 @@ def _codex_resume_args(session_id: str) -> list[str]:
 # Resume flag strategies keyed by tool_name (not launch key)
 _RESUME_FLAGS = {
     "opencode": lambda sid: ["--session", sid] if sid else [],
+    "kilo": lambda sid: ["--session", sid] if sid else [],
     "claude": lambda sid: ["--resume", sid] if sid else [],
     "codex": _codex_resume_args,
     "pi": lambda sid: ["--session", sid] if sid else [],

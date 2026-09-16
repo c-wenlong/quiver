@@ -31,18 +31,39 @@ from quiver.sessions.models import Session
 # SQLite family
 # ---------------------------------------------------------------------------
 
+_OPENCODE_FAMILY_QUERY = """
+    SELECT s.time_updated, s.title,
+           COALESCE(NULLIF(s.directory, ''), w.directory), s.id
+    FROM session s
+    LEFT JOIN workspace w ON s.workspace_id = w.id
+"""
+
+
 def parse_opencode():
     return parse_sqlite(
         SqliteParserConfig(
             tool_name="opencode",
             agent="OpenCode",
             db_path=os.path.expanduser("~/.local/share/opencode/opencode.db"),
-            query="""
-                SELECT s.time_updated, s.title,
-                       COALESCE(NULLIF(s.directory, ''), w.directory), s.id
-                FROM session s
-                LEFT JOIN workspace w ON s.workspace_id = w.id
-            """,
+            query=_OPENCODE_FAMILY_QUERY,
+            updated=0,
+            title=1,
+            path=2,
+            session_id=3,
+            require_path=True,
+        )
+    )
+
+
+def parse_kilo():
+    # Kilo is an opencode fork: kilo.db keeps the same drizzle schema
+    # (session/workspace/message/part, epoch-ms time_*, JSON data blobs).
+    return parse_sqlite(
+        SqliteParserConfig(
+            tool_name="kilo",
+            agent="Kilo",
+            db_path=os.path.expanduser("~/.local/share/kilo/kilo.db"),
+            query=_OPENCODE_FAMILY_QUERY,
             updated=0,
             title=1,
             path=2,

@@ -83,6 +83,36 @@ class ModelsAnalyticsTest(unittest.TestCase):
 
             self.assertEqual(usage["opencode"][("openai", "gpt-5")], 2)
 
+    def test_collects_kilo_models_from_sqlite(self):
+        # Kilo is an opencode fork: same message.data model JSON under
+        # ~/.local/share/kilo/kilo.db.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kilo.db"
+            connection = sqlite3.connect(db)
+            connection.execute("CREATE TABLE message (data TEXT)")
+            connection.executemany(
+                "INSERT INTO message VALUES (?)",
+                [
+                    (json.dumps({"model": {"providerID": "xai", "modelID": "grok-4.5"}}),),
+                    (json.dumps({"model": {"providerID": "xai", "modelID": "grok-4.5"}}),),
+                    (json.dumps({"model": {"providerID": "anthropic", "modelID": "claude-sonnet-4"}}),),
+                ],
+            )
+            connection.commit()
+            connection.close()
+
+            with mock.patch(
+                "quiver.sessions.models_analytics.os.path.expanduser",
+                side_effect=self._expand_for(
+                    root, {"~/.local/share/kilo/kilo.db": db}
+                ),
+            ):
+                usage = collect_model_usage()
+
+            self.assertEqual(usage["kilo"][("xai", "grok-4.5")], 2)
+            self.assertEqual(usage["kilo"][("anthropic", "claude-sonnet-4")], 1)
+
     def test_collects_codex_models_from_nested_sessions(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -528,6 +528,12 @@ def _read_opencode(session: Session) -> NormalizedTranscript:
     return _sqlite_json_parts(session, "~/.local/share/opencode/opencode.db")
 
 
+@register_reader("kilo")
+def _read_kilo(session: Session) -> NormalizedTranscript:
+    # Kilo is an opencode fork: kilo.db shares the drizzle message/part schema.
+    return _sqlite_json_parts(session, "~/.local/share/kilo/kilo.db")
+
+
 @register_reader("copilot")
 def _read_copilot(session: Session) -> NormalizedTranscript:
     path = Path(os.path.expanduser("~/.copilot/session-store.db"))
@@ -687,6 +693,6 @@ EXPECTED_READER_TOOLS = frozenset(
     {
         "opencode", "claude", "gemini", "codex", "pi", "cursor",
         "freebuff", "droid", "copilot", "continue", "crush",
-        "grok", "cline", "forge", "devin",
+        "grok", "cline", "forge", "devin", "kilo",
     }
 )

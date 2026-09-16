@@ -169,10 +169,10 @@ class StatusTestBase(unittest.TestCase):
             for rec in records:
                 fh.write(json.dumps(rec) + "\n")
 
-    def _write_opencode_db(self, sessions, messages, parts=()):
-        d = os.path.join(self.home, ".local", "share", "opencode")
+    def _write_opencode_db(self, sessions, messages, parts=(), tool="opencode"):
+        d = os.path.join(self.home, ".local", "share", tool)
         os.makedirs(d, exist_ok=True)
-        conn = sqlite3.connect(os.path.join(d, "opencode.db"))
+        conn = sqlite3.connect(os.path.join(d, f"{tool}.db"))
         conn.execute(
             "CREATE TABLE session (id TEXT PRIMARY KEY, "
             "time_created INTEGER, time_updated INTEGER)"
@@ -742,6 +742,34 @@ class OpencodeStatusTest(StatusTestBase):
 
     def test_missing_db_is_unknown(self):
         s = _session("opencode", "o10", age_s=9999)
+        self.assertEqual(UNKNOWN, session_status(s, now=NOW))
+
+
+class KiloStatusTest(StatusTestBase):
+    """Kilo reuses the opencode drizzle schema under ~/.local/share/kilo."""
+
+    def test_done_on_assistant_stop_with_text_part(self):
+        self._write_opencode_db(
+            [("k1", 1, 1)],
+            [_oc_msg("m1", "k1", "user", created=1),
+             _oc_msg("m2", "k1", "assistant", finish="stop", created=2)],
+            [_oc_part("p1", "m2", "k1", {"type": "text", "text": "Done."})],
+            tool="kilo",
+        )
+        s = _session("kilo", "k1", age_s=9999)
+        self.assertEqual(DONE, session_status(s, now=NOW))
+
+    def test_error_on_finish_error(self):
+        self._write_opencode_db(
+            [("k2", 1, 1)],
+            [_oc_msg("m1", "k2", "assistant", finish="error")],
+            tool="kilo",
+        )
+        s = _session("kilo", "k2", age_s=9999)
+        self.assertEqual(ERROR, session_status(s, now=NOW))
+
+    def test_missing_db_is_unknown(self):
+        s = _session("kilo", "k3", age_s=9999)
         self.assertEqual(UNKNOWN, session_status(s, now=NOW))
 
 

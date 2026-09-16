@@ -21,6 +21,7 @@ from quiver.sessions.parsers import (
     parse_freebuff,
     parse_gemini,
     parse_grok,
+    parse_kilo,
     parse_opencode,
     parse_pi,
 )
@@ -42,6 +43,7 @@ PARSER_REGISTRY: list[tuple[str, callable, tuple[str, ...]]] = [
     ("grok", parse_grok, ("grok", "gk")),
     ("cline", parse_cline, ("cline", "cl")),
     ("forge", parse_forge, ("forge", "fc")),
+    ("kilo", parse_kilo, ("kilo", "ki")),
 ]
 
 # Cache TTL in seconds (60s default)
