@@ -74,6 +74,105 @@ class DiscoveryTest(unittest.TestCase):
         self.assertEqual(skill_root_label(Path("/h/.config/opencode/skills")), "opencode")
 
 
+class SignatureTest(unittest.TestCase):
+    """Known-harness roots come from evidence, not the skills dir itself.
+
+    Cline's CLI creates only ~/.cline/data on first run; kilo keeps its
+    config in ~/.config/kilo and its skills root in ~/.kilo, whose parent
+    it never makes. Both are invisible to a skills/ glob and to a
+    parent-exists seed — the evidence field is what finds them.
+    """
+
+    def test_kilo_found_from_config_dir_without_kilo_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".config" / "kilo").mkdir(parents=True)
+            found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
+            self.assertIn(".kilo/skills", found)
+
+    def test_cline_found_from_dotdir_with_no_skills_inside(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".cline" / "data").mkdir(parents=True)
+            found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
+            self.assertIn(".cline/skills", found)
+
+    def test_no_evidence_means_no_signature_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
+            self.assertNotIn(".kilo/skills", found)
+            self.assertNotIn(".cline/skills", found)
+
+    def test_registry_declared_root_is_found_outside_the_glob(self):
+        # capabilities.skills.root wins even where the glob cannot reach:
+        # ~/.pi/agent/skills is one level deeper than .*/skills matches.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            registry = {"pi": {"capabilities": {
+                "skills": {"supported": True, "root": "~/.pi/agent/skills"}}}}
+            found = {str(p.relative_to(home))
+                     for p in discover_skill_roots(home, registry)}
+            self.assertIn(".pi/agent/skills", found)
+
+    def test_supported_false_registry_root_is_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            registry = {"aside": {"capabilities": {
+                "skills": {"supported": False, "root": "~/.aside/skills"}}}}
+            found = {str(p.relative_to(home))
+                     for p in discover_skill_roots(home, registry)}
+            self.assertNotIn(".aside/skills", found)
+
+    def test_signature_targets_link_on_init(self):
+        from quiver.init.layout import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".cline" / "data").mkdir(parents=True)
+            (home / ".config" / "kilo").mkdir(parents=True)
+            instructions, skills = plan(home)
+            by_label = {s.label: s for s in instructions}
+            self.assertEqual(by_label["cline"].state, "create")
+            self.assertEqual(by_label["cline"].path, home / ".agents" / "AGENTS.md")
+            self.assertEqual(by_label["kilo"].state, "create")
+            self.assertEqual(
+                by_label["kilo"].path, home / ".config" / "kilo" / "AGENTS.md")
+            skill_states = {s.label: s.state for s in skills}
+            self.assertEqual(skill_states["cline"], "create")
+            self.assertEqual(skill_states["kilo"], "create")
+
+    def test_evidence_without_instructions_parent_still_creates(self):
+        # ~/.cline exists but ~/.agents does not: the signature's evidence
+        # upgrades the row from skipped to create, and init makes the dir.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".cline" / "data").mkdir(parents=True)
+            code, _ = self._run_init(home, [])
+            self.assertEqual(code, 0)
+            self.assertTrue((home / ".agents" / "AGENTS.md").is_symlink())
+            self.assertTrue((home / ".cline" / "skills").is_symlink())
+
+    def test_uninstalled_signature_instruction_stays_skipped(self):
+        from quiver.init.layout import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            instructions, _ = plan(home)
+            by_label = {s.label: s for s in instructions}
+            self.assertEqual(by_label["cline"].state, "skipped")
+            self.assertEqual(by_label["kilo"].state, "skipped")
+
+    def _run_init(self, home, args):
+        from quiver.init import commands as init_commands
+
+        with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = init_commands.cmd_init(args)
+        return code, buf.getvalue()
+
+
 class ClassifyTest(unittest.TestCase):
     def test_empty_directory_is_absorbed(self):
         with tempfile.TemporaryDirectory() as tmp:

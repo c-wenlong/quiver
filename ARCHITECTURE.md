@@ -221,8 +221,13 @@ This rule drives `--scope=[all,global,local]` across `swe find`.
 
 Two scans, deliberately different:
 
-- **`init/layout.discover_skill_roots`** globs `~/.*/skills` and
-  `~/.config/*/skills`. This is the authority on where harnesses keep skills.
+- **`init/layout.discover_skill_roots`** joins three sources: the
+  `HARNESS_SIGNATURES` table (a known harness's skills root, emitted when
+  any of its `evidence` paths exists — how kilo is found via
+  `~/.config/kilo` while its skills root is `~/.kilo/skills`), a glob of
+  `~/.*/skills` and `~/.config/*/skills` for harnesses with no signature,
+  and `capabilities.skills.root` declared in harness.json. This is the
+  authority on where harnesses keep skills.
 - **`skills/discovery.skill_roots`** builds on it and adds the three kinds it
   cannot reach: plugin caches (a level deeper), non-standard names
   (`~/.cursor/skills-cursor`), and user-registered catalogs.
