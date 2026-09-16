@@ -111,16 +111,19 @@ HARNESS_SIGNATURES: dict[str, HarnessSignature] = {
 
 
 def _signature_installed(sig: HarnessSignature, home: Path) -> bool:
-    """True when any evidence path exists, or a target's parent already does.
+    """True when any evidence path exists, or the skills root's parent does.
 
     The implicit parent rule keeps the old seed behaviour: a harness that
     already made its config dir counts as installed even when the skills
-    dir inside it does not exist yet.
+    dir inside it does not exist yet. Only the skills parent can imply a
+    harness — instruction files may live in shared locations (cline reads
+    ``~/.agents/AGENTS.md``, and ``~/.agents`` was quiver's own pre-0.2.7
+    root, so a leftover proves nothing about cline) — so a signature with
+    no skills root must name its evidence explicitly.
     """
     marks = list(sig.evidence)
-    for target in (sig.skills, sig.instructions):
-        if target is not None:
-            marks.append(target.parent)
+    if sig.skills is not None:
+        marks.append(sig.skills.parent)
     return any((home / rel).exists() for rel in marks)
 
 
@@ -187,23 +190,69 @@ def discover_skill_roots(
             if path not in found:
                 found.append(path)
 
-    for entry in registry.values():
-        if not isinstance(entry, dict):
-            continue
-        skills = (entry.get("capabilities") or {}).get("skills")
-        if not isinstance(skills, dict) or skills.get("supported") is False:
-            continue
-        root = skills.get("root")
-        if isinstance(root, str) and root.startswith("~/"):
-            candidate = home / root[2:]
-            if candidate not in found:
-                found.append(candidate)
+    declared = _registry_skill_roots(registry, home)
+    for path in declared:
+        if path not in found:
+            found.append(path)
+
+    disabled = _skills_disabled(registry)
+    if disabled:
+        # The registry wins over inference: supported: false keeps a root
+        # out however it was found — declared, signature or glob.
+        found = [
+            path
+            for path in found
+            if declared.get(path) not in disabled
+            and registry_name(skill_root_label(path, home, registry))
+            not in disabled
+        ]
 
     return sorted(found)
 
 
-def skill_root_label(path: Path, home: Path | None = None) -> str:
-    """`~/.config/opencode/skills` -> `opencode`, `~/.qwen/skills` -> `qwen`."""
+def _registry_skill_roots(registry: dict, home: Path) -> dict[Path, str]:
+    """``capabilities.skills.root`` paths -> the registry key declaring them."""
+    roots: dict[Path, str] = {}
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        skills = (entry.get("capabilities") or {}).get("skills")
+        if not isinstance(skills, dict):
+            continue
+        root = skills.get("root")
+        if isinstance(root, str) and root.startswith("~/"):
+            roots[home / root[2:]] = key
+    return roots
+
+
+def _skills_disabled(registry: dict) -> set[str]:
+    """Registry keys (and their aliases) with ``skills.supported: false``."""
+    disabled: set[str] = set()
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        skills = (entry.get("capabilities") or {}).get("skills")
+        if isinstance(skills, dict) and skills.get("supported") is False:
+            disabled.add(key)
+            disabled.update(aliases_of(entry))
+    return disabled
+
+
+def skill_root_label(
+    path: Path, home: Path | None = None, registry: dict | None = None
+) -> str:
+    """`~/.config/opencode/skills` -> `opencode`, `~/.qwen/skills` -> `qwen`.
+
+    A registry-declared root keeps its registry key rather than the parent
+    dirname — ``~/.pi/agent/skills`` is ``pi``, never ``agent`` — so picker
+    claims and archived overrides join on the name harness.json uses.
+    """
+    home = home or Path.home()
+    if registry is None:
+        registry = load_registry(home)
+    key = _registry_skill_roots(registry, home).get(path)
+    if key is not None:
+        return key
     owner = path.parent.name
     return owner[1:] if owner.startswith(".") else owner
 
@@ -547,7 +596,7 @@ def plan(
             state, detail = "ignored", IGNORED_DETAIL
         else:
             state, detail = classify_skill_root(path, home)
-        status = LinkStatus(skill_root_label(path, home), path, state, detail)
+        status = LinkStatus(skill_root_label(path, home, registry), path, state, detail)
         archived_override(status, archived)
         skills.append(status)
     return instructions, skills

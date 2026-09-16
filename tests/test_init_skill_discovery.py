@@ -124,6 +124,79 @@ class SignatureTest(unittest.TestCase):
                      for p in discover_skill_roots(home, registry)}
             self.assertNotIn(".aside/skills", found)
 
+    def test_supported_false_suppresses_a_signature_root(self):
+        # The registry wins over inference: kilo is installed (its evidence
+        # is on disk) but the user declared skills unsupported, so init
+        # must not create ~/.kilo/skills anyway.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".config" / "kilo").mkdir(parents=True)
+            registry = {"kilo": {"capabilities": {
+                "skills": {"supported": False}}}}
+            found = {str(p.relative_to(home))
+                     for p in discover_skill_roots(home, registry)}
+            self.assertNotIn(".kilo/skills", found)
+
+    def test_supported_false_suppresses_a_glob_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".foo" / "skills").mkdir(parents=True)
+            registry = {"foo": {"capabilities": {
+                "skills": {"supported": False}}}}
+            found = {str(p.relative_to(home))
+                     for p in discover_skill_roots(home, registry)}
+            self.assertNotIn(".foo/skills", found)
+
+    def test_declared_root_labels_as_its_registry_key(self):
+        # ~/.pi/agent/skills labels as "pi", not "agent": an active pi must
+        # not be re-offered to the picker, an archived one must stay
+        # ignored.
+        from quiver.init.layout import plan
+        from quiver.init.manage import new_harnesses
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            registry = {"pi": {"capabilities": {
+                "skills": {"supported": True, "root": "~/.pi/agent/skills"}}}}
+            path = home / ".pi" / "agent" / "skills"
+            self.assertEqual(skill_root_label(path, home, registry), "pi")
+            _, skills = plan(home, registry=registry)
+            self.assertEqual(
+                [s.label for s in skills if s.path == path], ["pi"])
+            self.assertEqual(new_harnesses(skills, registry), [])
+
+    def test_archived_declared_root_is_ignored(self):
+        from quiver.init.layout import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            registry = {"pi": {
+                "state": "archived",
+                "capabilities": {"skills": {"root": "~/.pi/agent/skills"}},
+            }}
+            _, skills = plan(home, registry=registry)
+            by_path = {s.path: s for s in skills}
+            self.assertEqual(
+                by_path[home / ".pi" / "agent" / "skills"].state, "ignored")
+
+    def test_leftover_agents_dir_does_not_imply_cline(self):
+        # ~/.agents was quiver's own pre-0.2.7 root: a leftover proves
+        # nothing about cline, so its skills root must not appear. The
+        # AGENTS.md row still plans create — like every row, it creates a
+        # missing file under an existing dir — but that file is the shared
+        # standard target, not cline-specific state.
+        from quiver.init.layout import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".agents").mkdir()
+            found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
+            self.assertNotIn(".cline/skills", found)
+            instructions, _ = plan(home)
+            by_label = {s.label: s for s in instructions}
+            self.assertEqual(by_label["cline"].state, "create")
+            self.assertFalse((home / ".cline").exists())
+
     def test_signature_targets_link_on_init(self):
         from quiver.init.layout import plan
 
