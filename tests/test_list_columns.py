@@ -109,25 +109,25 @@ class EditCommandTest(unittest.TestCase):
         self.assertIn("swe list edit", out)
 
     def test_cancel_changes_nothing(self):
-        with mock.patch.object(C, "save_columns") as saved:
+        from quiver.harness import commands as H
+
+        # Patch the call site, not the source module: cmd_list_edit
+        # resolves save_columns through its own module binding, and
+        # patching C here would also poison that binding if commands
+        # were imported for the first time inside this `with` (the
+        # module-level `from columns import save_columns` snapshots
+        # whatever C.save_columns is at import time).
+        with mock.patch.object(H, "save_columns") as saved:
             code, out = self._run([], picked=None)
         self.assertEqual(code, 0)
         saved.assert_not_called()
         self.assertIn("cancelled", out)
 
     def _run_with_store(self, args, picked):
-        """Run cmd_list_edit against an in-memory config store.
-
-        wraps= pins cmd_list_edit's save_columns binding to the real
-        function regardless of what other tests have patched, while the
-        load_config/save_config patches keep the write off disk.
-        """
-        from quiver.harness import commands as H
-
+        """Run cmd_list_edit against an in-memory config store."""
         store = {}
         with mock.patch.object(C, "load_config", lambda: dict(store)), \
-                mock.patch.object(C, "save_config", lambda cfg: store.update(cfg)), \
-                mock.patch.object(H, "save_columns", wraps=C.save_columns):
+                mock.patch.object(C, "save_config", lambda cfg: store.update(cfg)):
             return self._run(args, picked=picked)
 
     def test_saving_rate_column_prints_the_network_note(self):
