@@ -374,6 +374,54 @@ class TranscriptReaderTest(unittest.TestCase):
             ["hello!", "Hello! How can I help?"])
         self.assertEqual(transcript.messages[0].role, "human")
 
+    def test_cline_envelope_unwrap_only_on_fully_wrapped_user_text(self):
+        # An assistant block quoting the markup, and a mid-text literal,
+        # must not be altered.
+        sid = "1789471031317_qw9zz"
+        sess_dir = self.home / f".cline/data/sessions/{sid}"
+        sess_dir.mkdir(parents=True)
+        quoted = 'Use <user_input mode="act">…</user_input> for input'
+        literal = "close it with </user_input> like this"
+        (sess_dir / f"{sid}.messages.json").write_text(json.dumps({
+            "sessionId": sid,
+            "messages": [
+                {"role": "user", "ts": 1,
+                 "content": [{"type": "text", "text": literal}]},
+                {"role": "assistant", "ts": 2,
+                 "content": [{"type": "text", "text": quoted}]},
+            ],
+        }), encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(
+            [m.text for m in transcript.messages], [literal, quoted])
+
+    def test_cline_mismatched_session_id_is_unreadable(self):
+        # A file at the right path but stamped for another session must
+        # not be attributed to this one.
+        sid = "1789471031317_zzzzz"
+        sess_dir = self.home / f".cline/data/sessions/{sid}"
+        sess_dir.mkdir(parents=True)
+        (sess_dir / f"{sid}.messages.json").write_text(json.dumps({
+            "sessionId": "someone_else",
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "x"}]}],
+        }), encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertFalse(transcript.readable)
+
+    def test_cline_messages_not_a_list_is_unreadable(self):
+        sid = "1789471031317_bad"
+        sess_dir = self.home / f".cline/data/sessions/{sid}"
+        sess_dir.mkdir(parents=True)
+        (sess_dir / f"{sid}.messages.json").write_text(
+            json.dumps({"sessionId": sid, "messages": {"partial": True}}),
+            encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertFalse(transcript.readable)
+
     def test_cline_legacy_tasks_layout_still_reads(self):
         sid = "1777068768553"
         task_dir = self.home / f".cline/data/tasks/{sid}"
