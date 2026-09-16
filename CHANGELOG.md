@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe init` detects known harnesses from evidence, not just `skills/` dirs.** `init/layout.py`'s new `HARNESS_SIGNATURES` table declares, per harness, its skills root, its instruction file, and an any-of list of home-relative paths that mean "installed" — so cline is found via `~/.cline` (its CLI only makes `data/` on first run) and kilo via `~/.config/kilo` or `~/.local/share/kilo`, even though kilo's skills root lives at `~/.kilo/skills` whose parent is never created. Newly covered: cline (`~/.cline/skills` plus the cross-tool `~/.agents/AGENTS.md` it reads) and kilo (`~/.kilo/skills` plus `~/.config/kilo/AGENTS.md`). `capabilities.skills.root` in harness.json now also feeds root discovery directly, so a declared root need not match the `*/skills` glob. `kilo` joins `HARNESS_CATALOG` (so `swe discover` finds its binary) and `skills/layout.py`'s `HARNESS_ROOTS` (so `swe find` and drift checks can name the root).
 - **`swe init` offers to manage harnesses it discovers.** A skills root the
   registry has never heard of now opens a checklist: ticked harnesses get an
   active `harness.json` entry with `capabilities.skills.root` and an

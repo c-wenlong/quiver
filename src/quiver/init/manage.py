@@ -16,10 +16,11 @@ from pathlib import Path
 
 from quiver import paths as _paths
 from quiver.init.layout import (
-    INSTRUCTION_TARGETS,
+    HARNESS_SIGNATURES,
     LinkStatus,
     aliases_of,
     registry_name,
+    skill_root_label,
 )
 
 
@@ -45,17 +46,23 @@ def new_harnesses(skills: list[LinkStatus], registry: dict) -> list[LinkStatus]:
     and those harnesses would never get a registry entry otherwise —
     declining one just archives it, and the link stays, since init never
     unlinks. A root whose label resolves to a registry key or one of its
-    aliases is known — and so is one the built-in instruction table already
-    covers: offering claude as "new" would let a default AGENTS.md answer
-    replace its real CLAUDE.md target, and declining it would archive a
-    harness init already manages.
+    aliases is known — and so is one a signature already covers: offering
+    claude as "new" would let a default AGENTS.md answer replace its real
+    CLAUDE.md target, and declining it would archive a harness init already
+    manages. The signature's own skills dir labels count too: ``.kilo``
+    reads as "kilo", ``.factory`` as "droid" through the alias table.
     """
     known = set(registry) | {
         alias
         for entry in registry.values()
         for alias in aliases_of(entry)
     }
-    known |= {registry_name(label) for label, _ in INSTRUCTION_TARGETS}
+    known |= {registry_name(label) for label in HARNESS_SIGNATURES}
+    known |= {
+        registry_name(skill_root_label(sig.skills))
+        for sig in HARNESS_SIGNATURES.values()
+        if sig.skills is not None
+    }
     found: dict[str, LinkStatus] = {}
     for status in skills:
         if status.label == "agents" or status.state == "ignored":
