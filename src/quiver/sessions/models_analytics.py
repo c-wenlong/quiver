@@ -1,6 +1,7 @@
 """Model usage analytics mined read-only from tool session logs."""
 
 import glob
+import json
 import os
 import re
 import sqlite3
@@ -109,6 +110,28 @@ def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
         seen = _drizzle_model_counts(kilo_db)
         if seen:
             raw["kilo"] = seen
+
+    # Cline 3.x stamps provider/model on each session's <id>.json metadata.
+    cline_dir = os.path.expanduser("~/.cline/data/sessions/")
+    if os.path.exists(cline_dir):
+        try:
+            seen = {}
+            for meta in glob.glob(os.path.join(cline_dir, "*", "*.json")):
+                try:
+                    with open(meta, encoding="utf-8") as fh:
+                        data = json.load(fh)
+                except Exception:
+                    continue
+                if not isinstance(data, dict) or "session_id" not in data:
+                    continue
+                model = data.get("model")
+                if model:
+                    key = (data.get("provider") or "", model)
+                    seen[key] = seen.get(key, 0) + 1
+            if seen:
+                raw["cline"] = seen
+        except Exception:
+            pass
 
     claude_dir = os.path.expanduser("~/.claude/projects/")
     if os.path.exists(claude_dir):

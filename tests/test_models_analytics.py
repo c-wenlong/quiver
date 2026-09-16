@@ -113,6 +113,43 @@ class ModelsAnalyticsTest(unittest.TestCase):
             self.assertEqual(usage["kilo"][("xai", "grok-4.5")], 2)
             self.assertEqual(usage["kilo"][("anthropic", "claude-sonnet-4")], 1)
 
+    def test_collects_cline_models_from_session_metadata(self):
+        # Cline 3.x stamps provider/model on <id>.json beside the
+        # <id>.messages.json transcript, which must not be counted.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "cline-sessions"
+            s1 = sessions / "s1"
+            s1.mkdir(parents=True)
+            (s1 / "s1.json").write_text(json.dumps({
+                "session_id": "s1", "provider": "xai",
+                "model": "grok-4-1-fast-reasoning",
+            }))
+            (s1 / "s1.messages.json").write_text(json.dumps({
+                "sessionId": "s1", "messages": [],
+            }))
+            s2 = sessions / "s2"
+            s2.mkdir(parents=True)
+            (s2 / "s2.json").write_text(json.dumps({
+                "session_id": "s2", "provider": "anthropic",
+                "model": "claude-sonnet-4",
+            }))
+
+            with mock.patch(
+                "quiver.sessions.models_analytics.os.path.expanduser",
+                side_effect=self._expand_for(
+                    root, {"~/.cline/data/sessions/": sessions}
+                ),
+            ):
+                usage = collect_model_usage()
+
+            self.assertEqual(
+                usage["cline"][("xai", "grok-4-1-fast-reasoning")], 1
+            )
+            self.assertEqual(
+                usage["cline"][("anthropic", "claude-sonnet-4")], 1
+            )
+
     def test_collects_codex_models_from_nested_sessions(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
