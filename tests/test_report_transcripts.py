@@ -348,6 +348,92 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertEqual(
             [m.text for m in transcript.messages], ["Run the suite", "All green"])
 
+    def test_cline_3x_reads_session_dir_messages(self):
+        # data/sessions/<id>/<id>.messages.json: user text arrives inside
+        # <user_input> and thinking blocks are dropped.
+        sid = "1789471031317_jp2hv"
+        sess_dir = self.home / f".cline/data/sessions/{sid}"
+        sess_dir.mkdir(parents=True)
+        (sess_dir / f"{sid}.messages.json").write_text(json.dumps({
+            "version": 1,
+            "sessionId": sid,
+            "messages": [
+                {"id": "m1", "role": "user", "ts": 1789471031482,
+                 "content": [{"type": "text",
+                              "text": '<user_input mode="act">hello!</user_input>'}]},
+                {"id": "m2", "role": "assistant", "ts": 1789471035698,
+                 "content": [{"type": "thinking", "thinking": "simple greeting"},
+                             {"type": "text", "text": "Hello! How can I help?"}]},
+            ],
+        }), encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(
+            [m.text for m in transcript.messages],
+            ["hello!", "Hello! How can I help?"])
+        self.assertEqual(transcript.messages[0].role, "human")
+
+    def test_cline_envelope_unwrap_only_on_fully_wrapped_user_text(self):
+        # An assistant block quoting the markup, and a mid-text literal,
+        # must not be altered.
+        sid = "1789471031317_qw9zz"
+        sess_dir = self.home / f".cline/data/sessions/{sid}"
+        sess_dir.mkdir(parents=True)
+        quoted = 'Use <user_input mode="act">…</user_input> for input'
+        literal = "close it with </user_input> like this"
+        (sess_dir / f"{sid}.messages.json").write_text(json.dumps({
+            "sessionId": sid,
+            "messages": [
+                {"role": "user", "ts": 1,
+                 "content": [{"type": "text", "text": literal}]},
+                {"role": "assistant", "ts": 2,
+                 "content": [{"type": "text", "text": quoted}]},
+            ],
+        }), encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(
+            [m.text for m in transcript.messages], [literal, quoted])
+
+    def test_cline_mismatched_session_id_is_unreadable(self):
+        # A file at the right path but stamped for another session must
+        # not be attributed to this one.
+        sid = "1789471031317_zzzzz"
+        sess_dir = self.home / f".cline/data/sessions/{sid}"
+        sess_dir.mkdir(parents=True)
+        (sess_dir / f"{sid}.messages.json").write_text(json.dumps({
+            "sessionId": "someone_else",
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "x"}]}],
+        }), encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertFalse(transcript.readable)
+
+    def test_cline_messages_not_a_list_is_unreadable(self):
+        sid = "1789471031317_bad"
+        sess_dir = self.home / f".cline/data/sessions/{sid}"
+        sess_dir.mkdir(parents=True)
+        (sess_dir / f"{sid}.messages.json").write_text(
+            json.dumps({"sessionId": sid, "messages": {"partial": True}}),
+            encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertFalse(transcript.readable)
+
+    def test_cline_legacy_tasks_layout_still_reads(self):
+        sid = "1777068768553"
+        task_dir = self.home / f".cline/data/tasks/{sid}"
+        task_dir.mkdir(parents=True)
+        (task_dir / "api_conversation_history.json").write_text(
+            json.dumps([{"role": "user", "content": "legacy task"}]),
+            encoding="utf-8")
+
+        transcript = read_transcript(_session("cline", sid))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(transcript.messages[0].text, "legacy task")
+
     def test_forge_unwraps_typed_text_envelopes_and_drops_system_messages(self):
         db = self.home / ".forge/.forge.db"
         db.parent.mkdir(parents=True)

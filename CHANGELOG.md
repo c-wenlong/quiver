@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Cline sessions read as zero.** `parse_cline` only read the legacy `~/.cline/data/state/taskHistory.json` index; Cline 3.x writes one directory per session under `~/.cline/data/sessions/<id>/` (`<id>.json` metadata beside a `<id>.messages.json` transcript) and never creates `state/`. The parser now reads both layouts — the per-session dirs and, for older installs, the index.
+- **Cline sessions read as zero.** `parse_cline` only read the legacy `~/.cline/data/state/taskHistory.json` index; Cline 3.x writes one directory per session under `~/.cline/data/sessions/<id>/` (`<id>.json` metadata beside a `<id>.messages.json` transcript) and never creates `state/`. The parser now reads both layouts — the per-session dirs and, for older installs, the index. Transcript previews/reports follow: the cline reader loads `<id>.messages.json` (unwrapping `<user_input>` envelopes, dropping `thinking` blocks) and falls back to the old `data/tasks/<id>/` pair.
 
 ### Added
 
