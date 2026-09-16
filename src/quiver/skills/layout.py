@@ -37,6 +37,7 @@ HARNESS_ROOTS: tuple[tuple[str, Path], ...] = (
     ("qwen-code", Path(".qwen/skills")),
     ("forge", Path(".forge/skills")),
     ("cline", Path(".cline/skills")),
+    ("kilo", Path(".kilo/skills")),
     ("kiro", Path(".kiro/skills")),
     ("mistral-vibe", Path(".vibe/skills")),
     ("augment", Path(".augment/skills")),

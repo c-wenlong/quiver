@@ -351,6 +351,22 @@ class AlreadyKnownTest(unittest.TestCase):
             _, picker = _init(home, ["--full"], supported=True, chosen=[])
             self.assertFalse(picker.called)
 
+    def test_signature_harness_is_never_offered(self):
+        # A signature claims its skills root: kilo installed means
+        # ~/.config/kilo exists, and the ~/.kilo/skills root init links is
+        # known, not "new". Offering it would let an untick archive a
+        # harness init manages.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".config" / "kilo").mkdir(parents=True)
+            (home / ".cline" / "data").mkdir(parents=True)
+            out, picker = _init(home, ["--full"], supported=True, chosen=[])
+            self.assertFalse(picker.called)
+            self.assertTrue((home / ".kilo" / "skills").is_symlink())
+            self.assertTrue((home / ".cline" / "skills").is_symlink())
+            self.assertTrue((home / ".config" / "kilo" / "AGENTS.md").is_symlink())
+            self.assertTrue((home / ".agents" / "AGENTS.md").is_symlink())
+
 
 class LegacyGuardTest(unittest.TestCase):
     def test_unmigrated_tools_json_blocks_the_picker(self):

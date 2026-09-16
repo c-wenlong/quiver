@@ -394,8 +394,10 @@ def print_init_help() -> None:
                        (also the non-terminal default)
 
   {c('bold', 'New harnesses')}
-    A skills folder the registry does not know is a new harness: ticked
-    ones are registered and linked (instructions too), unticked ones are
+    Known harnesses are linked from their own footprint — a config dir
+    like ~/.cline or ~/.config/kilo is enough, no skills folder needed
+    first. A skills folder nothing claims is offered as new: ticked ones
+    are registered and linked (instructions too), unticked ones are
     archived in harness.json and left alone. `swe hs` changes either later.
 
   {c('bold', 'What it owns')}

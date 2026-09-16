@@ -82,6 +82,12 @@ HARNESS_CATALOG: dict[str, dict] = {
         "tags": ["agentic", "coding", "open-source", "byok"],
         "aliases": ["cl"],
     },
+    "kilo": {
+        "command": "kilo",
+        "description": "Kilo Code's CLI, an opencode fork; extension and CLI share ~/.config/kilo",
+        "tags": ["agentic", "coding", "open-source", "byok"],
+        "aliases": ["ki"],
+    },
     "goose": {
         "command": "goose",
         "description": "Block's, extensions are MCP servers, local or hosted models",
