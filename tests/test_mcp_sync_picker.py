@@ -101,10 +101,14 @@ class SyncPickerTest(unittest.TestCase):
         tgt = {"s1": {"command": "old-a"}, "s2": {"command": "old-b"}}
         picks = iter([["s1", "s2"], ["s2"]])
         with TemporaryDirectory() as tmp:
-            code, out, _, saver_fn = self._run_sync(
+            code, out, ms, saver_fn = self._run_sync(
                 Path(tmp), src, tgt, lambda *a, **k: next(picks))
 
         self.assertEqual(code, 0, msg=out)
+        # Second call is the conflict picker: every conflict pre-ticked,
+        # matching the old widget's default-all behaviour.
+        _, kwargs = ms.call_args_list[1]
+        self.assertEqual(kwargs["selected"], ["s1", "s2"])
         written = saver_fn.return_value.call_args[0][0]
         self.assertEqual(written["s1"], {"command": "old-a"})
         self.assertEqual(written["s2"], {"command": "new-b"})
