@@ -11,8 +11,8 @@ import textwrap
 import unittest
 
 from quiver.console import (
-    COLORS, c, cell_len, cellpad, fill_ansi, lpad, strip_ansi, visible_len,
-    wrap_ansi,
+    COLORS, c, cell_len, cellpad, fill_ansi, lpad, sanitize, strip_ansi,
+    visible_len, wrap_ansi,
 )
 
 RESET = "\x1b[0m"
@@ -211,6 +211,71 @@ class CellWidthTest(unittest.TestCase):
         self.assertEqual(
             cell_len("\U0001f3f4\U000e0067\U000e0062\U000e0065"
                      "\U000e006e\U000e0067\U000e007f"), 2)
+
+
+class SanitizeTest(unittest.TestCase):
+    """sanitize() makes an untrusted string terminal-safe.
+
+    Titles, transcript lines, filenames and server names all originate
+    outside quiver, so a crafted value must not be able to paint itself,
+    open a link, rewrite the clipboard, or move the cursor.
+    """
+
+    def test_osc8_links_are_removed(self):
+        text = "click \x1b]8;;https://evil.example\x07here\x1b]8;;\x07 ok"
+        self.assertEqual(sanitize(text), "click here ok")
+
+    def test_osc52_clipboard_writes_are_removed(self):
+        text = "name\x1b]52;c;AAAAAAAA\x07tail"
+        self.assertEqual(sanitize(text), "nametail")
+
+    def test_st_terminated_osc_is_removed(self):
+        text = "a\x1b]0;owned\x1b\\b"
+        self.assertEqual(sanitize(text), "ab")
+
+    def test_unterminated_osc_consumes_to_end(self):
+        text = "a\x1b]8;;https://evil.example never closed"
+        self.assertEqual(sanitize(text), "a")
+
+    def test_csi_sequences_are_removed(self):
+        # SGR, cursor moves, private mode sets, intermediate-byte finals.
+        self.assertEqual(sanitize("a\x1b[31mb\x1b[2Jc\x1b[?25ld\x1b[ qe"),
+                         "abcde")
+
+    def test_charset_and_two_byte_escapes_are_removed(self):
+        self.assertEqual(sanitize("a\x1b(Bb\x1b#8c\x1bMd"), "abcd")
+
+    def test_a_lone_escape_is_removed(self):
+        self.assertEqual(sanitize("a\x1bb"), "ab")
+
+    def test_control_characters_become_spaces(self):
+        # A newline in a title used to fuse two rows into one.
+        self.assertEqual(sanitize("a\rb\nc\td\x07e"), "a b c d e")
+        self.assertEqual(sanitize("x\x00y\x9bz"), "x y z")
+
+    def test_sanitize_document_keeps_layout_and_fuses_controls(self):
+        from quiver.console import sanitize_document
+
+        self.assertEqual(sanitize_document("a\nb\tc"), "a\nb\tc")
+        # \r becomes a real newline rather than fusing words; a CRLF pair
+        # from JSON/SQLite storage collapses to one, not a blank line.
+        self.assertEqual(sanitize_document("warning\rerror"), "warning\nerror")
+        self.assertEqual(sanitize_document("a\r\nb"), "a\nb")
+        # Every other control vanishes so a split credential stays one token.
+        self.assertEqual(sanitize_document("a\x07b\x0bc\x0cd\ne"), "abcd\ne")
+        self.assertEqual(sanitize_document("x\x1b]8;;u\x07y"), "xy")
+
+    def test_intentional_paint_still_round_trips(self):
+        # sanitize is for foreign text; our own strings stay untouched
+        # when they carry no escapes of their own.
+        self.assertEqual(sanitize("plain label ✓ 12"), "plain label ✓ 12")
+
+    def test_strip_ansi_still_strips_only_escapes(self):
+        # strip_ansi is a measuring tool for our own painted strings: it
+        # removes every escape class but does not touch control chars.
+        text = "a\x1b]8;;u\x07b\x07"
+        self.assertEqual(strip_ansi(text), "ab\x07")
+        self.assertEqual(visible_len("x\x1b]8;;u\x07y"), 2)
 
 
 if __name__ == "__main__":

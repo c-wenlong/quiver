@@ -21,7 +21,7 @@ from itertools import islice
 from pathlib import Path
 
 from quiver import keys
-from quiver.console import c, elide, strip_ansi, truncate, visible_len
+from quiver.console import c, elide, sanitize, strip_ansi, truncate, visible_len
 from quiver.find.entries import HIDE_DIRS, TEXT_SUFFIXES, Entry
 from quiver.find.highlight import highlight
 
@@ -154,10 +154,14 @@ def _file_preview(path: Path, limit: int) -> list[str]:
     except OSError:
         return ["(unreadable)"]
     if path.suffix.lower() not in TEXT_SUFFIXES or size >= MAX_PREVIEW_BYTES:
-        return [path.name, _human_size(size), "binary or too large"]
+        return [sanitize(path.name), _human_size(size), "binary or too large"]
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
-            rows = [line.rstrip("\r\n").expandtabs(4)
+            # File content is the hostile case: a crafted SKILL.md could
+            # hide an OSC-52 clipboard write behind a previewed line.
+            # Tabs expand before sanitize, which would otherwise map them
+            # to a single space and lose the indentation.
+            rows = [sanitize(line.rstrip("\r\n").expandtabs(4))
                     for line in islice(fh, limit)]
     except OSError:
         return ["(unreadable)"]
@@ -185,7 +189,7 @@ def _preview(entry: Entry, limit: int) -> list[str]:
     stat every child on every keypress, and the pane shows names anyway.
     """
     if entry.children:
-        rows = [e.label + ("/" if e.can_descend else "")
+        rows = [sanitize(e.label) + ("/" if e.can_descend else "")
                 for e in entry.children[:limit]]
         return rows or ["(empty)"]
     if entry.path is None:
@@ -203,7 +207,7 @@ def _preview(entry: Entry, limit: int) -> list[str]:
     if not kids:
         return ["(empty)"]
     shown = kids[:limit - 1] if len(kids) > limit else kids
-    rows = [k.name + ("/" if k.is_dir() else "") for k in shown]
+    rows = [sanitize(k.name) + ("/" if k.is_dir() else "") for k in shown]
     if len(kids) > len(rows):
         rows.append(f"... {len(kids) - len(rows)} more")
     return rows
@@ -233,10 +237,11 @@ def _left_cell(entry: Entry, width: int, active: bool, muted: bool = False) -> s
     # No leading glyph. The bar already says which row is selected, and
     # colour already says which rows descend, so a triangle on every line
     # only narrows the column that holds the name.
-    detail_w = min(len(entry.detail), width // 3) if entry.detail else 0
+    detail_text = sanitize(entry.detail) if entry.detail else ""
+    detail_w = min(len(detail_text), width // 3) if detail_text else 0
     name_w = max(1, width - 1 - (detail_w + 1 if detail_w else 0))
-    name = elide(entry.label, name_w).ljust(name_w)
-    detail = (" " + truncate(entry.detail, detail_w).rjust(detail_w)
+    name = elide(sanitize(entry.label), name_w).ljust(name_w)
+    detail = (" " + truncate(detail_text, detail_w).rjust(detail_w)
               if detail_w else "")
 
     if active:
@@ -461,7 +466,8 @@ def browse(roots: list[Entry], title: str = "") -> int:
                 entries = levels[-1]
                 cursor = min(cursors[-1], max(0, len(entries) - 1))
                 cursors[-1] = cursor
-                crumb = " / ".join(trail) if trail else "top level"
+                crumb = (" / ".join(sanitize(t) for t in trail)
+                         if trail else "top level")
                 preview = _preview(entries[cursor], height) if entries else []
                 language = _preview_language(entries[cursor]) if entries else ""
                 # levels[-2] is literally where back would take you, so the

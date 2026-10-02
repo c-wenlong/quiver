@@ -150,6 +150,26 @@ class SessionCommandsTest(unittest.TestCase):
         legacy = SimpleNamespace(title="My name", session_id="x")  # no attribute
         self.assertIn(dim, _display_title(legacy, 50))
 
+    def test_display_title_strips_terminal_escapes(self):
+        # Titles come from harness-owned files: an OSC-8 link, an OSC-52
+        # clipboard write, a clear-screen CSI, or a stray BEL must never
+        # reach the terminal through a painted cell.
+        hostile = "hi \x1b]8;;https://evil\x07link\x1b]8;;\x07 \x07\x1b[2Jdone"
+        text = _display_title(SimpleNamespace(title=hostile, session_id="x"), 50)
+        # Our own dim/italic paint stays; only the hostile bytes go.
+        self.assertNotIn("\x1b]", text)
+        self.assertNotIn("\x07", text)
+        self.assertNotIn("\x1b[2J", text)
+        self.assertIn("hi link", text)
+        self.assertIn("done", text)
+
+    def test_display_title_sid_fallback_is_sanitized(self):
+        sid = "abc\x1b]52;c;AAAA\x07def"
+        text = _display_title(SimpleNamespace(title="", session_id=sid), 50)
+        self.assertNotIn("\x1b]", text)
+        self.assertNotIn("\x07", text)
+        self.assertIn("#abcdef", text)
+
     def test_parse_interactive_flag(self):
         parsed = _parse_session_args(["-i"])
         self.assertIsNotNone(parsed)

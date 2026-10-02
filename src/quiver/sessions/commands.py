@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from quiver.console import c, cpad, fit_widths, terminal_width, truncate, visible_len
+from quiver.console import c, cpad, fit_widths, sanitize, terminal_width, truncate, visible_len
 from quiver.flags import expand_value_flags
 from quiver.markdown import render_markdown
 from quiver.sessions import failures
@@ -310,7 +310,7 @@ def _resume_cmd_args(session) -> list[str]:
             print(
                 c(
                     "yellow",
-                    f"Note: {session.agent} does not support CLI resume flags. "
+                    f"Note: {sanitize(session.agent)} does not support CLI resume flags. "
                     "Type /resume in the prompt if needed.",
                 )
             )
@@ -318,7 +318,7 @@ def _resume_cmd_args(session) -> list[str]:
             print(
                 c(
                     "yellow",
-                    f"Note: {session.agent} resume flags are limited; "
+                    f"Note: {sanitize(session.agent)} resume flags are limited; "
                     "launching in session directory.",
                 )
             )
@@ -326,7 +326,9 @@ def _resume_cmd_args(session) -> list[str]:
 
 
 def _display_title(session, width: int) -> str:
-    title = (session.title or "").strip()
+    # Titles live in harness-owned files, so they are untrusted: a stored
+    # title carrying an OSC link or a BEL must not reach the terminal.
+    title = sanitize(session.title or "").strip()
     if title:
         shown = truncate(title, width)
         # A name the user set is the only title shown at full intensity, in
@@ -335,7 +337,7 @@ def _display_title(session, width: int) -> str:
         if getattr(session, "title_source", "") == "rename":
             return c("italic", shown)
         return c("dim", shown)
-    sid = (session.session_id or "").strip()
+    sid = sanitize(session.session_id or "").strip()
     if sid:
         short = sid if len(sid) <= 12 else sid[:8] + "…"
         return c("dim", f"#{short}")
@@ -429,7 +431,10 @@ def _build_session_table(sessions, reserve: int = 0, statuses=None) -> Table:
     # hardcoded 4, shifting every column after it from row 100 on.
     now = time.time()
     stamps = [_relative_time(now - (s.timestamp / 1000)) for s in sessions]
-    agents = [s.agent or "" for s in sessions]
+    # Agent names come out of harness files, so they carry the same
+    # escape-sequence risk titles do; the AGENT column is preformatted,
+    # which means nothing downstream will clean them again.
+    agents = [sanitize(s.agent or "") for s in sessions]
     idx_w = max(len("[#]"), len(f"[{len(sessions)}]"))
     time_w = max([len("LAST ACTIVE")] + [len(s) for s in stamps])
     agent_w = max([len("AGENT")] + [len(a) for a in agents])
@@ -542,7 +547,7 @@ def _session_preview(session) -> list[str]:
     if sources:
         # Plain so the view wraps it: the file name at the end is the part
         # that tells two forks apart, and a cut label would lose it.
-        lines.append(sources)
+        lines.append(sanitize(sources))
     if not transcript.messages:
         lines.append("(no messages)")
         return lines
@@ -569,10 +574,10 @@ def _session_preview(session) -> list[str]:
 
 def _resume_session(session) -> int:
     if not os.path.exists(session.path):
-        print(c("red", f"Directory not found: {session.path}"))
+        print(c("red", f"Directory not found: {sanitize(session.path)}"))
         return 1
 
-    print(c("cyan", f"Resuming {session.agent} session..."))
+    print(c("cyan", f"Resuming {sanitize(session.agent)} session..."))
     os.chdir(session.path)
 
     cmd_args = _resume_cmd_args(session)

@@ -30,7 +30,7 @@ from quiver.console import (
     c,
     cpad,
     elide,
-    strip_ansi,
+    sanitize,
     terminal_width,
     truncate,
     visible_len,
@@ -110,13 +110,15 @@ def _register_default_kinds() -> None:
     @register_kind("text")
     def _text(value, width, attrs):
         raw = "" if value is None else str(value)
-        # ANSI-painted inputs are stripped to plain before truncation so
-        # ``console.truncate`` (which slices by bytes) cannot chop a
-        # ``ESC[…m`` escape mid-sequence - that would leak the colour
-        # into the gap that follows this cell. Callers who want ANSI
-        # in a text-style column should use ``kind="preformatted"`` or
-        # ``trust_cell_width=True``; ``text`` is plain-only by design.
-        plain = strip_ansi(raw)
+        # ANSI-painted inputs are sanitized to plain before truncation so
+        # ``console.truncate`` (which slices by bytes) cannot chop an
+        # escape mid-sequence - that would leak the colour into the gap
+        # that follows this cell. ``sanitize`` also clears OSC links,
+        # clipboard writes, and control characters a hostile value could
+        # smuggle in. Callers who want ANSI in a text-style column should
+        # use ``kind="preformatted"`` or ``trust_cell_width=True``;
+        # ``text`` is plain-only by design.
+        plain = sanitize(raw)
         truncated = truncate(plain, width)
         return truncated + " " * max(width - visible_len(truncated), 0)
 
@@ -127,7 +129,7 @@ def _register_default_kinds() -> None:
         # says which project. Cutting from the right leaves every row in the
         # same workspace looking identical, so a column of paths that share a
         # long prefix becomes unreadable exactly when it matters most.
-        plain = strip_ansi("" if value is None else str(value))
+        plain = sanitize("" if value is None else str(value))
         shortened = elide(plain, width)
         return shortened + " " * max(width - visible_len(shortened), 0)
 
@@ -160,7 +162,7 @@ def _register_default_kinds() -> None:
         color = attrs.get("color", "cyan")
         if not value:
             return cpad(color, empty, width)
-        joined = ", ".join(str(v) for v in value)
+        joined = ", ".join(sanitize(str(v)) for v in value)
         return cpad(color, truncate(joined, width), width)
 
     @register_kind("timestamp")

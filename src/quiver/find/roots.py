@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quiver import paths
+from quiver.console import sanitize
 from quiver.find.entries import Entry
 from quiver.find.plugins import Plugin, discover_plugins, filter_plugins
 from quiver.find.tree import (
@@ -116,8 +117,8 @@ def dir_label(path: Path, home: Path) -> str | None:
         return None
     first = parts[0]
     if first == ".config" and len(parts) > 1:
-        return parts[1]
-    return first[1:] if first.startswith(".") else None
+        return sanitize(parts[1])
+    return sanitize(first[1:]) if first.startswith(".") else None
 
 
 def resolve_harness(label: str | None, reg: dict, aliases: dict) -> str | None:

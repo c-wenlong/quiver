@@ -191,6 +191,35 @@ class CmdFindTest(unittest.TestCase):
             self.assertEqual(before, after, "swe find must not touch the filesystem")
 
 
+class TrieSanitizeTest(unittest.TestCase):
+    """Hostile filenames: cleaned for display, never merged as keys."""
+
+    def _node(self, path):
+        from quiver.find.tree import Node
+
+        return Node(label=path.name, path=path, kind="file", state="keep")
+
+    def test_names_differing_only_by_escapes_do_not_collapse(self):
+        root = Path("/proj")
+        nodes = [
+            self._node(root / "ab"),
+            self._node(root / "a\x1b[31mb"),
+        ]
+        rows = list(find_commands._walk_trie(
+            find_commands._collapse(
+                find_commands._build_trie(nodes, root, root))))
+        labels = [label for _i, label, _n in rows]
+        self.assertEqual(labels, ["ab", "ab"])
+
+    def test_printed_labels_carry_no_escapes(self):
+        root = Path("/proj")
+        nodes = [self._node(root / "x\x1b]52;c;AAAA\x07y\x1b[2J")]
+        rows = list(find_commands._walk_trie(
+            find_commands._collapse(
+                find_commands._build_trie(nodes, root, root))))
+        self.assertEqual(rows[0][1], "xy")
+
+
 if __name__ == "__main__":
     unittest.main()
 

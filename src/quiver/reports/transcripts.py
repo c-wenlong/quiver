@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from quiver.console import sanitize, sanitize_document
 from quiver.sessions.models import Session
 
 
@@ -95,7 +96,9 @@ def _new(session: Session, paths: Iterable[Path] = ()) -> NormalizedTranscript:
 def _unreadable(session: Session, error: str, paths: Iterable[Path] = ()) -> NormalizedTranscript:
     transcript = _new(session, paths)
     transcript.readable = False
-    transcript.error = error
+    # ``error`` can carry an exception's filename, which the filesystem
+    # does not restrict: clean it like everything else that displays.
+    transcript.error = sanitize(error)
     return transcript
 
 
@@ -169,8 +172,13 @@ def _clean_text(value: Any) -> str:
         return ""
     if isinstance(value, str):
         text = _ENVELOPE_RE.sub("", value)
-        text = _redact_secrets(text)
-        text = text.replace("\x00", "").strip()
+        # Clean before redact, deleting controls rather than spacing
+        # them: ``KEY=secret\x07suffix`` fuses into one ``secretsuffix``
+        # token the assignment pattern removes whole (a space would leave
+        # ``suffix`` behind), and an OSC inside a value collapses instead
+        # of stopping the pattern at its own semicolon.
+        text = _redact_secrets(sanitize_document(text))
+        text = text.strip()
         return text
     if isinstance(value, list):
         parts = [_clean_text(item) for item in value]
@@ -240,7 +248,7 @@ def _messages_from_content(role: str, content: Any, timestamp: Any = None) -> li
 
 
 def _tool_message(name: Any, arguments: Any = None, output: Any = None) -> NormalizedMessage | None:
-    label = str(name or "tool").strip()
+    label = sanitize(str(name or "tool")).strip()
     if output is None and isinstance(arguments, str):
         try:
             decoded = json.loads(arguments)

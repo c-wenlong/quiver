@@ -81,6 +81,79 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertIn("python3 -m unittest", transcript.messages[1].text)
         self.assertNotIn('{"command"', transcript.messages[1].text)
 
+    def test_terminal_escapes_in_messages_never_reach_the_preview(self):
+        # A stored message that paints, links, writes the clipboard, or
+        # clears the screen would run inside the picker's alternate screen.
+        self._jsonl(
+            ".codex/sessions/2026/07/30/codex-evil.jsonl",
+            [
+                {"type": "session_meta", "payload": {"id": "codex-evil", "cwd": "/work/project"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": (
+                            "safe \x1b]8;;https://evil\x07linked\x1b]8;;\x07 "
+                            "\x1b]52;c;AAAA\x07 \x1b[2J \x07done"
+                        )}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": json.dumps({"command": "rm \x1b[2J -rf"}),
+                    },
+                },
+            ],
+        )
+        transcript = read_transcript(_session("codex", "codex-evil"))
+        self.assertTrue(transcript.readable)
+        rendered = "\n".join(m.text for m in transcript.messages)
+        self.assertNotIn("\x1b", rendered)
+        self.assertNotIn("\x07", rendered)
+        self.assertIn("safe linked", rendered)
+        self.assertIn("done", rendered)
+
+    def test_controls_fuse_before_redaction(self):
+        # Controls delete (line-ish ones become newlines) before the
+        # redactor runs, so a stray byte inside a value or token cannot
+        # split the match and leak a fragment. Words separated by \r
+        # stay separate: it becomes a newline.
+        from quiver.reports.transcripts import _clean_text
+
+        for raw in (
+            "API_KEY=secret\x07suffix tail",
+            "API_KEY=abc\x1b]8;;u\x07def tail",
+            "API_KEY=ab\x1b[31mcdef tail",
+            "API_KEY=secret\x1csuffix tail",
+            "API_KEY=secret\x0bsuffix tail",
+            "API_KEY=secret\x1fsuffix tail",
+            "tok sk-" + "a" * 20 + "\x07" + "b" * 20 + " end",
+        ):
+            out = _clean_text(raw)
+            self.assertNotIn("suffix", out)
+            self.assertNotIn("secret", out)
+            self.assertNotIn("def tail", out)
+            self.assertNotIn("cdef", out)
+            self.assertNotIn("b" * 20, out)
+            self.assertIn("[REDACTED]", out)
+
+        self.assertEqual(_clean_text("warning\rerror"), "warning\nerror")
+
+    def test_unreadable_errors_carry_no_escapes(self):
+        # A reader that fails on a hostile filename used to surface the
+        # exception (and its bytes) into the picker's preview pane.
+        from quiver.reports.transcripts import _unreadable
+
+        sess = _session("codex", "x")
+        t = _unreadable(sess, "OSError: cannot open 'evil\x1b]8;;u\x07f\x1b[2J'")
+        self.assertNotIn("\x1b", t.error)
+        self.assertNotIn("\x07", t.error)
+        self.assertIn("cannot open 'evilf'", t.error)
+
     def test_unclosed_envelope_does_not_swallow_adjacent_semantic_markup(self):
         self._jsonl(
             ".codex/sessions/2026/07/30/codex-markup.jsonl",

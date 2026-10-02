@@ -104,6 +104,35 @@ class TableAnsiSafetyTest(unittest.TestCase):
         gap = body[col_a_width:col_a_width + table_column_gap]
         self.assertEqual(gap, "  ")
 
+    def test_text_removes_osc_links_clipboard_writes_and_controls(self):
+        # A hostile value — OSC-8 link, OSC-52 clipboard write, clear-
+        # screen CSI, BEL, embedded newline — must render as inert text.
+        t = Table()
+        t.add_column("a", "A", width=40, fit="fixed")
+        evil = "x\x1b]8;;https://evil\x07y\x1b]8;;\x07\x1b]52;c;AAAA\x07\x1b[2J\x07\n"
+        t.add_row({"a": evil})
+        body = t.render()[-1]
+        self.assertNotIn("\x1b", body)
+        self.assertNotIn("\x07", body)
+        self.assertNotIn("\n", body)
+        self.assertIn("xy", body)
+
+    def test_path_removes_escapes_before_the_middle_cut(self):
+        t = Table()
+        t.add_column("p", "P", width=40, max_width=40, kind="path", fit="fixed")
+        t.add_row({"p": "~/a\x1b]8;;https://evil\x07/b\x1b[2Jc"})
+        body = t.render()[-1]
+        self.assertNotIn("\x1b", body)
+        self.assertNotIn("\x07", body)
+
+    def test_preformatted_stays_trusted(self):
+        # The escape hatch for own-painted cells must not be neutered:
+        # ANSI a caller ships stays.
+        t = Table()
+        t.add_column("a", "A", width=10, kind="preformatted")
+        t.add_row({"a": c("green", "ok")})
+        self.assertIn("\x1b[", t.render()[-1])
+
 
 class TableRegisteredKindsTest(unittest.TestCase):
     def test_default_kinds_registered(self):

@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 from quiver.mcp import cli as cli_mod
 from quiver.mcp.cli import cmd_sync
+from quiver.multiselect import Choice, _render as ms_render
 
 
 class SyncPickerTest(unittest.TestCase):
@@ -124,6 +125,30 @@ class SyncPickerTest(unittest.TestCase):
         self.assertEqual(code, 0, msg=out)
         saver_fn.return_value.assert_not_called()
         self.assertIn("skipped", out)
+
+
+class WidgetSanitizeTest(unittest.TestCase):
+    """Checklist labels come out of config files; a hostile name must not
+    reach the terminal while the widget owns it."""
+
+    def test_checklist_render_strips_escapes_and_controls(self):
+        evil = Choice(
+            key="k",
+            label="srv\x1b]8;;https://evil\x07X\x1b]52;c;AAAA\x07\x1b[2J",
+            about="v\x07\x1b[?25l",
+        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            ms_render([evil], set(), 0, "T\x1b[1m\x07", 0)
+        out = buf.getvalue()
+        # Widget-drawn control bytes (cursor-up, clear-below) are the
+        # frame's own machinery; nothing from the label may survive.
+        self.assertNotIn("https://evil", out)
+        self.assertNotIn("\x1b]52", out)
+        self.assertNotIn("\x1b]8", out)
+        self.assertNotIn("\x07", out)
+        self.assertNotIn("\x1b[?25l", out)
+        self.assertIn("srvX", out)
 
 
 if __name__ == "__main__":
