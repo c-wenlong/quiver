@@ -24,8 +24,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tty
-import termios
 from datetime import datetime
 from pathlib import Path
 
@@ -44,98 +42,8 @@ from quiver.mcp.formats import (
     normalize_server as normalize_server_any,
 )
 from quiver.mcp.codex_io import load_codex_servers, save_codex_servers
+from quiver.multiselect import Choice, multiselect
 
-
-def getch():
-    """Read a single character from stdin."""
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        ch = sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-    return ch
-
-def interactive_select(
-    items: list[str],
-    headers: list[str] = None,
-    source_label: str = "",
-    target_label: str = "",
-    preselected: set[str] | list[str] | tuple[str, ...] | None = None,
-) -> list[str]:
-    """Interactive multi-select with arrow keys and spacebar.
-
-    Args:
-        items: list of item names to select
-        headers: column headers
-        source_label: label for source column
-        target_label: label for target column
-        preselected: initial checked items; defaults to all items
-
-    Returns:
-        list of selected item names
-    """
-    selected = set(items) if preselected is None else (set(preselected) & set(items))
-    cursor = 0
-
-    def render():
-        # Move cursor up to redraw
-        if hasattr(render, 'last_lines'):
-            sys.stdout.write(f"\033[{render.last_lines}A")
-
-        lines = []
-        if source_label and target_label:
-            lines.append(f"  Copy from {c('cyan', source_label)} → {c('cyan', target_label)}")
-            lines.append("")
-
-        for i, item in enumerate(items):
-            prefix = "  "
-            if i == cursor:
-                prefix = c("cyan", "▸ ")
-            check = c("green", "✓") if item in selected else c("dim", "·")
-            lines.append(f"{prefix}[{check}] {item}")
-
-        lines.append("")
-        lines.append(f"  {c('dim', '↑↓ navigate   Space toggle   a select all   n select none   Enter confirm')}")
-
-        for line in lines:
-            sys.stdout.write(f"\033[2K{line}\n")
-        sys.stdout.flush()
-        render.last_lines = len(lines)
-
-    render.last_lines = 0
-    render()
-
-    while True:
-        ch = getch()
-
-        if ch == '\x1b':  # escape sequence
-            ch2 = getch()
-            if ch2 == '[':
-                ch3 = getch()
-                if ch3 == 'A':  # up
-                    cursor = max(0, cursor - 1)
-                elif ch3 == 'B':  # down
-                    cursor = min(len(items) - 1, cursor + 1)
-        elif ch == ' ':  # spacebar toggle
-            item = items[cursor]
-            if item in selected:
-                selected.discard(item)
-            else:
-                selected.add(item)
-        elif ch == 'a':  # select all
-            selected = set(items)
-        elif ch == 'n':  # select none
-            selected = set()
-        elif ch == '\r' or ch == '\n':  # enter
-            sys.stdout.write("\n")
-            return [item for item in items if item in selected]
-        elif ch == '\x03':  # ctrl-c
-            sys.stdout.write("\n")
-            return []
-
-        render()
 
 # Maps canonical tool name → MCP config location.
 # Tools not listed here are skipped by mcp commands.
@@ -1000,13 +908,12 @@ def cmd_sync(args):
     interactive = (not no_interactive) and sys.stdin.isatty() and sys.stdout.isatty()
 
     if interactive:
-        print(f"\n  Select servers to copy from {c('cyan', source)}:\n")
-        selected = interactive_select(
-            server_names,
-            source_label=source,
-            target_label=", ".join(targets),
-            preselected=target_server_names,
+        picked = multiselect(
+            [Choice(key=n, label=n) for n in server_names],
+            selected=target_server_names,
+            title=f"Copy from {source} → {', '.join(targets)}",
         )
+        selected = picked or []
     else:
         selected = server_names
         print(f"{c('dim', 'Non-interactive mode: selecting all eligible servers.')}")
@@ -1065,12 +972,12 @@ def cmd_sync(args):
                     print(f"      {source}: {c('dim', src_summary)}")
                     print(f"      {target}: {c('dim', tgt_summary)}")
 
-                print(f"\n  Overwrite conflicting servers in {c('cyan', target)}?")
-                overwrite = set(interactive_select(
-                    conflicts,
-                    source_label=source,
-                    target_label=target,
-                ))
+                picked = multiselect(
+                    [Choice(key=n, label=n) for n in conflicts],
+                    selected=conflicts,
+                    title=f"Overwrite conflicting servers in {target}? ({source} → {target})",
+                )
+                overwrite = set(picked or [])
             else:
                 print(f"{c('yellow', f'{target}: {len(conflicts)} conflict(s) skipped in non-interactive mode (use --force to overwrite).')}")
 

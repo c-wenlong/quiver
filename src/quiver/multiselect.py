@@ -127,7 +127,7 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
         while True:
             drawn = _render(choices, chosen, cursor, title, drawn)
             key = _read_key(fd)
-            if key == "cancel":
+            if key in ("cancel", "escape"):
                 return None
             if key == "enter":
                 return [ch.key for ch in choices if ch.key in chosen]
@@ -274,7 +274,7 @@ def statepicker(choices: list[StateChoice], title="Select",
         while True:
             drawn = _state_render(choices, cursor, title, drawn, height)
             key = _read_state_key(fd)
-            if key == "cancel":
+            if key in ("cancel", "escape"):
                 return None
             if key == "enter":
                 return choices
