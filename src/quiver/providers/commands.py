@@ -548,6 +548,9 @@ def cmd_add(args: list[str]) -> int:
 
 
 def cmd_remove(args: list[str]) -> int:
+    if args and args[0] in ("-h", "--help", "help"):
+        print_providers_help()
+        return 0
     if not args:
         print(c("red", "Usage: swe providers remove <name|alias>"))
         return 1
