@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Error exits and unknown args are strict now.** `swe info`/`remove`/`use`/`star`/`add`/`help` printed a red error but exited 0 because the handlers fell off the end — each now returns 1. Leftover argv that used to be silently absorbed is rejected: a `--flag` typo in `swe list` no longer filters the listing on the typo'd word (`-x` and `--x` both fail "Unknown flag"), `swe models`/`skills`/`providers list` reject unknown flags, and trailing positionals are an "Unexpected args" error on `find`, `info`, `remove`, `star`, `list`, `providers`, `autocomplete`, and the no-arg commands (`check`, `tags`, `aliases`, `doctor`, `list edit`, `list legend`, `harness edit`). The `-tag` filter shorthand on `swe list` is gone as a consequence: tags are bare words now.
 - **Cline sessions read as zero.** `parse_cline` only read the legacy `~/.cline/data/state/taskHistory.json` index; Cline 3.x writes one directory per session under `~/.cline/data/sessions/<id>/` (`<id>.json` metadata beside a `<id>.messages.json` transcript) and never creates `state/`. The parser now reads both layouts — the per-session dirs and, for older installs, the index. Transcript previews/reports follow: the cline reader loads `<id>.messages.json` (unwrapping `<user_input>` envelopes, dropping `thinking` blocks) and falls back to the old `data/tasks/<id>/` pair.
 
 ### Added

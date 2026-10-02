@@ -572,7 +572,7 @@ def cmd_help(args):
                     print()
                     return
         print(c("red", f"  Unknown command: '{cmd_name}'"))
-        return
+        return 1
 
     # ── full help ─────────────────────────────────────────────────────────────
     print(f"\n{c('bold', 'swe')} — Central manager for AI coding CLI tools\n")

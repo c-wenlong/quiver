@@ -143,6 +143,9 @@ def cmd_list_edit(args=None) -> int:
         save_window(100)
         print(f"  {c('green', 'reset')} {c('dim', 'to ' + ', '.join(DEFAULT_COLUMNS))}")
         return 0
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        return 1
 
     current = load_columns()
     window = load_window()
@@ -186,6 +189,10 @@ def cmd_list_legend(args=None) -> int:
     reader who forgot what a yellow circle meant had nowhere to look.
     """
     from quiver.harness.columns import load_window, window_label
+
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        return 1
 
     label = window_label(load_window())
     print(f"\n  {c('bold', f'{label} column')}\n")
@@ -277,6 +284,9 @@ def cmd_harness_edit(args=None):
         print(f"  {c('dim', 'enter saves · q cancels · archiving then asks why, one at a time')}")
         print(f"  {c('dim', 'A blank reason cancels that archive; the record is the point.')}\n")
         return 0
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        return 1
 
     tools = load_registry()
     if not tools:
@@ -523,6 +533,14 @@ def cmd_list(args):
         print(f"Unknown scope: {scope or '(empty)'}. Use {', '.join(LIST_SCOPES)}.")
         return 1
 
+    bad = next((a for a in args if a.startswith("-")), None)
+    if bad:
+        print(c("red", f"Unknown flag: {bad}"))
+        return 1
+    if len(args) > 1:
+        print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
+        return 1
+
     tools = load_registry()
 
     from quiver.harness.archive import load_archive
@@ -548,7 +566,7 @@ def cmd_list(args):
             tools.setdefault(name, {"command": name, "description": "",
                                     "aliases": [], "tags": []})
 
-    tag_filter = args[0].lstrip("-") if args else None
+    tag_filter = args[0] if args else None
     counts = _session_counts()
     broken = _broken_tools() if "sess" in set(load_columns()) else set()
     _sess_label = window_label(load_window())
@@ -810,6 +828,10 @@ def cmd_star(args):
     if args[0] in ("list", "ls"):
         return cmd_star([])
 
+    if len(args) > 1:
+        print(c("red", f"  Unexpected args: {' '.join(args[1:])}"))
+        return 1
+
     key = args[0]
     name = resolve(tools, key)
     if not name:
@@ -820,7 +842,7 @@ def cmd_star(args):
             name = key
         else:
             print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
-            return
+            return 1
 
     now_starred = toggle_star(name)
     if now_starred:
@@ -832,12 +854,15 @@ def cmd_star(args):
 def cmd_info(args):
     if not args:
         print(c("red", "Usage: swe info <name|alias>"))
-        return
+        return 1
+    if len(args) > 1:
+        print(c("red", f"  Unexpected args: {' '.join(args[1:])}"))
+        return 1
     tools = load_registry()
     name = resolve(tools, args[0])
     if not name:
         print(c("red", f"  Tool '{args[0]}' not found. Try 'swe list'."))
-        return
+        return 1
 
     info = tools[name]
     installed = is_installed(info["command"])
@@ -1066,7 +1091,7 @@ def cmd_add(args):
     if len(args) < 2:
         print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
         print(c("dim", "  Interactive: swe add -i   ·   swe add <name> -i"))
-        return
+        return 1
     tools = load_registry()
     name = args[0]
     command = args[1]
@@ -1088,10 +1113,11 @@ def cmd_add(args):
         elif args[i] == "--command":
             print(c("red", "  --command only prefills swe add -i; the command is a positional arg here."))
             return 1
-        elif not args[i].startswith("--"):
-            desc = args[i]
-            i += 1
+        elif args[i].startswith("-"):
+            print(c("red", f"  Unknown flag: {args[i]}"))
+            return 1
         else:
+            desc = args[i]
             i += 1
     if command.startswith("-"):
         print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
@@ -1115,12 +1141,15 @@ def cmd_add(args):
 def cmd_remove(args):
     if not args:
         print(c("red", "Usage: swe remove <name|alias>"))
-        return
+        return 1
+    if len(args) > 1:
+        print(c("red", f"  Unexpected args: {' '.join(args[1:])}"))
+        return 1
     tools = load_registry()
     name = resolve(tools, args[0])
     if not name:
         print(c("red", f"  Tool '{args[0]}' not found."))
-        return
+        return 1
     del tools[name]
     save_registry(tools)
     print(f"  {c('green', '✓')} Removed '{name}' from registry.")
@@ -1130,23 +1159,26 @@ def cmd_use(args):
     if not args:
         print(c("red", "Usage: swe use <name|alias> [extra args...]"))
         cmd_list([])
-        return
+        return 1
     tools = load_registry()
     name = resolve(tools, args[0])
     extra = args[1:]
     if not name:
         print(c("red", f"  Tool '{args[0]}' not found. Try 'swe list'."))
-        return
+        return 1
     command = tools[name]["command"]
     if not is_installed(command):
         print(c("red", f"  Command '{command}' not found in PATH."))
-        return
+        return 1
     label = f"{command} {' '.join(extra)}".strip()
     print(c("dim", f"  → {label}\n"))
     os.execvp(command, [command] + extra)
 
 
 def cmd_check(args):
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        return 1
     from quiver.harness.path_health import find_off_path_tools, preferred_npm_bin
 
     # Widths for the two cells that ship self-coloured ANSI via the
@@ -1238,6 +1270,9 @@ def cmd_check(args):
 
 
 def cmd_tags(args):
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        return 1
     tools = load_registry()
     tag_map: dict[str, list[str]] = {}
     for name, info in tools.items():
@@ -1281,6 +1316,9 @@ def cmd_tags(args):
 
 
 def cmd_aliases(args):
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        return 1
     tools = load_registry()
     print(f"\n{c('bold', 'Short aliases')}\n")
 
@@ -1306,6 +1344,9 @@ def cmd_aliases(args):
 
 def cmd_doctor(args):
     """Diagnose Node/PATH mismatches that hide globally installed harnesses."""
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        return 1
     from quiver.harness.path_health import (
         find_off_path_tools,
         is_dir_on_path,
