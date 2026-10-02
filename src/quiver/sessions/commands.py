@@ -58,6 +58,10 @@ _LIMITED_RESUME = frozenset(
 
 
 def cmd_models(args):
+    if args and args[0] in ("-h", "--help", "help"):
+        from quiver.help_text import cmd_help
+
+        return cmd_help(["models"]) or 0
     by_tool = False
     show_providers = False
     for arg in args:
@@ -587,6 +591,13 @@ def _resume_session(session) -> int:
 
 
 def cmd_session(args):
+    # `session --help` mid-listing (`session use --help`, `session -i -h`)
+    # still prints help; bare `help` counts only in first position so a
+    # `--search help` value is not eaten by the help route.
+    if "-h" in args or "--help" in args or (args and args[0] == "help"):
+        from quiver.help_text import cmd_help
+
+        return cmd_help(["session"]) or 0
     parsed = _parse_session_args(args)
     if parsed is None:
         return 1

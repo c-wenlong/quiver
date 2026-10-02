@@ -1137,6 +1137,20 @@ class CmdAddTest(unittest.TestCase):
             DEFAULT_PROVIDERS["together_ai"]["env_vars"],
         )
 
+class CmdRemoveHelpTest(unittest.TestCase):
+    def test_remove_help_token_prints_help_not_lookup(self):
+        # `providers remove --help` used to look up a provider literally
+        # named "--help" and report it missing.
+        from quiver.providers.commands import cmd_remove
+
+        for argv in (["--help"], ["-h"], ["help"]):
+            with self.subTest(argv=argv):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = cmd_remove(argv)
+                self.assertEqual(rc, 0)
+                self.assertIn("swe providers remove", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

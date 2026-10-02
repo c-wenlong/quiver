@@ -262,5 +262,52 @@ class ReportCommandsTest(unittest.TestCase):
         work.assert_not_called()
 
 
+class HelpRoutesTest(unittest.TestCase):
+    """Every report subcommand answers --help instead of erroring on it."""
+
+    def _run(self, argv):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = cmd_report(argv)
+        return result, output.getvalue()
+
+    def test_followup_help_token_prints_help(self):
+        for argv in (
+            ["followup", "--help"],
+            ["followup", "help"],
+            ["followup", "-h"],
+            ["followup", "done", "--help"],
+            ["followup", "work", "-h"],
+            ["followups", "--help"],
+            ["warnings", "--help"],
+        ):
+            with self.subTest(argv=argv):
+                result, out = self._run(argv)
+                self.assertEqual(result, 0)
+                self.assertIn("swe report daily", out)
+
+    def test_followup_add_help_does_not_create_an_item(self):
+        ledger = FollowUpLedger(
+            root=Path(tempfile.mkdtemp()),
+            clock=lambda: "2026-08-01T00:00:00+00:00",
+        )
+        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            result, out = self._run(["followup", "add", "--help"])
+        self.assertEqual(result, 0)
+        self.assertIn("swe report daily", out)
+        self.assertEqual(ledger.list(), [])
+
+    def test_edit_free_text_can_still_say_help(self):
+        # Only args[0]/args[1] route to help; edit's free text keeps it.
+        item = FollowUp(id="fu_x", text="old", project_root="/tmp")
+        ledger = Mock()
+        ledger.get.return_value = item
+        ledger.edit.return_value = item
+        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            result = _followup(["edit", "fu_x", "need", "help", "here"])
+        self.assertEqual(result, 0)
+        ledger.edit.assert_called_once_with("fu_x", text="need help here")
+
+
 if __name__ == "__main__":
     unittest.main()

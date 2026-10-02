@@ -198,6 +198,28 @@ class SessionCommandsTest(unittest.TestCase):
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed.use_index, 3)
 
+    def test_help_tokens_route_to_help(self):
+        # `session help`, `session -i --help`, `session use --help` all
+        # print help; `--search=help` still searches for the word.
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            self.assertEqual(cmd_session(["help"]), 0)
+            self.assertIn("swe session", buf.getvalue())
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            self.assertEqual(cmd_session(["-i", "--help"]), 0)
+            self.assertIn("swe session", buf.getvalue())
+        parsed = _parse_session_args(["--search=help"])
+        self.assertEqual(parsed.search, "help")
+
+    def test_models_help_token_routes_to_help(self):
+        from quiver.sessions.commands import cmd_models
+
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            self.assertEqual(cmd_models(["help"]), 0)
+            self.assertIn("swe models", buf.getvalue())
+
 
 class SessionInteractiveTest(unittest.TestCase):
     def setUp(self):

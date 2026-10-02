@@ -171,6 +171,11 @@ def main():
     if cmd in COMMANDS:
         try:
             if rest and rest[0] in ("--help", "-h"):
+                # providers carries its own fuller help text; routing
+                # through cmd_help would print the summary that ends by
+                # pointing back at `swe providers --help` itself.
+                if cmd in ("providers", "pv"):
+                    return COMMANDS[cmd](rest)
                 cmd_help([cmd])
                 return 0
             result = COMMANDS[cmd](rest)
