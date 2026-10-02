@@ -27,6 +27,19 @@ from __future__ import annotations
 
 import os
 import select
+import sys
+from contextlib import contextmanager
+
+try:
+    import tty  # noqa: F401
+except ImportError:
+    tty = None
+# tty.py does "from termios import *", copying the function references into
+# its own namespace at import time. If the first "import tty" happened while
+# termios was patched — as it does when a widget test mocks termios and the
+# widget lazily imports tty mid-patch — tty.setraw keeps a dead mock of
+# tcgetattr forever and every later real setraw blows up. Importing it here,
+# at module load, binds the real functions before any patch can exist.
 
 # Normal button tracking plus SGR encoding. 1000 alone reports the wheel as
 # buttons 64 and 65; 1006 is what keeps the column and row from being clamped
@@ -70,13 +83,18 @@ def _read_sequence(fd: int) -> bytes:
 
     The cap stops a terminal that never sends a final byte from spinning
     here, and a short read (stdin closed mid-sequence) drops the sequence
-    rather than returning half of one.
+    rather than returning half of one. Every byte after the introducer is
+    polled first, because a terminal that sent Esc [ and then died used to
+    leave the widget on an os.read that could never finish.
     """
     intro = os.read(fd, 1)
     if intro not in (b"[", b"O"):
         return b""                        # Esc plus a plain byte: an Alt chord
     seq = intro
     for _ in range(SEQUENCE_CAP):
+        ready, _, _ = select.select([fd], [], [], ESCAPE_TIMEOUT)
+        if not ready:
+            return b""
         byte = os.read(fd, 1)
         if not byte:
             return b""
@@ -126,3 +144,106 @@ def read_key(fd: int, letters: dict[bytes, str] | None = None,
     if letters and ch in letters:
         return letters[ch]
     return LETTERS.get(ch, "")
+
+
+@contextmanager
+def raw_terminal(fd: int):
+    """Raw mode on ``fd``, handed back on every exit, signals included.
+
+    The cleanup write (tracking off, caret on) happens in the finally
+    *before* the termios restore: those sequences have to reach the
+    terminal while it is still raw, because a shell left reporting the
+    wheel spews escape sequences at the prompt on every scroll. Every
+    widget in the tree used to carry that finally by hand.
+
+    tty.setraw clears ISIG, so Ctrl-C inside a widget arrives as the byte
+    "\\x03" and the loop maps it to cancel; no signal is raised. But a
+    SIGTERM or SIGHUP arriving from outside the terminal is still fatal,
+    and without a handler the shell inherits a screen left in raw mode.
+    The handler puts the attributes back, writes the same cleanup, then
+    re-raises the signal's default action, so the process still dies, it
+    just does not take the terminal with it.
+    """
+    import signal
+    import termios
+
+    saved = termios.tcgetattr(fd)
+    previous = {}
+
+    def _restore():
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        except termios.error:
+            pass
+
+    def _cleanup():
+        try:
+            sys.stdout.write(MOUSE_OFF + "\x1b[?25h")
+            sys.stdout.flush()
+        except Exception:
+            # A closed or replaced stdout (ValueError on a closed file,
+            # AttributeError when sys.stdout is None) must never stop the
+            # termios restore — that is the one thing this path guarantees.
+            pass
+        _restore()
+
+    def _restore_then_reraise(signum, _frame):
+        # sys.stdout is a buffered writer and its lock is not reentrant: if
+        # the signal landed inside a write on it, writing again would
+        # deadlock, so on this path the cleanup goes out on the raw fd.
+        try:
+            if os.isatty(1):
+                os.write(1, (MOUSE_OFF + "\x1b[?25h").encode())
+        except OSError:
+            pass
+        _restore()
+        # Hand the signal to whoever owned it before us rather than
+        # unconditionally dying on SIG_DFL: Python's own SIGINT handler
+        # raises KeyboardInterrupt the caller can catch. (A caller who
+        # ignored the signal never gets here — we did not take it over.)
+        prev = previous.get(signum, signal.SIG_DFL)
+        try:
+            signal.signal(signum, prev)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        if callable(prev):
+            # A Python-level handler: run it instead of dying on a
+            # duplicate delivery. If it raised (SIGINT's default raises
+            # KeyboardInterrupt), the widget unwinds through our finally.
+            # If it returned, the app wants to keep going — re-enter raw
+            # mode and retake the signal so the next one still cleans up.
+            prev(signum, _frame)
+            tty.setraw(fd)
+            try:
+                previous[signum] = signal.signal(signum,
+                                                 _restore_then_reraise)
+            except (OSError, RuntimeError, ValueError):
+                pass
+            return
+        os.kill(os.getpid(), signum)
+
+    tty.setraw(fd)
+    for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM):
+        try:
+            prev = signal.signal(sig, _restore_then_reraise)
+            if prev == signal.SIG_IGN:
+                # A signal the caller silenced must stay silenced: taking
+                # it over would turn the next delivery into a cleanup pass
+                # that strands the still-running widget in cooked mode.
+                signal.signal(sig, prev)
+            else:
+                previous[sig] = prev
+        except (OSError, RuntimeError, ValueError):
+            pass                          # e.g. not the main thread
+    try:
+        yield
+    finally:
+        # Cleanup before the handlers come off: a signal landing mid-exit
+        # still finds its handler installed, and a second cleanup is a
+        # no-op the terminal does not mind.
+        _cleanup()
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler)
+            except (OSError, RuntimeError, ValueError):
+                pass

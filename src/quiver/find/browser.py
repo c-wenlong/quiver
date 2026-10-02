@@ -406,8 +406,6 @@ def browse(roots: list[Entry], title: str = "") -> int:
     import select
     import shutil
     import signal
-    import termios
-    import tty
 
     def measure() -> tuple[int, int]:
         """Current window, re-read every frame rather than once at startup.
@@ -443,7 +441,6 @@ def browse(roots: list[Entry], title: str = "") -> int:
     def on_winch(_sig, _frame):
         resized[0] = True
 
-    saved = termios.tcgetattr(fd)
     previous_winch = None
     try:
         previous_winch = signal.signal(signal.SIGWINCH, on_winch)
@@ -455,86 +452,79 @@ def browse(roots: list[Entry], title: str = "") -> int:
     drawn = 0
     height, width = measure()
     try:
-        tty.setraw(fd)
-        # Caret off while redrawing, wheel on for the whole browse. The
-        # switches are writes to stdout, so the select wait below, which
-        # watches stdin, is untouched by them.
-        sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
-        while True:
-            entries = levels[-1]
-            cursor = min(cursors[-1], max(0, len(entries) - 1))
-            cursors[-1] = cursor
-            crumb = " / ".join(trail) if trail else "top level"
-            preview = _preview(entries[cursor], height) if entries else []
-            language = _preview_language(entries[cursor]) if entries else ""
-            # levels[-2] is literally where back would take you, so the
-            # parent pane needs no separate bookkeeping.
-            parent = levels[-2] if len(levels) > 1 else []
-            parent_cursor = cursors[-2] if len(cursors) > 1 else 0
-            drawn = _render(parent, parent_cursor, entries, cursor, preview,
-                            heading, crumb, drawn, height, width, ratio,
-                            language)
+        with keys.raw_terminal(fd):
+            # Caret off while redrawing, wheel on for the whole browse. The
+            # switches are writes to stdout, so the select wait below, which
+            # watches stdin, is untouched by them.
+            sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
+            while True:
+                entries = levels[-1]
+                cursor = min(cursors[-1], max(0, len(entries) - 1))
+                cursors[-1] = cursor
+                crumb = " / ".join(trail) if trail else "top level"
+                preview = _preview(entries[cursor], height) if entries else []
+                language = _preview_language(entries[cursor]) if entries else ""
+                # levels[-2] is literally where back would take you, so the
+                # parent pane needs no separate bookkeeping.
+                parent = levels[-2] if len(levels) > 1 else []
+                parent_cursor = cursors[-2] if len(cursors) > 1 else 0
+                drawn = _render(parent, parent_cursor, entries, cursor, preview,
+                                heading, crumb, drawn, height, width, ratio,
+                                language)
 
-            # Block on input, but wake often enough that a resize is
-            # visible immediately rather than on the next keypress.
-            while not select.select([fd], [], [], 0.2)[0]:
-                new = measure()
-                if resized[0] or new != (height, width):
-                    resized[0] = False
-                    height, width = new
-                    drawn = _render(parent, parent_cursor, entries, cursor,
-                                    preview, heading, crumb, drawn, height,
-                                    width, ratio, language)
-            key = _read_key(fd)
-            if key == "cancel":
-                return 0
-            if key == "back":
-                # At the top level there is nowhere to go, so this is a no-op
-                # rather than an exit: leaving on a stray left arrow is rude.
-                if len(levels) > 1:
-                    levels.pop()
-                    cursors.pop()
-                    trail.pop()
-                continue
-            if not entries:
-                continue
-            if key == "up":
-                cursors[-1] = (cursor - 1) % len(entries)
-            elif key == "down":
-                cursors[-1] = (cursor + 1) % len(entries)
-            elif key in ("wider_parent", "narrower_parent",
-                         "wider_preview", "narrower_preview"):
-                # Weights, not columns: one step is a noticeable move at
-                # any window size, and the split survives a resize.
-                if key == "wider_parent":
-                    ratio[0], ratio[1] = ratio[0] + 1, max(1, ratio[1] - 1)
-                elif key == "narrower_parent":
-                    ratio[0], ratio[1] = max(1, ratio[0] - 1), ratio[1] + 1
-                elif key == "wider_preview":
-                    ratio[2], ratio[1] = ratio[2] + 1, max(1, ratio[1] - 1)
-                else:
-                    ratio[2], ratio[1] = max(1, ratio[2] - 1), ratio[1] + 1
-            elif key == "top":
-                cursors[-1] = 0
-            elif key == "bottom":
-                cursors[-1] = len(entries) - 1
-            elif key == "open":
-                entry = entries[cursor]
-                level = _descend(entry)
-                if level:
-                    levels.append(level)
-                    cursors.append(0)
-                    trail.append(entry.label)
+                # Block on input, but wake often enough that a resize is
+                # visible immediately rather than on the next keypress.
+                while not select.select([fd], [], [], 0.2)[0]:
+                    new = measure()
+                    if resized[0] or new != (height, width):
+                        resized[0] = False
+                        height, width = new
+                        drawn = _render(parent, parent_cursor, entries, cursor,
+                                        preview, heading, crumb, drawn, height,
+                                        width, ratio, language)
+                key = _read_key(fd)
+                if key == "cancel":
+                    return 0
+                if key == "back":
+                    # At the top level there is nowhere to go, so this is a no-op
+                    # rather than an exit: leaving on a stray left arrow is rude.
+                    if len(levels) > 1:
+                        levels.pop()
+                        cursors.pop()
+                        trail.pop()
+                    continue
+                if not entries:
+                    continue
+                if key == "up":
+                    cursors[-1] = (cursor - 1) % len(entries)
+                elif key == "down":
+                    cursors[-1] = (cursor + 1) % len(entries)
+                elif key in ("wider_parent", "narrower_parent",
+                             "wider_preview", "narrower_preview"):
+                    # Weights, not columns: one step is a noticeable move at
+                    # any window size, and the split survives a resize.
+                    if key == "wider_parent":
+                        ratio[0], ratio[1] = ratio[0] + 1, max(1, ratio[1] - 1)
+                    elif key == "narrower_parent":
+                        ratio[0], ratio[1] = max(1, ratio[0] - 1), ratio[1] + 1
+                    elif key == "wider_preview":
+                        ratio[2], ratio[1] = ratio[2] + 1, max(1, ratio[1] - 1)
+                    else:
+                        ratio[2], ratio[1] = max(1, ratio[2] - 1), ratio[1] + 1
+                elif key == "top":
+                    cursors[-1] = 0
+                elif key == "bottom":
+                    cursors[-1] = len(entries) - 1
+                elif key == "open":
+                    entry = entries[cursor]
+                    level = _descend(entry)
+                    if level:
+                        levels.append(level)
+                        cursors.append(0)
+                        trail.append(entry.label)
     finally:
-        # Every exit path, exception included: a shell left in raw mode is a
-        # far worse outcome than an unfinished browse. Tracking goes off
-        # before the termios restore, because a shell left reporting the
-        # wheel spews escape sequences at the prompt on every scroll.
-        sys.stdout.write(keys.MOUSE_OFF + "\x1b[?25h")
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         if previous_winch is not None:
             try:
                 signal.signal(signal.SIGWINCH, previous_winch)
             except (ValueError, OSError):
                 pass
-        sys.stdout.flush()

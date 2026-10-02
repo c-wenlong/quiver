@@ -10,7 +10,10 @@ styled run closes the run and re-opens it on the next line.
 import textwrap
 import unittest
 
-from quiver.console import COLORS, c, fill_ansi, lpad, strip_ansi, visible_len, wrap_ansi
+from quiver.console import (
+    COLORS, c, cell_len, cellpad, fill_ansi, lpad, strip_ansi, visible_len,
+    wrap_ansi,
+)
 
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
@@ -170,6 +173,44 @@ class FillAnsiTest(unittest.TestCase):
         rows = wrap_ansi(c("user_bg", "one two three four five"), 9)
         for row in rows:
             self.assertEqual(9, visible_len(fill_ansi(row, 9)))
+
+
+class CellWidthTest(unittest.TestCase):
+    """cell_len counts terminal cells: CJK two, combining marks zero."""
+
+    def test_wide_glyphs_count_as_two_cells(self):
+        self.assertEqual(cell_len("a漢字b"), 6)
+        self.assertEqual(cell_len("✨"), 2)
+
+    def test_combining_marks_count_as_zero(self):
+        # e + combining acute (decomposed) is one visible glyph.
+        self.assertEqual(cell_len("café"), 4)
+        self.assertEqual(len("café"), 5)
+
+    def test_ansi_codes_do_not_widen(self):
+        self.assertEqual(cell_len(c("red", "hi")), 2)
+
+    def test_cellpad_pads_by_cells_not_characters(self):
+        padded = cellpad("漢", 3)
+        self.assertEqual(cell_len(padded), 3)
+        self.assertEqual(padded, "漢 ")
+        self.assertEqual(cellpad("abc", 2), "abc")
+
+    def test_joined_emoji_measure_as_one_glyph(self):
+        # Each of these renders as a single two-cell glyph:
+        # ZWJ chain, skin tone, RI flag pair, VS16 promotion, tag flag.
+        self.assertEqual(cell_len("\U0001f468‍\U0001f469‍\U0001f467"), 2)
+        self.assertEqual(cell_len("\U0001f44b\U0001f3fd"), 2)
+        self.assertEqual(cell_len("\U0001f1fa\U0001f1f8"), 2)
+        self.assertEqual(cell_len("\U0001f1eb\U0001f1f7\U0001f1e9\U0001f1ea"), 4)
+        self.assertEqual(cell_len("a❤️"), 3)
+        self.assertEqual(cell_len("a️"), 1)
+        # Keycap: digit + VS16 + U+20E3 — the mark is not a combining
+        # char, so it lands in the width-1 branch and the pair totals 2.
+        self.assertEqual(cell_len("1️⃣"), 2)
+        self.assertEqual(
+            cell_len("\U0001f3f4\U000e0067\U000e0062\U000e0065"
+                     "\U000e006e\U000e0067\U000e007f"), 2)
 
 
 if __name__ == "__main__":
