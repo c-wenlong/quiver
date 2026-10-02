@@ -72,6 +72,11 @@ class ReadJsonObjectTest(unittest.TestCase):
             with self.assertRaises(CorruptConfigurationError):
                 read_json_object(p)
 
+    def test_missing_with_allow_missing_false_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                read_json_object(Path(tmp) / "gone.json", allow_missing=False)
+
 
 class HarnessRegistryCorruptTest(unittest.TestCase):
     def _patch(self, config_dir):
@@ -346,6 +351,75 @@ class CliTopLevelTest(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 self.assertIn("Cannot parse JSON", buf.getvalue())
                 self.assertNotIn("Traceback", buf.getvalue())
+
+    def _harness_patches(self, config_dir):
+        return (
+            patch("quiver.harness.registry.CONFIG_DIR", config_dir),
+            patch(
+                "quiver.harness.registry.HARNESS_FILE",
+                config_dir / "harness.json",
+            ),
+            patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
+        )
+
+    def test_bare_swe_help_failure_exits_1(self):
+        from quiver import cli
+
+        with patch.object(
+            cli, "cmd_help", side_effect=CorruptConfigurationError("broken")
+        ), patch.object(sys, "argv", ["swe"]):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli.main()
+            self.assertEqual(rc, 1)
+            self.assertIn("broken", buf.getvalue())
+
+    def test_unknown_command_help_failure_still_reports(self):
+        from quiver import cli
+
+        with patch.object(
+            cli, "cmd_help", side_effect=CorruptConfigurationError("broken")
+        ), patch.object(sys, "argv", ["swe", "bogus"]):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli.main()
+            self.assertEqual(rc, 1)
+            self.assertIn("Unknown command", buf.getvalue())
+            self.assertIn("broken", buf.getvalue())
+
+    def test_providers_main_catches_corrupt_registry(self):
+        from quiver.providers import cli as providers_cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / "config"
+            config_dir.mkdir()
+            (config_dir / "providers.json").write_text("{corrupt")
+            with patch(
+                "quiver.providers.registry.CONFIG_DIR", config_dir
+            ), patch(
+                "quiver.providers.registry.PROVIDERS_REGISTRY_FILE",
+                config_dir / "providers.json",
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = providers_cli.main(["list"])
+                self.assertEqual(rc, 1)
+                self.assertIn("Cannot parse JSON", buf.getvalue())
+
+    def test_mcp_main_catches_corrupt_registry(self):
+        from quiver.mcp import cli as mcp_cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / "config"
+            config_dir.mkdir()
+            (config_dir / "harness.json").write_text("{corrupt")
+            p1, p2, p3 = self._harness_patches(config_dir)
+            with p1, p2, p3:
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = mcp_cli.main(["list"])
+                self.assertEqual(rc, 1)
+                self.assertIn("Cannot parse JSON", buf.getvalue())
 
 
 class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
