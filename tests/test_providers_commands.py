@@ -1183,6 +1183,22 @@ class CmdRemoveHelpTest(unittest.TestCase):
         self.assertNotIn("helper", saved)
         self.assertIn("helper", saved["_removed"])
 
+    def test_remove_help_survives_a_broken_registry(self):
+        # A corrupt providers.json must not block `remove --help`:
+        # help is exactly what a user needs when the registry broke.
+        from quiver.providers.commands import cmd_remove
+
+        for argv in (["--help"], ["-h"], ["help"]):
+            with self.subTest(argv=argv):
+                buf = io.StringIO()
+                with patch(
+                    "quiver.providers.commands.load_registry",
+                    side_effect=Exception("corrupt"),
+                ), redirect_stdout(buf):
+                    rc = cmd_remove(argv)
+                self.assertEqual(rc, 0)
+                self.assertIn("swe providers remove", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

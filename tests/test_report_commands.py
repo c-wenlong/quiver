@@ -301,7 +301,7 @@ class HelpRoutesTest(unittest.TestCase):
         self.assertEqual(ledger.list(), [])
 
     def test_edit_free_text_can_still_say_help(self):
-        # Only args[0]/args[1] route to help; edit's free text keeps it.
+        # Only args[0]/args[-1] route to help; edit's free text keeps it.
         item = FollowUp(id="fu_x", text="old", project_root="/tmp")
         ledger = Mock()
         ledger.get.return_value = item
@@ -310,6 +310,18 @@ class HelpRoutesTest(unittest.TestCase):
             result = _followup(["edit", "fu_x", "need", "help", "here"])
         self.assertEqual(result, 0)
         ledger.edit.assert_called_once_with("fu_x", text="need help here")
+
+    def test_mid_text_help_flag_stays_part_of_the_note(self):
+        # `edit fu_x ask for --help output` has --help mid-text — it is
+        # note content, not a help request.
+        item = FollowUp(id="fu_x", text="old", project_root="/tmp")
+        ledger = Mock()
+        ledger.get.return_value = item
+        ledger.edit.return_value = item
+        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            result = _followup(["edit", "fu_x", "ask", "for", "--help", "output"])
+        self.assertEqual(result, 0)
+        ledger.edit.assert_called_once_with("fu_x", text="ask for --help output")
 
 
 if __name__ == "__main__":
