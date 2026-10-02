@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from quiver.console import sanitize
+from quiver.console import sanitize, sanitize_document
 from quiver.sessions.models import Session
 
 
@@ -172,14 +172,14 @@ def _clean_text(value: Any) -> str:
         return ""
     if isinstance(value, str):
         text = _ENVELOPE_RE.sub("", value)
-        # Redact before sanitize: a control byte inside a secret value
-        # (``KEY=secret\x07suffix``) would otherwise split the assignment
-        # and leave the tail unredacted in the normalized text.
+        # Sanitize before redact, with controls deleted rather than
+        # spaced: ``KEY=secret\x07suffix`` becomes one ``secretsuffix``
+        # token the assignment redactor removes whole, and an OSC inside
+        # a value (``KEY=abc\x1b]8;;u\x07def``) collapses to ``abcdef``
+        # instead of stopping the pattern at its first semicolon.
+        text = sanitize_document(text)
         text = _redact_secrets(text)
-        # Transcript text is untrusted terminal input once the picker
-        # paints it: escapes and controls go, real newlines stay.
-        text = sanitize(text, keep_newlines=True)
-        text = text.replace("\x00", "").strip()
+        text = text.strip()
         return text
     if isinstance(value, list):
         parts = [_clean_text(item) for item in value]

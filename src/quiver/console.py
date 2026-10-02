@@ -113,7 +113,7 @@ _ESCAPES_RE = re.compile(
 # are load-bearing to a terminal.
 _CONTROLS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
-# The multiline flavour keeps real line breaks and tabs: a transcript is a
+# The document flavour keeps real line breaks and tabs: a transcript is a
 # document, not a label, and flattening it would lose every paragraph.
 _BLOCK_CONTROLS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
@@ -122,20 +122,27 @@ def strip_ansi(text: str) -> str:
     return _ESCAPES_RE.sub("", text)
 
 
-def sanitize(text: str, keep_newlines: bool = False) -> str:
+def sanitize(text: str) -> str:
     """Make untrusted text safe to print: no escapes, no control chars.
 
     ``strip_ansi`` is for measuring styled strings we wrote ourselves;
     this is for strings a session file or directory name handed us, where
     a BEL, an OSC-52 clipboard write, or a lone ESC is hostile. Control
     characters become spaces rather than vanishing, so a newline inside a
-    title cannot silently fuse rows. ``keep_newlines`` keeps ``\\n`` and
-    ``\\t`` for document-shaped text like transcripts.
+    title cannot silently fuse rows.
     """
-    cleaned = _ESCAPES_RE.sub("", str(text))
-    if keep_newlines:
-        return _BLOCK_CONTROLS_RE.sub(" ", cleaned)
-    return _CONTROLS_RE.sub(" ", cleaned)
+    return _CONTROLS_RE.sub(" ", _ESCAPES_RE.sub("", str(text)))
+
+
+def sanitize_document(text: str) -> str:
+    """Untrusted document text: escapes and non-structural controls vanish.
+
+    Unlike ``sanitize``, control bytes are deleted rather than spaced, so a
+    ``KEY=sec<BEL>ret`` credential stays one token a redactor can match.
+    Newlines and tabs survive — a transcript is a document, and flattening
+    it would fuse paragraphs. Run this before secret redaction.
+    """
+    return _BLOCK_CONTROLS_RE.sub("", _ESCAPES_RE.sub("", str(text)))
 
 
 def visible_len(text: str) -> int:

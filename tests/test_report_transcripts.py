@@ -118,14 +118,23 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertIn("done", rendered)
 
     def test_redaction_runs_before_control_chars_are_spaced(self):
-        # ``KEY=secret\x07suffix`` — if sanitize ran first the BEL would
-        # split the assignment and "suffix" would survive redaction.
+        # Controls are deleted (not spaced) before redaction, so neither
+        # fragment of a split credential can escape the pattern:
+        # ``KEY=secret\x07suffix`` collapses to one token, and an OSC
+        # inside a value stops being a semicolon wall for the pattern.
         from quiver.reports.transcripts import _clean_text
 
-        out = _clean_text("API_KEY=secret\x07suffix tail")
-        self.assertNotIn("suffix", out)
-        self.assertNotIn("secret", out)
-        self.assertIn("[REDACTED]", out)
+        for raw in (
+            "API_KEY=secret\x07suffix tail",
+            "API_KEY=abc\x1b]8;;u\x07def tail",
+            "API_KEY=ab\x1b[31mcdef tail",
+        ):
+            out = _clean_text(raw)
+            self.assertNotIn("suffix", out)
+            self.assertNotIn("secret", out)
+            self.assertNotIn("def tail", out)
+            self.assertNotIn("cdef", out)
+            self.assertIn("[REDACTED]", out)
 
     def test_unreadable_errors_carry_no_escapes(self):
         # A reader that fails on a hostile filename used to surface the
