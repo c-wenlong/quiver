@@ -115,7 +115,14 @@ _CONTROLS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 # The document flavour keeps real line breaks and tabs: a transcript is a
 # document, not a label, and flattening it would lose every paragraph.
-_BLOCK_CONTROLS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# ``\r`` alone maps to a newline (its terminal meaning) so it cannot fuse
+# words — every other control is deleted outright: deleting, not spacing
+# or newline-splitting, is what lets a byte inside a credential like
+# ``KEY=sec<BEL>ret`` stay one token for the redactor. A \r inside a value
+# is indistinguishable from a real newline, and no line-based redactor
+# can remove a secret that genuinely spans two lines.
+_LINEISH_RE = re.compile(r"\r")
+_DELETE_CONTROLS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 def strip_ansi(text: str) -> str:
@@ -135,16 +142,18 @@ def sanitize(text: str) -> str:
 
 
 def sanitize_document(text: str) -> str:
-    """Untrusted document text: escapes gone, controls spaced, layout kept.
+    """Untrusted document text: escapes gone, layout kept, controls fused.
 
-    Newlines and tabs survive — a transcript is a document, and flattening
-    it would fuse paragraphs. Other controls map to a space rather than
-    vanishing, so ``warning\\rerror`` reads as two words. When secrets are
-    redacted from the text, do it on the escape-stripped original — spacing
-    a control inside a credential splits the value before the pattern sees
-    it.
+    ``\\n`` and ``\\t`` survive — a transcript is a document, and
+    flattening it would fuse paragraphs. ``\\r`` becomes a real newline
+    (its terminal meaning), so ``warning\\rerror`` reads as two lines
+    rather than a fused word. Every other control is deleted, not
+    spaced or split: a credential cut by a stray byte must stay one
+    token for the redactor.
     """
-    return _BLOCK_CONTROLS_RE.sub(" ", _ESCAPES_RE.sub("", str(text)))
+    s = _ESCAPES_RE.sub("", str(text))
+    s = _LINEISH_RE.sub("\n", s)
+    return _DELETE_CONTROLS_RE.sub("", s)
 
 
 def visible_len(text: str) -> int:

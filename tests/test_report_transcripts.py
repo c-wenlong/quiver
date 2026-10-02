@@ -117,25 +117,31 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertIn("safe linked", rendered)
         self.assertIn("done", rendered)
 
-    def test_escapes_strip_and_controls_space_around_redaction(self):
-        # Escapes go before redaction (an OSC's semicolons must not cut a
-        # value), controls space after it (a BEL inside a value is \S and
-        # stays one token). Words separated by \r keep their space.
+    def test_controls_fuse_before_redaction(self):
+        # Controls delete (line-ish ones become newlines) before the
+        # redactor runs, so a stray byte inside a value or token cannot
+        # split the match and leak a fragment. Words separated by \r
+        # stay separate: it becomes a newline.
         from quiver.reports.transcripts import _clean_text
 
         for raw in (
             "API_KEY=secret\x07suffix tail",
             "API_KEY=abc\x1b]8;;u\x07def tail",
             "API_KEY=ab\x1b[31mcdef tail",
+            "API_KEY=secret\x1csuffix tail",
+            "API_KEY=secret\x0bsuffix tail",
+            "API_KEY=secret\x1fsuffix tail",
+            "tok sk-" + "a" * 20 + "\x07" + "b" * 20 + " end",
         ):
             out = _clean_text(raw)
             self.assertNotIn("suffix", out)
             self.assertNotIn("secret", out)
             self.assertNotIn("def tail", out)
             self.assertNotIn("cdef", out)
+            self.assertNotIn("b" * 20, out)
             self.assertIn("[REDACTED]", out)
 
-        self.assertEqual(_clean_text("warning\rerror"), "warning error")
+        self.assertEqual(_clean_text("warning\rerror"), "warning\nerror")
 
     def test_unreadable_errors_carry_no_escapes(self):
         # A reader that fails on a hostile filename used to surface the

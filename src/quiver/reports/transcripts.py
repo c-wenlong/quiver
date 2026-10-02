@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from quiver.console import sanitize, sanitize_document, strip_ansi
+from quiver.console import sanitize, sanitize_document
 from quiver.sessions.models import Session
 
 
@@ -172,12 +172,12 @@ def _clean_text(value: Any) -> str:
         return ""
     if isinstance(value, str):
         text = _ENVELOPE_RE.sub("", value)
-        # Order matters: escapes go first so an OSC's own semicolons cannot
-        # truncate a credential value; controls are spaced only *after*
-        # redaction, because a BEL inside ``KEY=sec\x07ret`` is still \S —
-        # one token the assignment pattern removes whole.
-        text = _redact_secrets(strip_ansi(text))
-        text = sanitize_document(text)
+        # Clean before redact, deleting controls rather than spacing
+        # them: ``KEY=secret\x07suffix`` fuses into one ``secretsuffix``
+        # token the assignment pattern removes whole (a space would leave
+        # ``suffix`` behind), and an OSC inside a value collapses instead
+        # of stopping the pattern at its own semicolon.
+        text = _redact_secrets(sanitize_document(text))
         text = text.strip()
         return text
     if isinstance(value, list):
