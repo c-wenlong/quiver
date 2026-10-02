@@ -57,8 +57,26 @@ _LIMITED_RESUME = frozenset(
 )
 
 
+def _help_requested(args: list[str], value_flags: set[str]) -> bool:
+    """`-h`/`--help` anywhere, or bare `help` in first position.
+
+    Tokens consumed as values of ``value_flags`` don't count, so
+    ``--search -h``'s ``-h`` is a search term, not a help request.
+    """
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-h", "--help"):
+            return True
+        if a in value_flags:
+            i += 2
+            continue
+        i += 1
+    return bool(args) and args[0] == "help"
+
+
 def cmd_models(args):
-    if args and args[0] in ("-h", "--help", "help"):
+    if _help_requested(args, set()):
         from quiver.help_text import cmd_help
 
         return cmd_help(["models"]) or 0
@@ -592,9 +610,12 @@ def _resume_session(session) -> int:
 
 def cmd_session(args):
     # `session --help` mid-listing (`session use --help`, `session -i -h`)
-    # still prints help; bare `help` counts only in first position so a
-    # `--search help` value is not eaten by the help route.
-    if "-h" in args or "--help" in args or (args and args[0] == "help"):
+    # still prints help; bare `help` counts only in first position and
+    # flag values are skipped, so `--search help` / `--search -h` search.
+    if _help_requested(args, {
+        "--agent", "--search", "--grep", "-q",
+        "--days", "-d", "--weeks", "-w", "--start", "-s", "--end", "-e",
+    }):
         from quiver.help_text import cmd_help
 
         return cmd_help(["session"]) or 0

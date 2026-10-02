@@ -358,21 +358,23 @@ def _print_followups(ledger: FollowUpLedger, status: str | None = None) -> int:
     return 0
 
 
+def _report_help() -> int:
+    from quiver.help_text import cmd_help
+
+    return cmd_help(["report"]) or 0
+
+
 def _followup(args: list[str]) -> int:
-    # `followup --help`, `followup help`, and `followup <action> --help`
-    # all print the report help rather than erroring or, for `add`,
-    # recording a follow-up literally named "--help".
+    # `followup --help`, `followup help`, `followup <action> --help`,
+    # and even `followup add text --help` all print the report help
+    # rather than erroring or recording a follow-up literally named
+    # "--help". The bare word `help` only routes in first position so
+    # `edit <id> need help here` keeps it as text.
     if not args:
         ledger = FollowUpLedger()
         return _print_followups(ledger, "open")
-    if args[0] in ("-h", "--help", "help"):
-        from quiver.help_text import cmd_help
-
-        return cmd_help(["report"]) or 0
-    if len(args) > 1 and args[1] in ("-h", "--help"):
-        from quiver.help_text import cmd_help
-
-        return cmd_help(["report"]) or 0
+    if args[0] in ("-h", "--help", "help") or "-h" in args or "--help" in args:
+        return _report_help()
     ledger = FollowUpLedger()
     action = args[0]
     # expand only where flags exist — edit's args[2:] is free text, so a
@@ -446,19 +448,15 @@ def cmd_report(args: list[str]) -> int:
     if command in {"daily", "weekly"}:
         return _generate(command, args[1:])
     if command == "warnings":
-        if len(args) > 1 and args[1] in ("-h", "--help", "help"):
-            from quiver.help_text import cmd_help
-
-            return cmd_help(["report"]) or 0
+        if any(a in ("-h", "--help", "help") for a in args[1:]):
+            return _report_help()
         if len(args) != 2:
             print(c("red", "  Usage: swe report warnings <report-manifest.json>"))
             return 1
         return _print_report_warnings(args[1])
     if command == "followups":
         if any(a in ("-h", "--help", "help") for a in args[1:]):
-            from quiver.help_text import cmd_help
-
-            return cmd_help(["report"]) or 0
+            return _report_help()
         try:
             rest = expand_value_flags(args[1:], {"--status"})
         except ValueError as exc:

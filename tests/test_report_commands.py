@@ -277,9 +277,12 @@ class HelpRoutesTest(unittest.TestCase):
             ["followup", "help"],
             ["followup", "-h"],
             ["followup", "done", "--help"],
+            ["followup", "done", "fu_x", "--help"],
+            ["followup", "add", "ship", "fix", "--help"],
             ["followup", "work", "-h"],
             ["followups", "--help"],
             ["warnings", "--help"],
+            ["warnings", "x.json", "--help"],
         ):
             with self.subTest(argv=argv):
                 result, out = self._run(argv)

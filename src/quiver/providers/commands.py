@@ -549,8 +549,12 @@ def cmd_add(args: list[str]) -> int:
 
 def cmd_remove(args: list[str]) -> int:
     if args and args[0] in ("-h", "--help", "help"):
-        print_providers_help()
-        return 0
+        # A provider can legitimately alias "help" (env HELP_API_KEY);
+        # only treat the token as help when it resolves to nothing.
+        providers = load_registry(include_removed=True)
+        if resolve(providers, args[0]) is None:
+            print_providers_help()
+            return 0
     if not args:
         print(c("red", "Usage: swe providers remove <name|alias>"))
         return 1
