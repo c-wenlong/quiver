@@ -135,14 +135,16 @@ def sanitize(text: str) -> str:
 
 
 def sanitize_document(text: str) -> str:
-    """Untrusted document text: escapes and non-structural controls vanish.
+    """Untrusted document text: escapes gone, controls spaced, layout kept.
 
-    Unlike ``sanitize``, control bytes are deleted rather than spaced, so a
-    ``KEY=sec<BEL>ret`` credential stays one token a redactor can match.
     Newlines and tabs survive — a transcript is a document, and flattening
-    it would fuse paragraphs. Run this before secret redaction.
+    it would fuse paragraphs. Other controls map to a space rather than
+    vanishing, so ``warning\\rerror`` reads as two words. When secrets are
+    redacted from the text, do it on the escape-stripped original — spacing
+    a control inside a credential splits the value before the pattern sees
+    it.
     """
-    return _BLOCK_CONTROLS_RE.sub("", _ESCAPES_RE.sub("", str(text)))
+    return _BLOCK_CONTROLS_RE.sub(" ", _ESCAPES_RE.sub("", str(text)))
 
 
 def visible_len(text: str) -> int:

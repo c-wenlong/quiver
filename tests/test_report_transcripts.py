@@ -117,11 +117,10 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertIn("safe linked", rendered)
         self.assertIn("done", rendered)
 
-    def test_redaction_runs_before_control_chars_are_spaced(self):
-        # Controls are deleted (not spaced) before redaction, so neither
-        # fragment of a split credential can escape the pattern:
-        # ``KEY=secret\x07suffix`` collapses to one token, and an OSC
-        # inside a value stops being a semicolon wall for the pattern.
+    def test_escapes_strip_and_controls_space_around_redaction(self):
+        # Escapes go before redaction (an OSC's semicolons must not cut a
+        # value), controls space after it (a BEL inside a value is \S and
+        # stays one token). Words separated by \r keep their space.
         from quiver.reports.transcripts import _clean_text
 
         for raw in (
@@ -135,6 +134,8 @@ class TranscriptReaderTest(unittest.TestCase):
             self.assertNotIn("def tail", out)
             self.assertNotIn("cdef", out)
             self.assertIn("[REDACTED]", out)
+
+        self.assertEqual(_clean_text("warning\rerror"), "warning error")
 
     def test_unreadable_errors_carry_no_escapes(self):
         # A reader that fails on a hostile filename used to surface the

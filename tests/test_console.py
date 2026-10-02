@@ -253,13 +253,13 @@ class SanitizeTest(unittest.TestCase):
         self.assertEqual(sanitize("a\rb\nc\td\x07e"), "a b c d e")
         self.assertEqual(sanitize("x\x00y\x9bz"), "x y z")
 
-    def test_sanitize_document_keeps_newlines_and_drops_controls(self):
+    def test_sanitize_document_keeps_layout_and_spaces_controls(self):
         from quiver.console import sanitize_document
 
         self.assertEqual(sanitize_document("a\nb\tc"), "a\nb\tc")
-        # Controls vanish rather than space, so a credential split by a
-        # BEL stays one token the redactor can match.
-        self.assertEqual(sanitize_document("a\x07b\nc"), "ab\nc")
+        # A control between words becomes a space, not a fusion.
+        self.assertEqual(sanitize_document("warning\rerror"), "warning error")
+        self.assertEqual(sanitize_document("a\x07b\nc"), "a b\nc")
         self.assertEqual(sanitize_document("x\x1b]8;;u\x07y"), "xy")
 
     def test_intentional_paint_still_round_trips(self):
