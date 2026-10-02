@@ -157,7 +157,7 @@ HELP = {
   {c('cyan', 'swe install <name>')}                    npm install -g + register in harness.json
   {c('cyan', 'swe install <name> --package=<pkg>')}    Override npm package name
   {c('cyan', 'swe install <name> --command=<cmd>')}    Override CLI binary name
-  {c('cyan', 'swe install <name> --dry-run')}          Show what would run
+  {c('cyan', 'swe install <name> --dry-run')}          Show what would run (alias: -n)
 
   Uses a PATH-visible npm (prefers Homebrew over nvm) so the binary lands where
   {c('cyan', 'swe list')} / {c('cyan', 'swe check')} can see it.
@@ -361,7 +361,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe harness archive <name> [why]')}  Shelve one you have ruled out
   {c('cyan', 'swe harness discover')}              Scan PATH and home dirs for AI tools (dry-run)
   {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to harness.json
-  {c('cyan', 'swe harness discover --apply-all')}  Add high + medium confidence matches
+  {c('cyan', 'swe harness discover --apply-all')}  Add every match, including low-confidence finds
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
   {c('cyan', 'swe harness discover --all')}        Include already-registered and missing tools too
 
@@ -429,11 +429,13 @@ to use their own login state and environment."""
         f"""\
   {c('cyan', 'swe init')}                    Create the layout and link all harnesses
   {c('cyan', 'swe init --full')}             List every path, not just the counts
-  {c('cyan', 'swe init --check')}            Show what would change, write nothing
+  {c('cyan', 'swe init --check')}            Show what would change, write nothing (alias: -n)
   {c('cyan', 'swe init --force')}            Replace real files too (backed up first)
   {c('cyan', 'swe init --migrate')}          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
   {c('cyan', 'swe init --yes')}              Register every new harness without asking
                                (also the non-terminal default)
+
+  {c('dim', 'Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.')}
 
   A {c('dim', 'symlink')} is a shortcut file: each harness's folder points at the one
   real copy in ~/.quiver, so editing once updates it everywhere.

@@ -35,7 +35,7 @@ def print_skills_overview():
   {SKILL_CATALOGS_FILE}   extra catalog paths
   {SKILL_LINKS_FILE}      recorded harness symlinks
 
-{c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')}  — topics: catalog, discover, link, unlink, move
+{c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')}  — topics: catalog, discover, link, unlink, move, tree, scope
   {c('dim', 'help comes before the topic here — unlike swe mcp <command> help, which puts it after.')}
 """
     )
@@ -88,6 +88,7 @@ def print_skills_link_help():
   {c('cyan', 'swe skills link codex shared')}           Explicit target
   {c('cyan', 'swe skills link codex claude')}           Link to claude's resolved root
   {c('cyan', 'swe skills link codex --force')}          Replace non-empty directory
+  {c('cyan', '--json')}                          Print the result as JSON
 
 {c('bold', 'Harness labels')}  shared, cursor, codex, claude  (or a path)
 """
@@ -101,6 +102,7 @@ def print_skills_unlink_help():
 
   {c('cyan', 'swe skills unlink codex')}              Remove codex → shared symlink
   {c('cyan', 'swe skills unlink codex --mkdir')}      Replace with empty directory
+  {c('cyan', '--json')}                          Print the result as JSON
 
   Then move harness-specific skills:
   {c('cyan', 'swe skills move my-skill --from=shared --to=codex')}
@@ -122,8 +124,25 @@ def print_skills_move_help():
   Scopes are harness labels (shared, codex, claude, cursor), catalog labels,
   or paths registered via {c('cyan', 'swe skills catalog add')}.
 
+  {c('cyan', '--force')}   Overwrite a non-empty destination
+  {c('cyan', '--json')}    Print the result as JSON
+
   If both scopes resolve to the same tree (symlinked), unlink the destination
   harness first or pass {c('cyan', '--force')}.
+"""
+    )
+
+
+def print_skills_tree_help():
+    print(
+        f"""
+  {c('bold', 'swe skills tree')} — Symlink layout, now part of swe find
+
+  {c('cyan', 'swe skills tree')}               forwards to {c('cyan', 'swe find skills -r')}
+  {c('cyan', 'swe skills scope list')}          forwards to the same view
+  {c('cyan', 'swe skills tree --scope=all')}    include vendored and project-local roots
+
+  {c('dim', 'Both spellings stay because they were the original commands; swe find owns the view now.')}
 """
     )
 
@@ -136,6 +155,9 @@ SKILLS_HELP_TOPICS = {
     "link": print_skills_link_help,
     "unlink": print_skills_unlink_help,
     "move": print_skills_move_help,
+    "tree": print_skills_tree_help,
+    "scope": print_skills_tree_help,
+    "scopes": print_skills_tree_help,
 }
 
 
@@ -146,10 +168,7 @@ def cmd_skills_help(args: list[str]) -> int:
     handler = SKILLS_HELP_TOPICS.get(topic)
     if handler is None:
         print(c("red", f"  Unknown skills help topic: {topic!r}"))
-        if topic in ("tree", "scope", "scopes"):
-            print(c("dim", "  That view is now swe find skills -r"))
-        else:
-            print(c("dim", "  Topics: catalog, discover, link, unlink, move"))
+        print(c("dim", f"  Topics: {', '.join(sorted(t for t in SKILLS_HELP_TOPICS if t))}"))
         return 1
     handler()
     return 0

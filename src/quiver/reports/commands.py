@@ -47,6 +47,7 @@ class _GenerateArgs:
     writer_harness: str | None = None
     writer_model: str | None = None
     writer_args: list[str] = field(default_factory=list)
+    help: bool = False
 
 
 def _value(args: list[str], index: int, flag: str) -> str:
@@ -110,6 +111,9 @@ def _parse_generate_args(args: list[str]) -> _GenerateArgs:
         elif arg == "--writer-arg":
             parsed.writer_args.append(_value(args, i, arg))
             i += 2
+        elif arg in ("-h", "--help", "help"):
+            parsed.help = True
+            i += 1
         else:
             raise ValueError(f"Unknown report argument: {arg}")
     if any(value is not None for value in (parsed.days, parsed.weeks, parsed.start, parsed.end)):
@@ -259,6 +263,11 @@ def _generate(cadence: str, args: list[str], input_fn: Callable[[str], str] = in
     except (ValueError, TypeError) as exc:
         print(c("red", f"  {exc}"))
         return 1
+
+    if parsed.help:
+        from quiver.help_text import cmd_help
+
+        return cmd_help(["report"]) or 0
 
     config = load_resolved_config()
     config_issues = validate_config(config)
@@ -411,9 +420,10 @@ def _followup(args: list[str]) -> int:
 
 
 def cmd_report(args: list[str]) -> int:
-    if not args:
-        print("Usage: swe report daily|weekly|warnings|followups|followup ...")
-        return 1
+    if not args or args[0] in ("-h", "--help", "help"):
+        from quiver.help_text import cmd_help
+
+        return cmd_help(["report"]) or 0
     command = args[0]
     if command in {"daily", "weekly"}:
         return _generate(command, args[1:])

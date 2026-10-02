@@ -428,5 +428,17 @@ class KiloMcpConfigTest(unittest.TestCase):
         self.assertIn("srv", data["mcp"])
 
 
+class McpLsAliasTest(unittest.TestCase):
+    def test_ls_routes_to_list(self):
+        from quiver.mcp.cli import COMMANDS
+
+        self.assertIs(COMMANDS["ls"], COMMANDS["list"])
+
+    def test_sync_help_documents_prune(self):
+        from quiver.mcp.cli import MCP_HELP
+
+        self.assertIn("--prune", MCP_HELP["sync"])
+
+
 if __name__ == "__main__":
     unittest.main()
