@@ -262,5 +262,69 @@ class ReportCommandsTest(unittest.TestCase):
         work.assert_not_called()
 
 
+class HelpRoutesTest(unittest.TestCase):
+    """Every report subcommand answers --help instead of erroring on it."""
+
+    def _run(self, argv):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = cmd_report(argv)
+        return result, output.getvalue()
+
+    def test_followup_help_token_prints_help(self):
+        for argv in (
+            ["followup", "--help"],
+            ["followup", "help"],
+            ["followup", "-h"],
+            ["followup", "done", "--help"],
+            ["followup", "done", "fu_x", "--help"],
+            ["followup", "add", "ship", "fix", "--help"],
+            ["followup", "work", "-h"],
+            ["followup", "work", "--help", "--new"],
+            ["followup", "done", "--help", "fu_x"],
+            ["followups", "--help"],
+            ["warnings", "--help"],
+            ["warnings", "x.json", "--help"],
+        ):
+            with self.subTest(argv=argv):
+                result, out = self._run(argv)
+                self.assertEqual(result, 0)
+                self.assertIn("swe report daily", out)
+
+    def test_followup_add_help_does_not_create_an_item(self):
+        ledger = FollowUpLedger(
+            root=Path(tempfile.mkdtemp()),
+            clock=lambda: "2026-08-01T00:00:00+00:00",
+        )
+        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            result, out = self._run(["followup", "add", "--help"])
+        self.assertEqual(result, 0)
+        self.assertIn("swe report daily", out)
+        self.assertEqual(ledger.list(), [])
+
+    def test_edit_free_text_can_still_say_help(self):
+        # Only args[0]/args[-1] route to help; edit's free text keeps it.
+        item = FollowUp(id="fu_x", text="old", project_root="/tmp")
+        ledger = Mock()
+        ledger.get.return_value = item
+        ledger.edit.return_value = item
+        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            result = _followup(["edit", "fu_x", "need", "help", "here"])
+        self.assertEqual(result, 0)
+        ledger.edit.assert_called_once_with("fu_x", text="need help here")
+
+    def test_mid_text_help_flag_stays_part_of_the_note(self):
+        # `edit fu_x ask for --help output` has --help mid-text — it is
+        # note content, not a help request.
+        item = FollowUp(id="fu_x", text="old", project_root="/tmp")
+        ledger = Mock()
+        ledger.get.return_value = item
+        ledger.edit.return_value = item
+        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            result = _followup(["edit", "fu_x", "ask", "for", "--help", "output"])
+        self.assertEqual(result, 0)
+        ledger.edit.assert_called_once_with("fu_x", text="ask for --help output")
+
+
 if __name__ == "__main__":
     unittest.main()

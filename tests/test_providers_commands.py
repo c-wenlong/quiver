@@ -1137,6 +1137,68 @@ class CmdAddTest(unittest.TestCase):
             DEFAULT_PROVIDERS["together_ai"]["env_vars"],
         )
 
+class CmdRemoveHelpTest(unittest.TestCase):
+    def test_remove_help_token_prints_help_not_lookup(self):
+        # `providers remove --help` used to look up a provider literally
+        # named "--help" and report it missing.
+        from quiver.providers.commands import cmd_remove
+
+        # The help token is checked against the live registry (a provider
+        # could legitimately alias "help"), so patch the registry paths
+        # to keep the test hermetic.
+        with TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".config" / "swe"
+            registry_file = config_dir / "providers.json"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            patches = _registry_patches(config_dir, registry_file)
+            for argv in (["--help"], ["-h"], ["help"]):
+                with self.subTest(argv=argv):
+                    buf = io.StringIO()
+                    with patches[0], patches[1], redirect_stdout(buf):
+                        rc = cmd_remove(argv)
+                    self.assertEqual(rc, 0)
+                    self.assertIn("swe providers remove", buf.getvalue())
+
+    def test_remove_can_still_remove_a_provider_named_help(self):
+        # `help` is a valid derived alias (env HELP_API_KEY) — the help
+        # route must yield when the token resolves to a real provider.
+        from quiver.providers.commands import cmd_remove
+
+        with TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".config" / "swe"
+            registry_file = config_dir / "providers.json"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            import json
+
+            registry_file.write_text(json.dumps({
+                "helper": {"env_vars": ["HELP_API_KEY"], "key_filename": "helper"},
+            }))
+            patches = _registry_patches(config_dir, registry_file)
+            buf = io.StringIO()
+            with patches[0], patches[1], redirect_stdout(buf):
+                rc = cmd_remove(["help"])
+            saved = json.loads(registry_file.read_text())
+        self.assertEqual(rc, 0)
+        self.assertIn("Removed 'helper'", buf.getvalue())
+        self.assertNotIn("helper", saved)
+        self.assertIn("helper", saved["_removed"])
+
+    def test_remove_help_survives_a_broken_registry(self):
+        # A corrupt providers.json must not block `remove --help`:
+        # help is exactly what a user needs when the registry broke.
+        from quiver.providers.commands import cmd_remove
+
+        for argv in (["--help"], ["-h"], ["help"]):
+            with self.subTest(argv=argv):
+                buf = io.StringIO()
+                with patch(
+                    "quiver.providers.commands.load_registry",
+                    side_effect=Exception("corrupt"),
+                ), redirect_stdout(buf):
+                    rc = cmd_remove(argv)
+                self.assertEqual(rc, 0)
+                self.assertIn("swe providers remove", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

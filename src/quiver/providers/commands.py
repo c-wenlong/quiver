@@ -548,6 +548,22 @@ def cmd_add(args: list[str]) -> int:
 
 
 def cmd_remove(args: list[str]) -> int:
+    if args and args[0] in ("-h", "--help", "help"):
+        # `-h`/`--help` can never be provider aliases, so they route
+        # straight to help. Bare `help` can be a real derived alias
+        # (env HELP_API_KEY): only route to help when it resolves to
+        # nothing, and still print help if the registry itself is
+        # unreadable — that is exactly when help is needed.
+        is_help = True
+        if args[0] == "help":
+            try:
+                providers = load_registry(include_removed=True)
+                is_help = resolve(providers, "help") is None
+            except Exception:
+                is_help = True
+        if is_help:
+            print_providers_help()
+            return 0
     if not args:
         print(c("red", "Usage: swe providers remove <name|alias>"))
         return 1

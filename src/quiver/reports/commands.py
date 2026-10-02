@@ -358,10 +358,32 @@ def _print_followups(ledger: FollowUpLedger, status: str | None = None) -> int:
     return 0
 
 
+def _report_help() -> int:
+    from quiver.help_text import cmd_help
+
+    return cmd_help(["report"]) or 0
+
+
 def _followup(args: list[str]) -> int:
-    ledger = FollowUpLedger()
+    # `followup --help`, `followup help`, and `followup <action> ...
+    # --help` all print the report help rather than erroring or
+    # recording a follow-up literally named "--help". For flag-only
+    # actions (done/dismiss/reopen/work) a help flag routes anywhere;
+    # for free-text actions (add/edit) only first or last position, so
+    # mid-text `--help` stays part of the note (`edit fu_x ask for
+    # --help output`). Bare `help` routes only in first position.
     if not args:
+        ledger = FollowUpLedger()
         return _print_followups(ledger, "open")
+    wants_help = args[0] in ("-h", "--help", "help")
+    if not wants_help:
+        if args[0] in ("add", "edit"):
+            wants_help = args[-1] in ("-h", "--help")
+        else:
+            wants_help = "-h" in args or "--help" in args
+    if wants_help:
+        return _report_help()
+    ledger = FollowUpLedger()
     action = args[0]
     # expand only where flags exist — edit's args[2:] is free text, so a
     # literal --harness=x there must stay part of the note, not become a pair.
@@ -434,11 +456,15 @@ def cmd_report(args: list[str]) -> int:
     if command in {"daily", "weekly"}:
         return _generate(command, args[1:])
     if command == "warnings":
+        if any(a in ("-h", "--help", "help") for a in args[1:]):
+            return _report_help()
         if len(args) != 2:
             print(c("red", "  Usage: swe report warnings <report-manifest.json>"))
             return 1
         return _print_report_warnings(args[1])
     if command == "followups":
+        if any(a in ("-h", "--help", "help") for a in args[1:]):
+            return _report_help()
         try:
             rest = expand_value_flags(args[1:], {"--status"})
         except ValueError as exc:
