@@ -347,12 +347,17 @@ def _followup(args: list[str]) -> int:
     ledger = FollowUpLedger()
     if not args:
         return _print_followups(ledger, "open")
-    try:
-        args = expand_value_flags(args, {"--project", "--harness"})
-    except ValueError as exc:
-        print(c("red", f"  {exc}"))
-        return 1
     action = args[0]
+    # expand only where flags exist — edit's args[2:] is free text, so a
+    # literal --harness=x there must stay part of the note, not become a pair.
+    if action in {"add", "work"}:
+        try:
+            args = [action] + expand_value_flags(
+                args[1:], {"--project", "--harness"}
+            )
+        except ValueError as exc:
+            print(c("red", f"  {exc}"))
+            return 1
     try:
         if action == "add":
             if len(args) < 2:

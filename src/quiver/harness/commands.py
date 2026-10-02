@@ -920,8 +920,9 @@ def _add_interactive(args: list[str]) -> int:
     """Interactive form: walk each field, show a summary, confirm before saving."""
     tools = load_registry()
 
-    # Pre-fill from positional args / flags (same shape as flag-based cmd_add).
-    rest = [a for a in args if a not in ("-i", "--interactive")]
+    # -i/--interactive were already pulled out by cmd_add before flag
+    # expansion, so the tokens here can only be real values or positionals.
+    rest = args
     name_pre = command_pre = desc_pre = ""
     aliases_pre = ""
     tags_pre = "agentic, coding"
@@ -1048,6 +1049,11 @@ def _add_interactive(args: list[str]) -> int:
 
 
 def cmd_add(args):
+    # -i detection must run on the raw argv: a standalone -i can only be the
+    # boolean flag now that long values require =, while an expanded
+    # --description=-i would smuggle -i in as a value.
+    interactive = "-i" in args or "--interactive" in args
+    args = [a for a in args if a not in ("-i", "--interactive")]
     try:
         args = expand_value_flags(
             args, {"--aliases", "--tags", "--description", "--command"}
@@ -1055,7 +1061,7 @@ def cmd_add(args):
     except ValueError as exc:
         print(c("red", str(exc)))
         return 1
-    if "-i" in args or "--interactive" in args:
+    if interactive:
         return _add_interactive(args)
     if len(args) < 2:
         print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
@@ -1076,11 +1082,20 @@ def cmd_add(args):
         elif args[i] == "--tags":
             tags = [t.strip() for t in args[i + 1].split(",")]
             i += 2
+        elif args[i] == "--description":
+            desc = args[i + 1]
+            i += 2
+        elif args[i] == "--command":
+            print(c("red", "  --command only prefills swe add -i; the command is a positional arg here."))
+            return 1
         elif not args[i].startswith("--"):
             desc = args[i]
             i += 1
         else:
             i += 1
+    if command.startswith("-"):
+        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
+        return 1
 
     action = "Updated" if name in tools else "Added"
     tools[name] = {

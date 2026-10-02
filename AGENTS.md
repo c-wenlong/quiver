@@ -125,7 +125,7 @@ The `swe autocomplete` feature relies on a hardcoded list of primary subcommands
 4. If the command should appear in `swe help`, add it to `COMMAND_CATEGORIES` in `help_text.py` and add a `HELP` entry. `swe doctor` fails on a command without one.
 5. Run `tests/test_completion.py` and `tests/test_drift.py` to verify completions and help drift.
 
-**Flag convention:** a long flag that takes a value is always `--name=value` (comma-separate multiple values into one token, e.g. `--tags=a,b`). Parse it by running `expand_value_flags(args, {"--name", ...})` at the top of the handler and consuming the resulting `("--name", value)` pairs; a bare `--name` raises a "write it as --name=<value>" error. Short flags (`-d`, `-q`) keep the space-separated form.
+**Flag convention:** a long flag that takes a value is always `--name=value` (comma-separate multiple values into one token, e.g. `--tags=a,b`). Parse it by running `expand_value_flags(args, {"--name", ...})` at the top of the handler and consuming the resulting `("--name", value)` pairs; a bare `--name` raises a "write it as --name=<value>" error. Short flags (`-d`, `-q`) keep the space-separated form. Two ordering rules: boolean membership checks like `"-i" in args` must run on the raw argv *before* expansion (an expanded `--description=-i` would smuggle `-i` in as a value), and commands whose trailing args are free text (e.g. `report followup edit`) must not expand them or literal `--x=y` text gets rewritten.
 
 **When you remove or rename a command:**
 

@@ -219,6 +219,15 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertEqual(code, 0)
         work.assert_called_once_with(item, mode="new", harness="claude")
 
+    def test_followup_edit_keeps_literal_flag_text(self):
+        ledger = Mock()
+        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            code, _ = _run(
+                _followup, ["edit", "fu_1", "note", "about", "--harness=x"]
+            )
+        self.assertEqual(code, 0)
+        ledger.edit.assert_called_once_with("fu_1", text="note about --harness=x")
+
     def test_generate_args_bare_days(self):
         with self.assertRaises(ValueError) as ctx:
             _parse_generate_args(["--days"])
@@ -265,6 +274,37 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertEqual(saved["tags"], ["t1", "t2"])
         self.assertEqual(saved["description"], "a desc")
         self.assertIn("Added 'demo'", out)
+
+    def test_add_description_flag_sets_description(self):
+        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd", "--description=from flag"])
+        self.assertEqual(save.call_args[0][0]["demo"]["description"], "from flag")
+
+    def test_add_dash_i_value_does_not_go_interactive(self):
+        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ), patch(
+            "quiver.harness.commands._add_interactive"
+        ) as interactive:
+            _run(cmd_add, ["demo", "demo-cmd", "--description=-i"])
+        interactive.assert_not_called()
+        self.assertEqual(save.call_args[0][0]["demo"]["description"], "-i")
+
+    def test_add_command_flag_conflicts_with_positional(self):
+        code, out = _run(cmd_add, ["demo", "demo-cmd", "--command=baz"])
+        self.assertEqual(code, 1)
+        self.assertIn("--command only prefills", out)
+
+    def test_add_flag_as_command_is_usage_error(self):
+        code, out = _run(cmd_add, ["demo", "--aliases=a"])
+        self.assertEqual(code, 1)
+        self.assertIn("Usage: swe add", out)
 
 
 if __name__ == "__main__":
