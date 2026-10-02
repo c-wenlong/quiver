@@ -180,7 +180,10 @@ def raw_terminal(fd: int):
         try:
             sys.stdout.write(MOUSE_OFF + "\x1b[?25h")
             sys.stdout.flush()
-        except OSError:
+        except Exception:
+            # A closed or replaced stdout (ValueError on a closed file,
+            # AttributeError when sys.stdout is None) must never stop the
+            # termios restore — that is the one thing this path guarantees.
             pass
         _restore()
 
@@ -194,7 +197,23 @@ def raw_terminal(fd: int):
         except OSError:
             pass
         _restore()
-        signal.signal(signum, signal.SIG_DFL)
+        # Hand the signal to whoever owned it before us rather than
+        # unconditionally dying on SIG_DFL: Python's own SIGINT handler
+        # raises KeyboardInterrupt the caller can catch, and a signal the
+        # caller ignored stays ignored.
+        prev = previous.get(signum, signal.SIG_DFL)
+        try:
+            signal.signal(signum, prev)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        if prev == signal.SIG_IGN:
+            return
+        if callable(prev):
+            # A Python-level handler: let the interpreter deliver the
+            # signal to it (SIGINT becomes KeyboardInterrupt) rather than
+            # dying on a duplicate delivery.
+            prev(signum, _frame)
+            return
         os.kill(os.getpid(), signum)
 
     tty.setraw(fd)

@@ -346,6 +346,8 @@ class RawTerminalTest(unittest.TestCase):
         import signal
 
         master, slave = self._pty()
+        saved = {s: signal.getsignal(s)
+                 for s in (signal.SIGTERM, signal.SIGHUP)}
         try:
             with patch("sys.stdout", io.StringIO()):
                 with keys.raw_terminal(slave):
@@ -369,7 +371,10 @@ class RawTerminalTest(unittest.TestCase):
                          patch("os.kill") as kill:
                         handler(signal.SIGHUP, None)
         finally:
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            # Put back what was there, not defaults: the runner may own
+            # these handlers.
+            for s, h in saved.items():
+                signal.signal(s, h)
             os.close(master)
             os.close(slave)
 
@@ -412,6 +417,9 @@ class RawTerminalTest(unittest.TestCase):
         import signal
 
         master, slave = self._pty()
+        saved = {s: signal.getsignal(s)
+                 for s in (signal.SIGTERM, signal.SIGINT, signal.SIGQUIT,
+                           signal.SIGHUP)}
         real_signal = signal.signal
         term_calls = [0]
 
@@ -430,9 +438,9 @@ class RawTerminalTest(unittest.TestCase):
                 with keys.raw_terminal(slave):
                     pass
         finally:
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            signal.signal(signal.SIGINT, signal.SIG_DFL)
-            signal.signal(signal.SIGQUIT, signal.SIG_DFL)
+            # Restore whatever the runner had, never bare defaults.
+            for s, h in saved.items():
+                signal.signal(s, h)
             os.close(master)
             os.close(slave)
 

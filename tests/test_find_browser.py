@@ -437,12 +437,20 @@ class BrowserMouseTest(unittest.TestCase):
                sizes=None):
         import os
 
+        from quiver.find import browser as browser_mod
         from quiver.find.browser import browse
 
         out = io.StringIO()
         stdin = mock.Mock()
         stdin.fileno.return_value = 0
         seen = []
+        renders = [0]
+        real_render = browser_mod._render
+
+        def count_render(*a, **k):
+            renders[0] += 1
+            return real_render(*a, **k)
+
         sel_kwargs = ({"side_effect": select_side_effect}
                       if select_side_effect is not None
                       else {"return_value": ([0], [], [])})
@@ -458,9 +466,11 @@ class BrowserMouseTest(unittest.TestCase):
              mock.patch("tty.setraw"), \
              mock.patch("select.select", **sel_kwargs), \
              mock.patch.object(os, "get_terminal_size", **size_kwargs), \
+             mock.patch.object(browser_mod, "_render",
+                               side_effect=count_render), \
              mock.patch("quiver.find.browser._read_key", side_effect=key_names):
             code = browse(roots or [Entry("a"), Entry("b")], title="T")
-        return code, out.getvalue(), seen
+        return code, out.getvalue(), seen, renders[0]
 
     def test_a_wheel_report_is_a_move_rather_than_a_cancel(self):
         import os
@@ -476,13 +486,13 @@ class BrowserMouseTest(unittest.TestCase):
             os.close(r)
 
         # A notch on either side of a quit still leaves through the quit.
-        code, _, _ = self._drive(["down", "up", "cancel"])
+        code, _, _, _ = self._drive(["down", "up", "cancel"])
         self.assertEqual(code, 0)
 
     def test_tracking_is_on_for_the_browse_and_off_before_termios(self):
         from quiver import keys
 
-        code, out, seen = self._drive(["cancel"])
+        code, out, seen, _ = self._drive(["cancel"])
         self.assertEqual(code, 0)
         self.assertIn(keys.MOUSE_ON, out)
         self.assertEqual(len(seen), 1)
@@ -497,7 +507,7 @@ class BrowserMouseTest(unittest.TestCase):
             sub.mkdir()
             (sub / "leaf.txt").write_text("x")
             roots = [Entry("dir", Path(td), "one entry"), Entry("b")]
-            code, _, _ = self._drive(
+            code, _, _, _ = self._drive(
                 ["down", "up", "bottom", "top",
                  "wider_parent", "narrower_parent",
                  "wider_preview", "narrower_preview",
@@ -511,7 +521,7 @@ class BrowserMouseTest(unittest.TestCase):
 
     def test_an_open_on_a_dead_end_stays_put(self):
         """Entries that cannot descend leave the level stack alone."""
-        code, _, _ = self._drive(["open", "cancel"],
+        code, _, _, _ = self._drive(["open", "cancel"],
                                  roots=[Entry("leaf", None, "no path")])
         self.assertEqual(code, 0)
 
@@ -536,8 +546,10 @@ class BrowserMouseTest(unittest.TestCase):
             calls[0] += 1
             return sizes[min(calls[0] - 1, len(sizes) - 1)]
 
-        code, out, _ = self._drive(
+        code, out, _, renders = self._drive(
             ["cancel"], select_side_effect=slow, sizes=size)
         self.assertEqual(code, 0)
-        # The 140-column frame redrew after the size change.
-        self.assertIn("quit", strip_ansi(out))
+        # Initial frame + startup-flag tick + genuine size-change tick:
+        # a footer check would pass on the first frame alone, so count
+        # the redraws the ticks forced.
+        self.assertEqual(renders, 3)
