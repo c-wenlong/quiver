@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import sys
 
-# 1-byte pushback for TTY reader (avoids dropping non-LF after CR)
+# 1-byte pushback for the fd reader (avoids dropping non-LF after CR)
 _pushback: list[int] = []
+
+# Same for the text-stream reader, for streams without an fd to poll.
+_stream_pushback: list[str] = []
 
 
 def _restore_cooked_tty(fd: int) -> None:
@@ -57,14 +60,25 @@ def read_line(prompt: str = "") -> str:
         sys.stdout.write(prompt)
         sys.stdout.flush()
 
-    if not sys.stdin.isatty():
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):
+        fd = None
+
+    if fd is None:
+        # An exotic stdin (a test's StringIO, say): no fd to poll, so the
+        # text-stream reader takes it.
         return _read_line_stream(sys.stdin)
 
-    fd = sys.stdin.fileno()
-    _restore_cooked_tty(fd)
+    is_tty = sys.stdin.isatty()
+    if is_tty:
+        _restore_cooked_tty(fd)
 
     try:
-        return _read_line_bytes(fd)
+        # Byte reads on the fd itself, pipe or terminal alike: a TextIOWrapper
+        # on a pipe cannot be peeked or seeked, which is how the stream reader
+        # used to leave the LF of a CRLF behind to be read as an empty line.
+        return _read_line_bytes(fd, echo=is_tty)
     except EOFError:
         raise
     except Exception:
@@ -75,28 +89,18 @@ def _read_line_stream(stream) -> str:
     """Read one line from a text stream, treating CR or LF as end-of-line."""
     buf: list[str] = []
     while True:
-        ch = stream.read(1)
+        ch = _stream_pushback.pop() if _stream_pushback else stream.read(1)
         if ch == "":
             if not buf:
                 raise EOFError
             break
         if ch in ("\n", "\r"):
             if ch == "\r":
-                # swallow optional LF of CRLF without blocking forever on pipes
-                try:
-                    if hasattr(stream, "peek"):
-                        nxt = stream.peek(1)
-                        if isinstance(nxt, (bytes, bytearray)):
-                            nxt = nxt[:1].decode(stream.encoding or "utf-8", "replace")
-                        if nxt.startswith("\n"):
-                            stream.read(1)
-                    elif hasattr(stream, "tell") and hasattr(stream, "seek"):
-                        pos = stream.tell()
-                        nxt = stream.read(1)
-                        if nxt != "\n":
-                            stream.seek(pos)
-                except Exception:
-                    pass
+                # Swallow the LF of a CRLF pair; anything else starts the
+                # next line and is pushed back rather than dropped.
+                nxt = _stream_pushback.pop() if _stream_pushback else stream.read(1)
+                if nxt and nxt != "\n":
+                    _stream_pushback.append(nxt)
             break
         buf.append(ch)
     return "".join(buf)
@@ -118,12 +122,14 @@ def _unread_byte(b: int) -> None:
     _pushback.append(b)
 
 
-def _read_line_bytes(fd: int) -> str:
+def _read_line_bytes(fd: int, echo: bool = True) -> str:
     """Read until CR, LF, or EOF.
 
     - Accepts CR, LF, or CRLF as Enter.
     - Non-LF byte after CR is pushed back (not dropped).
     - Avoids double-newline when the TTY already echoed the terminator.
+    - ``echo`` is off for pipes and redirects, where echoing the input back
+      to stdout would pollute whatever the caller is piping out.
     """
     buf = bytearray()
     saw_cr = False
@@ -157,7 +163,7 @@ def _read_line_bytes(fd: int) -> str:
         if b == 127 or b == 8:  # backspace / DEL
             if buf:
                 buf.pop()
-                if not _tty_echo_on(fd):
+                if echo and not _tty_echo_on(fd):
                     sys.stdout.write("\b \b")
                     sys.stdout.flush()
             continue
@@ -172,18 +178,20 @@ def _read_line_bytes(fd: int) -> str:
             continue
         buf.append(b)
         # Echo ourselves only when the TTY is not already echoing
-        if not _tty_echo_on(fd):
+        if echo and not _tty_echo_on(fd):
             sys.stdout.write(chr(b) if b < 128 else "?")
             sys.stdout.flush()
 
-    # TTY with ECHO already printed the line terminator for LF (and usually CR
-    # after ICRNL). Only force a newline for CR-only paths that did not echo.
-    if not (saw_lf or (saw_cr and _tty_echo_on(fd))):
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-    elif not saw_lf and saw_cr and _tty_echo_on(fd):
-        # Some TTYs echo CR as cursor-to-col0 without advancing row
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+    if echo:
+        # TTY with ECHO already printed the line terminator for LF (and
+        # usually CR after ICRNL). Only force a newline for CR-only paths
+        # that did not echo.
+        if not (saw_lf or (saw_cr and _tty_echo_on(fd))):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        elif not saw_lf and saw_cr and _tty_echo_on(fd):
+            # Some TTYs echo CR as cursor-to-col0 without advancing row
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
     return buf.decode(sys.stdin.encoding or "utf-8", errors="replace")

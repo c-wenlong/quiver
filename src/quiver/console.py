@@ -2,6 +2,7 @@
 
 import os
 import re
+import unicodedata
 
 COLORS = {
     "reset": "\033[0m",
@@ -100,6 +101,28 @@ def strip_ansi(text: str) -> str:
 
 def visible_len(text: str) -> int:
     return len(strip_ansi(text))
+
+
+def cell_len(text: str) -> int:
+    """Terminal cells the text occupies, not the characters in it.
+
+    len() counts a CJK glyph and a combining accent as one each; the
+    terminal draws them as two cells and zero. Padding by len() pushed the
+    pickers' columns right whenever a label contained either. Emoji are
+    mostly East-Asian "W" and so measure 2 here, which matches what the
+    terminal does with them.
+    """
+    width = 0
+    for ch in strip_ansi(text):
+        if unicodedata.combining(ch):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+def cellpad(text: str, width: int) -> str:
+    """Pad on the right to ``width`` terminal cells."""
+    return text + " " * max(0, width - cell_len(text))
 
 
 def lpad(text: str, width: int) -> str:

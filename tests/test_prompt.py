@@ -38,6 +38,41 @@ class ReadLineTest(unittest.TestCase):
             self.assertEqual(read_line(""), "Hello CR")
             self.assertEqual(read_line(""), "save")
 
+    def test_crlf_piped_input_does_not_eat_every_other_line(self):
+        """A TextIOWrapper on a pipe has no peek() and its tell()/seek()
+        raise OSError, so the old reader consumed the LF of every CRLF and
+        could not put it back: every second read_line saw that leftover LF
+        and returned an empty string."""
+        import os
+
+        r, w = os.pipe()
+        os.write(w, b"a\r\nb\r\nlast\r\n")
+        os.close(w)
+        fake = io.TextIOWrapper(io.FileIO(r, "r"))
+        try:
+            with patch("sys.stdin", fake), patch("sys.stdout", io.StringIO()):
+                self.assertEqual(read_line(""), "a")
+                self.assertEqual(read_line(""), "b")
+                self.assertEqual(read_line(""), "last")
+                self.assertRaises(EOFError, read_line, "")
+        finally:
+            fake.close()
+
+    def test_pipe_input_is_not_echoed_to_stdout(self):
+        import os
+
+        r, w = os.pipe()
+        os.write(w, b"quiet\n")
+        os.close(w)
+        fake = io.TextIOWrapper(io.FileIO(r, "r"))
+        out = io.StringIO()
+        try:
+            with patch("sys.stdin", fake), patch("sys.stdout", out):
+                self.assertEqual(read_line(""), "quiet")
+        finally:
+            fake.close()
+        self.assertEqual(out.getvalue(), "")
+
     def test_pushback_does_not_drop_byte_after_cr(self):
         """CR followed by a non-LF byte must not eat the next character."""
         from quiver import prompt as prompt_mod
