@@ -143,6 +143,234 @@ class CompletionEngineTest(unittest.TestCase):
         comps = get_completions(["use", "claude", "extra"])
         self.assertEqual(comps, [])
 
+    def test_primary_commands_cover_dispatch(self):
+        # `swe <TAB>` must offer every non-alias command — find and
+        # discover were missing while `harness` was listed twice.
+        from quiver.cli import COMMANDS
+        from quiver.completion import _PRIMARY_COMMANDS
+        from quiver.harness.drift import NO_TOPIC_WHITELIST
+
+        names = [name for name, _ in _PRIMARY_COMMANDS]
+        self.assertEqual(len(names), len(set(names)))
+        for name in names:
+            self.assertIn(name, COMMANDS, msg=name)
+        for cmd in COMMANDS:
+            if cmd in NO_TOPIC_WHITELIST:
+                self.assertNotIn(cmd, names, msg=f"alias {cmd} in primary list")
+            else:
+                self.assertIn(cmd, names, msg=f"{cmd} not completable")
+
+    def test_mcp_subcommands_and_sync_flags(self):
+        from quiver.completion import get_completions
+
+        subs = [c for c, _ in get_completions(["mcp", ""])]
+        for sub in ("discover", "list", "status", "sync", "diff", "edit",
+                    "validate", "doctor", "help"):
+            self.assertIn(sub, subs)
+        flags = [c for c, _ in get_completions(["mcp", "sync", "--"])]
+        for flag in ("--all", "--only=", "--except=", "--prune", "--dry-run"):
+            self.assertIn(flag, flags)
+
+    def test_find_and_skills_subcommands(self):
+        from quiver.completion import get_completions
+
+        topics = [c for c, _ in get_completions(["find", ""])]
+        self.assertIn("skills", topics)
+        self.assertIn("mcp", topics)
+        skills = [c for c, _ in get_completions(["skills", ""])]
+        for sub in ("tree", "scope", "link", "unlink", "move", "catalog"):
+            self.assertIn(sub, skills)
+
+    def test_nested_flag_tables(self):
+        from quiver.completion import get_completions
+
+        # `swe report followups --<TAB>` offers --status, not report's range flags
+        flags = [c for c, _ in get_completions(["report", "followups", "--"])]
+        self.assertIn("--status=open", flags)
+        self.assertNotIn("--days=", flags)
+        # `swe list edit --<TAB>` offers --reset, not --scope
+        flags = [c for c, _ in get_completions(["list", "edit", "--"])]
+        self.assertEqual(flags, ["--reset"])
+        # `swe find mcp --<TAB>` drops -i (not supported for mcps)
+        flags = [c for c, _ in get_completions(["find", "mcp", "--"])]
+        self.assertNotIn("-i", flags)
+        self.assertNotIn("--interactive", flags)
+        self.assertIn("--scope=global", flags)
+        # `find --root` is a switch, not --root=<dir>
+        flags = [c for c, _ in get_completions(["find", "--"])]
+        self.assertIn("--root", flags)
+        self.assertNotIn("--root=", flags)
+
+    def test_followup_work_flags_need_the_id_first(self):
+        from quiver.completion import get_completions
+
+        # Before the ID: no work flags, and no report-generation flags.
+        self.assertEqual(
+            get_completions(["report", "followup", "work", "--"]), []
+        )
+        # After the ID: the action's own flags.
+        flags = [
+            c for c, _ in get_completions(["report", "followup", "work", "id1", "--"])
+        ]
+        self.assertIn("--resume", flags)
+        self.assertIn("--new", flags)
+        self.assertIn("--harness=", flags)
+        self.assertNotIn("--days=", flags)
+
+    def test_nested_subcommands(self):
+        from quiver.completion import get_completions
+
+        actions = [c for c, _ in get_completions(["report", "followup", ""])]
+        self.assertIn("work", actions)
+        self.assertIn("done", actions)
+        catalog = [c for c, _ in get_completions(["skills", "catalog", ""])]
+        self.assertIn("add", catalog)
+
+    def test_mcp_sync_multi_tool_completion(self):
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+            "codex": {"description": "Codex CLI", "aliases": ["cx"]},
+            "cursor": {"description": "Cursor", "aliases": []},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "sync", "claude", ""])]
+        self.assertIn("codex", names)
+        self.assertIn("cursor", names)
+        # Already-typed sources are not re-offered.
+        self.assertNotIn("claude", names)
+        self.assertNotIn("cc", names)
+
+    def test_mcp_list_tool_completion(self):
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "list", ""])]
+        self.assertIn("claude", names)
+
+    def test_mcp_sync_resolves_alias_when_deduping(self):
+        # Typing the alias `cc` must also remove `claude` itself.
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+            "codex": {"description": "Codex CLI", "aliases": ["cx"]},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "sync", "cc", ""])]
+        self.assertIn("codex", names)
+        self.assertNotIn("claude", names)
+        self.assertNotIn("cc", names)
+
+    def test_provider_name_completion(self):
+        fake = {"anthropic": {"name": "Anthropic"}, "openai": {"name": "OpenAI"}}
+        with patch(
+            "quiver.providers.registry.load_registry", return_value=fake
+        ):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["providers", "info", ""])]
+            rm_names = [c for c, _ in get_completions(["pv", "rm", "o"])]
+        self.assertEqual(names, ["anthropic", "openai"])
+        self.assertEqual(rm_names, ["openai"])
+
+    def test_mcp_edit_server_completion(self):
+        with patch("quiver.mcp.cli.load_registry", return_value={}), \
+             patch("quiver.mcp.cli.resolve_tool_arg", return_value="codex"), \
+             patch("quiver.mcp.cli.get_tool_config",
+                   return_value={"path": Path("/x/mcp.json")}), \
+             patch("quiver.mcp.cli.get_tool_loader",
+                   return_value=lambda p: {"srv": {}, "db": {}}):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "edit", "codex", ""])]
+        self.assertEqual(names, ["db", "srv"])
+
+    def test_mcp_edit_server_completion_unknown_tool(self):
+        with patch("quiver.mcp.cli.load_registry", return_value={}), \
+             patch("quiver.mcp.cli.resolve_tool_arg", return_value=None):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["mcp", "edit", "ghost", ""]), [])
+
+    def test_mcp_edit_server_completion_no_backend(self):
+        with patch("quiver.mcp.cli.load_registry", return_value={}), \
+             patch("quiver.mcp.cli.resolve_tool_arg", return_value="codex"), \
+             patch("quiver.mcp.cli.get_tool_config", return_value=None), \
+             patch("quiver.mcp.cli.get_tool_loader", return_value=None):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["mcp", "edit", "codex", ""]), [])
+
+    def test_provider_alias_completion(self):
+        fake = {
+            "anthropic": {"name": "Anthropic", "aliases": ["claude-api"]},
+        }
+        with patch(
+            "quiver.providers.registry.load_registry", return_value=fake
+        ):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["providers", "info", ""])]
+        self.assertIn("anthropic", names)
+        self.assertIn("claude-api", names)
+
+    def test_provider_alias_matching_name_not_duplicated(self):
+        fake = {"openai": {"name": "OpenAI", "aliases": ["openai"]}}
+        with patch(
+            "quiver.providers.registry.load_registry", return_value=fake
+        ):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["providers", "info", ""])]
+        self.assertEqual(names, ["openai"])
+
+    def test_install_completes_catalog_names(self):
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+        }
+        catalog = {
+            "claude": {"description": "already registered"},
+            "jules": {"description": "Jules agent"},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry), \
+             patch.dict("quiver.harness.catalog.HARNESS_CATALOG", catalog, clear=True):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["install", ""])]
+        self.assertIn("claude", names)
+        self.assertIn("jules", names)
+        self.assertEqual(names.count("claude"), 1)
+
+    def test_provider_completion_survives_broken_registry(self):
+        with patch(
+            "quiver.providers.registry.load_registry",
+            side_effect=OSError("corrupt"),
+        ):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["providers", "info", ""]), [])
+
+    def test_completion_survives_broken_registry(self):
+        # A corrupt registry must yield no candidates, not a crash on TAB.
+        with patch(
+            "quiver.completion.load_registry", side_effect=OSError("corrupt")
+        ):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["use", ""]), [])
+            self.assertEqual(get_completions(["mcp", "sync", "x", ""]), [])
+            self.assertEqual(get_completions(["list", ""]), [])
+
+    def test_first_word_flag_returns_nothing(self):
+        from quiver.completion import get_completions
+
+        self.assertEqual(get_completions(["-"]), [])
+
 
 class CompleteCommandTest(unittest.TestCase):
     """Test the hidden __complete command output format."""
