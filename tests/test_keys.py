@@ -378,36 +378,52 @@ class RawTerminalTest(unittest.TestCase):
             os.close(master)
             os.close(slave)
 
-    def test_a_fatal_signal_delegates_to_the_previous_handler(self):
-        """SIG_IGN stays ignored, a Python handler runs instead of a
-        duplicate delivery, and only a real SIG_DFL re-raises fatally."""
+    def test_an_ignored_signal_is_never_trapped(self):
+        """If the caller silenced a signal, raw_terminal leaves it alone:
+        installing our cleanup on it would strand the still-running
+        widget in cooked mode when the signal next arrived."""
         import signal
 
         master, slave = self._pty()
-        ran = []
-        saved = {s: signal.getsignal(s) for s in (
-            signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM)}
+        saved = signal.getsignal(signal.SIGHUP)
         try:
             signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    self.assertEqual(
+                        signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
+            self.assertEqual(signal.getsignal(signal.SIGHUP),
+                             signal.SIG_IGN)
+        finally:
+            signal.signal(signal.SIGHUP, saved)
+            os.close(master)
+            os.close(slave)
+
+    def test_a_returning_python_handler_gets_raw_mode_back(self):
+        """A Python-level handler that returns instead of unwinding means
+        the app continues: the terminal is re-rawed and the cleanup
+        handler retaken for the next signal."""
+        import signal
+        import termios
+
+        master, slave = self._pty()
+        ran = []
+        saved = signal.getsignal(signal.SIGQUIT)
+        try:
             signal.signal(signal.SIGQUIT, lambda s, f: ran.append(s))
             with patch("sys.stdout", io.StringIO()):
                 with keys.raw_terminal(slave):
-                    # Ignored: no kill, and a failed handler-restore is
-                    # still tolerated.
-                    with patch("os.isatty", return_value=False), \
-                         patch("os.kill") as kill, \
-                         patch("signal.signal", side_effect=ValueError):
-                        signal.getsignal(signal.SIGHUP)(signal.SIGHUP, None)
-                    kill.assert_not_called()
-                    # A Python-level handler is invoked, not re-delivered.
+                    handler = signal.getsignal(signal.SIGQUIT)
                     with patch("os.isatty", return_value=False), \
                          patch("os.kill") as kill:
-                        signal.getsignal(signal.SIGQUIT)(signal.SIGQUIT, None)
+                        handler(signal.SIGQUIT, None)
                     self.assertEqual(ran, [signal.SIGQUIT])
                     kill.assert_not_called()
+                    self.assertFalse(
+                        termios.tcgetattr(slave)[3] & termios.ICANON)
+                    self.assertIs(signal.getsignal(signal.SIGQUIT), handler)
         finally:
-            for s, h in saved.items():
-                signal.signal(s, h)
+            signal.signal(signal.SIGQUIT, saved)
             os.close(master)
             os.close(slave)
 

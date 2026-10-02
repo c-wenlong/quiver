@@ -199,27 +199,40 @@ def raw_terminal(fd: int):
         _restore()
         # Hand the signal to whoever owned it before us rather than
         # unconditionally dying on SIG_DFL: Python's own SIGINT handler
-        # raises KeyboardInterrupt the caller can catch, and a signal the
-        # caller ignored stays ignored.
+        # raises KeyboardInterrupt the caller can catch. (A caller who
+        # ignored the signal never gets here — we did not take it over.)
         prev = previous.get(signum, signal.SIG_DFL)
         try:
             signal.signal(signum, prev)
         except (OSError, RuntimeError, ValueError):
             pass
-        if prev == signal.SIG_IGN:
-            return
         if callable(prev):
-            # A Python-level handler: let the interpreter deliver the
-            # signal to it (SIGINT becomes KeyboardInterrupt) rather than
-            # dying on a duplicate delivery.
+            # A Python-level handler: run it instead of dying on a
+            # duplicate delivery. If it raised (SIGINT's default raises
+            # KeyboardInterrupt), the widget unwinds through our finally.
+            # If it returned, the app wants to keep going — re-enter raw
+            # mode and retake the signal so the next one still cleans up.
             prev(signum, _frame)
+            tty.setraw(fd)
+            try:
+                previous[signum] = signal.signal(signum,
+                                                 _restore_then_reraise)
+            except (OSError, RuntimeError, ValueError):
+                pass
             return
         os.kill(os.getpid(), signum)
 
     tty.setraw(fd)
     for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM):
         try:
-            previous[sig] = signal.signal(sig, _restore_then_reraise)
+            prev = signal.signal(sig, _restore_then_reraise)
+            if prev == signal.SIG_IGN:
+                # A signal the caller silenced must stay silenced: taking
+                # it over would turn the next delivery into a cleanup pass
+                # that strands the still-running widget in cooked mode.
+                signal.signal(sig, prev)
+            else:
+                previous[sig] = prev
         except (OSError, RuntimeError, ValueError):
             pass                          # e.g. not the main thread
     try:
