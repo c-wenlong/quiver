@@ -144,16 +144,21 @@ class ProviderFileContainmentTest(unittest.TestCase):
                 find_key_file({"key_filename": "openai"}, keys_dir)
             )
 
-    def test_circular_symlink_returns_none(self):
-        """A symlink loop makes resolve() raise RuntimeError on py<=3.12 —
-        it must read as missing, not crash the listing."""
+    def test_circular_symlink_reads_as_missing(self):
+        """A symlink loop must never produce key content or a traceback.
+
+        Python <= 3.12 raises RuntimeError inside resolve() (caught, ->
+        None); 3.13 resolves the loop to itself, and read_key's ELOOP
+        then reports missing. Pin the contract both ways: no content.
+        """
+        from quiver.providers.keys import read_key
+
         with tempfile.TemporaryDirectory() as tmp:
             keys_dir = Path(tmp) / "keys"
             keys_dir.mkdir()
             (keys_dir / "loopy").symlink_to(keys_dir / "loopy")
-            self.assertIsNone(
-                find_key_file({"key_filename": "loopy"}, keys_dir)
-            )
+            key_path = find_key_file({"key_filename": "loopy"}, keys_dir)
+            self.assertIsNone(read_key(key_path))
 
     def test_symlink_staying_inside_keys_dir_allowed(self):
         """A link whose target still lives under keys_dir is fine."""
