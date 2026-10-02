@@ -84,7 +84,7 @@ Domain packages under `src/quiver/`:
 | `setup/` | interactive onboarding wizard (the one logic module allowed to print) |
 | `history/` | backward-compatible re-exports; prefer `quiver.sessions` |
 
-Five modules form the bottom layer and never import a domain package: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`, `keys.py` (the shared terminal key reader). They are ordered among themselves — `console.py` and `keys.py` import nothing from the project at all, `paths.py` takes only the constants in `quiver/__init__.py`, `table.py` imports `console`, `configuration.py` imports `paths`. Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
+Six modules form the bottom layer and never import a domain package: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`, `keys.py` (the shared terminal key reader), `flags.py` (the shared `--name=value` argv normaliser). They are ordered among themselves — `console.py`, `keys.py` and `flags.py` import nothing from the project at all, `paths.py` takes only the constants in `quiver/__init__.py`, `table.py` imports `console`, `configuration.py` imports `paths`. Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
 
 `harness/stars.py` and `harness/archive.py` are compatibility shims over `registry.py`, kept so old call sites work. Do not add new state to them.
 
@@ -124,6 +124,8 @@ The `swe autocomplete` feature relies on a hardcoded list of primary subcommands
 3. If the command accepts flags, add them to `_COMMAND_FLAGS`.
 4. If the command should appear in `swe help`, add it to `COMMAND_CATEGORIES` in `help_text.py` and add a `HELP` entry. `swe doctor` fails on a command without one.
 5. Run `tests/test_completion.py` and `tests/test_drift.py` to verify completions and help drift.
+
+**Flag convention:** a long flag that takes a value is always `--name=value` (comma-separate multiple values into one token, e.g. `--tags=a,b`). Parse it by running `expand_value_flags(args, {"--name", ...})` at the top of the handler and consuming the resulting `("--name", value)` pairs; a bare `--name` raises a "write it as --name=<value>" error. Short flags (`-d`, `-q`) keep the space-separated form. Two ordering rules: boolean membership checks like `"-i" in args` must run on the raw argv *before* expansion (an expanded `--description=-i` would smuggle `-i` in as a value), and commands whose trailing args are free text (e.g. `report followup edit`) must not expand them or literal `--x=y` text gets rewritten.
 
 **When you remove or rename a command:**
 

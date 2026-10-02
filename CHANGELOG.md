@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Value-taking long flags are `--name=value` only.** Every long flag that
+  takes a value — `--agent`, `--search`/`--grep`, `--days`, `--weeks`,
+  `--start`, `--end`, `--aliases`, `--tags`, `--description`, `--command`,
+  `--version`, `--notes`, `--set`, `--package`, `--url`, `--env`, `--file`,
+  `--from`, `--to`, `--api-keys-dir`, `--status`, `--project`, `--harness`,
+  the report `--session-*`/`--writer-*` overrides, and the existing
+  `--scope`/`--usage`/`--only`/`--except` — now requires the `=` form, e.g.
+  `--agent=claude`, `--tags=a,b`. A bare `--name` fails with
+  "takes a value: write it as --name=<value>" instead of silently consuming
+  the next token. Short flags (`-d 5`, `-q foo`) keep the space form.
 - **`swe list` quota column is a pie glyph now.** REMAINING becomes QUOTA:
   `○◔◑◕●` show the tightest window's share left on a red→green ramp (green
   = full), followed by the dim reset countdown, so the column is ~5-10

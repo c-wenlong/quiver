@@ -105,9 +105,9 @@ class CompletionEngineTest(unittest.TestCase):
 
         comps = get_completions(["session", "--"])
         names = [c for c, _ in comps]
-        self.assertIn("--search", names)
-        self.assertIn("--days", names)
-        self.assertIn("--start", names)
+        self.assertIn("--search=", names)
+        self.assertIn("--days=", names)
+        self.assertIn("--start=", names)
 
     def test_report_and_config_subcommands(self):
         from quiver.completion import get_completions

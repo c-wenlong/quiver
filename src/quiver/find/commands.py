@@ -6,6 +6,7 @@ from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, elide, terminal_width, truncate
+from quiver.flags import expand_value_flags
 from quiver.harness.registry import load_registry_if_present
 from quiver.init.layout import skill_folder_names
 from quiver.find.tree import (
@@ -965,11 +966,24 @@ def cmd_find(args) -> int:
     root_flag = any(a in ("--root", "-r") for a in args)
     args = [a for a in args if a not in ("--root", "-r")]
 
+    try:
+        args = expand_value_flags(args, {"--scope", "--harness"})
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return 1
+
     scope = "global"
-    for a in list(args):
-        if a.startswith("--scope"):
-            scope = a.split("=", 1)[1] if "=" in a else ""
-            args.remove(a)
+    harness = HARNESS_DEFAULT
+    i = 0
+    while i < len(args):
+        if args[i] == "--scope":
+            scope = args[i + 1]
+            del args[i : i + 2]
+        elif args[i] == "--harness":
+            harness = args[i + 1]
+            del args[i : i + 2]
+        else:
+            i += 1
     if scope not in ("all", "global", "local"):
         print(f"Unknown scope: {scope or '(empty)'}. Use all, global, or local.")
         return 1
@@ -979,11 +993,6 @@ def cmd_find(args) -> int:
     # Same treatment as --scope above — an unrecognised value is a hard
     # error at the CLI, not a silent fallback, so a typo is caught here
     # rather than quietly running as --harness=active.
-    harness = HARNESS_DEFAULT
-    for a in list(args):
-        if a.startswith("--harness"):
-            harness = a.split("=", 1)[1] if "=" in a else ""
-            args.remove(a)
     if harness not in HARNESS_STATES:
         print(f"Unknown harness state: {harness or '(empty)'}. Use active or all.")
         return 1

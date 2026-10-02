@@ -77,8 +77,8 @@ HELP = {
         f"""\
   {c('cyan', 'swe add <name> <command>')}             Add with defaults
   {c('cyan', 'swe add <name> <command> [desc]')}      Add with description
-  {c('cyan', 'swe add <name> <cmd> --aliases a,b')}   Set short aliases
-  {c('cyan', 'swe add <name> <cmd> --tags t1,t2')}    Set tags
+  {c('cyan', 'swe add <name> <cmd> --aliases=a,b')}   Set short aliases
+  {c('cyan', 'swe add <name> <cmd> --tags=t1,t2')}    Set tags
   {c('cyan', 'swe add -i')}                           Interactive form (walk each field)
   {c('cyan', 'swe add <name> -i')}                    Interactive, pre-filled name
 
@@ -88,20 +88,20 @@ HELP = {
   If the tool already exists, it updates the entry.
 
 {c('bold', 'Examples')}
-  swe add aider aider "AI pair programmer" --aliases ai --tags agentic,coding
+  swe add aider aider "AI pair programmer" --aliases=ai --tags=agentic,coding
   swe add mytool /usr/local/bin/mytool"""
     ),
     "edit": (
         "Edit fields of a registered harness",
         f"""\
   {c('cyan', 'swe edit <name|alias>')}                Interactive field editor
-  {c('cyan', 'swe edit <name> --description "..."')}  Set description
-  {c('cyan', 'swe edit <name> --aliases a,b')}        Replace aliases (comma-separated)
-  {c('cyan', 'swe edit <name> --tags t1,t2')}         Replace tags
-  {c('cyan', 'swe edit <name> --command <cmd>')}      Change launch command
-  {c('cyan', 'swe edit <name> --version <ver>')}      Set version string
-  {c('cyan', 'swe edit <name> --notes "..."')}        Set notes
-  {c('cyan', 'swe edit <name> --set field=value')}    Compact multi-set form
+  {c('cyan', 'swe edit <name> --description="..."')}  Set description
+  {c('cyan', 'swe edit <name> --aliases=a,b')}        Replace aliases (comma-separated)
+  {c('cyan', 'swe edit <name> --tags=t1,t2')}         Replace tags
+  {c('cyan', 'swe edit <name> --command=<cmd>')}      Change launch command
+  {c('cyan', 'swe edit <name> --version=<ver>')}      Set version string
+  {c('cyan', 'swe edit <name> --notes="..."')}        Set notes
+  {c('cyan', 'swe edit <name> --set=field=value')}    Compact multi-set form
 
   Editable fields: command, description, aliases, tags, version, notes.
   With no field flags, opens an interactive prompt loop (save / quit).
@@ -109,8 +109,8 @@ HELP = {
 
 {c('bold', 'Examples')}
   swe edit mastracode
-  swe edit mastracode --description "Mastra Code — AI coding agent" --aliases mc
-  swe edit droid --set tags=agentic,coding,autonomous"""
+  swe edit mastracode --description="Mastra Code — AI coding agent" --aliases=mc
+  swe edit droid --set=tags=agentic,coding,autonomous"""
     ),
     "remove": (
         "Remove a tool from the registry",
@@ -155,8 +155,8 @@ HELP = {
         "Install a harness via PATH-visible npm and register it",
         f"""\
   {c('cyan', 'swe install <name>')}                    npm install -g + register in harness.json
-  {c('cyan', 'swe install <name> --package <pkg>')}    Override npm package name
-  {c('cyan', 'swe install <name> --command <cmd>')}    Override CLI binary name
+  {c('cyan', 'swe install <name> --package=<pkg>')}    Override npm package name
+  {c('cyan', 'swe install <name> --command=<cmd>')}    Override CLI binary name
   {c('cyan', 'swe install <name> --dry-run')}          Show what would run
 
   Uses a PATH-visible npm (prefers Homebrew over nvm) so the binary lands where
@@ -164,8 +164,8 @@ HELP = {
 
 {c('bold', 'Examples')}
   swe install mastracode
-  swe install jules --package @google/jules
-  swe install claude --package @anthropic-ai/claude-code"""
+  swe install jules --package=@google/jules
+  swe install claude --package=@anthropic-ai/claude-code"""
     ),
     "session": (
         "Show recent AI sessions across all agents",
@@ -176,13 +176,13 @@ HELP = {
   {c('cyan', 'swe session -i')}               Pick with arrow keys; space reads a transcript, Enter resumes
 
 {c('bold', 'Flags')}
-  {c('cyan', '--agent <name>')}               Filter by agent (claude, codex, opencode, droid, ...)
+  {c('cyan', '--agent=<name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
-  {c('cyan', '--search <text>')}              Filter title/path/agent/session id (alias: -q, --grep)
-  {c('cyan', '-d, --days <N>')}               Include today and the preceding N-1 calendar dates
-  {c('cyan', '-w, --weeks <N>')}              Include the latest N times 7 calendar dates
-  {c('cyan', '-s, --start <YYYY-MM-DD>')}      Inclusive range start; use together with --end
-  {c('cyan', '-e, --end <YYYY-MM-DD>')}        Inclusive range end; use together with --start
+  {c('cyan', '--search=<text>')}              Filter title/path/agent/session id (alias: -q, --grep)
+  {c('cyan', '-d N, --days=<N>')}             Include today and the preceding N-1 calendar dates
+  {c('cyan', '-w N, --weeks=<N>')}            Include the latest N times 7 calendar dates
+  {c('cyan', '-s, --start=<YYYY-MM-DD>')}     Inclusive range start; use together with --end
+  {c('cyan', '-e, --end=<YYYY-MM-DD>')}       Inclusive range end; use together with --start
   {c('cyan', '-i, --interactive')}            Pick with arrow keys; Enter resumes, space opens the transcript
 
 {c('bold', 'Examples')}
@@ -190,12 +190,12 @@ HELP = {
   swe session 20
   swe session use 3
   swe session -i
-  swe session --agent claude
+  swe session --agent=claude
   swe session --here
   swe session -d 5
   swe session -w 3
   swe session -s 2026-07-01 -e 2026-07-30
-  swe session --search login
+  swe session --search=login
   swe session 30 -q quiver"""
     ),
     "report": (
@@ -216,13 +216,13 @@ When a report completes with warnings, Quiver prints the exact
 {c('cyan', 'swe report warnings <manifest.json>')} command for that report.
 
 {c('bold', 'Source flags')}
-  {c('cyan', '-d, --days <N>')}                Override the report with N calendar dates
-  {c('cyan', '-w, --weeks <N>')}               Override the report with N times 7 calendar dates
-  {c('cyan', '-s, --start <YYYY-MM-DD>')}       Inclusive custom start; requires --end
-  {c('cyan', '-e, --end <YYYY-MM-DD>')}         Inclusive custom end; requires --start
+  {c('cyan', '-d N, --days=<N>')}              Override the report with N calendar dates
+  {c('cyan', '-w N, --weeks=<N>')}             Override the report with N times 7 calendar dates
+  {c('cyan', '-s, --start=<YYYY-MM-DD>')}      Inclusive custom start; requires --end
+  {c('cyan', '-e, --end=<YYYY-MM-DD>')}        Inclusive custom end; requires --start
   {c('cyan', '--here')}                        Include only the current project
-  {c('cyan', '--agent <name>')}                Include only one coding harness
-  {c('cyan', '--search <text>')}               Match session title/path/agent/id (alias: -q)
+  {c('cyan', '--agent=<name>')}                Include only one coding harness
+  {c('cyan', '--search=<text>')}               Match session title/path/agent/id (alias: -q)
 
 Reports run in two passes: a cheap model summarizes each session, then a
 stronger model writes the final report from those summaries. The flags below
@@ -230,19 +230,19 @@ pick the harness/model for each pass; leave any of them out and Quiver falls
 back to {c('cyan', 'report.session.*')} / {c('cyan', 'report.writer.*')} in {c('cyan', 'swe config')}.
 
 {c('bold', 'Runner override flags')}
-  {c('cyan', '--session-harness <name>')}       Cheap summarizer harness: claude or codex
-  {c('cyan', '--session-model <model>')}        Model used for project/session summaries
-  {c('cyan', '--session-arg <arg>')}            Pass one extra summarizer argument; repeat as needed
-  {c('cyan', '--writer-harness <name>')}        Harness used for the final report
-  {c('cyan', '--writer-model <model>')}         Strong model used for the final report
-  {c('cyan', '--writer-arg <arg>')}             Pass one extra writer argument; repeat as needed
+  {c('cyan', '--session-harness=<name>')}       Cheap summarizer harness: claude or codex
+  {c('cyan', '--session-model=<model>')}        Model used for project/session summaries
+  {c('cyan', '--session-arg=<arg>')}            Pass one extra summarizer argument; repeat as needed
+  {c('cyan', '--writer-harness=<name>')}        Harness used for the final report
+  {c('cyan', '--writer-model=<model>')}         Strong model used for the final report
+  {c('cyan', '--writer-arg=<arg>')}             Pass one extra writer argument; repeat as needed
 
 {c('bold', 'Follow-up actions')}
-  add <text> [--project PATH]   Add an item; project defaults to the current directory
+  add <text> [--project=PATH]  Add an item; project defaults to the current directory
   edit <id> <text>             Correct an item's text
   done|dismiss|reopen <id>     Change status explicitly
   work <id> --resume           Resume the newest referenced supported session
-  work <id> --new --harness X  Start a new contextual session with harness X"""
+  work <id> --new --harness=X  Start a new contextual session with harness X"""
     ),
     "config": (
         "View or update Quiver configuration",
@@ -289,7 +289,7 @@ to use their own login state and environment."""
   {c('dim', 'swe skills scope list forwards to the same place; --sync is accepted but ignored.')}
   {c('cyan', 'swe skills link <harness> [target]')}   Symlink a harness root to shared/other
   {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break a harness symlink
-  {c('cyan', 'swe skills move <name> --from A --to B')} Move a skill folder between roots
+  {c('cyan', 'swe skills move <name> --from=A --to=B')} Move a skill folder between roots
   {c('cyan', 'swe skills discover [--apply]')} Scan Desktop/Documents for skill catalogs
   {c('cyan', 'swe skills catalog add [path] [label]')} Register a skills directory (default: .)
   {c('cyan', 'swe skills catalog .')}                Add the current directory as a catalog
@@ -343,7 +343,7 @@ to use their own login state and environment."""
       List registered providers + masked key status (`-` = no key)
   {c('cyan', 'swe providers info <name|alias>')}
       Show details for one provider, including key status + path
-  {c('cyan', 'swe providers add <name> [--url URL] [--env ENV] [--file NAME]')}
+  {c('cyan', 'swe providers add <name> [--url=URL] [--env=ENV] [--file=NAME]')}
       Register a provider in ~/.quiver/config/providers.json
   {c('cyan', 'swe providers remove <name>')}
       Unregister a provider (does not delete your key file)
