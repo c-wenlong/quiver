@@ -10,7 +10,10 @@ styled run closes the run and re-opens it on the next line.
 import textwrap
 import unittest
 
-from quiver.console import COLORS, c, fill_ansi, lpad, strip_ansi, visible_len, wrap_ansi
+from quiver.console import (
+    COLORS, c, cell_len, cellpad, fill_ansi, lpad, strip_ansi, visible_len,
+    wrap_ansi,
+)
 
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
@@ -170,6 +173,28 @@ class FillAnsiTest(unittest.TestCase):
         rows = wrap_ansi(c("user_bg", "one two three four five"), 9)
         for row in rows:
             self.assertEqual(9, visible_len(fill_ansi(row, 9)))
+
+
+class CellWidthTest(unittest.TestCase):
+    """cell_len counts terminal cells: CJK two, combining marks zero."""
+
+    def test_wide_glyphs_count_as_two_cells(self):
+        self.assertEqual(cell_len("a漢字b"), 6)
+        self.assertEqual(cell_len("✨"), 2)
+
+    def test_combining_marks_count_as_zero(self):
+        # e + combining acute (decomposed) is one visible glyph.
+        self.assertEqual(cell_len("café"), 4)
+        self.assertEqual(len("café"), 5)
+
+    def test_ansi_codes_do_not_widen(self):
+        self.assertEqual(cell_len(c("red", "hi")), 2)
+
+    def test_cellpad_pads_by_cells_not_characters(self):
+        padded = cellpad("漢", 3)
+        self.assertEqual(cell_len(padded), 3)
+        self.assertEqual(padded, "漢 ")
+        self.assertEqual(cellpad("abc", 2), "abc")
 
 
 if __name__ == "__main__":

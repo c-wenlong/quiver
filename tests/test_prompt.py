@@ -38,6 +38,130 @@ class ReadLineTest(unittest.TestCase):
             self.assertEqual(read_line(""), "Hello CR")
             self.assertEqual(read_line(""), "save")
 
+class ByteReaderTest(unittest.TestCase):
+    """_read_line_bytes on a real pipe: CR pushback, editing keys, echo."""
+
+    def _pipe(self, payload: bytes) -> int:
+        import os
+
+        r, w = os.pipe()
+        os.write(w, payload)
+        os.close(w)
+        return r
+
+    def test_a_cr_followed_by_a_letter_pushes_the_letter_back(self):
+        import os
+
+        from quiver import prompt
+
+        fd = self._pipe(b"a\rx")
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(prompt._read_line_bytes(fd), "a")
+                self.assertEqual(prompt._read_line_bytes(fd), "x")
+        finally:
+            prompt._pushback.clear()
+            os.close(fd)
+
+    def test_a_select_failure_after_cr_still_ends_the_line(self):
+        import os
+
+        from quiver import prompt
+
+        fd = self._pipe(b"a\r")
+        try:
+            with patch("sys.stdout", io.StringIO()), \
+                 patch("select.select", side_effect=OSError("no poll")):
+                self.assertEqual(prompt._read_line_bytes(fd), "a")
+        finally:
+            os.close(fd)
+
+    def test_backspace_edits_and_echoes_on_a_tty_without_echo(self):
+        import os
+
+        from quiver import prompt
+
+        fd = self._pipe(b"ab\x7fc\n")
+        out = io.StringIO()
+        try:
+            with patch("sys.stdout", out), \
+                 patch.object(prompt, "_tty_echo_on", return_value=False):
+                self.assertEqual(prompt._read_line_bytes(fd, echo=True), "ac")
+            self.assertIn("\b \b", out.getvalue())
+        finally:
+            os.close(fd)
+
+    def test_ctrl_c_raises_and_ctrl_d_ends_like_eof(self):
+        import os
+
+        from quiver import prompt
+
+        fd = self._pipe(b"\x03")
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                self.assertRaises(KeyboardInterrupt,
+                                  prompt._read_line_bytes, fd)
+        finally:
+            os.close(fd)
+
+        fd = self._pipe(b"\x04")
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                self.assertRaises(EOFError, prompt._read_line_bytes, fd)
+        finally:
+            os.close(fd)
+
+        fd = self._pipe(b"ab\x04")
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(prompt._read_line_bytes(fd), "ab")
+        finally:
+            os.close(fd)
+
+    def test_backspace_on_an_empty_line_is_a_noop(self):
+        import os
+
+        from quiver import prompt
+
+        fd = self._pipe(b"\x7fok\n")
+        try:
+            with patch("sys.stdout", io.StringIO()), \
+                 patch.object(prompt, "_tty_echo_on", return_value=True):
+                self.assertEqual(prompt._read_line_bytes(fd, echo=True), "ok")
+        finally:
+            os.close(fd)
+
+    def test_control_characters_are_skipped(self):
+        import os
+
+        from quiver import prompt
+
+        fd = self._pipe(b"a\x01b\n")
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(prompt._read_line_bytes(fd), "ab")
+        finally:
+            os.close(fd)
+
+    def test_cr_only_line_ends_write_the_newline_the_tty_skipped(self):
+        """A CR without a paired LF and without terminal echo still needs
+        the cursor moved off the row."""
+        import os
+
+        from quiver import prompt
+
+        for tty_echo in (False, True):
+            out = io.StringIO()
+            fd2 = self._pipe(b"x\r")
+            try:
+                with patch("sys.stdout", out), \
+                     patch.object(prompt, "_tty_echo_on",
+                                  return_value=tty_echo):
+                    self.assertEqual(prompt._read_line_bytes(fd2), "x")
+                self.assertIn("\n", out.getvalue())
+            finally:
+                os.close(fd2)
+
     def test_crlf_piped_input_does_not_eat_every_other_line(self):
         """A TextIOWrapper on a pipe has no peek() and its tell()/seek()
         raise OSError, so the old reader consumed the LF of every CRLF and

@@ -149,7 +149,7 @@ def _read_line_bytes(fd: int, echo: bool = True) -> str:
                 try:
                     import select
 
-                    if select.select([fd], [], [], 0)[0] or _pushback:
+                    if select.select([fd], [], [], 0)[0]:
                         nxt = _read_byte(fd)
                         if nxt == b"\n":
                             saw_lf = True

@@ -14,6 +14,7 @@ empty read.
 import io
 import os
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 from quiver import keys
@@ -335,6 +336,103 @@ class RawTerminalTest(unittest.TestCase):
             self.assertEqual(os.WTERMSIG(status), signal.SIGTERM)
             self._assert_attrs_restored(slave, before)
         finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_the_signal_handler_restores_and_reraises(self):
+        """The fork test proves the real path; driving the installed
+        handler directly covers its body in the parent process, where
+        coverage can see it."""
+        import signal
+
+        master, slave = self._pty()
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    handler = signal.getsignal(signal.SIGTERM)
+                    with patch("os.isatty", return_value=True), \
+                         patch("os.write") as wr, \
+                         patch("os.kill") as kill:
+                        handler(signal.SIGTERM, None)
+                    kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+                    self.assertEqual(
+                        wr.call_args[0][1],
+                        (keys.MOUSE_OFF + "\x1b[?25h").encode())
+                    # Not a tty, or the write itself failing: neither may
+                    # stop the restore + reraise.
+                    kill.reset_mock()
+                    with patch("os.isatty", return_value=False), \
+                         patch("os.kill") as kill:
+                        handler(signal.SIGHUP, None)
+                    with patch("os.isatty", return_value=True), \
+                         patch("os.write", side_effect=OSError("gone")), \
+                         patch("os.kill") as kill:
+                        handler(signal.SIGHUP, None)
+        finally:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            os.close(master)
+            os.close(slave)
+
+    def test_a_failed_restore_is_swallowed(self):
+        """tcsetattr failing inside _restore must not mask the widget's
+        own exception or escape the context."""
+        import termios
+
+        master, slave = self._pty()
+
+        def boom(fd, when, attrs):
+            raise termios.error(5, "boom")
+
+        try:
+            # tty.setraw keeps its own binding of tcsetattr, so the patch
+            # only lands on _restore's call — which is the one under test.
+            with patch("sys.stdout", io.StringIO()), \
+                 patch("termios.tcsetattr", side_effect=boom):
+                with keys.raw_terminal(slave):
+                    pass
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_a_cleanup_write_failure_is_swallowed(self):
+        master, slave = self._pty()
+        out = mock.Mock()
+        out.write.side_effect = OSError("dead stdout")
+        try:
+            with patch("sys.stdout", out):
+                with keys.raw_terminal(slave):
+                    pass
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_signal_install_and_restore_failures_are_tolerated(self):
+        """Not the main thread, or a handler already gone: neither may
+        break the widget."""
+        import signal
+
+        master, slave = self._pty()
+        real_signal = signal.signal
+        term_calls = [0]
+
+        def flaky(sig, handler):
+            if sig == signal.SIGHUP:
+                raise ValueError("not the main thread")
+            if sig == signal.SIGTERM:
+                term_calls[0] += 1
+                if term_calls[0] == 2:
+                    raise ValueError("handler gone")
+            return real_signal(sig, handler)
+
+        try:
+            with patch("sys.stdout", io.StringIO()), \
+                 patch("signal.signal", side_effect=flaky):
+                with keys.raw_terminal(slave):
+                    pass
+        finally:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            signal.signal(signal.SIGQUIT, signal.SIG_DFL)
             os.close(master)
             os.close(slave)
 

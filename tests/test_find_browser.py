@@ -433,7 +433,8 @@ class BrowserMouseTest(unittest.TestCase):
     quiver.keys.
     """
 
-    def _drive(self, key_names):
+    def _drive(self, key_names, roots=None, select_side_effect=None,
+               sizes=None):
         import os
 
         from quiver.find.browser import browse
@@ -442,6 +443,12 @@ class BrowserMouseTest(unittest.TestCase):
         stdin = mock.Mock()
         stdin.fileno.return_value = 0
         seen = []
+        sel_kwargs = ({"side_effect": select_side_effect}
+                      if select_side_effect is not None
+                      else {"return_value": ([0], [], [])})
+        size_kwargs = ({"side_effect": sizes}
+                       if sizes is not None
+                       else {"side_effect": OSError("no tty")})
         with mock.patch("quiver.find.browser._supported", return_value=True), \
              mock.patch("sys.stdout", out), \
              mock.patch("sys.stdin", stdin), \
@@ -449,11 +456,10 @@ class BrowserMouseTest(unittest.TestCase):
              mock.patch("termios.tcsetattr",
                         side_effect=lambda *a: seen.append(out.getvalue())), \
              mock.patch("tty.setraw"), \
-             mock.patch("select.select", return_value=([0], [], [])), \
-             mock.patch.object(os, "get_terminal_size",
-                               side_effect=OSError("no tty")), \
+             mock.patch("select.select", **sel_kwargs), \
+             mock.patch.object(os, "get_terminal_size", **size_kwargs), \
              mock.patch("quiver.find.browser._read_key", side_effect=key_names):
-            code = browse([Entry("a"), Entry("b")], title="T")
+            code = browse(roots or [Entry("a"), Entry("b")], title="T")
         return code, out.getvalue(), seen
 
     def test_a_wheel_report_is_a_move_rather_than_a_cancel(self):
@@ -483,3 +489,55 @@ class BrowserMouseTest(unittest.TestCase):
         # A shell left reporting the wheel spews escape sequences at the
         # prompt, so the off switch has to precede the termios restore.
         self.assertIn(keys.MOUSE_OFF, seen[0])
+
+    def test_every_dispatch_key_runs(self):
+        """Move, jump, resize and descend/back all through the one loop."""
+        with tempfile.TemporaryDirectory() as td:
+            sub = Path(td) / "child"
+            sub.mkdir()
+            (sub / "leaf.txt").write_text("x")
+            roots = [Entry("dir", Path(td), "one entry"), Entry("b")]
+            code, _, _ = self._drive(
+                ["down", "up", "bottom", "top",
+                 "wider_parent", "narrower_parent",
+                 "wider_preview", "narrower_preview",
+                 "back",          # top level: no-op, stays
+                 "open",          # descends into dir
+                 "back",          # pops the level
+                 "cancel"],
+                roots=roots,
+            )
+        self.assertEqual(code, 0)
+
+    def test_an_open_on_a_dead_end_stays_put(self):
+        """Entries that cannot descend leave the level stack alone."""
+        code, _, _ = self._drive(["open", "cancel"],
+                                 roots=[Entry("leaf", None, "no path")])
+        self.assertEqual(code, 0)
+
+    def test_a_resize_tick_redraws_with_the_new_size(self):
+        """select returning nothing on a tick is the resize path: the loop
+        re-measures and redraws without waiting for a keypress."""
+        import os
+
+        ticks = [0]
+
+        def slow(rlist, _w, _x, _t):
+            ticks[0] += 1
+            # Two idle ticks: the first consumes the startup resize flag,
+            # the second sees a genuinely different size.
+            return (rlist, [], []) if ticks[0] > 2 else ([], [], [])
+
+        sizes = [os.terminal_size((100, 30)), os.terminal_size((120, 30)),
+                 os.terminal_size((140, 30))]
+        calls = [0]
+
+        def size(_fd):
+            calls[0] += 1
+            return sizes[min(calls[0] - 1, len(sizes) - 1)]
+
+        code, out, _ = self._drive(
+            ["cancel"], select_side_effect=slow, sizes=size)
+        self.assertEqual(code, 0)
+        # The 140-column frame redrew after the size change.
+        self.assertIn("quit", strip_ansi(out))
