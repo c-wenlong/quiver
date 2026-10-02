@@ -118,6 +118,25 @@ class ByteReaderTest(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_a_cr_at_a_still_open_pipe_ends_the_line(self):
+        """Writer not closed: select reports nothing readable after the
+        CR, so no partner byte is consumed and the line still ends."""
+        import os
+
+        from quiver import prompt
+
+        r, w = os.pipe()
+        os.write(w, b"a\r")
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(prompt._read_line_bytes(r), "a")
+            os.write(w, b"b\n")
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(prompt._read_line_bytes(r), "b")
+        finally:
+            os.close(w)
+            os.close(r)
+
     def test_backspace_on_an_empty_line_is_a_noop(self):
         import os
 
@@ -128,6 +147,16 @@ class ByteReaderTest(unittest.TestCase):
             with patch("sys.stdout", io.StringIO()), \
                  patch.object(prompt, "_tty_echo_on", return_value=True):
                 self.assertEqual(prompt._read_line_bytes(fd, echo=True), "ok")
+        finally:
+            os.close(fd)
+
+        # echo=False (a pipe): the erasure is not written to stdout.
+        fd = self._pipe(b"ab\x7fc\n")
+        out = io.StringIO()
+        try:
+            with patch("sys.stdout", out):
+                self.assertEqual(prompt._read_line_bytes(fd, echo=False), "ac")
+            self.assertEqual(out.getvalue(), "")
         finally:
             os.close(fd)
 

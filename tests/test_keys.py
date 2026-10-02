@@ -378,6 +378,39 @@ class RawTerminalTest(unittest.TestCase):
             os.close(master)
             os.close(slave)
 
+    def test_a_fatal_signal_delegates_to_the_previous_handler(self):
+        """SIG_IGN stays ignored, a Python handler runs instead of a
+        duplicate delivery, and only a real SIG_DFL re-raises fatally."""
+        import signal
+
+        master, slave = self._pty()
+        ran = []
+        saved = {s: signal.getsignal(s) for s in (
+            signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM)}
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            signal.signal(signal.SIGQUIT, lambda s, f: ran.append(s))
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    # Ignored: no kill, and a failed handler-restore is
+                    # still tolerated.
+                    with patch("os.isatty", return_value=False), \
+                         patch("os.kill") as kill, \
+                         patch("signal.signal", side_effect=ValueError):
+                        signal.getsignal(signal.SIGHUP)(signal.SIGHUP, None)
+                    kill.assert_not_called()
+                    # A Python-level handler is invoked, not re-delivered.
+                    with patch("os.isatty", return_value=False), \
+                         patch("os.kill") as kill:
+                        signal.getsignal(signal.SIGQUIT)(signal.SIGQUIT, None)
+                    self.assertEqual(ran, [signal.SIGQUIT])
+                    kill.assert_not_called()
+        finally:
+            for s, h in saved.items():
+                signal.signal(s, h)
+            os.close(master)
+            os.close(slave)
+
     def test_a_failed_restore_is_swallowed(self):
         """tcsetattr failing inside _restore must not mask the widget's
         own exception or escape the context."""

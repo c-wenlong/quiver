@@ -196,6 +196,19 @@ class CellWidthTest(unittest.TestCase):
         self.assertEqual(padded, "漢 ")
         self.assertEqual(cellpad("abc", 2), "abc")
 
+    def test_joined_emoji_measure_as_one_glyph(self):
+        # Each of these renders as a single two-cell glyph:
+        # ZWJ chain, skin tone, RI flag pair, VS16 promotion, tag flag.
+        self.assertEqual(cell_len("\U0001f468‍\U0001f469‍\U0001f467"), 2)
+        self.assertEqual(cell_len("\U0001f44b\U0001f3fd"), 2)
+        self.assertEqual(cell_len("\U0001f1fa\U0001f1f8"), 2)
+        self.assertEqual(cell_len("\U0001f1eb\U0001f1f7\U0001f1e9\U0001f1ea"), 4)
+        self.assertEqual(cell_len("a❤️"), 3)
+        self.assertEqual(cell_len("a️"), 1)
+        self.assertEqual(
+            cell_len("\U0001f3f4\U000e0067\U000e0062\U000e0065"
+                     "\U000e006e\U000e0067\U000e007f"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
