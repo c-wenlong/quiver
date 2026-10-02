@@ -24,6 +24,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -1111,13 +1112,28 @@ def cmd_edit(args):
         return 1
 
     editor = os.environ.get("EDITOR", "vim")
-    tmp_file = CONFIG_DIR / ".mcp-edit-tmp.json"
-    tmp_file.write_text(json.dumps({name: tool_servers[name]}, indent=2) + "\n")
-
-    subprocess.run(shlex.split(editor) + [str(tmp_file)])
-
+    # mkstemp: unpredictable name, mode 0600, O_EXCL. The old fixed name in
+    # CONFIG_DIR followed a planted symlink, inherited a world-readable
+    # umask, survived a crashed editor, and sat inside the versioned
+    # ~/.quiver tree — a resolved-secret file one `git add -A` from a
+    # commit.
+    fd, tmp_name = tempfile.mkstemp(prefix="quiver-mcp-edit-", suffix=".json")
+    tmp_file = Path(tmp_name)
     try:
-        edited = json.loads(tmp_file.read_text())
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({name: tool_servers[name]}, indent=2) + "\n")
+
+        try:
+            subprocess.run(shlex.split(editor) + [str(tmp_file)], check=False)
+        except OSError as exc:
+            print(c("red", f"Editor failed ({editor}): {exc}"))
+            return 1
+
+        try:
+            edited = json.loads(tmp_file.read_text())
+        except json.JSONDecodeError:
+            print("Invalid JSON — no changes saved.")
+            return 0
         if name in edited and isinstance(edited[name], dict):
             # Bypass the format handler for toml_region tools (codex) so that
             # bespoke scalar extras like `startup_timeout_sec = 120` survive
@@ -1131,11 +1147,9 @@ def cmd_edit(args):
             print(f"Updated '{name}' in {tool}")
         else:
             print("Server name removed from edit — no changes.")
-    except json.JSONDecodeError:
-        print("Invalid JSON — no changes saved.")
-
-    tmp_file.unlink(missing_ok=True)
-    return 0
+        return 0
+    finally:
+        tmp_file.unlink(missing_ok=True)
 
 
 def cmd_validate(args):

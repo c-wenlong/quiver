@@ -40,7 +40,14 @@ def find_key_file(provider_info: dict, keys_dir: Path) -> Path | None:
     filename = provider_info.get("key_filename") or provider_info.get("file")
     if not filename:
         return None
-    return keys_dir / filename
+    fpath = Path(filename)
+    # The stored name must stay inside keys_dir. providers.json is plain
+    # user data — and ~/.quiver is designed to be a git checkout — so an
+    # absolute or traversing name would make `providers list`/`info` a
+    # masked-read oracle for any file the user can read.
+    if fpath.is_absolute() or ".." in fpath.parts:
+        return None
+    return keys_dir / fpath
 
 
 def _safe_read_text(path: Path | None) -> str | None:
