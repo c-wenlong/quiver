@@ -19,13 +19,22 @@ import json
 import shutil
 from datetime import datetime
 
-from quiver.paths import ARCHIVE_FILE, CONFIG_DIR, HARNESS_FILE, STARS_FILE, TOOLS_FILE
+from quiver.configuration import read_json_object
+from quiver.paths import (
+    ARCHIVE_FILE,
+    CONFIG_DIR,
+    HARNESS_FILE,
+    STARS_FILE,
+    TOOLS_FILE,
+    atomic_write_text,
+)
 
 
 def load_registry() -> dict:
     if HARNESS_FILE.exists():
-        with open(HARNESS_FILE) as f:
-            return json.load(f)
+        # Strict: a malformed registry must not read as empty — every caller
+        # that follows with save_registry would wipe whatever it held.
+        return read_json_object(HARNESS_FILE)
     if TOOLS_FILE.exists():
         return _migrate_from_legacy()
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -53,8 +62,9 @@ def load_registry_if_present() -> dict:
 
 def save_registry(tools: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(HARNESS_FILE, "w") as f:
-        json.dump(tools, f, indent=2)
+    # Atomic: a crash mid-write used to leave a truncated harness.json that
+    # then bricked every registry command with a bare JSONDecodeError.
+    atomic_write_text(HARNESS_FILE, json.dumps(tools, indent=2) + "\n")
 
 
 def alias_map(tools: dict) -> dict[str, str]:
@@ -123,8 +133,7 @@ def _migrate_from_legacy() -> dict:
     data plane migrated by hand already, and re-merging on top of it would
     silently clobber whatever it wrote.
     """
-    with open(TOOLS_FILE) as f:
-        tools = json.load(f)
+    tools = read_json_object(TOOLS_FILE)
 
     stars = _read_legacy_stars()
     archived = _read_legacy_archive()

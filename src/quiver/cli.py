@@ -4,6 +4,8 @@
 import sys
 
 from quiver.config_commands import cmd_config
+from quiver.configuration import ConfigurationError
+from quiver.console import c
 from quiver.harness.commands import (
     cmd_list_edit,
     cmd_add,
@@ -158,18 +160,29 @@ COMMANDS = {
 def main():
     argv = sys.argv[1:]
     if not argv:
-        cmd_help([])
+        try:
+            cmd_help([])
+        except ConfigurationError as exc:
+            print(c("red", str(exc)))
+            return 1
         return 0
     cmd = argv[0]
     rest = argv[1:]
     if cmd in COMMANDS:
-        if rest and rest[0] in ("--help", "-h"):
-            cmd_help([cmd])
-            return 0
-        result = COMMANDS[cmd](rest)
+        try:
+            if rest and rest[0] in ("--help", "-h"):
+                cmd_help([cmd])
+                return 0
+            result = COMMANDS[cmd](rest)
+        except ConfigurationError as exc:
+            print(c("red", str(exc)))
+            return 1
         return result if isinstance(result, int) else 0
     print(f"Unknown command: '{cmd}'")
-    cmd_help([])
+    try:
+        cmd_help([])
+    except ConfigurationError as exc:
+        print(c("red", str(exc)))
     return 1
 
 

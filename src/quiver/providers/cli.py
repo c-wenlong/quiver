@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 
+from quiver.configuration import ConfigurationError
 from quiver.console import c
 from quiver.providers.commands import PROVIDERS_COMMANDS
 
@@ -20,7 +21,11 @@ def main(argv=None) -> int:
         print(c("red", f"  Unknown providers subcommand: '{cmd}'"))
         print(c("dim", f"  Available: {', '.join(PROVIDERS_COMMANDS.keys())}"))
         return 1
-    result = PROVIDERS_COMMANDS[cmd](args[1:])
+    try:
+        result = PROVIDERS_COMMANDS[cmd](args[1:])
+    except ConfigurationError as exc:
+        print(c("red", str(exc)))
+        return 1
     return result if isinstance(result, int) else 0
 
 

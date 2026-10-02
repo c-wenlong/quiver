@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from quiver.configuration import CorruptConfigurationError
+from quiver.console import c
 from quiver.mcp.cli import (
     get_mcp_tools,
     get_tool_config,
@@ -32,7 +34,14 @@ class McpFinding:
 
 
 def _load_source_servers() -> dict:
-    data = load_json(MCP_SOURCE_FILE)
+    try:
+        data = load_json(MCP_SOURCE_FILE)
+    except CorruptConfigurationError as exc:
+        # Read path: report the hub as empty rather than crashing discover.
+        # apply_mcp_findings calls load_json itself, so writes still refuse
+        # to overwrite the malformed file.
+        print(c("yellow", f"  {exc}"))
+        return {}
     servers = data.get(MCP_SOURCE_KEY, data if MCP_SOURCE_KEY not in data and data else {})
     if not isinstance(servers, dict):
         return {}
