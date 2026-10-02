@@ -22,7 +22,7 @@ def print_skills_overview():
 {c('bold', 'Layout & symlinks')}
   {c('cyan', 'swe skills link <harness> [target]')}   Link codex/cursor/claude → shared
   {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break link; optional empty dir
-  {c('cyan', 'swe skills move <name> --from A --to B')} Move a skill folder
+  {c('cyan', 'swe skills move <name> --from=A --to=B')} Move a skill folder
 
 {c('bold', 'Catalogs (extra skill directories)')}
   {c('cyan', 'swe skills discover [--apply]')} Scan ~/Desktop and ~/Documents
@@ -103,7 +103,7 @@ def print_skills_unlink_help():
   {c('cyan', 'swe skills unlink codex --mkdir')}      Replace with empty directory
 
   Then move harness-specific skills:
-  {c('cyan', 'swe skills move my-skill --from shared --to codex')}
+  {c('cyan', 'swe skills move my-skill --from=shared --to=codex')}
 """
     )
 
@@ -113,11 +113,11 @@ def print_skills_move_help():
         f"""
   {c('bold', 'swe skills move')} — Move a skill folder between scope roots
 
-  {c('cyan', 'swe skills move <name> --from <scope> --to <scope>')}
+  {c('cyan', 'swe skills move <name> --from=<scope> --to=<scope>')}
 
 {c('bold', 'Examples')}
-  swe skills move query --from ai-engineering --to shared
-  swe skills move my-skill --from shared --to codex
+  swe skills move query --from=ai-engineering --to=shared
+  swe skills move my-skill --from=shared --to=codex
 
   Scopes are harness labels (shared, codex, claude, cursor), catalog labels,
   or paths registered via {c('cyan', 'swe skills catalog add')}.

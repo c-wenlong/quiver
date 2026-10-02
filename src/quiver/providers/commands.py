@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver.console import c, cpad, truncate
+from quiver.flags import expand_value_flags
 from quiver.providers.defaults import DEFAULT_PROVIDERS
 from quiver.providers.discover import discover_provider_keys
 from quiver.providers.help_text import print_providers_help
@@ -35,18 +36,14 @@ def _display_keys_dir(keys_dir: Path) -> str:
 
 
 def _parse_api_keys_dir(args: list[str]) -> tuple[Path | None, list[str]]:
-    """Pull ``--api-keys-dir`` (space or ``=`` form) out of ``args``."""
+    """Pull ``--api-keys-dir=DIR`` out of ``args`` (raises on a bare flag)."""
+    args = expand_value_flags(args, {"--api-keys-dir"})
     keys_dir: Path | None = None
     i = 0
     while i < len(args):
-        a = args[i]
-        if a.startswith("--api-keys-dir="):
-            keys_dir = Path(a.split("=", 1)[1])
-            args.pop(i)
-        elif a == "--api-keys-dir" and i + 1 < len(args):
+        if args[i] == "--api-keys-dir":
             keys_dir = Path(args[i + 1])
-            args.pop(i)
-            args.pop(i)
+            del args[i : i + 2]
         else:
             i += 1
     return keys_dir, args
@@ -57,7 +54,11 @@ def cmd_list(args: list[str]) -> int:
         print_providers_help()
         return 0
 
-    api_keys_dir, args = _parse_api_keys_dir(list(args))
+    try:
+        api_keys_dir, args = _parse_api_keys_dir(list(args))
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return 1
     show_desc = any(a in ("-d", "--desc") for a in args)
     args = [a for a in args if a not in ("-d", "--desc")]
 
@@ -303,7 +304,11 @@ def cmd_info(args: list[str]) -> int:
         print(c("red", "Usage: swe providers info <name|alias>"))
         return 1
 
-    api_keys_dir, args = _parse_api_keys_dir(list(args))
+    try:
+        api_keys_dir, args = _parse_api_keys_dir(list(args))
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return 1
     if not args:
         print(c("red", "Usage: swe providers info <name|alias>"))
         return 1
@@ -420,6 +425,12 @@ def cmd_add(args: list[str]) -> int:
         print_providers_help()
         return 0
 
+    try:
+        args = expand_value_flags(args, {"--url", "--env", "--file"})
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return 1
+
     name = args[0]
     description = ""
     url = ""
@@ -429,13 +440,13 @@ def cmd_add(args: list[str]) -> int:
     i = 1
     while i < len(args):
         a = args[i]
-        if a == "--url" and i + 1 < len(args):
+        if a == "--url":
             url = args[i + 1]
             i += 2
-        elif a == "--env" and i + 1 < len(args):
+        elif a == "--env":
             env_vars.extend(e.strip() for e in args[i + 1].split(",") if e.strip())
             i += 2
-        elif a == "--file" and i + 1 < len(args):
+        elif a == "--file":
             key_filename = args[i + 1]
             i += 2
         elif a.startswith("--"):

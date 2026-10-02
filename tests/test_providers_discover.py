@@ -130,12 +130,9 @@ class CommandsSmokeTest(unittest.TestCase):
                     [
                         "myprov",
                         "My Provider blurb",
-                        "--env",
-                        "MY_API_KEY",
-                        "--url",
-                        "https://example.com",
-                        "--file",
-                        "myprov",
+                        "--env=MY_API_KEY",
+                        "--url=https://example.com",
+                        "--file=myprov",
                     ]
                 )
                 # Verify the file is now in the (mocked) providers.json
@@ -164,7 +161,7 @@ class CommandsSmokeTest(unittest.TestCase):
                 "quiver.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
-                cmd_add(["myprov", "--env", "MY_KEY"])
+                cmd_add(["myprov", "--env=MY_KEY"])
                 cmd_remove(["myprov"])
                 cmd_remove(["myprov"])  # second remove: should report not found
 
@@ -189,7 +186,7 @@ class CommandsSmokeTest(unittest.TestCase):
                 return_value=keys_dir,
             ):
                 self.assertEqual(
-                    cmd_add(["myprov", "--aliases", "my-provider"]),
+                    cmd_add(["myprov", "--aliases=my-provider"]),
                     1,
                 )
 

@@ -14,14 +14,14 @@ from quiver.harness.commands import (
 class HarnessEditTest(unittest.TestCase):
     def test_parse_edit_flags(self):
         updates, rest = _parse_edit_flags(
-            ["mastracode", "--description", "Mastra", "--aliases", "mc,ms"]
+            ["mastracode", "--description=Mastra", "--aliases=mc,ms"]
         )
         self.assertEqual(rest, ["mastracode"])
         self.assertEqual(updates["description"], "Mastra")
         self.assertEqual(updates["aliases"], "mc,ms")
 
         updates, rest = _parse_edit_flags(
-            ["droid", "--set", "tags=agentic,coding,autonomous,notes=hi"]
+            ["droid", "--set=tags=agentic,coding,autonomous,notes=hi"]
         )
         self.assertEqual(rest, ["droid"])
         self.assertEqual(updates["tags"], "agentic,coding,autonomous")
@@ -100,10 +100,8 @@ class HarnessEditTest(unittest.TestCase):
                 rc = cmd_edit(
                     [
                         "mastracode",
-                        "--description",
-                        "Mastra Code — AI coding agent",
-                        "--aliases",
-                        "mc",
+                        "--description=Mastra Code — AI coding agent",
+                        "--aliases=mc",
                     ]
                 )
                 self.assertEqual(rc, 0)

@@ -436,7 +436,7 @@ class CmdSessionMigrationTest(unittest.TestCase):
 
         # With search arg: the footer line + blank must appear below the
         # table — same shape as the pre-migration behaviour.
-        output_with_search, _ = _run_cmd_session(["--search", "claude"])
+        output_with_search, _ = _run_cmd_session(["--search=claude"])
         plain_with = strip_ansi(output_with_search)
         self.assertIn("filter: --search 'claude'", plain_with)
         # Footer reports match count; 1 fixture session has agent==claude.

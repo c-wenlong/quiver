@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from quiver.console import c, truncate
+from quiver.flags import expand_value_flags
 from quiver.skills.help_text import (
     print_skills_link_help,
     print_skills_move_help,
@@ -27,6 +28,7 @@ def _tilde(path: Path, home: Path) -> str:
 
 
 def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
+    args = expand_value_flags(args, {"--from", "--to"})
     opts = {"force": False, "mkdir": False, "from": None, "to": None, "json": False}
     rest = []
     i = 0
@@ -36,10 +38,10 @@ def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
             opts["force"] = True
         elif arg == "--mkdir":
             opts["mkdir"] = True
-        elif arg == "--from" and i + 1 < len(args):
+        elif arg == "--from":
             opts["from"] = args[i + 1]
             i += 1
-        elif arg == "--to" and i + 1 < len(args):
+        elif arg == "--to":
             opts["to"] = args[i + 1]
             i += 1
         elif arg == "--json":
@@ -53,7 +55,11 @@ def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
 
 
 def cmd_skills_link(args):
-    opts, rest = _parse_flags(args)
+    try:
+        opts, rest = _parse_flags(args)
+    except ValueError as exc:
+        print(c("red", f"  {exc}"))
+        return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_link_help()
         return 0
@@ -77,7 +83,11 @@ def cmd_skills_link(args):
 
 
 def cmd_skills_unlink(args):
-    opts, rest = _parse_flags(args)
+    try:
+        opts, rest = _parse_flags(args)
+    except ValueError as exc:
+        print(c("red", f"  {exc}"))
+        return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_unlink_help()
         return 0
@@ -99,12 +109,16 @@ def cmd_skills_unlink(args):
 
 
 def cmd_skills_move(args):
-    opts, rest = _parse_flags(args)
+    try:
+        opts, rest = _parse_flags(args)
+    except ValueError as exc:
+        print(c("red", f"  {exc}"))
+        return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_move_help()
         return 0
     if not rest or not opts["from"] or not opts["to"]:
-        print(c("red", "  Usage: swe skills move <name> --from <scope> --to <scope>"))
+        print(c("red", "  Usage: swe skills move <name> --from=<scope> --to=<scope>"))
         return 1
     name = rest[0]
     try:
