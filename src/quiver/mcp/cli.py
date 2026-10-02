@@ -1322,6 +1322,7 @@ MCP_HELP = {
   --no-interactive    Disable interactive picker (select all)
   --dry-run           Preview changes without writing files
   --strict            Fail if conversion would be lossy
+  --prune             Also delete target servers not in the selection
 
 {c('bold', 'Conflict resolution')}
   Interactive mode:
@@ -1416,7 +1417,7 @@ MCP_HELP = {
 
 def cmd_help(args=None):
     if args:
-        cmd_name = args[0]
+        cmd_name = {"ls": "list"}.get(args[0], args[0])
         if cmd_name in MCP_HELP:
             print(MCP_HELP[cmd_name])
             return 0
@@ -1453,6 +1454,7 @@ def cmd_mcp_discover(args):
 COMMANDS = {
     "discover": cmd_mcp_discover,
     "list": cmd_list,
+    "ls": cmd_list,
     "status": cmd_status,
     "sync": cmd_sync,
     "diff": cmd_diff,

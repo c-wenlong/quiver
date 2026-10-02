@@ -88,7 +88,8 @@ class SubcommandHelpTest(unittest.TestCase):
         help_keys, command_keys = _real_mcp_help_and_commands()
         self.assertEqual(
             check_subcommand_help(
-                help_keys, command_keys, "mcp", whitelist=frozenset({"help"})
+                help_keys, command_keys, "mcp",
+                whitelist=frozenset({"help", "ls"}),
             ),
             [],
         )

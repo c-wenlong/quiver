@@ -164,9 +164,28 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertIn("--env=<value>", out)
 
     def test_report_no_args(self):
+        # Bare `swe report` prints help and exits 0, same as swe mcp /
+        # providers / skills / config.
         code, out = _run(cmd_report, [])
-        self.assertEqual(code, 1)
-        self.assertIn("Usage: swe report", out)
+        self.assertEqual(code, 0)
+        self.assertIn("swe report daily", out)
+
+    def test_report_help_subcommand(self):
+        code, out = _run(cmd_report, ["help"])
+        self.assertEqual(code, 0)
+        self.assertIn("swe report daily", out)
+
+    def test_report_daily_help_flag(self):
+        code, out = _run(cmd_report, ["daily", "--help"])
+        self.assertEqual(code, 0)
+        self.assertIn("swe report daily", out)
+
+    def test_report_daily_help_wins_over_bad_args(self):
+        # `--days=0` fails validation, but a user passing --help alongside
+        # it is asking for help, not a report run.
+        code, out = _run(cmd_report, ["daily", "--help", "--days=0"])
+        self.assertEqual(code, 0)
+        self.assertIn("swe report daily", out)
 
     def test_report_followup_dispatch(self):
         ledger = Mock()

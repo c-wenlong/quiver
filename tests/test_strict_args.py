@@ -256,5 +256,24 @@ class NoArgCommandsRejectArgsTest(unittest.TestCase):
         self.assertIn("Unexpected args: x", out)
 
 
+class SkillsHelpTopicsTest(unittest.TestCase):
+    """Every topic `swe help skills` advertises must resolve."""
+
+    def test_tree_and_scope_topics_exist(self):
+        from quiver.skills.help_text import cmd_skills_help
+
+        for topic in ("tree", "scope", "scopes"):
+            code, out = _run(cmd_skills_help, [topic])
+            self.assertEqual(code, 0, topic)
+            self.assertIn("swe find skills", out)
+
+    def test_unknown_topic_fails(self):
+        from quiver.skills.help_text import cmd_skills_help
+
+        code, out = _run(cmd_skills_help, ["bogus"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown skills help topic", out)
+
+
 if __name__ == "__main__":
     unittest.main()

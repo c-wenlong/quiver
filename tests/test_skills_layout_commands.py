@@ -1,6 +1,7 @@
 """Tests for ``swe skills link|unlink|move`` command handlers."""
 
 import io
+import json
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -14,6 +15,8 @@ from quiver.skills.layout_commands import (
 )
 from quiver.skills.link_ops import SkillLayoutError
 
+ALL_FLAGS = {"--from", "--to", "--force", "--mkdir", "--json"}
+
 
 def _run(fn, args):
     buf = io.StringIO()
@@ -24,7 +27,8 @@ def _run(fn, args):
 
 class ParseFlagsTest(unittest.TestCase):
     def test_equals_form_splits_into_pairs(self):
-        opts, rest = _parse_flags(["--from=shared", "--to=codex", "--force", "name"])
+        opts, rest = _parse_flags(
+            ["--from=shared", "--to=codex", "--force", "name"], ALL_FLAGS)
         self.assertEqual(opts["from"], "shared")
         self.assertEqual(opts["to"], "codex")
         self.assertTrue(opts["force"])
@@ -32,16 +36,31 @@ class ParseFlagsTest(unittest.TestCase):
 
     def test_bare_value_flag_is_an_error(self):
         with self.assertRaises(ValueError) as ctx:
-            _parse_flags(["--from", "shared"])
+            _parse_flags(["--from", "shared"], ALL_FLAGS)
         self.assertIn("--from=<value>", str(ctx.exception))
 
     def test_json_flag_is_accepted(self):
-        opts, _ = _parse_flags(["--json"])
+        opts, _ = _parse_flags(["--json"], ALL_FLAGS)
         self.assertTrue(opts["json"])
 
     def test_help_token_survives_to_rest(self):
-        _, rest = _parse_flags(["--help"])
+        _, rest = _parse_flags(["--help"], ALL_FLAGS)
         self.assertEqual(rest, ["--help"])
+
+    def test_flag_outside_allowed_set_is_an_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            _parse_flags(["--mkdir"], {"--force"})
+        self.assertIn("--mkdir is not valid here", str(ctx.exception))
+
+    def test_value_flag_outside_allowed_set_is_an_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            _parse_flags(["--to=codex"], {"--force"})
+        self.assertIn("--to is not valid here", str(ctx.exception))
+
+    def test_unknown_flag_is_an_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            _parse_flags(["--bogus"], ALL_FLAGS)
+        self.assertIn("Unknown flag: --bogus", str(ctx.exception))
 
 
 class SkillsLinkTest(unittest.TestCase):
@@ -82,6 +101,27 @@ class SkillsLinkTest(unittest.TestCase):
         self.assertEqual(code, 0)
         link.assert_called_once_with("codex", "shared", force=True)
         self.assertIn("Linked codex", out)
+
+    def test_mkdir_is_rejected_on_link(self):
+        code, out = _run(cmd_skills_link, ["codex", "--mkdir"])
+        self.assertEqual(code, 1)
+        self.assertIn("--mkdir is not valid here", out)
+
+    def test_unknown_flag_is_rejected(self):
+        code, out = _run(cmd_skills_link, ["codex", "--bogus"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown flag: --bogus", out)
+
+    def test_json_output(self):
+        with patch(
+            "quiver.skills.layout_commands.link_skill_root",
+            return_value=("codex", Path("/x/shared"), Path("/y/codex")),
+        ):
+            code, out = _run(cmd_skills_link, ["codex", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["action"], "link")
+        self.assertEqual(payload["harness"], "codex")
 
 
 class SkillsUnlinkTest(unittest.TestCase):
@@ -127,6 +167,27 @@ class SkillsUnlinkTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("empty directory", out)
 
+    def test_force_is_rejected_on_unlink(self):
+        code, out = _run(cmd_skills_unlink, ["codex", "--force"])
+        self.assertEqual(code, 1)
+        self.assertIn("--force is not valid here", out)
+
+    def test_extra_positional_is_rejected(self):
+        code, out = _run(cmd_skills_unlink, ["codex", "extra"])
+        self.assertEqual(code, 1)
+        self.assertIn("Usage: swe skills unlink", out)
+
+    def test_json_output(self):
+        with patch(
+            "quiver.skills.layout_commands.unlink_skill_root",
+            return_value=("codex", Path("/y/codex")),
+        ):
+            code, out = _run(cmd_skills_unlink, ["codex", "--json", "--mkdir"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["action"], "unlink")
+        self.assertTrue(payload["mkdir"])
+
 
 class SkillsMoveTest(unittest.TestCase):
     def test_help(self):
@@ -166,6 +227,26 @@ class SkillsMoveTest(unittest.TestCase):
         self.assertEqual(code, 0)
         move.assert_called_once_with("my-skill", "shared", "codex", force=True)
         self.assertIn("Moved my-skill", out)
+
+    def test_mkdir_is_rejected_on_move(self):
+        code, out = _run(
+            cmd_skills_move,
+            ["my-skill", "--from=shared", "--to=codex", "--mkdir"])
+        self.assertEqual(code, 1)
+        self.assertIn("--mkdir is not valid here", out)
+
+    def test_json_output(self):
+        with patch(
+            "quiver.skills.layout_commands.move_skill",
+            return_value=(Path("/a"), Path("/b")),
+        ):
+            code, out = _run(
+                cmd_skills_move,
+                ["my-skill", "--from=shared", "--to=codex", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["action"], "move")
+        self.assertEqual(payload["name"], "my-skill")
 
 
 if __name__ == "__main__":

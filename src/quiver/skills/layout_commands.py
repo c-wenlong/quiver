@@ -1,5 +1,6 @@
 """Skills tree, link, unlink, and move CLI commands."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -27,27 +28,26 @@ def _tilde(path: Path, home: Path) -> str:
     return text.replace(home_text, "~") if text.startswith(home_text) else text
 
 
-def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
+def _parse_flags(args: list[str], allowed: frozenset[str]) -> tuple[dict, list[str]]:
     args = expand_value_flags(args, {"--from", "--to"})
     opts = {"force": False, "mkdir": False, "from": None, "to": None, "json": False}
     rest = []
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg == "--force":
-            opts["force"] = True
-        elif arg == "--mkdir":
-            opts["mkdir"] = True
-        elif arg == "--from":
-            opts["from"] = args[i + 1]
+        if arg in ("--from", "--to"):
+            if arg not in allowed:
+                raise ValueError(f"{arg} is not valid here")
+            opts[arg[2:]] = args[i + 1]
             i += 1
-        elif arg == "--to":
-            opts["to"] = args[i + 1]
-            i += 1
-        elif arg == "--json":
-            opts["json"] = True
+        elif arg in ("--force", "--mkdir", "--json"):
+            if arg not in allowed:
+                raise ValueError(f"{arg} is not valid here")
+            opts[arg[2:]] = True
         elif arg in ("-h", "--help"):
             rest.append(arg)
+        elif arg.startswith("-"):
+            raise ValueError(f"Unknown flag: {arg}")
         else:
             rest.append(arg)
         i += 1
@@ -56,7 +56,7 @@ def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
 
 def cmd_skills_link(args):
     try:
-        opts, rest = _parse_flags(args)
+        opts, rest = _parse_flags(args, {"--force", "--json"})
     except ValueError as exc:
         print(c("red", f"  {exc}"))
         return 1
@@ -76,6 +76,12 @@ def cmd_skills_link(args):
     except SkillLayoutError as exc:
         print(c("red", f"  {exc}"))
         return 1
+    if opts["json"]:
+        print(json.dumps({
+            "action": "link", "harness": label,
+            "source": str(src), "target": str(tgt),
+        }))
+        return 0
     home = Path.home()
     print(c("green", f"  ✓ Linked {label}: {_tilde(src, home)} → {_tilde(tgt, home)}"))
     print(c("dim", "  Run `swe skills tree` to verify.\n"))
@@ -84,14 +90,14 @@ def cmd_skills_link(args):
 
 def cmd_skills_unlink(args):
     try:
-        opts, rest = _parse_flags(args)
+        opts, rest = _parse_flags(args, {"--mkdir", "--json"})
     except ValueError as exc:
         print(c("red", f"  {exc}"))
         return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_unlink_help()
         return 0
-    if not rest:
+    if not rest or len(rest) > 1:
         print(c("red", "  Usage: swe skills unlink <harness|path> [--mkdir]"))
         return 1
     try:
@@ -99,6 +105,12 @@ def cmd_skills_unlink(args):
     except SkillLayoutError as exc:
         print(c("red", f"  {exc}"))
         return 1
+    if opts["json"]:
+        print(json.dumps({
+            "action": "unlink", "harness": label,
+            "path": str(path), "mkdir": opts["mkdir"],
+        }))
+        return 0
     home = Path.home()
     msg = f"  ✓ Unlinked {label}: {_tilde(path, home)}"
     if opts["mkdir"]:
@@ -110,14 +122,14 @@ def cmd_skills_unlink(args):
 
 def cmd_skills_move(args):
     try:
-        opts, rest = _parse_flags(args)
+        opts, rest = _parse_flags(args, {"--from", "--to", "--force", "--json"})
     except ValueError as exc:
         print(c("red", f"  {exc}"))
         return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_move_help()
         return 0
-    if not rest or not opts["from"] or not opts["to"]:
+    if not rest or len(rest) > 1 or not opts["from"] or not opts["to"]:
         print(c("red", "  Usage: swe skills move <name> --from=<scope> --to=<scope>"))
         return 1
     name = rest[0]
@@ -131,6 +143,12 @@ def cmd_skills_move(args):
     except SkillLayoutError as exc:
         print(c("red", f"  {exc}"))
         return 1
+    if opts["json"]:
+        print(json.dumps({
+            "action": "move", "name": name,
+            "from": str(src), "to": str(dest),
+        }))
+        return 0
     home = Path.home()
     print(c("green", f"  ✓ Moved {name}"))
     print(c("dim", f"    from {_tilde(src, home)}"))

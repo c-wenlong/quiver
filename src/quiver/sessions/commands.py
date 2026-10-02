@@ -206,7 +206,10 @@ def _parse_session_args(args: list[str]):
 
     i = 0
     while i < len(args):
-        if args[i] == "use" and i + 1 < len(args) and args[i + 1].isdigit():
+        if args[i] == "use":
+            if i + 1 >= len(args) or not args[i + 1].isdigit():
+                print(c("red", "Usage: swe session use <N>  (N is the # column from swe session)"))
+                return None
             use_index = int(args[i + 1])
             i += 2
         elif args[i] in ("--interactive", "-i"):
