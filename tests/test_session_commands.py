@@ -1,5 +1,6 @@
 """Tests for session CLI helpers (resume mapping, search)."""
 
+import io
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -161,6 +162,21 @@ class SessionCommandsTest(unittest.TestCase):
 
         with patch("builtins.print"):
             self.assertIsNone(_parse_session_args(["use", "2", "-i"]))
+
+    def test_use_needs_a_numeric_index(self):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            self.assertIsNone(_parse_session_args(["use", "abc"]))
+            self.assertIn("Usage: swe session use <N>", buf.getvalue())
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            self.assertIsNone(_parse_session_args(["use"]))
+            self.assertIn("Usage: swe session use <N>", buf.getvalue())
+
+    def test_use_parses_a_valid_index(self):
+        parsed = _parse_session_args(["use", "3"])
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.use_index, 3)
 
 
 class SessionInteractiveTest(unittest.TestCase):

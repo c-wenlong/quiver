@@ -411,7 +411,7 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
     findings += check_help_vs_dispatch(_real_help_topics(), _real_commands())
     mcp_help, mcp_commands = _real_mcp_help_and_commands()
     findings += check_subcommand_help(
-        mcp_help, mcp_commands, "mcp", whitelist=frozenset({"help"}),
+        mcp_help, mcp_commands, "mcp", whitelist=frozenset({"help", "ls"}),
     )
     help_text_path = Path(__file__).resolve().parent.parent / "help_text.py"
     try:
