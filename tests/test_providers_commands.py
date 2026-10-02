@@ -1025,6 +1025,119 @@ class CmdInfoMigrationTest(unittest.TestCase):
                 break
 
 
+class CmdAddTest(unittest.TestCase):
+    """``providers add`` must not erase the ``_removed`` tombstone list."""
+
+    def _patches(self, tmp_path: Path):
+        config_dir = tmp_path / ".config" / "swe"
+        registry_file = config_dir / "providers.json"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return _registry_patches(config_dir, registry_file), registry_file
+
+    def _run_add(self, args):
+        from quiver.providers.commands import cmd_add
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_add(list(args))
+        return rc, buf.getvalue()
+
+    def _write_registry(self, registry_file: Path, data: dict):
+        import json
+
+        registry_file.write_text(json.dumps(data))
+
+    def _read_registry(self, registry_file: Path) -> dict:
+        import json
+
+        return json.loads(registry_file.read_text())
+
+    def test_add_preserves_other_tombstones(self):
+        # Saving a registry loaded WITHOUT include_removed used to drop
+        # the whole _removed list: removed defaults silently came back.
+        with TemporaryDirectory() as tmp:
+            patches, registry_file = self._patches(Path(tmp))
+            self._write_registry(registry_file, {
+                "custom": {"env_vars": ["CUSTOM_API_KEY"], "key_filename": "custom"},
+                "_removed": ["kimi", "deepseek"],
+            })
+            with patches[0], patches[1]:
+                rc, _ = self._run_add(["newco", "--env=NEWCO_API_KEY"])
+            saved = self._read_registry(registry_file)
+        self.assertEqual(rc, 0)
+        self.assertIn("newco", saved)
+        self.assertEqual(sorted(saved["_removed"]), ["deepseek", "kimi"])
+
+    def test_readd_lift_own_tombstone_and_seed_defaults(self):
+        # Re-adding a removed builtin lifts only its tombstone and keeps
+        # the default fields (env_vars/url) instead of a bare record.
+        with TemporaryDirectory() as tmp:
+            patches, registry_file = self._patches(Path(tmp))
+            self._write_registry(registry_file, {
+                "custom": {"env_vars": ["CUSTOM_API_KEY"], "key_filename": "custom"},
+                "_removed": ["kimi", "deepseek"],
+            })
+            with patches[0], patches[1]:
+                rc, _ = self._run_add(["kimi"])
+            saved = self._read_registry(registry_file)
+            loaded = {}
+            with patches[0], patches[1]:
+                from quiver.providers.registry import load_registry
+                loaded = load_registry()
+        self.assertEqual(rc, 0)
+        self.assertEqual(saved["_removed"], ["deepseek"])
+        self.assertEqual(saved["kimi"]["env_vars"], DEFAULT_PROVIDERS["kimi"]["env_vars"])
+        self.assertIn("kimi", loaded)
+        self.assertNotIn("deepseek", loaded)
+
+    def test_add_via_alias_updates_canonical_entry(self):
+        # Aliases are derived from env_vars[0] at load — slug "acme" with
+        # env BAR_API_KEY carries alias "bar"; `add bar` must update
+        # "acme", not fork a duplicate entry — and must keep acme's key
+        # filename, not rename it to the alias.
+        with TemporaryDirectory() as tmp:
+            patches, registry_file = self._patches(Path(tmp))
+            self._write_registry(registry_file, {
+                "acme": {
+                    "env_vars": ["BAR_API_KEY"],
+                    "key_filename": "acme",
+                },
+            })
+            with patches[0], patches[1]:
+                rc, _ = self._run_add(["bar", "--env=BAR_API_KEY"])
+            saved = self._read_registry(registry_file)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("bar", saved)
+        self.assertEqual(saved["acme"]["env_vars"], ["BAR_API_KEY"])
+        self.assertEqual(saved["acme"]["key_filename"], "acme")
+
+    def test_add_removed_builtin_by_alias_lifts_tombstone(self):
+        # together_ai's derived alias is together-ai; after removal the
+        # alias isn't resolvable in the live registry, so `add
+        # together-ai` used to fork a bare "together-ai" entry while
+        # together_ai stayed tombstoned.
+        with TemporaryDirectory() as tmp:
+            patches, registry_file = self._patches(Path(tmp))
+            self._write_registry(registry_file, {
+                "_removed": ["together_ai", "deepseek"],
+            })
+            with patches[0], patches[1]:
+                rc, _ = self._run_add(["together-ai"])
+            saved = self._read_registry(registry_file)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("together-ai", saved)
+        self.assertIn("together_ai", saved)
+        self.assertEqual(saved["_removed"], ["deepseek"])
+        self.assertEqual(
+            saved["together_ai"]["key_filename"],
+            DEFAULT_PROVIDERS["together_ai"]["key_filename"],
+        )
+        self.assertEqual(
+            saved["together_ai"]["env_vars"],
+            DEFAULT_PROVIDERS["together_ai"]["env_vars"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 
