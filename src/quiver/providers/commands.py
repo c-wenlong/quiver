@@ -469,6 +469,14 @@ def cmd_add(args: list[str]) -> int:
             description = a
             i += 1
 
+    key_path = Path(key_filename)
+    if key_path.is_absolute() or ".." in key_path.parts:
+        print(
+            c("red",
+              f"--file must be a name inside the keys directory, not {key_filename!r}")
+        )
+        return 1
+
     providers = load_registry()
     existing = providers.get(name, {})
     action = "Updated" if name in providers else "Added"
