@@ -146,7 +146,8 @@ def _real_mcp_help_and_commands() -> tuple[set[str], set[str]]:
 def check_completion_drift(
     primary: list[str],
     flag_keys: set[str],
-    subcommand_keys: set[str],
+    subcommand_tables: dict[str, list[str]],
+    nested_subcommands: dict[tuple[str, str], list[str]],
     commands: dict,
     *,
     whitelist: frozenset[str] = NO_TOPIC_WHITELIST,
@@ -157,8 +158,14 @@ def check_completion_drift(
     ``find``/``discover`` were absent, and ``list`` offered no
     ``--usage``/``--links`` for months. ``primary`` must be exactly the
     dispatchable, non-alias commands; flag/subcommand table keys name
-    either a command or ``"<command> <sub>"`` where the first word is a
-    command.
+    either a command or ``"<command> <sub>"`` (or a third word for
+    ``report followup`` style keys), and each named sub must exist in the
+    domain's subcommand table.
+
+    Scope: this checks that table *keys* point at real commands and real
+    subcommands. It cannot prove each listed flag is accepted by the
+    parser — that would need flag tables generated from the parsers, not
+    checked after the fact.
     """
     findings: list[Finding] = []
     seen: set[str] = set()
@@ -180,24 +187,49 @@ def check_completion_drift(
             f"command {name!r} is dispatchable but missing from completion's "
             f"primary list",
         ))
-    for key in sorted(flag_keys | subcommand_keys):
-        head = key.split()[0]
-        if head not in commands:
+    for key in sorted(flag_keys | set(subcommand_tables)):
+        words = key.split()
+        if words[0] not in commands:
             findings.append(Finding(
                 "warn", "help",
-                f"completion table key {key!r} starts with {head!r}, which is "
+                f"completion table key {key!r} starts with {words[0]!r}, which is "
                 f"not a dispatchable command",
             ))
+            continue
+        # "cmd sub" and "cmd sub subsub" keys must name real subcommands
+        # when the domain exposes a table to check against. Domains with
+        # no subcommand table (e.g. `list edit`) can't be verified here.
+        subs = set(subcommand_tables.get(words[0]) or ())
+        if len(words) > 1 and subs and words[1] not in subs:
+            findings.append(Finding(
+                "warn", "help",
+                f"completion flag table {key!r} names subcommand "
+                f"{words[1]!r}, which swe {words[0]} does not offer",
+            ))
+        elif len(words) > 2:
+            deep = set(nested_subcommands.get((words[0], words[1])) or ())
+            if deep and words[2] not in deep:
+                findings.append(Finding(
+                    "warn", "help",
+                    f"completion flag table {key!r} names action "
+                    f"{words[2]!r}, which swe {words[0]} {words[1]} does not offer",
+                ))
     return findings
 
 
-def _real_completion_tables() -> tuple[list[str], set[str], set[str]]:
+def _real_completion_tables() -> tuple[
+    list[str], set[str], dict[str, list[str]], dict[tuple[str, str], list[str]]
+]:
     import quiver.completion as comp
 
     return (
         [name for name, _ in comp._PRIMARY_COMMANDS],
         set(comp._COMMAND_FLAGS),
-        set(comp._SUBCOMMANDS),
+        {cmd: [sub for sub, _ in subs] for cmd, subs in comp._SUBCOMMANDS.items()},
+        {
+            pair: [sub for sub, _ in subs]
+            for pair, subs in comp._NESTED_SUBCOMMANDS.items()
+        },
     )
 
 
@@ -477,8 +509,10 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
     except OSError:
         help_text = ""
     findings += check_prose_mentions(help_text, "mcp", mcp_commands)
-    primary, flag_keys, sub_keys = _real_completion_tables()
-    findings += check_completion_drift(primary, flag_keys, sub_keys, _real_commands())
+    primary, flag_keys, sub_tables, nested_subs = _real_completion_tables()
+    findings += check_completion_drift(
+        primary, flag_keys, sub_tables, nested_subs, _real_commands()
+    )
     findings += check_registry_schema(registry)
     findings += check_code_vs_data(
         registry, skill_roots=_real_skill_roots(), hook_roots=_real_hook_roots(), home=home,

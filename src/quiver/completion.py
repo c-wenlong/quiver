@@ -94,7 +94,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--all", "Include already-cataloged skills"),
     ],
     "find": [
-        ("--root=", "Search under this directory"), ("-r", "Short for --root"),
+        ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
         ("--scope=global", "Global roots only"),
         ("--scope=local", "Project-local roots only"),
         ("--scope=all", "Global and local roots"),
@@ -105,7 +105,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("-i", "Short for --interactive"),
     ],
     "find mcp": [
-        ("--root=", "Search under this directory"), ("-r", "Short for --root"),
+        ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
         ("--scope=global", "Global roots only"),
         ("--scope=local", "Project-local roots only"),
         ("--scope=all", "Global and local roots"),
@@ -131,6 +131,14 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--status=open", "Open follow-ups only"),
         ("--status=done", "Done follow-ups only"),
         ("--status=dismissed", "Dismissed follow-ups only"),
+    ],
+    "report followup add": [
+        ("--project=", "Attach to a project"),
+    ],
+    "report followup work": [
+        ("--resume", "Resume the session the follow-up came from"),
+        ("--new", "Start a new session"),
+        ("--harness=", "Harness to run the work in"),
     ],
     "providers list": [
         ("--desc", "Show provider descriptions"), ("-d", "Short for --desc"),
@@ -249,6 +257,8 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
+        "followup add": "report followup add",
+        "followup work": "report followup work",
     },
 }
 
@@ -257,12 +267,12 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
 _NESTED_TOOL_TARGETS: dict[str, frozenset[str]] = {
     "harness": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
     "hs": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
-    "mcp": frozenset({"list", "ls", "status", "validate", "edit"}),
+    "mcp": frozenset({"list", "ls", "status", "edit"}),
 }
 
 # Subcommands that take several tool arguments (`swe mcp sync cc oc <TAB>`).
 _NESTED_MULTI_TOOL: dict[str, frozenset[str]] = {
-    "mcp": frozenset({"sync", "diff"}),
+    "mcp": frozenset({"sync", "diff", "validate"}),
 }
 
 # Subcommands whose first positional is a provider name.
@@ -427,8 +437,12 @@ def get_completions(words: list[str]) -> list[tuple[str, str]]:
     # Flag completion
     if partial.startswith("-"):
         nested = _NESTED_FLAGS.get(cmd)
-        if nested and rest and rest[0] in nested:
-            return _filter_by_prefix(_COMMAND_FLAGS.get(nested[rest[0]], []), partial)
+        if nested and rest:
+            # Two-word subcommands first (`report followup work --<TAB>`),
+            # then the single-word form (`mcp sync --<TAB>`).
+            key = nested.get(" ".join(rest[:2])) or nested.get(rest[0])
+            if key is not None:
+                return _filter_by_prefix(_COMMAND_FLAGS.get(key, []), partial)
         flags = _COMMAND_FLAGS.get(cmd, [])
         return _filter_by_prefix(flags, partial)
 
@@ -436,8 +450,11 @@ def get_completions(words: list[str]) -> list[tuple[str, str]]:
     if len(rest) == 1 and (cmd, rest[0]) in _NESTED_SUBCOMMANDS:
         return _filter_by_prefix(_NESTED_SUBCOMMANDS[(cmd, rest[0])], partial)
 
-    # Tool-name completion for commands that take a tool argument
+    # Tool-name completion for commands that take a tool argument.
+    # `install` also offers catalog names for harnesses not yet registered.
     if cmd in _TOOL_TARGET_COMMANDS and len(rest) == 0:
+        if cmd == "install":
+            return _install_completions(partial)
         return _tool_completions(partial)
 
     # `swe hs star <tool>` / `swe mcp status <tool>` — the tool name sits one
@@ -511,19 +528,38 @@ def _tool_completions(
 
 
 def _provider_completions(partial: str = "") -> list[tuple[str, str]]:
-    """Return provider names from the provider registry."""
+    """Return provider names + aliases from the provider registry."""
     try:
         from quiver.providers.registry import load_registry as load_providers
 
         providers = load_providers()
     except Exception:
         return []
-    out = [
-        (name, str(info.get("name") or name))
-        for name, info in sorted(providers.items())
-        if isinstance(info, dict)
-    ]
-    return _filter_by_prefix(out, partial)
+    out: list[tuple[str, str]] = []
+    for name, info in sorted(providers.items()):
+        if not isinstance(info, dict):
+            continue
+        if not partial or name.startswith(partial):
+            out.append((name, str(info.get("name") or name)))
+        for alias in info.get("aliases") or []:
+            if not partial or alias.startswith(partial):
+                out.append((alias, f"alias for {name}"))
+    return out
+
+
+def _install_completions(partial: str = "") -> list[tuple[str, str]]:
+    """Registered tools plus catalog names not yet registered."""
+    out = _tool_completions(partial)
+    have = {name for name, _ in out}
+    try:
+        from quiver.harness.catalog import HARNESS_CATALOG
+    except Exception:
+        return out
+    for name, spec in sorted(HARNESS_CATALOG.items()):
+        if name in have or (partial and not name.startswith(partial)):
+            continue
+        out.append((name, str(spec.get("description") or "installable")))
+    return out
 
 
 def _mcp_server_completions(tool: str, partial: str = "") -> list[tuple[str, str]]:
