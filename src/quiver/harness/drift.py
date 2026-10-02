@@ -143,6 +143,64 @@ def _real_mcp_help_and_commands() -> tuple[set[str], set[str]]:
     return set(MCP_HELP), set(MCP_COMMANDS)
 
 
+def check_completion_drift(
+    primary: list[str],
+    flag_keys: set[str],
+    subcommand_keys: set[str],
+    commands: dict,
+    *,
+    whitelist: frozenset[str] = NO_TOPIC_WHITELIST,
+) -> list[Finding]:
+    """completion.py's hand-maintained tables vs cli.py's dispatch.
+
+    The tables drifted twice already: ``harness`` listed twice while
+    ``find``/``discover`` were absent, and ``list`` offered no
+    ``--usage``/``--links`` for months. ``primary`` must be exactly the
+    dispatchable, non-alias commands; flag/subcommand table keys name
+    either a command or ``"<command> <sub>"`` where the first word is a
+    command.
+    """
+    findings: list[Finding] = []
+    seen: set[str] = set()
+    for name in primary:
+        if name in seen:
+            findings.append(Finding(
+                "warn", "help",
+                f"completion lists primary command {name!r} twice",
+            ))
+        seen.add(name)
+        if name not in commands:
+            findings.append(Finding(
+                "warn", "help",
+                f"completion offers {name!r} but cli.py's COMMANDS has no such entry",
+            ))
+    for name in sorted(set(commands) - seen - whitelist):
+        findings.append(Finding(
+            "warn", "help",
+            f"command {name!r} is dispatchable but missing from completion's "
+            f"primary list",
+        ))
+    for key in sorted(flag_keys | subcommand_keys):
+        head = key.split()[0]
+        if head not in commands:
+            findings.append(Finding(
+                "warn", "help",
+                f"completion table key {key!r} starts with {head!r}, which is "
+                f"not a dispatchable command",
+            ))
+    return findings
+
+
+def _real_completion_tables() -> tuple[list[str], set[str], set[str]]:
+    import quiver.completion as comp
+
+    return (
+        [name for name, _ in comp._PRIMARY_COMMANDS],
+        set(comp._COMMAND_FLAGS),
+        set(comp._SUBCOMMANDS),
+    )
+
+
 def check_prose_mentions(
     text: str, domain: str, command_keys: set[str],
     *, whitelist: frozenset[str] = frozenset({"help"}),
@@ -419,6 +477,8 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
     except OSError:
         help_text = ""
     findings += check_prose_mentions(help_text, "mcp", mcp_commands)
+    primary, flag_keys, sub_keys = _real_completion_tables()
+    findings += check_completion_drift(primary, flag_keys, sub_keys, _real_commands())
     findings += check_registry_schema(registry)
     findings += check_code_vs_data(
         registry, skill_roots=_real_skill_roots(), hook_roots=_real_hook_roots(), home=home,

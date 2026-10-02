@@ -143,6 +143,95 @@ class CompletionEngineTest(unittest.TestCase):
         comps = get_completions(["use", "claude", "extra"])
         self.assertEqual(comps, [])
 
+    def test_primary_commands_cover_dispatch(self):
+        # `swe <TAB>` must offer every non-alias command — find and
+        # discover were missing while `harness` was listed twice.
+        from quiver.cli import COMMANDS
+        from quiver.completion import _PRIMARY_COMMANDS
+        from quiver.harness.drift import NO_TOPIC_WHITELIST
+
+        names = [name for name, _ in _PRIMARY_COMMANDS]
+        self.assertEqual(len(names), len(set(names)))
+        for name in names:
+            self.assertIn(name, COMMANDS, msg=name)
+        for cmd in COMMANDS:
+            if cmd in NO_TOPIC_WHITELIST:
+                self.assertNotIn(cmd, names, msg=f"alias {cmd} in primary list")
+            else:
+                self.assertIn(cmd, names, msg=f"{cmd} not completable")
+
+    def test_mcp_subcommands_and_sync_flags(self):
+        from quiver.completion import get_completions
+
+        subs = [c for c, _ in get_completions(["mcp", ""])]
+        for sub in ("discover", "list", "status", "sync", "diff", "edit",
+                    "validate", "doctor", "help"):
+            self.assertIn(sub, subs)
+        flags = [c for c, _ in get_completions(["mcp", "sync", "--"])]
+        for flag in ("--all", "--only=", "--except=", "--prune", "--dry-run"):
+            self.assertIn(flag, flags)
+
+    def test_find_and_skills_subcommands(self):
+        from quiver.completion import get_completions
+
+        topics = [c for c, _ in get_completions(["find", ""])]
+        self.assertIn("skills", topics)
+        self.assertIn("mcp", topics)
+        skills = [c for c, _ in get_completions(["skills", ""])]
+        for sub in ("tree", "scope", "link", "unlink", "move", "catalog"):
+            self.assertIn(sub, skills)
+
+    def test_nested_flag_tables(self):
+        from quiver.completion import get_completions
+
+        # `swe report followups --<TAB>` offers --status, not report's range flags
+        flags = [c for c, _ in get_completions(["report", "followups", "--"])]
+        self.assertIn("--status=open", flags)
+        self.assertNotIn("--days=", flags)
+        # `swe list edit --<TAB>` offers --reset, not --scope
+        flags = [c for c, _ in get_completions(["list", "edit", "--"])]
+        self.assertEqual(flags, ["--reset"])
+        # `swe find mcp --<TAB>` drops -i (not supported for mcps)
+        flags = [c for c, _ in get_completions(["find", "mcp", "--"])]
+        self.assertNotIn("-i", flags)
+        self.assertNotIn("--interactive", flags)
+        self.assertIn("--scope=global", flags)
+
+    def test_nested_subcommands(self):
+        from quiver.completion import get_completions
+
+        actions = [c for c, _ in get_completions(["report", "followup", ""])]
+        self.assertIn("work", actions)
+        self.assertIn("done", actions)
+        catalog = [c for c, _ in get_completions(["skills", "catalog", ""])]
+        self.assertIn("add", catalog)
+
+    def test_mcp_sync_multi_tool_completion(self):
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+            "codex": {"description": "Codex CLI", "aliases": ["cx"]},
+            "cursor": {"description": "Cursor", "aliases": []},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "sync", "claude", ""])]
+        self.assertIn("codex", names)
+        self.assertIn("cursor", names)
+        # Already-typed sources are not re-offered.
+        self.assertNotIn("claude", names)
+        self.assertNotIn("cc", names)
+
+    def test_mcp_list_tool_completion(self):
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "list", ""])]
+        self.assertIn("claude", names)
+
 
 class CompleteCommandTest(unittest.TestCase):
     """Test the hidden __complete command output format."""

@@ -5,12 +5,14 @@ from pathlib import Path
 from quiver.harness.drift import (
     Finding,
     check_code_vs_data,
+    check_completion_drift,
     check_dangling_symlinks,
     check_help_vs_dispatch,
     check_prose_mentions,
     check_registry_schema,
     check_subcommand_help,
     _real_commands,
+    _real_completion_tables,
     _real_help_topics,
     _real_mcp_help_and_commands,
 )
@@ -91,6 +93,37 @@ class SubcommandHelpTest(unittest.TestCase):
                 help_keys, command_keys, "mcp",
                 whitelist=frozenset({"help", "ls"}),
             ),
+            [],
+        )
+
+
+class CompletionDriftTest(unittest.TestCase):
+    def test_duplicate_primary_entry_warns(self):
+        findings = check_completion_drift(
+            ["list", "list"], set(), set(), {"list": None}
+        )
+        self.assertTrue(any("twice" in f.message for f in findings))
+
+    def test_undispatchable_primary_warns(self):
+        findings = check_completion_drift(["ghost"], set(), set(), {"list": None})
+        self.assertTrue(any("ghost" in f.message for f in findings))
+
+    def test_missing_command_warns(self):
+        findings = check_completion_drift(
+            ["list"], set(), set(), {"list": None, "find": None}
+        )
+        self.assertTrue(any("'find'" in f.message for f in findings))
+
+    def test_table_key_with_bad_head_warns(self):
+        findings = check_completion_drift(
+            ["list"], {"nope sync"}, set(), {"list": None}
+        )
+        self.assertTrue(any("nope sync" in f.message for f in findings))
+
+    def test_real_completion_tables_agree_with_dispatch(self):
+        primary, flag_keys, sub_keys = _real_completion_tables()
+        self.assertEqual(
+            check_completion_drift(primary, flag_keys, sub_keys, _real_commands()),
             [],
         )
 
