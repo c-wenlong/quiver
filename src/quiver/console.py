@@ -95,8 +95,65 @@ def fill_ansi(text: str, width: int) -> str:
     return text + " " * pad
 
 
+# Every escape class a terminal acts on: OSC (links, clipboard writes,
+# titles) through BEL or ST or end-of-string, CSI including private
+# parameter bytes, charset designations, and two-byte escapes. SGR is the
+# only kind quiver emits itself, but strings arriving from transcripts,
+# titles, and filenames can carry any of them.
+_ESCAPES_RE = re.compile(
+    r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)"   # OSC … BEL / ST / unterminated
+    r"|\x1b\[[0-?]*[ -/]*[@-~]"              # CSI params + intermediates + final
+    r"|\x1b[()#%][0-9A-Za-z]"                # charset/designation escapes
+    r"|\x1b[@-Z\\-_]"                        # ESC X, and any two-byte escape
+    r"|\x1b"                                 # a lone ESC nobody claimed
+)
+
+# C0 controls (incl. tab/newline in a label), DEL, and the C1 block that
+# UTF-8 lets survive decoding — none of them are printable and all of them
+# are load-bearing to a terminal.
+_CONTROLS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+# The document flavour keeps real line breaks and tabs: a transcript is a
+# document, not a label, and flattening it would lose every paragraph.
+# ``\r`` maps to a newline (its terminal meaning, CRLF collapsing to one)
+# so it cannot fuse words — every other control is deleted outright:
+# deleting, not spacing or newline-splitting, is what lets a byte inside
+# a credential like ``KEY=sec<BEL>ret`` stay one token for the redactor.
+# A \r inside a value is indistinguishable from a real newline, and no
+# line-based redactor can remove a secret that genuinely spans two lines.
+_DELETE_CONTROLS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
 def strip_ansi(text: str) -> str:
-    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+    return _ESCAPES_RE.sub("", text)
+
+
+def sanitize(text: str) -> str:
+    """Make untrusted text safe to print: no escapes, no control chars.
+
+    ``strip_ansi`` is for measuring styled strings we wrote ourselves;
+    this is for strings a session file or directory name handed us, where
+    a BEL, an OSC-52 clipboard write, or a lone ESC is hostile. Control
+    characters become spaces rather than vanishing, so a newline inside a
+    title cannot silently fuse rows.
+    """
+    return _CONTROLS_RE.sub(" ", _ESCAPES_RE.sub("", str(text)))
+
+
+def sanitize_document(text: str) -> str:
+    """Untrusted document text: escapes gone, layout kept, controls fused.
+
+    ``\\n`` and ``\\t`` survive — a transcript is a document, and
+    flattening it would fuse paragraphs. ``\\r`` becomes a real newline
+    (its terminal meaning), so ``warning\\rerror`` reads as two lines
+    rather than a fused word. Every other control is deleted, not
+    spaced or split: a credential cut by a stray byte must stay one
+    token for the redactor.
+    """
+    s = _ESCAPES_RE.sub("", str(text))
+    # CRLF is one line break; a lone \r is a line break of its own.
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    return _DELETE_CONTROLS_RE.sub("", s)
 
 
 def visible_len(text: str) -> int:

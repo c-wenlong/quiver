@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quiver import paths
-from quiver.console import c, elide, terminal_width, truncate
+from quiver.console import c, elide, sanitize, terminal_width, truncate
 from quiver.flags import expand_value_flags
 from quiver.harness.registry import load_registry_if_present
 from quiver.init.layout import skill_folder_names
@@ -56,12 +56,14 @@ TREE_MID, TREE_END, TREE_BAR = "├─ ", "└─ ", "│  "
 
 
 def _short(path: Path, home: Path) -> str:
+    # Filenames are attacker-writable bytes: a directory named with an
+    # OSC-52 payload would otherwise reach the terminal untouched.
     if path == home:
         return "~"
     try:
-        return "~/" + str(path.relative_to(home))
+        return sanitize("~/" + str(path.relative_to(home)))
     except ValueError:
-        return str(path)
+        return sanitize(str(path))
 
 
 def _branch(i: int, total: int) -> str:
@@ -86,7 +88,7 @@ def _rel(path: Path, root: Path, home: Path, width: int = PATH_WIDTH) -> str:
         text = "./" + str(path.relative_to(root))
     except ValueError:
         text = _short(path, home)
-    return elide(text, width).ljust(width) + " "
+    return elide(sanitize(text), width).ljust(width) + " "
 
 
 # A path can be both a result and a parent of results: ~/.codex/vendor_imports/
@@ -146,11 +148,13 @@ def _walk_trie(trie: dict, prefix: str = ""):
         last = i == len(items) - 1
         branch = TREE_END if last else TREE_MID
         deeper = prefix + ("   " if last else TREE_BAR)
+        # Keys stay raw — sanitizing them here would collapse two distinct
+        # names onto one key — and each label is cleaned only for display.
         if _is_pure_leaf(child):
-            yield prefix + branch, name, child[LEAF]
+            yield prefix + branch, sanitize(name), child[LEAF]
             continue
         # Both a result and a parent: show it on its own row, then descend.
-        yield prefix + branch, name + "/", child.get(LEAF)
+        yield prefix + branch, sanitize(name) + "/", child.get(LEAF)
         yield from _walk_trie(child, deeper)
 
 
