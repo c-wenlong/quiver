@@ -477,8 +477,33 @@ def cmd_add(args: list[str]) -> int:
         )
         return 1
 
-    providers = load_registry()
-    existing = providers.get(name, {})
+    # include_removed=True is load-bearing: saving a registry loaded
+    # without it silently drops the whole _removed tombstone list, and
+    # every provider the user had removed comes back on the next load.
+    providers = load_registry(include_removed=True)
+    # An alias or derived name resolves to the canonical slug so
+    # ``providers add moonshot`` updates kimi instead of forking a
+    # duplicate entry.
+    canonical = resolve(providers, name) or name
+    if canonical == "_removed":
+        print(c("red", f"Provider name {name!r} is reserved."))
+        return 1
+    name = canonical
+
+    removed = providers.get("_removed") or []
+    if name in removed:
+        # Explicitly re-adding a removed provider lifts its own
+        # tombstone; every other removal stays recorded.
+        removed = [r for r in removed if r != name]
+    if removed:
+        providers["_removed"] = removed
+    else:
+        providers.pop("_removed", None)
+
+    # A removed builtin re-add seeds from its default catalog entry —
+    # otherwise the bare record would win over the default merge and
+    # lose env_vars/url/description.
+    existing = providers.get(name) or DEFAULT_PROVIDERS.get(name, {})
     action = "Updated" if name in providers else "Added"
     # Note: `name` and `aliases` are NOT persisted here — they are derived
     # from `env_vars[0]` by `load_registry._hydrate` at load time, so the

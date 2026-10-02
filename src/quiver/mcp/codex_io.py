@@ -37,6 +37,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from datetime import date, datetime, time
 from pathlib import Path
 
 from quiver.paths import atomic_write_text
@@ -55,8 +56,23 @@ _MCP_HEADER_RE = re.compile(
 )
 
 
+def _is_mcp_header(stripped_line: str) -> bool:
+    """True for a ``[mcp_servers…]`` table header (``.``/``]`` next char)."""
+    if not stripped_line.startswith("[mcp_servers"):
+        return False
+    rest = stripped_line[len("[mcp_servers"):]
+    return not rest or rest[0] in (".", "]")
+
+
 def split_codex_toml(text: str) -> tuple[str, str, str]:
-    """Split TOML into ``(pre, mcp_region, post)`` preserving everything else."""
+    """Split TOML into ``(pre, mcp_region, post)`` preserving everything else.
+
+    ``[mcp_servers*]`` tables are legal anywhere in a TOML file, not just
+    one contiguous run. A second block living past other sections used to
+    survive in ``post`` and be written a second time on save (invalid
+    TOML: duplicate table). Every later ``[mcp_servers*]`` block is folded
+    into ``region`` so the loader sees it and the saver writes it once.
+    """
     if not text:
         return "", "", ""
 
@@ -65,14 +81,9 @@ def split_codex_toml(text: str) -> tuple[str, str, str]:
 
     start = None
     for i, ln in enumerate(lines):
-        stripped = ln.lstrip()
-        if stripped.startswith("[mcp_servers"):
-            # Match only if this is a real [mcp_servers*] header
-            # (next char is '.' or ']')
-            rest = stripped[len("[mcp_servers"):]
-            if not rest or rest[0] in (".", "]"):
-                start = i
-                break
+        if _is_mcp_header(ln.lstrip()):
+            start = i
+            break
 
     if start is None:
         return text, "", ""
@@ -80,17 +91,31 @@ def split_codex_toml(text: str) -> tuple[str, str, str]:
     end = n
     for j in range(start + 1, n):
         stripped = lines[j].lstrip()
-        if stripped.startswith("["):
-            # Stop when we hit the next non-mcp_servers section.
-            if not (stripped.startswith("[mcp_servers")
-                    and (len(stripped) == len("[mcp_servers")
-                         or stripped[len("[mcp_servers")] in (".",))):
-                end = j
-                break
+        if stripped.startswith("[") and not _is_mcp_header(stripped):
+            end = j
+            break
 
     pre = "".join(lines[:start])
     region = "".join(lines[start:end])
-    post = "".join(lines[end:])
+
+    # Sweep the remainder for stray mcp sections: their lines move into
+    # the region while everything around them stays in ``post``.
+    post_lines: list[str] = []
+    k = end
+    while k < n:
+        if _is_mcp_header(lines[k].lstrip()):
+            m = k + 1
+            while m < n:
+                s = lines[m].lstrip()
+                if s.startswith("[") and not _is_mcp_header(s):
+                    break
+                m += 1
+            region += "".join(lines[k:m])
+            k = m
+        else:
+            post_lines.append(lines[k])
+            k += 1
+    post = "".join(post_lines)
     return pre, region, post
 
 
@@ -149,6 +174,10 @@ def _toml_value(v) -> str:
         ) + " }"
     if isinstance(v, str):
         return json.dumps(v, ensure_ascii=False)
+    # TOML date/time literals are bare ISO strings — tomllib hands them
+    # back as datetime/date/time objects, which must round-trip.
+    if isinstance(v, (datetime, date, time)):
+        return v.isoformat()
     raise TypeError(f"Unsupported TOML value type: {type(v).__name__}")
 
 
@@ -169,7 +198,7 @@ def render_codex_server(name: str, canonical: dict) -> str:
             # Standard-shape env/headers + any other top-level mapping → nested table.
             nested.append((key, val))
             continue
-        if isinstance(val, (str, list, bool, int, float)):
+        if isinstance(val, (str, list, bool, int, float, datetime, date, time)):
             lines.append(f"{_toml_key(key)} = {_toml_value(val)}")
 
     for sub_name, sub_dict in nested:
