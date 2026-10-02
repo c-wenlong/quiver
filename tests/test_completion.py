@@ -286,6 +286,36 @@ class CompletionEngineTest(unittest.TestCase):
 
             self.assertEqual(get_completions(["mcp", "edit", "codex", ""]), [])
 
+    def test_provider_alias_completion(self):
+        fake = {
+            "anthropic": {"name": "Anthropic", "aliases": ["claude-api"]},
+        }
+        with patch(
+            "quiver.providers.registry.load_registry", return_value=fake
+        ):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["providers", "info", ""])]
+        self.assertIn("anthropic", names)
+        self.assertIn("claude-api", names)
+
+    def test_install_completes_catalog_names(self):
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+        }
+        catalog = {
+            "claude": {"description": "already registered"},
+            "jules": {"description": "Jules agent"},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry), \
+             patch.dict("quiver.harness.catalog.HARNESS_CATALOG", catalog, clear=True):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["install", ""])]
+        self.assertIn("claude", names)
+        self.assertIn("jules", names)
+        self.assertEqual(names.count("claude"), 1)
+
     def test_provider_completion_survives_broken_registry(self):
         with patch(
             "quiver.providers.registry.load_registry",
