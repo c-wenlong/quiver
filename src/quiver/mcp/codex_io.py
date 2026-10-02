@@ -64,6 +64,32 @@ def _is_mcp_header(stripped_line: str) -> bool:
     return not rest or rest[0] in (".", "]")
 
 
+def _table_headers(lines: list[str]) -> list[int]:
+    """Line indices that begin real TOML table headers.
+
+    Lines inside a ``'''…'''`` or ``\"\"\"…\"\"\"`` multiline string are
+    skipped — a ``[mcp_servers.x]`` line inside a description string is
+    text, not a table, and treating it as one would split the string and
+    corrupt the file on save.
+    """
+    headers: list[int] = []
+    ml_delim: str | None = None
+    for i, ln in enumerate(lines):
+        s = ln.lstrip()
+        if ml_delim is not None:
+            if s.count(ml_delim) % 2:
+                ml_delim = None
+            continue
+        for delim in ('"""', "'''"):
+            if s.count(delim) % 2:
+                ml_delim = delim
+                break
+        else:
+            if s.startswith("["):
+                headers.append(i)
+    return headers
+
+
 def split_codex_toml(text: str) -> tuple[str, str, str]:
     """Split TOML into ``(pre, mcp_region, post)`` preserving everything else.
 
@@ -78,45 +104,35 @@ def split_codex_toml(text: str) -> tuple[str, str, str]:
 
     lines = text.splitlines(keepends=True)
     n = len(lines)
+    headers = _table_headers(lines)
+    mcp_headers = [h for h in headers if _is_mcp_header(lines[h].lstrip())]
 
-    start = None
-    for i, ln in enumerate(lines):
-        if _is_mcp_header(ln.lstrip()):
-            start = i
-            break
-
-    if start is None:
+    if not mcp_headers:
         return text, "", ""
 
-    end = n
-    for j in range(start + 1, n):
-        stripped = lines[j].lstrip()
-        if stripped.startswith("[") and not _is_mcp_header(stripped):
-            end = j
-            break
+    start = mcp_headers[0]
+    # The contiguous run ends at the first non-mcp table header after it.
+    end = next((h for h in headers if h > start and not _is_mcp_header(lines[h].lstrip())), n)
 
     pre = "".join(lines[:start])
     region = "".join(lines[start:end])
 
-    # Sweep the remainder for stray mcp sections: their lines move into
-    # the region while everything around them stays in ``post``.
+    # Stray mcp sections past the contiguous run move into the region;
+    # everything around them stays in ``post``.
+    extra_ranges = []
+    for h in mcp_headers:
+        if h < end:
+            continue
+        nxt = next((x for x in headers if x > h), n)
+        extra_ranges.append((h, nxt))
     post_lines: list[str] = []
-    k = end
-    while k < n:
-        if _is_mcp_header(lines[k].lstrip()):
-            m = k + 1
-            while m < n:
-                s = lines[m].lstrip()
-                if s.startswith("[") and not _is_mcp_header(s):
-                    break
-                m += 1
-            region += "".join(lines[k:m])
-            k = m
-        else:
-            post_lines.append(lines[k])
-            k += 1
-    post = "".join(post_lines)
-    return pre, region, post
+    extra_at = {i: (h, nxt) for h, nxt in extra_ranges for i in range(h, nxt)}
+    for k in range(end, n):
+        if k in extra_at:
+            continue
+        post_lines.append(lines[k])
+    region += "".join("".join(lines[h:nxt]) for h, nxt in extra_ranges)
+    return pre, region, "".join(post_lines)
 
 
 def parse_codex_mcp_region(region: str) -> dict[str, dict]:
