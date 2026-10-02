@@ -47,7 +47,14 @@ def find_key_file(provider_info: dict, keys_dir: Path) -> Path | None:
     # masked-read oracle for any file the user can read.
     if fpath.is_absolute() or ".." in fpath.parts:
         return None
-    return keys_dir / fpath
+    candidate = keys_dir / fpath
+    # A symlink inside keys_dir pointing outside it defeats the spelling
+    # check above, so compare resolved paths, not names.
+    try:
+        candidate.resolve().relative_to(keys_dir.resolve())
+    except (OSError, ValueError):
+        return None
+    return candidate
 
 
 def _safe_read_text(path: Path | None) -> str | None:

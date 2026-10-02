@@ -132,6 +132,30 @@ class ProviderFileContainmentTest(unittest.TestCase):
             Path("/k/openai"),
         )
 
+    def test_symlink_escaping_keys_dir_rejected(self):
+        """A clean name whose symlink points outside must not resolve."""
+        with tempfile.TemporaryDirectory() as tmp:
+            keys_dir = Path(tmp) / "keys"
+            keys_dir.mkdir()
+            outside = Path(tmp) / "outside_secret"
+            outside.write_text("shh")
+            (keys_dir / "openai").symlink_to(outside)
+            self.assertIsNone(
+                find_key_file({"key_filename": "openai"}, keys_dir)
+            )
+
+    def test_symlink_staying_inside_keys_dir_allowed(self):
+        """A link whose target still lives under keys_dir is fine."""
+        with tempfile.TemporaryDirectory() as tmp:
+            keys_dir = Path(tmp) / "keys"
+            keys_dir.mkdir()
+            (keys_dir / "real").write_text("key")
+            link = keys_dir / "alias"
+            link.symlink_to(keys_dir / "real")
+            self.assertEqual(
+                find_key_file({"key_filename": "alias"}, keys_dir), link
+            )
+
     def test_cmd_add_rejects_absolute_file(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
