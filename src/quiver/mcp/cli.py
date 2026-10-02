@@ -188,6 +188,17 @@ def resolve(registry: dict, key: str) -> str | None:
     return alias_map(registry).get(key)
 
 
+def _unsafe_registry_name(name: str | None) -> bool:
+    """True when an arg resolved to a name ``get_tool_config`` refuses.
+
+    resolve_tool_arg accepts every registry name, but a name that cannot
+    form a safe ``~/.<name>/`` path gets no config and is skipped by
+    get_mcp_tools — indexing its output with such a name would raise
+    KeyError. The hub resolves to its own label and is always usable.
+    """
+    return bool(name) and not is_hub(name) and get_tool_config(name) is None
+
+
 def get_mcp_tools(registry: dict) -> dict:
     """Return {canonical_name: mcp_config} for tools that have MCP support.
 
@@ -527,8 +538,15 @@ def _merge_format_keys(existing: dict, converted: dict) -> dict:
         return converted
     out = dict(converted)
     for k, v in existing.items():
-        if k not in _CANONICAL_SERVER_KEYS:
-            out[k] = v
+        if k in _CANONICAL_SERVER_KEYS:
+            continue
+        if k == "type" and ("url" in existing) != ("url" in converted):
+            # "type" describes the transport (droid's sse/http, opencode's
+            # local/remote). Carrying it across a transport change — stdio
+            # command beside a stale "sse" — would contradict the
+            # connection itself, so the emit-time default stands.
+            continue
+        out[k] = v
     return out
 
 
@@ -677,12 +695,17 @@ def cmd_list(args):
     target = None
     if args:
         target = resolve_tool_arg(registry, args[0])
+        if _unsafe_registry_name(target):
+            print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+            return 1
         if not target:
             print(f"Unknown tool: {args[0]}")
             print(f"Available: {', '.join(mcp_tools.keys())}")
             return 1
 
-    tools = {target: mcp_tools[target]} if target else _display_tools(mcp_tools)
+    # The value is never read — only the name loops into get_tool_servers,
+    # which resolves the hub and unverified names on its own.
+    tools = {target: mcp_tools.get(target, {})} if target else _display_tools(mcp_tools)
 
     all_servers = set()
     tool_data = {}
@@ -764,11 +787,14 @@ def cmd_status(args):
     target = None
     if args:
         target = resolve_tool_arg(registry, args[0])
+        if _unsafe_registry_name(target):
+            print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+            return 1
         if not target:
             print(f"Unknown tool: {args[0]}")
             return 1
 
-    tools = {target: mcp_tools[target]} if target else _display_tools(mcp_tools)
+    tools = {target: mcp_tools.get(target, {})} if target else _display_tools(mcp_tools)
 
     all_servers = set()
     tool_data = {}
@@ -911,6 +937,9 @@ def cmd_sync(args):
         return 1
 
     source = resolve_tool_arg(registry, positional[0])
+    if _unsafe_registry_name(source):
+        print(c("red", f"Unsafe harness name in registry: {positional[0]}"))
+        return 1
     if not source:
         print(f"Unknown source tool: {positional[0]}")
         return 1
@@ -931,13 +960,13 @@ def cmd_sync(args):
         candidates = []
         for a in positional[1:]:
             resolved = resolve_tool_arg(registry, a)
-            if not resolved:
-                print(f"Unknown target tool: {a}")
-                return 1
-            if not get_tool_config(resolved):
+            if _unsafe_registry_name(resolved):
                 # Resolves, but its name cannot form a safe ~/.<name>/
                 # config path — a malformed registry entry, not a tool.
                 print(c("red", f"Unsafe harness name in registry: {a}"))
+                return 1
+            if not resolved:
+                print(f"Unknown target tool: {a}")
                 return 1
             if is_hub(resolved):
                 # Data flows harness -> hub via discover, hub -> harness via
@@ -1127,6 +1156,9 @@ def cmd_diff(args):
     t1 = resolve_tool_arg(registry, args[0])
     t2 = resolve_tool_arg(registry, args[1])
     for t, a in [(t1, args[0]), (t2, args[1])]:
+        if _unsafe_registry_name(t):
+            print(c("red", f"Unsafe harness name in registry: {a}"))
+            return 1
         if not t:
             print(f"Unknown tool: {a}")
             return 1
@@ -1176,6 +1208,9 @@ def cmd_edit(args):
 
     registry = load_registry()
     tool = resolve_tool_arg(registry, args[0])
+    if _unsafe_registry_name(tool):
+        print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+        return 1
     if not tool:
         print(f"Unknown tool: {args[0]}")
         return 1
@@ -1249,6 +1284,9 @@ def cmd_validate(args):
     if args:
         for a in args:
             t = resolve_tool_arg(registry, a)
+            if _unsafe_registry_name(t):
+                print(c("red", f"Unsafe harness name in registry: {a}"))
+                return 1
             if not t:
                 print(f"Unknown tool: {a}")
                 return 1

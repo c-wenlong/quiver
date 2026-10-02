@@ -64,6 +64,30 @@ class MergeFormatKeysTest(unittest.TestCase):
             _merge_format_keys("junk", {"command": "x"}), {"command": "x"}
         )
 
+    def test_stale_remote_type_dropped_on_stdio_overwrite(self):
+        """type describes the transport — a url-backed "sse" must not ride
+        onto a server that now launches by command."""
+        merged = _merge_format_keys(
+            {"url": "https://a/mcp", "type": "sse"},
+            {"command": ["npx", "srv"]},
+        )
+        self.assertNotIn("type", merged)
+        self.assertEqual(merged["command"], ["npx", "srv"])
+
+    def test_stale_local_type_dropped_on_remote_overwrite(self):
+        merged = _merge_format_keys(
+            {"command": ["old"], "type": "local"},
+            {"url": "https://a/mcp", "type": "remote"},
+        )
+        self.assertEqual(merged["type"], "remote")
+
+    def test_stdio_type_kept_when_transport_unchanged(self):
+        merged = _merge_format_keys(
+            {"command": ["old"], "type": "stdio"},
+            {"command": ["new"]},
+        )
+        self.assertEqual(merged["type"], "stdio")
+
 
 class SyncPreserveEndToEndTest(unittest.TestCase):
     """cmd_sync overwrite keeps the target entry's extension keys."""
@@ -206,6 +230,39 @@ class UnverifiedNameSafetyTest(unittest.TestCase):
             rc = mcp_cli.cmd_sync(["claude", "../evil", "--no-interactive"])
         self.assertEqual(rc, 1)
         self.assertIn("Unsafe harness name", buf.getvalue())
+
+    def test_unsafe_name_rejected_by_every_tool_command(self):
+        """The same name that sync rejects crashed list/status via KeyError
+        on mcp_tools and validate via AttributeError on its missing config."""
+        for func, args in (
+            (mcp_cli.cmd_list, ["../evil"]),
+            (mcp_cli.cmd_status, ["../evil"]),
+            (mcp_cli.cmd_validate, ["../evil"]),
+            (mcp_cli.cmd_diff, ["../evil", "claude"]),
+            (mcp_cli.cmd_edit, ["../evil", "srv"]),
+            (mcp_cli.cmd_sync, ["../evil", "claude", "--no-interactive"]),
+        ):
+            buf = io.StringIO()
+            with patch.object(
+                mcp_cli, "load_registry",
+                lambda: {"../evil": {}, "claude": {}},
+            ), patch.object(
+                mcp_cli, "resolve_tool_arg",
+                lambda reg, n: n if n in reg else None,
+            ), redirect_stdout(buf):
+                rc = func(args)
+            self.assertEqual(rc, 1, func)
+            self.assertIn("Unsafe harness name", buf.getvalue(), func)
+
+    def test_hub_name_does_not_crash_list(self):
+        """`mcp list hub` resolves to the hub label, which mcp_tools does
+        not carry — the subscript used to raise KeyError."""
+        buf = io.StringIO()
+        with patch.object(mcp_cli, "load_registry", lambda: {}), \
+                patch.object(mcp_cli, "get_tool_servers", lambda t: {}), \
+                redirect_stdout(buf):
+            rc = mcp_cli.cmd_list(["hub"])
+        self.assertEqual(rc, 0)
 
 
 if __name__ == "__main__":
