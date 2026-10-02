@@ -62,9 +62,14 @@ class SessionCoercionTest(unittest.TestCase):
         self.assertEqual(self._mk(timestamp="1700000000").timestamp, 1700000000.0)
 
     def test_non_string_path_coerced(self):
-        self.assertEqual(self._mk(path=123).path, "123")
+        # Non-string non-path values become "" (missing): "123" would be a
+        # relative path a --here filter could false-match against cwd.
+        self.assertEqual(self._mk(path=123).path, "")
         self.assertEqual(self._mk(path=None).path, "")
-        self.assertEqual(self._mk(path={"cwd": "/x"}).path, "{'cwd': '/x'}")
+        self.assertEqual(self._mk(path={"cwd": "/x"}).path, "")
+        self.assertEqual(
+            self._mk(path=pathlib.Path("/real/dir")).path, "/real/dir"
+        )
 
     def test_non_string_fields_coerced(self):
         s = self._mk(agent=123, title=None, session_id=45)
@@ -99,35 +104,55 @@ class DaysOverflowTest(unittest.TestCase):
 class MalformedSessionListingTest(unittest.TestCase):
     """The verified critical: one NaN cline record killed `swe session`."""
 
+    def _write_cline_session(
+        self, home: pathlib.Path, sid: str, body: str
+    ) -> None:
+        session_dir = home / ".cline" / "data" / "sessions" / sid
+        session_dir.mkdir(parents=True)
+        (session_dir / f"{sid}.json").write_text(body)
+
+    def _run_session(self, home: pathlib.Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "quiver.cli", "session"],
+            env=_env(home), capture_output=True, text=True,
+        )
+
     def test_nan_session_file_does_not_crash_listing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = pathlib.Path(tmp)
-            session_dir = home / ".cline" / "data" / "sessions" / "x"
-            session_dir.mkdir(parents=True)
-            (session_dir / "x.json").write_text(
-                '{"session_id": "x", "cwd": "/tmp", "started_at": NaN}'
+            self._write_cline_session(
+                home, "x",
+                '{"session_id": "x", "cwd": "/tmp", "started_at": NaN}',
             )
-            r = subprocess.run(
-                [sys.executable, "-m", "quiver.cli", "session"],
-                env=_env(home), capture_output=True, text=True,
+            # A valid neighbour proves the bad record did not take the
+            # whole listing down with it: "no output" would also exit 0.
+            self._write_cline_session(
+                home, "good",
+                '{"session_id": "good", "cwd": "/tmp", '
+                '"started_at": "2024-01-01T00:00:00Z"}',
             )
+            r = self._run_session(home)
             self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
             self.assertNotIn("Traceback", r.stdout + r.stderr)
+            self.assertIn("#good", r.stdout)
 
     def test_non_string_cwd_does_not_crash_listing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = pathlib.Path(tmp)
-            session_dir = home / ".cline" / "data" / "sessions" / "y"
-            session_dir.mkdir(parents=True)
-            (session_dir / "y.json").write_text(
-                '{"session_id": "y", "cwd": 123, "started_at": "2024-01-01T00:00:00Z"}'
+            self._write_cline_session(
+                home, "y",
+                '{"session_id": "y", "cwd": 123, '
+                '"started_at": "2024-01-01T00:00:00Z"}',
             )
-            r = subprocess.run(
-                [sys.executable, "-m", "quiver.cli", "session"],
-                env=_env(home), capture_output=True, text=True,
+            self._write_cline_session(
+                home, "good",
+                '{"session_id": "good", "cwd": "/tmp", '
+                '"started_at": "2024-01-01T00:00:00Z"}',
             )
+            r = self._run_session(home)
             self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
             self.assertNotIn("Traceback", r.stdout + r.stderr)
+            self.assertIn("#good", r.stdout)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from os import PathLike
 
 
 @dataclass
@@ -26,9 +27,14 @@ class Session:
         except (TypeError, ValueError):
             ts = 0.0
         self.timestamp = ts if math.isfinite(ts) else 0.0
+        # A non-string cwd is treated as missing rather than str()'d: a
+        # json number like 123 would survive as the relative path "123"
+        # and a ``--here`` filter could then match it against the current
+        # workspace, showing a session that belongs nowhere.
+        if not isinstance(self.path, str):
+            self.path = str(self.path) if isinstance(self.path, PathLike) else ""
         for field in (
             "agent",
-            "path",
             "title",
             "session_id",
             "tool_name",
