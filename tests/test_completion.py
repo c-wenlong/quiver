@@ -232,6 +232,85 @@ class CompletionEngineTest(unittest.TestCase):
             names = [c for c, _ in get_completions(["mcp", "list", ""])]
         self.assertIn("claude", names)
 
+    def test_mcp_sync_resolves_alias_when_deduping(self):
+        # Typing the alias `cc` must also remove `claude` itself.
+        fake_registry = {
+            "claude": {"description": "Claude Code", "aliases": ["cc"]},
+            "codex": {"description": "Codex CLI", "aliases": ["cx"]},
+        }
+        with patch("quiver.completion.load_registry", return_value=fake_registry):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "sync", "cc", ""])]
+        self.assertIn("codex", names)
+        self.assertNotIn("claude", names)
+        self.assertNotIn("cc", names)
+
+    def test_provider_name_completion(self):
+        fake = {"anthropic": {"name": "Anthropic"}, "openai": {"name": "OpenAI"}}
+        with patch(
+            "quiver.providers.registry.load_registry", return_value=fake
+        ):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["providers", "info", ""])]
+            rm_names = [c for c, _ in get_completions(["pv", "rm", "o"])]
+        self.assertEqual(names, ["anthropic", "openai"])
+        self.assertEqual(rm_names, ["openai"])
+
+    def test_mcp_edit_server_completion(self):
+        with patch("quiver.mcp.cli.load_registry", return_value={}), \
+             patch("quiver.mcp.cli.resolve_tool_arg", return_value="codex"), \
+             patch("quiver.mcp.cli.get_tool_config",
+                   return_value={"path": Path("/x/mcp.json")}), \
+             patch("quiver.mcp.cli.get_tool_loader",
+                   return_value=lambda p: {"srv": {}, "db": {}}):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["mcp", "edit", "codex", ""])]
+        self.assertEqual(names, ["db", "srv"])
+
+    def test_mcp_edit_server_completion_unknown_tool(self):
+        with patch("quiver.mcp.cli.load_registry", return_value={}), \
+             patch("quiver.mcp.cli.resolve_tool_arg", return_value=None):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["mcp", "edit", "ghost", ""]), [])
+
+    def test_mcp_edit_server_completion_no_backend(self):
+        with patch("quiver.mcp.cli.load_registry", return_value={}), \
+             patch("quiver.mcp.cli.resolve_tool_arg", return_value="codex"), \
+             patch("quiver.mcp.cli.get_tool_config", return_value=None), \
+             patch("quiver.mcp.cli.get_tool_loader", return_value=None):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["mcp", "edit", "codex", ""]), [])
+
+    def test_provider_completion_survives_broken_registry(self):
+        with patch(
+            "quiver.providers.registry.load_registry",
+            side_effect=OSError("corrupt"),
+        ):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["providers", "info", ""]), [])
+
+    def test_completion_survives_broken_registry(self):
+        # A corrupt registry must yield no candidates, not a crash on TAB.
+        with patch(
+            "quiver.completion.load_registry", side_effect=OSError("corrupt")
+        ):
+            from quiver.completion import get_completions
+
+            self.assertEqual(get_completions(["use", ""]), [])
+            self.assertEqual(get_completions(["mcp", "sync", "x", ""]), [])
+            self.assertEqual(get_completions(["list", ""]), [])
+
+    def test_first_word_flag_returns_nothing(self):
+        from quiver.completion import get_completions
+
+        self.assertEqual(get_completions(["-"]), [])
+
 
 class CompleteCommandTest(unittest.TestCase):
     """Test the hidden __complete command output format."""
