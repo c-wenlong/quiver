@@ -28,7 +28,7 @@ class McpEditTmpFileTest(unittest.TestCase):
     """cmd_edit's scratch file must be private, unpredictable, and always
     cleaned up — including when the editor crashes."""
 
-    def _run_edit(self, editor, **patches):
+    def _run_edit(self, editor, write_back=None, **patches):
         seen = {}
 
         def fake_run(argv, **kw):
@@ -36,6 +36,8 @@ class McpEditTmpFileTest(unittest.TestCase):
             seen["path"] = path
             seen["mode"] = stat.S_IMODE(path.stat().st_mode)
             seen["content"] = path.read_text()
+            if write_back is not None:
+                path.write_text(write_back)
             return subprocess.CompletedProcess(argv, 0)
 
         defaults = dict(
@@ -112,6 +114,75 @@ class McpEditTmpFileTest(unittest.TestCase):
         self.assertIn("Editor failed", buf.getvalue())
         for name in created:
             self.assertFalse(Path(name).exists(), f"leaked tmp file {name}")
+
+    def test_edit_usage_errors(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(mcp_cli.cmd_edit(["claude"]), 1)
+            self.assertEqual(mcp_cli.cmd_edit([]), 1)
+
+    def test_edit_unknown_tool_exits_1(self):
+        buf = io.StringIO()
+        with patch.object(mcp_cli, "load_registry", lambda: {}), \
+             patch.object(
+                 mcp_cli, "resolve_tool_arg", lambda reg, name: None
+             ), \
+             redirect_stdout(buf):
+            self.assertEqual(mcp_cli.cmd_edit(["nope", "x"]), 1)
+        self.assertIn("Unknown tool", buf.getvalue())
+
+    def test_edit_without_backend_exits_1(self):
+        buf = io.StringIO()
+        base = (
+            patch.object(mcp_cli, "load_registry", lambda: {}),
+            patch.object(mcp_cli, "resolve_tool_arg", lambda reg, n: n),
+        )
+        with base[0], base[1], patch.object(
+            mcp_cli, "get_tool_config", lambda tool: None
+        ), redirect_stdout(buf):
+            self.assertEqual(mcp_cli.cmd_edit(["claude", "x"]), 1)
+        with base[0], base[1], patch.object(
+            mcp_cli, "get_tool_config",
+            lambda tool: {"path": Path("/t.json"), "key": "mcpServers",
+                          "format": "standard"},
+        ), patch.object(mcp_cli, "get_tool_loader", lambda tool: None), \
+             patch.object(mcp_cli, "get_tool_saver", lambda tool: None), \
+             redirect_stdout(buf):
+            self.assertEqual(mcp_cli.cmd_edit(["claude", "x"]), 1)
+
+    def test_edit_missing_server_exits_1(self):
+        buf = io.StringIO()
+        with patch.object(mcp_cli, "load_registry", lambda: {}), \
+             patch.object(
+                 mcp_cli, "resolve_tool_arg", lambda reg, name: name
+             ), \
+             patch.object(
+                 mcp_cli, "get_tool_config",
+                 lambda tool: {"path": Path("/t.json"), "key": "mcpServers",
+                               "format": "standard"},
+             ), \
+             patch.object(
+                 mcp_cli, "get_tool_loader",
+                 lambda tool: (lambda p: {"x": {}}),
+             ), \
+             patch.object(
+                 mcp_cli, "get_tool_saver", lambda tool: (lambda s, p: None)
+             ), \
+             redirect_stdout(buf):
+            self.assertEqual(mcp_cli.cmd_edit(["claude", "ghost"]), 1)
+        self.assertIn("not found", buf.getvalue())
+
+    def test_invalid_edited_json_saves_nothing(self):
+        rc, seen, out = self._run_edit("true", write_back="{not json")
+        self.assertEqual(rc, 0)
+        self.assertIn("Invalid JSON", out)
+        self.assertFalse(seen["path"].exists())
+
+    def test_removing_name_in_edit_saves_nothing(self):
+        rc, seen, out = self._run_edit("true", write_back="{}")
+        self.assertEqual(rc, 0)
+        self.assertIn("no changes", out)
+        self.assertFalse(seen["path"].exists())
 
 
 class ProviderFileContainmentTest(unittest.TestCase):
