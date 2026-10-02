@@ -98,6 +98,17 @@ class SessionCommandsTest(unittest.TestCase):
             self.assertIsNone(_parse_session_args(["--agent", "claude"]))
             self.assertIsNone(_parse_session_args(["--days", "5"]))
 
+    def test_equals_form_long_flags(self):
+        parsed = _parse_session_args(["--agent=claude", "--grep=error", "--days=2"])
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.agent_filter, "claude")
+        self.assertEqual(parsed.search, "error")
+        self.assertEqual(parsed.days, 2)
+
+        parsed = _parse_session_args(["--start=2026-07-01", "--end=2026-07-30"])
+        self.assertEqual(parsed.start, "2026-07-01")
+        self.assertEqual(parsed.end, "2026-07-30")
+
     def test_filter_search(self):
         sessions = [
             SimpleNamespace(
