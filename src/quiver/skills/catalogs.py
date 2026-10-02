@@ -6,7 +6,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from quiver.paths import CONFIG_DIR, SKILL_CATALOGS_FILE
+from quiver.configuration import read_json_object
+from quiver.paths import CONFIG_DIR, SKILL_CATALOGS_FILE, atomic_write_text
 
 DEFAULT_SEARCH_ROOTS = ("Desktop", "Documents")
 DEFAULT_MAX_DEPTH = 12
@@ -63,10 +64,14 @@ def load_skill_catalogs() -> list[dict]:
 
 def save_skill_catalogs(catalogs: list[dict]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SKILL_CATALOGS_FILE.with_suffix(".tmp")
-    payload = {"catalogs": catalogs}
-    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    tmp.rename(SKILL_CATALOGS_FILE)
+    # The loader treats a malformed file as "no catalogs", so without this
+    # check the next `catalog add` would happily overwrite the real one.
+    if SKILL_CATALOGS_FILE.exists():
+        read_json_object(SKILL_CATALOGS_FILE)
+    atomic_write_text(
+        SKILL_CATALOGS_FILE,
+        json.dumps({"catalogs": catalogs}, indent=2) + "\n",
+    )
 
 
 def count_skill_md(root: Path) -> int:

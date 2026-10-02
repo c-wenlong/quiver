@@ -403,13 +403,16 @@ class KiloMcpConfigTest(unittest.TestCase):
         self.assertEqual(data["s"], "keep ,} this")
 
     def test_load_json_leaves_plain_json_alone(self):
+        from quiver.configuration import CorruptConfigurationError
         from quiver.mcp.cli import load_json
 
         with TemporaryDirectory() as tmp:
             p = Path(tmp) / "mcp.json"
             p.write_text('{"a": "b"} // trailing comment')
-            # A .json file with junk still fails to parse: no stripping.
-            self.assertEqual(load_json(p), {})
+            # A .json file with junk fails to parse — and now raises rather
+            # than pretending to be empty, so a following save can't wipe it.
+            with self.assertRaises(CorruptConfigurationError):
+                load_json(p)
 
     def test_jsonc_round_trip_preserves_other_keys(self):
         from quiver.mcp.cli import get_tool_loader, get_tool_saver

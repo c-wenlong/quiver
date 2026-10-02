@@ -6,6 +6,7 @@ deleted with no copy anywhere. None of them raised, so none would have
 surfaced without a test pinning the behaviour.
 """
 
+import json
 import os
 import ssl
 import stat
@@ -115,6 +116,24 @@ class AtomicWritePermissionTest(unittest.TestCase):
         os.chmod(p, 0o600)
         save_json(p, {"mcpServers": {}})
         self.assertEqual(self._mode(p), 0o600, "swe mcp sync widened the config")
+
+    def test_writes_through_symlink(self):
+        """A symlinked config keeps its link; the target takes the write."""
+        target = self.d / "real.json"
+        target.write_text('{"a": 1}')
+        link = self.d / "link.json"
+        link.symlink_to(target)
+        atomic_write_text(link, '{"a": 2}')
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(json.loads(target.read_text()), {"a": 2})
+
+    def test_broken_symlink_writes_through_to_target(self):
+        target = self.d / "missing-target.json"
+        link = self.d / "link.json"
+        link.symlink_to(target)
+        atomic_write_text(link, '{"a": 3}')
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(json.loads(target.read_text()), {"a": 3})
 
 
 class ForcedLinkBacksUpTest(unittest.TestCase):

@@ -106,6 +106,45 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     return _copy_mapping(data) if isinstance(data, dict) else {}
 
 
+def parse_json_object(text: str, path: Path) -> dict[str, Any]:
+    """Parse JSON text that must decode to an object, else raise.
+
+    Any caller that writes the same path after reading it must never treat
+    an unparseable file as empty — a following save would destroy whatever
+    the file actually held (OAuth tokens in ``~/.claude.json`` are the
+    canonical example). Raises :class:`CorruptConfigurationError`.
+    """
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise CorruptConfigurationError(
+            f"Cannot parse JSON in {path}: fix or remove the file"
+        ) from exc
+    if not isinstance(data, dict):
+        raise CorruptConfigurationError(
+            f"{path} must contain a JSON object: fix or remove the file"
+        )
+    return data
+
+
+def read_json_object(path: Path, *, allow_missing: bool = True) -> dict[str, Any]:
+    """Read a JSON file that must contain an object.
+
+    Raises :class:`CorruptConfigurationError` when the file exists but is
+    unreadable, not UTF-8, not valid JSON, or not an object. A missing file
+    returns ``{}`` unless ``allow_missing`` is false.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if allow_missing:
+            return {}
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise CorruptConfigurationError(f"Cannot read {path}: {exc}") from exc
+    return parse_json_object(text, path)
+
+
 def _assert_existing_file_is_safe(path: Path) -> None:
     if not path.exists():
         return

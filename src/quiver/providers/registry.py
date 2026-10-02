@@ -27,7 +27,8 @@ view of providers without the bookkeeping key.
 import json
 from datetime import datetime
 
-from quiver.paths import CONFIG_DIR, PROVIDERS_REGISTRY_FILE
+from quiver.configuration import read_json_object
+from quiver.paths import CONFIG_DIR, PROVIDERS_REGISTRY_FILE, atomic_write_text
 from quiver.providers.defaults import (
     DEFAULT_PROVIDERS,
     derived_alias,
@@ -64,18 +65,11 @@ def load_registry(include_removed: bool = False) -> dict:
     """
     user_reg: dict = {}
     if PROVIDERS_REGISTRY_FILE.exists():
-        try:
-            with open(PROVIDERS_REGISTRY_FILE) as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    user_reg = data
-        except FileNotFoundError:
-            user_reg = {}
-        except json.JSONDecodeError:
-            # Do not overwrite a corrupt user registry with defaults. Returning
-            # an empty registry keeps the command read-only and preserves the
-            # broken file for manual recovery.
-            return {_REMOVED_KEY: []} if include_removed else {}
+        # Strict: the old corrupt-returns-empty path was not actually
+        # read-only — the seed branch below then overwrote the broken file
+        # with defaults. Raising CorruptConfigurationError makes the file
+        # stay put until the user fixes or removes it.
+        user_reg = read_json_object(PROVIDERS_REGISTRY_FILE)
 
     explicitly_removed: set[str] = set(user_reg.get(_REMOVED_KEY) or [])
 
@@ -121,8 +115,7 @@ def load_registry(include_removed: bool = False) -> dict:
 def save_registry(providers: dict) -> None:
     """Persist provider metadata to disk (no key strings)."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(PROVIDERS_REGISTRY_FILE, "w") as f:
-        json.dump(providers, f, indent=2)
+    atomic_write_text(PROVIDERS_REGISTRY_FILE, json.dumps(providers, indent=2) + "\n")
 
 
 def alias_map(providers: dict) -> dict[str, str]:

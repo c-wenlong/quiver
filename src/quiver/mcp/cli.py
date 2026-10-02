@@ -27,6 +27,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from quiver.configuration import (
+    ConfigurationError,
+    CorruptConfigurationError,
+    parse_json_object,
+)
 from quiver.console import c, cpad, strip_ansi, terminal_width, truncate, visible_len
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
@@ -272,16 +277,25 @@ def _strip_jsonc(text: str) -> str:
 
 
 def load_json(path: Path) -> dict:
+    """Parse a harness MCP config file, strictly.
+
+    These files hold far more than the MCP slice — ``~/.claude.json``
+    carries the account's OAuth tokens and project state — so a file that
+    fails to parse must never look like ``{}``: any caller that then saves
+    would destroy everything else in it. Raises
+    :class:`CorruptConfigurationError`; missing files still return ``{}``.
+    Read paths (``get_tool_loader``, ``get_hub_servers``) catch it and warn;
+    write paths let it propagate so a malformed file is never overwritten.
+    """
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
+    except (OSError, UnicodeError) as exc:
+        raise CorruptConfigurationError(f"Cannot read {path}: {exc}") from exc
     if path.suffix == ".jsonc":
         text = _strip_jsonc(text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {}
+    return parse_json_object(text, path)
 
 
 def save_json(path: Path, data: dict):
@@ -315,7 +329,21 @@ def get_tool_loader(tool_name: str):
     def _load(p):
         if not p.exists():
             return {}
-        return load_json(p).get(key, {})
+        try:
+            data = load_json(p)
+        except CorruptConfigurationError as exc:
+            # Diagnostics go to stderr so `mcp ... --json` output stays
+            # machine-readable.
+            print(c("yellow", f"  {exc}"), file=sys.stderr)
+            return {}
+        servers = data.get(key, {})
+        if not isinstance(servers, dict):
+            print(
+                c("yellow", f"  {p}: '{key}' is not an object — skipping {tool_name}"),
+                file=sys.stderr,
+            )
+            return {}
+        return servers
     return _load
 
 
@@ -380,7 +408,11 @@ def is_hub(name: str | None) -> bool:
 
 def get_hub_servers() -> dict:
     """Canonical servers recorded in mcp.json, keyed by name."""
-    data = load_json(MCP_SOURCE_FILE) or {}
+    try:
+        data = load_json(MCP_SOURCE_FILE) or {}
+    except CorruptConfigurationError as exc:
+        print(c("yellow", f"  {exc}"), file=sys.stderr)
+        return {}
     servers = data.get(MCP_SOURCE_KEY, {})
     return servers if isinstance(servers, dict) else {}
 
@@ -1476,7 +1508,11 @@ def main(argv=None):
         print(f"Unknown command: {cmd}")
         print(f"Available: {', '.join(COMMANDS.keys())}")
         return 1
-    return COMMANDS[cmd](args[1:])
+    try:
+        return COMMANDS[cmd](args[1:])
+    except ConfigurationError as exc:
+        print(c("red", str(exc)))
+        return 1
 
 
 if __name__ == "__main__":

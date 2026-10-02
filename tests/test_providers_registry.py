@@ -143,7 +143,11 @@ class RegistryLoadSeedingTest(unittest.TestCase):
                 self.assertEqual(loaded["openai"]["name"], "Openai")
                 self.assertEqual(loaded["openai"]["aliases"], ["openai"])
 
-    def test_corrupt_json_returns_empty(self):
+    def test_corrupt_json_raises(self):
+        """Corrupt providers.json raises rather than reading as empty — the
+        old lenient path let the seed branch overwrite the broken file."""
+        from quiver.configuration import CorruptConfigurationError
+
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             config_dir = tmp_path / ".config" / "swe"
@@ -153,7 +157,10 @@ class RegistryLoadSeedingTest(unittest.TestCase):
 
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2:
-                self.assertEqual(load_registry(), {})
+                with self.assertRaises(CorruptConfigurationError):
+                    load_registry()
+            # The file is left alone for manual recovery.
+            self.assertEqual(registry_file.read_text(), "{not-json}")
 
 
 class RegistrySaveRoundtripTest(unittest.TestCase):
