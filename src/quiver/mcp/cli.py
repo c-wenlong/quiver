@@ -37,6 +37,7 @@ from quiver.console import c, cpad, strip_ansi, terminal_width, truncate, visibl
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
+from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
 from quiver.mcp.secrets import unresolved_names
 from quiver.paths import atomic_write_text, CONFIG_DIR, MCP_SOURCE_FILE
@@ -146,16 +147,27 @@ def _unverified_mcp_config(tool_name: str) -> dict:
     }
 
 
+# Registry names become ``~/.<name>/mcp.json``. A hand-edited or malformed
+# registry entry containing ``/``, ``\`` or ``..`` would turn `mcp sync`
+# into a write outside the home directory — only plain names are safe.
+_SAFE_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
 def get_tool_config(tool_name: str) -> dict | None:
     """Return the MCP config descriptor for any tool name, or None.
 
     Verified tools use ``MCP_CONFIG_MAP``. Any other non-empty name gets
-    an optimistic unverified default (see :func:`_unverified_mcp_config`).
-    Returns None only for empty/None input.
+    an optimistic unverified default (see :func:`_unverified_mcp_config`),
+    unless the name could not form a safe ``~/.<name>/`` path.
     """
     if not tool_name:
         return None
-    return MCP_CONFIG_MAP.get(tool_name) or _unverified_mcp_config(tool_name)
+    cfg = MCP_CONFIG_MAP.get(tool_name)
+    if cfg:
+        return cfg
+    if not _SAFE_TOOL_NAME_RE.match(tool_name):
+        return None
+    return _unverified_mcp_config(tool_name)
 
 
 # ── Registry & alias resolution ─────────────────────────────────────
@@ -174,6 +186,17 @@ def alias_map(registry: dict) -> dict:
 
 def resolve(registry: dict, key: str) -> str | None:
     return alias_map(registry).get(key)
+
+
+def _unsafe_registry_name(name: str | None) -> bool:
+    """True when an arg resolved to a name ``get_tool_config`` refuses.
+
+    resolve_tool_arg accepts every registry name, but a name that cannot
+    form a safe ``~/.<name>/`` path gets no config and is skipped by
+    get_mcp_tools — indexing its output with such a name would raise
+    KeyError. The hub resolves to its own label and is always usable.
+    """
+    return bool(name) and not is_hub(name) and get_tool_config(name) is None
 
 
 def get_mcp_tools(registry: dict) -> dict:
@@ -196,10 +219,13 @@ def get_mcp_tools(registry: dict) -> dict:
             if resolved and resolved in MCP_CONFIG_MAP:
                 result[resolved] = MCP_CONFIG_MAP[resolved]
     # Optimistic defaults: any registry harness without an explicit entry
-    # is still sync-capable via the ~/.<tool>/mcp.json convention.
+    # is still sync-capable via the ~/.<tool>/mcp.json convention. Unsafe
+    # names get no config from get_tool_config and are skipped here too.
     for name in registry:
         if name not in result:
-            result[name] = _unverified_mcp_config(name)
+            cfg = get_tool_config(name)
+            if cfg:
+                result[name] = cfg
     return result
 
 
@@ -492,6 +518,38 @@ def convert_server_for_target(cfg: dict, source_tool: str, target_tool: str) -> 
     )
 
 
+# Canonical data fields — everything else in a target entry is
+# format-specific metadata (opencode's ``enabled``, droid's ``type``,
+# claude's ``disabled``/``autoApprove``, timeouts) that must survive an
+# overwrite, because emit stamps its own defaults for some of them.
+_CANONICAL_SERVER_KEYS = frozenset(
+    {"command", "args", "env", "environment", "url", "headers"}
+)
+
+
+def _merge_format_keys(existing: dict, converted: dict) -> dict:
+    """Overwrite the data fields but keep the target's own extension keys.
+
+    Without this, syncing over an opencode server marked ``enabled: false``
+    silently re-enables it, a droid ``type: sse`` server becomes ``http``,
+    and claude's ``autoApprove`` list vanishes.
+    """
+    if not isinstance(existing, dict):
+        return converted
+    out = dict(converted)
+    for k, v in existing.items():
+        if k in _CANONICAL_SERVER_KEYS:
+            continue
+        if k == "type" and ("url" in existing) != ("url" in converted):
+            # "type" describes the transport (droid's sse/http, opencode's
+            # local/remote). Carrying it across a transport change — stdio
+            # command beside a stale "sse" — would contradict the
+            # connection itself, so the emit-time default stands.
+            continue
+        out[k] = v
+    return out
+
+
 def server_type(cfg: dict) -> str:
     cfg = normalize_server(cfg)
     if cfg.get("url"):
@@ -507,7 +565,12 @@ def server_summary(cfg: dict) -> str:
     cfg = normalize_server(cfg)
     st = server_type(cfg)
     if st == "http":
-        return f"http → {cfg.get('url', '?')}"
+        # Harness configs hold resolved values — a `?key=TOKEN` URL would
+        # otherwise print its credential to the terminal. redact() swaps
+        # known secret values back to ${NAME} placeholders.
+        url = cfg.get("url", "?")
+        url = redact_secrets(url) if isinstance(url, str) else url
+        return f"http → {url}"
     if st == "stdio":
         cmd = cfg.get("command", "?")
         args = cfg.get("args", [])
@@ -520,6 +583,7 @@ def server_summary(cfg: dict) -> str:
     if st == "wrapped":
         args = cfg.get("args", [])
         url = next((a for a in args if a.startswith("http")), "?")
+        url = redact_secrets(url) if isinstance(url, str) else url
         return f"wrapped → {url}"
     return "unknown"
 
@@ -631,12 +695,17 @@ def cmd_list(args):
     target = None
     if args:
         target = resolve_tool_arg(registry, args[0])
+        if _unsafe_registry_name(target):
+            print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+            return 1
         if not target:
             print(f"Unknown tool: {args[0]}")
             print(f"Available: {', '.join(mcp_tools.keys())}")
             return 1
 
-    tools = {target: mcp_tools[target]} if target else _display_tools(mcp_tools)
+    # The value is never read — only the name loops into get_tool_servers,
+    # which resolves the hub and unverified names on its own.
+    tools = {target: mcp_tools.get(target, {})} if target else _display_tools(mcp_tools)
 
     all_servers = set()
     tool_data = {}
@@ -718,11 +787,14 @@ def cmd_status(args):
     target = None
     if args:
         target = resolve_tool_arg(registry, args[0])
+        if _unsafe_registry_name(target):
+            print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+            return 1
         if not target:
             print(f"Unknown tool: {args[0]}")
             return 1
 
-    tools = {target: mcp_tools[target]} if target else _display_tools(mcp_tools)
+    tools = {target: mcp_tools.get(target, {})} if target else _display_tools(mcp_tools)
 
     all_servers = set()
     tool_data = {}
@@ -865,6 +937,9 @@ def cmd_sync(args):
         return 1
 
     source = resolve_tool_arg(registry, positional[0])
+    if _unsafe_registry_name(source):
+        print(c("red", f"Unsafe harness name in registry: {positional[0]}"))
+        return 1
     if not source:
         print(f"Unknown source tool: {positional[0]}")
         return 1
@@ -885,6 +960,11 @@ def cmd_sync(args):
         candidates = []
         for a in positional[1:]:
             resolved = resolve_tool_arg(registry, a)
+            if _unsafe_registry_name(resolved):
+                # Resolves, but its name cannot form a safe ~/.<name>/
+                # config path — a malformed registry entry, not a tool.
+                print(c("red", f"Unsafe harness name in registry: {a}"))
+                return 1
             if not resolved:
                 print(f"Unknown target tool: {a}")
                 return 1
@@ -1022,7 +1102,9 @@ def cmd_sync(args):
             converted = convert_server_for_target(source_servers[name], source, target)
             if name in target_servers:
                 if force or name in overwrite:
-                    target_servers[name] = converted
+                    target_servers[name] = _merge_format_keys(
+                        target_servers[name], converted
+                    )
                     updated += 1
                 else:
                     skipped += 1
@@ -1074,6 +1156,9 @@ def cmd_diff(args):
     t1 = resolve_tool_arg(registry, args[0])
     t2 = resolve_tool_arg(registry, args[1])
     for t, a in [(t1, args[0]), (t2, args[1])]:
+        if _unsafe_registry_name(t):
+            print(c("red", f"Unsafe harness name in registry: {a}"))
+            return 1
         if not t:
             print(f"Unknown tool: {a}")
             return 1
@@ -1123,6 +1208,9 @@ def cmd_edit(args):
 
     registry = load_registry()
     tool = resolve_tool_arg(registry, args[0])
+    if _unsafe_registry_name(tool):
+        print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+        return 1
     if not tool:
         print(f"Unknown tool: {args[0]}")
         return 1
@@ -1196,6 +1284,9 @@ def cmd_validate(args):
     if args:
         for a in args:
             t = resolve_tool_arg(registry, a)
+            if _unsafe_registry_name(t):
+                print(c("red", f"Unsafe harness name in registry: {a}"))
+                return 1
             if not t:
                 print(f"Unknown tool: {a}")
                 return 1

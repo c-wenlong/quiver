@@ -115,13 +115,17 @@ def redact(value, secrets: dict[str, str] | None = None, home: Path | None = Non
     pairs = sorted(secrets.items(), key=lambda kv: -len(kv[1]))
 
     def swap(text: str) -> str:
-        """Replace only a whole field value, or a scheme-prefixed one.
+        """Replace whole-field values, and long embedded credentials.
 
-        Substring matching is unsafe here: TELEGRAM_API_ID is 8 digits, and a
-        blind replace would rewrite any config text that happened to contain
-        that number. A credential occupies its own field, so anchoring to the
-        whole value (optionally after ``Bearer``/``Token``/``Basic``) is both
-        sufficient and safe.
+        Blind substring matching is unsafe for short values:
+        TELEGRAM_API_ID is 8 digits, and a blind replace would rewrite any
+        config text that happened to contain that number. But resolve()
+        substitutes ``${NAME}`` anywhere in a string, so a
+        ``?key=TOKEN`` URL gets a literal credential written into the
+        harness — and without embedded matching it is written back into
+        the hub in plaintext, undoing the indirection. Values long enough
+        to be unambiguous (16+ chars) are replaced wherever they appear;
+        shorter ones keep the whole-field anchor.
         """
         for name, secret in pairs:
             if not secret:
@@ -131,6 +135,8 @@ def redact(value, secrets: dict[str, str] | None = None, home: Path | None = Non
             for scheme in ("Bearer ", "Token ", "Basic "):
                 if text == scheme + secret:
                     return f"{scheme}${{{name}}}"
+            if len(secret) >= 16 and secret in text:
+                text = text.replace(secret, f"${{{name}}}")
         return text
 
     def walk(v):
