@@ -258,6 +258,12 @@ def _print_report_warnings(path: str) -> int:
 
 
 def _generate(cadence: str, args: list[str], input_fn: Callable[[str], str] = input) -> int:
+    # Help wins over validation: `daily --help --days=0` shows help rather
+    # than failing on the very option the user is asking about.
+    if any(arg in ("-h", "--help", "help") for arg in args):
+        from quiver.help_text import cmd_help
+
+        return cmd_help(["report"]) or 0
     try:
         parsed = _parse_generate_args(args)
     except (ValueError, TypeError) as exc:

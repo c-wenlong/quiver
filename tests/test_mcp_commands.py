@@ -434,6 +434,15 @@ class McpLsAliasTest(unittest.TestCase):
 
         self.assertIs(COMMANDS["ls"], COMMANDS["list"])
 
+    def test_help_ls_resolves_to_list_topic(self):
+        from quiver.mcp.cli import cmd_help
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = cmd_help(["ls"])
+        self.assertEqual(code, 0)
+        self.assertIn("swe mcp list", buf.getvalue())
+
     def test_sync_help_documents_prune(self):
         from quiver.mcp.cli import MCP_HELP
 

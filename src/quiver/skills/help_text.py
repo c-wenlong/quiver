@@ -124,11 +124,11 @@ def print_skills_move_help():
   Scopes are harness labels (shared, codex, claude, cursor), catalog labels,
   or paths registered via {c('cyan', 'swe skills catalog add')}.
 
-  {c('cyan', '--force')}   Overwrite a non-empty destination
+  {c('cyan', '--force')}   Back up and replace a skill already at the destination
   {c('cyan', '--json')}    Print the result as JSON
 
-  If both scopes resolve to the same tree (symlinked), unlink the destination
-  harness first or pass {c('cyan', '--force')}.
+  If both scopes resolve to the same tree (symlinked), the move is refused:
+  unlink the destination harness first to give it a private skills folder.
 """
     )
 

@@ -156,7 +156,9 @@ def move_skill(
     except OSError as exc:
         raise SkillLayoutError(str(exc)) from exc
 
-    if from_resolved == to_resolved and not force:
+    # Unconditional: destination would be the source itself, so a forced
+    # overwrite below would back up and delete the very folder being moved.
+    if from_resolved == to_resolved:
         raise SkillLayoutError(
             f"Scopes {from_scope!r} and {to_scope!r} resolve to the same directory ({from_resolved}). "
             f"Unlink one harness first to give it a private skills folder, then move."
@@ -175,8 +177,20 @@ def move_skill(
 
     dest_root = to_resolved if to_root.is_symlink() else to_root
     dest = dest_root / skill_dir.name
-    if dest.exists():
-        raise SkillLayoutError(f"Destination already exists: {dest}")
+    if dest.exists() or dest.is_symlink():
+        if not force:
+            raise SkillLayoutError(
+                f"Destination already exists: {dest}. "
+                f"Pass --force to back it up and replace it."
+            )
+        if dest.is_symlink() or dest.is_file():
+            dest.unlink()
+        else:
+            # Same backup convention as link_skill_root --force: a skill at
+            # the destination can be its only copy, so never rmtree raw.
+            if any(dest.iterdir()):
+                backup_tree(dest, home)
+            shutil.rmtree(dest)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(skill_dir), str(dest))

@@ -180,6 +180,13 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("swe report daily", out)
 
+    def test_report_daily_help_wins_over_bad_args(self):
+        # `--days=0` fails validation, but a user passing --help alongside
+        # it is asking for help, not a report run.
+        code, out = _run(cmd_report, ["daily", "--help", "--days=0"])
+        self.assertEqual(code, 0)
+        self.assertIn("swe report daily", out)
+
     def test_report_followup_dispatch(self):
         ledger = Mock()
         ledger.get.return_value = None

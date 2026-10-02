@@ -72,6 +72,56 @@ class SkillsLayoutTest(unittest.TestCase):
             with self.assertRaises(SkillLayoutError):
                 move_skill("x", "shared", "codex", home=home)
 
+    def test_move_rejects_same_resolved_tree_even_with_force(self):
+        # Same-tree + force used to proceed, then fail (or worse, once
+        # force gained a real overwrite path, back up the folder it was
+        # about to move). The check is unconditional now.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            self._write_skill(shared, "x", "x")
+            codex = home / ".codex" / "skills"
+            codex.parent.mkdir(parents=True)
+            codex.symlink_to(shared)
+
+            with self.assertRaises(SkillLayoutError):
+                move_skill("x", "shared", "codex", home=home, force=True)
+            self.assertTrue((shared / "x" / "SKILL.md").exists())
+
+    def test_move_refuses_existing_destination_without_force(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            codex = home / ".codex" / "skills"
+            shared.mkdir(parents=True)
+            codex.mkdir(parents=True)
+            self._write_skill(shared, "move-me", "move-me")
+            self._write_skill(codex, "move-me", "move-me")
+
+            with self.assertRaises(SkillLayoutError):
+                move_skill("move-me", "shared", "codex", home=home)
+            self.assertTrue((shared / "move-me" / "SKILL.md").exists())
+
+    def test_move_force_backs_up_and_replaces_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            codex = home / ".codex" / "skills"
+            shared.mkdir(parents=True)
+            codex.mkdir(parents=True)
+            self._write_skill(shared, "move-me", "move-me")
+            dest_dir = codex / "move-me"
+            self._write_skill(codex, "move-me", "old-version")
+            (dest_dir / "extra.txt").write_text("keep me safe", encoding="utf-8")
+
+            src, dest = move_skill("move-me", "shared", "codex", home=home, force=True)
+            self.assertFalse(src.exists())
+            self.assertTrue((dest / "SKILL.md").exists())
+            # The replaced destination was backed up, not deleted.
+            backups = list((home / ".quiver" / "backups").glob("**/extra.txt"))
+            self.assertEqual(len(backups), 1)
+
     def test_sync_link_records(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

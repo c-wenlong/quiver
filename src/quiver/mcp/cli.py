@@ -1417,7 +1417,7 @@ MCP_HELP = {
 
 def cmd_help(args=None):
     if args:
-        cmd_name = args[0]
+        cmd_name = {"ls": "list"}.get(args[0], args[0])
         if cmd_name in MCP_HELP:
             print(MCP_HELP[cmd_name])
             return 0
