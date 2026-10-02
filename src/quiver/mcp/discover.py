@@ -1,7 +1,9 @@
 """Discover MCP servers across tool configs vs quiver source-of-truth."""
 
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from quiver.configuration import CorruptConfigurationError
 from quiver.console import c
@@ -39,13 +41,46 @@ def _load_source_servers() -> dict:
     except CorruptConfigurationError as exc:
         # Read path: report the hub as empty rather than crashing discover.
         # apply_mcp_findings calls load_json itself, so writes still refuse
-        # to overwrite the malformed file.
-        print(c("yellow", f"  {exc}"))
+        # to overwrite the malformed file. stderr keeps --json output clean.
+        print(c("yellow", f"  {exc}"), file=sys.stderr)
         return {}
     servers = data.get(MCP_SOURCE_KEY, data if MCP_SOURCE_KEY not in data and data else {})
     if not isinstance(servers, dict):
         return {}
     return {k: v for k, v in servers.items() if isinstance(v, dict)}
+
+
+def _unreadable_tools(mcp_tools) -> set[str]:
+    """Tools whose MCP config exists on disk but cannot be parsed.
+
+    A corrupt file reads as zero servers, so without this its servers look
+    "orphaned" — and `discover --apply --prune` would delete live entries
+    from the hub. Any unreadable config poisons orphan detection entirely.
+    """
+    from quiver.mcp.codex_io import load_codex_servers
+
+    out: set[str] = set()
+    for tool in mcp_tools:
+        cfg = get_tool_config(tool)
+        if not cfg:
+            continue
+        path = cfg.get("path")
+        if not path:
+            continue
+        try:
+            p = Path(str(path)).expanduser()
+        except (OSError, RuntimeError):
+            continue
+        if not p.exists():
+            continue
+        try:
+            if cfg.get("io_type") == "toml_region":
+                load_codex_servers(p)
+            else:
+                load_json(p)
+        except Exception:
+            out.add(tool)
+    return out
 
 
 def _registered_paths(mcp_tools) -> set:
@@ -109,6 +144,7 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
     source = _load_source_servers()
+    unreadable = _unreadable_tools(mcp_tools)
 
     by_name: dict[str, dict] = {}
     for tool in sorted(mcp_tools):
@@ -154,17 +190,27 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
 
     # A server the hub still lists but no harness configures any more. Reported
     # rather than deleted: quiver cannot tell a deliberate removal from a
-    # harness whose config file is temporarily unreadable.
-    for name in sorted(set(source) - set(by_name)):
-        findings.append(
-            McpFinding(
-                name=name,
-                tools=(),
-                status="orphaned",
-                source_tool="",
-                server=source[name],
-            )
+    # harness whose config file is temporarily unreadable. When any harness
+    # config failed to parse, skip orphan detection entirely — those tools'
+    # servers look absent but are not, so pruning would delete live entries.
+    if unreadable:
+        print(
+            c("yellow",
+              "  cannot read " + ", ".join(sorted(unreadable))
+              + " — skipping orphan detection"),
+            file=sys.stderr,
         )
+    else:
+        for name in sorted(set(source) - set(by_name)):
+            findings.append(
+                McpFinding(
+                    name=name,
+                    tools=(),
+                    status="orphaned",
+                    source_tool="",
+                    server=source[name],
+                )
+            )
 
     if not include_in_source:
         findings = [f for f in findings if f.status != "in_source"]

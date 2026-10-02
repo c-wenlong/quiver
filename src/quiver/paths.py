@@ -173,6 +173,12 @@ def atomic_write_text(path: "Path", text: str, *, private: bool = False) -> None
     import os
     import tempfile
 
+    # Write through a symlink instead of replacing it: os.replace on a
+    # linked config (dotfiles layout) would silently drop the link and
+    # split this file from the target everyone else still reads.
+    if path.is_symlink():
+        path = path.resolve()
+
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         mode = os.stat(path).st_mode & 0o777

@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -265,7 +265,7 @@ class McpSaverRefuseTest(unittest.TestCase):
             ):
                 loader = get_tool_loader("claude")
                 buf = io.StringIO()
-                with redirect_stdout(buf):
+                with redirect_stderr(buf):
                     out = loader(target)
                 self.assertEqual(out, {})
                 self.assertIn("Cannot parse JSON", buf.getvalue())
@@ -283,7 +283,7 @@ class McpSaverRefuseTest(unittest.TestCase):
             ):
                 loader = get_tool_loader("cursor")
                 buf = io.StringIO()
-                with redirect_stdout(buf):
+                with redirect_stderr(buf):
                     out = loader(target)
                 self.assertEqual(out, {})
                 self.assertIn("not an object", buf.getvalue())
@@ -298,7 +298,7 @@ class HubCorruptTest(unittest.TestCase):
             hub.write_text("{corrupt")
             with patch("quiver.mcp.cli.MCP_SOURCE_FILE", hub):
                 buf = io.StringIO()
-                with redirect_stdout(buf):
+                with redirect_stderr(buf):
                     self.assertEqual(get_hub_servers(), {})
                 self.assertIn("Cannot parse JSON", buf.getvalue())
 
@@ -477,7 +477,7 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
     def test_list_warns_and_continues(self):
         r = self.run_mcp("list")
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
-        self.assertIn("Cannot parse JSON", r.stdout)
+        self.assertIn("Cannot parse JSON", r.stderr)
         self.assertIn("notion", r.stdout)
 
     def test_discover_warns_on_corrupt_hub_and_apply_refuses(self):
@@ -487,10 +487,44 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
         hub.write_text("{corrupt")
         r = self.run_mcp("discover")
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
-        self.assertIn("Cannot parse JSON", r.stdout)
+        self.assertIn("Cannot parse JSON", r.stderr)
         r = self.run_mcp("discover", "--apply")
         self.assertEqual(r.returncode, 1)
         self.assertEqual(hub.read_text(), "{corrupt")
+
+    def _seed_ghost_hub(self):
+        hub = self.home / ".quiver" / "mcp.json"
+        hub.write_text(
+            json.dumps({"mcpServers": {"ghost": {"command": "ghostd"}}},
+                       indent=2) + "\n"
+        )
+        return hub
+
+    def test_orphans_suppressed_when_harness_config_unreadable(self):
+        """claude.json is corrupt (fixture): a hub-only server is not an
+        orphan — its home config just can't be read — and --prune is a
+        no-op rather than deleting it from the hub."""
+        hub = self._seed_ghost_hub()
+        r = self.run_mcp("discover", "--json")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        # The warnings all went to stderr, so stdout parses as JSON.
+        payload = json.loads(r.stdout)
+        self.assertNotIn("ghost", {f["name"] for f in payload})
+        self.assertIn("skipping orphan detection", r.stderr)
+        r = self.run_mcp("discover", "--apply", "--prune")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("ghost", json.loads(hub.read_text())["mcpServers"])
+
+    def test_orphans_pruned_when_all_configs_parse(self):
+        hub = self._seed_ghost_hub()
+        self.claude_path.write_text('{"mcpServers": {}}')
+        r = self.run_mcp("discover", "--json")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        by_name = {f["name"]: f["status"] for f in json.loads(r.stdout)}
+        self.assertEqual(by_name.get("ghost"), "orphaned")
+        r = self.run_mcp("discover", "--apply", "--prune")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertNotIn("ghost", json.loads(hub.read_text())["mcpServers"])
 
 
 class CorruptRegistryIntegrationTest(unittest.TestCase):

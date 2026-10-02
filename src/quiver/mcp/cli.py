@@ -332,11 +332,16 @@ def get_tool_loader(tool_name: str):
         try:
             data = load_json(p)
         except CorruptConfigurationError as exc:
-            print(c("yellow", f"  {exc}"))
+            # Diagnostics go to stderr so `mcp ... --json` output stays
+            # machine-readable.
+            print(c("yellow", f"  {exc}"), file=sys.stderr)
             return {}
         servers = data.get(key, {})
         if not isinstance(servers, dict):
-            print(c("yellow", f"  {p}: '{key}' is not an object — skipping {tool_name}"))
+            print(
+                c("yellow", f"  {p}: '{key}' is not an object — skipping {tool_name}"),
+                file=sys.stderr,
+            )
             return {}
         return servers
     return _load
@@ -406,7 +411,7 @@ def get_hub_servers() -> dict:
     try:
         data = load_json(MCP_SOURCE_FILE) or {}
     except CorruptConfigurationError as exc:
-        print(c("yellow", f"  {exc}"))
+        print(c("yellow", f"  {exc}"), file=sys.stderr)
         return {}
     servers = data.get(MCP_SOURCE_KEY, {})
     return servers if isinstance(servers, dict) else {}
