@@ -196,6 +196,26 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertNotIn("-i", flags)
         self.assertNotIn("--interactive", flags)
         self.assertIn("--scope=global", flags)
+        # `find --root` is a switch, not --root=<dir>
+        flags = [c for c, _ in get_completions(["find", "--"])]
+        self.assertIn("--root", flags)
+        self.assertNotIn("--root=", flags)
+
+    def test_followup_work_flags_need_the_id_first(self):
+        from quiver.completion import get_completions
+
+        # Before the ID: no work flags, and no report-generation flags.
+        self.assertEqual(
+            get_completions(["report", "followup", "work", "--"]), []
+        )
+        # After the ID: the action's own flags.
+        flags = [
+            c for c, _ in get_completions(["report", "followup", "work", "id1", "--"])
+        ]
+        self.assertIn("--resume", flags)
+        self.assertIn("--new", flags)
+        self.assertIn("--harness=", flags)
+        self.assertNotIn("--days=", flags)
 
     def test_nested_subcommands(self):
         from quiver.completion import get_completions
@@ -298,6 +318,16 @@ class CompletionEngineTest(unittest.TestCase):
             names = [c for c, _ in get_completions(["providers", "info", ""])]
         self.assertIn("anthropic", names)
         self.assertIn("claude-api", names)
+
+    def test_provider_alias_matching_name_not_duplicated(self):
+        fake = {"openai": {"name": "OpenAI", "aliases": ["openai"]}}
+        with patch(
+            "quiver.providers.registry.load_registry", return_value=fake
+        ):
+            from quiver.completion import get_completions
+
+            names = [c for c, _ in get_completions(["providers", "info", ""])]
+        self.assertEqual(names, ["openai"])
 
     def test_install_completes_catalog_names(self):
         fake_registry = {

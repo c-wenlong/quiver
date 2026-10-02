@@ -257,6 +257,9 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
+        # `followup <action>` takes its own tables below; bare `followup`
+        # must not fall through to report's generation flags.
+        "followup": "report followup",
         "followup add": "report followup add",
         "followup work": "report followup work",
     },
@@ -438,9 +441,14 @@ def get_completions(words: list[str]) -> list[tuple[str, str]]:
     if partial.startswith("-"):
         nested = _NESTED_FLAGS.get(cmd)
         if nested and rest:
-            # Two-word subcommands first (`report followup work --<TAB>`),
-            # then the single-word form (`mcp sync --<TAB>`).
-            key = nested.get(" ".join(rest[:2])) or nested.get(rest[0])
+            # Two-word subcommands first — but only once their positional
+            # is filled (`followup work <id> --<TAB>`), else the flags would
+            # be suggested where a required argument belongs.
+            if len(rest) > 2:
+                key = nested.get(" ".join(rest[:2]))
+            else:
+                key = None
+            key = key or nested.get(rest[0])
             if key is not None:
                 return _filter_by_prefix(_COMMAND_FLAGS.get(key, []), partial)
         flags = _COMMAND_FLAGS.get(cmd, [])
@@ -542,6 +550,8 @@ def _provider_completions(partial: str = "") -> list[tuple[str, str]]:
         if not partial or name.startswith(partial):
             out.append((name, str(info.get("name") or name)))
         for alias in info.get("aliases") or []:
+            if alias == name:
+                continue
             if not partial or alias.startswith(partial):
                 out.append((alias, f"alias for {name}"))
     return out
