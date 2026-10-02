@@ -67,26 +67,54 @@ def _is_mcp_header(stripped_line: str) -> bool:
 def _table_headers(lines: list[str]) -> list[int]:
     """Line indices that begin real TOML table headers.
 
-    Lines inside a ``'''…'''`` or ``\"\"\"…\"\"\"`` multiline string are
-    skipped — a ``[mcp_servers.x]`` line inside a description string is
-    text, not a table, and treating it as one would split the string and
-    corrupt the file on save.
+    Tracks strings and comments while scanning: a ``[mcp_servers.x]``
+    line inside a ``'''…'''``/``\"\"\"…\"\"\"`` multiline string is text,
+    not a table, and a delimiter inside a ``#`` comment (or inside an
+    ordinary quoted value, e.g. ``x = '\"\"\"'``) cannot fake an open
+    multiline string. Basic strings honor ``\\`` escapes.
     """
     headers: list[int] = []
-    ml_delim: str | None = None
+    in_ml: str | None = None
     for i, ln in enumerate(lines):
         s = ln.lstrip()
-        if ml_delim is not None:
-            if s.count(ml_delim) % 2:
-                ml_delim = None
+        if in_ml is not None:
+            if in_ml in s:
+                in_ml = None
             continue
-        for delim in ('"""', "'''"):
-            if s.count(delim) % 2:
-                ml_delim = delim
+        is_header = s.startswith("[")
+        pos = 0
+        while pos < len(s):
+            if s.startswith(('"""', "'''"), pos):
+                delim = s[pos:pos + 3]
+                close = s.find(delim, pos + 3)
+                if close == -1:
+                    in_ml = delim
+                    break
+                pos = close + 3
+                continue
+            ch = s[pos]
+            if ch == "#":
                 break
-        else:
-            if s.startswith("["):
-                headers.append(i)
+            if ch == "'":
+                end = s.find("'", pos + 1)
+                if end == -1:
+                    break
+                pos = end + 1
+                continue
+            if ch == '"':
+                pos += 1
+                while pos < len(s):
+                    if s[pos] == "\\":
+                        pos += 2
+                        continue
+                    if s[pos] == '"':
+                        pos += 1
+                        break
+                    pos += 1
+                continue
+            pos += 1
+        if is_header:
+            headers.append(i)
     return headers
 
 

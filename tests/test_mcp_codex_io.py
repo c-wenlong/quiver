@@ -369,6 +369,25 @@ x = 1
         self.assertIn("[mcp_servers.fake]", parsed["notes"]["desc"])
         self.assertEqual(sorted(parsed["mcp_servers"]), ["a"])
 
+    def test_comment_mentioning_a_delimiter_cannot_hide_a_table(self):
+        # `# ... """` before a real header used to open a fake multiline
+        # string, hiding the table from load and doubling it on save.
+        doc = (
+            '[mcp_servers.a]\ncommand = "a"\n\n'
+            '[projects]\n# delimiters: """ and \'\'\'\n'
+            '[projects.p]\npath = "/tmp"\n\n'
+            '[mcp_servers.b]\nurl = "https://b.example"  # ends \'"""\' here\n'
+        )
+        pre, region, post = split_codex_toml(doc)
+        servers = parse_codex_mcp_region(region)
+        self.assertEqual(sorted(servers), ["a", "b"])
+
+    def test_delimiter_inside_quoted_value_is_not_multiline(self):
+        doc = "[mcp_servers.a]\nnote = '\"\"\"'\n\n[tui]\nx = 1\n"
+        _, region, post = split_codex_toml(doc)
+        self.assertIn("[tui]", post)
+        self.assertEqual(sorted(parse_codex_mcp_region(region)), ["a"])
+
     def test_datetime_values_round_trip(self):
         # tomllib parses bare ISO datetimes to datetime objects; the writer
         # used to TypeError on them, crashing sync.
