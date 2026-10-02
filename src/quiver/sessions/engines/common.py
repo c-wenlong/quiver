@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sqlite3
@@ -24,6 +25,11 @@ def parse_iso_ts(value: Any) -> float:
         return 0.0
     if isinstance(value, (int, float)):
         v = float(value)
+        # NaN/±Inf pass every magnitude comparison below and then kill the
+        # listing (int(nan) raises in _relative_time, json writes them back
+        # into the session cache). Reject non-finite up front.
+        if not math.isfinite(v):
+            return 0.0
         if v > 1e14:  # ns-ish
             return v / 1e6
         if v > 1e12:  # already ms

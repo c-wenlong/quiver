@@ -254,7 +254,7 @@ def _parse_session_args(args: list[str]):
     if any(value is not None for value in (days, weeks, start, end)):
         try:
             calendar_range_ms(days=days, weeks=weeks, start=start, end=end)
-        except ValueError as exc:
+        except (ValueError, OverflowError) as exc:
             print(c("red", str(exc)))
             return None
     if interactive and use_index is not None:
