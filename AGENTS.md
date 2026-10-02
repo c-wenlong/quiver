@@ -115,13 +115,13 @@ For `swe init`, `archived` also means unmanaged: a path of an archived harness t
 
 ## When adding or changing CLI commands
 
-The `swe autocomplete` feature relies on a hardcoded list of primary subcommands in `src/quiver/completion.py` (`_PRIMARY_COMMANDS`) and context-aware completion rules (`_TOOL_TARGET_COMMANDS`, `_COMMAND_FLAGS`, `_SUBCOMMANDS`).
+The `swe autocomplete` feature relies on hardcoded tables in `src/quiver/completion.py`: `_PRIMARY_COMMANDS` (top-level candidates), `_TOOL_TARGET_COMMANDS` (commands whose first positional is a tool name), `_COMMAND_FLAGS` (per-command or `"<domain> <sub>"` flag lists), `_SUBCOMMANDS` (second-level candidates), `_NESTED_FLAGS` (cmd → sub → `_COMMAND_FLAGS` key), `_NESTED_TOOL_TARGETS` / `_NESTED_MULTI_TOOL` / `_NESTED_PROVIDER_TARGETS` (subcommand positional completion), and `_NESTED_SUBCOMMANDS` (third level, e.g. `report followup`). `swe doctor` warns when these drift from `cli.py`'s `COMMANDS` via `check_completion_drift` in `harness/drift.py`.
 
 **When you add a new command to `COMMANDS` in `cli.py`:**
 
-1. Add the command to `_PRIMARY_COMMANDS` in `completion.py` with a short description.
+1. Add the command to `_PRIMARY_COMMANDS` in `completion.py` with a short description (skip aliases and hidden commands — doctor checks the two sets agree).
 2. If the command takes a tool name/alias as its first argument, add it to `_TOOL_TARGET_COMMANDS`.
-3. If the command accepts flags, add them to `_COMMAND_FLAGS`.
+3. If the command accepts flags, add them to `_COMMAND_FLAGS`; for a domain subcommand, add a `"<domain> <sub>"` flag list and wire it through `_NESTED_FLAGS`.
 4. If the command should appear in `swe help`, add it to `COMMAND_CATEGORIES` in `help_text.py` and add a `HELP` entry. `swe doctor` fails on a command without one.
 5. Run `tests/test_completion.py` and `tests/test_drift.py` to verify completions and help drift.
 
