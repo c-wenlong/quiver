@@ -159,7 +159,9 @@ def _file_preview(path: Path, limit: int) -> list[str]:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             # File content is the hostile case: a crafted SKILL.md could
             # hide an OSC-52 clipboard write behind a previewed line.
-            rows = [sanitize(line.rstrip("\r\n")).expandtabs(4)
+            # Tabs expand before sanitize, which would otherwise map them
+            # to a single space and lose the indentation.
+            rows = [sanitize(line.rstrip("\r\n").expandtabs(4))
                     for line in islice(fh, limit)]
     except OSError:
         return ["(unreadable)"]

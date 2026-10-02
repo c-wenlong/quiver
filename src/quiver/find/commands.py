@@ -105,9 +105,6 @@ def _build_trie(nodes, root: Path, home: Path) -> dict:
             parts = list(n.path.relative_to(root).parts)
         except ValueError:
             parts = [_short(n.path, home)]
-        # Segments are trie keys, never re-joined for filesystem use, so
-        # cleaning them here is safe and keeps escapes out of the tree.
-        parts = [sanitize(p) for p in parts]
         cur = trie
         for seg in parts:
             cur = cur.setdefault(seg, {})
@@ -151,11 +148,13 @@ def _walk_trie(trie: dict, prefix: str = ""):
         last = i == len(items) - 1
         branch = TREE_END if last else TREE_MID
         deeper = prefix + ("   " if last else TREE_BAR)
+        # Keys stay raw — sanitizing them here would collapse two distinct
+        # names onto one key — and each label is cleaned only for display.
         if _is_pure_leaf(child):
-            yield prefix + branch, name, child[LEAF]
+            yield prefix + branch, sanitize(name), child[LEAF]
             continue
         # Both a result and a parent: show it on its own row, then descend.
-        yield prefix + branch, name + "/", child.get(LEAF)
+        yield prefix + branch, sanitize(name) + "/", child.get(LEAF)
         yield from _walk_trie(child, deeper)
 
 

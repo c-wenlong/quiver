@@ -117,6 +117,27 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertIn("safe linked", rendered)
         self.assertIn("done", rendered)
 
+    def test_redaction_runs_before_control_chars_are_spaced(self):
+        # ``KEY=secret\x07suffix`` — if sanitize ran first the BEL would
+        # split the assignment and "suffix" would survive redaction.
+        from quiver.reports.transcripts import _clean_text
+
+        out = _clean_text("API_KEY=secret\x07suffix tail")
+        self.assertNotIn("suffix", out)
+        self.assertNotIn("secret", out)
+        self.assertIn("[REDACTED]", out)
+
+    def test_unreadable_errors_carry_no_escapes(self):
+        # A reader that fails on a hostile filename used to surface the
+        # exception (and its bytes) into the picker's preview pane.
+        from quiver.reports.transcripts import _unreadable
+
+        sess = _session("codex", "x")
+        t = _unreadable(sess, "OSError: cannot open 'evil\x1b]8;;u\x07f\x1b[2J'")
+        self.assertNotIn("\x1b", t.error)
+        self.assertNotIn("\x07", t.error)
+        self.assertIn("cannot open 'evilf'", t.error)
+
     def test_unclosed_envelope_does_not_swallow_adjacent_semantic_markup(self):
         self._jsonl(
             ".codex/sessions/2026/07/30/codex-markup.jsonl",

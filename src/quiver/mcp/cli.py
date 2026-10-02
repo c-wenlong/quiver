@@ -570,7 +570,7 @@ def server_summary(cfg: dict) -> str:
         # known secret values back to ${NAME} placeholders.
         url = cfg.get("url", "?")
         url = redact_secrets(url) if isinstance(url, str) else url
-        return f"http → {url}"
+        return f"http → {sanitize(url)}"
     if st == "stdio":
         cmd = cfg.get("command", "?")
         args = cfg.get("args", [])
@@ -579,12 +579,12 @@ def server_summary(cfg: dict) -> str:
             if not a.startswith("-"):
                 parts.append(a)
                 break
-        return " ".join(parts)
+        return " ".join(sanitize(str(p)) for p in parts)
     if st == "wrapped":
         args = cfg.get("args", [])
         url = next((a for a in args if a.startswith("http")), "?")
         url = redact_secrets(url) if isinstance(url, str) else url
-        return f"wrapped → {url}"
+        return f"wrapped → {sanitize(url)}"
     return "unknown"
 
 
@@ -614,11 +614,14 @@ def check_server_health(name: str, cfg: dict) -> str:
                 return c("red", "✗ binary not found")
         else:
             if not shutil.which(cmd):
-                return c("red", f"✗ '{cmd}' not in PATH")
+                # ``cmd`` is config text: a name carrying escapes would
+                # otherwise print them straight to the terminal.
+                return c("red", f"✗ '{sanitize(cmd)}' not in PATH")
         env = cfg.get("env", {})
         missing = [k for k, v in env.items() if not v or v.startswith("YOUR_")]
         if missing:
-            return c("red", f"✗ missing env: {', '.join(missing)}")
+            shown = ", ".join(sanitize(k) for k in missing)
+            return c("red", f"✗ missing env: {shown}")
         return c("green", "✓")
 
     if st == "wrapped":

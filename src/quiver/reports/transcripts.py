@@ -96,7 +96,9 @@ def _new(session: Session, paths: Iterable[Path] = ()) -> NormalizedTranscript:
 def _unreadable(session: Session, error: str, paths: Iterable[Path] = ()) -> NormalizedTranscript:
     transcript = _new(session, paths)
     transcript.readable = False
-    transcript.error = error
+    # ``error`` can carry an exception's filename, which the filesystem
+    # does not restrict: clean it like everything else that displays.
+    transcript.error = sanitize(error)
     return transcript
 
 
@@ -170,10 +172,13 @@ def _clean_text(value: Any) -> str:
         return ""
     if isinstance(value, str):
         text = _ENVELOPE_RE.sub("", value)
+        # Redact before sanitize: a control byte inside a secret value
+        # (``KEY=secret\x07suffix``) would otherwise split the assignment
+        # and leave the tail unredacted in the normalized text.
+        text = _redact_secrets(text)
         # Transcript text is untrusted terminal input once the picker
         # paints it: escapes and controls go, real newlines stay.
         text = sanitize(text, keep_newlines=True)
-        text = _redact_secrets(text)
         text = text.replace("\x00", "").strip()
         return text
     if isinstance(value, list):

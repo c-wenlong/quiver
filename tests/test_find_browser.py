@@ -107,6 +107,18 @@ class BrowserSafetyTest(unittest.TestCase):
         self.assertEqual(rows[0], "ok line")
         self.assertIn("evil link", rows[1])
 
+    def test_preview_tabs_expand_before_sanitizing(self):
+        """Sanitize maps \t to one space, so it has to run after
+        expandtabs or indented files lose their shape."""
+        from quiver.find.browser import _file_preview
+
+        d = Path(tempfile.mkdtemp())
+        f = d / "x.md"
+        f.write_text("one\n\tdeep\n\t\tdeeper\n")
+        rows = _file_preview(f, 10)
+        self.assertEqual(rows[1], "    deep")
+        self.assertEqual(rows[2], "        deeper")
+
     def test_child_preview_labels_are_sanitized(self):
         from quiver.find.browser import _preview
 
