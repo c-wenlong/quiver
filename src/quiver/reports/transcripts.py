@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from quiver.console import sanitize
 from quiver.sessions.models import Session
 
 
@@ -169,6 +170,9 @@ def _clean_text(value: Any) -> str:
         return ""
     if isinstance(value, str):
         text = _ENVELOPE_RE.sub("", value)
+        # Transcript text is untrusted terminal input once the picker
+        # paints it: escapes and controls go, real newlines stay.
+        text = sanitize(text, keep_newlines=True)
         text = _redact_secrets(text)
         text = text.replace("\x00", "").strip()
         return text
@@ -240,7 +244,7 @@ def _messages_from_content(role: str, content: Any, timestamp: Any = None) -> li
 
 
 def _tool_message(name: Any, arguments: Any = None, output: Any = None) -> NormalizedMessage | None:
-    label = str(name or "tool").strip()
+    label = sanitize(str(name or "tool")).strip()
     if output is None and isinstance(arguments, str):
         try:
             decoded = json.loads(arguments)

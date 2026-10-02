@@ -70,6 +70,52 @@ class BrowserSafetyTest(unittest.TestCase):
         for name in (".in_use", ".git", "__pycache__", "node_modules"):
             self.assertIn(name, HIDE_DIRS)
 
+    def test_entry_labels_and_details_cannot_drive_the_terminal(self):
+        """A directory can be named anything; the panes must not let an
+        escape payload through while the browser owns the screen."""
+        from quiver.find.browser import _left_cell
+
+        entry = Entry(
+            "x\x1b]8;;https://evil\x07y\x1b[2J\x07",
+            detail="\x1b]52;c;AAAA\x07detail",
+        )
+        cell = _left_cell(entry, 40, active=False)
+        self.assertNotIn("\x1b]8", cell)
+        self.assertNotIn("\x07", cell)
+        self.assertNotIn("\x1b[2J", cell)
+        active = _left_cell(entry, 40, active=True)
+        self.assertNotIn("\x1b]8", active)
+        self.assertNotIn("\x07", active)
+
+    def test_a_file_preview_cannot_smuggle_escapes(self):
+        """The right pane prints file bytes; a crafted SKILL.md must not
+        carry an OSC link or a clipboard write into the browser."""
+        from quiver.find.browser import _file_preview
+
+        d = Path(tempfile.mkdtemp())
+        f = d / "SKILL.md"
+        f.write_text(
+            "ok line\n"
+            "evil \x1b]8;;https://evil\x07link\x1b]8;;\x07\n"
+            "clip \x1b]52;c;AAAA\x07\n"
+            "clear \x1b[2J \x07\n"
+        )
+        rows = _file_preview(f, 10)
+        for row in rows:
+            self.assertNotIn("\x1b", row)
+            self.assertNotIn("\x07", row)
+        self.assertEqual(rows[0], "ok line")
+        self.assertIn("evil link", rows[1])
+
+    def test_child_preview_labels_are_sanitized(self):
+        from quiver.find.browser import _preview
+
+        e = Entry("p", children=[Entry("kid\x1b]52;c;AAAA\x07")])
+        rows = _preview(e, 10)
+        for row in rows:
+            self.assertNotIn("\x1b", row)
+            self.assertNotIn("\x07", row)
+
 
 class BrowseDispatchTest(unittest.TestCase):
     def _run(self, argv):

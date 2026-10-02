@@ -33,7 +33,7 @@ from quiver.configuration import (
     CorruptConfigurationError,
     parse_json_object,
 )
-from quiver.console import c, cpad, strip_ansi, terminal_width, truncate, visible_len
+from quiver.console import c, cpad, sanitize, strip_ansi, terminal_width, truncate, visible_len
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
@@ -757,7 +757,7 @@ def cmd_list(args):
     # alignment without needing a custom kind.
     for t in tool_names:
         table.add_column(
-            f"tool_{t}", _tool_header(t, col_width),
+            f"tool_{t}", _tool_header(sanitize(t), col_width),
             width=col_width,
             kind="preformatted", trust_cell_width=True,
         )
@@ -854,7 +854,7 @@ def cmd_status(args):
     )
     for t in tool_names:
         table.add_column(
-            f"tool_{t}", _tool_header(t, col_width),
+            f"tool_{t}", _tool_header(sanitize(t), col_width),
             width=col_width,
             kind="preformatted", trust_cell_width=True,
         )
@@ -1052,7 +1052,8 @@ def cmd_sync(args):
         if strict_errors:
             print(c("red", "Strict mode blocked sync due to lossy conversion:"))
             for target, name, issues in strict_errors[:20]:
-                print(f"  {c('cyan', target)}:{name} -> " + "; ".join(issues))
+                print(f"  {c('cyan', sanitize(target))}:{sanitize(name)} -> "
+                      + "; ".join(issues))
             if len(strict_errors) > 20:
                 print(f"  ... and {len(strict_errors) - 20} more")
             print(c("dim", "Tip: rerun without --strict to proceed."))
@@ -1081,7 +1082,7 @@ def cmd_sync(args):
                 for name in conflicts:
                     src_summary = server_summary(source_servers[name])
                     tgt_summary = server_summary(target_servers[name])
-                    print(f"    {c('bold', name)}")
+                    print(f"    {c('bold', sanitize(name))}")
                     print(f"      {source}: {c('dim', src_summary)}")
                     print(f"      {target}: {c('dim', tgt_summary)}")
 
@@ -1178,19 +1179,20 @@ def cmd_diff(args):
     only1, only2, both, different = [], [], [], []
     for name in all_names:
         in1, in2 = name in s1, name in s2
+        shown = sanitize(name)
         if in1 and not in2:
             only1.append(name)
-            print(f"{name:<{width}}  {cpad('green', '✓', 12)}  {cpad('dim', '—', 12)}  only in {t1}")
+            print(f"{shown:<{width}}  {cpad('green', '✓', 12)}  {cpad('dim', '—', 12)}  only in {t1}")
         elif in2 and not in1:
             only2.append(name)
-            print(f"{name:<{width}}  {cpad('dim', '—', 12)}  {cpad('green', '✓', 12)}  only in {t2}")
+            print(f"{shown:<{width}}  {cpad('dim', '—', 12)}  {cpad('green', '✓', 12)}  only in {t2}")
         else:
             both.append(name)
             if s1[name] == s2[name]:
-                print(f"{name:<{width}}  {cpad('green', '✓', 12)}  {cpad('green', '✓', 12)}  identical")
+                print(f"{shown:<{width}}  {cpad('green', '✓', 12)}  {cpad('green', '✓', 12)}  identical")
             else:
                 different.append(name)
-                print(f"{name:<{width}}  {cpad('green', '✓', 12)}  {cpad('green', '✓', 12)}  {c('yellow', 'DIFFERENT')}")
+                print(f"{shown:<{width}}  {cpad('green', '✓', 12)}  {cpad('green', '✓', 12)}  {c('yellow', 'DIFFERENT')}")
 
     print(f"\nOnly in {t1}: {c('cyan', str(len(only1)))}")
     print(f"Only in {t2}: {c('cyan', str(len(only2)))}")
@@ -1228,7 +1230,7 @@ def cmd_edit(args):
 
     tool_servers = loader(tool_cfg["path"])
     if name not in tool_servers:
-        print(f"'{name}' not found in {tool}.")
+        print(f"'{sanitize(name)}' not found in {sanitize(tool)}.")
         return 1
 
     editor = os.environ.get("EDITOR", "vim")
@@ -1264,7 +1266,7 @@ def cmd_edit(args):
             else:
                 tool_servers[name] = get_mcp_handler(tool).emit(edited[name])
             saver(tool_servers, tool_cfg["path"])
-            print(f"Updated '{name}' in {tool}")
+            print(f"Updated '{sanitize(name)}' in {sanitize(tool)}")
         else:
             print("Server name removed from edit — no changes.")
         return 0
@@ -1335,9 +1337,9 @@ def cmd_validate(args):
 
             if deduped:
                 total_errors += 1
-                print(f"  {c('red', '✗')} {name}: {c('yellow', '; '.join(deduped))}")
+                print(f"  {c('red', '✗')} {sanitize(name)}: {c('yellow', '; '.join(deduped))}")
             else:
-                print(f"  {c('green', '✓')} {name}")
+                print(f"  {c('green', '✓')} {sanitize(name)}")
         print()
 
     if total_errors:
@@ -1373,12 +1375,12 @@ def cmd_doctor(args):
         servers = get_tool_servers(tool_name)
         if not servers:
             continue
-        print(f"{tool_name} ({tool_cfg['label']})")
+        print(f"{sanitize(tool_name)} ({sanitize(tool_cfg['label'])})")
         for name, server_cfg in servers.items():
             health = check_server_health(name, server_cfg)
             st = server_type(server_cfg)
             summary = server_summary(server_cfg)
-            print(f"  {health} {name} ({st}): {summary}")
+            print(f"  {health} {sanitize(name)} ({st}): {summary}")
 
             plain_health = strip_ansi(health).strip()
             if plain_health != "✓":
@@ -1388,7 +1390,7 @@ def cmd_doctor(args):
     if strict and failures:
         print(c("red", f"Doctor strict failed: {len(failures)} unhealthy server(s)."))
         for tool_name, name, reason in failures[:20]:
-            print(f"  {c('cyan', tool_name)}:{name} -> {c('yellow', reason)}")
+            print(f"  {c('cyan', sanitize(tool_name))}:{sanitize(name)} -> {c('yellow', reason)}")
         if len(failures) > 20:
             print(f"  ... and {len(failures) - 20} more")
         return 1

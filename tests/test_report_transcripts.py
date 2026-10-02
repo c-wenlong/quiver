@@ -81,6 +81,42 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertIn("python3 -m unittest", transcript.messages[1].text)
         self.assertNotIn('{"command"', transcript.messages[1].text)
 
+    def test_terminal_escapes_in_messages_never_reach_the_preview(self):
+        # A stored message that paints, links, writes the clipboard, or
+        # clears the screen would run inside the picker's alternate screen.
+        self._jsonl(
+            ".codex/sessions/2026/07/30/codex-evil.jsonl",
+            [
+                {"type": "session_meta", "payload": {"id": "codex-evil", "cwd": "/work/project"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": (
+                            "safe \x1b]8;;https://evil\x07linked\x1b]8;;\x07 "
+                            "\x1b]52;c;AAAA\x07 \x1b[2J \x07done"
+                        )}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": json.dumps({"command": "rm \x1b[2J -rf"}),
+                    },
+                },
+            ],
+        )
+        transcript = read_transcript(_session("codex", "codex-evil"))
+        self.assertTrue(transcript.readable)
+        rendered = "\n".join(m.text for m in transcript.messages)
+        self.assertNotIn("\x1b", rendered)
+        self.assertNotIn("\x07", rendered)
+        self.assertIn("safe linked", rendered)
+        self.assertIn("done", rendered)
+
     def test_unclosed_envelope_does_not_swallow_adjacent_semantic_markup(self):
         self._jsonl(
             ".codex/sessions/2026/07/30/codex-markup.jsonl",

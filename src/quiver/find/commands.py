@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quiver import paths
-from quiver.console import c, elide, terminal_width, truncate
+from quiver.console import c, elide, sanitize, terminal_width, truncate
 from quiver.flags import expand_value_flags
 from quiver.harness.registry import load_registry_if_present
 from quiver.init.layout import skill_folder_names
@@ -56,12 +56,14 @@ TREE_MID, TREE_END, TREE_BAR = "├─ ", "└─ ", "│  "
 
 
 def _short(path: Path, home: Path) -> str:
+    # Filenames are attacker-writable bytes: a directory named with an
+    # OSC-52 payload would otherwise reach the terminal untouched.
     if path == home:
         return "~"
     try:
-        return "~/" + str(path.relative_to(home))
+        return sanitize("~/" + str(path.relative_to(home)))
     except ValueError:
-        return str(path)
+        return sanitize(str(path))
 
 
 def _branch(i: int, total: int) -> str:
@@ -86,7 +88,7 @@ def _rel(path: Path, root: Path, home: Path, width: int = PATH_WIDTH) -> str:
         text = "./" + str(path.relative_to(root))
     except ValueError:
         text = _short(path, home)
-    return elide(text, width).ljust(width) + " "
+    return elide(sanitize(text), width).ljust(width) + " "
 
 
 # A path can be both a result and a parent of results: ~/.codex/vendor_imports/
@@ -103,6 +105,9 @@ def _build_trie(nodes, root: Path, home: Path) -> dict:
             parts = list(n.path.relative_to(root).parts)
         except ValueError:
             parts = [_short(n.path, home)]
+        # Segments are trie keys, never re-joined for filesystem use, so
+        # cleaning them here is safe and keeps escapes out of the tree.
+        parts = [sanitize(p) for p in parts]
         cur = trie
         for seg in parts:
             cur = cur.setdefault(seg, {})

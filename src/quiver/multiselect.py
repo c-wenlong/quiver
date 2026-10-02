@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 
 from quiver import keys
-from quiver.console import c, cell_len, cellpad
+from quiver.console import c, cell_len, cellpad, sanitize
 
 
 @dataclass
@@ -82,17 +82,19 @@ def _render(choices, selected, cursor, title, prev_lines: int) -> int:
         out.append(f"\x1b[{prev_lines}A")   # back to the top of the widget
     out.append("\r\x1b[J")                  # and clear everything below it
 
-    out.append(c("bold", title) + "\r\n")
+    out.append(c("bold", sanitize(title)) + "\r\n")
     for i, ch in enumerate(choices):
         box = "[x]" if (ch.locked or ch.key in selected) else "[ ]"
         tail = c("dim", "  always shown") if ch.locked else ""
-        label = ch.label
+        # Labels come out of config files and registries, so a server
+        # named ``\x1b]52;c;...\x07`` cannot write to the clipboard.
+        label = sanitize(ch.label)
         if ch.cycle is not None:
             shown = ch.render_value(ch.value) if ch.render_value else str(ch.value)
-            label = shown
+            label = sanitize(shown)
             tail = c("dim", "  ← → to change")
         pointer = c("cyan", ">") if i == cursor else " "
-        body = f"{box} {cellpad(label, 12)} {c('dim', ch.about)}{tail}"
+        body = f"{box} {cellpad(label, 12)} {c('dim', sanitize(ch.about))}{tail}"
         line = c("cyan", body) if i == cursor else (c("dim", body) if ch.locked else body)
         out.append(f" {pointer} {line}\r\n")
     out.append(c("dim", FOOTER) + "\r\n")
@@ -198,15 +200,15 @@ def _state_render(choices, cursor, title, prev_lines: int, height: int) -> int:
         f"{c(STATE_GLYPH[s][0], STATE_GLYPH[s][1])} {c('dim', f'{counts[s]} {s}')}"
         for s in STATES
     )
-    out.append(f"{c('bold', title)}   {tally}\r\n")
+    out.append(f"{c('bold', sanitize(title))}   {tally}\r\n")
 
-    width = max((cell_len(ch.label) for ch in choices), default=10) + 2
+    width = max((cell_len(sanitize(ch.label)) for ch in choices), default=10) + 2
     for i in range(top, top + view):
         ch = choices[i]
         colour, glyph = STATE_GLYPH[ch.state]
         pointer = c("cyan", ">") if i == cursor else " "
-        body = (f"{c(colour, glyph)} {cellpad(ch.label, width)}"
-                f"{c('dim', ch.state.ljust(9))}{c('dim', ch.about)}")
+        body = (f"{c(colour, glyph)} {cellpad(sanitize(ch.label), width)}"
+                f"{c('dim', ch.state.ljust(9))}{c('dim', sanitize(ch.about))}")
         out.append(f" {pointer} {body}\r\n")
 
     if total > view:
