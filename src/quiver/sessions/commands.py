@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quiver.console import c, cpad, fit_widths, terminal_width, truncate, visible_len
+from quiver.flags import expand_value_flags
 from quiver.markdown import render_markdown
 from quiver.sessions import failures
 from quiver.sessions.aggregator import get_all_sessions
@@ -179,6 +180,15 @@ class _SessionArgs:
 
 
 def _parse_session_args(args: list[str]):
+    try:
+        args = expand_value_flags(args, {
+            "--agent", "--search", "--grep",
+            "--days", "--weeks", "--start", "--end",
+        })
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return None
+
     limit = 10
     agent_filter = None
     cwd_filter = None
@@ -199,33 +209,33 @@ def _parse_session_args(args: list[str]):
         elif args[i] in ("--interactive", "-i"):
             interactive = True
             i += 1
-        elif args[i] == "--agent" and i + 1 < len(args):
+        elif args[i] == "--agent":
             agent_filter = args[i + 1]
             i += 2
-        elif args[i] in ("--search", "-q", "--grep") and i + 1 < len(args):
+        elif args[i] in ("--search", "--grep") or (args[i] == "-q" and i + 1 < len(args)):
             search = args[i + 1]
             i += 2
         elif args[i] == "--here":
             cwd_filter = os.getcwd()
             i += 1
-        elif args[i] in ("--days", "-d") and i + 1 < len(args):
+        elif args[i] == "--days" or (args[i] == "-d" and i + 1 < len(args)):
             try:
                 days = int(args[i + 1])
             except ValueError:
                 print(c("red", "--days must be a positive integer"))
                 return None
             i += 2
-        elif args[i] in ("--weeks", "-w") and i + 1 < len(args):
+        elif args[i] == "--weeks" or (args[i] == "-w" and i + 1 < len(args)):
             try:
                 weeks = int(args[i + 1])
             except ValueError:
                 print(c("red", "--weeks must be a positive integer"))
                 return None
             i += 2
-        elif args[i] in ("--start", "-s") and i + 1 < len(args):
+        elif args[i] == "--start" or (args[i] == "-s" and i + 1 < len(args)):
             start = args[i + 1]
             i += 2
-        elif args[i] in ("--end", "-e") and i + 1 < len(args):
+        elif args[i] == "--end" or (args[i] == "-e" and i + 1 < len(args)):
             end = args[i + 1]
             i += 2
         elif args[i].isdigit() and use_index is None:

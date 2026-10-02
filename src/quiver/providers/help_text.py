@@ -14,7 +14,7 @@ def print_providers_help() -> None:
   {c('cyan', 'swe providers info <name|alias> [--api-keys-dir=DIR]')}
       Show full details for one provider, including key status + path
 
-  {c('cyan', 'swe providers add <name> [desc] [--url URL] [--env ENV] [--file NAME]')}
+  {c('cyan', 'swe providers add <name> [desc] [--url=URL] [--env=ENV] [--file=NAME]')}
       Register a provider in {c('bold', '~/.quiver/config/providers.json')}.
       Does not create or touch any key file.
 
@@ -39,9 +39,9 @@ def print_providers_help() -> None:
   swe providers list
   swe providers info openai
   swe providers add anthropic "Anthropic Claude" \
-      --env ANTHROPIC_API_KEY \
-      --url https://console.anthropic.com/settings/keys
-  swe providers add myprov --env MY_API_KEY --url https://example.com
+      --env=ANTHROPIC_API_KEY \
+      --url=https://console.anthropic.com/settings/keys
+  swe providers add myprov --env=MY_API_KEY --url=https://example.com
   swe providers remove myprov
 """
     )

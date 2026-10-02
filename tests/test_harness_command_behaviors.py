@@ -57,7 +57,7 @@ class HarnessProcessCommandTest(unittest.TestCase):
             "quiver.harness.tools.live_version", return_value="1.2.3"
         ), patch("quiver.harness.commands.save_registry") as save:
             result = cmd_install(
-                ["demo", "--package", "@scope/demo", "--command", "demo-bin"]
+                ["demo", "--package=@scope/demo", "--command=demo-bin"]
             )
 
         self.assertEqual(result, 0)

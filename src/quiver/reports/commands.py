@@ -17,6 +17,7 @@ from quiver.configuration import (
     validate_config,
 )
 from quiver.console import c
+from quiver.flags import expand_value_flags
 from quiver.reports.followups import FollowUpLedger
 from quiver.reports.pipeline import (
     ApprovedReportPlan,
@@ -55,15 +56,26 @@ def _value(args: list[str], index: int, flag: str) -> str:
 
 
 def _parse_generate_args(args: list[str]) -> _GenerateArgs:
+    args = expand_value_flags(args, {
+        "--days", "--weeks", "--start", "--end", "--agent", "--search",
+        "--session-harness", "--session-model", "--session-arg",
+        "--writer-harness", "--writer-model", "--writer-arg",
+    })
     parsed = _GenerateArgs()
     i = 0
     while i < len(args):
         arg = args[i]
         if arg in ("-d", "--days"):
-            parsed.days = int(_value(args, i, arg))
+            try:
+                parsed.days = int(_value(args, i, arg))
+            except ValueError:
+                raise ValueError("--days must be a positive integer")
             i += 2
         elif arg in ("-w", "--weeks"):
-            parsed.weeks = int(_value(args, i, arg))
+            try:
+                parsed.weeks = int(_value(args, i, arg))
+            except ValueError:
+                raise ValueError("--weeks must be a positive integer")
             i += 2
         elif arg in ("-s", "--start"):
             parsed.start = _value(args, i, arg)
@@ -335,17 +347,20 @@ def _followup(args: list[str]) -> int:
     ledger = FollowUpLedger()
     if not args:
         return _print_followups(ledger, "open")
+    try:
+        args = expand_value_flags(args, {"--project", "--harness"})
+    except ValueError as exc:
+        print(c("red", f"  {exc}"))
+        return 1
     action = args[0]
     try:
         if action == "add":
             if len(args) < 2:
-                raise ValueError("Usage: swe report followup add <text> [--project PATH]")
+                raise ValueError("Usage: swe report followup add <text> [--project=PATH]")
             project = os.getcwd()
             words = args[1:]
             if "--project" in words:
                 index = words.index("--project")
-                if index + 1 >= len(words):
-                    raise ValueError("--project requires a path")
                 project = words[index + 1]
                 del words[index : index + 2]
             item = ledger.add(" ".join(words), project)
@@ -359,7 +374,7 @@ def _followup(args: list[str]) -> int:
             item = ledger.edit(args[1], text=" ".join(args[2:]))
         elif action == "work":
             if len(args) < 2:
-                raise ValueError("Usage: swe report followup work <id> [--resume|--new --harness NAME]")
+                raise ValueError("Usage: swe report followup work <id> [--resume|--new --harness=NAME]")
             item = ledger.get(args[1])
             if item is None:
                 raise ValueError(f"Unknown follow-up: {args[1]}")
@@ -403,12 +418,17 @@ def cmd_report(args: list[str]) -> int:
             return 1
         return _print_report_warnings(args[1])
     if command == "followups":
+        try:
+            rest = expand_value_flags(args[1:], {"--status"})
+        except ValueError as exc:
+            print(c("red", f"  {exc}"))
+            return 1
         status = None
-        if args[1:]:
-            if len(args) != 3 or args[1] != "--status":
-                print(c("red", "  Usage: swe report followups [--status open|done|dismissed]"))
+        if rest:
+            if len(rest) != 2 or rest[0] != "--status":
+                print(c("red", "  Usage: swe report followups [--status=open|done|dismissed]"))
                 return 1
-            status = args[2]
+            status = rest[1]
         try:
             return _print_followups(FollowUpLedger(), status)
         except (ValueError, MalformedReportStateError) as exc:

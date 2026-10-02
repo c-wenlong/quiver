@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver.console import c, cpad, elide, fit_widths, terminal_width, truncate
+from quiver.flags import expand_value_flags
 from quiver.harness.columns import (
     COLUMNS,
     DEFAULT_COLUMNS,
@@ -412,14 +413,25 @@ def cmd_archive(args):
     # wrong in both directions: a harness with no parser reads as unknown
     # however much you used it, and a high count can come from one long
     # evaluation rather than real adoption.
+    try:
+        args = expand_value_flags(args, {"--usage"})
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return 1
     usage = None
-    for a in list(args):
-        if a.startswith("--usage"):
-            usage = a.split("=", 1)[1] if "=" in a else ""
-            args.remove(a)
+    i = 0
+    while i < len(args):
+        if args[i] == "--usage":
+            usage = args[i + 1]
+            del args[i : i + 2]
+        else:
+            i += 1
     if usage is not None and normalise_usage(usage, "") == "":
         print(c("red", f"  Unknown usage level: {usage or '(empty)'}. "
                        f"Use {', '.join(USAGE_LEVELS)}."))
+        return 1
+    if not args:
+        print(c("red", "  Usage: swe hs archive <name> [why] [--usage=<level>]"))
         return 1
 
     tools = load_registry()
@@ -457,6 +469,11 @@ def cmd_archive(args):
 
 def cmd_list(args):
     args = list(args or [])
+    try:
+        args = expand_value_flags(args, {"--scope"})
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return 1
     if args and args[0] == "edit":
         return cmd_list_edit(args[1:])
     if args and args[0] in ("legend", "--legend", "key"):
@@ -495,10 +512,13 @@ def cmd_list(args):
     # --scope mirrors swe find: active (default) hides what you shelved,
     # archived shows only that, all shows everything with a marker.
     scope = "active"
-    for a in list(args):
-        if a.startswith("--scope"):
-            scope = a.split("=", 1)[1] if "=" in a else ""
-            args.remove(a)
+    i = 0
+    while i < len(args):
+        if args[i] == "--scope":
+            scope = args[i + 1]
+            del args[i : i + 2]
+        else:
+            i += 1
     if scope not in LIST_SCOPES:
         print(f"Unknown scope: {scope or '(empty)'}. Use {', '.join(LIST_SCOPES)}.")
         return 1
@@ -1028,10 +1048,17 @@ def _add_interactive(args: list[str]) -> int:
 
 
 def cmd_add(args):
+    try:
+        args = expand_value_flags(
+            args, {"--aliases", "--tags", "--description", "--command"}
+        )
+    except ValueError as exc:
+        print(c("red", str(exc)))
+        return 1
     if "-i" in args or "--interactive" in args:
         return _add_interactive(args)
     if len(args) < 2:
-        print(c("red", "Usage: swe add <name> <command> [description] [--aliases a,b] [--tags t1,t2]"))
+        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
         print(c("dim", "  Interactive: swe add -i   ·   swe add <name> -i"))
         return
     tools = load_registry()
@@ -1043,10 +1070,10 @@ def cmd_add(args):
 
     i = 2
     while i < len(args):
-        if args[i] == "--aliases" and i + 1 < len(args):
+        if args[i] == "--aliases":
             aliases = [a.strip() for a in args[i + 1].split(",")]
             i += 2
-        elif args[i] == "--tags" and i + 1 < len(args):
+        elif args[i] == "--tags":
             tags = [t.strip() for t in args[i + 1].split(",")]
             i += 2
         elif not args[i].startswith("--"):
@@ -1183,7 +1210,7 @@ def cmd_check(args):
             print(f"  {c('yellow', '!')}  {name:<16} found at {c('dim', hit.path)}")
             print(c("dim", f"      source: {hit.source}  ·  not on current PATH"))
             print(c("dim", f"      fix: {npm} install -g {name}   # or: swe install {name}"))
-            print(c("dim", f"      or:  swe edit {name} --command {hit.path}"))
+            print(c("dim", f"      or:  swe edit {name} --command={hit.path}"))
             off_path_notes.append(name)
         print()
 
@@ -1323,7 +1350,7 @@ def cmd_doctor(args):
             print(f"    {c('yellow', '!')} {name}  ({command})")
             print(c("dim", f"        {hit.path}  [{hit.source}]"))
             print(c("dim", f"        fix: swe install {name}"))
-            print(c("dim", f"         or: swe edit {name} --command {hit.path}"))
+            print(c("dim", f"         or: swe edit {name} --command={hit.path}"))
     else:
         print(c("dim", "    off-PATH:     none detected"))
     print()
@@ -1366,9 +1393,15 @@ def cmd_install(args):
     from quiver.harness.tools import live_version
 
     if not args:
-        print(c("red", "Usage: swe install <name|npm-package> [--package <pkg>] [--command <cmd>]"))
+        print(c("red", "Usage: swe install <name|npm-package> [--package=<pkg>] [--command=<cmd>]"))
         print(c("dim", "  Example: swe install mastracode"))
-        print(c("dim", "           swe install jules --package @google/jules"))
+        print(c("dim", "           swe install jules --package=@google/jules"))
+        return 1
+
+    try:
+        args = expand_value_flags(args, {"--package", "--command"})
+    except ValueError as exc:
+        print(c("red", str(exc)))
         return 1
 
     name = args[0]
@@ -1377,10 +1410,10 @@ def cmd_install(args):
     dry_run = False
     i = 1
     while i < len(args):
-        if args[i] == "--package" and i + 1 < len(args):
+        if args[i] == "--package":
             package = args[i + 1]
             i += 2
-        elif args[i] == "--command" and i + 1 < len(args):
+        elif args[i] == "--command":
             command = args[i + 1]
             i += 2
         elif args[i] in ("--dry-run", "-n"):
@@ -1446,7 +1479,7 @@ def cmd_install(args):
 
     if result.returncode != 0:
         print(c("red", f"  npm install exited with code {result.returncode}"))
-        print(c("dim", "  Tip: if the package name differs, try --package <npm-name>"))
+        print(c("dim", "  Tip: if the package name differs, try --package=<npm-name>"))
         return result.returncode
 
     # Re-hash PATH resolution
@@ -1572,20 +1605,20 @@ def _parse_set_string(raw: str) -> dict:
 
 def _parse_edit_flags(args: list[str]) -> tuple[dict, list[str]]:
     """Return (updates, remaining_positional_args)."""
+    args = expand_value_flags(
+        args, {f"--{field}" for field in EDITABLE_FIELDS} | {"--set"}
+    )
     updates: dict = {}
     rest: list[str] = []
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg == "--set" and i + 1 < len(args):
+        if arg == "--set":
             updates.update(_parse_set_string(args[i + 1]))
             i += 2
             continue
         if arg.startswith("--") and arg[2:] in EDITABLE_FIELDS:
-            field = arg[2:]
-            if i + 1 >= len(args):
-                raise ValueError(f"Missing value for --{field}")
-            updates[field] = args[i + 1]
+            updates[arg[2:]] = args[i + 1]
             i += 2
             continue
         if arg.startswith("--"):
@@ -1752,9 +1785,9 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
 def cmd_edit(args):
     """Edit harness registry fields (flags or interactive)."""
     if not args:
-        print(c("red", "Usage: swe edit <name|alias> [--field value ...]"))
+        print(c("red", "Usage: swe edit <name|alias> [--field=value ...]"))
         print(c("dim", "  Interactive: swe edit mastracode"))
-        print(c("dim", "  Flags:       swe edit mastracode --description '...' --aliases mc"))
+        print(c("dim", "  Flags:       swe edit mastracode --description='...' --aliases=mc"))
         return 1
 
     try:
@@ -1764,7 +1797,7 @@ def cmd_edit(args):
         return 1
 
     if not rest:
-        print(c("red", "Usage: swe edit <name|alias> [--field value ...]"))
+        print(c("red", "Usage: swe edit <name|alias> [--field=value ...]"))
         return 1
 
     key = rest[0]

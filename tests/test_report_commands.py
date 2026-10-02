@@ -68,9 +68,9 @@ class ReportCommandsTest(unittest.TestCase):
 
     def test_generate_flags_are_explained_by_distinct_fields(self):
         parsed = _parse_generate_args([
-            "-d", "5", "--here", "--session-harness", "claude",
-            "--session-model", "haiku", "--session-arg", "--server=local",
-            "--writer-harness", "codex", "--writer-model", "strong",
+            "-d", "5", "--here", "--session-harness=claude",
+            "--session-model=haiku", "--session-arg=--server=local",
+            "--writer-harness=codex", "--writer-model=strong",
         ])
         self.assertEqual(parsed.days, 5)
         self.assertTrue(parsed.here)
@@ -238,7 +238,7 @@ class ReportCommandsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ledger = FollowUpLedger(root=tmp, clock=lambda: "2026-08-01T00:00:00+00:00")
             with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
-                self.assertEqual(_followup(["add", "Ship", "the", "fix", "--project", tmp]), 0)
+                self.assertEqual(_followup(["add", "Ship", "the", "fix", f"--project={tmp}"]), 0)
                 item = ledger.list()[0]
                 self.assertEqual(_followup(["edit", item.id, "Ship", "the", "tested", "fix"]), 0)
                 self.assertEqual(_followup(["done", item.id]), 0)

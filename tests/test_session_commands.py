@@ -59,7 +59,7 @@ class SessionCommandsTest(unittest.TestCase):
         self.assertIn("launching in session directory", note.call_args[0][0])
 
     def test_parse_search_flag(self):
-        parsed = _parse_session_args(["20", "--search", "login"])
+        parsed = _parse_session_args(["20", "--search=login"])
         self.assertIsNotNone(parsed)
         limit, agent, cwd, use, search = parsed
         self.assertEqual(limit, 20)
@@ -78,7 +78,7 @@ class SessionCommandsTest(unittest.TestCase):
         self.assertEqual(parsed.days, 5)
         self.assertFalse(parsed.limit_explicit)
 
-        parsed = _parse_session_args(["20", "--weeks", "3"])
+        parsed = _parse_session_args(["20", "--weeks=3"])
         self.assertEqual(parsed.weeks, 3)
         self.assertEqual(parsed.limit, 20)
         self.assertTrue(parsed.limit_explicit)
@@ -92,6 +92,11 @@ class SessionCommandsTest(unittest.TestCase):
             self.assertIsNone(_parse_session_args(["-d", "0"]))
             self.assertIsNone(_parse_session_args(["-w", "nope"]))
             self.assertIsNone(_parse_session_args(["-s", "2026-07-01"]))
+
+    def test_rejects_space_form_long_flags(self):
+        with patch("builtins.print"):
+            self.assertIsNone(_parse_session_args(["--agent", "claude"]))
+            self.assertIsNone(_parse_session_args(["--days", "5"]))
 
     def test_filter_search(self):
         sessions = [
