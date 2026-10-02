@@ -312,5 +312,91 @@ class CodexSliceIOTest(unittest.TestCase):
             self.assertEqual(after_first, p.read_text())
 
 
+class CodexEdgeCaseTest(unittest.TestCase):
+    """Stray ``[mcp_servers*]`` blocks and datetime values."""
+
+    NONCONTIGUOUS = """\
+model = "gpt-5.5"
+
+[mcp_servers.a]
+command = "a"
+
+[projects.p]
+path = "/tmp"
+
+[mcp_servers.b]
+url = "https://b.example"
+
+[tui]
+x = 1
+"""
+
+    def test_stray_mcp_section_loads_and_is_written_once(self):
+        pre, region, post = split_codex_toml(self.NONCONTIGUOUS)
+        self.assertNotIn("[mcp_servers", post)
+        servers = parse_codex_mcp_region(region)
+        self.assertEqual(sorted(servers), ["a", "b"])
+        out = apply_merges(self.NONCONTIGUOUS, servers)
+        self.assertEqual(out.count("[mcp_servers.b]"), 1)
+        # Whole file still parses; non-mcp sections untouched.
+        parsed = tomllib.loads(out)
+        self.assertEqual(parsed["projects"]["p"]["path"], "/tmp")
+        self.assertEqual(parsed["tui"]["x"], 1)
+
+    def test_save_round_trip_through_noncontiguous_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "codex.toml"
+            p.write_text(self.NONCONTIGUOUS)
+            servers = load_codex_servers(p)
+            self.assertEqual(sorted(servers), ["a", "b"])
+            save_codex_servers(servers, p)
+            reloaded = tomllib.loads(p.read_text())
+            self.assertEqual(sorted(reloaded["mcp_servers"]), ["a", "b"])
+
+    def test_multiline_string_holding_a_fake_header_is_not_a_section(self):
+        # A '''/\"\"\" string in a later section containing a
+        # ``[mcp_servers.x]`` line is text, not a table — treating it as
+        # one left the real section with an unterminated string.
+        doc = (
+            '[mcp_servers.a]\ncommand = "a"\n\n'
+            '[notes]\ndesc = """\n[mcp_servers.fake]\ncommand = "x"\n"""\n\n'
+            '[tui]\nx = 1\n'
+        )
+        servers = parse_codex_mcp_region(split_codex_toml(doc)[1])
+        self.assertEqual(sorted(servers), ["a"])
+        out = apply_merges(doc, servers)
+        parsed = tomllib.loads(out)
+        self.assertIn("[mcp_servers.fake]", parsed["notes"]["desc"])
+        self.assertEqual(sorted(parsed["mcp_servers"]), ["a"])
+
+    def test_comment_mentioning_a_delimiter_cannot_hide_a_table(self):
+        # `# ... """` before a real header used to open a fake multiline
+        # string, hiding the table from load and doubling it on save.
+        doc = (
+            '[mcp_servers.a]\ncommand = "a"\n\n'
+            '[projects]\n# delimiters: """ and \'\'\'\n'
+            '[projects.p]\npath = "/tmp"\n\n'
+            '[mcp_servers.b]\nurl = "https://b.example"  # ends \'"""\' here\n'
+        )
+        pre, region, post = split_codex_toml(doc)
+        servers = parse_codex_mcp_region(region)
+        self.assertEqual(sorted(servers), ["a", "b"])
+
+    def test_delimiter_inside_quoted_value_is_not_multiline(self):
+        doc = "[mcp_servers.a]\nnote = '\"\"\"'\n\n[tui]\nx = 1\n"
+        _, region, post = split_codex_toml(doc)
+        self.assertIn("[tui]", post)
+        self.assertEqual(sorted(parse_codex_mcp_region(region)), ["a"])
+
+    def test_datetime_values_round_trip(self):
+        # tomllib parses bare ISO datetimes to datetime objects; the writer
+        # used to TypeError on them, crashing sync.
+        doc = '[mcp_servers.a]\ncreated = 2024-01-02T03:04:05Z\nstamp = 2024-01-02\n'
+        servers = parse_codex_mcp_region(split_codex_toml(doc)[1])
+        out = apply_merges(doc, servers)
+        parsed = tomllib.loads(out)
+        self.assertEqual(str(parsed["mcp_servers"]["a"]["created"]), "2024-01-02 03:04:05+00:00")
+
+
 if __name__ == "__main__":
     unittest.main()

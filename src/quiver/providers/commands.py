@@ -7,7 +7,7 @@ from pathlib import Path
 
 from quiver.console import c, cpad, truncate
 from quiver.flags import expand_value_flags
-from quiver.providers.defaults import DEFAULT_PROVIDERS
+from quiver.providers.defaults import DEFAULT_PROVIDERS, derived_alias
 from quiver.providers.discover import discover_provider_keys
 from quiver.providers.help_text import print_providers_help
 from quiver.providers.keys import default_keys_dir
@@ -448,6 +448,7 @@ def cmd_add(args: list[str]) -> int:
     description = ""
     url = ""
     key_filename = name
+    file_flag_given = False
     env_vars: list[str] = []
 
     i = 1
@@ -461,6 +462,7 @@ def cmd_add(args: list[str]) -> int:
             i += 2
         elif a == "--file":
             key_filename = args[i + 1]
+            file_flag_given = True
             i += 2
         elif a.startswith("--"):
             print(c("red", f"Unknown flag: {a}"))
@@ -477,8 +479,46 @@ def cmd_add(args: list[str]) -> int:
         )
         return 1
 
-    providers = load_registry()
-    existing = providers.get(name, {})
+    # include_removed=True is load-bearing: saving a registry loaded
+    # without it silently drops the whole _removed tombstone list, and
+    # every provider the user had removed comes back on the next load.
+    providers = load_registry(include_removed=True)
+    # An alias or derived name resolves to the canonical slug so
+    # ``providers add moonshot`` updates kimi instead of forking a
+    # duplicate entry. The defaults map is a fallback: a removed builtin
+    # is absent from the loaded registry, so ``add together-ai`` would
+    # otherwise fork a bare entry while together_ai stays tombstoned.
+    default_aliases = {
+        alias: slug
+        for slug, info in DEFAULT_PROVIDERS.items()
+        for alias in {slug, derived_alias(info)}
+        if alias
+    }
+    canonical = resolve(providers, name) or default_aliases.get(name) or name
+    if canonical == "_removed":
+        print(c("red", f"Provider name {name!r} is reserved."))
+        return 1
+    name = canonical
+
+    removed = providers.get("_removed") or []
+    if name in removed:
+        # Explicitly re-adding a removed provider lifts its own
+        # tombstone; every other removal stays recorded.
+        removed = [r for r in removed if r != name]
+    if removed:
+        providers["_removed"] = removed
+    else:
+        providers.pop("_removed", None)
+
+    # A removed builtin re-add seeds from its default catalog entry —
+    # otherwise the bare record would win over the default merge and
+    # lose env_vars/url/description.
+    existing = providers.get(name) or DEFAULT_PROVIDERS.get(name, {})
+    # Without an explicit --file the key filename follows the canonical
+    # slug (or the entry's existing pointer), never the alias the user
+    # typed — `add together-ai` must not rename together_ai's key file.
+    if not file_flag_given:
+        key_filename = existing.get("key_filename") or name
     action = "Updated" if name in providers else "Added"
     # Note: `name` and `aliases` are NOT persisted here — they are derived
     # from `env_vars[0]` by `load_registry._hydrate` at load time, so the

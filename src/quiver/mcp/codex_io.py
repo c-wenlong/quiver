@@ -37,6 +37,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from datetime import date, datetime, time
 from pathlib import Path
 
 from quiver.paths import atomic_write_text
@@ -55,43 +56,111 @@ _MCP_HEADER_RE = re.compile(
 )
 
 
+def _is_mcp_header(stripped_line: str) -> bool:
+    """True for a ``[mcp_servers…]`` table header (``.``/``]`` next char)."""
+    if not stripped_line.startswith("[mcp_servers"):
+        return False
+    rest = stripped_line[len("[mcp_servers"):]
+    return not rest or rest[0] in (".", "]")
+
+
+def _table_headers(lines: list[str]) -> list[int]:
+    """Line indices that begin real TOML table headers.
+
+    Tracks strings and comments while scanning: a ``[mcp_servers.x]``
+    line inside a ``'''…'''``/``\"\"\"…\"\"\"`` multiline string is text,
+    not a table, and a delimiter inside a ``#`` comment (or inside an
+    ordinary quoted value, e.g. ``x = '\"\"\"'``) cannot fake an open
+    multiline string. Basic strings honor ``\\`` escapes.
+    """
+    headers: list[int] = []
+    in_ml: str | None = None
+    for i, ln in enumerate(lines):
+        s = ln.lstrip()
+        if in_ml is not None:
+            if in_ml in s:
+                in_ml = None
+            continue
+        is_header = s.startswith("[")
+        pos = 0
+        while pos < len(s):
+            if s.startswith(('"""', "'''"), pos):
+                delim = s[pos:pos + 3]
+                close = s.find(delim, pos + 3)
+                if close == -1:
+                    in_ml = delim
+                    break
+                pos = close + 3
+                continue
+            ch = s[pos]
+            if ch == "#":
+                break
+            if ch == "'":
+                end = s.find("'", pos + 1)
+                if end == -1:
+                    break
+                pos = end + 1
+                continue
+            if ch == '"':
+                pos += 1
+                while pos < len(s):
+                    if s[pos] == "\\":
+                        pos += 2
+                        continue
+                    if s[pos] == '"':
+                        pos += 1
+                        break
+                    pos += 1
+                continue
+            pos += 1
+        if is_header:
+            headers.append(i)
+    return headers
+
+
 def split_codex_toml(text: str) -> tuple[str, str, str]:
-    """Split TOML into ``(pre, mcp_region, post)`` preserving everything else."""
+    """Split TOML into ``(pre, mcp_region, post)`` preserving everything else.
+
+    ``[mcp_servers*]`` tables are legal anywhere in a TOML file, not just
+    one contiguous run. A second block living past other sections used to
+    survive in ``post`` and be written a second time on save (invalid
+    TOML: duplicate table). Every later ``[mcp_servers*]`` block is folded
+    into ``region`` so the loader sees it and the saver writes it once.
+    """
     if not text:
         return "", "", ""
 
     lines = text.splitlines(keepends=True)
     n = len(lines)
+    headers = _table_headers(lines)
+    mcp_headers = [h for h in headers if _is_mcp_header(lines[h].lstrip())]
 
-    start = None
-    for i, ln in enumerate(lines):
-        stripped = ln.lstrip()
-        if stripped.startswith("[mcp_servers"):
-            # Match only if this is a real [mcp_servers*] header
-            # (next char is '.' or ']')
-            rest = stripped[len("[mcp_servers"):]
-            if not rest or rest[0] in (".", "]"):
-                start = i
-                break
-
-    if start is None:
+    if not mcp_headers:
         return text, "", ""
 
-    end = n
-    for j in range(start + 1, n):
-        stripped = lines[j].lstrip()
-        if stripped.startswith("["):
-            # Stop when we hit the next non-mcp_servers section.
-            if not (stripped.startswith("[mcp_servers")
-                    and (len(stripped) == len("[mcp_servers")
-                         or stripped[len("[mcp_servers")] in (".",))):
-                end = j
-                break
+    start = mcp_headers[0]
+    # The contiguous run ends at the first non-mcp table header after it.
+    end = next((h for h in headers if h > start and not _is_mcp_header(lines[h].lstrip())), n)
 
     pre = "".join(lines[:start])
     region = "".join(lines[start:end])
-    post = "".join(lines[end:])
-    return pre, region, post
+
+    # Stray mcp sections past the contiguous run move into the region;
+    # everything around them stays in ``post``.
+    extra_ranges = []
+    for h in mcp_headers:
+        if h < end:
+            continue
+        nxt = next((x for x in headers if x > h), n)
+        extra_ranges.append((h, nxt))
+    post_lines: list[str] = []
+    extra_at = {i: (h, nxt) for h, nxt in extra_ranges for i in range(h, nxt)}
+    for k in range(end, n):
+        if k in extra_at:
+            continue
+        post_lines.append(lines[k])
+    region += "".join("".join(lines[h:nxt]) for h, nxt in extra_ranges)
+    return pre, region, "".join(post_lines)
 
 
 def parse_codex_mcp_region(region: str) -> dict[str, dict]:
@@ -149,6 +218,10 @@ def _toml_value(v) -> str:
         ) + " }"
     if isinstance(v, str):
         return json.dumps(v, ensure_ascii=False)
+    # TOML date/time literals are bare ISO strings — tomllib hands them
+    # back as datetime/date/time objects, which must round-trip.
+    if isinstance(v, (datetime, date, time)):
+        return v.isoformat()
     raise TypeError(f"Unsupported TOML value type: {type(v).__name__}")
 
 
@@ -169,7 +242,7 @@ def render_codex_server(name: str, canonical: dict) -> str:
             # Standard-shape env/headers + any other top-level mapping → nested table.
             nested.append((key, val))
             continue
-        if isinstance(val, (str, list, bool, int, float)):
+        if isinstance(val, (str, list, bool, int, float, datetime, date, time)):
             lines.append(f"{_toml_key(key)} = {_toml_value(val)}")
 
     for sub_name, sub_dict in nested:
