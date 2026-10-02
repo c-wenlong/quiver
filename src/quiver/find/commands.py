@@ -1009,6 +1009,10 @@ def cmd_find(args) -> int:
     args = [a for a in args if a != "--full"]
 
     topic = args[0] if args else None
+    rest = args[1:]
+    if rest:
+        print(f"Unexpected args: {' '.join(rest)}")
+        return 1
     if interactive:
         return _browse(topic, scope, harness)
 

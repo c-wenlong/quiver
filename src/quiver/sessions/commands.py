@@ -65,6 +65,9 @@ def cmd_models(args):
             by_tool = True
         elif arg in ("--providers", "-p"):
             show_providers = True
+        else:
+            print(c("red", f"Unknown argument: {arg}"))
+            return 1
 
     raw = collect_model_usage()
     if not raw:

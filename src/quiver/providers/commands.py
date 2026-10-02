@@ -62,11 +62,21 @@ def cmd_list(args: list[str]) -> int:
     show_desc = any(a in ("-d", "--desc") for a in args)
     args = [a for a in args if a not in ("-d", "--desc")]
 
+    filt = None
+    if args:
+        bad = next((a for a in args if a.startswith("-")), None)
+        if bad:
+            print(c("red", f"Unknown flag: {bad}"))
+            return 1
+        if len(args) > 1:
+            print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
+            return 1
+        filt = args[0].lower()
+
     providers = load_registry()
     keys_dir = (api_keys_dir or default_keys_dir()).expanduser()
     rows = discover_provider_keys(providers, keys_dir)
-    if args:
-        filt = args[0].lower()
+    if filt:
         rows = [
             r
             for r in rows
@@ -312,6 +322,9 @@ def cmd_info(args: list[str]) -> int:
     if not args:
         print(c("red", "Usage: swe providers info <name|alias>"))
         return 1
+    if len(args) > 1:
+        print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
+        return 1
 
     providers = load_registry()
     name = resolve(providers, args[0])
@@ -489,6 +502,9 @@ def cmd_add(args: list[str]) -> int:
 def cmd_remove(args: list[str]) -> int:
     if not args:
         print(c("red", "Usage: swe providers remove <name|alias>"))
+        return 1
+    if len(args) > 1:
+        print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
         return 1
     providers = load_registry(include_removed=True)
     name = resolve(providers, args[0])

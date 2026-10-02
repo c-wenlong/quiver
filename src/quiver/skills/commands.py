@@ -70,7 +70,10 @@ def cmd_skills(args):
             show_desc = True
         elif arg in ("list", "ls"):
             continue
-        elif not arg.startswith("-"):
+        elif arg.startswith("-"):
+            print(c("red", f"  Unknown flag: {arg}"))
+            return 1
+        else:
             filt = arg.lower()
 
     skills = discover_skills()
