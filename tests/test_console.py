@@ -257,8 +257,10 @@ class SanitizeTest(unittest.TestCase):
         from quiver.console import sanitize_document
 
         self.assertEqual(sanitize_document("a\nb\tc"), "a\nb\tc")
-        # \r becomes a real newline rather than fusing words.
+        # \r becomes a real newline rather than fusing words; a CRLF pair
+        # from JSON/SQLite storage collapses to one, not a blank line.
         self.assertEqual(sanitize_document("warning\rerror"), "warning\nerror")
+        self.assertEqual(sanitize_document("a\r\nb"), "a\nb")
         # Every other control vanishes so a split credential stays one token.
         self.assertEqual(sanitize_document("a\x07b\x0bc\x0cd\ne"), "abcd\ne")
         self.assertEqual(sanitize_document("x\x1b]8;;u\x07y"), "xy")

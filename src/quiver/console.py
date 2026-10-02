@@ -115,13 +115,12 @@ _CONTROLS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 # The document flavour keeps real line breaks and tabs: a transcript is a
 # document, not a label, and flattening it would lose every paragraph.
-# ``\r`` alone maps to a newline (its terminal meaning) so it cannot fuse
-# words — every other control is deleted outright: deleting, not spacing
-# or newline-splitting, is what lets a byte inside a credential like
-# ``KEY=sec<BEL>ret`` stay one token for the redactor. A \r inside a value
-# is indistinguishable from a real newline, and no line-based redactor
-# can remove a secret that genuinely spans two lines.
-_LINEISH_RE = re.compile(r"\r")
+# ``\r`` maps to a newline (its terminal meaning, CRLF collapsing to one)
+# so it cannot fuse words — every other control is deleted outright:
+# deleting, not spacing or newline-splitting, is what lets a byte inside
+# a credential like ``KEY=sec<BEL>ret`` stay one token for the redactor.
+# A \r inside a value is indistinguishable from a real newline, and no
+# line-based redactor can remove a secret that genuinely spans two lines.
 _DELETE_CONTROLS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
@@ -152,7 +151,8 @@ def sanitize_document(text: str) -> str:
     token for the redactor.
     """
     s = _ESCAPES_RE.sub("", str(text))
-    s = _LINEISH_RE.sub("\n", s)
+    # CRLF is one line break; a lone \r is a line break of its own.
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
     return _DELETE_CONTROLS_RE.sub("", s)
 
 
