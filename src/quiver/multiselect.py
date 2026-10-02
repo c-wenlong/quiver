@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 
 from quiver import keys
-from quiver.console import c
+from quiver.console import c, cell_len, cellpad
 
 
 @dataclass
@@ -92,7 +92,7 @@ def _render(choices, selected, cursor, title, prev_lines: int) -> int:
             label = shown
             tail = c("dim", "  ← → to change")
         pointer = c("cyan", ">") if i == cursor else " "
-        body = f"{box} {label.ljust(12)} {c('dim', ch.about)}{tail}"
+        body = f"{box} {cellpad(label, 12)} {c('dim', ch.about)}{tail}"
         line = c("cyan", body) if i == cursor else (c("dim", body) if ch.locked else body)
         out.append(f" {pointer} {line}\r\n")
     out.append(c("dim", FOOTER) + "\r\n")
@@ -108,19 +108,16 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
     Falls back to returning the current selection unchanged when there is no
     terminal, so piping `swe list edit` cannot hang a script.
     """
+    if not choices:
+        return []
     chosen = set(selected or []) | {ch.key for ch in choices if ch.locked}
     if not _supported():
         print(c("dim", "  not a terminal, nothing changed"))
         return None
 
-    import termios
-    import tty
-
     fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
     cursor, drawn = 0, 0
-    try:
-        tty.setraw(fd)
+    with keys.raw_terminal(fd):
         # Caret off while redrawing, wheel on so a scroll moves the cursor
         # instead of arriving as loose bytes the reader has to drop.
         sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
@@ -147,14 +144,6 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
                 chosen = {ch.key for ch in choices}
             elif key == "none":
                 chosen = {ch.key for ch in choices if ch.locked}
-    finally:
-        # Every exit path, exception included: a shell left in raw mode is a
-        # far worse outcome than a mis-picked column. Tracking goes off before
-        # the termios restore, because a shell left reporting the wheel spews
-        # escape sequences at the prompt on every scroll.
-        sys.stdout.write(keys.MOUSE_OFF + "\x1b[?25h")
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-        sys.stdout.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -211,12 +200,12 @@ def _state_render(choices, cursor, title, prev_lines: int, height: int) -> int:
     )
     out.append(f"{c('bold', title)}   {tally}\r\n")
 
-    width = max((len(ch.label) for ch in choices), default=10) + 2
+    width = max((cell_len(ch.label) for ch in choices), default=10) + 2
     for i in range(top, top + view):
         ch = choices[i]
         colour, glyph = STATE_GLYPH[ch.state]
         pointer = c("cyan", ">") if i == cursor else " "
-        body = (f"{c(colour, glyph)} {ch.label.ljust(width)}"
+        body = (f"{c(colour, glyph)} {cellpad(ch.label, width)}"
                 f"{c('dim', ch.state.ljust(9))}{c('dim', ch.about)}")
         out.append(f" {pointer} {body}\r\n")
 
@@ -257,8 +246,6 @@ def statepicker(choices: list[StateChoice], title="Select",
         return None
 
     import shutil
-    import termios
-    import tty
 
     if height is None:
         # Leave room for the title, the footer, the range line, and the
@@ -266,10 +253,8 @@ def statepicker(choices: list[StateChoice], title="Select",
         height = max(5, shutil.get_terminal_size(fallback=(80, 24)).lines - 5)
 
     fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
     cursor, drawn = 0, 0
-    try:
-        tty.setraw(fd)
+    with keys.raw_terminal(fd):
         sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
             drawn = _state_render(choices, cursor, title, drawn, height)
@@ -288,7 +273,3 @@ def statepicker(choices: list[StateChoice], title="Select",
                 ch.state = STATES[(STATES.index(ch.state) + step) % len(STATES)]
             elif key in STATES:
                 choices[cursor].state = key
-    finally:
-        sys.stdout.write(keys.MOUSE_OFF + "\x1b[?25h")
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-        sys.stdout.flush()

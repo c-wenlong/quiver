@@ -2,6 +2,7 @@
 
 import os
 import re
+import unicodedata
 
 COLORS = {
     "reset": "\033[0m",
@@ -100,6 +101,60 @@ def strip_ansi(text: str) -> str:
 
 def visible_len(text: str) -> int:
     return len(strip_ansi(text))
+
+
+def cell_len(text: str) -> int:
+    """Terminal cells the text occupies, not the characters in it.
+
+    len() counts a CJK glyph and a combining accent as one each; the
+    terminal draws them as two cells and zero. Padding by len() pushed the
+    pickers' columns right whenever a label contained either. Emoji are
+    mostly East-Asian "W" and so measure 2 here — joined sequences
+    (family emoji, skin tones, flags) still render as one glyph, so the
+    joiner, variation selectors, skin-tone modifiers, tag bytes, and the
+    second regional indicator of a flag pair add nothing.
+    """
+    width = 0
+    joined = False   # next glyph is merged into the previous by ZWJ
+    last_ri = False  # previous char was a regional indicator
+    prev = ""        # last glyph that earned cells
+    for ch in strip_ansi(text):
+        if unicodedata.combining(ch):
+            continue
+        if ch == "\u200d":  # ZWJ: the next glyph merges with the last
+            joined = True
+            continue
+        if "\ufe00" <= ch <= "\ufe0f":          # variation selectors
+            # VS16 promotes an ambiguous/neutral-width glyph (a heart,
+            # a digit) into the two-cell emoji presentation.
+            if (ch == "\ufe0f" and prev and ord(prev) > 0x7F
+                    and unicodedata.east_asian_width(prev) in ("N", "A")):
+                width += 1
+            continue
+        if "\U0001f3fb" <= ch <= "\U0001f3ff":  # skin tones
+            continue
+        if "\U000e0020" <= ch <= "\U000e007f":  # tag bytes (waving flags)
+            continue
+        if "\U0001f1e6" <= ch <= "\U0001f1ff":  # regional indicators
+            if last_ri:  # second half of a flag pair adds no cells
+                last_ri = False
+                continue
+            last_ri = True
+            prev = ch
+            width += 2
+            continue
+        last_ri = False
+        if joined:
+            joined = False
+            continue
+        prev = ch
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+def cellpad(text: str, width: int) -> str:
+    """Pad on the right to ``width`` terminal cells."""
+    return text + " " * max(0, width - cell_len(text))
 
 
 def lpad(text: str, width: int) -> str:

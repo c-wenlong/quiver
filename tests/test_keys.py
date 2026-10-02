@@ -11,8 +11,10 @@ write end held open so the poll times out, and a closed stdin needs an
 empty read.
 """
 
+import io
 import os
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 from quiver import keys
@@ -123,6 +125,25 @@ class EscapeTest(unittest.TestCase):
     def test_a_sequence_cut_short_by_a_closed_stdin_is_dropped(self):
         self.assertEqual(feed(b"\x1b["), "")
 
+    def test_a_sequence_left_open_mid_way_does_not_block(self):
+        """A terminal that dies after "Esc [" used to hang the widget on a
+        read for a final byte that would never come; now every byte of the
+        sequence gets the same short poll the introducer got."""
+        import threading
+
+        r, w = os.pipe()
+        os.write(w, b"\x1b[")
+        try:
+            out = []
+            t = threading.Thread(target=lambda: out.append(keys.read_key(r)))
+            t.start()
+            t.join(5)
+            self.assertFalse(t.is_alive())
+            self.assertEqual(out, [""])
+        finally:
+            os.close(w)
+            os.close(r)
+
 
 class MouseTest(unittest.TestCase):
     def test_the_wheel_reads_as_one_line_up_or_down(self):
@@ -219,6 +240,258 @@ class WidgetCancelTest(unittest.TestCase):
             multiselect.multiselect,
             multiselect.Choice("a", "a"), ["enter"])
         self.assertEqual(result, [])
+
+    def test_no_choices_is_an_empty_selection_not_a_crash(self):
+        """An empty list used to meet "% 0" on the first arrow key."""
+        from quiver import multiselect
+
+        self.assertEqual(multiselect.multiselect([]), [])
+        self.assertEqual(multiselect.statepicker([]), [])
+
+
+class RawTerminalTest(unittest.TestCase):
+    """The shared setraw/restore wrapper every widget enters through."""
+
+    def _pty(self):
+        try:
+            import pty
+        except ImportError:
+            self.skipTest("no pty module")
+        return pty.openpty()
+
+    def _assert_attrs_restored(self, fd, before):
+        """lflag carries read-only status bits (PENDIN and friends) that
+        tcgetattr reports but tcsetattr ignores, so the comparison is the
+        flags setraw actually changes rather than a whole-list equality."""
+        import termios
+
+        after = termios.tcgetattr(fd)
+        self.assertEqual(after[:3], before[:3])
+        mask = (termios.ICANON | termios.ECHO | termios.ECHONL |
+                termios.ISIG | termios.IEXTEN)
+        self.assertEqual(after[3] & mask, before[3] & mask)
+        self.assertEqual(after[4:], before[4:])
+
+    def test_termios_is_restored_on_exit(self):
+        import termios
+
+        master, slave = self._pty()
+        try:
+            before = termios.tcgetattr(slave)
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    self.assertFalse(
+                        termios.tcgetattr(slave)[3] & termios.ICANON)
+            self._assert_attrs_restored(slave, before)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_cleanup_sequences_are_written_before_the_restore(self):
+        master, slave = self._pty()
+        try:
+            out = io.StringIO()
+            with patch("sys.stdout", out):
+                with keys.raw_terminal(slave):
+                    pass
+            self.assertIn(keys.MOUSE_OFF + "\x1b[?25h", out.getvalue())
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_signal_handlers_come_off_with_the_context(self):
+        import signal
+
+        master, slave = self._pty()
+        try:
+            before = signal.getsignal(signal.SIGTERM)
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    self.assertNotEqual(
+                        signal.getsignal(signal.SIGTERM), before)
+                self.assertEqual(signal.getsignal(signal.SIGTERM), before)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_a_fatal_signal_still_hands_the_terminal_back(self):
+        if not hasattr(os, "fork"):
+            self.skipTest("no fork")
+        import signal
+        import termios
+
+        master, slave = self._pty()
+        try:
+            before = termios.tcgetattr(slave)
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    with keys.raw_terminal(slave):
+                        os.kill(os.getpid(), signal.SIGTERM)
+                finally:
+                    os._exit(0)
+                os._exit(0)
+            _, status = os.waitpid(pid, 0)
+            self.assertTrue(os.WIFSIGNALED(status))
+            self.assertEqual(os.WTERMSIG(status), signal.SIGTERM)
+            self._assert_attrs_restored(slave, before)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_the_signal_handler_restores_and_reraises(self):
+        """The fork test proves the real path; driving the installed
+        handler directly covers its body in the parent process, where
+        coverage can see it."""
+        import signal
+
+        master, slave = self._pty()
+        saved = {s: signal.getsignal(s)
+                 for s in (signal.SIGTERM, signal.SIGHUP)}
+        try:
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    handler = signal.getsignal(signal.SIGTERM)
+                    with patch("os.isatty", return_value=True), \
+                         patch("os.write") as wr, \
+                         patch("os.kill") as kill:
+                        handler(signal.SIGTERM, None)
+                    kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+                    self.assertEqual(
+                        wr.call_args[0][1],
+                        (keys.MOUSE_OFF + "\x1b[?25h").encode())
+                    # Not a tty, or the write itself failing: neither may
+                    # stop the restore + reraise.
+                    kill.reset_mock()
+                    with patch("os.isatty", return_value=False), \
+                         patch("os.kill") as kill:
+                        handler(signal.SIGHUP, None)
+                    with patch("os.isatty", return_value=True), \
+                         patch("os.write", side_effect=OSError("gone")), \
+                         patch("os.kill") as kill:
+                        handler(signal.SIGHUP, None)
+        finally:
+            # Put back what was there, not defaults: the runner may own
+            # these handlers.
+            for s, h in saved.items():
+                signal.signal(s, h)
+            os.close(master)
+            os.close(slave)
+
+    def test_an_ignored_signal_is_never_trapped(self):
+        """If the caller silenced a signal, raw_terminal leaves it alone:
+        installing our cleanup on it would strand the still-running
+        widget in cooked mode when the signal next arrived."""
+        import signal
+
+        master, slave = self._pty()
+        saved = signal.getsignal(signal.SIGHUP)
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    self.assertEqual(
+                        signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
+            self.assertEqual(signal.getsignal(signal.SIGHUP),
+                             signal.SIG_IGN)
+        finally:
+            signal.signal(signal.SIGHUP, saved)
+            os.close(master)
+            os.close(slave)
+
+    def test_a_returning_python_handler_gets_raw_mode_back(self):
+        """A Python-level handler that returns instead of unwinding means
+        the app continues: the terminal is re-rawed and the cleanup
+        handler retaken for the next signal."""
+        import signal
+        import termios
+
+        master, slave = self._pty()
+        ran = []
+        saved = signal.getsignal(signal.SIGQUIT)
+        try:
+            signal.signal(signal.SIGQUIT, lambda s, f: ran.append(s))
+            with patch("sys.stdout", io.StringIO()):
+                with keys.raw_terminal(slave):
+                    handler = signal.getsignal(signal.SIGQUIT)
+                    with patch("os.isatty", return_value=False), \
+                         patch("os.kill") as kill:
+                        handler(signal.SIGQUIT, None)
+                    self.assertEqual(ran, [signal.SIGQUIT])
+                    kill.assert_not_called()
+                    self.assertFalse(
+                        termios.tcgetattr(slave)[3] & termios.ICANON)
+                    self.assertIs(signal.getsignal(signal.SIGQUIT), handler)
+        finally:
+            signal.signal(signal.SIGQUIT, saved)
+            os.close(master)
+            os.close(slave)
+
+    def test_a_failed_restore_is_swallowed(self):
+        """tcsetattr failing inside _restore must not mask the widget's
+        own exception or escape the context."""
+        import termios
+
+        master, slave = self._pty()
+
+        def boom(fd, when, attrs):
+            raise termios.error(5, "boom")
+
+        try:
+            # tty.setraw keeps its own binding of tcsetattr, so the patch
+            # only lands on _restore's call — which is the one under test.
+            with patch("sys.stdout", io.StringIO()), \
+                 patch("termios.tcsetattr", side_effect=boom):
+                with keys.raw_terminal(slave):
+                    pass
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_a_cleanup_write_failure_is_swallowed(self):
+        master, slave = self._pty()
+        out = mock.Mock()
+        out.write.side_effect = OSError("dead stdout")
+        try:
+            with patch("sys.stdout", out):
+                with keys.raw_terminal(slave):
+                    pass
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_signal_install_and_restore_failures_are_tolerated(self):
+        """Not the main thread, or a handler already gone: neither may
+        break the widget."""
+        import signal
+
+        master, slave = self._pty()
+        saved = {s: signal.getsignal(s)
+                 for s in (signal.SIGTERM, signal.SIGINT, signal.SIGQUIT,
+                           signal.SIGHUP)}
+        real_signal = signal.signal
+        term_calls = [0]
+
+        def flaky(sig, handler):
+            if sig == signal.SIGHUP:
+                raise ValueError("not the main thread")
+            if sig == signal.SIGTERM:
+                term_calls[0] += 1
+                if term_calls[0] == 2:
+                    raise ValueError("handler gone")
+            return real_signal(sig, handler)
+
+        try:
+            with patch("sys.stdout", io.StringIO()), \
+                 patch("signal.signal", side_effect=flaky):
+                with keys.raw_terminal(slave):
+                    pass
+        finally:
+            # Restore whatever the runner had, never bare defaults.
+            for s, h in saved.items():
+                signal.signal(s, h)
+            os.close(master)
+            os.close(slave)
 
 
 class WidgetsShareItTest(unittest.TestCase):

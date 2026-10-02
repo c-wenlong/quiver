@@ -225,9 +225,6 @@ def pick_session(
         print(c("dim", "  not a terminal, nothing selected"))
         return None
 
-    import termios
-    import tty
-
     if height is None:
         # Leave room for the header, the footer, the range line, and the
         # shell prompt that follows.
@@ -236,10 +233,8 @@ def pick_session(
 
     footer = FOOTER + (PREVIEW_HINT if preview is not None else "")
     fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
     cursor, drawn = 0, 0
-    try:
-        tty.setraw(fd)
+    with keys.raw_terminal(fd):
         # Caret off while redrawing, wheel on for the whole session: tracking
         # stays enabled across the alternate screen, so the pager scrolls on
         # the same reports the list moves on.
@@ -277,10 +272,3 @@ def pick_session(
                     sys.stdout.flush()
                 if outcome == "enter":
                     return cursor
-    finally:
-        # Every exit path, exception included. Tracking goes off before the
-        # termios restore, because a shell left reporting the wheel spews
-        # escape sequences at the prompt on every scroll.
-        sys.stdout.write(MOUSE_OFF + "\x1b[?25h")
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-        sys.stdout.flush()
