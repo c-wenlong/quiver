@@ -365,16 +365,23 @@ def _report_help() -> int:
 
 
 def _followup(args: list[str]) -> int:
-    # `followup --help`, `followup help`, and `followup <action> [args]
+    # `followup --help`, `followup help`, and `followup <action> ...
     # --help` all print the report help rather than erroring or
-    # recording a follow-up literally named "--help". A help flag only
-    # routes in first or last position so mid-text `--help` stays part
-    # of the note (`edit fu_x ask for --help output`), and bare `help`
-    # only routes in first position.
+    # recording a follow-up literally named "--help". For flag-only
+    # actions (done/dismiss/reopen/work) a help flag routes anywhere;
+    # for free-text actions (add/edit) only first or last position, so
+    # mid-text `--help` stays part of the note (`edit fu_x ask for
+    # --help output`). Bare `help` routes only in first position.
     if not args:
         ledger = FollowUpLedger()
         return _print_followups(ledger, "open")
-    if args[0] in ("-h", "--help", "help") or args[-1] in ("-h", "--help"):
+    wants_help = args[0] in ("-h", "--help", "help")
+    if not wants_help:
+        if args[0] in ("add", "edit"):
+            wants_help = args[-1] in ("-h", "--help")
+        else:
+            wants_help = "-h" in args or "--help" in args
+    if wants_help:
         return _report_help()
     ledger = FollowUpLedger()
     action = args[0]

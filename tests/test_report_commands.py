@@ -280,6 +280,8 @@ class HelpRoutesTest(unittest.TestCase):
             ["followup", "done", "fu_x", "--help"],
             ["followup", "add", "ship", "fix", "--help"],
             ["followup", "work", "-h"],
+            ["followup", "work", "--help", "--new"],
+            ["followup", "done", "--help", "fu_x"],
             ["followups", "--help"],
             ["warnings", "--help"],
             ["warnings", "x.json", "--help"],
