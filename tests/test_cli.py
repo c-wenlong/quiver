@@ -17,5 +17,23 @@ class ProvidersCliRoutingTest(unittest.TestCase):
         self.assertIs(COMMANDS["pv"], cmd_providers)
 
 
+class ProvidersHelpRouteTest(unittest.TestCase):
+    """`swe providers --help` reaches the group's own fuller help, not
+    the summary that ends by pointing back at `swe providers --help`."""
+
+    def test_providers_help_bypasses_top_level_summary(self):
+        import sys
+        from quiver.cli import main
+
+        for argv in (["swe", "providers", "--help"], ["swe", "pv", "-h"]):
+            with self.subTest(argv=argv):
+                with mock.patch.object(sys, "argv", argv), mock.patch(
+                    "quiver.cli.providers_cli.main", return_value=0
+                ) as provider_main:
+                    result = main()
+                self.assertEqual(result, 0)
+                provider_main.assert_called_once_with([argv[2]])
+
+
 if __name__ == "__main__":
     unittest.main()
