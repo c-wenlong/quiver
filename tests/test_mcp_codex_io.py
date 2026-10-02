@@ -353,6 +353,22 @@ x = 1
             reloaded = tomllib.loads(p.read_text())
             self.assertEqual(sorted(reloaded["mcp_servers"]), ["a", "b"])
 
+    def test_multiline_string_holding_a_fake_header_is_not_a_section(self):
+        # A '''/\"\"\" string in a later section containing a
+        # ``[mcp_servers.x]`` line is text, not a table — treating it as
+        # one left the real section with an unterminated string.
+        doc = (
+            '[mcp_servers.a]\ncommand = "a"\n\n'
+            '[notes]\ndesc = """\n[mcp_servers.fake]\ncommand = "x"\n"""\n\n'
+            '[tui]\nx = 1\n'
+        )
+        servers = parse_codex_mcp_region(split_codex_toml(doc)[1])
+        self.assertEqual(sorted(servers), ["a"])
+        out = apply_merges(doc, servers)
+        parsed = tomllib.loads(out)
+        self.assertIn("[mcp_servers.fake]", parsed["notes"]["desc"])
+        self.assertEqual(sorted(parsed["mcp_servers"]), ["a"])
+
     def test_datetime_values_round_trip(self):
         # tomllib parses bare ISO datetimes to datetime objects; the writer
         # used to TypeError on them, crashing sync.

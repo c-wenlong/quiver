@@ -1093,7 +1093,8 @@ class CmdAddTest(unittest.TestCase):
     def test_add_via_alias_updates_canonical_entry(self):
         # Aliases are derived from env_vars[0] at load — slug "acme" with
         # env BAR_API_KEY carries alias "bar"; `add bar` must update
-        # "acme", not fork a duplicate entry.
+        # "acme", not fork a duplicate entry — and must keep acme's key
+        # filename, not rename it to the alias.
         with TemporaryDirectory() as tmp:
             patches, registry_file = self._patches(Path(tmp))
             self._write_registry(registry_file, {
@@ -1108,6 +1109,33 @@ class CmdAddTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertNotIn("bar", saved)
         self.assertEqual(saved["acme"]["env_vars"], ["BAR_API_KEY"])
+        self.assertEqual(saved["acme"]["key_filename"], "acme")
+
+    def test_add_removed_builtin_by_alias_lifts_tombstone(self):
+        # together_ai's derived alias is together-ai; after removal the
+        # alias isn't resolvable in the live registry, so `add
+        # together-ai` used to fork a bare "together-ai" entry while
+        # together_ai stayed tombstoned.
+        with TemporaryDirectory() as tmp:
+            patches, registry_file = self._patches(Path(tmp))
+            self._write_registry(registry_file, {
+                "_removed": ["together_ai", "deepseek"],
+            })
+            with patches[0], patches[1]:
+                rc, _ = self._run_add(["together-ai"])
+            saved = self._read_registry(registry_file)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("together-ai", saved)
+        self.assertIn("together_ai", saved)
+        self.assertEqual(saved["_removed"], ["deepseek"])
+        self.assertEqual(
+            saved["together_ai"]["key_filename"],
+            DEFAULT_PROVIDERS["together_ai"]["key_filename"],
+        )
+        self.assertEqual(
+            saved["together_ai"]["env_vars"],
+            DEFAULT_PROVIDERS["together_ai"]["env_vars"],
+        )
 
 
 if __name__ == "__main__":
