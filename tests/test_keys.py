@@ -177,6 +177,50 @@ class LayeringTest(unittest.TestCase):
                 self.assertNotIn("quiver", stripped, line)
 
 
+class WidgetCancelTest(unittest.TestCase):
+    """A bare Esc cancels both checklist widgets, same as q and Ctrl-C.
+
+    read_key says "escape" for a lone Esc (pending bytes distinguish a
+    sequence), so a widget that only listens for "cancel" swallows it.
+    """
+
+    def _run_widget(self, widget, choice, first_key):
+        import sys
+        import io
+        from contextlib import redirect_stdout
+        from quiver import multiselect
+
+        with patch.object(multiselect, "_supported", return_value=True), \
+                patch.object(sys, "stdin", **{"fileno.return_value": 0}), \
+                patch("termios.tcgetattr", return_value=[]), \
+                patch("termios.tcsetattr"), \
+                patch("tty.setraw"), \
+                patch.object(keys, "read_key", side_effect=first_key), \
+                redirect_stdout(io.StringIO()):
+            return widget([choice])
+
+    def test_escape_cancels_the_checklist(self):
+        from quiver import multiselect
+        result = self._run_widget(
+            multiselect.multiselect,
+            multiselect.Choice("a", "a"), ["escape"])
+        self.assertIsNone(result)
+
+    def test_escape_cancels_the_statepicker(self):
+        from quiver import multiselect
+        result = self._run_widget(
+            multiselect.statepicker,
+            multiselect.StateChoice("a", "a"), ["escape"])
+        self.assertIsNone(result)
+
+    def test_enter_still_confirms_the_checklist(self):
+        from quiver import multiselect
+        result = self._run_widget(
+            multiselect.multiselect,
+            multiselect.Choice("a", "a"), ["enter"])
+        self.assertEqual(result, [])
+
+
 class WidgetsShareItTest(unittest.TestCase):
     """Every raw-mode reader in the tree is a wrapper over this one."""
 
