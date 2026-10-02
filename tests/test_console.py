@@ -205,6 +205,9 @@ class CellWidthTest(unittest.TestCase):
         self.assertEqual(cell_len("\U0001f1eb\U0001f1f7\U0001f1e9\U0001f1ea"), 4)
         self.assertEqual(cell_len("a❤️"), 3)
         self.assertEqual(cell_len("a️"), 1)
+        # Keycap: digit + VS16 + U+20E3 — the mark is not a combining
+        # char, so it lands in the width-1 branch and the pair totals 2.
+        self.assertEqual(cell_len("1️⃣"), 2)
         self.assertEqual(
             cell_len("\U0001f3f4\U000e0067\U000e0062\U000e0065"
                      "\U000e006e\U000e0067\U000e007f"), 2)
