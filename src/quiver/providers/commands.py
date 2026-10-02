@@ -62,9 +62,7 @@ def cmd_list(args: list[str]) -> int:
     show_desc = any(a in ("-d", "--desc") for a in args)
     args = [a for a in args if a not in ("-d", "--desc")]
 
-    providers = load_registry()
-    keys_dir = (api_keys_dir or default_keys_dir()).expanduser()
-    rows = discover_provider_keys(providers, keys_dir)
+    filt = None
     if args:
         bad = next((a for a in args if a.startswith("-")), None)
         if bad:
@@ -74,6 +72,11 @@ def cmd_list(args: list[str]) -> int:
             print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
             return 1
         filt = args[0].lower()
+
+    providers = load_registry()
+    keys_dir = (api_keys_dir or default_keys_dir()).expanduser()
+    rows = discover_provider_keys(providers, keys_dir)
+    if filt:
         rows = [
             r
             for r in rows

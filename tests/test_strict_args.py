@@ -11,6 +11,8 @@ Two bug classes this pins:
 import io
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from quiver.cli import cmd_autocomplete
@@ -45,6 +47,22 @@ def _run(fn, args):
     with redirect_stdout(buf):
         code = fn(list(args))
     return code, buf.getvalue()
+
+
+def _provider_patches(tmp_path: Path):
+    """Keep provider commands away from the real registry and keys dir."""
+    config_dir = tmp_path / ".config" / "swe"
+    registry_file = config_dir / "providers.json"
+    keys_dir = tmp_path / ".api_keys"
+    keys_dir.mkdir()
+    return (
+        patch("quiver.providers.registry.CONFIG_DIR", config_dir),
+        patch("quiver.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
+        patch(
+            "quiver.providers.commands.default_keys_dir",
+            return_value=keys_dir,
+        ),
+    )
 
 
 class ErrorExitCodesTest(unittest.TestCase):
@@ -135,22 +153,34 @@ class UnknownArgRejectionTest(unittest.TestCase):
         self.assertIn("Unexpected args: junk", out)
 
     def test_providers_list_unknown_flag(self):
-        code, out = _run(provider_list, ["--bogus"])
+        with TemporaryDirectory() as tmp:
+            patches = _provider_patches(Path(tmp))
+            with patches[0], patches[1], patches[2]:
+                code, out = _run(provider_list, ["--bogus"])
         self.assertEqual(code, 1)
         self.assertIn("Unknown flag: --bogus", out)
 
     def test_providers_list_extra_positional(self):
-        code, out = _run(provider_list, ["a", "b"])
+        with TemporaryDirectory() as tmp:
+            patches = _provider_patches(Path(tmp))
+            with patches[0], patches[1], patches[2]:
+                code, out = _run(provider_list, ["a", "b"])
         self.assertEqual(code, 1)
         self.assertIn("Unexpected args: b", out)
 
     def test_providers_info_extra_positional(self):
-        code, out = _run(provider_info, ["a", "b"])
+        with TemporaryDirectory() as tmp:
+            patches = _provider_patches(Path(tmp))
+            with patches[0], patches[1], patches[2]:
+                code, out = _run(provider_info, ["a", "b"])
         self.assertEqual(code, 1)
         self.assertIn("Unexpected args: b", out)
 
     def test_providers_remove_extra_positional(self):
-        code, out = _run(provider_remove, ["a", "b"])
+        with TemporaryDirectory() as tmp:
+            patches = _provider_patches(Path(tmp))
+            with patches[0], patches[1], patches[2]:
+                code, out = _run(provider_remove, ["a", "b"])
         self.assertEqual(code, 1)
         self.assertIn("Unexpected args: b", out)
 
@@ -163,6 +193,23 @@ class UnknownArgRejectionTest(unittest.TestCase):
         code, out = _run(cmd_star, ["a", "b"])
         self.assertEqual(code, 1)
         self.assertIn("Unexpected args: b", out)
+
+    def test_star_clear_extra_positional_does_not_clear(self):
+        with patch("quiver.harness.commands.load_registry", return_value={}), \
+                patch("quiver.harness.stars.save_stars") as save_stars:
+            code, out = _run(cmd_star, ["clear", "junk"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unexpected args: junk", out)
+        save_stars.assert_not_called()
+
+    def test_list_edit_reset_extra_positional_does_not_reset(self):
+        with patch("quiver.harness.commands.save_columns") as save_columns, \
+                patch("quiver.harness.commands.save_window") as save_window:
+            code, out = _run(cmd_list_edit, ["--reset", "junk"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unexpected args: junk", out)
+        save_columns.assert_not_called()
+        save_window.assert_not_called()
 
     def test_autocomplete_extra_positional(self):
         code, out = _run(cmd_autocomplete, ["zsh", "junk"])

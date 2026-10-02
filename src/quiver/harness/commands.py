@@ -139,6 +139,9 @@ def cmd_list_edit(args=None) -> int:
         print(f"  {c('dim', 'NAME and the favourite marker are always shown.')}\n")
         return 0
     if args and args[0] == "--reset":
+        if len(args) > 1:
+            print(c("red", f"  Unexpected args: {' '.join(args[1:])}"))
+            return 1
         save_columns(DEFAULT_COLUMNS)
         save_window(100)
         print(f"  {c('green', 'reset')} {c('dim', 'to ' + ', '.join(DEFAULT_COLUMNS))}")
@@ -818,6 +821,10 @@ def cmd_star(args):
         print(c("dim", "  swe hs star <name>   toggle  ·  swe hs star clear   remove all\n"))
         return
 
+    if len(args) > 1:
+        print(c("red", f"  Unexpected args: {' '.join(args[1:])}"))
+        return 1
+
     if args[0] in ("clear", "--clear"):
         from quiver.harness.stars import save_stars
 
@@ -827,10 +834,6 @@ def cmd_star(args):
 
     if args[0] in ("list", "ls"):
         return cmd_star([])
-
-    if len(args) > 1:
-        print(c("red", f"  Unexpected args: {' '.join(args[1:])}"))
-        return 1
 
     key = args[0]
     name = resolve(tools, key)
