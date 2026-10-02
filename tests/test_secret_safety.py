@@ -144,6 +144,17 @@ class ProviderFileContainmentTest(unittest.TestCase):
                 find_key_file({"key_filename": "openai"}, keys_dir)
             )
 
+    def test_circular_symlink_returns_none(self):
+        """A symlink loop makes resolve() raise RuntimeError on py<=3.12 —
+        it must read as missing, not crash the listing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            keys_dir = Path(tmp) / "keys"
+            keys_dir.mkdir()
+            (keys_dir / "loopy").symlink_to(keys_dir / "loopy")
+            self.assertIsNone(
+                find_key_file({"key_filename": "loopy"}, keys_dir)
+            )
+
     def test_symlink_staying_inside_keys_dir_allowed(self):
         """A link whose target still lives under keys_dir is fine."""
         with tempfile.TemporaryDirectory() as tmp:

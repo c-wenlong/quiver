@@ -52,7 +52,9 @@ def find_key_file(provider_info: dict, keys_dir: Path) -> Path | None:
     # check above, so compare resolved paths, not names.
     try:
         candidate.resolve().relative_to(keys_dir.resolve())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
+        # RuntimeError: a circular symlink makes resolve() give up on
+        # Python <= 3.12 — treat the key as missing rather than crash.
         return None
     return candidate
 
