@@ -479,14 +479,16 @@ class CmdListSortAndFilterTest(unittest.TestCase):
         self.assertNotIn("codex", plain)
         self.assertNotIn("droid", plain)
 
-    def test_tag_filter_dash_prefix_also_accepted(self):
+    def test_dash_prefixed_arg_is_rejected_as_flag(self):
+        # `-anthropic` used to be tolerated as a tag filter via lstrip("-"),
+        # which is what let a typo'd flag like `--verbse` silently filter to
+        # nothing. Leftover dash tokens are unknown flags now.
         _setup_patches(self)
-        buf1, buf2 = io.StringIO(), io.StringIO()
-        with redirect_stdout(buf1):
-            cmd_list(["anthropic"])
-        with redirect_stdout(buf2):
-            cmd_list(["-anthropic"])
-        self.assertEqual(buf1.getvalue(), buf2.getvalue())
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = cmd_list(["-anthropic"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown flag", buf.getvalue())
 
 
 class CmdListRefreshFlagTest(unittest.TestCase):

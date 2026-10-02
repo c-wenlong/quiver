@@ -61,6 +61,9 @@ def cmd_autocomplete(args):
         if args and args[0] not in supported:
             print(c("red", f"Unsupported shell: '{args[0]}'"))
         return 1
+    if len(args) > 1:
+        print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
+        return 1
 
     shell = args[0]
     config = SHELL_CONFIGS[shell]
