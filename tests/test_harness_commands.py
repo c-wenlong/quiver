@@ -35,13 +35,24 @@ Tests below pin the structural invariants the new layout must hold:
 
 import copy
 import io
+import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from quiver.console import c, strip_ansi, visible_len
-from quiver.harness.commands import _sort_tools, cmd_aliases, cmd_check, cmd_info, cmd_list, cmd_tags
-from quiver.harness.rate_limits import RateLimitInfo
+from quiver.harness.commands import (
+    _fetch_rate_limits,
+    _sort_tools,
+    cmd_aliases,
+    cmd_check,
+    cmd_info,
+    cmd_list,
+    cmd_tags,
+)
+from quiver.harness.rate_limits import RateLimitInfo, _FETCHERS, register
 from quiver.table import Table
 
 
@@ -1275,6 +1286,91 @@ class CmdTagsMigrationTest(unittest.TestCase):
         self.assertIn("No tags found", plain)
         # No table header line because the empty-state branch bypasses Table.
         self.assertNotIn("TOOLS", plain)
+
+
+class _FakeTty(io.StringIO):
+    """StringIO that answers yes to ``isatty`` so TTY branches run in tests."""
+
+    def isatty(self):
+        return True
+
+
+class FetchRateLimitsTtyTest(unittest.TestCase):
+    """The terminal fetch path spins on stderr and waits past the pipe
+    deadline; the piped path stays a short static passthrough."""
+
+    def test_tty_waits_for_slow_fetcher_and_clears_spinner(self):
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+
+        def slow():
+            time.sleep(0.3)
+            return RateLimitInfo(
+                tool_name="fake", used_percent=55, limit_reached=False,
+                reset_at=0.0, plan_type="pro", window_seconds=0)
+
+        register("fake", slow)
+        err = _FakeTty()
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ), patch(
+                # The fetcher misses the pipe-sized deadline but lands
+                # inside the TTY budget — the same call both ways is the
+                # proof the longer deadline reaches the worker.
+                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                0.05,
+                create=True,
+            ), patch("sys.stdout", _FakeTty()), patch("sys.stderr", err):
+                result = _fetch_rate_limits(refresh=True,
+                                            tool_names={"fake"})
+            with tempfile.TemporaryDirectory() as tmp2, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp2) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                0.05,
+                create=True,
+            ), patch("sys.stdout", io.StringIO()):
+                piped = _fetch_rate_limits(refresh=True,
+                                           tool_names={"fake"})
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(result["fake"].used_percent, 55)
+        self.assertEqual(result["fake"].plan_type, "pro")
+        self.assertEqual(piped["fake"].plan_type, "timeout")
+        noise = err.getvalue()
+        self.assertIn("fetching usage", noise)
+        # The erase sequence is the last thing written, so the spinner
+        # leaves no residue on the line the table prints over.
+        self.assertTrue(noise.endswith("\r" + " " * 20 + "\r"))
+
+    def test_tty_fetch_propagates_aggregator_errors(self):
+        """A raised fetch surfaces, it does not blank the column."""
+        with patch("sys.stdout", _FakeTty()), patch(
+            "sys.stderr", _FakeTty(),
+        ), patch(
+            "quiver.harness.rate_limits.get_all_rate_limits",
+            side_effect=RuntimeError("boom"),
+        ):
+            with self.assertRaises(RuntimeError):
+                _fetch_rate_limits(refresh=True, tool_names={"fake"})
+
+    def test_pipe_fetch_is_a_static_passthrough(self):
+        """No TTY: straight call, no spinner bytes on stderr."""
+        sentinel = {"fake": "info"}
+        err = io.StringIO()
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", err), patch(
+            "quiver.harness.rate_limits.get_all_rate_limits",
+            return_value=sentinel,
+        ) as fetch:
+            result = _fetch_rate_limits(refresh=True, tool_names={"fake"})
+        self.assertIs(result, sentinel)
+        fetch.assert_called_once_with(use_cache=False, tool_names={"fake"})
+        self.assertEqual(err.getvalue(), "")
 
 
 if __name__ == "__main__":
