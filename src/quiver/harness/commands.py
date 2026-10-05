@@ -4,6 +4,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -480,6 +482,59 @@ def cmd_archive(args):
     return 0
 
 
+# Braille spinner for the rate-limit fetch wait. The lead-in delay keeps a
+# cache hit (or a fast fetch) from flashing a frame nobody can read.
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER_DELAY = 0.2
+_SPINNER_FRAME_SECONDS = 0.08
+
+
+def _fetch_rate_limits(refresh: bool, tool_names: set[str]) -> dict:
+    """Rate limits for the REMAINING column.
+
+    On a terminal the fetch runs behind a spinner and workers get a longer
+    deadline than the pipeline budget, so a slow provider resolves to a
+    figure instead of the ``…`` timeout marker. Piped output keeps the
+    short cap and prints once, static.
+    """
+    from quiver.harness.rate_limits import (
+        _RATE_LIMIT_FETCH_DEADLINE_TTY,
+        get_all_rate_limits,
+    )
+
+    if not sys.stdout.isatty():
+        return get_all_rate_limits(
+            use_cache=not refresh, tool_names=tool_names,
+        )
+
+    holder: dict = {}
+
+    def work() -> None:
+        holder["result"] = get_all_rate_limits(
+            use_cache=not refresh,
+            tool_names=tool_names,
+            deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
+        )
+
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    worker.join(_SPINNER_DELAY)
+    spin = sys.stderr.isatty()
+    frames = 0
+    while worker.is_alive():
+        if spin:
+            sys.stderr.write(
+                "\r" + c("dim", f"{_SPINNER[frames % len(_SPINNER)]} "
+                                 "fetching usage…"))
+            sys.stderr.flush()
+        frames += 1
+        worker.join(_SPINNER_FRAME_SECONDS)
+    if frames and spin:
+        sys.stderr.write("\r" + " " * 20 + "\r")
+        sys.stderr.flush()
+    return holder.get("result", {})
+
+
 def cmd_list(args):
     args = list(args or [])
     try:
@@ -581,7 +636,6 @@ def cmd_list(args):
 
     # Fetch rate limits (cached 5min by default, refresh flags bypass;
     # override TTL with SWE_RATE_LIMITS_TTL=<seconds>)
-    from quiver.harness.rate_limits import get_all_rate_limits
 
     # Which columns will actually render, so the data behind them is fetched
     # exactly when it is needed. Gating on the flags alone was wrong once the
@@ -594,8 +648,8 @@ def cmd_list(args):
         wanted |= {"sess", "rate"}
 
     rate_limits = (
-        get_all_rate_limits(
-            use_cache=not refresh,
+        _fetch_rate_limits(
+            refresh=refresh,
             tool_names={name for name in starred_set if name in tools},
         )
         if "rate" in wanted

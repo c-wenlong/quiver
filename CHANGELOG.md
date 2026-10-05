@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`swe list` waits out slow usage fetchers on a terminal.** The REMAINING
+  fetchers ran under a 2s deadline so a hung provider can't stall the
+  listing, but slow-but-working endpoints rendered `…` and cached the
+  marker for the TTL. When stdout is a TTY the fetch now runs behind a
+  spinner with an 11s budget, long enough to cover the slowest fetcher's
+  own socket timeouts, while piped output keeps the 2s cap and prints
+  once, static.
 - **Value-taking long flags are `--name=value` only.** Every long flag that
   takes a value — `--agent`, `--search`/`--grep`, `--days`, `--weeks`,
   `--start`, `--end`, `--aliases`, `--tags`, `--description`, `--command`,
