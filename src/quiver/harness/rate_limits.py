@@ -2200,6 +2200,13 @@ def invalidate_cache() -> None:
 
 _RATE_LIMIT_FETCH_DEADLINE = 2.0
 
+# Interactive runs can afford to wait out a fetcher's own socket timeout
+# (the slowest path is the Keychain lookup's 1s plus a 10s HTTP read), so
+# a slow provider resolves to a real figure instead of the ``…`` timeout
+# marker. ``swe list`` passes this only when stdout is a terminal; piped
+# output and library callers keep the shorter cap.
+_RATE_LIMIT_FETCH_DEADLINE_TTY = 11.0
+
 
 def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
     """Load the last snapshot for outage fallback, up to 24 hours old."""
@@ -2234,6 +2241,7 @@ def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
 def get_all_rate_limits(
     use_cache: bool = True,
     tool_names: Iterable[str] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, RateLimitInfo]:
     """Fetch rate limits for the selected registered tools.
 
@@ -2241,7 +2249,9 @@ def get_all_rate_limits(
     ``tool_names=None`` retains the low-level all-fetchers behavior for tests
     and diagnostics. CLI callers pass the starred harness set so unselected
     usage scripts never start. Tools without a fetcher or whose fetch fails
-    are omitted.
+    are omitted. ``deadline`` overrides ``_RATE_LIMIT_FETCH_DEADLINE`` — how
+    long the aggregator waits for the workers before marking stragglers
+    timed out.
     """
     result: dict[str, RateLimitInfo] = {}
     requested = None if tool_names is None else set(tool_names)
@@ -2303,11 +2313,12 @@ def get_all_rate_limits(
         threading.Thread(target=fetch_one, args=item, daemon=True)
         for item in fetchers
     ]
-    deadline = time.monotonic() + _RATE_LIMIT_FETCH_DEADLINE
+    limit = _RATE_LIMIT_FETCH_DEADLINE if deadline is None else deadline
+    cutoff = time.monotonic() + limit
     for worker in workers:
         worker.start()
     for worker in workers:
-        worker.join(max(0.0, deadline - time.monotonic()))
+        worker.join(max(0.0, cutoff - time.monotonic()))
 
     with fetched_lock:
         completed = fetched.copy()

@@ -594,6 +594,40 @@ class RateLimitRegistryTest(unittest.TestCase):
         self.assertEqual(
             payload["limits"]["slow-tool"]["plan_type"], "timeout")
 
+    def test_deadline_param_waits_for_slow_fetcher(self):
+        """An explicit deadline lets a slow fetcher resolve to a figure."""
+        saved = _FETCHERS.copy()
+
+        def slow_fetch():
+            time.sleep(0.15)
+            return RateLimitInfo(
+                tool_name="slow-tool",
+                used_percent=40,
+                limit_reached=False,
+                reset_at=0.0,
+                plan_type="plus",
+                window_seconds=0,
+            )
+
+        _FETCHERS.clear()
+        register("slow-tool", slow_fetch)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                0.05,
+                create=True,
+            ):
+                result = get_all_rate_limits(use_cache=False, deadline=1.0)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(result["slow-tool"].used_percent, 40)
+        self.assertEqual(result["slow-tool"].plan_type, "plus")
+
     def test_timeout_marker_served_from_cache(self):
         """A fresh cached marker answers without re-running the fetcher."""
         saved = _FETCHERS.copy()
