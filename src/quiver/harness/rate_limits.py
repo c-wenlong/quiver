@@ -2200,12 +2200,13 @@ def invalidate_cache() -> None:
 
 _RATE_LIMIT_FETCH_DEADLINE = 2.0
 
-# Interactive runs can afford to wait out a fetcher's own socket timeout
-# (the slowest path is the Keychain lookup's 1s plus a 10s HTTP read), so
-# a slow provider resolves to a real figure instead of the ``…`` timeout
-# marker. ``swe list`` passes this only when stdout is a terminal; piped
-# output and library callers keep the shorter cap.
-_RATE_LIMIT_FETCH_DEADLINE_TTY = 11.0
+# Interactive runs can afford to wait out a fetcher's whole designed
+# budget — the slowest is Copilot's ``gh auth token`` subprocess (5s) plus
+# a 10s HTTP read plus its once-only cert-bundle retry (10s) — so a slow
+# provider resolves to a real figure instead of the ``…`` timeout marker.
+# ``swe list`` passes this only when stdout is a terminal; piped output
+# and library callers keep the shorter cap.
+_RATE_LIMIT_FETCH_DEADLINE_TTY = 25.0
 
 
 def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
@@ -2221,6 +2222,8 @@ def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
         usable: dict[str, dict] = {}
         usable_timestamps: dict[str, float] = {}
         for name, raw in limits.items():
+            if not isinstance(raw, dict):
+                continue
             # Transient statuses (auth failure, timed-out fetch) are not
             # usage readings. A forced refresh must be able to replace or
             # remove these markers immediately.
