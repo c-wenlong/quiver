@@ -510,11 +510,16 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str]) -> dict:
     holder: dict = {}
 
     def work() -> None:
-        holder["result"] = get_all_rate_limits(
-            use_cache=not refresh,
-            tool_names=tool_names,
-            deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
-        )
+        try:
+            holder["result"] = get_all_rate_limits(
+                use_cache=not refresh,
+                tool_names=tool_names,
+                deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
+            )
+        except Exception as exc:
+            # Surface the failure exactly as the non-TTY path would instead
+            # of silently rendering a blank column.
+            holder["error"] = exc
 
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
@@ -532,7 +537,9 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str]) -> dict:
     if frames and spin:
         sys.stderr.write("\r" + " " * 20 + "\r")
         sys.stderr.flush()
-    return holder.get("result", {})
+    if "error" in holder:
+        raise holder["error"]
+    return holder["result"]
 
 
 def cmd_list(args):
