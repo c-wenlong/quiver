@@ -82,6 +82,11 @@ class RateLimitInfo:
                                 # backward-compatible.
     remaining_units: float | None = None
     total_units: float | None = None
+    fetched_at: float = 0.0    # when the reading was actually taken;
+                               # 0 means "just now", the common case.
+                               # Lets a fetcher hand back a saved reading
+                               # (Claude's refresh-pending path) without
+                               # the aggregator stamping it fresh.
 
     @property
     def remaining_percent(self) -> int:
@@ -973,10 +978,21 @@ def _fetch_claude() -> RateLimitInfo | None:
     if not token:
         return None
 
-    # quiver never refreshes tokens, so an expired token always 401s
-    # even when a refreshToken sits next to it.
+    # quiver never refreshes tokens, so an expired token always 401s.
+    # Whether the login is actually dead is the refreshToken's call:
+    # Claude Code refreshes transparently on its next call, so an expired
+    # access token beside a refreshToken is a live login, and re-login is
+    # the wrong advice. Serve the last reading from claude's own cache
+    # (≤24h) the way the 429 cooldown does until the CLI self-heals.
+    # re-login is kept for an expired token with no refreshToken — the
+    # case that genuinely needs `claude auth login`.
     expires_at_seconds = _claude_expires_at_seconds(oauth)
     if expires_at_seconds and expires_at_seconds <= time.time():
+        if oauth.get("refreshToken"):
+            info, _retry_at, _fp, fetched_at = _load_claude_state()
+            if info is not None:
+                info.fetched_at = fetched_at
+            return info
         return RateLimitInfo(
             tool_name="claude",
             used_percent=0,
@@ -994,6 +1010,8 @@ def _fetch_claude() -> RateLimitInfo | None:
         retry_at > time.time()
         and cooldown_fingerprint == credential_fingerprint
     ):
+        if stale_info is not None:
+            stale_info.fetched_at = fetched_at
         return stale_info
 
     req = urllib.request.Request(
@@ -1020,6 +1038,8 @@ def _fetch_claude() -> RateLimitInfo | None:
                 credential_fingerprint,
                 fetched_at=fetched_at,
             )
+            if stale_info is not None:
+                stale_info.fetched_at = fetched_at
             return stale_info
         # Any other failure (TLS, 401, timeout, network) is reported as no
         # reading. The aggregator's own 24h fallback then shows the last
@@ -2127,8 +2147,17 @@ _register_devin()
 # Cache
 # ---------------------------------------------------------------------------
 
-def _load_cached() -> dict[str, dict] | None:
-    """Load rate limits from disk cache if fresh enough."""
+def _load_cached() -> tuple[dict[str, dict], dict[str, float]] | None:
+    """Load per-provider readings that are individually fresh.
+
+    Freshness is judged on each provider's ``updated_at`` (the envelope
+    ``cached_at`` for entries saved before it existed). The envelope is
+    rewritten on every save, so gating on it would let a persistent
+    refetch — e.g. a logged-out Claude re-deriving its ``auth-required``
+    verdict — keep week-old values alive indefinitely. Returns
+    ``(limits, updated_at)``; ``None`` when the file is missing, corrupt,
+    or wholly past the envelope TTL.
+    """
     try:
         if not RATE_LIMITS_CACHE_FILE.exists():
             return None
@@ -2137,7 +2166,24 @@ def _load_cached() -> dict[str, dict] | None:
         cached_at = data.get("cached_at", 0)
         if time.time() - cached_at > _CACHE_TTL:
             return None
-        return data.get("limits", {})
+        limits = data.get("limits", {})
+        updated_at = data.get("updated_at", {})
+        if not isinstance(limits, dict):
+            return None
+        if not isinstance(updated_at, dict):
+            updated_at = {}
+        now = time.time()
+        fresh_limits: dict[str, dict] = {}
+        fresh_at: dict[str, float] = {}
+        for name, raw in limits.items():
+            try:
+                ts = float(updated_at.get(name, cached_at))
+            except (TypeError, ValueError):
+                continue
+            if now - ts <= _CACHE_TTL:
+                fresh_limits[name] = raw
+                fresh_at[name] = ts
+        return fresh_limits, fresh_at
     except Exception:
         return None
 
@@ -2150,6 +2196,9 @@ def _load_cached_no_data() -> set[str]:
     fetcher. For providers that shell out, that cost lands on every
     ``swe list``. Remembering the
     negative answer for the same TTL keeps the miss to once per window.
+    Newer saves keep a per-name answer time; the legacy list form is
+    covered by the envelope freshness check above and is upgraded to the
+    dict on the next save.
     """
     try:
         if not RATE_LIMITS_CACHE_FILE.exists():
@@ -2159,6 +2208,12 @@ def _load_cached_no_data() -> set[str]:
         if time.time() - data.get("cached_at", 0) > _CACHE_TTL:
             return set()
         names = data.get("no_data", [])
+        if isinstance(names, dict):
+            now = time.time()
+            return {
+                name for name, ts in names.items()
+                if isinstance(ts, (int, float)) and now - ts <= _CACHE_TTL
+            }
         return set(names) if isinstance(names, list) else set()
     except Exception:
         return set()
@@ -2177,7 +2232,7 @@ def _save_cached(
             "cached_at": now,
             "limits": limits,
             "updated_at": updated_at or {name: now for name in limits},
-            "no_data": sorted(no_data or ()),
+            "no_data": {name: now for name in (no_data or ())},
         }
         with open(RATE_LIMITS_CACHE_FILE, "w") as f:
             json.dump(payload, f)
@@ -2268,13 +2323,27 @@ def get_all_rate_limits(
     cache_updated_at: dict[str, float] = {}
 
     if use_cache:
-        cached = _load_cached()
-        if cached is not None:
+        loaded = _load_cached()
+        if loaded is not None:
+            cached, fresh_at = loaded
             for name, raw in cached.items():
                 if name not in fetcher_names:
                     continue
+                # auth-required is a local credential verdict, not a
+                # network reading: re-deriving it is a file/Keychain
+                # lookup, and serving it from cache would pin a stale
+                # re-login (or a superseded rule) for the whole TTL.
+                # timeout markers stay cached — re-running a hung fetcher
+                # costs the deadline again.
+                if (isinstance(raw, dict)
+                        and raw.get("plan_type") == "auth-required"):
+                    continue
                 try:
                     result[name] = RateLimitInfo(**raw)
+                    # Each hydrated value keeps its real fetch time — a
+                    # partial refetch must not re-age the untouched
+                    # providers or the stale-fallback bound leaks.
+                    cache_updated_at[name] = fresh_at[name]
                 except (TypeError, ValueError):
                     pass
             # A provider that answered "nothing to report" last time is
@@ -2284,9 +2353,7 @@ def get_all_rate_limits(
             if not missing:
                 return result
             fetchers = [item for item in fetchers if item[0] in missing]
-            now = time.time()
             raw_cache = {name: asdict(info) for name, info in result.items()}
-            cache_updated_at = {name: now for name in result}
 
     if not raw_cache:
         stale_limits, stale_updated_at = _load_stale_cached()
@@ -2331,7 +2398,7 @@ def get_all_rate_limits(
         if info:
             result[tool_name] = info
             raw_cache[tool_name] = asdict(info)
-            cache_updated_at[tool_name] = time.time()
+            cache_updated_at[tool_name] = info.fetched_at or time.time()
         elif tool_name in completed:
             # Ran to completion and produced nothing. Distinct from a worker
             # that hit the deadline, which is absent from ``completed`` and
