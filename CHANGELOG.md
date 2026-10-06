@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claude no longer cries `re-login` on a self-healing token.** An expired
+  access token beside a `refreshToken` is a live login — Claude Code
+  refreshes transparently on its next call — so the fetcher now serves
+  the last reading from claude's own ≤24h cache instead of the red
+  `re-login`, and a `re-login` marker in the shared cache is re-derived
+  on sight rather than replayed for the TTL. The label is kept only for
+  an expired token with no `refreshToken`, the case that genuinely needs
+  `claude auth login`. Cache ages are honest now too: each provider's
+  reading carries its own `updated_at`, a re-served stale reading keeps
+  its real fetch time, and freshness is judged per provider — so a
+  persistent refetch on one provider (the re-derived `re-login`) can no
+  longer rewrite the envelope and keep every other provider's cached
+  value alive forever.
 - **`swe providers add` no longer erases removal tombstones.** `add` saved a registry loaded without the `_removed` bookkeeping list, silently dropping every recorded removal — previously-removed default providers all came back on the next load. `add` now preserves `_removed`, lifts only the re-added provider's own tombstone, seeds a re-added builtin's default fields instead of persisting a bare record, and resolves aliases to the canonical slug instead of forking a duplicate entry. On the codex side, `split_codex_toml` now folds stray `[mcp_servers*]` tables found later in `config.toml` into the region (TOML allows them anywhere) instead of writing them twice on save — an invalid duplicate-table file — and `_toml_value`/`render_codex_server` handle `datetime`/`date`/`time` values `tomllib` produces instead of crashing or silently dropping the key.
 - **Every subcommand now answers `--help`.** `swe report followup --help`, `followup <action> --help`, `report followups --help`, and `report warnings --help` used to error out ("Unknown follow-up action", a bogus usage line, or a manifest-suffix complaint) — or worse, `followup add --help` recorded a follow-up literally named "--help". `swe providers remove --help` reported a missing provider named "--help", `swe session help` and `swe models help` were rejected as unknown arguments, and `swe providers --help` printed the short summary whose last line pointed back at `swe providers --help` itself — it now reaches the providers group's own detailed help.
 - **Untrusted strings can no longer drive the terminal.** Session titles, transcript text, file previews, directory names, and MCP server names all originate outside quiver, and a crafted value carrying an OSC-8 hyperlink, an OSC-52 clipboard write, a cursor-moving CSI, or a bare BEL/CR previously printed verbatim — inside a table cell, a picker row, or a find preview it could paint itself, open a link, or rewrite rows. A new `console.sanitize` removes every escape class (OSC through BEL/ST/end-of-string, CSI including private modes, charset and two-byte escapes, lone ESC) and maps C0/C1 controls to spaces (`sanitize_document` keeps `\n`/`\t` for transcript text, turns `\r` into a newline, and deletes other controls so a byte inside a credential cannot split it before redaction). Applied at the render boundary: table `text`/`path`/`list` cells, `_display_title`, the agent column, picker preview sources and labels, the checklist and tri-state labels, find-browser labels/details/preview rows, tree and path printing in `swe find`, and MCP name/label display. `strip_ansi` widened to match the same escape classes so width math is right on hostile input, while `preformatted` cells remain an intentional trusted styling path. Transcript text is cleaned inside `_clean_text`, so reports and previews share the guarantee.
