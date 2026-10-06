@@ -107,6 +107,16 @@ HARNESS_SIGNATURES: dict[str, HarnessSignature] = {
         instructions=Path(".config/kilo/AGENTS.md"),
         evidence=(Path(".kilo"), Path(".config/kilo"), Path(".local/share/kilo")),
     ),
+    "devin": HarnessSignature(
+        # Confirmed from `devin skills paths` on 2026.5.6-10: global skills
+        # at ~/.config/devin/skills. Config is ~/.config/devin/config.json;
+        # sessions live under ~/.local/share/devin. The skills parent is
+        # made on first run, so evidence is those two homes. Instructions
+        # sit next to the skills root, same convention as manage.py.
+        skills=Path(".config/devin/skills"),
+        instructions=Path(".config/devin/AGENTS.md"),
+        evidence=(Path(".config/devin"), Path(".local/share/devin")),
+    ),
 }
 
 
