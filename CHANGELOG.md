@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Devin joins the discover catalog.** `HARNESS_CATALOG` now names the
+  `devin` binary (alias `dv`), so `swe discover` finds it on PATH the
+  same way it finds kilo. `swe init` gets a signature for
+  `~/.config/devin/skills` plus `~/.config/devin/AGENTS.md`, with
+  evidence at `~/.config/devin` or `~/.local/share/devin` — the homes
+  the CLI actually creates. `skills/layout.py`'s `HARNESS_ROOTS` lists
+  the same skills path so `swe find` can name it. Session parsing and
+  the quota fetcher already knew Devin; discover did not.
 - **Kilo MCP target and Cline models/hooks coverage.** `swe mcp` now maps kilo to `~/.config/kilo/kilo.jsonc` (opencode `mcp` schema), and `load_json` strips `//`/`/* */` comments on `.jsonc` paths so a commented config reads instead of parsing as empty. `swe models` counts cline sessions from the `provider`/`model` fields in each session's `<id>.json` metadata. `HOOK_FALLBACK` gains `cline` → `~/.cline/hooks`, opt-in via `~/.quiver/hooks/cline/` as usual.
 - **Cline session status and resume.** The STATUS column now reads Cline 3.x's per-session metadata (`~/.cline/data/sessions/<id>/<id>.json`): its `status` lifecycle field maps `running`/`streaming` to active (with the recorded `pid` — not the never-advancing `started_at` timestamp — deciding whether an old turn is still live), `waiting`/`idle`/`completed` to done-or-followup via the last assistant text, and `failed`/`canceled`/`paused` to error/interrupted. `swe session use` resumes with `cline --id <session-id>`.
 - **Kilo sessions.** `parse_kilo` reads `~/.local/share/kilo/kilo.db` — an opencode fork, same drizzle schema — so `swe session` lists kilo sessions, `--agent kilo`/`ki` filters them, `swe session use` resumes them via `kilo --session <id>`, the STATUS column probes the same `message`/`part` rows as opencode, and `swe models` mines `message.data` for provider/model counts.
