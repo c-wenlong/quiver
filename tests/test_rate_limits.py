@@ -660,6 +660,40 @@ class RateLimitRegistryTest(unittest.TestCase):
         self.assertEqual(result["slow-tool"].plan_type, "timeout")
         fetcher.assert_not_called()
 
+    def test_auth_required_marker_not_served_from_cache(self):
+        """A cached re-login is re-derived, not replayed for the TTL."""
+        saved = _FETCHERS.copy()
+        fetcher = MagicMock(return_value=RateLimitInfo(
+            tool_name="claude", used_percent=10, limit_reached=False,
+            reset_at=0.0, plan_type="pro", window_seconds=0))
+        _FETCHERS.clear()
+        register("claude", fetcher)
+        marker = {
+            "claude": {
+                "tool_name": "claude",
+                "used_percent": 0,
+                "limit_reached": False,
+                "reset_at": 0.0,
+                "plan_type": "auth-required",
+                "window_seconds": 0,
+                "window": "",
+            }
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+                _save_cached(marker)
+                result = get_all_rate_limits(use_cache=True)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertEqual(result["claude"].used_percent, 10)
+        fetcher.assert_called_once()
+
     def test_timeout_marker_not_served_as_stale_fallback(self):
         """The 24h outage fallback skips markers; only real readings carry."""
         raw = {
@@ -1545,6 +1579,30 @@ class ClaudeFetcherTest(unittest.TestCase):
             tmp.cleanup()
 
         self.assertIsNone(info)
+        request.assert_not_called()
+
+    def test_expired_token_with_refresh_token_serves_own_cache(self):
+        """A fresh claude-side reading shows through the self-heal window."""
+        from quiver.harness.rate_limits import _fetch_claude, _save_claude_state
+
+        tmp, patches = self._linux_creds_file(expiresAt=1)
+        try:
+            with patches[0], patches[1], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp.name) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits.urllib.request.urlopen",
+            ) as request:
+                _save_claude_state(RateLimitInfo(
+                    tool_name="claude", used_percent=61,
+                    limit_reached=False, reset_at=0.0,
+                    plan_type="—", window_seconds=0, window="7d"))
+                info = _fetch_claude()
+        finally:
+            tmp.cleanup()
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.used_percent, 61)
         request.assert_not_called()
 
     def test_fresher_keychain_beats_expired_file(self):

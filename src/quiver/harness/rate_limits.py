@@ -977,14 +977,14 @@ def _fetch_claude() -> RateLimitInfo | None:
     # Whether the login is actually dead is the refreshToken's call:
     # Claude Code refreshes transparently on its next call, so an expired
     # access token beside a refreshToken is a live login, and re-login is
-    # the wrong advice. Report no reading and let the aggregator's stale
-    # fallback show the last figure (≤24h) until the CLI self-heals.
+    # the wrong advice. Serve the last reading from claude's own cache
+    # (≤24h) the way the 429 cooldown does until the CLI self-heals.
     # re-login is kept for an expired token with no refreshToken — the
     # case that genuinely needs `claude auth login`.
     expires_at_seconds = _claude_expires_at_seconds(oauth)
     if expires_at_seconds and expires_at_seconds <= time.time():
         if oauth.get("refreshToken"):
-            return None
+            return _load_claude_state()[0]
         return RateLimitInfo(
             tool_name="claude",
             used_percent=0,
@@ -2280,6 +2280,15 @@ def get_all_rate_limits(
         if cached is not None:
             for name, raw in cached.items():
                 if name not in fetcher_names:
+                    continue
+                # auth-required is a local credential verdict, not a
+                # network reading: re-deriving it is a file/Keychain
+                # lookup, and serving it from cache would pin a stale
+                # re-login (or a superseded rule) for the whole TTL.
+                # timeout markers stay cached — re-running a hung fetcher
+                # costs the deadline again.
+                if (isinstance(raw, dict)
+                        and raw.get("plan_type") == "auth-required"):
                     continue
                 try:
                     result[name] = RateLimitInfo(**raw)
