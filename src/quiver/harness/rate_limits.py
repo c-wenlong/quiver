@@ -973,10 +973,18 @@ def _fetch_claude() -> RateLimitInfo | None:
     if not token:
         return None
 
-    # quiver never refreshes tokens, so an expired token always 401s
-    # even when a refreshToken sits next to it.
+    # quiver never refreshes tokens, so an expired token always 401s.
+    # Whether the login is actually dead is the refreshToken's call:
+    # Claude Code refreshes transparently on its next call, so an expired
+    # access token beside a refreshToken is a live login, and re-login is
+    # the wrong advice. Report no reading and let the aggregator's stale
+    # fallback show the last figure (≤24h) until the CLI self-heals.
+    # re-login is kept for an expired token with no refreshToken — the
+    # case that genuinely needs `claude auth login`.
     expires_at_seconds = _claude_expires_at_seconds(oauth)
     if expires_at_seconds and expires_at_seconds <= time.time():
+        if oauth.get("refreshToken"):
+            return None
         return RateLimitInfo(
             tool_name="claude",
             used_percent=0,

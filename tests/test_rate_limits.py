@@ -1504,7 +1504,32 @@ class ClaudeFetcherTest(unittest.TestCase):
         self.assertIsNone(info)
 
     def test_expired_credentials_request_relogin(self):
-        """A known-expired token is shown as re-login, never fetched."""
+        """Expired token with no refreshToken is re-login, never fetched."""
+        from quiver.harness.rate_limits import _fetch_claude
+
+        tmp, patches = self._linux_creds_file(expiresAt=1, refreshToken=None)
+        try:
+            with patches[0], patches[1], patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp.name) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits.urllib.request.urlopen",
+            ) as request:
+                info = _fetch_claude()
+        finally:
+            tmp.cleanup()
+
+        self.assertEqual(info.plan_type, "auth-required")
+        self.assertIn("re-login", info.format_column())
+        request.assert_not_called()
+
+    def test_expired_token_with_refresh_token_is_no_reading(self):
+        """An expired access token beside a refreshToken is a live login.
+
+        Claude Code refreshes transparently on its next call, so the
+        fetcher reports nothing and the aggregator can serve the last
+        good figure instead of crying re-login.
+        """
         from quiver.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file(expiresAt=1)
@@ -1519,8 +1544,7 @@ class ClaudeFetcherTest(unittest.TestCase):
         finally:
             tmp.cleanup()
 
-        self.assertEqual(info.plan_type, "auth-required")
-        self.assertIn("re-login", info.format_column())
+        self.assertIsNone(info)
         request.assert_not_called()
 
     def test_fresher_keychain_beats_expired_file(self):
@@ -1649,7 +1673,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             _fetch_claude, _get_claude_oauth_credentials,
         )
 
-        tmp, patches = self._linux_creds_file(expiresAt=1)
+        tmp, patches = self._linux_creds_file(expiresAt=1, refreshToken=None)
         try:
             with patches[0], patches[1], patch(
                 "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
