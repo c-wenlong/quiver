@@ -45,6 +45,7 @@ HARNESS_ROOTS: tuple[tuple[str, Path], ...] = (
     ("pi", Path(".pi/skills")),
     ("grok", Path(".grok/skills")),
     ("crush", Path(".config/crush/skills")),
+    ("devin", Path(".config/devin/skills")),
 )
 
 BUILTIN_ROOTS: tuple[tuple[str, Path], ...] = (

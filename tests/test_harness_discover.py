@@ -44,6 +44,28 @@ class HarnessDiscoverTest(unittest.TestCase):
                 self.assertEqual(kiro[0].confidence, "high")
                 self.assertEqual(kiro[0].source, "catalog")
 
+    def test_discovers_devin_binary_from_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            bindir = tmp_path / "bin"
+            bindir.mkdir()
+            self._make_fake_bin(bindir, "devin")
+
+            config_dir = tmp_path / ".quiver" / "config"
+            registry_file = config_dir / "harness.json"
+            minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
+
+            p1, p2, p3 = _registry_patches(config_dir, registry_file)
+            with p1, p2, p3:
+                save_registry(minimal)
+                findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
+                found = [f for f in findings if f.name == "devin"]
+                self.assertEqual(len(found), 1)
+                self.assertEqual(found[0].status, "new")
+                self.assertEqual(found[0].confidence, "high")
+                self.assertEqual(found[0].source, "catalog")
+                self.assertEqual(found[0].command, "devin")
+
     def test_path_scan_finds_unknown_cli_pattern(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
