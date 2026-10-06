@@ -121,6 +121,12 @@ HARNESS_CATALOG: dict[str, dict] = {
     },
 
     # Autonomous, enterprise and long tail.
+    "devin": {
+        "command": "devin",
+        "description": "Cognition's, lives in the terminal and the cloud",
+        "tags": ["agentic", "coding", "cloud"],
+        "aliases": ["dv"],
+    },
     "droid": {
         "command": "droid",
         "description": "Factory's, spawns a worker per feature and syncs them through git",
