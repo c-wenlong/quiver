@@ -217,6 +217,96 @@ class RateLimitCacheTest(unittest.TestCase):
                 loaded = _load_cached()
                 self.assertIsNone(loaded)
 
+    def test_load_cached_defensive_branches(self):
+        """Malformed cache fields degrade instead of crashing the listing."""
+        from quiver.harness.rate_limits import (
+            _load_cached, _load_cached_no_data, _save_cached,
+        )
+
+        info = {
+            "tool_name": "codex", "used_percent": 1, "limit_reached": False,
+            "reset_at": 0.0, "plan_type": "x", "window_seconds": 0,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_file = Path(tmp) / "rate_limits_cache.json"
+            with patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file
+            ), patch("quiver.harness.rate_limits._CACHE_TTL", 300.0):
+                now = time.time()
+                self.assertIsNone(_load_cached())
+                self.assertEqual(_load_cached_no_data(), set())
+                cache_file.write_text(json.dumps(
+                    {"cached_at": now, "limits": [1]}))
+                self.assertIsNone(_load_cached())
+                # A non-dict updated_at falls back to the envelope time.
+                cache_file.write_text(json.dumps({
+                    "cached_at": now, "limits": {"codex": info},
+                    "updated_at": 5,
+                }))
+                loaded = _load_cached()
+                self.assertIn("codex", loaded[0])
+                # An unparseable per-provider time drops just that entry.
+                cache_file.write_text(json.dumps({
+                    "cached_at": now, "limits": {"codex": info},
+                    "updated_at": {"codex": "old"},
+                }))
+                self.assertEqual(_load_cached()[0], {})
+                # Corrupt JSON is a miss, not a traceback.
+                cache_file.write_text("{nope")
+                self.assertIsNone(_load_cached())
+                self.assertEqual(_load_cached_no_data(), set())
+                # no_data: dict filters stale and non-numeric answers;
+                # the legacy list form still reads under a fresh envelope.
+                cache_file.write_text(json.dumps({
+                    "cached_at": now,
+                    "no_data": {"a": now, "b": now - 9999, "c": "x"},
+                }))
+                self.assertEqual(_load_cached_no_data(), {"a"})
+                cache_file.write_text(json.dumps({
+                    "cached_at": now, "no_data": ["a", "b"],
+                }))
+                self.assertEqual(_load_cached_no_data(), {"a", "b"})
+                # An unwritable destination is swallowed by the save.
+                a_file = Path(tmp) / "afile"
+                a_file.write_text("x")
+                with patch(
+                    "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                    a_file / "x.json",
+                ):
+                    _save_cached({"codex": info})  # must not raise
+
+    def test_hydration_skips_unknown_and_malformed_entries(self):
+        """Cache entries with no fetcher or bad shape are dropped."""
+        saved = _FETCHERS.copy()
+        fetcher = MagicMock(return_value=None)
+        _FETCHERS.clear()
+        register("codex", fetcher)
+        raw = {
+            "ghost": {
+                "tool_name": "ghost", "used_percent": 9,
+                "limit_reached": False, "reset_at": 0.0,
+                "plan_type": "x", "window_seconds": 0,
+            },
+            "codex": {"bogus_field": 1},
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits._CACHE_TTL", 300.0,
+            ):
+                from quiver.harness.rate_limits import _save_cached
+                _save_cached(raw)
+                result = get_all_rate_limits(use_cache=True)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        fetcher.assert_called_once()
+        self.assertNotIn("ghost", result)
+        self.assertNotIn("codex", result)
+
     def test_invalidate_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "rate_limits_cache.json"
