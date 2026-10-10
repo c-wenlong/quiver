@@ -5,7 +5,7 @@ the reasons given in test_json_output.py. Every expected value below is a
 literal taken from the fixture, never recomputed the way the code does.
 
 A session's timestamp is the transcript file's mtime, so each fixture pins
-its mtime with os.utime to make "started_at" a known number.
+its mtime with os.utime to make "last_active_at" a known number.
 """
 
 import json
@@ -88,9 +88,9 @@ class ClaudeSessionJsonTest(SessionJsonTestBase):
         self.assertEqual(row["cwd"], "/work/proj")
         self.assertEqual(row["title"], "fix the login bug")
 
-    def test_started_at_is_epoch_seconds_not_milliseconds(self):
+    def test_last_active_at_is_epoch_seconds_not_milliseconds(self):
         add_claude_session(self.home)
-        self.assertEqual(self.sessions()[0]["started_at"], 1_790_000_000.0)
+        self.assertEqual(self.sessions()[0]["last_active_at"], 1_790_000_000.0)
 
     def test_status_comes_from_the_transcript(self):
         add_claude_session(self.home)
@@ -154,7 +154,7 @@ class CodexSessionJsonTest(SessionJsonTestBase):
         self.assertEqual(row["harness"], "codex")
         self.assertEqual(row["agent"], "Codex CLI")
         self.assertEqual(row["cwd"], "/work/other")
-        self.assertEqual(row["started_at"], 1_780_000_000.0)
+        self.assertEqual(row["last_active_at"], 1_780_000_000.0)
         self.assertEqual(
             row["resume"],
             {"argv": ["codex", "resume", CODEX_UUID], "cwd": "/work/other"})

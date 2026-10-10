@@ -378,8 +378,9 @@ def _session_json(session, status: str) -> dict:
         "cwd": session.path or None,
         "title": session.title,
         "title_source": session.title_source or None,
-        # Session.timestamp is epoch milliseconds; the contract is seconds.
-        "started_at": session.timestamp / 1000,
+        # Session.timestamp is the transcript mtime in epoch ms; the contract
+        # is seconds, named for what it is: when the session last moved.
+        "last_active_at": session.timestamp / 1000,
         "status": status or None,
         "resume": _resume_json(session),
     }
