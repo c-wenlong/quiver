@@ -184,6 +184,7 @@ HELP = {
   {c('cyan', '-s, --start=<YYYY-MM-DD>')}     Inclusive range start; use together with --end
   {c('cyan', '-e, --end=<YYYY-MM-DD>')}       Inclusive range end; use together with --start
   {c('cyan', '-i, --interactive')}            Pick with arrow keys; Enter resumes, space opens the transcript
+  {c('cyan', '--json')}                       Print the listing as one JSON document; not with use or -i
 
 {c('bold', 'Examples')}
   swe session

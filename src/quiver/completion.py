@@ -67,6 +67,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--agent=", "Filter by agent"), ("--here", "Current project only"),
         ("--interactive", "Pick a session with arrow keys"),
         ("-i", "Short for --interactive"),
+        ("--json", "Print the listing as JSON"),
     ],
     "models": [
         ("--by-tool", "Group by harness"), ("-t", "Short for --by-tool"),

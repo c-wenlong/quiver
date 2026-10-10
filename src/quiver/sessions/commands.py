@@ -1,12 +1,15 @@
 """Session and model analytics CLI commands."""
 
 import os
+import sys
 import time
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
 from quiver.console import c, cpad, fit_widths, sanitize, terminal_width, truncate, visible_len
 from quiver.flags import expand_value_flags
+from quiver.json_output import emit, take_json_flag
 from quiver.markdown import render_markdown
 from quiver.sessions import failures
 from quiver.sessions.aggregator import get_all_sessions
@@ -321,13 +324,32 @@ def _launch_tool_name(tool_name: str) -> str:
     return launch_tool(tool_name)
 
 
+def _resume_flags(session) -> list[str]:
+    """The flags that reopen ``session`` in its harness, or [] when none do."""
+    builder = _RESUME_FLAGS.get(session.tool_name)
+    return builder(session.session_id) if builder else []
+
+
+def _resume_json(session) -> dict | None:
+    """The command that resumes ``session``, or None when none can.
+
+    A harness in ``_LIMITED_RESUME`` only launches in the session's
+    directory, and a session whose id yields no flags (a codex rollout with
+    no uuid in its name) has nothing to reopen. Neither is a resume.
+    """
+    flags = _resume_flags(session)
+    if not flags:
+        return None
+    return {
+        "argv": [_launch_tool_name(session.tool_name), *flags],
+        "cwd": session.path or None,
+    }
+
+
 def _resume_cmd_args(session) -> list[str]:
     launch = _launch_tool_name(session.tool_name)
-    cmd_args = [launch]
-    builder = _RESUME_FLAGS.get(session.tool_name)
-    if builder:
-        cmd_args.extend(builder(session.session_id))
-    elif session.tool_name in _LIMITED_RESUME:
+    cmd_args = [launch, *_resume_flags(session)]
+    if session.tool_name in _LIMITED_RESUME and session.tool_name not in _RESUME_FLAGS:
         if session.tool_name == "gemini":
             print(
                 c(
@@ -345,6 +367,22 @@ def _resume_cmd_args(session) -> list[str]:
                 )
             )
     return cmd_args
+
+
+def _session_json(session, status: str) -> dict:
+    """One ``swe session --json`` row."""
+    return {
+        "id": session.session_id or None,
+        "harness": session.tool_name,
+        "agent": session.agent,
+        "cwd": session.path or None,
+        "title": session.title,
+        "title_source": session.title_source or None,
+        # Session.timestamp is epoch milliseconds; the contract is seconds.
+        "started_at": session.timestamp / 1000,
+        "status": status or None,
+        "resume": _resume_json(session),
+    }
 
 
 def _display_title(session, width: int) -> str:
@@ -619,8 +657,16 @@ def cmd_session(args):
         from quiver.help_text import cmd_help
 
         return cmd_help(["session"]) or 0
-    parsed = _parse_session_args(args)
+    args, json_view = take_json_flag(args)
+    # Under --json a refusal must leave stdout empty, so the message goes
+    # to stderr instead.
+    with redirect_stdout(sys.stderr if json_view else sys.stdout):
+        parsed = _parse_session_args(args)
     if parsed is None:
+        return 1
+    if json_view and (parsed.use_index is not None or parsed.interactive):
+        print(c("red", "--json lists sessions; it cannot be combined "
+                       "with use <N> or --interactive"), file=sys.stderr)
         return 1
     limit, agent_filter, cwd_filter, use_index, search = parsed
     has_date_filter = any(
@@ -659,6 +705,12 @@ def cmd_session(args):
     else:
         query = SessionQuery(search=search, limit=result_limit)
     sessions = query.apply(sessions)
+
+    if json_view:
+        statuses = session_statuses(sessions)
+        return emit({"sessions": [
+            _session_json(s, status) for s, status in zip(sessions, statuses)
+        ]})
 
     if not sessions:
         print(c("dim", "  No sessions found."))
