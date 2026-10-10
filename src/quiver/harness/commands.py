@@ -31,6 +31,7 @@ from quiver.harness.stars import (
     unstar as unstar_name,
 )
 from quiver.harness.tools import extract_version_number, is_installed, live_version
+from quiver.json_output import emit, take_json_flag
 from quiver.prompt import read_line
 from quiver.table import Table
 
@@ -542,6 +543,27 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str]) -> dict:
     return holder["result"]
 
 
+def _harness_json(name, info, starred, archived, counts, rate) -> dict:
+    """One ``swe list --json`` row."""
+    if name in archived:
+        state = "archived"
+    elif name in starred:
+        state = "starred"
+    else:
+        state = "active"
+    return {
+        "name": name,
+        "command": info.get("command") or name,
+        "description": info.get("description") or "",
+        "version": info.get("version") or None,
+        "aliases": [a for a in info.get("aliases", []) if a != name],
+        "tags": list(info.get("tags", [])),
+        "state": state,
+        "sessions_100d": counts.get(name),
+        "rate_limit": rate.to_json() if rate is not None else None,
+    }
+
+
 def cmd_list(args):
     args = list(args or [])
     try:
@@ -558,6 +580,7 @@ def cmd_list(args):
     refresh_flags = {"--refresh", "-r", "-n"}
     refresh = any(arg in refresh_flags for arg in args)
     args = [arg for arg in args if arg not in refresh_flags]
+    args, json_view = take_json_flag(args)
 
     # Usage is opt-in. Rate limits are the only part of `swe list` that
     # touches the network, and on a cold cache they cost ~850ms against
@@ -615,6 +638,8 @@ def cmd_list(args):
     # fresh install lands here with nothing to render. Say what to run
     # instead of printing a header over an empty table.
     if not tools and not archived:
+        if json_view:
+            return emit({"harnesses": []})
         print(f"\n  {c('dim', 'No harnesses registered yet.')}")
         print(f"  {c('dim', 'Run')} {c('cyan', 'swe discover --apply')} "
               f"{c('dim', 'to register what is installed here.')}\n")
@@ -640,6 +665,21 @@ def cmd_list(args):
     shows_usage = any(n in archived for n in tools)
     stars = load_stars()
     starred_set = set(stars)
+
+    if json_view:
+        rate_limits = (
+            _fetch_rate_limits(
+                refresh=refresh,
+                tool_names={name for name in starred_set if name in tools},
+            )
+            if usage_view
+            else {}
+        )
+        return emit({"harnesses": [
+            _harness_json(name, info, starred_set, archived, counts,
+                          rate_limits.get(name))
+            for name, info in tools.items()
+        ]})
 
     # Fetch rate limits (cached 5min by default, refresh flags bypass;
     # override TTL with SWE_RATE_LIMITS_TTL=<seconds>)
