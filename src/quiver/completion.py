@@ -104,6 +104,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--full", "Show every match, not just counts"),
         ("--interactive", "Browse matches with arrow keys"),
         ("-i", "Short for --interactive"),
+        ("--json", "Skills only: print the roots as JSON"),
     ],
     "find mcp": [
         ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
@@ -208,6 +209,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--full", "List every path, not just the counts"),
         ("--check", "Show what would change, write nothing"),
         ("-n", "Short for --check"),
+        ("--json", "With --check, print link states as JSON"),
         ("--force", "Replace real files too (backed up first)"),
         ("--migrate", "Move a pre-0.2.7 ~/.config/swe into ~/.quiver"),
         ("--yes", "Register every new harness without asking"),
