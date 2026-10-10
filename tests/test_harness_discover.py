@@ -382,3 +382,20 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
                                      supported=True, chosen=None)
         self.assertEqual(code, 0)
         apply.assert_not_called()
+
+    def test_pick_and_apply_together_are_rejected(self):
+        code, out, apply = self._run(["--pick", "--apply"], [self._finding("a")],
+                                     supported=True)
+        self.assertEqual(code, 1)
+        apply.assert_not_called()
+
+    def test_pick_with_nothing_new_opens_no_picker(self):
+        from quiver.harness import discover_commands as dc
+        self.assertEqual(dc._pick([self._finding("a", status="registered")]), set())
+
+    def test_pick_with_nothing_ticked_says_so(self):
+        code, out, apply = self._run(["--pick"], [self._finding("a")],
+                                     supported=True, chosen=[])
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.kwargs["names"], set())
+        self.assertIn("nothing ticked", out)

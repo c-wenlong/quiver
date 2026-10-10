@@ -446,6 +446,21 @@ class NotHarnessTest(unittest.TestCase):
             keys = [ch.key for ch in picker.call_args[0][0]]
             self.assertEqual(keys, ["foo"])
 
+    def test_already_linked_known_app_is_not_registered_again(self):
+        """An older init linked it: keep the link, never re-register it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            (home / ".tokentracker").mkdir()
+            root = home / ".tokentracker" / "skills"
+            root.symlink_to(shared)
+            _, picker = _init(home, ["--yes", "--full"])
+            self.assertFalse(picker.called)
+            path = home / ".quiver" / "config" / "harness.json"
+            self.assertFalse(path.exists() and "tokentracker" in _registry(home))
+            self.assertTrue(root.is_symlink())
+
     def test_active_registry_entry_wins(self):
         """Someone registered it on purpose: link it like any harness."""
         with tempfile.TemporaryDirectory() as tmp:

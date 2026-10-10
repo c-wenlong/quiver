@@ -18,6 +18,7 @@ from quiver import paths as _paths
 from quiver.harness.catalog import HARNESS_CATALOG
 from quiver.init.layout import (
     HARNESS_SIGNATURES,
+    NOT_HARNESSES,
     LinkStatus,
     aliases_of,
     registry_name,
@@ -69,6 +70,13 @@ def new_harnesses(skills: list[LinkStatus], registry: dict) -> list[LinkStatus]:
         if status.label == "agents" or status.state == "ignored":
             continue
         if registry_name(status.label) in known:
+            continue
+        # plan() leaves a non-harness root that an older init already
+        # linked as "linked" (init never unlinks), so the state check
+        # above misses it. Exclude it by name: never offered, never
+        # registered by --yes. An active entry under the name is already
+        # in ``known`` and was handled one check up.
+        if registry_name(status.label) in NOT_HARNESSES:
             continue
         found.setdefault(status.label, status)
     return [found[label] for label in sorted(found)]
