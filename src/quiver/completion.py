@@ -169,6 +169,15 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "mcp doctor": [
         ("--strict", "Exit nonzero on warnings"),
     ],
+    "mcp list": [
+        ("--json", "Machine-readable output"),
+    ],
+    "mcp status": [
+        ("--json", "Machine-readable output"),
+    ],
+    "doctor": [
+        ("--json", "Machine-readable output"),
+    ],
     "harness archive": [
         ("--usage=none", "Mark the harness as unused"),
         ("--usage=trial", "Mark the harness as tried once"),
@@ -234,6 +243,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     },
     "mcp": {
         "discover": "mcp discover", "sync": "mcp sync", "doctor": "mcp doctor",
+        "list": "mcp list", "ls": "mcp list", "status": "mcp status",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",

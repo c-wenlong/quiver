@@ -1446,11 +1446,70 @@ def cmd_aliases(args):
     print()
 
 
+def _doctor_finding(check, severity, message, fix=None) -> dict:
+    return {"check": check, "severity": severity, "message": message, "fix": fix}
+
+
+def _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> list:
+    """Every problem ``swe doctor`` knows about, as ``--json`` rows.
+
+    Severity ``error`` is exactly what makes the exit status 1: an off-PATH
+    harness, an npm global bin missing from PATH, or an error-level drift
+    finding. A missing node or npm, nvm bins off PATH and drift warnings
+    are warnings, and a differing preferred npm is info, so ``ok`` and the
+    exit status always agree.
+    """
+    from quiver.harness.path_health import is_dir_on_path
+
+    findings = []
+    if not env.node:
+        findings.append(_doctor_finding(
+            "node", "warning", "node not found on PATH"))
+    if not env.npm:
+        findings.append(_doctor_finding(
+            "npm", "warning", "npm not found on PATH",
+            "Install Node/npm, or put npm on PATH."))
+    if env.global_bin and not env.global_bin_on_path:
+        findings.append(_doctor_finding(
+            "npm.global-bin", "error",
+            f"npm global bin {env.global_bin} is not on PATH",
+            f'export PATH="{env.global_bin}:$PATH"'))
+    if preferred and which_npm and Path(preferred).resolve() != Path(which_npm).resolve():
+        findings.append(_doctor_finding(
+            "npm.preferred", "info",
+            f"which npm is {which_npm}; swe prefers {preferred}"))
+    if nvm_dirs and not any(is_dir_on_path(d) for d in nvm_dirs):
+        findings.append(_doctor_finding(
+            "nvm", "warning",
+            "nvm node bins are not on PATH, so nvm globals are invisible "
+            "to swe and non-interactive shells",
+            "Avoid `npm install -g` under nvm unless nvm is always on PATH. "
+            "Prefer: swe install <name>"))
+    for name, command, hit in orphans:
+        findings.append(_doctor_finding(
+            "off-path", "error",
+            f"{name} ({command}) is at {hit.path} [{hit.source}], not on PATH",
+            f"swe install {name}"))
+    for finding in drift:
+        findings.append(_doctor_finding(
+            f"drift.{finding.area}",
+            "error" if finding.severity == "error" else "warning",
+            finding.message))
+    return findings
+
+
 def cmd_doctor(args):
     """Diagnose Node/PATH mismatches that hide globally installed harnesses."""
+    args, json_view = take_json_flag(list(args or []))
     if args:
-        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        message = f"  Unexpected args: {' '.join(args)}"
+        if json_view:
+            # stdout is one JSON document or nothing.
+            print(message, file=sys.stderr)
+        else:
+            print(c("red", message))
         return 1
+    from quiver.harness.drift import run_drift_checks
     from quiver.harness.path_health import (
         find_off_path_tools,
         is_dir_on_path,
@@ -1462,6 +1521,17 @@ def cmd_doctor(args):
     tools = load_registry()
     env = probe_node_env()
     home = Path.home()
+    nvm_dirs = nvm_bin_dirs(home)
+    preferred = preferred_npm_bin()
+    which_npm = shutil.which("npm")
+    orphans = find_off_path_tools(tools)
+    drift = run_drift_checks()
+    found = _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift)
+    failed = any(f["severity"] == "error" for f in found)
+
+    if json_view:
+        emit({"ok": not failed, "findings": found})
+        return 1 if failed else 0
 
     print(f"\n{c('bold', 'swe doctor')} — environment health\n")
 
@@ -1474,14 +1544,11 @@ def cmd_doctor(args):
         on = c("green", "on PATH") if env.global_bin_on_path else c("red", "NOT on PATH")
         print(f"    global prefix:{' ' if True else ''} {env.global_prefix}")
         print(f"    global bin:    {env.global_bin or '—'}  ({on})")
-    preferred = preferred_npm_bin()
-    which_npm = shutil.which("npm")
     if preferred and which_npm and Path(preferred).resolve() != Path(which_npm).resolve():
         print(c("yellow", f"    note: which npm → {which_npm}; swe prefers {preferred}"))
     print()
 
     print(c("bold", "  nvm"))
-    nvm_dirs = nvm_bin_dirs(home)
     nvm_root = Path(os.environ.get("NVM_DIR", home / ".nvm"))
     if not nvm_root.exists():
         print(c("dim", "    not installed (or NVM_DIR unset)"))
@@ -1501,7 +1568,6 @@ def cmd_doctor(args):
     n_inst = sum(1 for i in tools.values() if is_installed(i.get("command", "")))
     print(f"    registered:   {len(tools)}")
     print(f"    on PATH:      {c('green', str(n_inst))}/{len(tools)}")
-    orphans = find_off_path_tools(tools)
     if orphans:
         print(f"    off-PATH:     {c('yellow', str(len(orphans)))}")
         print()
@@ -1529,21 +1595,17 @@ def cmd_doctor(args):
         print(c("green", "    • Environment looks healthy for swe."))
     print()
 
-    from quiver.harness.drift import run_drift_checks
-
-    findings = run_drift_checks()
     print(c("bold", "  Drift"))
-    if not findings:
+    if not drift:
         print(c("dim", "    none detected"))
     else:
-        for finding in findings:
+        for finding in drift:
             icon, color = ("✗", "red") if finding.severity == "error" else ("!", "yellow")
             print(f"    {c(color, icon)} [{finding.area}] {finding.message}")
     print()
     print(c("dim", "  Related: swe check  ·  swe install <name>  ·  swe help doctor\n"))
 
-    has_error_findings = any(f.severity == "error" for f in findings)
-    return 1 if orphans or (env.global_bin and not env.global_bin_on_path) or has_error_findings else 0
+    return 1 if failed else 0
 
 
 def cmd_install(args):
