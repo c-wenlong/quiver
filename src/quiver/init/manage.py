@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.harness.catalog import HARNESS_CATALOG
 from quiver.init.layout import (
     HARNESS_SIGNATURES,
     LinkStatus,
@@ -71,6 +72,39 @@ def new_harnesses(skills: list[LinkStatus], registry: dict) -> list[LinkStatus]:
             continue
         found.setdefault(status.label, status)
     return [found[label] for label in sorted(found)]
+
+
+UNREVIEWED_DETAIL = "new, not reviewed: run swe init in a terminal"
+
+
+def has_harness_evidence(label: str) -> bool:
+    """True when a new root's owner looks like a harness, not just an app.
+
+    A skills/ dir alone proves little: browsers, launchers and usage
+    trackers keep one too. A command on PATH under the label (or its
+    registry name), or a catalog entry naming it, is the evidence the
+    picker uses to pre-tick a root. Everything else starts unticked.
+    """
+    name = registry_name(label)
+    if name in HARNESS_CATALOG or label in HARNESS_CATALOG:
+        return True
+    commands = {entry.get("command") for entry in HARNESS_CATALOG.values()}
+    if label in commands or name in commands:
+        return True
+    return bool(shutil.which(label) or shutil.which(name))
+
+
+def hold_unreviewed(skills: list[LinkStatus], labels: set[str]) -> None:
+    """Keep roots nobody has decided on out of this run's links.
+
+    A new root is linked only once it is registered as managed. One that
+    was not reviewed (non-terminal run, cancelled picker, --check) is
+    reported ``skipped`` instead. An existing link stays, since init never
+    unlinks.
+    """
+    for status in skills:
+        if status.label in labels and status.state != "linked":
+            status.state, status.detail = "skipped", UNREVIEWED_DETAIL
 
 
 def instruction_target(root: Path, filename: str) -> Path:

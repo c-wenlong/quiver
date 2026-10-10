@@ -110,21 +110,36 @@ class YesFlagTest(unittest.TestCase):
             )
             self.assertTrue(root.is_symlink())
 
-    def test_non_terminal_registers_everything(self):
+    def test_non_terminal_decides_nothing_and_links_nothing(self):
+        """A skills/ dir alone does not make an app a harness.
+
+        Without a terminal nobody can say which it is, so the root is left
+        exactly as found: not registered, not linked, no AGENTS.md. This is
+        the run a nix rebuild's activation script makes.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             root = home / ".config" / "foo" / "skills"
             root.mkdir(parents=True)
             out, picker = _init(home, ["--full"], supported=False)
             self.assertFalse(picker.called)
-            self.assertIn("not a terminal, registering every new harness", out)
-            entry = _registry(home)["foo"]
-            self.assertNotIn("state", entry)
-            self.assertEqual(
-                entry["capabilities"]["instructions"]["file"],
-                "~/.config/foo/AGENTS.md",
-            )
-            self.assertTrue((home / ".config" / "foo" / "AGENTS.md").is_symlink())
+            self.assertIn("left 1 new skills folder(s) alone (foo)", out)
+            self.assertIn(manage.UNREVIEWED_DETAIL, out)
+            self.assertFalse((home / ".quiver" / "config" / "harness.json").exists())
+            self.assertFalse(root.is_symlink())
+            self.assertFalse((home / ".config" / "foo" / "AGENTS.md").exists())
+
+    def test_non_terminal_keeps_an_existing_link(self):
+        """init never unlinks, held or not."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            (home / ".foo").mkdir()
+            root = home / ".foo" / "skills"
+            root.symlink_to(shared)
+            _init(home, ["--full"], supported=False)
+            self.assertTrue(root.is_symlink())
 
 
 class InteractivePickerTest(unittest.TestCase):
@@ -221,7 +236,7 @@ class InteractivePickerTest(unittest.TestCase):
                 "~/.foo/AGENTS.md",
             )
 
-    def test_cancel_registers_nothing_but_still_links(self):
+    def test_cancel_registers_nothing_and_links_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             root = home / ".foo" / "skills"
@@ -229,7 +244,27 @@ class InteractivePickerTest(unittest.TestCase):
             out, _ = _init(home, ["--full"], supported=True, chosen=None)
             self.assertIn("cancelled, nothing registered", out)
             self.assertFalse((home / ".quiver" / "config" / "harness.json").exists())
-            self.assertTrue(root.is_symlink())
+            self.assertFalse(root.is_symlink())
+
+    def test_only_roots_with_evidence_start_ticked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            self._two_roots(home)
+            which = lambda name: "/usr/bin/foo" if name == "foo" else None
+            with mock.patch.object(manage.shutil, "which", which):
+                _, picker = _init(home, ["--full"], supported=True,
+                                  chosen=[], lines=[])
+            self.assertEqual(picker.call_args.kwargs["selected"], ["foo"])
+            about = {ch.key: ch.about for ch in picker.call_args[0][0]}
+            self.assertIn("no matching command", about["bar"])
+            self.assertNotIn("no matching command", about["foo"])
+
+    def test_catalog_entry_counts_as_evidence_without_a_binary(self):
+        name, entry = next(iter(manage.HARNESS_CATALOG.items()))
+        with mock.patch.object(manage.shutil, "which", lambda _: None):
+            self.assertTrue(manage.has_harness_evidence(name))
+            self.assertTrue(manage.has_harness_evidence(entry["command"]))
+            self.assertFalse(manage.has_harness_evidence("definitely-not-a-tool"))
 
 
 class ArchivedMeansUnmanagedTest(unittest.TestCase):
@@ -384,3 +419,41 @@ class LegacyGuardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NotHarnessTest(unittest.TestCase):
+    """Known apps with a skills/ dir are ignored, never offered or linked."""
+
+    def test_known_app_is_ignored_even_with_yes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".tokentracker" / "skills"
+            root.mkdir(parents=True)
+            (root / "usage-cache.json").write_text("{}")
+            out, picker = _init(home, ["--yes", "--full"])
+            self.assertIn("not a coding harness", out)
+            self.assertFalse(root.is_symlink())
+            self.assertTrue((root / "usage-cache.json").exists())
+            path = home / ".quiver" / "config" / "harness.json"
+            self.assertFalse(path.exists() and "tokentracker" in _registry(home))
+
+    def test_known_app_is_not_offered_in_the_picker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".aside" / "skills").mkdir(parents=True)
+            (home / ".foo" / "skills").mkdir(parents=True)
+            _, picker = _init(home, ["--full"], supported=True, chosen=[], lines=[])
+            keys = [ch.key for ch in picker.call_args[0][0]]
+            self.assertEqual(keys, ["foo"])
+
+    def test_active_registry_entry_wins(self):
+        """Someone registered it on purpose: link it like any harness."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp, {"pinokio": {
+                "command": "", "description": "", "tags": [], "aliases": [],
+                "capabilities": {"skills": {"supported": True,
+                                            "root": "~/.pinokio/skills"}}}})
+            root = home / ".pinokio" / "skills"
+            root.mkdir(parents=True)
+            _init(home, ["--full"], supported=False)
+            self.assertTrue(root.is_symlink())

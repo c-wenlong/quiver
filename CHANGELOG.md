@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe init` no longer registers and links every app with a `skills/`
+  folder.** A non-terminal run (a nix rebuild's activation script, say)
+  used to register each unknown `~/.<name>/skills` as a harness and link
+  it to the shared tree, so a token usage tracker's cache folder and a
+  browser's skills folder both ended up as "harnesses". Now a new folder
+  is linked only once someone ticks it: a non-terminal run leaves it
+  alone and reports it as `skipped`, a cancelled picker links nothing,
+  and the picker pre-ticks only folders whose owner has a command on PATH
+  or a catalog entry. Aside, Pinokio and TokenTracker are named in
+  `NOT_HARNESSES` and never offered or linked; an active registry entry
+  under the same name still wins. `--yes` still takes everything.
+- **`swe harness discover --apply NAME…` and `--pick`.** Registering was
+  all-or-nothing by confidence tier (`--apply` or `--apply-all`). Naming
+  findings now registers just those, at any confidence, and `--pick`
+  opens a multiselect in a terminal with only catalog matches ticked. The
+  home scan skips the `NOT_HARNESSES` apps too.
 - **Claude no longer cries `re-login` on a self-healing token.** An expired
   access token beside a `refreshToken` is a live login — Claude Code
   refreshes transparently on its next call — so the fetcher now serves

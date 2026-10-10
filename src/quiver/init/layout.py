@@ -156,6 +156,20 @@ SKILL_SCAN_EXCLUDE: tuple[str, ...] = (
 )
 
 
+# Apps that keep agent-shaped furniture in their home (a skills/ dir, an
+# AGENTS.md) but are not coding harnesses. The scan finds them like any
+# other root, so they are named here and kept out: never offered as a new
+# harness, never linked, never registered by `swe harness discover`. Keyed
+# by the dotdir name without its dot. An active harness.json entry under
+# the same name still wins, so a deliberate registration is respected.
+NOT_HARNESSES: dict[str, str] = {
+    "aside": "an AI browser",
+    "pinokio": "a launcher for local AI apps",
+    "tokentracker": "a token usage tracker; its skills/ dir holds caches",
+}
+NOT_HARNESS_DETAIL = "not a coding harness: {}"
+
+
 def _looks_like_backup(name: str) -> bool:
     """e.g. .hermes.pre-bootstrap-20260730-110640 — a snapshot, not a harness."""
     return any(m in name for m in ("pre-bootstrap", ".bak", ".backup", ".old"))
@@ -567,6 +581,23 @@ def archived_override(status: LinkStatus, archived: set[str]) -> None:
         status.state, status.detail = "ignored", ARCHIVED_DETAIL
 
 
+def not_harness_override(status: LinkStatus, registry: dict) -> None:
+    """A root owned by a known non-harness app is ignored, not linked.
+
+    Same shape as ``archived_override``: an existing link is left alone
+    (init never unlinks), and an active registry entry under the name wins,
+    since someone registered it on purpose.
+    """
+    name = registry_name(status.label)
+    reason = NOT_HARNESSES.get(name)
+    if reason is None or status.state in ("linked", "ignored"):
+        return
+    entry = registry.get(name)
+    if isinstance(entry, dict) and entry.get("state") != "archived":
+        return
+    status.state, status.detail = "ignored", NOT_HARNESS_DETAIL.format(reason)
+
+
 def plan(
     home: Path | None = None,
     patterns: list[str] | None = None,
@@ -608,6 +639,7 @@ def plan(
             state, detail = classify_skill_root(path, home)
         status = LinkStatus(skill_root_label(path, home, registry), path, state, detail)
         archived_override(status, archived)
+        not_harness_override(status, registry)
         skills.append(status)
     return instructions, skills
 
