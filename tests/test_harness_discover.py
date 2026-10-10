@@ -399,3 +399,23 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(apply.call_args.kwargs["names"], set())
         self.assertIn("nothing ticked", out)
+
+
+class OllamaIsNotAHarnessTest(unittest.TestCase):
+    def test_ollama_on_path_is_not_a_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            bindir = home / "bin"
+            bindir.mkdir()
+            exe = bindir / "ollama"
+            exe.write_text("#!/bin/sh\n")
+            exe.chmod(0o755)
+            config_dir = home / ".quiver" / "config"
+            patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
+                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
+                found = {f.name for f in discover_harnesses(path_env=str(bindir), home=home)}
+            self.assertNotIn("ollama", found)
+            self.assertNotIn("ollama", HARNESS_CATALOG)

@@ -164,6 +164,7 @@ SKILL_SCAN_EXCLUDE: tuple[str, ...] = (
 # the same name still wins, so a deliberate registration is respected.
 NOT_HARNESSES: dict[str, str] = {
     "aside": "an AI browser",
+    "ollama": "a local model runtime",
     "pinokio": "a launcher for local AI apps",
     "tokentracker": "a token usage tracker; its skills/ dir holds caches",
 }

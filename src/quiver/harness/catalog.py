@@ -157,20 +157,15 @@ HARNESS_CATALOG: dict[str, dict] = {
         "tags": ["agentic", "coding", "free"],
         "aliases": ["fb"],
     },
-
-    # Not a harness: a local inference engine. Listed so discovery names it
-    # instead of reporting an unknown binary, never seeded as a harness row.
-    "ollama": {
-        "command": "ollama",
-        "description": "Most popular local inference engine",
-        "tags": ["local", "llm", "infrastructure"],
-        "aliases": ["ol"],
-    },
 }
 
 # Basenames to skip when scanning PATH (common false positives).
 EXCLUDE_BASENAMES = frozenset(
     {
+        # A local model runtime, not a harness. It used to sit in the
+        # catalog "so discovery names it", but catalog hits are what
+        # --apply registers, so it kept landing in harness.json.
+        "ollama",
         "agentd",
         "python",
         "python3",

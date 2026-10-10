@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is linked only once someone ticks it: a non-terminal run leaves it
   alone and reports it as `skipped`, a cancelled picker links nothing,
   and the picker pre-ticks only folders whose owner has a command on PATH
-  or a catalog entry. Aside, Pinokio and TokenTracker are named in
+  or a catalog entry. Aside, Pinokio, TokenTracker and Ollama are named in
   `NOT_HARNESSES` and never offered or linked; an active registry entry
   under the same name still wins. `--yes` still takes everything.
 - **`swe harness discover --apply NAME…` and `--pick`.** Registering was
@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   findings now registers just those, at any confidence, and `--pick`
   opens a multiselect in a terminal with only catalog matches ticked. The
   home scan skips the `NOT_HARNESSES` apps too.
+- **Ollama is out of the harness catalog.** It was listed "so discovery
+  names it", but catalog matches are exactly what `discover --apply`
+  registers, so a local model runtime kept landing in `harness.json`. It is
+  now in the PATH scan's exclude list instead, and gone from the alias help.
 - **Claude no longer cries `re-login` on a self-healing token.** An expired
   access token beside a `refreshToken` is a live login — Claude Code
   refreshes transparently on its next call — so the fetcher now serves

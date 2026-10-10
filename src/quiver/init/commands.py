@@ -422,7 +422,7 @@ def print_init_help() -> None:
     in harness.json and left alone. `swe hs` changes either later.
     Without a terminal nothing is decided: new folders stay unlinked
     until an interactive run or --yes. A few known apps (Aside, Pinokio,
-    TokenTracker) are never offered.
+    TokenTracker, Ollama) are never offered.
 
   {c('bold', 'What it owns')}
     ~/.quiver/AGENTS.md    one instruction file, linked in under each

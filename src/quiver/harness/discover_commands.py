@@ -62,7 +62,7 @@ def _print_help():
   desktop apps and IDE tools that never put a binary on PATH. Home-scan finds
   are low confidence and register as archived: known, hidden from swe list,
   one swe hs star away if they matter. A few known apps that keep a skills/
-  dir but are not harnesses (Aside, Pinokio, TokenTracker) are never listed.
+  dir but are not harnesses (Aside, Pinokio, TokenTracker, Ollama) are never listed.
 
 {c('bold', 'See also')}  {c('cyan', 'swe setup')} — interactive onboarding wizard
 """
