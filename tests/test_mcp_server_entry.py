@@ -1,5 +1,6 @@
 """``python -m quiver.mcp_server`` must start the server, not just import it."""
 
+import importlib
 import runpy
 import sys
 import types
@@ -61,7 +62,8 @@ class TestMcpServerShimWithoutExtra(unittest.TestCase):
 @unittest.skipUnless(_have_fastmcp(), "FastMCP (quiver[server]) not installed")
 class TestMcpServerShimWithFastMCP(unittest.TestCase):
     def test_running_shim_as_main_starts_the_real_server(self):
-        from quiver.mcp import server
+        # Not `from quiver.mcp import server`: the stub tests can leave a stale package attribute.
+        server = importlib.import_module("quiver.mcp.server")
 
         with mock.patch.object(server.mcp, "run") as run:
             runpy.run_module("quiver.mcp_server", run_name="__main__")
