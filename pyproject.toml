@@ -35,7 +35,8 @@ dependencies = []
 [project.optional-dependencies]
 # `mcp_server.py` exposes session history as a FastMCP server; only needed if
 # you run `python -m quiver.mcp_server`. The core `swe` CLI is stdlib-only.
-server = ["mcp>=1.0.0"]
+# mcp 2.x removed mcp.server.fastmcp, which mcp/server.py imports.
+server = ["mcp>=1.0.0,<2"]
 test = ["coverage[toml]>=7.10"]
 
 [project.scripts]
