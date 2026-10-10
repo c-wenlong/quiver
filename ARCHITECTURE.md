@@ -120,8 +120,8 @@ Link state is a small vocabulary shared by `swe init`, `swe list` and
 | `absorb` | a real directory whose contents are all duplicates or empty |
 | `keep` | a real directory holding files that exist nowhere else |
 | `conflict` | a real file where the link should go |
-| `skipped` | harness not installed; `swe init` lists it only when `harness.json` has the harness |
-| `ignored` | listed in `~/.quiver/.linkignore`, never touched or counted |
+| `skipped` | harness not installed (`swe init` lists it only when `harness.json` has the harness), or a new skills folder nobody has reviewed yet |
+| `ignored` | listed in `~/.quiver/.linkignore`, archived in `harness.json`, or owned by a known non-harness app (`NOT_HARNESSES` in `init/layout.py`); never touched or counted |
 
 `keep` is the safety valve. It is never overwritten on a plain run, because
 absorbing it would hide the only copy of something behind the shared tree.

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from quiver.console import c, elide
+from quiver.multiselect import Choice, _supported, multiselect
 from quiver.harness.discover import apply_findings, discover_harnesses
 
 
@@ -15,6 +16,8 @@ def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
         "json": False,
         "include_registered": False,
         "include_missing": False,
+        "pick": False,
+        "names": [],
     }
     rest = []
     for arg in args:
@@ -27,8 +30,12 @@ def _parse_flags(args: list[str]) -> tuple[dict, list[str]]:
         elif arg == "--all":
             opts["include_registered"] = True
             opts["include_missing"] = True
+        elif arg == "--pick":
+            opts["pick"] = True
         elif arg in ("-h", "--help"):
             rest.append(arg)
+        elif not arg.startswith("-"):
+            opts["names"].append(arg)
         else:
             rest.append(arg)
     return opts, rest
@@ -42,6 +49,8 @@ def _print_help():
   {c('cyan', 'swe harness discover')}              List tools not in the registry (dry-run)
   {c('cyan', 'swe harness discover --apply')}      Add high-confidence matches to harness.json
   {c('cyan', 'swe harness discover --apply-all')}  Add every match, including home-scan finds
+  {c('cyan', 'swe harness discover --apply')} {c('dim', 'NAME…')} Add only the named matches, any confidence
+  {c('cyan', 'swe harness discover --pick')}       Tick the matches to add (terminal only)
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
   {c('cyan', 'swe harness discover --all')}        Include already-registered and missing entries
 
@@ -52,11 +61,38 @@ def _print_help():
   dotdirs holding a skills/ or agents/ dir or an AGENTS.md — which catches
   desktop apps and IDE tools that never put a binary on PATH. Home-scan finds
   are low confidence and register as archived: known, hidden from swe list,
-  one swe hs star away if they matter.
+  one swe hs star away if they matter. A few known apps that keep a skills/
+  dir but are not harnesses (Aside, Pinokio, TokenTracker, Ollama) are never listed.
 
 {c('bold', 'See also')}  {c('cyan', 'swe setup')} — interactive onboarding wizard
 """
     )
+
+
+def _pick(findings) -> set[str] | None:
+    """Multiselect over the new findings; None when cancelled.
+
+    High-confidence matches (catalog hits) start ticked. Path and home-scan
+    finds start unticked: they are guesses until someone says otherwise.
+    """
+    new = [f for f in findings if f.status == "new"]
+    if not new:
+        return set()
+    home = str(Path.home())
+    choices = [
+        Choice(
+            key=f.name,
+            label=f.name,
+            about=f"{f.confidence} · {(f.path or '').replace(home, '~') or f.description}",
+        )
+        for f in new
+    ]
+    chosen = multiselect(
+        choices,
+        selected=[f.name for f in new if f.confidence == "high"],
+        title="Tick the tools that are coding harnesses",
+    )
+    return None if chosen is None else set(chosen)
 
 
 def cmd_discover(args):
@@ -69,10 +105,36 @@ def cmd_discover(args):
         _print_help()
         return 1
 
+    if opts["names"] and not opts["apply"]:
+        print(c("red", "  Names only go with --apply: swe harness discover --apply NAME…"))
+        return 1
+    if opts["pick"] and (opts["apply"] or opts["apply_all"]):
+        print(c("red", "  --pick chooses for you; drop --apply/--apply-all"))
+        return 1
+    if opts["pick"] and not _supported():
+        print(c("red", "  --pick needs a terminal. Use --apply NAME… to choose by name."))
+        return 1
+
     findings = discover_harnesses(
         include_registered=opts["include_registered"],
         include_missing=opts["include_missing"],
     )
+
+    names: set[str] | None = None
+    if opts["names"]:
+        new_names = {f.name for f in findings if f.status == "new"}
+        unknown = [n for n in opts["names"] if n not in new_names]
+        if unknown:
+            print(c("red", f"  Not a new match: {', '.join(unknown)}"))
+            if new_names:
+                print(c("dim", f"  New matches: {', '.join(sorted(new_names))}"))
+            return 1
+        names = set(opts["names"])
+    elif opts["pick"]:
+        names = _pick(findings)
+        if names is None:
+            print(c("dim", "  cancelled, nothing added\n"))
+            return 0
 
     if opts["json"]:
         payload = [
@@ -120,18 +182,20 @@ def cmd_discover(args):
             )
             print()
 
-    if opts["apply"] or opts["apply_all"]:
+    if opts["apply"] or opts["apply_all"] or names is not None:
         # --apply-all means every tier, including the home scan's "low";
         # the floor map in apply_findings treats "low" as accept-everything.
+        # Named or picked findings skip the floor entirely.
         min_conf = "low" if opts["apply_all"] else "high"
-        added = apply_findings(findings, min_confidence=min_conf)
+        added = apply_findings(findings, min_confidence=min_conf, names=names)
         if opts["json"]:
             print(json.dumps({"added": added}, indent=2))
         elif added:
             print(c("green", f"  ✓ Added {len(added)} tool(s) to registry: {', '.join(added)}"))
             print(c("dim", "  Run `swe list` to verify.\n"))
         elif not opts["json"]:
-            print(c("dim", "  Nothing to add (no new high-confidence matches).\n"))
+            reason = "nothing ticked" if names is not None else "no new high-confidence matches"
+            print(c("dim", f"  Nothing to add ({reason}).\n"))
     elif not opts["json"] and findings and findings[0].status == "new":
         actionable = [f for f in findings if f.status == "new"]
         if actionable and not sys.stdin.isatty():

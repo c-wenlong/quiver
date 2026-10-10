@@ -10,6 +10,7 @@ from pathlib import Path
 from quiver.harness.catalog import EXCLUDE_BASENAMES, EXTRA_BIN_DIRS, HARNESS_CATALOG
 from quiver.harness.registry import load_registry, save_registry
 from quiver.harness.tools import live_version
+from quiver.init.layout import NOT_HARNESSES
 
 # Uncatalogued agent binaries and *-code suffixes (avoid generic *-cli false positives).
 _UNCATALOGUED_BINARIES = frozenset({"aider", "warp", "factory"})
@@ -334,7 +335,7 @@ def _home_scan_findings(
     findings: list[HarnessFinding] = []
     taken = {f.name for f in existing}
     for name, path in sorted(candidates):
-        if name in taken or name in catalog_names:
+        if name in taken or name in catalog_names or name in NOT_HARNESSES:
             continue
         marker = _looks_like_agent_home(path)
         if marker is None:
@@ -379,8 +380,17 @@ def discover_harnesses(
     return findings
 
 
-def apply_findings(findings: list[HarnessFinding], *, min_confidence: str = "high") -> list[str]:
-    """Add findings to harness.json; returns names added or updated."""
+def apply_findings(
+    findings: list[HarnessFinding],
+    *,
+    min_confidence: str = "high",
+    names: set[str] | None = None,
+) -> list[str]:
+    """Add findings to harness.json; returns names added or updated.
+
+    ``names`` picks findings by name and bypasses the confidence floor:
+    naming a tool is a decision, the floor only stands in for one.
+    """
     # min_confidence is a floor: "high" applies only sure things, "low"
     # applies everything. This map used to be inverted — --apply (high)
     # accepted every tier while --apply-all accepted fewer — which went
@@ -395,7 +405,10 @@ def apply_findings(findings: list[HarnessFinding], *, min_confidence: str = "hig
     for finding in findings:
         if finding.status != "new":
             continue
-        if finding.confidence not in conf_ok:
+        if names is not None:
+            if finding.name not in names:
+                continue
+        elif finding.confidence not in conf_ok:
             continue
         version = live_version(finding.command) if finding.command else None
         entry = {

@@ -13,6 +13,8 @@ from quiver.prompt import read_line
 from quiver.init.hooks import load_registry, plan_hooks
 from quiver.init.manage import (
     _valid_filename,
+    has_harness_evidence,
+    hold_unreviewed,
     home_relative,
     legacy_registry_pending,
     new_harnesses,
@@ -195,23 +197,35 @@ def _pick_new_harnesses(
 ) -> tuple[dict[str, tuple[Path, str | None]], dict[str, Path]] | None:
     """Split ``new`` into (managed, declined); None when cancelled.
 
-    ``--yes`` and a non-terminal run both register everything with the
-    conventional AGENTS.md. Otherwise the multiselect decides; a cancelled
+    ``--yes`` registers everything with the conventional AGENTS.md: the
+    caller asked for that by name. A non-terminal run decides nothing,
+    since a skills/ dir alone does not make an app a harness and nobody is
+    there to say so; it returns two empty dicts and the roots wait,
+    unlinked, for an interactive run. In a terminal the multiselect
+    decides, pre-ticking only roots with harness evidence. A cancelled
     picker leaves the registry alone entirely.
     """
-    if yes or not _supported():
-        if not yes:
-            print(c("dim", "  not a terminal, registering every new harness"))
+    if yes:
         return {s.label: (s.path, "AGENTS.md") for s in new}, {}
+    if not _supported():
+        names = ", ".join(s.label for s in new)
+        print(c("dim", f"  not a terminal: left {len(new)} new skills "
+                       f"folder(s) alone ({names})"))
+        print(c("dim", "  run swe init in a terminal to choose, "
+                       "or swe init --yes to take them all"))
+        return {}, {}
 
-    choices = [
-        Choice(key=s.label, label=s.label, about=home_relative(s.path, home))
-        for s in new
-    ]
+    def about(status: LinkStatus) -> str:
+        where = home_relative(status.path, home)
+        if has_harness_evidence(status.label):
+            return where
+        return f"{where}  (no matching command or catalog entry)"
+
+    choices = [Choice(key=s.label, label=s.label, about=about(s)) for s in new]
     chosen = multiselect(
         choices,
-        selected=[s.label for s in new],
-        title="New harnesses found, tick the ones quiver should manage",
+        selected=[s.label for s in new if has_harness_evidence(s.label)],
+        title="New skills folders found, tick the ones that are coding harnesses",
     )
     if chosen is None:
         print(c("dim", "  cancelled, nothing registered"))
@@ -294,6 +308,9 @@ def cmd_init(args) -> int:
     # been asked about: offer to manage it (register + link instructions) or
     # archive it so it is never asked again.
     new = new_harnesses(skills, registry)
+    # Every new root starts held. Only a managed tick releases one to be
+    # linked; a declined one is archived, which plan() already ignores.
+    held = {s.label for s in new}
     if check_only:
         if new:
             scaffold.append(
@@ -308,12 +325,15 @@ def cmd_init(args) -> int:
             decided = _pick_new_harnesses(new, home, yes)
             if decided is not None:
                 managed, declined = decided
-                registry = register(home, registry, managed, declined)
-                print(c("green", f"  registered {len(managed)} managed, "
-                                 f"{len(declined)} declined"))
-                # Re-plan so the new instruction targets and the freshly
-                # archived roots show up in this same run.
-                instructions, skills = plan(home, patterns, registry)
+                held -= set(managed) | set(declined)
+                if managed or declined:
+                    registry = register(home, registry, managed, declined)
+                    print(c("green", f"  registered {len(managed)} managed, "
+                                     f"{len(declined)} declined"))
+                    # Re-plan so the new instruction targets and the freshly
+                    # archived roots show up in this same run.
+                    instructions, skills = plan(home, patterns, registry)
+    hold_unreviewed(skills, held)
 
     registered = set(registry) | {
         alias
@@ -390,15 +410,19 @@ def print_init_help() -> None:
   {c('cyan', 'swe init --check')}    Show what would change, write nothing
   {c('cyan', 'swe init --force')}    Replace real files too (backed up first)
   {c('cyan', 'swe init --migrate')}  Move a pre-0.2.7 ~/.config/swe into ~/.quiver
-  {c('cyan', 'swe init --yes')}      Register every new harness without asking
-                       (also the non-terminal default)
+  {c('cyan', 'swe init --yes')}      Register every new skills folder without asking
 
   {c('bold', 'New harnesses')}
     Known harnesses are linked from their own footprint — a config dir
     like ~/.cline or ~/.config/kilo is enough, no skills folder needed
-    first. A skills folder nothing claims is offered as new: ticked ones
-    are registered and linked (instructions too), unticked ones are
-    archived in harness.json and left alone. `swe hs` changes either later.
+    first. A skills folder nothing claims is offered as new, since apps
+    that are not harnesses keep one too. Only folders whose owner has a
+    command on PATH or a catalog entry start ticked. Ticked ones are
+    registered and linked (instructions too), unticked ones are archived
+    in harness.json and left alone. `swe hs` changes either later.
+    Without a terminal nothing is decided: new folders stay unlinked
+    until an interactive run or --yes. A few known apps (Aside, Pinokio,
+    TokenTracker, Ollama) are never offered.
 
   {c('bold', 'What it owns')}
     ~/.quiver/AGENTS.md    one instruction file, linked in under each
@@ -421,9 +445,9 @@ def print_init_help() -> None:
     {c('red', 'conflict')}    a real file or directory, needs --force
     {c('yellow', 'protected')}   ran without --force: a {c('bold', 'keep')} directory, left untouched
     {c('red', 'blocked')}     ran without --force: a {c('bold', 'conflict')} path, left untouched
-    {c('dim', 'skipped')}     harness not installed on this machine
-    {c('dim', 'ignored')}     listed in .linkignore or archived in harness.json,
-                   never touched or counted
+    {c('dim', 'skipped')}     harness not installed, or a new folder nobody has reviewed
+    {c('dim', 'ignored')}     listed in .linkignore, archived in harness.json, or a
+                   known app that is not a harness; never touched or counted
 
   {c('dim', 'These are the same five ideas swe list legend (✓ ○ ↻ ✗) and swe init')}
   {c('dim', '(linked/create/relink/conflict) print under different names.')}

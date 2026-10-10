@@ -321,7 +321,9 @@ class SafetyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             _skill(home / ".pane" / "skills", "only-here")
-            _, out = self._run(home, [])
+            # --yes: an unreviewed root is held, never planned for linking,
+            # so the protect path only shows for one that is managed.
+            _, out = self._run(home, ["--yes"])
             self.assertIn("exist nowhere else", out)
             self.assertIn(".pane/skills", out)
 
@@ -331,7 +333,7 @@ class SafetyTest(unittest.TestCase):
             pane = home / ".pane" / "skills"
             _skill(pane, "only-here", "irreplaceable")
 
-            self._run(home, ["--force"])
+            self._run(home, ["--force", "--yes"])
             self.assertTrue(pane.is_symlink())
 
             saved = list((home / ".quiver" / "backups").glob("*pane_skills*"))
