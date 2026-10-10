@@ -48,6 +48,9 @@ remembering CLI commands.
 - [ ] Profile store and directory layout (see open questions)
 - [ ] Open a desktop app or terminal per profile (Claude, Codex)
 - [ ] Native limit fetchers: Claude, Codex, Devin, Cursor, Copilot
+- [ ] Carry over the safeguards in `rate_limits.py`: honor provider cooldowns
+  and `Retry-After`, keep the original `fetched_at` when reusing a reading,
+  and expire stale readings instead of showing them as current
 - [ ] Account cards with bars, plan badge, reset time and "fetched N min ago"
 - [ ] Menu bar panel shows the same bars
 
