@@ -146,7 +146,7 @@ enum RetryAfter {
 enum PlanNames {
     private static let families: [(String, String)] = [
         ("enterprise", "Enterprise"), ("business", "Business"), ("team", "Team"),
-        ("max", "Max"), ("pro", "Pro"), ("plus", "Plus"), ("free", "Free"),
+        ("edu", "Edu"), ("max", "Max"), ("pro", "Pro"), ("plus", "Plus"), ("free", "Free"),
     ]
 
     static func name(_ provider: UsageProvider, _ slugs: String?...) -> String? {
