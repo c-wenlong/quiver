@@ -43,7 +43,7 @@ import Testing
     func model() throws -> AccountsModel {
         let root = FileManager.default.temporaryDirectory.appending(path: "access-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
-        return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher, terminal: { .ghostty })
+        return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher, terminal: { .ghostty }, cliOnPath: { _ in true })
     }
 
     @Test func openingAHarnessAppOpensThatBundle() async throws {
@@ -87,5 +87,35 @@ import Testing
         #expect(HarnessDisplayNames(defaults: defaults).name(for: "devin") == "Devin (team)")
         names.set("   ", for: "devin")
         #expect(names.name(for: "devin") == nil)
+    }
+}
+
+@Suite struct CLIPathTests {
+    @Test func aCommandIsOnPathOnlyAsAnExecutableFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "path-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let tool = dir.appending(path: "claude")
+        try Data("#!/bin/sh\n".utf8).write(to: tool)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        try Data("x".utf8).write(to: dir.appending(path: "codex"))
+        let path = "/nonexistent:\(dir.path)"
+        #expect(CLIPath.contains("claude", path: path))
+        // Present but not executable is not runnable.
+        #expect(!CLIPath.contains("codex", path: path))
+        #expect(!CLIPath.contains("devin", path: path))
+        #expect(!CLIPath.contains("../claude", path: path))
+    }
+}
+
+@MainActor
+@Suite struct AccountCLICheckTests {
+    @Test func loadingChecksEachVendorsCLIDirectly() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cli-\(UUID().uuidString)")
+        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let model = AccountsModel(store: store, usage: FakeUsage(), launcher: FakeLauncher(), terminal: { .terminal },
+                                  cliOnPath: { $0 == "claude" })
+        #expect(model.cliOnPath.isEmpty)
+        await model.load(force: false)
+        #expect(model.cliOnPath == [.claude: true, .codex: false])
     }
 }

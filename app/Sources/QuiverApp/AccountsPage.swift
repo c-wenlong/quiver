@@ -134,7 +134,8 @@ private struct AccountCard: View {
                 Spacer()
                 LaunchButtons(
                     appPath: app.apps.installedApp(for: profile.vendor.rawValue),
-                    cliInstalled: app.others.cliInstalled[profile.vendor.rawValue],
+                    // swe's answer when its registry lists the CLI, else a direct PATH check.
+                    cliInstalled: app.others.cliInstalled[profile.vendor.rawValue] ?? model.cliOnPath[profile.vendor],
                     openApp: { path in perform { try await model.openApp(profile, at: path) } },
                     openTerminal: { perform { try await model.openTerminal(profile) } })
             }

@@ -56,6 +56,22 @@ public struct AppLocator: Sendable {
     }
 }
 
+/// Whether a command is an executable file in a PATH, as a shell would
+/// find it. A static check: nothing is run.
+public enum CLIPath {
+    public static func contains(_ command: String, path: String,
+                                isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> Bool {
+        guard !command.isEmpty, !command.contains("/") else { return false }
+        return path.split(separator: ":").contains { isExecutable("\($0)/\(command)") }
+    }
+
+    /// Against the login shell's PATH, which a Dock-launched app lacks.
+    public static func onLoginPath(_ command: String) async -> Bool {
+        let env = await LoginShell.cachedEnvironment()
+        return contains(command, path: env["PATH"] ?? "")
+    }
+}
+
 /// Names the user gave harness cards on the Accounts page. A harness has no
 /// Quiver profile to hold one, so they live in the app's own defaults.
 @MainActor

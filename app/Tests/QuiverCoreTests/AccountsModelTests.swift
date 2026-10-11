@@ -38,7 +38,7 @@ final class FakeLauncher: Launching, @unchecked Sendable {
     }
 
     func model(terminal: TerminalApp = .terminal) -> AccountsModel {
-        AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal })
+        AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal }, cliOnPath: { _ in true })
     }
 
     let reading = AccountUsage(

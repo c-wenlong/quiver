@@ -91,6 +91,10 @@ public final class AccountsModel {
     }
 
     public private(set) var cards: [Card] = []
+    /// Whether each vendor's CLI is on the login shell's PATH, checked on
+    /// every load. swe's registry says the same for harnesses it knows, but
+    /// a fresh registry may not list Claude or Codex at all.
+    public private(set) var cliOnPath: [Vendor: Bool] = [:]
     public private(set) var isLoading = false
     public private(set) var error: String?
 
@@ -98,14 +102,17 @@ public final class AccountsModel {
     private let usage: UsageFetching
     private let launcher: Launching
     private let terminal: () -> TerminalApp
+    private let checkCLI: @Sendable (String) async -> Bool
     private var generation = 0
 
     public init(store: ProfileStore, usage: UsageFetching, launcher: Launching,
-                terminal: @escaping () -> TerminalApp) {
+                terminal: @escaping () -> TerminalApp,
+                cliOnPath: @escaping @Sendable (String) async -> Bool = { await CLIPath.onLoginPath($0) }) {
         self.store = store
         self.usage = usage
         self.launcher = launcher
         self.terminal = terminal
+        checkCLI = cliOnPath
     }
 
     /// Reload profiles, then every account's usage at once. `force` skips the
@@ -123,6 +130,10 @@ public final class AccountsModel {
             isLoading = false
             return
         }
+        var found: [Vendor: Bool] = [:]
+        for vendor in Vendor.allCases { found[vendor] = await checkCLI(LaunchPlanner.cliName(for: vendor)) }
+        guard mine == generation else { return }
+        cliOnPath = found
         let previous = Dictionary(uniqueKeysWithValues: cards.map { ($0.id, $0.usage) })
         cards = profiles.map { Card(profile: $0, usage: previous[$0.id] ?? nil) }
         isLoading = true
