@@ -185,6 +185,14 @@ private struct HarnessLinksPanel: View {
                     }
                     LinkLegend()
                 }
+                // A link or unlink started here reports back here too, since
+                // the page's own error card is behind the popover.
+                if let error = model.actionError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(Theme.caption).foregroundStyle(Theme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
             }
             .padding(16)
             .frame(width: 440, alignment: .leading)
