@@ -17,6 +17,9 @@ actor FakeLedger: LedgerQuerying {
     var days: [DailyUsage] = []
     var scanError: Error?
     private(set) var scans = 0
+    private(set) var pricingUpdates = 0
+
+    func setPricing(_ catalog: PricingCatalog) { pricingUpdates += 1 }
     private(set) var ranges: [DateInterval] = []
 
     func set(harnesses: [String: UsageTotals], accounts: [String: UsageTotals] = [:], days: [DailyUsage] = []) {
@@ -104,6 +107,7 @@ struct ScanFailed: Error, LocalizedError {
         #expect(summary.totals.totalTokens == 1000)
         #expect(summary.totals.costUSD == 80.5)
         #expect(summary.totals.unpricedTokens == 70)
+        #expect(model.updatedAt == now)
     }
 
     @Test func dailyRowsCombineHarnessesAndModelsNewestFirst() async throws {
@@ -144,6 +148,31 @@ struct ScanFailed: Error, LocalizedError {
         await model.load(scan: true)
         #expect(await ledger.scans == 1)
         #expect(model.error == "Couldn't read your usage logs: disk unreadable")
+    }
+
+    @Test func switchingPeriodOnlyRequeriesThatPeriod() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 2)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        let before = await ledger.ranges.count
+        let spend = model.spend
+        model.period = .today
+        await model.reloadPeriod()
+        #expect(await ledger.ranges.count == before + 1)
+        #expect(model.spend == spend)
+        #expect(model.summary?.period == .today)
+        #expect(await ledger.scans == 0)
+    }
+
+    @Test func aNewerPriceListIsAppliedBeforeScanning() async {
+        let ledger = FakeLedger()
+        let model = OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
+                                  refreshPricing: { .empty }, now: { [now] in now }, calendar: calendar)
+        await model.load(scan: false)
+        #expect(await ledger.pricingUpdates == 0)
+        await model.load(scan: true)
+        #expect(await ledger.pricingUpdates == 1)
     }
 
     @Test func spendForTheMenuBarCoversTodayYesterdayAndThirtyDays() async throws {

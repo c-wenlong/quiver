@@ -253,21 +253,24 @@ public actor Ledger {
     }
 
     /// Usage per calendar day, harness and model. Days with no usage are left out.
+    ///
+    /// One query in 15-minute buckets, each then placed in its local day:
+    /// every timezone offset in use is a whole number of quarter hours, so a
+    /// bucket never straddles midnight.
     public func daily(in range: DateInterval, calendar: Calendar) -> [DailyUsage] {
-        var result: [DailyUsage] = []
-        var dayStart = calendar.startOfDay(for: range.start)
-        while dayStart < range.end {
-            guard let next = calendar.date(byAdding: .day, value: 1, to: dayStart) else { break }
-            let window = DateInterval(start: max(dayStart, range.start), end: min(next, range.end))
-            if window.duration > 0 {
-                let groups = aggregate(in: window, by: [.harness, .model])
-                for (key, totals) in groups.sorted(by: { $0.key.lexicographicallyPrecedes($1.key) }) {
-                    result.append(DailyUsage(day: dayStart, harness: key[0], model: key[1], totals: totals))
-                }
-            }
-            dayStart = next
+        guard let groups = try? store.groups(
+            in: range, by: [.harness, .model], thresholds: pricing.thresholds, bucketSeconds: 900)
+        else { return [] }
+        struct Key: Hashable { var day: Date, harness: String, model: String }
+        var days: [Key: UsageTotals] = [:]
+        for group in groups {
+            let day = calendar.startOfDay(for: max(group.bucket ?? group.first, range.start))
+            days[Key(day: day, harness: group.dimensions[.harness] ?? "", model: group.model), default: UsageTotals()]
+                .add(price(group))
         }
-        return result
+        return days
+            .map { DailyUsage(day: $0.key.day, harness: $0.key.harness, model: $0.key.model, totals: $0.value) }
+            .sorted { ($0.day, $0.harness, $0.model) < ($1.day, $1.harness, $1.model) }
     }
 
     /// Usage per session, most recent first.

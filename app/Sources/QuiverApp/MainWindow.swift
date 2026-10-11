@@ -33,6 +33,8 @@ struct PageView: View {
 
     var body: some View {
         switch section {
+        case .overview:
+            OverviewPage()
         case .accounts:
             AccountsPage()
         case .doctor:

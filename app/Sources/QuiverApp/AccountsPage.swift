@@ -88,15 +88,6 @@ struct AccountsPage: View {
     }
 }
 
-extension Vendor {
-    var title: String {
-        switch self {
-        case .claude: "Claude"
-        case .codex: "Codex"
-        }
-    }
-}
-
 private struct AccountCard: View {
     @Environment(AppModel.self) private var app
     var card: AccountsModel.Card

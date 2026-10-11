@@ -48,8 +48,10 @@ final class LedgerStore {
     }
 
     init(url: URL) throws {
+        // The ledger names projects and sessions, so only the user reads it.
         try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
         db = try SQLiteDatabase(url: url)
         try db.execute("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = OFF;")
         try db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -233,6 +235,8 @@ extension LedgerStore {
         var count: Int
         var first: Date
         var last: Date
+        /// With `bucketSeconds`, the bucket's start.
+        var bucket: Date?
     }
 
     struct TokenSums: Equatable {
@@ -240,13 +244,19 @@ extension LedgerStore {
         var total: Int { input + output + cacheRead + cacheWrite + reasoning }
     }
 
-    func groups(in range: DateInterval, by columns: [Column], thresholds: [Int]) throws -> [PricedGroup] {
+    /// - Parameter bucketSeconds: also split each group into time buckets of
+    ///   this many seconds since the epoch.
+    func groups(in range: DateInterval, by columns: [Column], thresholds: [Int],
+                bucketSeconds: Int? = nil) throws -> [PricedGroup] {
+        let bucket = bucketSeconds.map { "CAST(e.ts / \($0) AS INTEGER)" }
         let dims = columns.map { "d.\($0.rawValue)" }
         let crossed = thresholds.isEmpty
             ? "0"
             : thresholds.map { "(e.input + e.cache_read + e.cache_write > \($0))" }.joined(separator: " + ")
-        let groupColumns = (dims + ["d.model", "d.tier", "logged", "crossed"]).joined(separator: ", ")
-        let select = (dims + ["d.model", "d.tier", "(e.cost IS NOT NULL) AS logged", "\(crossed) AS crossed"])
+        let groupColumns = (dims + ["d.model", "d.tier", "logged", "crossed"] + (bucket.map { _ in ["bucket"] } ?? []))
+            .joined(separator: ", ")
+        let select = (dims + ["d.model", "d.tier", "(e.cost IS NOT NULL) AS logged", "\(crossed) AS crossed"]
+            + (bucket.map { ["\($0) AS bucket"] } ?? []))
             .joined(separator: ", ")
         let statement = try db.prepare("""
             SELECT \(select),
@@ -269,6 +279,9 @@ extension LedgerStore {
             let tier = statement.text(next()) ?? ""
             let logged = statement.int(next()) != 0
             let crossedCount = Int(statement.int(next()))
+            let bucketStart = bucketSeconds.map { size in
+                Date(timeIntervalSince1970: Double(statement.int(next())) * Double(size))
+            }
             let sums = TokenSums(
                 input: Int(statement.int(next())), output: Int(statement.int(next())),
                 cacheRead: Int(statement.int(next())), cacheWrite: Int(statement.int(next())),
@@ -280,7 +293,7 @@ extension LedgerStore {
             result.append(PricedGroup(
                 dimensions: dimensions, model: model, tier: tier.isEmpty ? nil : tier,
                 hasLoggedCost: logged, thresholdsCrossed: crossedCount, tokens: sums,
-                loggedCost: cost, count: count, first: first, last: last))
+                loggedCost: cost, count: count, first: first, last: last, bucket: bucketStart))
         }
         return result
     }

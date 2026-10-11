@@ -7,6 +7,7 @@ public protocol LedgerQuerying: Sendable {
     func byHarness(in range: DateInterval) async -> [String: UsageTotals]
     func byAccount(in range: DateInterval) async -> [String: UsageTotals]
     func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage]
+    func setPricing(_ catalog: PricingCatalog) async
 }
 
 extension Ledger: LedgerQuerying {}
@@ -63,6 +64,7 @@ public struct AccountRow: Sendable, Equatable, Identifiable {
 }
 
 public struct OverviewSummary: Sendable, Equatable {
+    public var period: OverviewPeriod
     public var range: DateInterval
     public var totals: UsageTotals
     public var harnesses: [HarnessShare]
@@ -90,18 +92,25 @@ public final class OverviewModel {
     public private(set) var activity: [DayRow] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
+    /// When the figures were last rebuilt.
+    public private(set) var updatedAt: Date?
 
     private let ledger: LedgerQuerying
     private let roots: @Sendable () async -> LedgerRoots
     private let accountLabel: (String) -> String
     private let now: () -> Date
     private let calendar: Calendar
+    private let refreshPricing: @Sendable () async -> PricingCatalog?
     private var generation = 0
 
+    /// - Parameter refreshPricing: a newer price list when one is due, else nil;
+    ///   asked before every scan.
     public init(ledger: LedgerQuerying, roots: @escaping @Sendable () async -> LedgerRoots,
                 accountLabel: @escaping (String) -> String,
+                refreshPricing: @escaping @Sendable () async -> PricingCatalog? = { nil },
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.ledger = ledger
+        self.refreshPricing = refreshPricing
         self.roots = roots
         self.accountLabel = accountLabel
         self.now = now
@@ -115,6 +124,7 @@ public final class OverviewModel {
         isLoading = true
         defer { if mine == generation { isLoading = false } }
         if scan {
+            if let catalog = await refreshPricing() { await ledger.setPricing(catalog) }
             do {
                 _ = try await ledger.scan(roots: roots())
                 error = nil
@@ -127,11 +137,7 @@ public final class OverviewModel {
         }
 
         let now = now()
-        let range = period.range(now: now, calendar: calendar)
-        let harnesses = await ledger.byHarness(in: range)
-        let accounts = await ledger.byAccount(in: range)
-        let daily = await ledger.daily(in: range, calendar: calendar)
-
+        let summary = await summarize(period, now: now)
         let todayStart = calendar.startOfDay(for: now)
         let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart) ?? todayStart
         let spend = [
@@ -144,10 +150,34 @@ public final class OverviewModel {
         let activity = Self.combineDays(await ledger.daily(in: halfYear, calendar: calendar))
 
         guard mine == generation else { return }
+        self.summary = summary
+        self.spend = spend
+        self.activity = activity
+        updatedAt = now
+    }
+
+    /// Rebuild only the period's figures, after the picker changes. The menu
+    /// bar's spend and the heatmap don't depend on the period.
+    public func reloadPeriod() async {
+        generation += 1
+        let mine = generation
+        isLoading = true
+        defer { if mine == generation { isLoading = false } }
+        let summary = await summarize(period, now: now())
+        guard mine == generation else { return }
+        self.summary = summary
+    }
+
+    private func summarize(_ period: OverviewPeriod, now: Date) async -> OverviewSummary {
+        let range = period.range(now: now, calendar: calendar)
+        let harnesses = await ledger.byHarness(in: range)
+        let accounts = await ledger.byAccount(in: range)
+        let daily = await ledger.daily(in: range, calendar: calendar)
         var total = UsageTotals()
         for value in harnesses.values { total.add(value) }
         let grand = Double(max(total.totalTokens, 1))
-        summary = OverviewSummary(
+        return OverviewSummary(
+            period: period,
             range: range,
             totals: total,
             harnesses: harnesses
@@ -157,8 +187,6 @@ public final class OverviewModel {
             accounts: accounts
                 .map { AccountRow(home: $0.key, label: accountLabel($0.key), totals: $0.value) }
                 .sorted { $0.totals.costUSD > $1.totals.costUSD })
-        self.spend = spend
-        self.activity = activity
     }
 
     /// Reload on a timer until cancelled, scanning for new usage each time.

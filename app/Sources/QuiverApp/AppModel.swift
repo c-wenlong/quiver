@@ -30,6 +30,9 @@ final class AppModel {
     }
 
     let accounts: AccountsModel
+    /// Nil when the ledger database could not be opened; `overviewError` says why.
+    let overview: OverviewModel?
+    let overviewError: String?
 
     init() {
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
@@ -50,7 +53,32 @@ final class AppModel {
         var terminalChoice: () -> TerminalApp = { .terminal }
         accounts = AccountsModel(store: store, usage: usage, launcher: ProcessLauncher(),
                                  terminal: { terminalChoice() })
+
+        let directory: @Sendable () -> AccountDirectory = {
+            AccountDirectory(profiles: (try? store.load()) ?? [], paths: store.paths(for:), home: home)
+        }
+        do {
+            let pricing = PricingStore(cacheFile: quiver.appending(path: "cache/pricing/litellm.json"))
+            let ledger = try Ledger(cacheDirectory: quiver.appending(path: "cache/ledger"),
+                                    pricing: (try? pricing.load()) ?? .empty)
+            overview = OverviewModel(ledger: ledger, roots: { directory().roots },
+                                     accountLabel: { directory().label(for: $0) },
+                                     refreshPricing: { await pricing.refreshIfStale() })
+            overviewError = nil
+        } catch {
+            overview = nil
+            overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
+        }
         terminalChoice = { [unowned self] in self.terminal }
+    }
+
+    private var refreshing: Task<Void, Never>?
+
+    /// Keep the ledger scanned while the app runs. One loop serves both the
+    /// window and the menu bar.
+    func start() {
+        guard refreshing == nil, let overview else { return }
+        refreshing = Task { await overview.keepFresh() }
     }
 
     private static func client(for path: String) -> SweClient {
