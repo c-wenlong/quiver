@@ -232,8 +232,10 @@ public final class SessionsModel {
     /// When the list on show was listed and by which swe; nil until one is.
     private var listedAt: Date?
     private var listedFrom: String?
-    /// The swe the load in flight is asking.
-    private var loadingFrom: String?
+    /// The listing in flight and the swe it asks. It runs in a task of its
+    /// own, so a page that closes doesn't cancel it, and a page that
+    /// reopens waits for it instead of starting another.
+    private var inflight: (source: String, task: Task<Void, Never>)?
     /// Only the newest list load writes the list.
     private var generation = 0
     /// Only the newest usage read (from a load or a refresh) writes usage.
@@ -274,10 +276,11 @@ public final class SessionsModel {
         listedFrom = snapshot.source
     }
 
-    /// Lists again unless this swe's list is under `maxAge` old or is
-    /// already being listed. Refresh calls `load` instead, which always lists.
+    /// Lists again unless this swe's list is under `maxAge` old. Joins a
+    /// listing already in flight from the same swe rather than starting
+    /// another. Refresh calls `load` instead, which always lists.
     public func loadIfStale(for sweSource: String) async {
-        if isLoading, loadingFrom == sweSource { return }
+        if let inflight, inflight.source == sweSource { return await inflight.task.value }
         if error == nil, listedFrom == sweSource, let listedAt, now().timeIntervalSince(listedAt) < maxAge { return }
         await load(for: sweSource)
     }
@@ -288,9 +291,19 @@ public final class SessionsModel {
         generation += 1
         let mine = generation
         let key = sweSource ?? listedFrom ?? ""
-        loadingFrom = key
         isLoading = true
-        defer { if mine == generation { isLoading = false } }
+        let task = Task { await self.list(from: key, generation: mine) }
+        inflight = (key, task)
+        await task.value
+    }
+
+    private func list(from key: String, generation mine: Int) async {
+        defer {
+            if mine == generation {
+                isLoading = false
+                inflight = nil
+            }
+        }
         let list: SessionList
         do {
             list = try await source.sessions(days: Self.days, limit: limit)

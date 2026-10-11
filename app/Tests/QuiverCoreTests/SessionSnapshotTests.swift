@@ -14,6 +14,23 @@ actor MemorySnapshots: SessionSnapshotStoring {
     }
 }
 
+/// Holds the listing until released, then fails if its caller was
+/// cancelled meanwhile, as swe's client does when the child is stopped.
+actor CancellableGatedSource: SessionListing {
+    let list: SessionList
+    private var gate: CheckedContinuation<Void, Never>?
+    private(set) var calls = 0
+    init(_ list: SessionList) { self.list = list }
+    func sessions(days: Int, limit: Int) async throws -> SessionList {
+        calls += 1
+        await withCheckedContinuation { gate = $0 }
+        try Task.checkCancellation()
+        return list
+    }
+    var waiting: Bool { gate != nil }
+    func release() { gate?.resume(); gate = nil }
+}
+
 @MainActor
 @Suite struct SessionSnapshotTests {
     let start = Date(timeIntervalSince1970: 1_791_700_000)
@@ -81,6 +98,23 @@ actor MemorySnapshots: SessionSnapshotStoring {
         // Refresh always lists.
         await model.load()
         #expect(source.calls == 4)
+    }
+
+    @Test func leavingThePageMidListDoesNotLoseTheList() async throws {
+        let source = CancellableGatedSource(SessionList(sessions: [session("a")], failures: []))
+        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshots(),
+                          clock: TestClock(start))
+        // The page opens, then closes while swe is still listing.
+        let first = Task { await model.loadIfStale(for: "/bin/swe") }
+        while await !source.waiting { await Task.yield() }
+        first.cancel()
+        // Reopened before swe answers: it joins the listing in flight.
+        let reopened = Task { await model.loadIfStale(for: "/bin/swe") }
+        await source.release()
+        await reopened.value
+        #expect(model.rows.map(\.id) == ["a"])
+        #expect(model.isLoading == false)
+        #expect(await source.calls == 1)
     }
 
     @Test func aSavedListIsRefreshedOnceItIsOld() async throws {
@@ -181,7 +215,14 @@ actor MemorySnapshots: SessionSnapshotStoring {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("{not json".utf8).write(to: url)
         #expect(await file.load() == nil)
-        try Data(#"{"version": 99}"#.utf8).write(to: url)
+        // A complete snapshot from another version is ignored too.
+        var other = SessionSnapshot(source: "/bin/swe", savedAt: Date(timeIntervalSince1970: 1), sessions: [],
+                                    failures: [], isCapped: false, usage: [])
+        other.version = SessionSnapshot.currentVersion + 1
+        try JSONEncoder().encode(other).write(to: url)
         #expect(await file.load() == nil)
+        other.version = SessionSnapshot.currentVersion
+        try JSONEncoder().encode(other).write(to: url)
+        #expect(await file.load() == other)
     }
 }
