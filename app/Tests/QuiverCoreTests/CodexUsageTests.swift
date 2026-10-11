@@ -48,6 +48,49 @@ import Testing
         ])
     }
 
+    @Test func anEduWorkspacesMonthlyCreditCapIsA30dWindow() async throws {
+        let h = UsageHarness()
+        h.files.set("\(codexHome)/auth.json", codexAuthJSON())
+        // The shape the Codex CLI parses: used credits can pass the cap.
+        let body = #"""
+        {"plan_type": "edu",
+         "rate_limit": {"primary_window": {"used_percent": 0, "limit_window_seconds": 18000, "reset_at": 1791727200},
+                        "secondary_window": {"used_percent": 86, "limit_window_seconds": 604800, "reset_at": 1792051200}},
+         "spend_control": {"reached": true, "individual_limit": {
+            "source": "workspace_spend_controls", "limit": "2500", "used": "2504", "remaining": "0",
+            "used_percent": 101, "remaining_percent": 0, "reset_after_seconds": 86400, "reset_at": 1792300000}}}
+        """#
+        h.transport.reply(200, body: Data(body.utf8))
+
+        let usage = await h.makeService().usage(for: codexKey, force: false)
+
+        #expect(usage.plan == "Edu")
+        #expect(usage.windows == [
+            UsageWindow(label: "5h", usedPercent: 0, resetsAt: Date(timeIntervalSince1970: 1_791_727_200)),
+            UsageWindow(label: "7d", usedPercent: 86, resetsAt: Date(timeIntervalSince1970: 1_792_051_200)),
+            UsageWindow(label: "30d", usedPercent: 100, resetsAt: Date(timeIntervalSince1970: 1_792_300_000)),
+        ])
+    }
+
+    @Test func aSpendCapAloneStillCounts() async throws {
+        let h = UsageHarness()
+        h.files.set("\(codexHome)/auth.json", codexAuthJSON())
+        let body = #"{"spend_control": {"reached": false, "individual_limit": {"used_percent": 32, "reset_after_seconds": 43200}}}"#
+        h.transport.reply(200, body: Data(body.utf8))
+
+        let usage = await h.makeService().usage(for: codexKey, force: false)
+
+        #expect(usage.status == .ok)
+        #expect(usage.windows == [UsageWindow(label: "30d", usedPercent: 32, resetsAt: usageEpoch.addingTimeInterval(43_200))])
+    }
+
+    @Test func noSpendControlAddsNoWindow() throws {
+        let body = #"{"rate_limit": {"primary_window": {"used_percent": 5, "limit_window_seconds": 18000}}, "spend_control": {"reached": false, "individual_limit": null}}"#
+        let parsed = try #require(CodexUsageAPI.parse(Data(body.utf8), credential: UsageCredential(
+            token: "t", accountID: nil, expiresAt: nil, plan: nil, email: nil), now: usageEpoch))
+        #expect(parsed.windows.map(\.label) == ["5h"])
+    }
+
     @Test func identityComesFromTheIDTokenWhenTheResponseLacksIt() async throws {
         let h = UsageHarness()
         h.files.set("\(codexHome)/auth.json", codexAuthJSON(accountID: nil, email: "other@example.com", plan: "prolite"))
