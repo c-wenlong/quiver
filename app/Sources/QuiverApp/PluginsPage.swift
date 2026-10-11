@@ -8,13 +8,14 @@ struct PluginsPage: View {
     @Environment(AppModel.self) private var app
     @State private var model = PluginsModel()
     @State private var confirming: PluginDrift?
-    @State private var confirmingAll = false
+    /// What the Fix all confirmation listed; only these run.
+    @State private var confirmingAll: [String]?
 
     var body: some View {
         Page(title: "Plugins",
              subtitle: "Where the copies Claude Code and Codex run no longer match ~/.quiver/plugins.") {
             if model.fixAllCount > 0 || model.fixAllProgress != nil {
-                Button(fixAllTitle) { confirmingAll = true }
+                Button(fixAllTitle) { confirmingAll = model.fixAllIDs }
                     .primaryButton()
                     .disabled(model.fixing != nil)
                     .help("Run every fix swe can run, one at a time")
@@ -63,12 +64,13 @@ struct PluginsPage: View {
         } message: { finding in
             Text("swe will check the finding still applies, then run:\n\(finding.fix)")
         }
-        .confirmationDialog(model.fixAllCount == 1 ? "Run 1 fix?" : "Run \(model.fixAllCount) fixes?",
-                            isPresented: $confirmingAll) {
-            Button("Run all") { Task { await model.fixAll(swe: app.swe) } }
-        } message: {
+        .confirmationDialog(confirmingAll?.count == 1 ? "Run 1 fix?" : "Run \(confirmingAll?.count ?? 0) fixes?",
+                            isPresented: .init(get: { confirmingAll != nil }, set: { if !$0 { confirmingAll = nil } }),
+                            presenting: confirmingAll) { ids in
+            Button("Run all") { Task { await model.fixAll(confirmed: ids, swe: app.swe) } }
+        } message: { ids in
             Text("One at a time, stopping at the first that fails. swe checks each still applies before it runs:\n\n"
-                 + runnableFixes.joined(separator: "\n"))
+                 + fixes(for: ids).joined(separator: "\n"))
         }
     }
 
@@ -77,9 +79,9 @@ struct PluginsPage: View {
         return "Fixing \(min(progress.done + 1, progress.total)) of \(progress.total)…"
     }
 
-    private var runnableFixes: [String] {
+    private func fixes(for ids: [String]) -> [String] {
         guard case .loaded(let report) = model.state else { return [] }
-        return report.drift.filter(\.runnable).map(\.fix)
+        return ids.compactMap { id in report.drift.first { $0.id == id }?.fix }
     }
 }
 

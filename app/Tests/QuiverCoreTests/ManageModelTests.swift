@@ -636,7 +636,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         let swe = SweClient(runner: runner)
         await model.load(swe: swe)
         #expect(model.fixAllCount == 2)
-        await model.fixAll(swe: swe)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
         #expect(runner.fixed == ["claude:stale:a@mk", "codex:stale:b@mk"])
         #expect(model.fixError == nil)
         #expect(model.lastFixed == "2 fixes")
@@ -654,10 +654,25 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         let model = PluginsModel()
         let swe = SweClient(runner: runner)
         await model.load(swe: swe)
-        await model.fixAll(swe: swe)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
         #expect(runner.fixed == ["codex:linked-manifest:a@mk"])
         #expect(model.fixError == nil)
         #expect(model.lastFixed == "1 fix")
+    }
+
+    @Test func fixAllRunsOnlyWhatTheUserConfirmed() async throws {
+        // Registering a marketplace exposes "not installed" findings the
+        // confirmation never listed; those wait for their own confirmation.
+        let runner = DriftRunner(["claude:unregistered:mk": true],
+                                 reveals: ["claude:unregistered:mk": ["claude:not-installed:a@mk"]])
+        let model = PluginsModel()
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
+        #expect(runner.fixed == ["claude:unregistered:mk"])
+        guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
+        #expect(report.drift.map(\.id) == ["claude:not-installed:a@mk"])
+        #expect(model.fixAllCount == 1)
     }
 
     @Test func fixAllStopsAtTheFirstFailureAndSaysWhy() async throws {
@@ -666,7 +681,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         let model = PluginsModel()
         let swe = SweClient(runner: runner)
         await model.load(swe: swe)
-        await model.fixAll(swe: swe)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
         #expect(runner.fixed.isEmpty)
         #expect(runner.attempted == ["claude:stale:a@mk"])
         #expect(model.fixError == "claude plugin update a@mk failed: offline")
@@ -690,13 +705,16 @@ final class DriftRunner: CommandRunning, @unchecked Sendable {
     /// Finding id -> runnable, in report order.
     private var findings: [(id: String, runnable: Bool)]
     private let clears: [String: [String]]
+    private let reveals: [String: [String]]
     private let failing: [String: String]
     private(set) var fixed: [String] = []
     private(set) var attempted: [String] = []
 
-    init(_ findings: KeyValuePairs<String, Bool>, clears: [String: [String]] = [:], failing: [String: String] = [:]) {
+    init(_ findings: KeyValuePairs<String, Bool>, clears: [String: [String]] = [:],
+         reveals: [String: [String]] = [:], failing: [String: String] = [:]) {
         self.findings = findings.map { (id: $0.key, runnable: $0.value) }
         self.clears = clears
+        self.reveals = reveals
         self.failing = failing
     }
 
@@ -710,6 +728,7 @@ final class DriftRunner: CommandRunning, @unchecked Sendable {
                 }
                 let gone = Set([id] + (clears[id] ?? []))
                 findings.removeAll { gone.contains($0.id) }
+                findings += (reveals[id] ?? []).map { (id: $0, runnable: true) }
                 fixed.append(id)
                 return json(#"{"fixed": \#(entry(id, runnable: true))}"#)
             }
@@ -721,6 +740,7 @@ final class DriftRunner: CommandRunning, @unchecked Sendable {
     private func entry(_ id: String, runnable: Bool) -> String {
         let parts = id.split(separator: ":").map(String.init)
         let ref = parts[2]
-        return #"{"id": "\#(id)", "harness": "\#(parts[0])", "marketplace": "mk", "plugin": "\#(ref.split(separator: "@")[0])", "ref": "\#(ref)", "kind": "\#(parts[1])", "detail": "d", "fix": "fix \#(id)", "runnable": \#(runnable), "paths": []}"#
+        let plugin = ref.contains("@") ? #""\#(ref.split(separator: "@")[0])""# : "null"
+        return #"{"id": "\#(id)", "harness": "\#(parts[0])", "marketplace": "mk", "plugin": \#(plugin), "ref": "\#(ref)", "kind": "\#(parts[1])", "detail": "d", "fix": "fix \#(id)", "runnable": \#(runnable), "paths": []}"#
     }
 }

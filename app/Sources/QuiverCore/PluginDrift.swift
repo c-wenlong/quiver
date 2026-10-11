@@ -91,11 +91,14 @@ public final class PluginsModel {
         public var total: Int
     }
 
-    /// How many findings Fix all would run now: the ones swe can fix itself.
-    public var fixAllCount: Int {
-        guard case .loaded(let report) = state else { return 0 }
-        return report.drift.filter(\.runnable).count
+    /// The findings Fix all would run now: the ones swe can fix itself, in
+    /// report order. The confirmation lists exactly these.
+    public var fixAllIDs: [String] {
+        guard case .loaded(let report) = state else { return [] }
+        return report.drift.filter(\.runnable).map(\.id)
     }
+
+    public var fixAllCount: Int { fixAllIDs.count }
 
     public init() {}
 
@@ -131,16 +134,18 @@ public final class PluginsModel {
         await load(swe: swe)
     }
 
-    /// Runs every fix swe can run, one at a time, reloading between them.
+    /// Runs the confirmed fixes, one at a time, reloading between them.
     /// The next fix is taken from the fresh report, so a finding an earlier
-    /// fix already cleared is skipped rather than failing. Stops at the first
-    /// failure. Edits to make by hand are left for the user. Call only after
-    /// the user has confirmed.
-    public func fixAll(swe: SweClient) async {
-        guard fixing == nil, fixAllCount > 0 else { return }
+    /// fix already cleared is skipped rather than failing. Only `confirmed`
+    /// ids run: a finding a fix newly exposes (registering a marketplace
+    /// reveals its uninstalled plugins) waits for its own confirmation.
+    /// Stops at the first failure. Edits to make by hand are never sent.
+    public func fixAll(confirmed: [String], swe: SweClient) async {
+        let confirmed = Set(confirmed)
+        guard fixing == nil, !confirmed.isEmpty else { return }
         fixError = nil
         lastFixed = nil
-        fixAllProgress = FixAllProgress(done: 0, total: fixAllCount)
+        fixAllProgress = FixAllProgress(done: 0, total: confirmed.count)
         defer {
             fixing = nil
             fixAllProgress = nil
@@ -148,7 +153,9 @@ public final class PluginsModel {
         var tried: Set<String> = []
         var ran = 0
         while case .loaded(let report) = state,
-              let next = report.drift.first(where: { $0.runnable && !tried.contains($0.id) }) {
+              let next = report.drift.first(where: {
+                  $0.runnable && confirmed.contains($0.id) && !tried.contains($0.id)
+              }) {
             tried.insert(next.id)
             fixing = next.id
             do {
