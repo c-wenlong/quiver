@@ -98,6 +98,8 @@ struct PageView: View {
             OverviewPage()
         case .accounts:
             AccountsPage()
+        case .apiKeys:
+            APIKeysPage()
         case .serviceStatus:
             ServiceStatusPage()
         case .harnesses:
@@ -122,7 +124,7 @@ struct Placeholder: View {
         switch section {
         case .overview: "M3"
         case .sessions: "M4"
-        case .accounts: "M2"
+        case .accounts, .apiKeys: "M2"
         case .harnesses, .skills, .agentsMd, .mcpServers: "M5"
         case .doctor, .settings: "M1"
         case .serviceStatus: "M7"

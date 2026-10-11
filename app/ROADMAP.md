@@ -86,6 +86,7 @@ Modelled on TokenTracker's Sessions page.
 - [ ] Plugins: drift findings with one-click fixes
 - [x] Harnesses: discover installed ones, star and archive them ([#144](https://github.com/c-wenlong/quiver/pull/144))
 - [ ] Launch a session in the right folder with one click
+- [x] API keys: the provider keys in `~/.api_keys`, masked until revealed, edited in place
 
 ### M6. Menu bar, widgets and shipping
 - [ ] Limits in the menu bar: every account's bars at a glance

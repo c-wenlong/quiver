@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsPage: View {
     @Environment(AppModel.self) private var app
     @State private var draft = ""
+    @State private var keysDraft = ""
 
     var body: some View {
         Page(title: "Settings", subtitle: "Where the app finds swe, and which terminal it opens.", maxWidth: 960) {
@@ -22,6 +23,18 @@ struct SettingsPage: View {
                     .font(Theme.caption)
                     .foregroundStyle(Theme.textSecondary)
             }
+            Card(title: "API keys file") {
+                Text("The shell file the API keys page reads and edits. Leave empty for ~/.api_keys.")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                HStack {
+                    TextField("~/.api_keys", text: $keysDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .onSubmit { app.apiKeysPath = keysDraft.trimmingCharacters(in: .whitespaces) }
+                    Button("Use") { app.apiKeysPath = keysDraft.trimmingCharacters(in: .whitespaces) }
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+            }
             Card(title: "Terminal") {
                 @Bindable var app = app
                 Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal)
@@ -29,7 +42,10 @@ struct SettingsPage: View {
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
-        .onAppear { draft = app.swePath }
+        .onAppear {
+            draft = app.swePath
+            keysDraft = app.apiKeysPath
+        }
     }
 
     private func apply() {
