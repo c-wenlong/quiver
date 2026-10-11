@@ -237,7 +237,8 @@ def hub_plugins(home: Path | None = None) -> dict:
     machine. Its ``state`` is ``installed``, the first gap ``swe find
     plugins`` reports (``unregistered``, ``not-installed``, ``stale``,
     ``disabled-here``), or ``disabled`` when it is disabled in every harness,
-    with the command that closes it as ``fix``.
+    with the command that closes it as ``fix`` and, when swe can run that
+    command itself, the ``id`` that ``swe find plugins --fix`` takes.
     """
     home = home or Path.home()
     sources = quiver_plugins(home)
@@ -264,8 +265,10 @@ def hub_plugins(home: Path | None = None) -> dict:
                 return {"state": "disabled", "fix": view.fix_enable(ref).text, "id": None}
             return {"state": "installed", "fix": None, "id": None}
         first = min(mine, key=lambda f: rank[f.kind])
-        # `id` is what `swe find plugins --fix=<id>` takes.
-        return {"state": first.kind, "fix": first.fix, "id": first.id}
+        # `id` is what `swe find plugins --fix=<id>` takes, given only when
+        # that has commands to run: codex's enable is an edit by hand.
+        return {"state": first.kind, "fix": first.fix,
+                "id": first.id if first.argv else None}
 
     plugins = []
     for plugin in sources:

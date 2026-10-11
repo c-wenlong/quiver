@@ -109,8 +109,15 @@ let hubJSON = #"""
   "components": {"skills": 2, "agents": 0, "commands": 1, "hooks": 0},
   "skills": [{"name": "hammer", "description": "Hits things", "path": "/p/hammer"},
              {"name": "saw", "description": "", "path": "/p/saw"}],
-  "install": {"codex": {"state": "not-installed", "fix": "codex plugin install toolkit@kit"},
-              "claude": {"state": "installed", "fix": null}}}
+  "install": {"codex": {"state": "not-installed", "fix": "codex plugin add toolkit@kit",
+                        "id": "codex:not-installed:toolkit@kit"},
+              "claude": {"state": "installed", "fix": null, "id": null}}},
+ {"name": "drawer", "marketplace": "kit", "description": "", "version": null,
+  "path": "/h/.quiver/plugins/kit/drawer", "components": {}, "skills": [],
+  "install": {"claude": {"state": "stale", "fix": "claude plugin update drawer@kit",
+                         "id": "claude:stale:drawer@kit"},
+              "codex": {"state": "disabled-here", "fix": "set enabled = true in ~/.codex/config.toml",
+                        "id": null}}}
 ]}
 """#
 
@@ -266,11 +273,63 @@ let hubJSON = #"""
         #expect(plugin.skills.map(\.name) == ["hammer", "saw"])
         #expect(plugin.harnesses == ["claude", "codex"])
         #expect(plugin.install["codex"]?.state == .notInstalled)
-        #expect(plugin.fixes == ["codex plugin install toolkit@kit"])
+        #expect(plugin.fixes == ["codex plugin add toolkit@kit"])
+        #expect(plugin.runnableFixes.map(\.id) == ["codex:not-installed:toolkit@kit"])
+        #expect(plugin.manualFixes.isEmpty)
         model.query = "saw"
         #expect(model.hubPlugins.count == 1)
         model.query = "nothing"
         #expect(model.hubPlugins.isEmpty)
+    }
+
+    @Test func fixRunsOnlyWhatSweCanRunByIdThenReloads() async throws {
+        let (model, runner) = model([
+            (["find", "plugins"], ok(#"""
+            {"fixed": {"id": "claude:stale:drawer@kit", "harness": "claude", "marketplace": "kit",
+             "plugin": "drawer", "ref": "drawer@kit", "kind": "stale", "detail": "1 file differs",
+             "fix": "claude plugin update drawer@kit", "runnable": true, "paths": ["SKILL.md"]}}
+            """#)),
+            (["skills", "hub", "--json"], ok(hubJSON)),
+        ])
+        await model.loadHub()
+        let drawer = try #require(model.hubPlugins.first { $0.name == "drawer" })
+        // codex's half is an edit by hand: shown, never sent to swe.
+        #expect(drawer.manualFixes == ["set enabled = true in ~/.codex/config.toml"])
+        await model.fixHub(drawer)
+        #expect(runner.calls == [
+            ["skills", "hub", "--json"],
+            ["find", "plugins", "--fix=claude:stale:drawer@kit", "--json"],
+            ["skills", "hub", "--json"],
+        ])
+        #expect(model.hubError == nil)
+        #expect(model.fixingPlugin == nil)
+    }
+
+    @Test func aFailedFixSaysWhyAndStillReloads() async throws {
+        let (model, runner) = model([
+            (["find", "plugins"], CommandResult(status: 1, stdout: Data(),
+                                                stderr: "claude is not on PATH")),
+            (["skills", "hub", "--json"], ok(hubJSON)),
+        ])
+        await model.loadHub()
+        await model.fixHub(try #require(model.hubPlugins.first { $0.name == "toolkit" }))
+        #expect(model.hubError == "claude is not on PATH")
+        #expect(runner.calls.last == ["skills", "hub", "--json"])
+    }
+
+    @Test func aPluginWithNothingToRunNeverCallsSwe() async throws {
+        let manualOnly = #"""
+        {"hub": "/h/.quiver", "plugins": [{"name": "drawer", "marketplace": "kit", "description": "",
+          "version": null, "path": "/p", "components": {}, "skills": [],
+          "install": {"claude": {"state": "installed", "fix": null, "id": null},
+                      "codex": {"state": "disabled-here", "fix": "edit config.toml", "id": null}}}]}
+        """#
+        let (model, runner) = model([(["skills", "hub", "--json"], ok(manualOnly))])
+        await model.loadHub()
+        let drawer = try #require(model.hubPlugins.first)
+        #expect(drawer.runnableFixes.isEmpty)
+        await model.fixHub(drawer)
+        #expect(runner.calls.count == 1)
     }
 
     @Test func anUnknownInstallStateStillDecodes() async throws {
