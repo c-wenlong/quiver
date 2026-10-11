@@ -314,6 +314,12 @@ class EditJsonTest(unittest.TestCase):
     def test_extra_positional_is_refused(self):
         self.assertRefused(self.edit("claude", "codex", "--notes=x"))
 
+    def test_an_unreadable_registry_is_refused_on_stderr(self):
+        path = self.home / ".quiver" / "config" / "harness.json"
+        path.write_text("{not json")
+        self.assertRefused(self.edit("claude", "--notes=x"))
+        self.assertEqual(path.read_text(), "{not json")
+
     def test_without_json_the_output_is_unchanged(self):
         result = run_swe(self.home, "edit", "claude", "--description=Plain")
         self.assertEqual(result.returncode, 0, result.stderr)

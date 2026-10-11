@@ -31,6 +31,7 @@ from quiver.harness.stars import (
     unstar as unstar_name,
 )
 from quiver.harness.tools import extract_version_number, is_installed, live_version
+from quiver.configuration import ConfigurationError
 from quiver.json_output import emit, take_json_flag
 from quiver.prompt import read_line
 from quiver.table import Table
@@ -2065,6 +2066,16 @@ def _edit_harness_json(name: str, info: dict) -> dict:
 def cmd_edit(args):
     """Edit harness registry fields (flags or interactive)."""
     args, json_view = take_json_flag(list(args or []))
+    try:
+        return _edit(args, json_view)
+    except ConfigurationError as exc:
+        # An unreadable registry would otherwise reach the dispatcher, which
+        # prints to stdout, and the app decodes stdout whole.
+        print(c("red", str(exc)), file=sys.stderr if json_view else sys.stdout)
+        return 1
+
+
+def _edit(args, json_view):
     # Under --json a refusal must leave stdout empty: the app decodes it whole.
     err = sys.stderr if json_view else sys.stdout
 
@@ -2129,13 +2140,16 @@ def cmd_edit(args):
         print(c("dim", "  No changes."))
         return 0
 
+    # Built before the write: a failure here must not leave an edit saved
+    # that the caller was told failed.
+    harness = _edit_harness_json(name, new_info) if json_view else None
     tools[name] = new_info
     save_registry(tools)
     if json_view:
         # Each change line reads "field: old -> new".
         return emit({"name": name,
                      "changes": [line.split(":", 1)[0] for line in changes],
-                     "harness": _edit_harness_json(name, new_info)})
+                     "harness": harness})
     print(f"  {c('green', '✓')} Updated '{name}'")
     for line in changes:
         print(c("dim", f"    · {line}"))
