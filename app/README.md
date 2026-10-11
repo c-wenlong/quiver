@@ -80,6 +80,11 @@ executable whose `@main` is a `WidgetBundle`, inside an `.appex` with an
 `NSExtension` Info.plist. So `QuiverWidgets` is a plain executable target
 sharing QuiverCore, and `build-app.sh` wraps it in
 `Contents/PlugIns/QuiverWidgets.appex`. No Xcode project or XcodeGen spec.
+An extension's `Bundle.main` is the .appex, so the script also copies
+QuiverCore's resource bundle into the appex's own `Contents/Resources`,
+where `CoreResources` finds the harness logos the widgets draw. A packaged
+app or appex never falls back to SwiftPM's `Bundle.module`, which would
+stop the process on any Mac but the one that built it.
 
 Data goes one way, through a file. The app writes
 `~/.quiver/cache/widgets/snapshot.json` (usage figures, top models and
