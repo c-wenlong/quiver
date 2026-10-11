@@ -79,6 +79,109 @@ export MIMO_API_KEY="sk-new-000000000000000000000000beef"
     }
 }
 
+/// A synthetic key: SECRET marks the part that must never be shown.
+let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
+
+@Suite struct APIKeysRedactionTests {
+    @Test func aLineWithoutEqualsShowsOnlyItsName() {
+        #expect(APIKeysFile.redacted("export ANTHROPIC_API_KEY \(fakeKey)") == "export ANTHROPIC_API_KEY…")
+        #expect(APIKeysFile.redacted("EXPORT FOO \(fakeKey)") == "EXPORT FOO…")
+        #expect(APIKeysFile.redacted("  export FOO\t\(fakeKey)") == "  export FOO…")
+    }
+
+    @Test func nothingBeforeALaterEqualsIsKept() {
+        #expect(APIKeysFile.redacted("export FOO sk-a=b") == "export FOO…")
+        #expect(APIKeysFile.redacted("export FOO+=\"\(fakeKey)\"") == "export FOO…")
+    }
+
+    @Test func aNameThatIsItselfAKeyIsHidden() {
+        #expect(APIKeysFile.redacted("export sk_live_SECRET0000000000000") == "export …")
+        #expect(APIKeysFile.redacted("export AKIASECRET7EXAMPLE00") == "export …")
+        #expect(APIKeysFile.redacted("# \(fakeKey)") == "# sk…")
+    }
+
+    @Test func aLineWithNoNameKeepsOnlyItsKeyword() {
+        #expect(APIKeysFile.redacted("export \"\(fakeKey)\"") == "export …")
+        #expect(APIKeysFile.redacted(fakeKey) == "sk…")
+    }
+
+    @Test func problemLinesWithoutEqualsNeverShowTheValue() {
+        let file = APIKeysFile(text: "export ANTHROPIC_API_KEY \(fakeKey)\nEXPORT FOO \(fakeKey)\nexport BAR sk-a=b\n")
+        #expect(file.problems.map(\.text) == ["export ANTHROPIC_API_KEY…", "EXPORT FOO…", "export BAR…"])
+        #expect(!file.problems.contains { $0.text.contains("SECRET") || $0.text.contains("sk-a") })
+    }
+}
+
+@Suite struct APIKeysHeadingTests {
+    @Test func realHeadingsStillNameTheirKeys() {
+        for label in ["Anthropic", "OPENAI", "MiMo (Xiaomi)", "Kimi (Moonshot AI)", "ZAI (01.ai)", "xAi (Grok)",
+                      "Keys for every harness", "Google / Vertex, AI & Co."] {
+            #expect(APIKeysFile.heading("# \(label)") == label)
+            #expect(APIKeysFile.heading("  ##  \(label)  ") == label)
+        }
+    }
+
+    /// Commented-out keys that aren't `NAME=value` still hold a value.
+    static let commentedKeyShapes = [
+        "# export FOO \(fakeKey)",
+        "# FOO: \(fakeKey)",
+        "# \(fakeKey)",
+        "# export FOO+=\"\(fakeKey)\"",
+        "# FOO[0]=\(fakeKey)",
+        "# old key was \(fakeKey), rotated",
+        "# export FOO sk-short",
+    ]
+
+    @Test(arguments: commentedKeyShapes)
+    func aCommentedOutKeyIsNeverAHeading(shape: String) {
+        #expect(APIKeysFile.heading(shape) == nil)
+        let file = APIKeysFile(text: "# Anthropic\n\(shape)\nexport ANTHROPIC_API_KEY=x\n")
+        #expect(file.entries.map(\.provider) == ["Anthropic"])
+        #expect(file.problems.map(\.line) == [2])
+        #expect(file.problems.map(\.reason) == ["a commented-out key still holds a value; delete the line"])
+        #expect(!file.problems.contains { $0.text.contains("SECRET") || $0.text.contains("short") })
+    }
+
+    @Test func commentsThatDoNotLookLikeALabelAreNotHeadings() {
+        let words = Array(repeating: "Abcdefghij", count: 5).joined(separator: " ")
+        #expect(APIKeysFile.heading("# \(words) Abcde") != nil)
+        for comment in ["# \(words) Abcdef", "# ----------", "# 2024", "# OPENAI_COMPAT", "#!/bin/zsh",
+                        "# see https://console.example.com/keys", "# Export keys below",
+                        "# Abcdefghijklmnopqrst"] {
+            #expect(APIKeysFile.heading(comment) == nil, "\(comment) became a heading")
+        }
+    }
+
+    @Test func anOrdinaryCommentIsNotAProblem() {
+        let file = APIKeysFile(text: """
+            # Keys for every harness
+            # see https://console.example.com/settings/keys
+            # export these before running the tests
+            # OPENAI_COMPAT
+            # Anthropic
+            export ANTHROPIC_API_KEY=x
+            """)
+        #expect(file.problems.isEmpty)
+    }
+
+    @Test func noProviderEverHoldsAKey() {
+        let text = Self.commentedKeyShapes.joined(separator: "\n") + "\nexport A=1\n"
+        for entry in APIKeysFile(text: text).entries {
+            #expect(!entry.provider.contains("SECRET") && !entry.provider.contains("sk-"))
+        }
+    }
+
+    @Test func aNewProviderHasToReadBackAsAHeading() throws {
+        var file = APIKeysFile(text: "")
+        for provider in ["Google: Gemini", "OPENAI_COMPAT", fakeKey, "export FOO bar",
+                         String(repeating: "Ab ", count: 30)] {
+            #expect(throws: APIKeysError.invalidProvider) { try file.set(name: "A", value: "1", provider: provider) }
+        }
+        try file.set(name: "KIMI_API_KEY", value: "k", provider: "Kimi (Moonshot AI)")
+        #expect(APIKeysFile(text: file.text).entries.map(\.provider) == ["Kimi (Moonshot AI)"])
+    }
+}
+
 @Suite struct APIKeysFileTests {
     @Test func entriesAreGroupedUnderTheCommentAboveThem() throws {
         let file = APIKeysFile(text: sampleKeysFile)
