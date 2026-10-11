@@ -499,19 +499,29 @@ _SPINNER_DELAY = 0.2
 _SPINNER_FRAME_SECONDS = 0.08
 
 
-def _fetch_rate_limits(refresh: bool, tool_names: set[str]) -> dict:
+def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False) -> dict:
     """Rate limits for the REMAINING column.
 
     On a terminal the fetch runs behind a spinner and workers get a longer
     deadline than the pipeline budget, so a slow provider resolves to a
     figure instead of the ``…`` timeout marker. Piped output keeps the
     short cap and prints once, static.
+
+    ``wait`` gives that longer deadline without a spinner. ``--json`` asks
+    for it: the macOS app reads limits that way from a fresh process each
+    time, where a provider's first fetch often takes longer than the short
+    cap, so it would only ever see the last cached reading, hours old.
     """
     from quiver.harness.rate_limits import (
         _RATE_LIMIT_FETCH_DEADLINE_TTY,
         get_all_rate_limits,
     )
 
+    if wait:
+        return get_all_rate_limits(
+            use_cache=not refresh, tool_names=tool_names,
+            deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
+        )
     if not sys.stdout.isatty():
         return get_all_rate_limits(
             use_cache=not refresh, tool_names=tool_names,
@@ -715,6 +725,7 @@ def cmd_list(args):
                 refresh=refresh,
                 tool_names={name for name in starred_set
                             if name in tools and name not in excluded},
+                wait=True,
             )
             if usage_view
             else {}

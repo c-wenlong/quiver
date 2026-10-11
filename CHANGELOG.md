@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe list --usage --json` served an hour-old limit reading instead of
+  a fresh one.** Piped output gave each provider's fetch a 2 second cap,
+  and a fresh `swe` process (which is how the macOS app reads limits) often
+  needs longer for its first Cursor or Devin request, so it fell back to the
+  last cached reading, up to 24 hours old. The app then showed "Fetched 1h
+  ago, couldn't refresh". `--json` now waits up to the same 25 seconds an
+  interactive terminal gets; the piped table keeps the short cap.
+
 - **`swe skills --json` listed a hub plugin's skills from Claude's stale
   cache.** Claude Code runs a plugin from a directory marketplace (every
   one in `~/.quiver/plugins`) straight from the marketplace's folder, so a
