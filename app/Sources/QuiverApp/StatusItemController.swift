@@ -268,8 +268,8 @@ private struct PanelLimits: View {
             } else if app.accounts.cards.isEmpty {
                 Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            // Harnesses are accounts too, so they share the list and the
-            // layout rather than sitting under a heading of their own.
+            // Harnesses swe reports follow the accounts in one list: each
+            // row already carries its logo and name, so no heading.
             ForEach(others) { row in PanelOtherRow(row: row) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
