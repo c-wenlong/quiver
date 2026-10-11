@@ -31,6 +31,7 @@ struct MainWindow: View {
 
 private struct Sidebar: View {
     @Environment(AppModel.self) private var model
+    @FocusState private var focused: AppSection?
 
     var body: some View {
         ScrollView {
@@ -46,6 +47,7 @@ private struct Sidebar: View {
                             NavItem(section: section, isSelected: model.selection == section) {
                                 model.selection = section
                             }
+                            .focused($focused, equals: section)
                         }
                     }
                 }
@@ -53,8 +55,18 @@ private struct Sidebar: View {
             .padding(.horizontal, 8)
             // Clear of the traffic lights.
             .padding(.top, 52)
+            // Like a source list: up and down move the selection and focus.
+            .onKeyPress(.upArrow) { move(-1) }
+            .onKeyPress(.downArrow) { move(1) }
         }
         .scrollIndicators(.never)
+    }
+
+    private func move(_ offset: Int) -> KeyPress.Result {
+        let next = (focused ?? model.selection ?? .overview).step(offset)
+        model.selection = next
+        if focused != nil { focused = next }
+        return .handled
     }
 }
 
@@ -96,10 +108,24 @@ struct PageView: View {
         switch section {
         case .overview:
             OverviewPage()
+        case .sessions:
+            SessionsPage()
         case .accounts:
             AccountsPage()
+        case .agentsMd:
+            AgentsMdPage()
+        case .mcpServers:
+            McpServersPage()
+        case .plugins:
+            PluginsPage()
+        case .apiKeys:
+            APIKeysPage()
         case .serviceStatus:
             ServiceStatusPage()
+        case .harnesses:
+            HarnessesPage()
+        case .skills:
+            SkillsPage()
         case .doctor:
             DoctorPage()
         case .settings:
@@ -118,8 +144,8 @@ struct Placeholder: View {
         switch section {
         case .overview: "M3"
         case .sessions: "M4"
-        case .accounts: "M2"
-        case .skills, .agentsMd, .mcpServers: "M5"
+        case .accounts, .apiKeys: "M2"
+        case .harnesses, .skills, .agentsMd, .mcpServers, .plugins: "M5"
         case .doctor, .settings: "M1"
         case .serviceStatus: "M7"
         }

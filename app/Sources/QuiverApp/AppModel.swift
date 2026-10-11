@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import QuiverCore
@@ -9,7 +10,11 @@ final class AppModel {
     static let shared = AppModel()
 
     private(set) var swe: SweClient
-    var selection: AppSection? = .overview
+    /// The open page, kept across launches.
+    var selection: AppSection? = UserDefaults.standard.string(forKey: "lastSection")
+        .flatMap(AppSection.init(rawValue:)) ?? .overview {
+        didSet { UserDefaults.standard.set(selection?.rawValue, forKey: "lastSection") }
+    }
 
     /// Opens (or reopens) the main window. Captured from the window's scene,
     /// because the menu bar panel lives outside SwiftUI's scene graph and
@@ -21,6 +26,8 @@ final class AppModel {
         didSet {
             UserDefaults.standard.set(swePath, forKey: SweLocation.defaultsKey)
             swe = Self.client(for: swePath)
+            others = OtherLimitsModel(swe: swe)
+            Task { await others.load() }
         }
     }
 
@@ -30,23 +37,49 @@ final class AppModel {
     }
 
     let accounts: AccountsModel
+    /// Limits of the harnesses with no Quiver account, from swe.
+    private(set) var others: OtherLimitsModel
+    /// Every limit together: the status item, notifications and widgets.
+    let limits: LimitsMonitor
+    /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
+    let agentsMd = AgentsModel()
+    private(set) var apiKeys: APIKeysModel
+
+    /// The shell file of API keys; empty means ~/.api_keys.
+    var apiKeysPath: String {
+        didSet {
+            UserDefaults.standard.set(apiKeysPath, forKey: "apiKeysPath")
+            apiKeys = Self.keysModel(path: apiKeysPath)
+        }
+    }
     /// Nil when the ledger database could not be opened; `overviewError` says why.
     let overview: OverviewModel?
     let overviewError: String?
     let serviceStatus: ServiceStatusModel
     /// Which providers show, in what order (Settings).
     let providers: ProviderVisibilityModel
+    /// Nil when the ledger is unavailable, like `overview`.
+    let sessions: SessionsModel?
+    private let launcher = ProcessLauncher()
+    private let userHome = FileManager.default.homeDirectoryForCurrentUser
 
     init() {
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
         swePath = saved
-        swe = Self.client(for: saved)
+        let client = Self.client(for: saved)
+        swe = client
+        others = OtherLimitsModel(swe: client)
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
+
+        let keysPath = UserDefaults.standard.string(forKey: "apiKeysPath") ?? ""
+        apiKeysPath = keysPath
+        apiKeys = Self.keysModel(path: keysPath)
 
         // Everything Quiver keeps lives under ~/.quiver (see AGENTS.md).
         let home = FileManager.default.homeDirectoryForCurrentUser
         let quiver = home.appending(path: ".quiver")
+        limits = LimitsMonitor(quiver: quiver)
         let usage = UsageService(
             transport: URLSessionTransport(),
             secrets: KeychainCLI(),
@@ -68,8 +101,11 @@ final class AppModel {
                                      accountLabel: { directory().label(for: $0) },
                                      refreshPricing: { await pricing.refreshIfStale() })
             overviewError = nil
+            sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
+                                     defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path])
         } catch {
             overview = nil
+            sessions = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
@@ -91,18 +127,84 @@ final class AppModel {
 
     private var refreshing: Task<Void, Never>?
 
-    /// Keep the ledger scanned while the app runs. One loop serves both the
-    /// window and the menu bar.
+    private var watchers: [Task<Void, Never>] = []
+
+    /// Keep the ledger scanned and every limit fetched while the app runs.
+    /// One set of loops serves the window, the menu bar and the widgets.
     func start() {
         if statusPolling == nil {
             statusPolling = Task { [serviceStatus] in await serviceStatus.keepFresh() }
         }
-        guard refreshing == nil, let overview else { return }
-        refreshing = Task { await overview.keepFresh() }
+        guard watchers.isEmpty else { return }
+        if let overview { refreshing = Task { await overview.keepFresh() } }
+        watchers = [
+            Task { await accounts.keepFresh() },
+            Task { [weak self] in
+                while !Task.isCancelled {
+                    await self?.others.load()
+                    try? await Task.sleep(for: .seconds(300))
+                }
+            },
+            // Limits change on a fetch; whether a window has reset changes
+            // with the clock, so look again every minute as well.
+            Task { [weak self] in
+                let changes = Observations { [weak self] in
+                    self.map { ($0.accounts.cards, $0.others.rows) }
+                }
+                for await _ in changes { self?.refreshLimits() }
+            },
+            Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    self?.refreshLimits()
+                }
+            },
+            Task { [weak self] in
+                let changes = Observations { [weak self] in
+                    self.map { ($0.overview?.activity, $0.overview?.recentModels, $0.limits.readings) }
+                }
+                for await _ in changes { self?.limits.writeWidgets(overview: self?.overview) }
+            },
+            // Notifications may be switched on or off in System Settings
+            // while Quiver is in the background.
+            Task { [weak self] in
+                await self?.limits.checkNotificationPermission()
+                for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+                    await self?.limits.checkNotificationPermission()
+                }
+            },
+        ]
+    }
+
+    private func refreshLimits() {
+        limits.update(LimitReading.all(cards: accounts.cards, others: others.rows, now: .now))
     }
 
     /// Keeps the Service status page and the menu bar line current.
     private var statusPolling: Task<Void, Never>?
+    /// Resume a session in the chosen terminal, in the account it ran under.
+    func resume(_ row: SessionsModel.Row) async throws {
+        guard let resume = row.session.resume else { return }
+        let home = row.usage?.accountHome
+        let defaults = [".claude", ".codex"].map { userHome.appending(path: $0).path }
+        let line = SessionResume.shellLine(resume, harness: row.session.harness, accountHome: home,
+                                           isDefaultHome: home.map(defaults.contains) ?? true)
+        try await launcher.launch(LaunchPlanner.terminal(terminal, running: line))
+    }
+
+    static func keysFile(path: String) -> URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let trimmed = path.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return home.appending(path: ".api_keys") }
+        return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
+    }
+
+    private static func keysModel(path: String) -> APIKeysModel {
+        // One backup of the previous version, private to you, under ~/.quiver.
+        let backups = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".quiver/backups/api-keys")
+        return APIKeysModel(store: APIKeysStore(url: keysFile(path: path), backupDirectory: backups),
+                            shell: LoginShellEnvironment())
+    }
 
     private static func client(for path: String) -> SweClient {
         SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
@@ -113,4 +215,13 @@ final class AppModel {
 private struct UserDefaultsStore: KeyValueStoring {
     func strings(forKey key: String) -> [String]? { UserDefaults.standard.stringArray(forKey: key) }
     func set(_ strings: [String], forKey key: String) { UserDefaults.standard.set(strings, forKey: key) }
+}
+
+/// The swe chosen in Settings at the moment of each call.
+private struct CurrentSwe: SessionListing {
+    func sessions(days: Int, limit: Int) async throws -> SessionList {
+        let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
+        return try await SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
+            .sessions(days: days, limit: limit)
+    }
 }

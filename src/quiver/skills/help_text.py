@@ -13,6 +13,10 @@ def print_skills_overview():
   {c('cyan', 'swe skills')}                   One line per skill: name, root, path
   {c('cyan', 'swe skills <filter>')}          Filter by name, scope, or harness
   {c('cyan', 'swe skills -d')}                Include descriptions
+  {c('cyan', 'swe skills --json')}             Every skill, and which harnesses see it
+
+{c('bold', 'Quiver hub')}
+  {c('cyan', 'swe skills hub')}               Plugins in ~/.quiver/plugins and where they are installed
 
 {c('bold', 'Where skills live')}
   {c('cyan', 'swe find skills -r')}           Every root on disk, and what it links to
@@ -35,7 +39,7 @@ def print_skills_overview():
   {SKILL_CATALOGS_FILE}   extra catalog paths
   {SKILL_LINKS_FILE}      recorded harness symlinks
 
-{c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')}  — topics: catalog, discover, link, unlink, move, tree, scope
+{c('bold', 'Help')}  {c('cyan', 'swe skills help <topic>')}  — topics: catalog, discover, hub, link, unlink, move, tree, scope
   {c('dim', 'help comes before the topic here — unlike swe mcp <command> help, which puts it after.')}
 """
     )
@@ -88,7 +92,7 @@ def print_skills_link_help():
   {c('cyan', 'swe skills link codex shared')}           Explicit target
   {c('cyan', 'swe skills link codex claude')}           Link to claude's resolved root
   {c('cyan', 'swe skills link codex --force')}          Replace non-empty directory
-  {c('cyan', '--json')}                          Print the result as JSON
+  {c('cyan', '--json')}                          Print the result as JSON (errors go to stderr)
 
 {c('bold', 'Harness labels')}  shared, cursor, codex, claude  (or a path)
 """
@@ -133,6 +137,22 @@ def print_skills_move_help():
     )
 
 
+def print_skills_hub_help():
+    print(
+        f"""
+  {c('bold', 'swe skills hub')} — What the quiver hub offers
+
+  Lists every plugin in the marketplaces under {c('dim', '~/.quiver/plugins')}, the
+  skills each one ships, and whether Claude Code and Codex have it installed.
+
+  {c('cyan', 'swe skills hub')}           One line per plugin
+  {c('cyan', 'swe skills hub --json')}    Machine-readable, with the command that installs each
+
+  {c('dim', 'Read-only. swe find plugins --full shows the same gaps across every harness.')}
+"""
+    )
+
+
 def print_skills_tree_help():
     print(
         f"""
@@ -152,6 +172,7 @@ SKILLS_HELP_TOPICS = {
     "catalog": print_skills_catalog_help,
     "catalogs": print_skills_catalog_help,
     "discover": print_skills_discover_help,
+    "hub": print_skills_hub_help,
     "link": print_skills_link_help,
     "unlink": print_skills_unlink_help,
     "move": print_skills_move_help,

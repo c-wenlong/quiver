@@ -50,6 +50,9 @@ public struct SweClient: Sendable {
 
     func call<T: Decodable>(_ arguments: [String], allowFailure: Bool = false) async throws -> T {
         let result = try await runner.run(arguments)
+        // Cancelling stops the child, which then exits with a signal status
+        // rather than throwing; that is a cancellation, not a swe failure.
+        try Task.checkCancellation()
         let stdoutText = String(decoding: result.stdout.prefix(500), as: UTF8.self)
         if Self.rejectsJSONFlag(stdoutText) || Self.rejectsJSONFlag(result.stderr) {
             throw SweError.jsonUnsupported
@@ -88,7 +91,9 @@ extension SweClient {
         let plain = plain(text)
         return !plain.hasPrefix("{") && plain.contains("--json")
             && (plain.contains("Unexpected args") || plain.contains("Unknown flag")
-                || plain.contains("Unknown option"))
+                || plain.contains("Unknown option")
+                // `swe find` from before plugins had --json
+                || plain.contains("--json is only available for skills"))
     }
 
     /// Text with terminal colour codes removed and edges trimmed.

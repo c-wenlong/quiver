@@ -68,30 +68,31 @@ remembering CLI commands.
 - [x] Cost donut in the menu bar panel (Today, Yesterday, 30 days)
 
 ### Restyle
-- [ ] Shell, cards, controls and Overview after the TokenTracker style package ([#133](https://github.com/c-wenlong/quiver/pull/133))
+- [x] Shell, cards, controls and Overview after the TokenTracker style package ([#133](https://github.com/c-wenlong/quiver/pull/133))
 
 ### M4. Sessions
 Modelled on TokenTracker's Sessions page.
-- [ ] List from `swe session --json`, joined with M3 token and cost data by session id
-- [ ] Search plus tool, time, project and model filters
-- [ ] Summary strip: matching sessions, tokens, cost
-- [ ] Rows grouped by date, with models, duration and project on a second line
-- [ ] Resume action: opens the session in your terminal, in its folder and account
-- [ ] Session detail sheet
+- [x] List from `swe session --json`, joined with M3 token and cost data by session id
+- [x] Search plus tool, time, project and model filters
+- [x] Summary strip: matching sessions, tokens, cost
+- [x] Rows grouped by date, with models, duration and project on a second line
+- [x] Resume action: opens the session in your terminal, in its folder and account
+- [x] Session detail sheet
 
 ### M5. Manage
-- [ ] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills`
-- [ ] AGENTS.md and CLAUDE.md, global and per project: edit in place, link status per harness
-- [ ] MCP servers: list by harness, diff, sync
-- [ ] Plugins: drift findings with one-click fixes
-- [ ] Harnesses: discover installed ones, star and archive them
+- [x] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills` ([#144](https://github.com/c-wenlong/quiver/pull/144))
+- [x] AGENTS.md and CLAUDE.md, global and per project: edit in place, link status per harness ([#142](https://github.com/c-wenlong/quiver/pull/142))
+- [x] MCP servers: list by harness, diff, sync (`swe mcp sync --json`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
+- [x] Plugins: drift findings with one-click fixes (`swe find plugins --fix=<id>`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
+- [x] Harnesses: discover installed ones, star and archive them ([#144](https://github.com/c-wenlong/quiver/pull/144))
 - [ ] Launch a session in the right folder with one click
+- [x] API keys: the provider keys in `~/.api_keys`, masked until revealed, edited in place
 
 ### M6. Menu bar, widgets and shipping
-- [ ] Limits in the menu bar: every account's bars at a glance
-- [ ] WidgetKit widgets after TokenTracker's designs (`screenshots/widgets-dark-full.png`): usage summary, activity heatmap, top models, usage limits
-- [ ] Notifications when a limit resets or crosses 90%
-- [ ] Launch at login
+- [x] Limits in the menu bar: the status item shows the tightest limit; the panel lists every account's windows and the other harnesses
+- [x] WidgetKit widgets after TokenTracker's designs (`screenshots/widgets-dark-full.png`): usage summary, activity heatmap, top models, usage limits
+- [x] Notifications when a limit resets or crosses 90%, once per crossing
+- [x] Launch at login (`SMAppService.mainApp`, a switch in Settings)
 - [ ] Signing, notarization, Sparkle updates
 
 ### M7. Service status

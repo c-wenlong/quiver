@@ -35,4 +35,16 @@ import Testing
         #expect(cells.first { $0.day == day(-10) }?.level == 0)
         #expect(cells.first { $0.day == day(0) }?.level == 0)
     }
+
+    @Test func totalsCountOnlyTheDaysTheGridShows() {
+        // A narrow widget draws fewer weeks; its caption must not count the rest.
+        let rows = [DayRow(day: day(-1), totals: totals(tokens: 5, cost: 0)),
+                    DayRow(day: day(-100), totals: totals(tokens: 9, cost: 0))]
+        let narrow = Heatmap(days: rows, weeks: 4, now: now, calendar: calendar)
+        #expect(narrow.totalTokens == 5)
+        #expect(narrow.activeDays == 1)
+        let wide = Heatmap(days: rows, weeks: 26, now: now, calendar: calendar)
+        #expect(wide.totalTokens == 14)
+        #expect(wide.activeDays == 2)
+    }
 }
