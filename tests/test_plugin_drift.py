@@ -227,23 +227,29 @@ class StaleTest(_FakeHome, unittest.TestCase):
     def test_changed_bytes_same_size(self):
         _write(self.plugin / "agents" / "helper.md", "HELPER\n")
         found = self.drift()
-        self.assertEqual([(f.harness, f.kind) for f in found],
-                         [("claude", "stale"), ("codex", "stale")])
-        claude, codex = found
-        self.assertEqual(claude.paths, ("agents/helper.md",))
-        self.assertEqual(claude.detail, "installed 1.0.0 vs source 1.0.0, 1 file differs")
-        self.assertEqual(claude.fix, "claude plugin update tool@mk")
+        self.assertEqual([(f.harness, f.kind) for f in found], [("codex", "stale")])
+        codex = found[0]
+        self.assertEqual(codex.paths, ("agents/helper.md",))
+        self.assertEqual(codex.detail, "installed 1.0.0 vs source 1.0.0, 1 file differs")
         self.assertEqual(codex.fix, "codex plugin remove tool@mk && codex plugin add tool@mk")
+
+    def test_claude_reads_a_directory_marketplace_live(self):
+        # Claude Code loads a directory-marketplace plugin from its folder; the
+        # copy under plugins/cache is a leftover it never reads, and
+        # `claude plugin update` reports nothing to update. Comparing against
+        # that copy flagged drift no fix could clear.
+        _write(self.plugin / "agents" / "helper.md", "HELPER\n")
+        _write(self.claude_copy / "leftover.md", "old\n")
+        self.assertEqual([f for f in self.drift() if f.harness == "claude"], [])
 
     def test_version_bump_and_new_file(self):
         _write(self.plugin / ".claude-plugin" / "plugin.json",
                json.dumps({"name": "tool", "version": "1.1.0"}))
         _write(self.plugin / "skills" / "new" / "SKILL.md", "new\n")
-        found = [f for f in self.drift() if f.harness == "claude"]
-        self.assertEqual(found[0].kind, "stale")
-        # the symlinked .codex-plugin reads as its target, so it differs too
-        self.assertEqual(found[0].detail, "installed 1.0.0 vs source 1.1.0, 3 files differ")
         codex = [f for f in self.drift() if f.harness == "codex"][0]
+        self.assertEqual(codex.kind, "stale")
+        # the symlinked .codex-plugin reads as its target, so it differs too
+        self.assertEqual(codex.detail, "installed 1.0.0 vs source 1.1.0, 3 files differ")
         self.assertEqual(codex.paths, (".claude-plugin/plugin.json",
                                        ".codex-plugin/plugin.json",
                                        "skills/new/SKILL.md"))
@@ -279,8 +285,8 @@ class StaleTest(_FakeHome, unittest.TestCase):
     def test_dangling_symlink(self):
         os.symlink("nowhere", self.plugin / "agents" / "ghost.md")
         found = self.drift()
-        self.assertEqual([(f.kind, f.paths) for f in found],
-                         [("stale", ("agents/ghost.md",)), ("stale", ("agents/ghost.md",))])
+        self.assertEqual([(f.harness, f.kind, f.paths) for f in found],
+                         [("codex", "stale", ("agents/ghost.md",))])
 
 
 class DisabledHereTest(_FakeHome, unittest.TestCase):
