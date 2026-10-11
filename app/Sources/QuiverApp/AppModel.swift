@@ -32,6 +32,11 @@ final class AppModel {
     }
 
     /// Which terminal Open in Terminal and Sign in use.
+    /// What the menu bar item shows, and whether it's there at all.
+    var menuBar = MenuBarDisplay(defaults: .standard) {
+        didSet { menuBar.save(to: .standard) }
+    }
+
     var terminal: TerminalApp {
         didSet { UserDefaults.standard.set(terminal.rawValue, forKey: "terminalApp") }
     }
@@ -60,6 +65,8 @@ final class AppModel {
     let providers: ProviderVisibilityModel
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
+    /// The Plugins page's last report, kept while the app runs.
+    let plugins: PluginsModel
     private let launcher = ProcessLauncher()
     private let userHome = FileManager.default.homeDirectoryForCurrentUser
 
@@ -109,6 +116,7 @@ final class AppModel {
             sessions = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
+        plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")))
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
         providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {
@@ -142,6 +150,9 @@ final class AppModel {
             Task { await accounts.keepFresh() },
             // The last session list shows at once; swe lists again behind it,
             // so the page is usually ready before it is opened.
+            // The other swe pages only read what they showed last; swe runs
+            // when one is opened.
+            Task { [plugins] in await plugins.restore() },
             Task { [weak self] in
                 guard let sessions = self?.sessions else { return }
                 await sessions.restore()

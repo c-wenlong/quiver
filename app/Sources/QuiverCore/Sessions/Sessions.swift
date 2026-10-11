@@ -227,7 +227,7 @@ public final class SessionsModel {
     private let now: () -> Date
     private let calendar: Calendar
     private var listed: [SessionInfo] = []
-    private let snapshots: SessionSnapshotStoring?
+    private let snapshots: (any SnapshotStoring<SessionSnapshot>)?
     private let maxAge: TimeInterval
     private let listTimeout: Duration
     /// When the list on show was listed and by which swe; nil until one is.
@@ -253,7 +253,7 @@ public final class SessionsModel {
     ///   - listTimeout: how long swe may take before the listing is stopped
     ///     and counts as failed, so a hung swe can't block the next try.
     public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
-                limit: Int = 100_000, snapshots: SessionSnapshotStoring? = nil, maxAge: TimeInterval = 60,
+                limit: Int = 100_000, snapshots: (any SnapshotStoring<SessionSnapshot>)? = nil, maxAge: TimeInterval = 60,
                 listTimeout: Duration = .seconds(60),
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.source = source
@@ -358,15 +358,8 @@ public final class SessionsModel {
     /// cancels the listing, which stops the swe process.
     nonisolated static func listing(from source: SessionListing, limit: Int,
                                     within timeout: Duration) async throws -> SessionList {
-        try await withThrowingTaskGroup(of: SessionList.self) { group in
-            group.addTask { try await source.sessions(days: days, limit: limit) }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw ListingTimedOut(timeout: timeout)
-            }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw CancellationError() }
-            return first
+        try await withDeadline(timeout, onTimeout: { ListingTimedOut(timeout: timeout) }) {
+            try await source.sessions(days: days, limit: limit)
         }
     }
 

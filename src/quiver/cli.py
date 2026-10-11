@@ -180,7 +180,9 @@ def main():
                 return 0
             result = COMMANDS[cmd](rest)
         except ConfigurationError as exc:
-            print(c("red", str(exc)))
+            # Under --json the app decodes stdout whole, so the message goes
+            # to stderr there; everywhere else it stays where it always was.
+            print(c("red", str(exc)), file=sys.stderr if "--json" in rest else sys.stdout)
             return 1
         return result if isinstance(result, int) else 0
     print(f"Unknown command: '{cmd}'")
