@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        FocusVisibility.start()
         statusItem = StatusItemController(model: AppModel.shared)
         AppModel.shared.start()
     }
