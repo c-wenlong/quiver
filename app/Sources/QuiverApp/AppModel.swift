@@ -68,6 +68,11 @@ final class AppModel {
     /// The MCP servers and Plugins pages' last lists, kept while the app runs.
     let mcp: McpModel
     let plugins: PluginsModel
+    /// Every plugin in every marketplace: the Plugins page's Explore tab,
+    /// and what the Skills page moves plugin skills out by.
+    let pluginCatalog: PluginCatalogModel
+    /// The Plugins page's tab, so another page can open Explore.
+    var pluginsTab: PluginsTab = .health
     private let launcher = ProcessLauncher()
     private let userHome = FileManager.default.homeDirectoryForCurrentUser
 
@@ -119,6 +124,7 @@ final class AppModel {
         }
         mcp = McpModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/mcp-servers.json")))
         plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")))
+        pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")))
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
         providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {
@@ -156,6 +162,7 @@ final class AppModel {
             // when one is opened.
             Task { [mcp] in await mcp.restore() },
             Task { [plugins] in await plugins.restore() },
+            Task { [pluginCatalog] in await pluginCatalog.restore() },
             Task { [weak self] in
                 guard let sessions = self?.sessions else { return }
                 await sessions.restore()

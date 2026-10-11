@@ -102,25 +102,6 @@ let inventoryJSON = #"""
  ]}
 """#
 
-let hubJSON = #"""
-{"hub": "/h/.quiver", "plugins": [
- {"name": "toolkit", "marketplace": "kit", "description": "Tools for testing", "version": "1.2.0",
-  "path": "/h/.quiver/plugins/kit/toolkit",
-  "components": {"skills": 2, "agents": 0, "commands": 1, "hooks": 0},
-  "skills": [{"name": "hammer", "description": "Hits things", "path": "/p/hammer"},
-             {"name": "saw", "description": "", "path": "/p/saw"}],
-  "install": {"codex": {"state": "not-installed", "fix": "codex plugin add toolkit@kit",
-                        "id": "codex:not-installed:toolkit@kit"},
-              "claude": {"state": "installed", "fix": null, "id": null}}},
- {"name": "drawer", "marketplace": "kit", "description": "", "version": null,
-  "path": "/h/.quiver/plugins/kit/drawer", "components": {}, "skills": [],
-  "install": {"claude": {"state": "stale", "fix": "claude plugin update drawer@kit",
-                         "id": "claude:stale:drawer@kit"},
-              "codex": {"state": "disabled-here", "fix": "set enabled = true in ~/.codex/config.toml",
-                        "id": null}}}
-]}
-"""#
-
 @MainActor
 @Suite struct SkillsModelTests {
     func model(_ rules: [(prefix: [String], reply: CommandResult)]) -> (SkillsModel, ScriptedRunner) {
@@ -235,12 +216,41 @@ let hubJSON = #"""
     @Test func theSharedLibraryListsFirst() async {
         let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
         await model.load()
+        // No catalog to read: hammer has no plugin to move to, so it stays.
+        model.plugins = .unavailable("swe plugins failed")
         #expect(model.visibleSkills.map(\.name) == ["alpha", "only-codex", "future", "hammer"])
+    }
+
+    @Test func nothingIsListedUntilTheCatalogIsKnown() async {
+        let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
+        await model.load()
+        // Listing now would show hammer, then move it a moment later.
+        #expect(model.placement == nil)
+        #expect(model.visibleSkills.isEmpty)
+        model.plugins = .ready(PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: []))
+        #expect(model.visibleSkills.map(\.name) == ["alpha", "only-codex", "future", "hammer"])
+    }
+
+    @Test func aPluginSkillMovesToThePluginThatShipsIt() async throws {
+        let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
+        model.plugins = .ready(PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
+            PluginMarketplace(name: "kit", harnesses: ["claude": .init()], plugins: [
+                CatalogPlugin(name: "toolkit", marketplace: "kit", harnesses: [
+                    "claude": PluginHarnessState(available: true, installed: true, enabled: true,
+                                                 path: "/h/.claude/plugins/cache/kit/toolkit/1.0"),
+                ]),
+            ]),
+        ]))
+        await model.load()
+        #expect(model.visibleSkills.map(\.name) == ["alpha", "only-codex", "future"])
+        #expect(model.pluginSkillCount == 1)
+        #expect(model.placement?.byPlugin["toolkit@kit"]?.map(\.name) == ["hammer"])
     }
 
     @Test func filtersByHarnessSourceAndText() async {
         let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
         await model.load()
+        model.plugins = .unavailable("swe plugins failed")
         model.harness = "claude"
         #expect(model.visibleSkills.map(\.name) == ["alpha", "hammer"])
         model.source = .plugin
@@ -262,105 +272,14 @@ let hubJSON = #"""
         #expect(model.chips(for: hammer).map(\.root.name) == ["claude"])
     }
 
-    @Test func hubListsPluginsWithTheirInstallState() async throws {
-        let (model, runner) = model([(["skills", "hub", "--json"], ok(hubJSON))])
-        await model.loadHub()
-        #expect(runner.calls == [["skills", "hub", "--json"]])
-        let plugin = try #require(model.hubPlugins.first)
-        #expect(plugin.id == "toolkit@kit")
-        #expect(plugin.version == "1.2.0")
-        #expect(plugin.components["commands"] == 1)
-        #expect(plugin.skills.map(\.name) == ["hammer", "saw"])
-        #expect(plugin.harnesses == ["claude", "codex"])
-        #expect(plugin.install["codex"]?.state == .notInstalled)
-        #expect(plugin.fixes == ["codex plugin add toolkit@kit"])
-        #expect(plugin.runnableFixes.map(\.id) == ["codex:not-installed:toolkit@kit"])
-        #expect(plugin.manualFixes.isEmpty)
-        model.query = "saw"
-        #expect(model.hubPlugins.count == 1)
-        model.query = "nothing"
-        #expect(model.hubPlugins.isEmpty)
-    }
-
-    @Test func fixRunsOnlyWhatSweCanRunByIdThenReloads() async throws {
-        let (model, runner) = model([
-            (["find", "plugins"], ok(#"""
-            {"fixed": {"id": "claude:stale:drawer@kit", "harness": "claude", "marketplace": "kit",
-             "plugin": "drawer", "ref": "drawer@kit", "kind": "stale", "detail": "1 file differs",
-             "fix": "claude plugin update drawer@kit", "runnable": true, "paths": ["SKILL.md"]}}
-            """#)),
-            (["skills", "hub", "--json"], ok(hubJSON)),
-            (["skills", "--json"], ok(inventoryJSON)),
-        ])
-        await model.loadHub()
-        let drawer = try #require(model.hubPlugins.first { $0.name == "drawer" })
-        // codex's half is an edit by hand: shown, never sent to swe.
-        #expect(drawer.manualFixes == ["set enabled = true in ~/.codex/config.toml"])
-        await model.fixHub(drawer)
-        // The fix can change installed skills too, so both tabs reload.
-        #expect(runner.calls == [
-            ["skills", "hub", "--json"],
-            ["find", "plugins", "--fix=claude:stale:drawer@kit", "--json"],
-            ["skills", "--json"],
-            ["skills", "hub", "--json"],
-        ])
-        #expect(model.allSkills.count == 4)
-        #expect(model.hubError == nil)
-        #expect(model.fixingPlugin == nil)
-    }
-
-    @Test func aFailedFixSaysWhyAndStillReloads() async throws {
-        let (model, runner) = model([
-            (["find", "plugins"], CommandResult(status: 1, stdout: Data(),
-                                                stderr: "claude is not on PATH")),
-            (["skills", "hub", "--json"], ok(hubJSON)),
-            (["skills", "--json"], ok(inventoryJSON)),
-        ])
-        await model.loadHub()
-        await model.fixHub(try #require(model.hubPlugins.first { $0.name == "toolkit" }))
-        #expect(model.hubError == "claude is not on PATH")
-        #expect(runner.calls.suffix(2) == [["skills", "--json"], ["skills", "hub", "--json"]])
-    }
-
-    @Test func aPluginWithNothingToRunNeverCallsSwe() async throws {
-        let manualOnly = #"""
-        {"hub": "/h/.quiver", "plugins": [{"name": "drawer", "marketplace": "kit", "description": "",
-          "version": null, "path": "/p", "components": {}, "skills": [],
-          "install": {"claude": {"state": "installed", "fix": null, "id": null},
-                      "codex": {"state": "disabled-here", "fix": "edit config.toml", "id": null}}}]}
-        """#
-        let (model, runner) = model([(["skills", "hub", "--json"], ok(manualOnly))])
-        await model.loadHub()
-        let drawer = try #require(model.hubPlugins.first)
-        #expect(drawer.runnableFixes.isEmpty)
-        await model.fixHub(drawer)
-        #expect(runner.calls.count == 1)
-    }
-
-    @Test func anUnknownInstallStateStillDecodes() async throws {
-        let json = hubJSON.replacingOccurrences(of: #""state": "installed""#, with: #""state": "quarantined""#)
-        let (model, _) = model([(["skills", "hub", "--json"], ok(json))])
-        await model.loadHub()
-        #expect(model.hubPlugins.first?.install["claude"]?.state == .unknown)
-    }
-
-    @Test func aLinkedManifestStateDecodesWithItsOwnTitle() async throws {
-        let json = hubJSON.replacingOccurrences(of: #""state": "installed""#, with: #""state": "linked-manifest""#)
-        let (model, _) = model([(["skills", "hub", "--json"], ok(json))])
-        await model.loadHub()
-        let state = model.hubPlugins.first?.install["claude"]?.state
-        #expect(state == .linkedManifest)
-        #expect(state?.title == "Linked manifest")
-    }
-
-    @Test func leavingTheHubMidLoadLetsTheNextVisitRetry() async {
+    @Test func leavingThePageMidLoadLetsTheNextVisitRetry() async {
         let runner = StuckRunner()
         let model = SkillsModel(swe: SweClient(runner: runner))
-        let load = Task { await model.loadHub() }
+        let load = Task { await model.load() }
         while runner.started == 0 { await Task.yield() }
         load.cancel()
         await load.value
-        #expect(model.hub == .idle)
+        #expect(model.inventory == .idle)
     }
 
     @Test func aChildStoppedByCancellingIsNotAFailure() async {
@@ -368,11 +287,11 @@ let hubJSON = #"""
         // exit status, not by throwing.
         let runner = TerminatedRunner()
         let model = SkillsModel(swe: SweClient(runner: runner))
-        let load = Task { await model.loadHub() }
+        let load = Task { await model.load() }
         while runner.started == 0 { await Task.yield() }
         load.cancel()
         await load.value
-        #expect(model.hub == .idle)
+        #expect(model.inventory == .idle)
     }
 
     @Test func linksRunOneAtATime() async throws {

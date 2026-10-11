@@ -2,78 +2,123 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// Where the plugins in `~/.quiver/plugins` have not reached Claude Code or
-/// Codex, each with the fix swe would run.
+/// The Plugins page's two views.
+enum PluginsTab: Hashable {
+    /// Where the copies Claude Code and Codex run no longer match
+    /// `~/.quiver/plugins`, each with the fix swe would run.
+    case health
+    /// Every plugin in every marketplace, with install, uninstall, enable
+    /// and disable per harness.
+    case explore
+}
+
 struct PluginsPage: View {
     @Environment(AppModel.self) private var app
     @State private var confirming: PluginDrift?
     /// What the Fix all confirmation listed; only these run.
     @State private var confirmingAll: [String]?
+    @State private var confirmingAction: PluginAction?
 
     /// App-wide, so a check outlives a trip to another page and the last
     /// report shows at once.
     private var model: PluginsModel { app.plugins }
+    private var catalog: PluginCatalogModel { app.pluginCatalog }
 
     var body: some View {
+        @Bindable var app = app
         Page(title: "Plugins",
-             subtitle: "Where the copies Claude Code and Codex run no longer match ~/.quiver/plugins.") {
-            if model.fixAllCount > 0 || model.fixAllProgress != nil {
-                Button(fixAllTitle) { confirmingAll = model.fixAllIDs }
-                    .primaryButton()
+             subtitle: "Every plugin in every marketplace, and where Claude Code and Codex no longer match ~/.quiver/plugins.") {
+            switch app.pluginsTab {
+            case .health:
+                if model.fixAllCount > 0 || model.fixAllProgress != nil {
+                    Button(fixAllTitle) { confirmingAll = model.fixAllIDs }
+                        .primaryButton()
+                        .disabled(model.fixing != nil)
+                        .help("Run every fix swe can run, one at a time")
+                }
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe, for: app.swePath) } }
+                    .iconButton()
                     .disabled(model.fixing != nil)
-                    .help("Run every fix swe can run, one at a time")
+                    .help("Check again")
+            case .explore:
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await catalog.load(swe: app.swe, for: app.swePath) } }
+                    .iconButton()
+                    .disabled(catalog.running != nil)
+                    .help("Read the marketplaces again")
             }
-            Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe, for: app.swePath) } }
-                .iconButton()
-                .disabled(model.fixing != nil)
-                .help("Check again")
         } content: {
-            if let error = model.fixError {
-                ErrorCard(message: error)
-            } else if let fixed = model.lastFixed {
-                Card {
-                    Label("Ran \(fixed)", systemImage: "checkmark.circle")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                }
-            }
-            switch model.state {
-            case .idle, .loading:
-                ProgressView().frame(maxWidth: .infinity)
-            case .failed(let message):
-                ErrorCard(message: message)
-            case .loaded(let report) where report.sources == 0:
-                Card { Label("No plugins in ~/.quiver/plugins, so there is nothing to keep in step.", systemImage: "puzzlepiece.extension").foregroundStyle(Theme.textSecondary) }
-            case .loaded(let report) where report.drift.isEmpty:
-                Card { Label("Claude Code and Codex run what ~/.quiver/plugins holds.", systemImage: "checkmark.seal").foregroundStyle(Theme.textPrimary) }
-            case .loaded(let report):
-                let harnesses = report.drift.map(\.harness).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-                ForEach(harnesses, id: \.self) { harness in
-                    let rows = report.drift.filter { $0.harness == harness }
-                    Card {
-                        HarnessTitle(harness: harness, findings: rows.count)
-                        ForEach(rows) { finding in
-                            DriftRow(finding: finding, running: model.fixing == finding.id,
-                                     busy: model.fixing != nil) { confirming = finding }
-                            if finding != rows.last { Divider().overlay(Theme.border) }
-                        }
-                    }
-                }
+            Tabs(options: [(PluginsTab.health, "Health"), (PluginsTab.explore, "Explore")],
+                 selection: $app.pluginsTab, style: .underline)
+            switch app.pluginsTab {
+            case .health: health
+            case .explore:
+                PluginExplorer(model: catalog, openHealth: { app.pluginsTab = .health }) { confirmingAction = $0 }
             }
         }
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
+        .task(id: ExploreLoad(swePath: app.swePath, open: app.pluginsTab == .explore)) {
+            if app.pluginsTab == .explore { await catalog.loadIfStale(swe: app.swe, for: app.swePath) }
+        }
         .confirmationDialog("Run this fix?", isPresented: .init(
             get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { finding in
-            Button("Run") { Task { await model.fix(finding, swe: app.swe, for: app.swePath) } }
+            Button("Run") { Task { await fix(finding) } }
         } message: { finding in
             Text("swe will check the finding still applies, then run:\n\(finding.fix)")
         }
         .confirmationDialog(confirmingAll?.count == 1 ? "Run 1 fix?" : "Run \(confirmingAll?.count ?? 0) fixes?",
                             isPresented: .init(get: { confirmingAll != nil }, set: { if !$0 { confirmingAll = nil } }),
                             presenting: confirmingAll) { ids in
-            Button("Run all") { Task { await model.fixAll(confirmed: ids, swe: app.swe, for: app.swePath) } }
+            Button("Run all") { Task { await fixAll(ids) } }
         } message: { ids in
             Text("One at a time, stopping at the first that fails. swe checks each still applies before it runs:\n\n"
                  + fixes(for: ids).joined(separator: "\n"))
+        }
+        .confirmationDialog(confirmingAction?.question ?? "",
+                            isPresented: .init(get: { confirmingAction != nil }, set: { if !$0 { confirmingAction = nil } }),
+                            presenting: confirmingAction) { action in
+            Button(action.verb.title, role: action.verb == .uninstall ? .destructive : nil) {
+                Task { await run(action) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { action in
+            Text(action.isEdit
+                 ? "swe checks the current state, then makes this edit, and writes it only once it is proven safe:\n\n\(action.command)"
+                 : "swe checks the current state, then runs:\n\n\(action.command)")
+        }
+    }
+
+    /// The drift report, as before Explore: one card per harness.
+    @ViewBuilder private var health: some View {
+        if let error = model.fixError {
+            ErrorCard(message: error)
+        } else if let fixed = model.lastFixed {
+            Card {
+                Label("Ran \(fixed)", systemImage: "checkmark.circle")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            }
+        }
+        switch model.state {
+        case .idle, .loading:
+            ProgressView().frame(maxWidth: .infinity)
+        case .failed(let message):
+            ErrorCard(message: message)
+        case .loaded(let report) where report.sources == 0:
+            Card { Label("No plugins in ~/.quiver/plugins, so there is nothing to keep in step.", systemImage: "puzzlepiece.extension").foregroundStyle(Theme.textSecondary) }
+        case .loaded(let report) where report.drift.isEmpty:
+            Card { Label("Claude Code and Codex run what ~/.quiver/plugins holds.", systemImage: "checkmark.seal").foregroundStyle(Theme.textPrimary) }
+        case .loaded(let report):
+            let harnesses = report.drift.map(\.harness).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            ForEach(harnesses, id: \.self) { harness in
+                let rows = report.drift.filter { $0.harness == harness }
+                Card {
+                    HarnessTitle(harness: harness, findings: rows.count)
+                    ForEach(rows) { finding in
+                        DriftRow(finding: finding, running: model.fixing == finding.id,
+                                 busy: model.fixing != nil) { confirming = finding }
+                        if finding != rows.last { Divider().overlay(Theme.border) }
+                    }
+                }
+            }
         }
     }
 
@@ -86,6 +131,36 @@ struct PluginsPage: View {
         guard case .loaded(let report) = model.state else { return [] }
         return ids.compactMap { id in report.drift.first { $0.id == id }?.fix }
     }
+
+    private func fix(_ finding: PluginDrift) async {
+        await model.fix(finding, swe: app.swe, for: app.swePath)
+        await refreshCatalog()
+    }
+
+    private func fixAll(_ ids: [String]) async {
+        await model.fixAll(confirmed: ids, swe: app.swe, for: app.swePath)
+        await refreshCatalog()
+    }
+
+    /// A fix changes what Explore shows; read it again if it has been read.
+    private func refreshCatalog() async {
+        guard catalog.index != nil else { return }
+        await catalog.load(swe: app.swe, for: app.swePath)
+    }
+
+    /// Runs a confirmed action. One in the hub can open or close a gap the
+    /// Health tab reports, so its report is checked again too.
+    private func run(_ action: PluginAction) async {
+        let hub = catalog.index?.rows.first { $0.id == action.ref }?.group == .hub
+        await catalog.run(action, swe: app.swe, for: app.swePath)
+        if hub { await model.load(swe: app.swe, for: app.swePath) }
+    }
+}
+
+/// Explore reads the catalog when it opens, and again for another swe.
+private struct ExploreLoad: Hashable {
+    var swePath: String
+    var open: Bool
 }
 
 /// The card's heading: the harness logo, its name and how many findings.

@@ -1,0 +1,901 @@
+import Foundation
+import Observation
+
+// MARK: - The catalog
+
+/// `swe plugins catalog --json`: every plugin in every marketplace a harness
+/// has registered or `~/.quiver/plugins` holds, installed or not, with each
+/// harness's state.
+public struct PluginCatalog: Codable, Sendable, Equatable {
+    /// The harnesses swe read, in its order.
+    public let harnesses: [String]
+    /// The harnesses swe can install, uninstall, enable and disable in.
+    public let actions: [String]
+    public let marketplaces: [PluginMarketplace]
+    /// What swe could not read, in its words.
+    public let errors: [Problem]
+
+    public struct Problem: Codable, Sendable, Equatable {
+        public let harness: String
+        public let marketplace: String?
+        public let detail: String
+
+        public init(harness: String, marketplace: String? = nil, detail: String) {
+            self.harness = harness
+            self.marketplace = marketplace
+            self.detail = detail
+        }
+    }
+
+    public init(harnesses: [String], actions: [String], marketplaces: [PluginMarketplace],
+                errors: [Problem] = []) {
+        self.harnesses = harnesses
+        self.actions = actions
+        self.marketplaces = marketplaces
+        self.errors = errors
+    }
+
+    enum CodingKeys: String, CodingKey { case harnesses, actions, marketplaces, errors }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        harnesses = try c.decodeIfPresent([String].self, forKey: .harnesses) ?? []
+        actions = try c.decodeIfPresent([String].self, forKey: .actions) ?? []
+        marketplaces = try c.decodeIfPresent([PluginMarketplace].self, forKey: .marketplaces) ?? []
+        errors = (try? c.decodeIfPresent([Problem].self, forKey: .errors)) ?? []
+    }
+
+    /// Every plugin, marketplace by marketplace.
+    public var plugins: [CatalogPlugin] { marketplaces.flatMap(\.plugins) }
+
+    /// What can be done to `plugin` in `harness` now, in the order a menu
+    /// lists them. Empty for a harness swe cannot act in (Cursor), and for a
+    /// state swe does not know.
+    public func actions(for plugin: CatalogPlugin, in harness: String) -> [PluginAction] {
+        guard actions.contains(harness), let state = plugin.harnesses[harness] else { return [] }
+        let verbs: [PluginAction.Verb]
+        switch state.installed {
+        case true?:
+            switch state.enabled {
+            case true?: verbs = [.disable, .uninstall]
+            case false?: verbs = [.enable, .uninstall]
+            case nil: verbs = [.uninstall]
+            }
+        case false?:
+            // Only from a marketplace this harness lists: anything else
+            // would fail in the harness's own CLI.
+            verbs = state.available ? [.install] : []
+        case nil:
+            verbs = []
+        }
+        return verbs.map { PluginAction(verb: $0, ref: plugin.ref, harness: harness) }
+    }
+}
+
+public struct PluginMarketplace: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { name }
+    public let name: String
+    /// A marketplace in `~/.quiver/plugins`.
+    public let hub: Bool
+    /// Its folder in the hub; nil elsewhere.
+    public let path: String?
+    public let description: String?
+    /// The harnesses that have it registered, and from where.
+    public let harnesses: [String: Registration]
+    public let plugins: [CatalogPlugin]
+
+    public struct Registration: Codable, Sendable, Equatable {
+        public let sourceType: String?
+        public let location: String?
+        public let readable: Bool
+
+        public init(sourceType: String? = nil, location: String? = nil, readable: Bool = true) {
+            self.sourceType = sourceType
+            self.location = location
+            self.readable = readable
+        }
+
+        enum CodingKeys: String, CodingKey { case sourceType, location, readable }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sourceType = try? c.decodeIfPresent(String.self, forKey: .sourceType)
+            location = try? c.decodeIfPresent(String.self, forKey: .location)
+            readable = (try? c.decodeIfPresent(Bool.self, forKey: .readable)) ?? true
+        }
+    }
+
+    public init(name: String, hub: Bool = false, path: String? = nil, description: String? = nil,
+                harnesses: [String: Registration], plugins: [CatalogPlugin]) {
+        self.name = name
+        self.hub = hub
+        self.path = path
+        self.description = description
+        self.harnesses = harnesses
+        self.plugins = plugins
+    }
+
+    enum CodingKeys: String, CodingKey { case name, hub, path, description, harnesses, plugins }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        hub = (try? c.decodeIfPresent(Bool.self, forKey: .hub)) ?? false
+        path = try? c.decodeIfPresent(String.self, forKey: .path)
+        description = try? c.decodeIfPresent(String.self, forKey: .description)
+        harnesses = try c.decodeIfPresent([String: Registration].self, forKey: .harnesses) ?? [:]
+        plugins = try c.decodeIfPresent([CatalogPlugin].self, forKey: .plugins) ?? []
+    }
+
+    /// No harness has it registered and it is not in the hub: all that is
+    /// left of it is what was installed from it before.
+    public var isRegistered: Bool { hub || !harnesses.isEmpty }
+}
+
+public struct CatalogPlugin: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { ref }
+    public let name: String
+    /// `<plugin>@<marketplace>`, what every harness CLI takes.
+    public let ref: String
+    public let marketplace: String
+    public let displayName: String?
+    public let description: String?
+    public let version: String?
+    public let category: String?
+    public let tags: [String]
+    public let author: String?
+    public let homepage: String?
+    /// A marketplace lists it; false for one only installed.
+    public let listed: Bool
+    /// Its folder in the marketplace, when the marketplace is a folder.
+    public let sourcePath: String?
+    /// How many of each component it ships: `skills`, `agents`,
+    /// `commands`, `hooks`, `mcp_servers`.
+    public let components: [String: Int]
+    public let skills: [CatalogSkill]
+    /// Keyed by harness: `claude`, `codex`, `cursor`.
+    public let harnesses: [String: PluginHarnessState]
+    /// A hub plugin's gaps, as the Health tab reports them; nil elsewhere.
+    public let drift: [String: PluginDriftState]?
+
+    public init(name: String, marketplace: String, description: String? = nil, version: String? = nil,
+                listed: Bool = true, sourcePath: String? = nil, components: [String: Int] = [:],
+                skills: [CatalogSkill] = [], harnesses: [String: PluginHarnessState],
+                drift: [String: PluginDriftState]? = nil) {
+        self.name = name
+        self.ref = "\(name)@\(marketplace)"
+        self.marketplace = marketplace
+        self.displayName = nil
+        self.description = description
+        self.version = version
+        self.category = nil
+        self.tags = []
+        self.author = nil
+        self.homepage = nil
+        self.listed = listed
+        self.sourcePath = sourcePath
+        self.components = components
+        self.skills = skills
+        self.harnesses = harnesses
+        self.drift = drift
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, ref, marketplace, displayName, description, version, category, tags, author, homepage,
+             listed, sourcePath, components, skills, harnesses, drift
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        marketplace = try c.decode(String.self, forKey: .marketplace)
+        ref = (try? c.decodeIfPresent(String.self, forKey: .ref)) ?? "\(name)@\(marketplace)"
+        // Text from a manifest: a value of another type reads as missing.
+        displayName = try? c.decodeIfPresent(String.self, forKey: .displayName)
+        description = try? c.decodeIfPresent(String.self, forKey: .description)
+        version = try? c.decodeIfPresent(String.self, forKey: .version)
+        category = try? c.decodeIfPresent(String.self, forKey: .category)
+        tags = (try? c.decodeIfPresent([String].self, forKey: .tags)) ?? []
+        author = try? c.decodeIfPresent(String.self, forKey: .author)
+        homepage = try? c.decodeIfPresent(String.self, forKey: .homepage)
+        listed = (try? c.decodeIfPresent(Bool.self, forKey: .listed)) ?? true
+        sourcePath = try? c.decodeIfPresent(String.self, forKey: .sourcePath)
+        // swe's snake_case keys come through the decoder's key conversion
+        // as camelCase ("mcpServers"); put them back, so a saved snapshot
+        // and a fresh reply say the same.
+        let raw = (try? c.decodeIfPresent([String: Int].self, forKey: .components)) ?? [:]
+        components = Dictionary(raw.map { (Self.snakeCase($0.key), $0.value) }, uniquingKeysWith: +)
+        skills = try c.decodeIfPresent([CatalogSkill].self, forKey: .skills) ?? []
+        harnesses = try c.decodeIfPresent([String: PluginHarnessState].self, forKey: .harnesses) ?? [:]
+        drift = try? c.decodeIfPresent([String: PluginDriftState].self, forKey: .drift)
+    }
+
+    static func snakeCase(_ key: String) -> String {
+        key.reduce(into: "") { out, ch in
+            if ch.isUppercase {
+                out += "_" + ch.lowercased()
+            } else {
+                out.append(ch)
+            }
+        }
+    }
+
+    /// Harness names with something to show, in `order`: listed there,
+    /// installed there, or a copy on disk.
+    public func shownHarnesses(in order: [String]) -> [String] {
+        order.filter { harnesses[$0].map { $0.status != .absent } ?? false }
+    }
+
+    /// Every folder the plugin occupies on disk: its source folder, each
+    /// harness's loaded copy and every cached copy.
+    public var folders: [String] {
+        var out: [String] = []
+        for folder in [sourcePath] + harnesses.values.flatMap({ [$0.path] + $0.copies.map(Optional.some) }) {
+            guard let folder, !folder.isEmpty, !out.contains(folder) else { continue }
+            out.append(folder)
+        }
+        return out
+    }
+
+    /// The worst gap the Health tab reports for this plugin, if any, and
+    /// the harnesses it is in.
+    public var worstDrift: (state: PluginDriftState.Kind, harnesses: [String])? {
+        guard let drift else { return nil }
+        let gaps = drift.filter { $0.value.state != .installed }
+        guard let worst = gaps.values.map(\.state).min(by: { $0.severity < $1.severity }) else { return nil }
+        return (worst, gaps.filter { $0.value.state == worst }.keys.sorted())
+    }
+}
+
+public struct CatalogSkill: Codable, Sendable, Equatable {
+    public let name: String
+    public let description: String
+    public let path: String
+    /// The harnesses whose loaded copy holds it; empty for a plugin no
+    /// harness has installed.
+    public let harnesses: [String]
+
+    public init(name: String, description: String = "", path: String, harnesses: [String] = []) {
+        self.name = name
+        self.description = description
+        self.path = path
+        self.harnesses = harnesses
+    }
+
+    enum CodingKeys: String, CodingKey { case name, description, path, harnesses }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        description = (try? c.decodeIfPresent(String.self, forKey: .description)) ?? ""
+        path = try c.decode(String.self, forKey: .path)
+        harnesses = (try? c.decodeIfPresent([String].self, forKey: .harnesses)) ?? []
+    }
+}
+
+/// One harness's view of one plugin.
+public struct PluginHarnessState: Codable, Sendable, Equatable {
+    /// A marketplace this harness has registered lists it.
+    public let available: Bool
+    /// Nil when swe cannot tell (Cursor keeps only a cache).
+    public let installed: Bool?
+    /// Nil when not installed, or when the harness does not say.
+    public let enabled: Bool?
+    public let version: String?
+    public let scopes: [String]
+    /// The copy the harness loads.
+    public let path: String?
+    /// Every cached copy.
+    public let copies: [String]
+
+    public enum Status: Sendable, Equatable {
+        case enabled, disabled, installed, available, cached, absent
+
+        public var title: String {
+            switch self {
+            case .enabled: "Enabled"
+            case .disabled: "Disabled"
+            case .installed: "Installed"
+            case .available: "Available"
+            case .cached: "Cached"
+            case .absent: "Not listed"
+            }
+        }
+    }
+
+    public init(available: Bool, installed: Bool?, enabled: Bool? = nil, version: String? = nil,
+                scopes: [String] = [], path: String? = nil, copies: [String] = []) {
+        self.available = available
+        self.installed = installed
+        self.enabled = enabled
+        self.version = version
+        self.scopes = scopes
+        self.path = path
+        self.copies = copies
+    }
+
+    enum CodingKeys: String, CodingKey { case available, installed, enabled, version, scopes, path, copies }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = (try? c.decodeIfPresent(Bool.self, forKey: .available)) ?? false
+        installed = try? c.decodeIfPresent(Bool.self, forKey: .installed)
+        enabled = try? c.decodeIfPresent(Bool.self, forKey: .enabled)
+        version = try? c.decodeIfPresent(String.self, forKey: .version)
+        scopes = (try? c.decodeIfPresent([String].self, forKey: .scopes)) ?? []
+        path = try? c.decodeIfPresent(String.self, forKey: .path)
+        copies = (try? c.decodeIfPresent([String].self, forKey: .copies)) ?? []
+    }
+
+    public var status: Status {
+        switch installed {
+        case true?:
+            switch enabled {
+            case true?: .enabled
+            case false?: .disabled
+            case nil: .installed
+            }
+        case false?:
+            available ? .available : .absent
+        case nil:
+            path != nil || !copies.isEmpty ? .cached : available ? .available : .absent
+        }
+    }
+}
+
+/// A hub plugin's state in one harness, as `swe find plugins` judges it.
+public struct PluginDriftState: Codable, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable {
+        case installed
+        case unregistered
+        case notInstalled = "not-installed"
+        /// The source's `.codex-plugin` is a symlink, which Codex skips.
+        case linkedManifest = "linked-manifest"
+        case stale
+        case disabledHere = "disabled-here"
+        /// Disabled in every harness that has it.
+        case disabled
+        /// A state from a newer swe.
+        case unknown
+
+        public var title: String {
+            switch self {
+            case .installed: "Installed"
+            case .unregistered: "Marketplace not added"
+            case .notInstalled: "Not installed"
+            case .linkedManifest: "Linked manifest"
+            case .stale: "Out of date"
+            case .disabledHere, .disabled: "Disabled"
+            case .unknown: "Needs a look"
+            }
+        }
+
+        /// Lower is worse.
+        var severity: Int {
+            switch self {
+            case .unregistered: 0
+            case .notInstalled: 1
+            case .stale: 2
+            case .linkedManifest: 3
+            case .disabledHere: 4
+            case .disabled: 5
+            case .unknown: 6
+            case .installed: 7
+            }
+        }
+    }
+
+    public let state: Kind
+    /// The fix as text, nil when there is nothing to fix.
+    public let fix: String?
+    /// What `swe find plugins --fix=` takes; nil for an edit by hand.
+    public let id: String?
+
+    public init(state: Kind, fix: String? = nil, id: String? = nil) {
+        self.state = state
+        self.fix = fix
+        self.id = id
+    }
+
+    enum CodingKeys: String, CodingKey { case state, fix, id }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = (try? c.decode(Kind.self, forKey: .state)) ?? .unknown
+        fix = try? c.decodeIfPresent(String.self, forKey: .fix)
+        id = try? c.decodeIfPresent(String.self, forKey: .id)
+    }
+}
+
+// MARK: - Actions
+
+/// One install, uninstall, enable or disable of one plugin in one harness.
+public struct PluginAction: Sendable, Hashable, Identifiable {
+    public enum Verb: String, Sendable, CaseIterable {
+        case install, uninstall, enable, disable
+
+        public var title: String {
+            switch self {
+            case .install: "Install"
+            case .uninstall: "Uninstall"
+            case .enable: "Enable"
+            case .disable: "Disable"
+            }
+        }
+
+        var past: String {
+            switch self {
+            case .install: "Installed"
+            case .uninstall: "Uninstalled"
+            case .enable: "Enabled"
+            case .disable: "Disabled"
+            }
+        }
+    }
+
+    public let verb: Verb
+    public let ref: String
+    public let harness: String
+
+    public init(verb: Verb, ref: String, harness: String) {
+        self.verb = verb
+        self.ref = ref
+        self.harness = harness
+    }
+
+    public var id: String { "\(verb.rawValue) \(harness) \(ref)" }
+
+    /// Codex has no enable verb: swe sets the flag in config.toml itself.
+    public var isEdit: Bool { harness == "codex" && (verb == .enable || verb == .disable) }
+
+    /// What swe will run, or the edit it will make, as swe words it
+    /// (src/quiver/plugins/actions.py).
+    public var command: String {
+        switch (harness, verb) {
+        case ("codex", .install): "codex plugin add \(ref)"
+        case ("codex", .uninstall): "codex plugin remove \(ref)"
+        case ("codex", .enable), ("codex", .disable):
+            "set [plugins.\"\(ref)\"] enabled = \(verb == .enable) in ~/.codex/config.toml"
+        default: "\(harness) plugin \(verb.rawValue) \(ref)"
+        }
+    }
+
+    /// "Install in Claude Code", for a menu.
+    public var menuTitle: String {
+        let name = HarnessMark(harness).name
+        return verb == .uninstall ? "Uninstall from \(name)" : "\(verb.title) in \(name)"
+    }
+
+    /// "Install tool@kit in Claude Code?", for the confirmation.
+    public var question: String {
+        let name = HarnessMark(harness).name
+        return "\(verb.title) \(ref) \(verb == .uninstall ? "from" : "in") \(name)?"
+    }
+
+    var arguments: [String] { ["plugins", verb.rawValue, ref, "--harness=" + harness, "--json"] }
+}
+
+/// `swe plugins <action> --json`: what happened.
+public struct PluginActionResult: Decodable, Sendable, Equatable {
+    public let action: String
+    public let harness: String
+    public let ref: String
+    public let changed: Bool
+    /// Why nothing was done, when nothing was.
+    public let detail: String?
+
+    enum CodingKeys: String, CodingKey { case action, harness, ref, changed, detail }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decode(String.self, forKey: .action)
+        harness = try c.decode(String.self, forKey: .harness)
+        ref = try c.decode(String.self, forKey: .ref)
+        changed = try c.decode(Bool.self, forKey: .changed)
+        detail = try? c.decodeIfPresent(String.self, forKey: .detail)
+    }
+
+    /// One line for the page: "Installed tool@kit in Claude Code".
+    public var summary: String {
+        let name = HarnessMark(harness).name
+        guard changed, let verb = PluginAction.Verb(rawValue: action) else {
+            return "\(ref) in \(name): \(detail ?? "nothing changed")"
+        }
+        return "\(verb.past) \(ref) \(verb == .uninstall ? "from" : "in") \(name)"
+    }
+}
+
+extension SweClient {
+    public func pluginCatalog() async throws -> PluginCatalog {
+        try await call(["plugins", "catalog", "--json"])
+    }
+
+    /// swe reads the harness's state first and does nothing when the plugin
+    /// is already where it was asked to be; the app never sends a command.
+    public func run(_ action: PluginAction) async throws -> PluginActionResult {
+        try await call(action.arguments)
+    }
+}
+
+// MARK: - Where each skill is shown
+
+/// One skill in a plugin's row on the Explore tab.
+public struct PluginSkill: Sendable, Equatable, Identifiable {
+    /// Unique within one plugin.
+    public var id: String { name }
+    public let name: String
+    public let description: String
+    /// Every folder holding it that the app knows of: the catalog's, and
+    /// each installed copy `swe skills` found.
+    public let paths: [String]
+
+    public init(name: String, description: String, paths: [String]) {
+        self.name = name
+        self.description = description
+        self.paths = paths
+    }
+}
+
+/// Where each skill on the Mac is shown: on the Skills page, or inside the
+/// one plugin that ships it, on the Plugins page's Explore tab. Both pages
+/// use this, so a skill is never shown twice and never dropped.
+///
+/// A skill moves only when its source is `plugin` and exactly one catalog
+/// plugin owns its folder: the deepest plugin folder (source, loaded copy or
+/// cached copy) holding it, as `swe` itself decides in
+/// `quiver.plugins.catalog.owners`. Anything else stays on the Skills page.
+public struct SkillPlacement: Sendable, Equatable {
+    /// What the Skills page lists, in inventory order.
+    public let standalone: [Skill]
+    /// Plugin ref to the skills found inside its folders.
+    public let byPlugin: [String: [Skill]]
+
+    /// - Parameter catalog: nil while it is unknown; then every skill stays
+    ///   on the Skills page.
+    public init(skills: [Skill], catalog: PluginCatalog?) {
+        guard let catalog else {
+            standalone = skills
+            byPlugin = [:]
+            return
+        }
+        let owners = FolderOwners(catalog)
+        var standalone: [Skill] = []
+        var byPlugin: [String: [Skill]] = [:]
+        for skill in skills {
+            if skill.source == .plugin, let ref = owners.owner(of: skill.path) {
+                byPlugin[ref, default: []].append(skill)
+            } else {
+                standalone.append(skill)
+            }
+        }
+        self.standalone = standalone
+        self.byPlugin = byPlugin
+    }
+
+    /// How many skills moved to the Plugins page.
+    public var inPlugins: Int { byPlugin.values.reduce(0) { $0 + $1.count } }
+
+    /// The skills `plugin` ships, for its row: the catalog's list, plus
+    /// every installed copy `swe skills` found inside it, one entry per name
+    /// (a skill and its nested copy share a name). Sorted by name.
+    public func skills(of plugin: CatalogPlugin) -> [PluginSkill] {
+        var order: [String] = []
+        var entries: [String: (description: String, paths: [String])] = [:]
+        func add(_ name: String, _ description: String, _ path: String) {
+            if var entry = entries[name] {
+                if !entry.paths.contains(path) { entry.paths.append(path) }
+                if entry.description.isEmpty { entry.description = description }
+                entries[name] = entry
+            } else {
+                order.append(name)
+                entries[name] = (description, [path])
+            }
+        }
+        for skill in plugin.skills { add(skill.name, skill.description, skill.path) }
+        for skill in byPlugin[plugin.ref] ?? [] { add(skill.name, skill.description, skill.path) }
+        return order
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { PluginSkill(name: $0, description: entries[$0]!.description, paths: entries[$0]!.paths) }
+    }
+}
+
+/// Which catalog plugin a folder belongs to.
+struct FolderOwners {
+    private let folders: [(folder: String, ref: String)]
+
+    init(_ catalog: PluginCatalog) {
+        folders = catalog.plugins.flatMap { plugin in
+            plugin.folders.map { (Self.trimmed($0), plugin.ref) }
+        }
+    }
+
+    /// The one plugin owning the deepest folder holding `path`; nil when
+    /// none does, or when two plugins share that folder.
+    func owner(of path: String) -> String? {
+        let path = Self.trimmed(path)
+        var best = -1
+        var refs: Set<String> = []
+        for (folder, ref) in folders where path == folder || path.hasPrefix(folder + "/") {
+            if folder.count > best {
+                best = folder.count
+                refs = [ref]
+            } else if folder.count == best {
+                refs.insert(ref)
+            }
+        }
+        return refs.count == 1 ? refs.first : nil
+    }
+
+    static func trimmed(_ path: String) -> String {
+        var path = path
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        return path
+    }
+}
+
+// MARK: - The Explore tab
+
+/// What the Explore tab shows: the catalog, and the skills `swe skills`
+/// found, so each plugin lists the copies installed too.
+public struct PluginExplore: SnapshotValue {
+    public static let snapshotVersion = 1
+
+    public let catalog: PluginCatalog
+    public let skills: [Skill]
+
+    public init(catalog: PluginCatalog, skills: [Skill]) {
+        self.catalog = catalog
+        self.skills = skills
+    }
+}
+
+/// The Explore tab's Source select.
+public enum ExploreSource: Hashable, Sendable {
+    case all
+    case hub
+    case marketplace(String)
+}
+
+/// One plugin as the Explore tab lists it.
+public struct ExploreRow: Sendable, Equatable, Identifiable {
+    public var id: String { plugin.ref }
+    public let plugin: CatalogPlugin
+    public let group: ExploreGroup.Kind
+    public let skills: [PluginSkill]
+    /// Lowercased name, description and skill names, for search.
+    let haystack: String
+}
+
+public struct ExploreGroup: Sendable, Equatable, Identifiable {
+    public enum Kind: Int, Sendable, Comparable {
+        case hub, other, unregistered
+
+        public static func < (a: Kind, b: Kind) -> Bool { a.rawValue < b.rawValue }
+
+        public var title: String {
+            switch self {
+            case .hub: "Quiver hub"
+            case .other: "Other marketplaces"
+            case .unregistered: "No longer registered"
+            }
+        }
+
+        /// Said under the title, when the group needs explaining.
+        public var note: String? {
+            switch self {
+            case .unregistered:
+                "Installed from marketplaces no harness has registered any more. They stay installed until you uninstall them, and nothing new can come from them."
+            default: nil
+            }
+        }
+    }
+
+    public var id: Kind { kind }
+    public let kind: Kind
+    public let rows: [ExploreRow]
+}
+
+/// The Explore tab's rows, worked out once per catalog so filtering 372
+/// plugins on each keystroke is cheap.
+public struct PluginExploreIndex: Sendable, Equatable {
+    public let value: PluginExplore
+    public let placement: SkillPlacement
+    /// Every plugin, hub first, then the other marketplaces, then the ones
+    /// no longer registered.
+    public let rows: [ExploreRow]
+
+    public init(_ value: PluginExplore) {
+        self.value = value
+        let placement = SkillPlacement(skills: value.skills, catalog: value.catalog)
+        self.placement = placement
+        var rows: [ExploreRow] = []
+        for market in value.catalog.marketplaces {
+            let kind: ExploreGroup.Kind = market.hub ? .hub : market.isRegistered ? .other : .unregistered
+            for plugin in market.plugins {
+                let skills = placement.skills(of: plugin)
+                let haystack = ([plugin.name, plugin.displayName ?? "", plugin.description ?? ""]
+                    + skills.map(\.name)).joined(separator: "\n").lowercased()
+                rows.append(ExploreRow(plugin: plugin, group: kind, skills: skills, haystack: haystack))
+            }
+        }
+        // Stable: within a group, the catalog's own order.
+        self.rows = rows.enumerated()
+            .sorted { ($0.element.group, $0.offset) < ($1.element.group, $1.offset) }
+            .map(\.element)
+    }
+
+    public var total: Int { rows.count }
+
+    /// The marketplaces for the Source select, beyond All and Quiver hub:
+    /// every one outside the hub, by name.
+    public var otherMarketplaces: [String] {
+        value.catalog.marketplaces.filter { !$0.hub }.map(\.name)
+    }
+
+    /// The rows matching the filters, grouped, empty groups left out.
+    /// - Parameters:
+    ///   - harness: only plugins with something in this harness (listed,
+    ///     installed or cached there); nil for all.
+    ///   - query: matched against the name, description and the names of
+    ///     the skills a plugin ships.
+    public func groups(source: ExploreSource = .all, harness: String? = nil, query: String = "") -> [ExploreGroup] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let matching = rows.filter { row in
+            switch source {
+            case .all: break
+            case .hub: guard row.group == .hub else { return false }
+            case .marketplace(let name): guard row.plugin.marketplace == name else { return false }
+            }
+            if let harness, (row.plugin.harnesses[harness]?.status ?? .absent) == .absent { return false }
+            return needle.isEmpty || row.haystack.contains(needle)
+        }
+        return [ExploreGroup.Kind.hub, .other, .unregistered].compactMap { kind in
+            let rows = matching.filter { $0.group == kind }
+            return rows.isEmpty ? nil : ExploreGroup(kind: kind, rows: rows)
+        }
+    }
+}
+
+/// What a page knows of the plugin catalog.
+public enum CatalogLookup: Sendable, Equatable {
+    /// Not read yet.
+    case pending
+    case ready(PluginCatalog)
+    /// swe could not read it; the reason.
+    case unavailable(String)
+
+    public var catalog: PluginCatalog? {
+        if case .ready(let catalog) = self { return catalog }
+        return nil
+    }
+}
+
+/// The Plugins page's Explore tab: the catalog, kept app-wide so the last
+/// one shows at once, and the actions run on it.
+@MainActor
+@Observable
+public final class PluginCatalogModel {
+    public var state: Loadable<PluginExplore> { loader.state }
+    /// The rows, worked out from the catalog on show.
+    public private(set) var index: PluginExploreIndex?
+    /// Bumped whenever `index` or `lookup` changes, for a page to watch cheaply.
+    public private(set) var revision = 0
+    /// The action running now.
+    public private(set) var running: PluginAction?
+    public private(set) var actionError: String?
+    /// The last action that finished, in one line.
+    public private(set) var lastResult: String?
+
+    // The filters, kept with the catalog so a return visit finds them set.
+    public var source: ExploreSource = .all
+    /// A harness name, or nil for every harness.
+    public var harness: String?
+    public var query = ""
+
+    private let loader: SnapshotLoader<PluginExplore>
+
+    /// - Parameter snapshots: where the last catalog is kept between launches.
+    public init(snapshots: (any SnapshotStoring<Snapshot<PluginExplore>>)? = nil, maxAge: TimeInterval = 60,
+                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
+        loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
+    }
+
+    /// What the Skills page places skills with.
+    public var lookup: CatalogLookup {
+        switch loader.state {
+        case .idle, .loading: .pending
+        case .loaded(let value): .ready(value.catalog)
+        case .failed(let message): .unavailable(message)
+        }
+    }
+
+    /// Shows the last saved catalog until swe answers.
+    public func restore() async {
+        await loader.restore()
+        reindex()
+    }
+
+    /// Reads again unless this swe's catalog is fresh; joins a read in flight.
+    public func loadIfStale(swe: SweClient, for source: String) async {
+        await loader.loadIfStale(from: source, fetch: Self.fetch(swe))
+        reindex()
+    }
+
+    /// Always reads. `source` is the swe asked, as set in Settings; nil keeps the last one.
+    public func load(swe: SweClient, for source: String? = nil) async {
+        await loader.load(from: source, fetch: Self.fetch(swe))
+        reindex()
+    }
+
+    /// Runs `action`, then reads the catalog again. Call only after the user
+    /// has confirmed the command, and only with an action the catalog on
+    /// show offers.
+    /// - Parameter source: the swe `swe` is, as set in Settings. The reload
+    ///   is dropped if another swe was picked meanwhile; nil reloads anyway.
+    public func run(_ action: PluginAction, swe: SweClient, for source: String? = nil) async {
+        guard running == nil, let catalog = index?.value.catalog,
+              let plugin = catalog.plugins.first(where: { $0.ref == action.ref }),
+              catalog.actions(for: plugin, in: action.harness).contains(action)
+        else { return }
+        running = action
+        actionError = nil
+        lastResult = nil
+        defer { running = nil }
+        do {
+            lastResult = try await swe.run(action).summary
+        } catch is CancellationError {
+            // Fall through to the reload: the harness may have changed anyway.
+        } catch {
+            actionError = error.localizedDescription
+        }
+        // Reload either way: a failed command may still have changed something.
+        if let source {
+            await loader.reload(from: source, fetch: Self.fetch(swe))
+        } else {
+            await loader.load(from: nil, fetch: Self.fetch(swe))
+        }
+        reindex()
+    }
+
+    /// The catalog and the skills inventory, read at the same time. The
+    /// inventory only adds installed copies to each plugin's skills, so a
+    /// failure there leaves the catalog's own lists rather than failing.
+    private static func fetch(_ swe: SweClient) -> @Sendable () async throws -> PluginExplore {
+        {
+            async let catalog = swe.pluginCatalog()
+            async let skills = swe.skills()
+            let read = try await catalog
+            let found = (try? await skills)?.skills ?? []
+            return PluginExplore(catalog: read, skills: found)
+        }
+    }
+
+    private var indexedLookup: CatalogLookupKind = .pending
+
+    private func reindex() {
+        var changed = false
+        if case .loaded(let value) = loader.state, index?.value != value {
+            index = PluginExploreIndex(value)
+            changed = true
+        }
+        let kind = CatalogLookupKind(lookup)
+        if kind != indexedLookup {
+            indexedLookup = kind
+            changed = true
+        }
+        if changed { revision += 1 }
+    }
+}
+
+/// `CatalogLookup` without its catalog, cheap to compare.
+private enum CatalogLookupKind: Equatable {
+    case pending, ready, unavailable(String)
+
+    init(_ lookup: CatalogLookup) {
+        switch lookup {
+        case .pending: self = .pending
+        case .ready: self = .ready
+        case .unavailable(let message): self = .unavailable(message)
+        }
+    }
+}
