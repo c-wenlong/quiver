@@ -19,7 +19,6 @@ changed, or nothing is written and the error says what to edit by hand.
 from __future__ import annotations
 
 import copy
-import fcntl
 import json
 import os
 import re
@@ -227,7 +226,7 @@ def _edit_enabled(text: str, ref: str, value: bool) -> str | None:
 
 
 @contextmanager
-def _config_lock(home: Path):
+def _config_lock(home: Path, by_hand: str):
     """Serialise config.toml edits across swe processes.
 
     ``os.replace`` stops a reader seeing half a file, not two writers each
@@ -235,6 +234,12 @@ def _config_lock(home: Path):
     would silently undo the first. The lock lives in ~/.quiver/cache, not
     beside config.toml, so nothing of swe's is left in ~/.codex.
     """
+    try:
+        # Imported here, not at the top: Windows has no fcntl, and every
+        # other swe command loads this module and must keep working there.
+        import fcntl
+    except ImportError:
+        raise ActionError(f"this platform has no file locking for a safe edit; {by_hand}") from None
     lock = cache_dir_for(home) / "codex-config.lock"
     try:
         lock.parent.mkdir(parents=True, exist_ok=True)
@@ -257,7 +262,7 @@ def set_codex_enabled(home: Path, ref: str, value: bool) -> Path:
     the new one, never half of each. A symlinked config.toml (dotfiles) is
     edited at its target, and keeps its mode.
     """
-    with _config_lock(home):
+    with _config_lock(home, manual_edit(ref, value)):
         return _set_codex_enabled(home, ref, value)
 
 

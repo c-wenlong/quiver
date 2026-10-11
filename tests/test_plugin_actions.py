@@ -288,6 +288,16 @@ class CodexTomlEditTest(_ActionHome, unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertIn("enabled = false", self.config().read_text())
 
+    def test_no_file_locking_refuses_with_the_edit_by_hand(self):
+        import sys
+
+        body = '[plugins."tool@mk"]\nenabled = true\n'
+        self.write(body)
+        with unittest.mock.patch.dict(sys.modules, {"fcntl": None}):   # as on Windows
+            with self.assertRaisesRegex(ActionError, r"no file locking.*set \[plugins\."):
+                set_codex_enabled(self.home, "tool@mk", False)
+        self.assertEqual(self.config().read_text(), body)
+
     def test_edit_text_returns_none_without_the_table(self):
         self.assertIsNone(_edit_enabled('[plugins."x@y"]\nenabled = true\n', "tool@mk", True))
 
