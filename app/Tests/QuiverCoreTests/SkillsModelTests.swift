@@ -247,6 +247,22 @@ let inventoryJSON = #"""
         #expect(model.placement?.byPlugin["toolkit@kit"]?.map(\.name) == ["hammer"])
     }
 
+    @Test func aSourceFilterLeftWithNoSkillsIsCleared() async {
+        let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
+        model.plugins = .unavailable("swe plugins failed")
+        await model.load()
+        model.source = .plugin
+        // The catalog arrives and takes hammer, the only plugin skill.
+        model.plugins = .ready(PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
+            PluginMarketplace(name: "kit", harnesses: ["claude": .init()], plugins: [
+                CatalogPlugin(name: "toolkit", marketplace: "kit", sourcePath: "/h/.claude/plugins/cache/kit/toolkit",
+                              harnesses: ["claude": PluginHarnessState(available: true, installed: true)]),
+            ]),
+        ]))
+        #expect(model.source == nil)
+        #expect(model.visibleSkills.count == 3)
+    }
+
     @Test func filtersByHarnessSourceAndText() async {
         let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
         await model.load()
@@ -272,26 +288,26 @@ let inventoryJSON = #"""
         #expect(model.chips(for: hammer).map(\.root.name) == ["claude"])
     }
 
-    @Test func leavingThePageMidLoadLetsTheNextVisitRetry() async {
+    @Test func leavingThePageMidLoadKeepsItLoadingForTheNextVisit() async {
         let runner = StuckRunner()
-        let model = SkillsModel(swe: SweClient(runner: runner))
-        let load = Task { await model.load() }
+        let model = SkillsModel(swe: SweClient(runner: runner), timeout: .milliseconds(200))
+        let load = Task { await model.loadIfStale(for: "/bin/swe") }
         while runner.started == 0 { await Task.yield() }
         load.cancel()
-        await load.value
-        #expect(model.inventory == .idle)
+        #expect(model.inventory == .loading)
+        // The next visit joins the load rather than starting another.
+        await model.loadIfStale(for: "/bin/swe")
+        #expect(runner.started == 1)
     }
 
-    @Test func aChildStoppedByCancellingIsNotAFailure() async {
+    @Test func aHungSweGivesUpAndSaysSo() async {
         // ProcessRunner answers a cancel by terminating swe and returning its
-        // exit status, not by throwing.
+        // exit status, not by throwing; the timeout still reads as one.
         let runner = TerminatedRunner()
-        let model = SkillsModel(swe: SweClient(runner: runner))
-        let load = Task { await model.load() }
-        while runner.started == 0 { await Task.yield() }
-        load.cancel()
-        await load.value
-        #expect(model.inventory == .idle)
+        let model = SkillsModel(swe: SweClient(runner: runner), timeout: .milliseconds(50))
+        await model.load()
+        guard case .failed(let message) = model.inventory else { Issue.record("\(model.inventory)"); return }
+        #expect(message.contains("didn't answer"))
     }
 
     @Test func linksRunOneAtATime() async throws {

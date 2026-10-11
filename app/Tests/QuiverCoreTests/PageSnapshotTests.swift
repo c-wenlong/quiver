@@ -191,3 +191,184 @@ import Testing
         #expect(docs.onlyPattern == "docs")
     }
 }
+
+@MainActor
+@Suite struct SkillsSnapshotTests {
+    let start = Date(timeIntervalSince1970: 1_791_700_000)
+
+    func model(_ runner: ScriptedRunner, skills: MemorySnapshotStore<Snapshot<SkillInventory>>,
+               clock: TestClock) -> SkillsModel {
+        SkillsModel(swe: SweClient(runner: runner), snapshots: skills, maxAge: 60, now: { clock.now })
+    }
+
+    @Test func theLastSkillsShowAtOnceOnTheNextLaunch() async throws {
+        let skills = MemorySnapshotStore<Snapshot<SkillInventory>>()
+        let clock = TestClock(start)
+        let runner = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let first = model(runner, skills: skills, clock: clock)
+        await first.loadIfStale(for: "/bin/swe")
+
+        let next = model(ScriptedRunner([]), skills: skills, clock: clock)
+        next.plugins = .unavailable("not read")
+        await next.restore()
+        #expect(next.inventory == first.inventory)
+        #expect(next.roots.map(\.link) == first.roots.map(\.link))
+        // Placed at once too, not only once swe answers.
+        #expect(next.listedSkills.count == 4)
+    }
+
+    @Test func freshListsAreNotFetchedAgain() async throws {
+        let clock = TestClock(start)
+        let runner = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let model = model(runner, skills: MemorySnapshotStore(), clock: clock)
+        await model.loadIfStale(for: "/bin/swe")
+        await model.loadIfStale(for: "/bin/swe")
+        #expect(runner.calls == [["skills", "--json"]])
+        clock.advance(61)
+        await model.loadIfStale(for: "/bin/swe")
+        #expect(runner.calls.count == 2)
+        // Refresh always lists.
+        await model.load()
+        #expect(runner.calls.count == 3)
+    }
+
+    @Test func aLinkListsAgainAndSavesTheResult() async throws {
+        let skills = MemorySnapshotStore<Snapshot<SkillInventory>>()
+        let runner = ScriptedRunner([
+            (["skills", "link"], ok(#"{"action": "link"}"#)),
+            (["skills", "--json"], ok(inventoryJSON)),
+        ])
+        let model = model(runner, skills: skills, clock: TestClock(start))
+        await model.loadIfStale(for: "/bin/swe")
+        let hermes = try #require(model.roots.first { $0.name == "hermes" })
+        runner.rules.insert((["skills", "--json"], ok(inventoryJSON.replacingOccurrences(
+            of: #""path": "/h/.hermes/skills", "state": "create""#, with: #""path": "/h/.hermes/skills", "state": "linked""#))),
+            at: 0)
+        await model.link(hermes)
+        #expect(runner.calls.filter { $0 == ["skills", "--json"] }.count == 2)
+        #expect(await skills.saved?.value.harnesses.first { $0.name == "hermes" }?.state == "linked")
+        #expect(await skills.saved?.source == "/bin/swe")
+    }
+
+    @Test func aNewSweIsUsedFromTheNextLoad() async throws {
+        let old = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let new = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let model = model(old, skills: MemorySnapshotStore(), clock: TestClock(start))
+        await model.loadIfStale(for: "/old/swe")
+        model.use(SweClient(runner: new), for: "/new/swe")
+        await model.loadIfStale(for: "/new/swe")
+        #expect(old.calls.count == 1)
+        #expect(new.calls.count == 1)
+    }
+
+    @Test func aLinkFinishingAfterAnotherSweWasPickedDoesNotReplaceItsList() async throws {
+        let old = HeldLinkRunner(ScriptedRunner([
+            (["skills", "link"], ok(#"{"action": "link"}"#)),
+            (["skills", "--json"], ok(inventoryJSON)),
+        ]))
+        let new = ScriptedRunner([(["skills", "--json"], ok(#"{"shared_dir": "/n", "harnesses": [], "skills": []}"#))])
+        let model = SkillsModel(swe: SweClient(runner: old), snapshots: MemorySnapshotStore())
+        model.use(SweClient(runner: old), for: "/old/swe")
+        await model.loadIfStale(for: "/old/swe")
+        let hermes = try #require(model.roots.first { $0.name == "hermes" })
+        let link = Task { await model.link(hermes) }
+        while !old.held { await Task.yield() }
+        // Settings moves to another swe while the link is running.
+        model.use(SweClient(runner: new), for: "/new/swe")
+        await model.loadIfStale(for: "/new/swe")
+        old.release()
+        await link.value
+        #expect(old.inner.calls.filter { $0 == ["skills", "--json"] }.count == 1)
+        guard case .loaded(let shown) = model.inventory else { Issue.record("\(model.inventory)"); return }
+        #expect(shown.sharedDir == "/n")
+    }
+
+    @Test func anActionFinishingAfterASwitchIsDroppedEvenWithThePageClosed() async throws {
+        let old = HeldLinkRunner(ScriptedRunner([
+            (["skills", "link"], ok(#"{"action": "link"}"#)),
+            (["skills", "--json"], ok(inventoryJSON)),
+        ]))
+        let model = SkillsModel(swe: SweClient(runner: old), snapshots: MemorySnapshotStore())
+        model.use(SweClient(runner: old), for: "/old/swe")
+        await model.loadIfStale(for: "/old/swe")
+        let hermes = try #require(model.roots.first { $0.name == "hermes" })
+        let link = Task { await model.link(hermes) }
+        while !old.held { await Task.yield() }
+        // Settings moves on while Skills is closed: nothing lists the new swe yet.
+        model.use(SweClient(runner: ScriptedRunner([])), for: "/new/swe")
+        old.release()
+        await link.value
+        #expect(old.inner.calls.filter { $0 == ["skills", "--json"] }.count == 1)
+    }
+
+    @Test func aFilterTheNewListLacksIsCleared() async throws {
+        let codexOnly = #"""
+        {"shared_dir": "/n", "harnesses": [], "skills": [
+          {"name": "x", "path": "/n/x", "root": "codex", "source": "harness", "harnesses": ["codex"]}]}
+        """#
+        let model = SkillsModel(swe: SweClient(runner: ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])))
+        model.plugins = .unavailable("not read")
+        model.use(model.swe, for: "/a/swe")
+        await model.loadIfStale(for: "/a/swe")
+        model.harness = "codex"
+        model.source = .harness
+        // Another list that still has both keeps them.
+        model.use(SweClient(runner: ScriptedRunner([(["skills", "--json"], ok(codexOnly))])), for: "/b/swe")
+        await model.loadIfStale(for: "/b/swe")
+        #expect(model.harness == "codex")
+        #expect(model.source == .harness)
+        model.harness = "claude"
+        model.source = .shared
+        await model.load(for: "/b/swe")
+        #expect(model.harness == nil)
+        #expect(model.source == nil)
+        #expect(model.visibleSkills.map(\.name) == ["x"])
+    }
+
+    @Test func aFailedRefreshKeepsTheFilters() async throws {
+        let runner = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let model = SkillsModel(swe: SweClient(runner: runner))
+        await model.load(for: "/bin/swe")
+        model.harness = "codex"
+        model.source = .harness
+        runner.rules = [(["skills", "--json"], CommandResult(status: 1, stdout: Data(), stderr: "boom"))]
+        await model.load(for: "/bin/swe")
+        #expect(model.inventory == .failed("boom"))
+        #expect(model.harness == "codex")
+        #expect(model.source == .harness)
+    }
+
+    @Test func skillsRoundTripThroughTheirFile() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "quiver-skills-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let skills = SnapshotFile<Snapshot<SkillInventory>>(url: folder.appending(path: "cache/skills.json"))
+        let runner = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let first = SkillsModel(swe: SweClient(runner: runner), snapshots: skills)
+        await first.load(for: "/bin/swe")
+
+        let next = SkillsModel(swe: SweClient(runner: ScriptedRunner([])), snapshots: skills)
+        await next.restore()
+        #expect(next.inventory == first.inventory)
+        #expect(next.roots.map(\.link) == [.linked, .blocked, .notLinked, .notLinked])
+        #expect(next.roots.last?.linkNeedsForce == true)
+        #expect(next.allSkills.last?.source == .harness)
+    }
+}
+
+/// Holds a link until released; everything else answers at once.
+final class HeldLinkRunner: CommandRunning, @unchecked Sendable {
+    let inner: ScriptedRunner
+    private let lock = NSLock()
+    private var waiter: CheckedContinuation<Void, Never>?
+    init(_ inner: ScriptedRunner) { self.inner = inner }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        if arguments.contains("link") {
+            await withCheckedContinuation { continuation in lock.withLock { waiter = continuation } }
+        }
+        return try await inner.run(arguments)
+    }
+
+    var held: Bool { lock.withLock { waiter != nil } }
+    func release() { lock.withLock { () -> CheckedContinuation<Void, Never>? in defer { waiter = nil }; return waiter }?.resume() }
+}

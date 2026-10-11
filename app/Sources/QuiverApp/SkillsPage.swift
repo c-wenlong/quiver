@@ -8,45 +8,45 @@ import SwiftUI
 /// never written from here.
 struct SkillsPage: View {
     @Environment(AppModel.self) private var app
-    @State private var model: SkillsModel?
+
+    /// App-wide, so a list outlives a trip to another page and the last
+    /// one shows at once.
+    private var model: SkillsModel { app.skills }
 
     var body: some View {
         Page(title: "Skills",
              subtitle: "Every skill on this Mac outside a plugin, and which harnesses load it.") {
             // The harness links fold into one line in the header, so the
             // first skill sits right under the filter bar.
-            if let model, case .loaded(let inventory) = model.inventory {
+            if case .loaded(let inventory) = model.inventory {
                 HarnessLinksSummary(model: model, sharedDir: inventory.sharedDir)
             }
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
-                    await model?.load()
-                    await app.pluginCatalog.load(swe: app.swe, for: app.swePath)
+                    async let catalog: Void = app.pluginCatalog.load(swe: app.swe, for: app.swePath)
+                    await model.load(for: app.swePath)
+                    await catalog
                 }
             }
             .iconButton()
             .help("Refresh")
         } content: {
-            if let model {
-                InstalledSkills(model: model) {
-                    app.pluginsTab = .explore
-                    app.selection = .plugins
-                }
+            InstalledSkills(model: model) {
+                app.pluginsTab = .explore
+                app.selection = .plugins
             }
         }
         .task(id: app.swePath) {
-            let skills = SkillsModel(swe: app.swe)
-            skills.plugins = app.pluginCatalog.lookup
-            model = skills
+            model.plugins = app.pluginCatalog.lookup
             // Both at once: which skills stay here depends on the catalog.
             async let catalog: Void = app.pluginCatalog.loadIfStale(swe: app.swe, for: app.swePath)
-            await skills.load()
+            await model.loadIfStale(for: app.swePath)
             await catalog
         }
         // The catalog can arrive before or after the skills, or change while
         // the page is open; the model places the skills again each time.
         .onChange(of: app.pluginCatalog.revision) {
-            model?.plugins = app.pluginCatalog.lookup
+            model.plugins = app.pluginCatalog.lookup
         }
     }
 }

@@ -3,7 +3,9 @@ import Observation
 
 /// `swe skills --json`: every skill on the machine, and each harness's
 /// skills folder with its link state.
-public struct SkillInventory: Decodable, Sendable, Equatable {
+public struct SkillInventory: SnapshotValue {
+    public static let snapshotVersion = 1
+
     public let sharedDir: String
     public let harnesses: [SkillRoot]
     public let skills: [Skill]
@@ -17,7 +19,7 @@ public struct SkillInventory: Decodable, Sendable, Equatable {
 
 /// The one folder a harness reads skills from. quiver links whole folders,
 /// so this is where linking and unlinking happen.
-public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
+public struct SkillRoot: Codable, Sendable, Equatable, Identifiable {
     /// What the page can do about a folder.
     public enum Link: Sendable, Equatable {
         /// Points at `~/.quiver/skills`.
@@ -169,7 +171,7 @@ struct LinkReply: Decodable { let action: String }
 @MainActor
 @Observable
 public final class SkillsModel {
-    public private(set) var inventory: Loadable<SkillInventory> = .idle
+    public var inventory: Loadable<SkillInventory> { skills.state }
     /// Roots with a link or unlink in flight, by path.
     public private(set) var busy: Set<String> = []
     /// The last link or unlink that failed, in swe's words.
@@ -189,45 +191,84 @@ public final class SkillsModel {
     public var harness: String?
     public var source: Skill.Source?
 
-    private let swe: SweClient
+    /// The swe chosen in Settings and its path; a new one is used from the next load.
+    public private(set) var swe: SweClient
+    private var sweSource: String?
     private let gate = SerialGate()
-    private var generation = 0
+    private let skills: SnapshotLoader<SkillInventory>
+    /// What `placement` was worked out from, so it is redone only on a change.
+    private var placedFrom: (inventory: SkillInventory, plugins: CatalogLookup)?
 
-    public init(swe: SweClient) {
+    /// - Parameters:
+    ///   - snapshots: where the last skills are kept between launches.
+    ///   - maxAge: how long a list counts as fresh, so a page opened again
+    ///     soon after doesn't ask swe again.
+    ///   - timeout: how long swe may take before a list counts as failed.
+    public init(swe: SweClient, snapshots: (any SnapshotStoring<Snapshot<SkillInventory>>)? = nil,
+                maxAge: TimeInterval = 60, timeout: Duration = .seconds(60),
+                now: @escaping @Sendable () -> Date = Date.init) {
         self.swe = swe
+        skills = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
     }
 
-    public func load() async {
-        generation += 1
-        let mine = generation
-        if case .loaded = inventory {} else { inventory = .loading }
-        let next: Loadable<SkillInventory>
-        do {
-            next = .loaded(try await swe.skills())
-        } catch is CancellationError {
-            // Back to idle, so the next visit loads again instead of spinning.
-            if mine == generation, inventory == .loading { inventory = .idle }
-            return
-        } catch {
-            next = .failed(error.localizedDescription)
-        }
-        if mine == generation {
-            inventory = next
-            place()
-        }
+    /// Switches to the swe picked in Settings.
+    public func use(_ swe: SweClient, for source: String) {
+        self.swe = swe
+        sweSource = source
     }
 
+    /// Shows the last saved skills until swe answers.
+    public func restore() async {
+        await skills.restore()
+        place()
+    }
+
+    /// Lists the skills unless this swe's list is fresh; joins a list in flight.
+    /// - Parameter source: the swe asked, as set in Settings.
+    public func loadIfStale(for source: String) async {
+        let swe = swe
+        await skills.loadIfStale(from: source) { try await swe.skills() }
+        place()
+    }
+
+    /// Always lists. `source` nil keeps the last swe.
+    public func load(for source: String? = nil) async {
+        let swe = swe
+        await skills.load(from: source) { try await swe.skills() }
+        place()
+    }
+
+    /// Works out which skills this page lists, once the inventory and the
+    /// catalog are both known.
     private func place() {
         guard case .loaded(let inventory) = inventory else {
             placement = nil
+            placedFrom = nil
+            return
+        }
+        if let placedFrom, placedFrom.inventory == inventory, placedFrom.plugins == plugins {
+            dropMissingFilters()
             return
         }
         switch plugins {
-        case .pending: placement = nil
+        case .pending:
+            placement = nil
+            placedFrom = nil
+            return
         // swe couldn't read the catalog: every skill stays here, so none is lost.
         case .unavailable: placement = SkillPlacement(skills: inventory.skills, catalog: nil)
         case .ready(let catalog): placement = SkillPlacement(skills: inventory.skills, catalog: catalog)
         }
+        placedFrom = (inventory, plugins)
+        dropMissingFilters()
+    }
+
+    /// Clears a harness or source filter the list on show no longer has,
+    /// which the menus can't offer and which would hide every row.
+    private func dropMissingFilters() {
+        guard placement != nil else { return }
+        if let harness, !listedSkills.contains(where: { $0.harnesses.contains(harness) }) { self.harness = nil }
+        if let source, !listedSkills.contains(where: { $0.source == source }) { self.source = nil }
     }
 
     public func link(_ root: SkillRoot) async {
@@ -242,6 +283,7 @@ public final class SkillsModel {
 
     private func change(_ root: SkillRoot, _ work: (SweClient) async throws -> Void) async {
         guard !busy.contains(root.path) else { return }
+        let (swe, source) = (swe, sweSource)
         busy.insert(root.path)
         defer { busy.remove(root.path) }
         // swe rewrites skill_links.json on every link; one at a time.
@@ -256,7 +298,19 @@ public final class SkillsModel {
             actionError = error.localizedDescription
         }
         // Reload either way: a failed change may still have moved something.
-        await load()
+        await reload(through: swe, source)
+    }
+
+    /// Lists again after a change made through `swe`, unless another swe
+    /// has been picked since, page open or not: its list is the one to keep.
+    private func reload(through swe: SweClient, _ source: String?) async {
+        guard let source else {
+            await load()
+            return
+        }
+        guard source == sweSource else { return }
+        await skills.reload(from: source) { try await swe.skills() }
+        place()
     }
 
     public var roots: [SkillRoot] {
