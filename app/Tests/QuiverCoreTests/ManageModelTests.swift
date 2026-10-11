@@ -627,11 +627,147 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(model.lastFixed == nil)
     }
 
+    // MARK: Fix all
+
+    @Test func fixAllRunsEachRunnableFindingInTurnAndSkipsEdits() async throws {
+        let runner = DriftRunner(["claude:stale:a@mk": true, "codex:stale:b@mk": true,
+                                  "codex:disabled-here:a@mk": false])
+        let model = PluginsModel()
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe)
+        #expect(model.fixAllCount == 2)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
+        #expect(runner.fixed == ["claude:stale:a@mk", "codex:stale:b@mk"])
+        #expect(model.fixError == nil)
+        #expect(model.lastFixed == "2 fixes")
+        #expect(model.fixing == nil)
+        #expect(model.fixAllProgress == nil)
+        // Only the edit is left, and Fix all has nothing more to run.
+        guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
+        #expect(report.drift.map(\.id) == ["codex:disabled-here:a@mk"])
+        #expect(model.fixAllCount == 0)
+    }
+
+    @Test func fixAllSkipsAFindingAnEarlierFixAlreadyCleared() async throws {
+        let runner = DriftRunner(["codex:linked-manifest:a@mk": true, "codex:stale:a@mk": true],
+                                 clears: ["codex:linked-manifest:a@mk": ["codex:stale:a@mk"]])
+        let model = PluginsModel()
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
+        #expect(runner.fixed == ["codex:linked-manifest:a@mk"])
+        #expect(model.fixError == nil)
+        #expect(model.lastFixed == "1 fix")
+    }
+
+    @Test func fixAllRunsOnlyWhatTheUserConfirmed() async throws {
+        // Registering a marketplace exposes "not installed" findings the
+        // confirmation never listed; those wait for their own confirmation.
+        let runner = DriftRunner(["claude:unregistered:mk": true],
+                                 reveals: ["claude:unregistered:mk": ["claude:not-installed:a@mk"]])
+        let model = PluginsModel()
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
+        #expect(runner.fixed == ["claude:unregistered:mk"])
+        guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
+        #expect(report.drift.map(\.id) == ["claude:not-installed:a@mk"])
+        #expect(model.fixAllCount == 1)
+    }
+
+    @Test func fixAllStopsWhenAnotherSweIsPickedMidBatch() async throws {
+        let model = PluginsModel()
+        // The other swe sees the same machine, so it still lists b.
+        let other = SweClient(runner: DriftRunner(["codex:stale:b@mk": true]))
+        let runner = DriftRunner(["claude:stale:a@mk": true, "codex:stale:b@mk": true])
+        // Settings switches to another swe while the first fix runs.
+        runner.onFix = { _ in await model.loadIfStale(swe: other, for: "/other/swe") }
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe, for: "/this/swe")
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe, for: "/this/swe")
+        #expect(runner.fixed == ["claude:stale:a@mk"])
+        #expect(model.fixAllProgress == nil)
+        #expect(model.fixing == nil)
+        // The batch stops rather than fix b through a swe no longer chosen.
+        #expect(model.fixError == "Stopped: another swe was picked in Settings.")
+    }
+
+    @Test func fixAllStopsAtTheFirstFailureAndSaysWhy() async throws {
+        let runner = DriftRunner(["claude:stale:a@mk": true, "codex:stale:b@mk": true],
+                                 failing: ["claude:stale:a@mk": "claude plugin update a@mk failed: offline"])
+        let model = PluginsModel()
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe)
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe)
+        #expect(runner.fixed.isEmpty)
+        #expect(runner.attempted == ["claude:stale:a@mk"])
+        #expect(model.fixError == "claude plugin update a@mk failed: offline")
+        #expect(model.lastFixed == nil)
+        #expect(model.fixAllProgress == nil)
+    }
+
     @Test func anOlderSweSaysToUpdate() async {
         let runner = RoutingRunner([(["find", "plugins", "--json"], CommandResult(
             status: 1, stdout: Data(), stderr: "--json is only available for skills: swe find skills --json\n"))])
         let model = PluginsModel()
         await model.load(swe: SweClient(runner: runner))
         #expect(model.state == .failed(SweError.jsonUnsupported.localizedDescription))
+    }
+}
+
+/// swe's plugin drift as state: each fix removes its finding, may clear
+/// others, or fails with a reason.
+final class DriftRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    /// Finding id -> runnable, in report order.
+    private var findings: [(id: String, runnable: Bool)]
+    private let clears: [String: [String]]
+    private let reveals: [String: [String]]
+    private let failing: [String: String]
+    private(set) var fixed: [String] = []
+    private(set) var attempted: [String] = []
+    /// Runs after a fix succeeds, outside the lock.
+    var onFix: (@Sendable (String) async -> Void)?
+
+    init(_ findings: KeyValuePairs<String, Bool>, clears: [String: [String]] = [:],
+         reveals: [String: [String]] = [:], failing: [String: String] = [:]) {
+        self.findings = findings.map { (id: $0.key, runnable: $0.value) }
+        self.clears = clears
+        self.reveals = reveals
+        self.failing = failing
+    }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let result = answer(arguments)
+        if let fix = arguments.first(where: { $0.hasPrefix("--fix=") }), result.status == 0 {
+            await onFix?(String(fix.dropFirst("--fix=".count)))
+        }
+        return result
+    }
+
+    private func answer(_ arguments: [String]) -> CommandResult {
+        lock.withLock {
+            if let fix = arguments.first(where: { $0.hasPrefix("--fix=") }) {
+                let id = String(fix.dropFirst("--fix=".count))
+                attempted.append(id)
+                if let reason = failing[id] {
+                    return CommandResult(status: 1, stdout: Data(), stderr: reason + "\n")
+                }
+                let gone = Set([id] + (clears[id] ?? []))
+                findings.removeAll { gone.contains($0.id) }
+                findings += (reveals[id] ?? []).map { (id: $0, runnable: true) }
+                fixed.append(id)
+                return json(#"{"fixed": \#(entry(id, runnable: true))}"#)
+            }
+            let rows = findings.map { entry($0.id, runnable: $0.runnable) }.joined(separator: ",")
+            return json(#"{"sources": 2, "drift": [\#(rows)]}"#)
+        }
+    }
+
+    private func entry(_ id: String, runnable: Bool) -> String {
+        let parts = id.split(separator: ":").map(String.init)
+        let ref = parts[2]
+        let plugin = ref.contains("@") ? #""\#(ref.split(separator: "@")[0])""# : "null"
+        return #"{"id": "\#(id)", "harness": "\#(parts[0])", "marketplace": "mk", "plugin": \#(plugin), "ref": "\#(ref)", "kind": "\#(parts[1])", "detail": "d", "fix": "fix \#(id)", "runnable": \#(runnable), "paths": []}"#
     }
 }
