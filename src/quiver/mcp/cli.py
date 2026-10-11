@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
 
@@ -749,7 +750,9 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
 
     ``tool_data`` maps each tool to its raw ``{name: config}``. The row is
     what ``--json`` prints: identity taken from the first tool that defines
-    the server, every tool it appears in, and whether those tools disagree.
+    the server, every tool it appears in, whether those tools disagree, and
+    ``variants``: the tools grouped by identical definition, in order of
+    first appearance, so a caller can say which ones agree.
     Env and header values stay out; only their names go into the row. The
     command, arguments and URL are scrubbed, since a credential can sit in
     any of them (see ``quiver.mcp.secrets.scrub_url``).
@@ -771,6 +774,15 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
         canonical = entry["canonical"]
         env = canonical.get("env") or {}
         headers = canonical.get("headers") or {}
+        # Grouped by equality, not hashing: an identity can hold a list or a
+        # dict straight from a hand-edited config.
+        groups: list[tuple[tuple, list[str]]] = []
+        for tool, ident in zip(entry["tools"], entry["identities"]):
+            group = next((g for g in groups if g[0] == ident), None)
+            if group is None:
+                groups.append((ident, [tool]))
+            else:
+                group[1].append(tool)
         inventory.append(({
             "name": name,
             "transport": _transport(entry["raw"], canonical),
@@ -782,8 +794,8 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
             "env_keys": sorted(str(k) for k in env),
             "header_keys": sorted(str(k) for k in headers),
             "harnesses": entry["tools"],
-            "conflict": any(i != entry["identities"][0]
-                            for i in entry["identities"]),
+            "conflict": len(groups) > 1,
+            "variants": [tools for _, tools in groups],
         }, entry["raw"]))
     return inventory
 
@@ -822,7 +834,10 @@ def cmd_list(args):
         all_servers.update(servers.keys())
 
     if json_view:
-        return emit({"servers": [row for row, _ in server_inventory(tool_data)]})
+        # Every harness that was read, server or not, so a caller can draw
+        # the whole matrix and see which harnesses lack a server.
+        return emit({"harnesses": list(tool_data),
+                     "servers": [row for row, _ in server_inventory(tool_data)]})
 
     if not all_servers:
         print("No MCP servers found.")
@@ -923,7 +938,7 @@ def cmd_status(args):
             row["health"], row["detail"] = probe_server_health(
                 row["name"], first_cfg)
             rows.append(row)
-        return emit({"servers": rows})
+        return emit({"harnesses": list(tool_data), "servers": rows})
 
     if not all_servers:
         print("No MCP servers found.")
@@ -1018,7 +1033,26 @@ def cmd_sync(args):
     if args and args[0] in ("-h", "--help", "help"):
         print(MCP_HELP["sync"])
         return 0
+    args, json_view = take_json_flag(list(args))
+    if not json_view:
+        return _sync(args, None)
+    # --json: stdout holds one document, so everything the sync says on the
+    # way goes to stderr, and nobody is at a terminal to pick or confirm.
+    report = {"source": None, "dry_run": "--dry-run" in args,
+              "selected": [], "targets": []}
+    with redirect_stdout(sys.stderr):
+        code = _sync([*args, "--no-interactive"], report)
+    if code:
+        return code
+    return emit(report)
 
+
+def _sync(args, report: dict | None):
+    """The body of ``swe mcp sync``; fills ``report`` when one is given.
+
+    ``report`` takes names, never configs: the server definitions carry
+    resolved secrets.
+    """
     allowed_flags = {"--force", "--skip-conflicts", "--all", "--no-interactive", "--dry-run", "--strict", "--prune"}
     unknown_flags = [
         a for a in args
@@ -1156,6 +1190,9 @@ def cmd_sync(args):
     if not selected:
         print("Nothing selected.")
         return 0
+    if report is not None:
+        report["source"] = source
+        report["selected"] = list(selected)
 
     print(f"\n{c('green', f'Selected {len(selected)} server(s)')} from {c('cyan', source)}")
     if dry_run:
@@ -1217,9 +1254,9 @@ def cmd_sync(args):
             else:
                 print(f"{c('yellow', f'{target}: {len(conflicts)} conflict(s) skipped in non-interactive mode (use --force to overwrite).')}")
 
-        added = 0
-        updated = 0
-        skipped = 0
+        added: list[str] = []
+        updated: list[str] = []
+        skipped: list[str] = []
 
         for name in selected:
             converted = convert_server_for_target(source_servers[name], source, target)
@@ -1228,19 +1265,24 @@ def cmd_sync(args):
                     target_servers[name] = _merge_format_keys(
                         target_servers[name], converted
                     )
-                    updated += 1
+                    updated.append(name)
                 else:
-                    skipped += 1
+                    skipped.append(name)
             else:
                 target_servers[name] = converted
-                added += 1
+                added.append(name)
 
-        pruned = 0
+        pruned: list[str] = []
         if prune:
             target_only = sorted(set(target_servers.keys()) - set(selected))
             for name in target_only:
                 del target_servers[name]
-                pruned += 1
+                pruned.append(name)
+
+        if report is not None:
+            report["targets"].append({"name": target, "added": added,
+                                      "updated": updated, "skipped": skipped,
+                                      "pruned": pruned})
 
         if (added or updated or pruned) and not dry_run:
             saver = get_tool_saver(target)
@@ -1249,13 +1291,13 @@ def cmd_sync(args):
 
         parts = []
         if added:
-            parts.append(f"{added} {'would add' if dry_run else 'added'}")
+            parts.append(f"{len(added)} {'would add' if dry_run else 'added'}")
         if updated:
-            parts.append(f"{updated} {'would update' if dry_run else 'updated'}")
+            parts.append(f"{len(updated)} {'would update' if dry_run else 'updated'}")
         if skipped:
-            parts.append(f"{skipped} {'would skip' if dry_run else 'skipped'}")
+            parts.append(f"{len(skipped)} {'would skip' if dry_run else 'skipped'}")
         if pruned:
-            parts.append(f"{pruned} {'would prune' if dry_run else 'pruned'}")
+            parts.append(f"{len(pruned)} {'would prune' if dry_run else 'pruned'}")
 
         if parts:
             status = c('cyan', '•') if dry_run else c('green', '✓')
@@ -1597,6 +1639,8 @@ MCP_HELP = {
   --dry-run           Preview changes without writing files
   --strict            Fail if conversion would be lossy
   --prune             Also delete target servers not in the selection
+  --json              Print what moved as one JSON document (implies
+                      --no-interactive); names only, never configs
 
 {c('bold', 'Conflict resolution')}
   Interactive mode:

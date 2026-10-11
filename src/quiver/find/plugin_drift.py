@@ -12,8 +12,9 @@ the gap, per harness, in four kinds:
   stale          the installed copy's content differs from the source
   disabled-here  installed but disabled here, while enabled in the other one
 
-Every finding carries a copy-pasteable ``fix``. Nothing here writes, runs a
-harness CLI, or prints. A record this module cannot parse yields no findings
+Every finding carries a copy-pasteable ``fix``, and ``argv`` when that fix is
+commands rather than an edit. Nothing here writes or prints, and only
+``apply_fix`` runs a harness CLI, when asked to by finding id. A record this module cannot parse yields no findings
 for that harness rather than a guess: reporting every plugin as unregistered
 because ``config.toml`` has a typo would be worse than reporting nothing.
 """
@@ -58,10 +59,29 @@ class Finding:
     detail: str
     fix: str              # a shell command, or a one-line edit where no verb exists
     paths: tuple[str, ...] = field(default=())  # stale only: differing files, relative
+    # ``fix`` as argv lists, run one after another; empty when no verb exists
+    # and ``fix`` describes an edit instead. ``apply_fix`` runs these without
+    # a shell, so nothing in a marketplace path or plugin name is interpreted.
+    argv: tuple[tuple[str, ...], ...] = field(default=())
 
     @property
     def ref(self) -> str:
         return f"{self.plugin}@{self.marketplace}" if self.plugin else self.marketplace
+
+    @property
+    def id(self) -> str:
+        """Names this finding across runs, for ``swe find plugins --fix``."""
+        return f"{self.harness}:{self.kind}:{self.ref}"
+
+
+class Fix(NamedTuple):
+    text: str
+    argv: tuple[tuple[str, ...], ...]
+
+
+def _commands(*argvs: tuple[str, ...]) -> Fix:
+    """A fix that is one or more commands; the text is their shell form."""
+    return Fix(" && ".join(shlex.join(a) for a in argvs), tuple(argvs))
 
 
 class SourcePlugin(NamedTuple):
@@ -198,10 +218,10 @@ class _Harness:
     registered: dict            # realpath of marketplace dir -> registered name
     enabled: dict               # "plugin@marketplace" -> bool
     install: Callable[[str, str], _Install | None]   # (marketplace, plugin)
-    fix_register: Callable[[Path], str]
-    fix_install: Callable[[str], str]
-    fix_update: Callable[[str], str]
-    fix_enable: Callable[[str], str]
+    fix_register: Callable[[Path], Fix]
+    fix_install: Callable[[str], Fix]
+    fix_update: Callable[[str], Fix]
+    fix_enable: Callable[[str], Fix]
 
 
 def _claude(home: Path) -> _Harness | None:
@@ -256,10 +276,10 @@ def _claude(home: Path) -> _Harness | None:
 
     return _Harness(
         name="claude", registered=registered, enabled=enabled, install=install,
-        fix_register=lambda d: f"claude plugin marketplace add {shlex.quote(str(d))}",
-        fix_install=lambda ref: f"claude plugin install {shlex.quote(ref)}",
-        fix_update=lambda ref: f"claude plugin update {shlex.quote(ref)}",
-        fix_enable=lambda ref: f"claude plugin enable {shlex.quote(ref)}",
+        fix_register=lambda d: _commands(("claude", "plugin", "marketplace", "add", str(d))),
+        fix_install=lambda ref: _commands(("claude", "plugin", "install", ref)),
+        fix_update=lambda ref: _commands(("claude", "plugin", "update", ref)),
+        fix_enable=lambda ref: _commands(("claude", "plugin", "enable", ref)),
     )
 
 
@@ -313,18 +333,26 @@ def _codex(home: Path) -> _Harness | None:
 
     return _Harness(
         name="codex", registered=registered, enabled=enabled, install=install,
-        fix_register=lambda d: f"codex plugin marketplace add {shlex.quote(str(d))}",
-        fix_install=lambda ref: f"codex plugin add {shlex.quote(ref)}",
+        fix_register=lambda d: _commands(("codex", "plugin", "marketplace", "add", str(d))),
+        fix_install=lambda ref: _commands(("codex", "plugin", "add", ref)),
         # codex plugin has add, list, marketplace and remove, and no update
         # verb, so a refresh is a reinstall.
-        fix_update=lambda ref: f"codex plugin remove {shlex.quote(ref)} && codex plugin add {shlex.quote(ref)}",
-        # Nor is there an enable verb; the flag lives only in config.toml.
-        # json.dumps yields a valid TOML basic-string key for any name.
-        fix_enable=lambda ref: f"set [plugins.{json.dumps(ref)}] enabled = true in ~/.codex/config.toml",
+        fix_update=lambda ref: _commands(("codex", "plugin", "remove", ref),
+                                         ("codex", "plugin", "add", ref)),
+        # Nor is there an enable verb; the flag lives only in config.toml, so
+        # this fix is an edit with nothing to run. json.dumps yields a valid
+        # TOML basic-string key for any name.
+        fix_enable=lambda ref: Fix(
+            f"set [plugins.{json.dumps(ref)}] enabled = true in ~/.codex/config.toml", ()),
     )
 
 
 _READERS = {"claude": _claude, "codex": _codex}
+
+
+def _fix_fields(fix: Fix, paths: tuple[str, ...] = ()) -> tuple:
+    """``fix``, ``paths`` and ``argv`` in Finding's field order."""
+    return fix.text, paths, fix.argv
 
 
 # --------------------------------------------------------------------------
@@ -465,14 +493,14 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
                     findings.append(Finding(
                         hname, sp.marketplace, "", "unregistered",
                         f"{sp.marketplace_dir} is not a {hname} marketplace",
-                        view.fix_register(sp.marketplace_dir)))
+                        *_fix_fields(view.fix_register(sp.marketplace_dir))))
                 continue
             mname = ref.rpartition("@")[2]
             if inst is None:
                 findings.append(Finding(
                     hname, mname, sp.name, "not-installed",
                     f"registered in {hname} but never installed",
-                    view.fix_install(ref)))
+                    *_fix_fields(view.fix_install(ref))))
                 continue
 
             src = source_snapshot(sp)
@@ -487,7 +515,7 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
                         hname, mname, sp.name, "stale",
                         f"installed {installed} vs source {source_v}, "
                         f"{len(diff)} {noun}",
-                        view.fix_update(ref), tuple(diff)))
+                        *_fix_fields(view.fix_update(ref), tuple(diff))))
 
             if view.enabled.get(ref) is False:
                 elsewhere = []
@@ -501,5 +529,45 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
                     findings.append(Finding(
                         hname, mname, sp.name, "disabled-here",
                         f"disabled in {hname}, enabled in {', '.join(elsewhere)}",
-                        view.fix_enable(ref)))
+                        *_fix_fields(view.fix_enable(ref))))
     return findings
+
+
+# --------------------------------------------------------------------------
+# Running a fix
+
+
+class FixError(Exception):
+    """A fix that could not run, or ran and failed; the message says which."""
+
+
+def apply_fix(home: Path, finding_id: str, run=None, harnesses=HARNESSES) -> Finding:
+    """Run the commands of the finding named ``finding_id``; return it.
+
+    Drift is computed again first, so only a fix for a gap that exists right
+    now runs, and the commands are the ones this module builds, never text
+    a caller supplied. Commands run in order without a shell and stop at the
+    first failure, so ``codex plugin remove && add`` never adds after a
+    failed remove.
+    """
+    import subprocess
+
+    run = run or subprocess.run
+    finding = next((f for f in plugin_drift(home, harnesses) if f.id == finding_id), None)
+    if finding is None:
+        raise FixError(f"no current plugin drift has id {finding_id}; refresh and try again")
+    if not finding.argv:
+        raise FixError(f"nothing to run for {finding_id}: {finding.fix}")
+    for argv in finding.argv:
+        try:
+            done = run(list(argv), capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, timeout=300)
+        except FileNotFoundError:
+            raise FixError(f"{argv[0]} is not on PATH") from None
+        except subprocess.TimeoutExpired:
+            raise FixError(f"{shlex.join(argv)} did not finish in 5 minutes") from None
+        if done.returncode != 0:
+            said = (done.stderr or done.stdout or "").strip().splitlines()
+            tail = said[-1] if said else f"exit status {done.returncode}"
+            raise FixError(f"{shlex.join(argv)} failed: {tail}")
+    return finding

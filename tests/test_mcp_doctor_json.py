@@ -169,7 +169,18 @@ class McpListJsonTest(unittest.TestCase):
         write_registry(home, REGISTRY)
         result = run_swe(home, "mcp", "list", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(decode(result)["data"], {"servers": []})
+        data = decode(result)["data"]
+        self.assertEqual(data["servers"], [])
+        self.assertIn("claude", data["harnesses"])
+
+    def test_harnesses_names_every_config_read_even_with_no_servers(self):
+        data = decode(run_swe(self.home, "mcp", "list", "--json"))["data"]
+        self.assertIn("claude", data["harnesses"])
+        self.assertIn("cursor", data["harnesses"])
+        # claude-desktop is always read and holds nothing here
+        self.assertIn("claude-desktop", data["harnesses"])
+        filtered = decode(run_swe(self.home, "mcp", "list", "cs", "--json"))["data"]
+        self.assertEqual(filtered["harnesses"], ["cursor"])
 
     def test_unknown_tool_fails_with_nothing_on_stdout(self):
         result = run_swe(self.home, "mcp", "list", "nope", "--json")
@@ -201,12 +212,25 @@ class McpListConflictTest(unittest.TestCase):
         clash = self.rows()["clash"]
         self.assertTrue(clash["conflict"])
         self.assertEqual(clash["harnesses"], ["claude", "cursor"])
+        self.assertEqual(clash["variants"], [["claude"], ["cursor"]])
+
+    def test_variants_group_the_harnesses_that_agree(self):
+        write_registry(self.home, {**REGISTRY, "droid": {"command": "droid"}})
+        write_claude(self.home, {"s": {"command": "node", "args": ["a.js"]}})
+        write_cursor(self.home, {"s": {"command": "node", "args": ["b.js"]}})
+        write_json(self.home / ".factory" / "mcp.json",
+                   {"mcpServers": {"s": {"command": "node", "args": ["a.js"]}}})
+        s = self.rows()["s"]
+        self.assertEqual(sorted(map(sorted, s["variants"])), [["claude", "droid"], ["cursor"]])
+        self.assertEqual(s["variants"][0][0], "claude")
 
     def test_identical_definitions_do_not_conflict(self):
         server = {"command": "uvx", "args": ["tool"], "env": {"K": "v"}}
         write_claude(self.home, {"same": server})
         write_cursor(self.home, {"same": dict(server)})
-        self.assertFalse(self.rows()["same"]["conflict"])
+        same = self.rows()["same"]
+        self.assertFalse(same["conflict"])
+        self.assertEqual(same["variants"], [["claude", "cursor"]])
 
     def test_a_server_in_one_harness_cannot_conflict(self):
         write_claude(self.home, {"solo": {"command": "uvx"}})
@@ -337,7 +361,9 @@ class McpStatusJsonTest(unittest.TestCase):
         write_registry(home, REGISTRY)
         result = run_swe(home, "mcp", "status", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(decode(result)["data"], {"servers": []})
+        data = decode(result)["data"]
+        self.assertEqual(data["servers"], [])
+        self.assertIn("claude", data["harnesses"])
 
     def test_unknown_tool_fails_with_nothing_on_stdout(self):
         result = run_swe(self.home, "mcp", "status", "nope", "--json")
@@ -731,3 +757,62 @@ class DoctorJsonChecksTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class McpSyncJsonTest(unittest.TestCase):
+    """`swe mcp sync ... --json`: what the app's sync button reads back.
+
+    Names only: a server definition carries resolved secrets, so the report
+    says which servers moved, never what they hold.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        write_registry(self.home, REGISTRY)
+        write_claude(self.home, {
+            "github": {"command": "npx", "args": ["gh"], "env": {"GITHUB_TOKEN": FAKE_KEY}},
+            "clash": {"command": "node", "args": ["a.js"]},
+        })
+        write_cursor(self.home, {"clash": {"command": "node", "args": ["b.js"]}})
+
+    def sync(self, *args):
+        result = run_swe(self.home, "mcp", "sync", *args, "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return decode(result)["data"]
+
+    def cursor(self) -> dict:
+        return json.loads((self.home / ".cursor" / "mcp.json").read_text())["mcpServers"]
+
+    def test_reports_names_per_target_and_writes(self):
+        data = self.sync("claude", "cursor", "--only=github")
+        self.assertEqual(data["source"], "claude")
+        self.assertFalse(data["dry_run"])
+        self.assertEqual(data["selected"], ["github"])
+        self.assertEqual(data["targets"], [{"name": "cursor", "added": ["github"],
+                                            "updated": [], "skipped": [], "pruned": []}])
+        self.assertIn("github", self.cursor())
+
+    def test_never_prints_a_secret_value(self):
+        result = run_swe(self.home, "mcp", "sync", "claude", "cursor", "--json")
+        self.assertNotIn(FAKE_KEY, result.stdout)
+        self.assertNotIn(FAKE_KEY, result.stderr)
+
+    def test_dry_run_writes_nothing(self):
+        data = self.sync("claude", "cursor", "--only=github", "--dry-run")
+        self.assertTrue(data["dry_run"])
+        self.assertEqual(data["targets"][0]["added"], ["github"])
+        self.assertNotIn("github", self.cursor())
+
+    def test_a_conflict_is_skipped_without_force_and_updated_with_it(self):
+        skipped = self.sync("claude", "cursor", "--only=clash")
+        self.assertEqual(skipped["targets"][0]["skipped"], ["clash"])
+        self.assertEqual(self.cursor()["clash"]["args"], ["b.js"])
+        forced = self.sync("claude", "cursor", "--only=clash", "--force")
+        self.assertEqual(forced["targets"][0]["updated"], ["clash"])
+        self.assertEqual(self.cursor()["clash"]["args"], ["a.js"])
+
+    def test_a_refusal_fails_with_nothing_on_stdout(self):
+        result = run_swe(self.home, "mcp", "sync", "claude", "nope", "--json")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Unknown target tool", result.stderr)
