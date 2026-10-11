@@ -429,7 +429,7 @@ private struct PluginCard: View {
                 Spacer(minLength: 0)
             }
             if !plugin.fixes.isEmpty {
-                Button(copied ? "Copied" : "Copy install command", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                Button(copied ? "Copied" : "Copy fix command", systemImage: copied ? "checkmark" : "doc.on.doc") {
                     copyToPasteboard(plugin.fixes.joined(separator: "\n"))
                     copied = true
                 }
