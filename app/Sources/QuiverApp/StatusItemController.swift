@@ -64,7 +64,7 @@ final class StatusItemController: NSObject {
         }
         let percent = limit.percent
         button.image = LimitRing.image(fraction: limit.usedPercent / 100, critical: percent >= 90)
-        let window = limit.window.isEmpty ? "" : " \(limit.window)"
+        let window = limit.window.isEmpty ? "" : " \(UsageFormat.window(limit.window))"
         button.toolTip = "\(limit.title)\(window) at \(percent)%"
         // VoiceOver hears the same figures the item shows.
         let shown = text.isEmpty ? "" : ". Showing \(text)"
@@ -245,10 +245,11 @@ private struct PanelLimits: View {
         }
     }
 
+    /// Other harnesses that are shown and have a shown window left.
     private var others: [OtherLimitsModel.Row] {
         app.others.rows.filter { row in
             row.limit.status == .ok && app.popup.shows(harness: row.name)
-                && app.popup.shows(window: row.limit.window ?? "", of: row.name)
+                && row.limit.allWindows.contains { app.popup.shows(window: $0.window, of: row.name) }
         }
     }
 
@@ -268,17 +269,9 @@ private struct PanelLimits: View {
                 Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             if !others.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text("Other harnesses").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    ForEach(others) { row in
-                        // swe hands back its last reading, status ok, for up to
-                        // a day when a provider fails; dim one that old.
-                        let old = row.limit.fetchedAt.map { Date.now.timeIntervalSince($0) > LimitReading.sweStaleAfter } ?? true
-                        PanelLimitRow(harness: row.name, label: UsageFormat.harness(row.name), window: row.limit.window,
-                                      percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
-                            .opacity(old ? 0.55 : 1)
-                            .help(row.limit.fetchedAt.map { "Fetched \(UsageFormat.ago($0, now: .now))" } ?? "Fetch time unknown")
-                    }
+                    ForEach(others) { row in PanelOtherRow(row: row) }
                 }
             }
         }
@@ -394,6 +387,39 @@ private struct PanelAccountRow: View {
                 StatusLine(usage: card.usage)
             }
         }
+    }
+}
+
+/// A harness swe reports, laid out like an account: logo, name and plan,
+/// then each shown window, then any extra usage balance.
+private struct PanelOtherRow: View {
+    @Environment(AppModel.self) private var app
+    var row: OtherLimitsModel.Row
+
+    var body: some View {
+        // swe hands back its last reading, status ok, for up to a day when a
+        // provider fails; dim one that old.
+        let old = row.limit.fetchedAt.map { Date.now.timeIntervalSince($0) > LimitReading.sweStaleAfter } ?? true
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                HarnessIcon(harness: row.name, size: 14)
+                Text(UsageFormat.harness(row.name)).font(Theme.rowTitle)
+                if let plan = row.limit.planType { Badge(planTitle(plan)) }
+            }
+            ForEach(row.limit.allWindows.filter { app.popup.shows(window: $0.window, of: row.name) },
+                    id: \.window) { window in
+                PanelLimitRow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),
+                              percent: Double(window.usedPercent), resetsAt: window.resetAt)
+            }
+            .opacity(old ? 0.55 : 1)
+            if let balance = row.limit.extraUsageUSD {
+                // As old as the windows above it, so dimmed with them.
+                Text("Extra usage balance \(UsageFormat.balance(balance))")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .opacity(old ? 0.55 : 1)
+            }
+        }
+        .help(row.limit.fetchedAt.map { "Fetched \(UsageFormat.ago($0, now: .now))" } ?? "Fetch time unknown")
     }
 }
 

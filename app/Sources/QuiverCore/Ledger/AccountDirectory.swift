@@ -61,6 +61,24 @@ public enum UsageFormat {
         }
     }
 
+    /// Money that is a balance, not a spend: always to the cent, "$9,868.98".
+    public static func balance(_ amount: Double) -> String {
+        amount.formatted(FloatingPointFormatStyle<Double>.Currency(code: "USD", locale: Locale(identifier: "en_US"))
+            .precision(.fractionLength(2)))
+    }
+
+    /// A limit window's name as the harness's own CLI prints it: Cursor's
+    /// "included", "auto" and "api" read "Included", "Auto" and "API";
+    /// "5h" or "7d Fable" stay as they are.
+    public static func window(_ label: String) -> String {
+        switch label {
+        case "included": "Included"
+        case "auto": "Auto"
+        case "api": "API"
+        default: label
+        }
+    }
+
     /// "in 12m", "in 4h 28m", "in 25d": how long until a limit resets.
     public static func resetIn(_ date: Date, now: Date) -> String {
         let seconds = date.timeIntervalSince(now)
