@@ -755,9 +755,6 @@ class DoctorJsonChecksTest(unittest.TestCase):
         self.assertTrue(doc["data"]["ok"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class McpSyncJsonTest(unittest.TestCase):
     """`swe mcp sync ... --json`: what the app's sync button reads back.
@@ -811,8 +808,18 @@ class McpSyncJsonTest(unittest.TestCase):
         self.assertEqual(forced["targets"][0]["updated"], ["clash"])
         self.assertEqual(self.cursor()["clash"]["args"], ["a.js"])
 
+    def test_a_no_op_run_still_names_its_source(self):
+        data = self.sync("claude", "cursor", "--only=nomatch")
+        self.assertEqual(data["source"], "claude")
+        self.assertEqual(data["selected"], [])
+        self.assertEqual(data["targets"], [])
+
     def test_a_refusal_fails_with_nothing_on_stdout(self):
         result = run_swe(self.home, "mcp", "sync", "claude", "nope", "--json")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
         self.assertIn("Unknown target tool", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

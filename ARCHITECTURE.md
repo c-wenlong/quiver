@@ -248,8 +248,13 @@ lives in `~/.claude/settings.json` (often Nix-managed) and
 `~/.codex/config.toml` (rewritten by Codex), which quiver must not edit.
 `swe find plugins --fix=<id>` (the app's one-click fix) is the only path
 that acts, and it does so through the harness's own CLI: it recomputes
-drift, finds the finding by id (`<harness>:<kind>:<ref>`), and runs that
-finding's `argv` without a shell, stopping at the first failure. A fix with
+drift, finds the finding by id (`<harness>:<kind>:<ref>`, with the source
+directory in place of the ref for `unregistered`, since two directories can
+declare one marketplace name), refuses an id that matches more than one, and
+runs that finding's `argv` without a shell, stopping at the first failure.
+The harness runs with `HOME` set to the home drift was read from and
+`CLAUDE_CONFIG_DIR` / `CODEX_HOME` removed, so it changes the account that
+was checked. A fix with
 no verb (codex has no `plugin enable`) has no `argv` and is refused.
 
 Every `swe find` view prints section tallies by default, the same shape as

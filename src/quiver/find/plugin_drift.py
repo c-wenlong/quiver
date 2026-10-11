@@ -63,6 +63,9 @@ class Finding:
     # and ``fix`` describes an edit instead. ``apply_fix`` runs these without
     # a shell, so nothing in a marketplace path or plugin name is interpreted.
     argv: tuple[tuple[str, ...], ...] = field(default=())
+    # unregistered only: the source directory. Two directories can declare
+    # one marketplace name, and the id has to tell their fixes apart.
+    marketplace_dir: str = ""
 
     @property
     def ref(self) -> str:
@@ -71,7 +74,7 @@ class Finding:
     @property
     def id(self) -> str:
         """Names this finding across runs, for ``swe find plugins --fix``."""
-        return f"{self.harness}:{self.kind}:{self.ref}"
+        return f"{self.harness}:{self.kind}:{self.marketplace_dir or self.ref}"
 
 
 class Fix(NamedTuple):
@@ -493,7 +496,8 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
                     findings.append(Finding(
                         hname, sp.marketplace, "", "unregistered",
                         f"{sp.marketplace_dir} is not a {hname} marketplace",
-                        *_fix_fields(view.fix_register(sp.marketplace_dir))))
+                        *_fix_fields(view.fix_register(sp.marketplace_dir)),
+                        marketplace_dir=str(sp.marketplace_dir)))
                 continue
             mname = ref.rpartition("@")[2]
             if inst is None:
@@ -541,6 +545,18 @@ class FixError(Exception):
     """A fix that could not run, or ran and failed; the message says which."""
 
 
+# Variables that move a harness away from its default home. Drift is read
+# from ``home/.claude`` and ``home/.codex``, so a fix must act on those too,
+# not on whichever account the caller's shell happens to point at.
+_HOME_OVERRIDES = ("CLAUDE_CONFIG_DIR", "CODEX_HOME")
+
+
+def _harness_env(home: Path) -> dict:
+    env = {k: v for k, v in os.environ.items() if k not in _HOME_OVERRIDES}
+    env["HOME"] = str(home)
+    return env
+
+
 def apply_fix(home: Path, finding_id: str, run=None, harnesses=HARNESSES) -> Finding:
     """Run the commands of the finding named ``finding_id``; return it.
 
@@ -553,17 +569,23 @@ def apply_fix(home: Path, finding_id: str, run=None, harnesses=HARNESSES) -> Fin
     import subprocess
 
     run = run or subprocess.run
-    finding = next((f for f in plugin_drift(home, harnesses) if f.id == finding_id), None)
-    if finding is None:
+    matches = [f for f in plugin_drift(home, harnesses) if f.id == finding_id]
+    if not matches:
         raise FixError(f"no current plugin drift has id {finding_id}; refresh and try again")
+    if len(matches) > 1:
+        # Never guess which of two findings was meant.
+        raise FixError(f"{len(matches)} findings share id {finding_id}; fix them by hand")
+    finding = matches[0]
     if not finding.argv:
         raise FixError(f"nothing to run for {finding_id}: {finding.fix}")
     for argv in finding.argv:
         try:
             done = run(list(argv), capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL, timeout=300)
+                       stdin=subprocess.DEVNULL, timeout=300, env=_harness_env(home))
         except FileNotFoundError:
             raise FixError(f"{argv[0]} is not on PATH") from None
+        except OSError as exc:
+            raise FixError(f"couldn't run {argv[0]}: {exc.strerror or exc}") from None
         except subprocess.TimeoutExpired:
             raise FixError(f"{shlex.join(argv)} did not finish in 5 minutes") from None
         if done.returncode != 0:

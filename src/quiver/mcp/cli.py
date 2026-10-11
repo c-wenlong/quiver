@@ -1099,6 +1099,9 @@ def _sync(args, report: dict | None):
     if not source:
         print(f"Unknown source tool: {positional[0]}")
         return 1
+    if report is not None:
+        # Set before any early return, so a no-op run still names its source.
+        report["source"] = source
 
     targets: list[str] = []
     seen: set[str] = set()
@@ -1191,7 +1194,6 @@ def _sync(args, report: dict | None):
         print("Nothing selected.")
         return 0
     if report is not None:
-        report["source"] = source
         report["selected"] = list(selected)
 
     print(f"\n{c('green', f'Selected {len(selected)} server(s)')} from {c('cyan', source)}")
