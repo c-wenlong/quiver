@@ -29,15 +29,26 @@ bundle="$here/build/Quiver.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$bin" "$bundle/Contents/MacOS/Quiver"
-# QuiverCore's resources (the pricing snapshot). Inside Contents/Resources,
-# since codesign refuses anything at the bundle root; CoreResources looks here.
+# QuiverCore's resources (the pricing snapshot, the harness logos). Inside
+# Contents/Resources, since codesign refuses anything at the bundle root;
+# CoreResources looks here. The widget extension gets its own copy below.
 cp -R "$bindir/Quiver_QuiverCore.bundle" "$bundle/Contents/Resources/"
-for resource in pricing.json pricing-supplement.json; do
-  if [ -z "$(find "$bundle/Contents/Resources/Quiver_QuiverCore.bundle" -name "$resource" -print -quit)" ]; then
-    echo "build-app: $resource missing from the app bundle" >&2
-    exit 1
-  fi
-done
+
+# Stops the build when a copy of QuiverCore's bundle lacks a resource or a
+# harness logo: a packaged app or extension never falls back to the build
+# folder, so whatever is missing here is missing for the user.
+check_core_resources() {
+  local core="$1/Contents/Resources/Quiver_QuiverCore.bundle" resource
+  for resource in pricing.json pricing-supplement.json harness-icons.tsv \
+                  "$here"/Sources/QuiverCore/Resources/harness-*.svg; do
+    resource="$(basename "$resource")"
+    if [ ! -f "$core/$resource" ]; then
+      echo "build-app: $resource missing from $core" >&2
+      exit 1
+    fi
+  done
+}
+check_core_resources "$bundle"
 
 version="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 cat > "$bundle/Contents/Info.plist" <<PLIST
@@ -64,8 +75,14 @@ PLIST
 # The widget extension: SwiftPM's executable in an .appex. Its @main
 # WidgetBundle is the whole entry point, so no Xcode project is needed.
 appex="$bundle/Contents/PlugIns/QuiverWidgets.appex"
-mkdir -p "$appex/Contents/MacOS"
+mkdir -p "$appex/Contents/MacOS" "$appex/Contents/Resources"
 cp "$bindir/QuiverWidgets" "$appex/Contents/MacOS/QuiverWidgets"
+# An extension's Bundle.main is the .appex, so CoreResources looks in the
+# appex's own Contents/Resources for the harness logos; without this copy
+# the widgets would have none. The sandbox always lets an extension read
+# its own bundle, so the entitlements need nothing for it.
+cp -R "$bindir/Quiver_QuiverCore.bundle" "$appex/Contents/Resources/"
+check_core_resources "$appex"
 cat > "$appex/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

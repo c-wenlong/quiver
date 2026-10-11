@@ -26,16 +26,6 @@ enum Palette {
         Color(light: "#10b981", dark: "#34d399"),
     ]
 
-    static func harness(_ id: String) -> Color {
-        switch id {
-        case "claude": Color(light: "#cf6848", dark: "#cf6848")
-        case "codex": Color(light: "#3b7ff0", dark: "#3b7ff0")
-        case "opencode": Color(light: "#139f8b", dark: "#139f8b")
-        case "devin": Color(light: "#c4860f", dark: "#c4860f")
-        default: .gray
-        }
-    }
-
     static func usage(_ percent: Int) -> Color {
         percent >= 90 ? danger : percent >= 70 ? warning : accentFill
     }
@@ -150,7 +140,7 @@ private struct LimitLine: View {
         let reset = reading.hasReset(now: now)
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
-                Circle().fill(Palette.harness(reading.harness)).frame(width: 6, height: 6)
+                HarnessLogo(harness: reading.harness, size: 12)
                 Text(reading.window.isEmpty ? reading.title : "\(reading.title) · \(reading.window)")
                     .font(.system(size: 11, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 4)
