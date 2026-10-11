@@ -468,19 +468,18 @@ def _linked_manifest(harness: str, manifest: str, sp: SourcePlugin) -> _LinkedMa
     """The finding for a source whose ``manifest`` folder is a symlink, or None.
 
     The fix swaps the link for a real copy of its target, by resolved path.
-    It copies first, into a folder beside the link, and only then removes
-    the link and moves the copy into its place: a copy that fails leaves the
-    link, so the finding and its retry are still there. The staging path is
-    cleared before the copy (``rm -rf`` removes a link there, never what it
-    points at), so ``cp`` always writes to a fresh path: a leftover from a
-    failed run, or a link the plugin itself ships under that name, could
-    otherwise point the copy outside the plugin.
+    It copies first, into a new folder beside the link, and only then
+    removes the link and moves the copy into its place: a copy that fails
+    leaves the link, so the finding is still there. The only thing it ever
+    deletes is the link.
 
     It is a command only when that target is a folder inside the plugin's
-    own marketplace and does not contain the link: a link out of the
-    marketplace could pull any folder on the machine into the plugin, and
-    copying a folder into itself never ends. Anything else is left to do by
-    hand.
+    own marketplace that does not contain the link, and nothing is at the
+    staging path yet. A link out of the marketplace could pull any folder
+    on the machine into the plugin, copying a folder into itself never
+    ends, and ``cp`` into something already there would write through any
+    link it holds, while clearing it first could delete a real folder.
+    Anything else is left to do by hand.
     """
     link = sp.path / manifest
     try:
@@ -493,17 +492,19 @@ def _linked_manifest(harness: str, manifest: str, sp: SourcePlugin) -> _LinkedMa
     real_link = os.path.join(plugin_dir, manifest)
     resolved = _real(link)
     market = _real(sp.marketplace_dir)
+    staged = real_link + ".quiver-tmp"
+    by_hand = f"replace the {manifest} symlink in {plugin_dir} with a folder holding plugin.json"
+    if os.path.lexists(staged):
+        # most likely a copy an earlier run of this fix left when it failed
+        return _LinkedManifest(detail, Fix(f"{by_hand}; {staged} is in the way", ()))
     if (os.path.isdir(resolved)
             and os.path.commonpath([resolved, market]) == market
             and os.path.commonpath([resolved, real_link]) != resolved):
-        staged = real_link + ".quiver-tmp"
         return _LinkedManifest(detail, _commands(
-            ("rm", "-rf", staged),
             ("cp", "-R", resolved, staged),
             ("rm", real_link),
             ("mv", staged, real_link)))
-    return _LinkedManifest(detail, Fix(
-        f"replace the {manifest} symlink in {plugin_dir} with a folder holding plugin.json", ()))
+    return _LinkedManifest(detail, Fix(by_hand, ()))
 
 
 # --------------------------------------------------------------------------

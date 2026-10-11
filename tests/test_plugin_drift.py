@@ -363,14 +363,12 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         real = Path(os.path.realpath(self.plugin))
         link, target = str(real / ".codex-plugin"), str(real / ".claude-plugin")
         staged = link + ".quiver-tmp"
-        # copy to a fresh path first, so a copy that fails leaves the link
-        # and its finding
-        self.assertEqual(finding.argv, (("rm", "-rf", staged),
-                                        ("cp", "-R", target, staged),
+        # copy to a new path first, so a copy that fails leaves the link and
+        # its finding; the link is the only thing removed
+        self.assertEqual(finding.argv, (("cp", "-R", target, staged),
                                         ("rm", link),
                                         ("mv", staged, link)))
-        self.assertEqual(finding.fix, f"rm -rf {staged} && cp -R {target} {staged} "
-                                      f"&& rm {link} && mv {staged} {link}")
+        self.assertEqual(finding.fix, f"cp -R {target} {staged} && rm {link} && mv {staged} {link}")
 
     def test_a_failed_copy_keeps_the_link_and_the_finding(self):
         from quiver.find.plugin_drift import FixError, apply_fix
@@ -383,40 +381,55 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         with self.assertRaisesRegex(FixError, "Permission denied"):
             apply_fix(self.home, "codex:linked-manifest:tool@mk", run=fail_on_cp)
         self.assertTrue((self.plugin / ".codex-plugin").is_symlink())
-        self.assertEqual(self.kinds(), [("codex", "linked-manifest")])
+        [finding] = self.drift()
+        self.assertEqual(finding.kind, "linked-manifest")
+        self.assertTrue(finding.argv)
 
-    def test_a_retry_starts_over_from_a_partial_copy(self):
-        from quiver.find.plugin_drift import apply_fix
+    def test_anything_at_the_staging_path_makes_it_a_hand_fix(self):
+        # cp into an existing folder writes through any link in it, and
+        # clearing the path first could delete a real folder, so neither
+        # happens: the fix names what is in the way and runs nothing.
+        from quiver.find.plugin_drift import FixError, apply_fix
 
-        partial = self.plugin / ".codex-plugin.quiver-tmp"
-        _write(partial / "plugin.json", "{")
-        _write(partial / "stray.md", "half-copied\n")
-        apply_fix(self.home, "codex:linked-manifest:tool@mk")
-        self.assertFalse(partial.exists())
-        self.assertEqual(sorted(p.name for p in (self.plugin / ".codex-plugin").iterdir()),
-                         ["plugin.json"])
-        self.assertEqual((self.plugin / ".codex-plugin" / "plugin.json").read_bytes(),
-                         (self.plugin / ".claude-plugin" / "plugin.json").read_bytes())
-
-    def test_a_link_at_the_staging_path_is_never_written_through(self):
-        from quiver.find.plugin_drift import apply_fix
-
+        staged = self.plugin / ".codex-plugin.quiver-tmp"
         outside = self.home / "outside"
         _write(outside / "plugin.json", "keep me\n")
-        os.symlink(outside, self.plugin / ".codex-plugin.quiver-tmp")
-        apply_fix(self.home, "codex:linked-manifest:tool@mk")
-        self.assertEqual((outside / "plugin.json").read_text(), "keep me\n")
-        manifest = self.plugin / ".codex-plugin"
-        self.assertFalse(manifest.is_symlink())
-        self.assertEqual((manifest / "plugin.json").read_bytes(),
-                         (self.plugin / ".claude-plugin" / "plugin.json").read_bytes())
+
+        def leftover():
+            _write(staged / "plugin.json", "half-copied\n")
+
+        def link_out():
+            os.symlink(outside, staged)
+
+        def link_to_it():
+            # .codex-plugin -> .codex-plugin.quiver-tmp, a real folder
+            _write(staged / "plugin.json", "keep me\n")
+            self.link_manifest(staged.name)
+
+        for setup in (leftover, link_out, link_to_it):
+            setup()
+            before = sorted((str(q), q.lstat().st_mtime_ns) for q in self.home.rglob("*"))
+            # a real folder there is also a stale path; that one is honest
+            [finding] = [f for f in self.drift() if f.kind == "linked-manifest"]
+            self.assertEqual(finding.argv, (), setup.__name__)
+            in_the_way = os.path.join(os.path.realpath(self.plugin), staged.name)
+            self.assertTrue(finding.fix.endswith(f"{in_the_way} is in the way"))
+            with self.assertRaisesRegex(FixError, "nothing to run"):
+                apply_fix(self.home, "codex:linked-manifest:tool@mk")
+            after = sorted((str(q), q.lstat().st_mtime_ns) for q in self.home.rglob("*"))
+            self.assertEqual(after, before, setup.__name__)
+            self.assertEqual((outside / "plugin.json").read_text(), "keep me\n")
+            if staged.is_symlink():
+                staged.unlink()
+            else:
+                shutil.rmtree(staged)
 
     def test_target_outside_the_plugin_is_resolved(self):
         shared = self.market / "shared-manifest"
         shutil.copytree(self.plugin / ".claude-plugin", shared)
         self.link_manifest("../shared-manifest")
         [finding] = self.drift()
-        self.assertEqual(finding.argv[1][2], os.path.realpath(shared))
+        self.assertEqual(finding.argv[0][2], os.path.realpath(shared))
         self.assertIn("a symlink to ../shared-manifest;", finding.detail)
 
     def test_no_command_for_a_target_outside_the_marketplace_or_around_the_link(self):
@@ -440,8 +453,8 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         [finding] = self.drift()
         self.assertEqual([shlex.split(part) for part in finding.fix.split(" && ")],
                          [list(argv) for argv in finding.argv])
-        self.assertEqual(finding.argv[2][0], "rm")
-        self.assertTrue(finding.argv[2][1].endswith("/it's my tool/.codex-plugin"))
+        self.assertEqual(finding.argv[1][0], "rm")
+        self.assertTrue(finding.argv[1][1].endswith("/it's my tool/.codex-plugin"))
 
     def test_dangling_link_has_no_command(self):
         self.link_manifest("nowhere")
