@@ -14,7 +14,8 @@ public enum HarnessIcons {
 
     /// Other names the same harness goes by.
     static let aliases = ["claude-code": "claude", "github-copilot": "copilot", "factory": "droid",
-                          "qwen": "qwen-code", "mistral": "mistral-vibe", "codebuff": "freebuff"]
+                          "qwen": "qwen-code", "mistral": "mistral-vibe", "codebuff": "freebuff",
+                          "ark-coding-plan": "ark", "ark-agent-plan": "ark", "command-code": "commandcode"]
 
     /// Ids with a bundled icon, sorted.
     public static let available: [String] = {

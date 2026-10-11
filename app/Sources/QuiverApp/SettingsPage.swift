@@ -28,6 +28,7 @@ struct SettingsPage: View {
                 Text("Used by Terminal, Sign in and Resume.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
+            ProviderVisibilityCard(model: app.providers)
         }
         .onAppear { draft = app.swePath }
     }

@@ -34,6 +34,8 @@ final class AppModel {
     let overview: OverviewModel?
     let overviewError: String?
     let serviceStatus: ServiceStatusModel
+    /// Which providers show, in what order (Settings).
+    let providers: ProviderVisibilityModel
 
     init() {
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
@@ -72,6 +74,17 @@ final class AppModel {
         }
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
+        providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {
+            // swe's installed harnesses, plus the extra providers' own signs.
+            let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
+            let swe = SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
+            let harnesses = (try? await swe.harnesses(withUsage: false)) ?? []
+            let shellPath = await LoginShell.cachedEnvironment()["PATH"] ?? ""
+            return Set(ProviderDetection.installed(
+                sweHarnesses: Set(harnesses.map(\.name)),
+                commandExists: { ProviderDetection.commandExists($0, path: shellPath) },
+                pathExists: { FileManager.default.fileExists(atPath: $0) }))
+        })
         terminalChoice = { [unowned self] in self.terminal }
     }
 
@@ -93,4 +106,10 @@ final class AppModel {
     private static func client(for path: String) -> SweClient {
         SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
     }
+}
+
+/// Provider visibility lives in the app's own preferences.
+private struct UserDefaultsStore: KeyValueStoring {
+    func strings(forKey key: String) -> [String]? { UserDefaults.standard.stringArray(forKey: key) }
+    func set(_ strings: [String], forKey key: String) { UserDefaults.standard.set(strings, forKey: key) }
 }
