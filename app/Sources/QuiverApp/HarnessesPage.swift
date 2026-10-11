@@ -34,16 +34,19 @@ private struct HarnessList: View {
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let all):
-            HStack(spacing: 8) {
-                Tabs(options: [(HarnessesModel.Scope.inUse, "In use \(model.count(.inUse))"),
-                               (.archived, "Archived \(model.count(.archived))")],
-                     selection: $model.scope, style: .underline)
+            let rows = model.visible
+            // The shared filter bar: selects, then search taking the slack, then the count.
+            HStack(spacing: 10) {
+                SelectMenu(options: [(HarnessesModel.Scope.inUse, "In use (\(model.count(.inUse)))"),
+                                     (.archived, "Archived (\(model.count(.archived)))")],
+                           selection: $model.scope)
                 SearchField(prompt: "Filter harnesses", text: $model.query)
-                    .frame(maxWidth: 320)
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity)
+                Text(rows.count == 1 ? "1 harness" : "\(rows.count) harnesses")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
+                    .fixedSize()
             }
             if let error = model.actionError { ErrorCard(message: error) }
-            let rows = model.visible
             if rows.isEmpty {
                 Card {
                     Text(emptyText(all: all))
@@ -96,13 +99,17 @@ private struct HarnessRow: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HarnessIcon(harness: harness.name, size: 16)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
                     Text(harness.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     if let version = harness.version {
                         Text(version).font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
+                            .lineLimit(1).truncationMode(.middle)
                     }
                     if harness.command != harness.name {
                         Text(harness.command)
                             .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1).truncationMode(.middle)
                     }
                     ForEach(harness.aliases, id: \.self) { Badge($0) }
                 }
@@ -116,11 +123,8 @@ private struct HarnessRow: View {
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
                 if !harness.tags.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(harness.tags, id: \.self) { tag in
-                            Text(tag).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                        }
-                    }
+                    Text(harness.tags.joined(separator: " · "))
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 }
             }
             Spacer(minLength: 12)
@@ -136,7 +140,7 @@ private struct HarnessRow: View {
             actions
         }
         .padding(.horizontal, Theme.cardPadding)
-        .padding(.vertical, 16)
+        .padding(.vertical, 12)
         .background(hovering ? Theme.rowHover : .clear)
         .onHover { hovering = $0 }
         .opacity(busy ? 0.6 : 1)
