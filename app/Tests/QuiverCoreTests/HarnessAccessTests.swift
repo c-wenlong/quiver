@@ -43,7 +43,7 @@ import Testing
     func model() throws -> AccountsModel {
         let root = FileManager.default.temporaryDirectory.appending(path: "access-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
-        return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher, terminal: { .ghostty }, cliOnPath: { _ in true })
+        return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher, terminal: { .ghostty }, loginPath: { "" })
     }
 
     @Test func openingAHarnessAppOpensThatBundle() async throws {
@@ -112,8 +112,12 @@ import Testing
     @Test func loadingChecksEachVendorsCLIDirectly() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "cli-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let bin = root.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: bin.appending(path: "claude"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: "claude").path)
         let model = AccountsModel(store: store, usage: FakeUsage(), launcher: FakeLauncher(), terminal: { .terminal },
-                                  cliOnPath: { $0 == "claude" })
+                                  loginPath: { "/nonexistent:\(bin.path)" })
         #expect(model.cliOnPath.isEmpty)
         await model.load(force: false)
         #expect(model.cliOnPath == [.claude: true, .codex: false])

@@ -65,10 +65,17 @@ public enum CLIPath {
         return path.split(separator: ":").contains { isExecutable("\($0)/\(command)") }
     }
 
-    /// Against the login shell's PATH, which a Dock-launched app lacks.
-    public static func onLoginPath(_ command: String) async -> Bool {
-        let env = await LoginShell.cachedEnvironment()
-        return contains(command, path: env["PATH"] ?? "")
+    /// The PATH of the shell Terminal runs (`/bin/zsh -ilc`, see
+    /// `LaunchPlanner.terminal`), read fresh on each call so a CLI installed
+    /// after Quiver started shows up on Refresh. Falls back to the cached
+    /// login environment when zsh doesn't answer in time.
+    public static func terminalShellPath() async -> String {
+        let base = ProcessInfo.processInfo.environment
+        if let env = await LoginShell.environment(shell: "/bin/zsh", base: base, timeout: .seconds(5)),
+           let path = env["PATH"] {
+            return path
+        }
+        return await LoginShell.cachedEnvironment()["PATH"] ?? ""
     }
 }
 

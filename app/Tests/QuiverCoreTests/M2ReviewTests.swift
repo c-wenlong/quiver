@@ -126,7 +126,7 @@ import Testing
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         let usage = FakeUsage()
         let model = AccountsModel(store: ProfileStore(root: home.appending(path: "a"), userHome: home),
-                                  usage: usage, launcher: FakeLauncher(), terminal: { .terminal }, cliOnPath: { _ in true })
+                                  usage: usage, launcher: FakeLauncher(), terminal: { .terminal }, loginPath: { "" })
         let task = Task { await model.keepFresh(every: .milliseconds(10)) }
         // Wait for three reloads (two default accounts each) rather than
         // counting what fits in a fixed window: CI runners are slow.
