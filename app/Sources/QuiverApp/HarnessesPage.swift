@@ -66,7 +66,6 @@ private struct HarnessList: View {
                         }
                     }
                 }
-                .clipShape(.rect(cornerRadius: Theme.cardRadius))
                 .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
             }
@@ -81,12 +80,18 @@ private struct HarnessList: View {
 }
 
 /// The last row of the list: unfolds the unstarred harnesses, or folds
-/// them away again.
+/// them away again. It is the card's bottom edge, so its hover fill and its
+/// focus ring follow the card's bottom corners and stay inside the card.
 private struct ExpandRow: View {
     var isExpanded: Bool
     var hidden: Int
     var action: () -> Void
     @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    private var shape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(bottomLeadingRadius: Theme.cardRadius, bottomTrailingRadius: Theme.cardRadius)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -99,10 +104,17 @@ private struct ExpandRow: View {
             .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
             .frame(maxWidth: .infinity)
             .frame(height: 36)
-            .background(hovering ? Theme.rowHover : .clear)
-            .contentShape(.rect)
+            .background(hovering ? Theme.rowHover : .clear, in: shape)
+            .contentShape(shape)
         }
-        .plainButton(cornerRadius: 0)
+        .buttonStyle(RingedPlainStyle(cornerRadius: 0))
+        .focused($focused)
+        .focusEffectDisabled()
+        .overlay(
+            shape.inset(by: 2)
+                .stroke(Theme.focus, lineWidth: Theme.focusRing)
+                .opacity(focused && FocusVisibility.shared.fromKeyboard ? 1 : 0)
+                .allowsHitTesting(false))
         .onHover { hovering = $0 }
         .help(isExpanded ? "Hide the harnesses you haven't starred" : "Show the harnesses you haven't starred")
     }
