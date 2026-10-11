@@ -72,16 +72,17 @@ the design. No code was copied from either.
 ## Harness logos
 
 `Sources/QuiverCore/Resources/harness-*.svg` are the logos of the coding
-harnesses Quiver lists, redrawn as single-colour marks by
-`script/import-harness-icons.py`. Every logo is a trademark of its owner
+harnesses Quiver lists, imported by `script/import-harness-icons.py`:
+Claude, Codex, Gemini, OpenCode, Qwen and Mistral keep their brand colours
+(`harness-<id>-color.svg`), the rest are single-colour marks. Every logo is a trademark of its owner
 and is used only to name that harness; none of them implies endorsement.
 Where each came from is in `Resources/harness-icons.tsv`:
 
 - Claude, Codex, Gemini, Copilot, Cursor, Grok, Kiro, Devin, OpenCode, Kilo
   and Pi come from TokenTracker (`dashboard/public/brand-logos` and
   `ProviderIcon.jsx`), most of them extracted there from LobeHub icons.
-- Qwen, Mistral, goose and Cline come from LobeHub icons
-  (`@lobehub/icons-static-svg`).
+- Claude's colour mark, Qwen, Mistral, goose and Cline come from LobeHub
+  icons (`@lobehub/icons-static-svg`).
 - Continue comes from its repository (continuedev/continue,
   `docs/logo/light.svg`); Droid (Factory), Forge, Augment, Blackbox and
   Freebuff from each product's own site.
