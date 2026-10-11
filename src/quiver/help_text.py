@@ -293,6 +293,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe skills link <harness> [target]')}   Symlink a harness root to shared/other
   {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break a harness symlink
   {c('cyan', 'swe skills move <name> --from=A --to=B')} Move a skill folder between roots
+  {c('cyan', 'swe skills hub')}               Plugins in ~/.quiver/plugins and where they are installed
   {c('cyan', 'swe skills discover [--apply]')} Scan Desktop/Documents for skill catalogs
   {c('cyan', 'swe skills catalog add [path] [label]')} Register a skills directory (default: .)
   {c('cyan', 'swe skills catalog .')}                Add the current directory as a catalog

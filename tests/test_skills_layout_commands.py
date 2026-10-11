@@ -119,7 +119,7 @@ class SkillsLinkTest(unittest.TestCase):
         ):
             code, out = _run(cmd_skills_link, ["codex", "--json"])
         self.assertEqual(code, 0)
-        payload = json.loads(out)
+        payload = json.loads(out)["data"]
         self.assertEqual(payload["action"], "link")
         self.assertEqual(payload["harness"], "codex")
 
@@ -184,7 +184,7 @@ class SkillsUnlinkTest(unittest.TestCase):
         ):
             code, out = _run(cmd_skills_unlink, ["codex", "--json", "--mkdir"])
         self.assertEqual(code, 0)
-        payload = json.loads(out)
+        payload = json.loads(out)["data"]
         self.assertEqual(payload["action"], "unlink")
         self.assertTrue(payload["mkdir"])
 
@@ -244,7 +244,7 @@ class SkillsMoveTest(unittest.TestCase):
                 cmd_skills_move,
                 ["my-skill", "--from=shared", "--to=codex", "--json"])
         self.assertEqual(code, 0)
-        payload = json.loads(out)
+        payload = json.loads(out)["data"]
         self.assertEqual(payload["action"], "move")
         self.assertEqual(payload["name"], "my-skill")
 

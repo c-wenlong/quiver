@@ -5,7 +5,7 @@ import Testing
     @Test func sectionsAreGroupedAsTheRoadmapSays() {
         #expect(SidebarGroup.allCases.map(\.title) == ["Usage", "Manage", "System"])
         #expect(SidebarGroup.usage.sections == [.overview, .sessions])
-        #expect(SidebarGroup.manage.sections == [.accounts, .skills, .agentsMd, .mcpServers])
+        #expect(SidebarGroup.manage.sections == [.accounts, .harnesses, .skills, .agentsMd, .mcpServers])
         #expect(SidebarGroup.system.sections == [.serviceStatus, .doctor, .settings])
     }
 
