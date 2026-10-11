@@ -64,6 +64,22 @@ actor FakeSwe {
     }
 }
 
+/// Answers at once the first time, then holds the second check until
+/// released, with a harness added.
+actor HeldCheck {
+    var calls = 0
+    var parked = false
+    var waiting: CheckedContinuation<Void, Never>?
+    func next() async -> Set<String> {
+        calls += 1
+        if calls == 1 { return ["claude"] }
+        parked = true
+        await withCheckedContinuation { waiting = $0 }
+        return ["claude", "codex"]
+    }
+    func release() { waiting?.resume(); waiting = nil }
+}
+
 /// An in-memory stand-in for UserDefaults.
 final class MemoryStore: KeyValueStoring, @unchecked Sendable {
     var values: [String: [String]] = [:]
@@ -292,6 +308,49 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         #expect(model.checkError == nil)   // B's late result is dropped
         await model.loadIfNeeded(for: "A")
         #expect(await gate.calls == 2)
+    }
+
+    @Test func aHarnessInstalledLaterShowsUpOnTheQuietRecheck() async {
+        let swe = FakeSwe(results: ["A": ["claude"]])
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
+        await model.recheck()   // nothing checked yet: no swe call of its own
+        #expect(await swe.calls == 0)
+        await swe.use("A"); await model.loadIfNeeded(for: "A")
+        #expect(model.rows.first { $0.id == "codex" }?.isInstalled == false)
+        await swe.set("A", ["claude", "codex"])   // installed in a terminal
+        await model.loadIfNeeded(for: "A")           // the cache still holds
+        #expect(await swe.calls == 1)
+        await model.recheck()                        // Quiver is active again
+        #expect(await swe.calls == 2)
+        #expect(model.isVisible("codex"))
+        await model.loadIfNeeded(for: "A")
+        #expect(await swe.calls == 2)
+    }
+
+    @Test func aQuietRecheckKeepsTheRowsAndHidesItsOwnFailure() async {
+        let swe = FakeSwe(results: ["A": ["claude"]])
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
+        await swe.use("A"); await model.loadIfNeeded(for: "A")
+        await swe.set("A", nil)
+        await model.recheck()
+        #expect(model.checkError == nil)
+        #expect(model.hasChecked)
+        #expect(model.isVisible("claude"))
+        await model.loadIfNeeded(for: "A")   // still counts as checked
+        #expect(await swe.calls == 2)
+    }
+
+    @Test func noCheckingStateWhileARecheckRuns() async {
+        let gate = HeldCheck()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { await gate.next() })
+        await model.loadIfNeeded(for: "A")
+        let recheck = Task { await model.recheck() }
+        while !(await gate.parked) { await Task.yield() }
+        #expect(model.hasChecked)   // rows keep their result, no "Checking…"
+        #expect(model.isVisible("claude"))
+        await gate.release()
+        await recheck.value
+        #expect(model.isVisible("codex"))
     }
 
     @Test func aRowCanBeDraggedToTheEnd() async {

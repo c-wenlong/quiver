@@ -158,7 +158,21 @@ public final class ProviderVisibilityModel {
         await load()
     }
 
+    /// Checks the last-checked swe again, for a harness installed while
+    /// Quiver was in the background (call it when the app becomes active).
+    /// Quiet: the rows keep their result while it runs, and if it fails
+    /// they stay as they were with no error, since nobody asked for it.
+    /// Does nothing before the first check, or while one is running.
+    public func recheck() async {
+        guard key != nil, !isLoading else { return }
+        await load(quiet: true)
+    }
+
     public func load() async {
+        await load(quiet: false)
+    }
+
+    private func load(quiet: Bool) async {
         request += 1
         let mine = request
         let key = self.key
@@ -175,6 +189,8 @@ public final class ProviderVisibilityModel {
             checkedKey = key
             checkError = nil
         case .failure(let error) where error is CancellationError:
+            return
+        case .failure where quiet && hasChecked:
             return
         case .failure(let error):
             // A check that couldn't run says nothing about what is installed.
