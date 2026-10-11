@@ -225,6 +225,10 @@ class _Harness:
     fix_install: Callable[[str], Fix]
     fix_update: Callable[[str], Fix]
     fix_enable: Callable[[str], Fix]
+    # Whether the harness runs its own copy of a plugin. When it reads the
+    # marketplace folder live there is no copy to fall behind, so a "stale"
+    # check would compare against a leftover it never loads.
+    copies_source: bool = True
 
 
 def _claude(home: Path) -> _Harness | None:
@@ -283,6 +287,10 @@ def _claude(home: Path) -> _Harness | None:
         fix_install=lambda ref: _commands(("claude", "plugin", "install", ref)),
         fix_update=lambda ref: _commands(("claude", "plugin", "update", ref)),
         fix_enable=lambda ref: _commands(("claude", "plugin", "enable", ref)),
+        # Claude Code loads a directory-marketplace plugin from its folder
+        # (`claude plugin update` says "read from its folder ... nothing to
+        # update"), and every marketplace checked here is a directory.
+        copies_source=False,
     )
 
 
@@ -507,7 +515,7 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
                     *_fix_fields(view.fix_install(ref))))
                 continue
 
-            src = source_snapshot(sp)
+            src = source_snapshot(sp) if view.copies_source else None
             copy = _snapshot(inst.path) if src is not None else None
             if src is not None and copy is not None:
                 diff = _differing(src, copy)
