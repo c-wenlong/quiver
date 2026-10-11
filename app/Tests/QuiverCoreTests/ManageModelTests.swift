@@ -483,6 +483,17 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
                 + #"--name "My Server""#)
     }
 
+    @Test func aCommandInsideQuotesOrOneArgIsRedactedToo() {
+        #expect(stdio("bash -c 'server --token SECRET1 --name x'", []).summary == "bash -c 'server --token … --name x'")
+        #expect(stdio("bash", ["-c", "server --api-key SECRET2 KEY=SECRET3"]).summary
+                == "bash -c server --api-key … KEY=…")
+        #expect(stdio(#"sh -c "bash -c 'x --password SECRET4'""#, []).summary == #"sh -c "bash -c 'x --password …'""#)
+        #expect(stdio(#"npx mcp-remote "https://x.example.com/sse?token=SECRET5""#, []).summary
+                == #"npx mcp-remote "https://x.example.com/sse?token=…""#)
+        #expect(stdio("sh", [#"-c"#, #"x"--token SECRET6""#]).summary.contains("SECRET") == false)
+        #expect(stdio(#"npx "--token SECRET7"#, []).summary.contains("SECRET") == false)
+    }
+
     @Test func aFlagAndItsValueInOneArgAreSplit() {
         #expect(stdio("npx", ["--token SECRET1", "--api-key=SECRET2 two", "--header Authorization: Bearer SECRET3"]).summary
                 == "npx --token … --api-key=… --header Authorization:…")

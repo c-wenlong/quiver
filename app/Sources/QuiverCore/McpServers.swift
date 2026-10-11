@@ -222,9 +222,15 @@ enum McpRedaction {
                 word.append(character)
             }
         }
-        if quote != nil { return line.split(whereSeparator: \.isWhitespace).map(String.init) }
+        if quote != nil { return looseWords(line) }
         if !word.isEmpty { words.append(word) }
         return words
+    }
+
+    /// Split at every space and quote mark, for text the shell split can't
+    /// handle, so a flag glued to a quote (`"--token`) is still seen.
+    static func looseWords(_ line: String) -> [String] {
+        line.split { $0.isWhitespace || $0 == "\"" || $0 == "'" }.map(String.init)
     }
 
     static func args(_ args: [String]) -> [String] {
@@ -243,6 +249,11 @@ enum McpRedaction {
             } else if let match = arg.firstMatch(of: /^[A-Za-z_][A-Za-z0-9_]*=/) {
                 // An environment assignment, as `env NAME=value cmd` takes.
                 out.append(match.output + "…")
+            } else if let quote = arg.first, quote == "\"" || quote == "'", arg.count >= 2, arg.last == quote {
+                // A quoted word may be a whole command, as `bash -c '…'` takes.
+                out.append(String(quote) + line(String(arg.dropFirst().dropLast())) + String(quote))
+            } else if arg.contains(where: \.isWhitespace) {
+                out.append(line(arg))
             } else if arg.contains("://") {
                 out.append(url(arg))
             } else {
@@ -250,6 +261,15 @@ enum McpRedaction {
             }
         }
         return out
+    }
+
+    /// A command line inside one word, redacted word by word. A word the
+    /// shell split can't break up (`x"a b"`) is split at every space and
+    /// quote mark, so each pass works on shorter text and no flag hides.
+    private static func line(_ text: String) -> String {
+        var words = shellWords(text)
+        if words == [text] { words = looseWords(text) }
+        return args(words).joined(separator: " ")
     }
 
     /// A header keeps its name (`Authorization:…`); any other value is hidden.
