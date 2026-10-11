@@ -242,12 +242,19 @@ a `~/.quiver/plugins` marketplace in place but run an installed cached copy,
 so an edit under `~/.quiver` reaches neither until it reinstalls.
 `find/plugin_drift.py` compares each locally sourced plugin with both
 harnesses' registration, install record or cache, and enable state, and
-returns findings of four kinds (`unregistered`, `not-installed`, `stale`,
-`disabled-here`), each with a fix command. It never writes: registration
+returns findings of five kinds (`unregistered`, `not-installed`,
+`linked-manifest`, `stale`, `disabled-here`), each with a fix command. Codex
+follows no symlink when it copies a plugin, so the source is compared
+without its symlinks, the way Codex copies it. A symlinked `.codex-plugin`
+is its own finding, `linked-manifest`: Codex skips it and installs a
+manifest it generates, with no version, so no reinstall can help until the
+link in the source is replaced by a real folder. It never writes: registration
 lives in `~/.claude/settings.json` (often Nix-managed) and
 `~/.codex/config.toml` (rewritten by Codex), which quiver must not edit.
 `swe find plugins --fix=<id>` (the app's one-click fix) is the only path
-that acts, and it does so through the harness's own CLI: it recomputes
+that acts, and it does so through the harness's own CLI (or, for
+`linked-manifest`, an `rm` and `cp -R` of the link's target inside the
+marketplace, which is the user's own source tree): it recomputes
 drift, finds the finding by id (`<harness>:<kind>:<ref>`, with the source
 directory in place of the ref for `unregistered`, since two directories can
 declare one marketplace name), refuses an id that matches more than one, and
@@ -373,7 +380,7 @@ and the app refuses a schema it does not know rather than misreading it.
 | `swe harness archive <name> [why] --json` | `name`, `state`, and the `archived` record (null after a restore) |
 | `swe session [filters] --json` | `sessions`: id, harness, agent, cwd, title, title_source, `last_active_at` (epoch seconds), status, `resume` (`argv` and `cwd`, or null); `failures` names any parser that crashed, so a broken reader is not mistaken for no history |
 | `swe skills --json` | `shared_dir`; `harnesses`: each harness skills root (name, label, path, init's link `state` and `detail`, `archived`); `skills`: every SKILL.md with name, description, path, root, `source` (shared, plugin, harness, builtin, catalog, project) and the `harnesses` that load it |
-| `swe skills hub --json` | `hub` and `plugins`: each plugin in `~/.quiver/plugins` with marketplace, description, version, components, `skills`, and `install` per harness (`state`: installed, unregistered, not-installed, stale, disabled-here, disabled; `fix`; `id` for `swe find plugins --fix`, null when the fix is an edit by hand) |
+| `swe skills hub --json` | `hub` and `plugins`: each plugin in `~/.quiver/plugins` with marketplace, description, version, components, `skills`, and `install` per harness (`state`: installed, unregistered, not-installed, linked-manifest, stale, disabled-here, disabled; `fix`; `id` for `swe find plugins --fix`, null when the fix is an edit by hand) |
 | `swe skills link\|unlink\|move ... --json` | what was done: `action`, `harness`, and the paths |
 | `swe find skills -r --json` | `shared_dir`, `skills` (the shared library), `roots` (per-harness skills root with its link state and skill count) |
 | `swe init --check --json` | `agents_file`, `agents_file_exists`, `harnesses` with `instructions` and `skills`, each a path and link state or null |

@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Comparing against that copy raised "N files differ" findings no fix could
   clear. Claude is no longer checked for stale copies; Codex, which runs its
   own copy, still is.
+- **`swe find plugins` kept calling a Codex plugin stale after its fix ran.**
+  Codex follows no symlink when it copies a plugin, so a source whose
+  `.codex-plugin`, `.cursor-plugin` or `.factory-plugin` was a symlink never
+  matched its copy, and `codex plugin remove && add` changed nothing. The
+  source is now compared the way Codex copies it, without its symlinks. A
+  symlinked `.codex-plugin` is reported as a new kind, `linked-manifest`:
+  Codex skips it and installs a manifest it generates itself, with no
+  version (the copy shows up as `local`). Its fix replaces the link with a
+  real copy of its target (`rm` then `cp -R`), and the next run offers the
+  reinstall. The app shows it as "Linked manifest".
 
 - **`swe skills unlink ~/.x/skills` unlinked the wrong thing.** A path to a
   linked harness root resolved to the shared tree it points at, so the

@@ -344,6 +344,15 @@ let hubJSON = #"""
         #expect(model.hubPlugins.first?.install["claude"]?.state == .unknown)
     }
 
+    @Test func aLinkedManifestStateDecodesWithItsOwnTitle() async throws {
+        let json = hubJSON.replacingOccurrences(of: #""state": "installed""#, with: #""state": "linked-manifest""#)
+        let (model, _) = model([(["skills", "hub", "--json"], ok(json))])
+        await model.loadHub()
+        let state = model.hubPlugins.first?.install["claude"]?.state
+        #expect(state == .linkedManifest)
+        #expect(state?.title == "Linked manifest")
+    }
+
     @Test func leavingTheHubMidLoadLetsTheNextVisitRetry() async {
         let runner = StuckRunner()
         let model = SkillsModel(swe: SweClient(runner: runner))

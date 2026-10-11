@@ -8,19 +8,29 @@ it reinstalls. Claude Code reads a directory-marketplace plugin from the
 folder itself (``claude plugin update`` says "read from its folder ... nothing
 to update"); the copy it leaves under ``~/.claude/plugins/cache`` is never
 loaded, so it is not compared. This module finds the gap, per harness, in
-four kinds:
+five kinds:
 
-  unregistered   the marketplace directory is not registered in the harness
-  not-installed  registered, but the plugin has no install record or copy
-  stale          the installed copy's content differs from the source
-                 (only for a harness that runs its own copy: Codex)
-  disabled-here  installed but disabled here, while enabled in the other one
+  unregistered     the marketplace directory is not registered in the harness
+  not-installed    registered, but the plugin has no install record or copy
+  linked-manifest  the source's ``.codex-plugin`` is a symlink, which Codex
+                   skips when it copies, writing a manifest of its own with
+                   no version instead (Codex only)
+  stale            the installed copy's content differs from the source
+                   (only for a harness that runs its own copy: Codex)
+  disabled-here    installed but disabled here, while enabled in the other one
+
+Codex follows no symlink when it copies a plugin: a linked file, folder or
+manifest is left out of the copy. So the source is compared the way Codex
+copies it, without its symlinks, and a reinstall is never offered for a
+difference no reinstall could clear.
 
 Every finding carries a copy-pasteable ``fix``, and ``argv`` when that fix is
-commands rather than an edit. Nothing here writes or prints, and only
-``apply_fix`` runs a harness CLI, when asked to by finding id. A record this module cannot parse yields no findings
-for that harness rather than a guess: reporting every plugin as unregistered
-because ``config.toml`` has a typo would be worse than reporting nothing.
+commands rather than an edit. Nothing here writes or prints except
+``apply_fix``, which runs one finding's commands when asked to by id: a
+harness CLI, or for ``linked-manifest`` an ``rm`` and ``cp`` in the source.
+A record this module cannot parse yields no findings for that harness rather
+than a guess: reporting every plugin as unregistered because
+``config.toml`` has a typo would be worse than reporting nothing.
 """
 
 from __future__ import annotations
@@ -51,7 +61,9 @@ LITTER = frozenset({".in_use", ".orphaned_at", ".DS_Store", "__pycache__"})
 # make a read-only report hang, so the comparison gives up instead.
 MAX_ENTRIES = 20_000
 
-KINDS = ("unregistered", "not-installed", "stale", "disabled-here")
+# Worst first: the skills hub shows a plugin's first gap in this order, and
+# a linked manifest has to be fixed in the source before a reinstall helps.
+KINDS = ("unregistered", "not-installed", "linked-manifest", "stale", "disabled-here")
 
 
 @dataclass(frozen=True)
@@ -233,6 +245,9 @@ class _Harness:
     # marketplace folder live there is no copy to fall behind, so a "stale"
     # check would compare against a leftover it never loads.
     copies_source: bool = True
+    # The manifest folder the harness reads from its own copy, which it
+    # replaces with a generated one when the source's is a symlink.
+    own_manifest: str = ""
 
 
 def _claude(home: Path) -> _Harness | None:
@@ -359,6 +374,10 @@ def _codex(home: Path) -> _Harness | None:
         # TOML basic-string key for any name.
         fix_enable=lambda ref: Fix(
             f"set [plugins.{json.dumps(ref)}] enabled = true in ~/.codex/config.toml", ()),
+        # `codex plugin add` skips a symlinked .codex-plugin and writes its
+        # own plugin.json from the marketplace entry, without the version,
+        # into a copy named "local" (seen with codex-cli 0.162.1).
+        own_manifest=".codex-plugin",
     )
 
 
@@ -375,22 +394,21 @@ def _fix_fields(fix: Fix, paths: tuple[str, ...] = ()) -> tuple:
 
 
 def _snapshot(root: Path) -> dict | None:
-    """relative path -> (kind, value, absolute path) for every file under root.
+    """relative path -> (size, absolute path) for every regular file under root.
 
-    Symlinks are followed, so a tree is compared by what a reader of it gets:
-    claude copies ``.codex-plugin -> .claude-plugin`` as a link, codex copies
-    the file it points at, and both are the same content. A directory whose
-    real path is already one of its own ancestors is a loop; it is recorded
-    as a leaf and not entered. A dangling link is recorded with its target so
-    two identical dangling links still compare equal. Empty directories are
-    not recorded, the same as git. Returns None when the tree is too large to
-    be a plugin (see MAX_ENTRIES).
+    Symlinks below the root are neither followed nor recorded, because that
+    is how codex copies a plugin: a linked file, folder or manifest, and a
+    dangling link, are all left out of its copy. Comparing the source by
+    what its links point at reported differences no reinstall could clear.
+    Only real directories are entered, so no link can loop the walk. Empty
+    directories are not recorded, the same as git. Returns None when the
+    tree is too large to be a plugin (see MAX_ENTRIES).
     """
     out: dict = {}
-    stack = [(str(root), "", frozenset({_real(root)}))]
+    stack = [(str(root), "")]
     seen = 0
     while stack:
-        directory, prefix, ancestors = stack.pop()
+        directory, prefix = stack.pop()
         try:
             with os.scandir(directory) as it:
                 entries = list(it)
@@ -402,24 +420,15 @@ def _snapshot(root: Path) -> dict | None:
             seen += 1
             if seen > MAX_ENTRIES:
                 return None
-            rel = prefix + entry.name
             try:
-                st = os.stat(entry.path)          # follows the link
+                st = entry.stat(follow_symlinks=False)
             except OSError:
-                try:
-                    target = os.readlink(entry.path)
-                except OSError:
-                    target = ""
-                out[rel] = ("dangling", target, entry.path)
                 continue
+            rel = prefix + entry.name
             if stat.S_ISDIR(st.st_mode):
-                real = _real(entry.path)
-                if real in ancestors:
-                    out[rel] = ("loop", "", entry.path)
-                else:
-                    stack.append((entry.path, rel + "/", ancestors | {real}))
+                stack.append((entry.path, rel + "/"))
             elif stat.S_ISREG(st.st_mode):
-                out[rel] = ("file", st.st_size, entry.path)
+                out[rel] = (st.st_size, entry.path)
     return out
 
 
@@ -445,11 +454,44 @@ def _differing(source: dict, copy: dict) -> list[str]:
     out = []
     for rel in sorted(source.keys() | copy.keys()):
         a, b = source.get(rel), copy.get(rel)
-        if a is None or b is None or a[:2] != b[:2]:
-            out.append(rel)
-        elif a[0] == "file" and not _same_bytes(a[2], b[2]):
+        if a is None or b is None or a[0] != b[0] or not _same_bytes(a[1], b[1]):
             out.append(rel)
     return out
+
+
+class _LinkedManifest(NamedTuple):
+    detail: str
+    fix: Fix
+
+
+def _linked_manifest(harness: str, manifest: str, sp: SourcePlugin) -> _LinkedManifest | None:
+    """The finding for a source whose ``manifest`` folder is a symlink, or None.
+
+    The fix swaps the link for a real copy of its target, by resolved path.
+    It is a command only when that target is a folder inside the plugin's
+    own marketplace and does not contain the link: a link out of the
+    marketplace could pull any folder on the machine into the plugin, and
+    copying a folder into itself never ends. Anything else is left to do by
+    hand.
+    """
+    link = sp.path / manifest
+    try:
+        target = os.readlink(link)
+    except OSError:          # absent, or a real folder
+        return None
+    detail = (f"{manifest} is a symlink to {target}; {harness} doesn't follow "
+              f"symlinks, so it installs a generated manifest without the version")
+    plugin_dir = _real(sp.path)
+    real_link = os.path.join(plugin_dir, manifest)
+    resolved = _real(link)
+    market = _real(sp.marketplace_dir)
+    if (os.path.isdir(resolved)
+            and os.path.commonpath([resolved, market]) == market
+            and os.path.commonpath([resolved, real_link]) != resolved):
+        return _LinkedManifest(detail, _commands(("rm", real_link),
+                                                 ("cp", "-R", resolved, real_link)))
+    return _LinkedManifest(detail, Fix(
+        f"replace the {manifest} symlink in {plugin_dir} with a folder holding plugin.json", ()))
 
 
 # --------------------------------------------------------------------------
@@ -461,8 +503,10 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
 
     Findings for one plugin stop at the first gap that blocks the rest: an
     unregistered marketplace is not also reported as N uninstalled plugins,
-    and an uninstalled plugin cannot be stale. ``stale`` and
-    ``disabled-here`` are independent and can both appear.
+    and an uninstalled plugin cannot be stale. ``linked-manifest``,
+    ``stale`` and ``disabled-here`` are independent and can all appear, but
+    each cause is reported once: the manifest codex generates for a linked
+    one is not also a stale path.
 
     ``disabled-here`` compares against every harness this module reads, not
     just the ones asked for, so ``harnesses=("codex",)`` still says a plugin
@@ -519,9 +563,21 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
                     *_fix_fields(view.fix_install(ref))))
                 continue
 
+            linked = (_linked_manifest(hname, view.own_manifest, sp)
+                      if view.copies_source and view.own_manifest else None)
+            if linked is not None:
+                findings.append(Finding(
+                    hname, mname, sp.name, "linked-manifest", linked.detail,
+                    *_fix_fields(linked.fix)))
+
             src = source_snapshot(sp) if view.copies_source else None
             copy = _snapshot(inst.path) if src is not None else None
             if src is not None and copy is not None:
+                if linked is not None:
+                    # The harness generated this manifest because of the
+                    # link, which the finding above already reports.
+                    copy = {rel: v for rel, v in copy.items()
+                            if not rel.startswith(view.own_manifest + "/")}
                 diff = _differing(src, copy)
                 if diff:
                     installed = inst.version or "unversioned"
