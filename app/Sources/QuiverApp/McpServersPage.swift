@@ -332,7 +332,8 @@ private struct ServerSheet: View {
                     Text("Copy from").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .frame(width: 96, alignment: .leading)
                     SelectMenu(options: server.groups.enumerated().map { index, group in
-                                   (group.first ?? "", "Definition \(variantLetter(index)) (\(harnessNames(group)))")
+                                   (group.first ?? "", "Definition \(variantLetter(index)) (\(harnessNames(group)))",
+                                    group.first)
                                },
                                selection: Binding(
                                    get: { server.group(of: source).flatMap { server.groups[$0].first } ?? source },

@@ -136,9 +136,17 @@ private struct KeyRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(showsProvider ? row.provider : "").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                .lineLimit(1).frame(width: 150, alignment: .leading)
-                .accessibilityLabel(row.provider)
+            HStack(spacing: 6) {
+                // A provider a harness logo stands for shows it; the rest show the heading only.
+                if showsProvider, let logo = APIKeyProviderLogo.logoID(for: row.provider) {
+                    HarnessIcon(harness: logo, size: 16)
+                }
+                Text(showsProvider ? row.provider : "").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+            }
+            .frame(width: 150, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(row.provider)
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.name).font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary)

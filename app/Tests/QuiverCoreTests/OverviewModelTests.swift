@@ -14,6 +14,7 @@ func totals(tokens input: Int, cost: Double, unpriced: Int = 0) -> UsageTotals {
 actor FakeLedger: LedgerQuerying {
     var harnesses: [String: UsageTotals] = [:]
     var accounts: [String: UsageTotals] = [:]
+    var accountHarnesses: [String: String] = [:]
     var days: [DailyUsage] = []
     var scanError: Error?
     private(set) var scans = 0
@@ -32,9 +33,11 @@ actor FakeLedger: LedgerQuerying {
     func setPricing(_ catalog: PricingCatalog) { pricingUpdates += 1 }
     private(set) var ranges: [DateInterval] = []
 
-    func set(harnesses: [String: UsageTotals], accounts: [String: UsageTotals] = [:], days: [DailyUsage] = []) {
+    func set(harnesses: [String: UsageTotals], accounts: [String: UsageTotals] = [:],
+             accountHarnesses: [String: String] = [:], days: [DailyUsage] = []) {
         self.harnesses = harnesses
         self.accounts = accounts
+        self.accountHarnesses = accountHarnesses
         self.days = days
     }
 
@@ -57,6 +60,8 @@ actor FakeLedger: LedgerQuerying {
     }
 
     func byAccount(in range: DateInterval) async -> [String: UsageTotals] { accounts }
+
+    func harnessByAccount(in range: DateInterval) async -> [String: String] { accountHarnesses }
 
     func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage] {
         days.filter { range.contains($0.day) }
@@ -190,6 +195,22 @@ struct ScanFailed: Error, LocalizedError {
         ])
         await model.load(scan: false)
         #expect(model.summary?.accounts.map(\.label) == ["Claude: Default", "Codex: Work"])
+    }
+
+    @Test func accountsCarryTheHarnessTheirUsageCameFrom() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: [:], accounts: [
+            "/Users/k/.claude": totals(tokens: 10, cost: 9),
+            "/Users/k/.quiver/accounts/codex/codex-work/home": totals(tokens: 20, cost: 3),
+            "/Users/k/elsewhere": totals(tokens: 5, cost: 1),
+        ], accountHarnesses: [
+            "/Users/k/.claude": "claude",
+            "/Users/k/.quiver/accounts/codex/codex-work/home": "codex",
+        ])
+        let model = model(ledger)
+        await model.load(scan: false)
+        let accounts = try #require(model.summary?.accounts)
+        #expect(accounts.map(\.harness) == ["claude", "codex", nil])
     }
 
     @Test func aScanRunsBeforeQueryingAndItsFailureIsShown() async {

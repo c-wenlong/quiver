@@ -212,7 +212,10 @@ private struct HarnessRow: View {
             .help("Archive: hide it from swe list and record why")
             .popover(isPresented: $archiving, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Archive \(harness.name)").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    HStack(spacing: 8) {
+                        if HarnessIcon.exists(for: harness.name) { HarnessIcon(harness: harness.name, size: 16) }
+                        Text("Archive \(harness.name)").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    }
                     Text("It drops out of swe list. Nothing is uninstalled, and the reason is kept so you remember why.")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

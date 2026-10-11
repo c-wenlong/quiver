@@ -139,7 +139,7 @@ private struct FilterBar: View {
     }
 
     @ViewBuilder private var selects: some View {
-        SelectMenu(options: [(nil, "All tools")] + model.harnesses.map { (Optional($0), UsageFormat.harness($0)) },
+        SelectMenu(options: [(nil, "All tools", nil)] + model.harnesses.map { (Optional($0), UsageFormat.harness($0), $0) },
                    selection: $model.filter.harness,
                    title: model.filter.harness.map(UsageFormat.harness) ?? "All tools")
         SelectMenu(symbol: "calendar", options: SessionsModel.Window.allCases.map { ($0, $0.title) },

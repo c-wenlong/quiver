@@ -396,6 +396,25 @@ private func openGeminiIncident() throws -> Data {
                                                try status("cursor", nil)]) == nil)
         #expect(ServiceStatusSummary.worst([try status("cloudflare", .major), try status("claude", .minor)]) == .minor)
     }
+
+    /// The services the line names, in its order, for their logos.
+    @Test func affectedListsTheProvidersTheLineNames() throws {
+        let statuses = [try status("claude", .minor), try status("cloudflare", .major), try status("openai", .major),
+                        try status("cursor", .minor), try status("github", .maintenance)]
+        #expect(ServiceStatusSummary.affected(statuses).map(\.service.id) == ["openai", "claude", "cursor"])
+        #expect(ServiceStatusSummary.affected([try status("claude", .operational)]).isEmpty)
+    }
+
+    /// Pages filed under a harness's id draw its logo; infrastructure has none.
+    @Test func logoIDsMapPagesToHarnessLogos() throws {
+        #expect(try service("claude").logoID == "claude")
+        #expect(try service("openai").logoID == "codex")
+        #expect(try service("github").logoID == "copilot")
+        #expect(try service("gemini").logoID == "gemini")
+        #expect(try service("npm").logoID == nil)
+        #expect(try service("vercel").logoID == nil)
+        #expect(try service("cloudflare").logoID == nil)
+    }
 }
 
 /// The fake network, answering only after a pause so calls can overlap.

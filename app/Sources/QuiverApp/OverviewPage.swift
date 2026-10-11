@@ -284,12 +284,18 @@ private struct BreakdownCard: View {
 
     @ViewBuilder private var accounts: some View {
         let shown = summary.accounts.filter { $0.totals.totalTokens > 0 }
+        let withLogos = shown.contains { $0.harness.map(HarnessIcon.exists) ?? false }
         if shown.isEmpty {
             Text("No usage in this period.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
         }
         VStack(spacing: 0) {
             ForEach(shown) { row in
                 HStack {
+                    // An account with no logo keeps the square, so the names line up.
+                    if withLogos {
+                        HarnessIcon(harness: row.harness ?? "", size: 16)
+                            .help(row.harness.map { HarnessMark($0).name } ?? row.label)
+                    }
                     Text(row.label).lineLimit(1).truncationMode(.middle).help(row.home)
                     Spacer()
                     Text(UsageFormat.tokens(row.totals.totalTokens)).foregroundStyle(Theme.textSecondary)

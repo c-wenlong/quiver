@@ -40,6 +40,9 @@ struct SearchField: View {
 /// TokenTracker's select: 36pt, radius 6, 14/20 at 400 on the field fill,
 /// a chevron, and a border that strengthens under the pointer. An optional
 /// "Label:" prefix and symbol. A menu underneath, so it reads as a popup.
+/// An option that stands for a harness can carry its id: the menu item and,
+/// once picked, the closed label then draw its logo. A harness with no
+/// bundled logo shows its title only.
 struct SelectMenu<Value: Hashable>: View {
     var label: String? = nil
     var symbol: String? = nil
@@ -51,22 +54,44 @@ struct SelectMenu<Value: Hashable>: View {
     /// pass it when the selection can drop out of `options` (a filter whose
     /// value vanished on refresh) so the menu still says what it's set to.
     var title: String? = nil
+    /// The harness id whose logo goes beside an option, by option value.
+    /// The three-part options initialiser fills it in.
+    var icons: [Value: String] = [:]
     @State private var hovering = false
 
     private var current: String {
         title ?? options.first { $0.value == selection }?.title ?? ""
     }
 
+    /// The selected option's harness, when it has a logo to draw.
+    private var currentIcon: String? {
+        guard let id = icons[selection], HarnessIcon.exists(for: id) else { return nil }
+        return id
+    }
+
     var body: some View {
         Menu {
             ForEach(options, id: \.value) { option in
-                Button {
-                    selection = option.value
-                } label: {
-                    if option.value == selection {
-                        Label(option.title, systemImage: "checkmark")
-                    } else {
-                        Text(option.title)
+                if icons.isEmpty {
+                    Button {
+                        selection = option.value
+                    } label: {
+                        if option.value == selection {
+                            Label(option.title, systemImage: "checkmark")
+                        } else {
+                            Text(option.title)
+                        }
+                    }
+                } else {
+                    // The logo takes the item's image, so the checkmark goes
+                    // in the menu's own state column instead.
+                    Toggle(isOn: Binding(get: { option.value == selection },
+                                         set: { if $0 { selection = option.value } })) {
+                        if let id = icons[option.value], let image = HarnessIcon.menuImage(for: id) {
+                            Label { Text(option.title) } icon: { Image(nsImage: image) }
+                        } else {
+                            Text(option.title)
+                        }
                     }
                 }
             }
@@ -77,6 +102,7 @@ struct SelectMenu<Value: Hashable>: View {
                     // The prefix keeps its width; the value truncates instead.
                     Text("\(label):").foregroundStyle(Theme.textSecondary).lineLimit(1).fixedSize()
                 }
+                if let currentIcon { HarnessIcon(harness: currentIcon, size: 16) }
                 Text(current).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.down").font(.system(size: 12))
@@ -96,6 +122,18 @@ struct SelectMenu<Value: Hashable>: View {
         .plainButton(cornerRadius: Theme.selectRadius)
         .onHover { hovering = $0 }
         .fixedSize()
+    }
+}
+
+extension SelectMenu {
+    /// Options as (value, title, harness id or nil).
+    init(label: String? = nil, symbol: String? = nil,
+         options: [(value: Value, title: String, icon: String?)],
+         selection: Binding<Value>, width: CGFloat? = 168, title: String? = nil) {
+        var icons: [Value: String] = [:]
+        for option in options { if let icon = option.icon { icons[option.value] = icon } }
+        self.init(label: label, symbol: symbol, options: options.map { ($0.value, $0.title) },
+                  selection: selection, width: width, title: title, icons: icons)
     }
 }
 
