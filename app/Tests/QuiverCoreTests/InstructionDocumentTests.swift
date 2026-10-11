@@ -157,6 +157,20 @@ final class TempFolder {
         #expect(folder.isLink("A.md") && folder.isLink("B.md"))
     }
 
+    @Test func checkDiskRetriesAFileThatFailedOnceItIsRepaired() throws {
+        let folder = try TempFolder()
+        try folder.link("A.md", to: "B.md")
+        try folder.link("B.md", to: "A.md")
+        let doc = InstructionDocument(url: folder.url.appending(path: "A.md"))
+        doc.load()
+        guard case .failed = doc.state else { Issue.record("expected failed"); return }
+        try FileManager.default.removeItem(at: folder.url.appending(path: "B.md"))
+        _ = try folder.write("B.md", "fixed\n")
+        doc.checkDisk()
+        #expect(doc.state == .ready)
+        #expect(doc.text == "fixed\n")
+    }
+
     @Test func revertDropsEdits() throws {
         let folder = try TempFolder()
         let doc = InstructionDocument(url: try folder.write("AGENTS.md", "keep\n"))

@@ -78,6 +78,12 @@ public final class InstructionDocument: Identifiable {
     /// Looks at the disk again: picks up an outside change when there are no
     /// edits to lose, and flags it when there are.
     public func checkDisk() {
+        if case .failed = state, !isDirty {
+            // Whatever stopped the last read (a broken link, a permission)
+            // may be fixed by now.
+            load()
+            return
+        }
         guard state == .ready, case .success(let current) = Self.read(writeURL),
               current != baseline else { return }
         if isDirty {
