@@ -6,8 +6,10 @@ import WidgetKit
 
 /// The app's colour roles, copied from `QuiverApp/Theme.swift` (the
 /// TokenTracker package's tokens.json), which this target can't import.
+/// The widget surface is #262626 in dark, as TokenTracker's widgets sample,
+/// one step up from the app's #171717 card so it stands off a dark desktop.
 enum Palette {
-    static let card = Color(light: "#ffffff", dark: "#171717")
+    static let card = Color(light: "#ffffff", dark: "#262626")
     static let textPrimary = Color(light: "#0a0a0a", dark: "#fafafa")
     static let textSecondary = Color(light: "#737373", dark: "#a3a3a3")
     static let track = Color(light: "#f5f5f5", dark: "#40404080")
@@ -16,7 +18,8 @@ enum Palette {
     static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
     static let danger = Color(light: "#ef4444", dark: "#f87171")
     static let heatmap: [Color] = [
-        Color(light: "#ebedf0", dark: "#262626"),
+        // #404040 at 50%: the empty step must show on the #262626 surface.
+        Color(light: "#ebedf0", dark: "#40404080"),
         Color(light: "#a7f3d0", dark: "#065f46"),
         Color(light: "#6ee7b7", dark: "#059669"),
         Color(light: "#34d399", dark: "#10b981"),
@@ -266,7 +269,7 @@ struct ModelsView: View {
             if snapshot.models.isEmpty {
                 Text("No usage in the last 30 days").font(.system(size: 12, weight: .medium))
             }
-            ForEach(Array(snapshot.models.enumerated()), id: \.offset) { index, model in
+            ForEach(Array(snapshot.models.enumerated()), id: \.offset) { _, model in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
                         Circle().fill(Palette.textSecondary).frame(width: 6, height: 6)
@@ -278,7 +281,9 @@ struct ModelsView: View {
                             .font(.system(size: 10).monospacedDigit()).foregroundStyle(Palette.textSecondary)
                             .frame(width: 30, alignment: .trailing)
                     }
-                    ThinBar(fraction: model.share, color: Palette.accentFill.opacity(1 - Double(index) * 0.2))
+                    // Neutral: green is kept for money and "on", and a model can
+                    // run under several harnesses, so no harness colour fits.
+                    ThinBar(fraction: model.share, color: Palette.textSecondary)
                 }
             }
             Spacer(minLength: 0)
