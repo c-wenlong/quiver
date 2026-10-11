@@ -71,7 +71,9 @@ private struct SessionsContent: View {
                 Text("Spend").frame(width: 84, alignment: .trailing)
                 Color.clear.frame(width: Theme.iconButton)
             }
-            .font(Theme.tableHeader).foregroundStyle(Theme.textSecondary)
+            .font(Theme.tableHeader).tracking(0.12).foregroundStyle(Theme.tableHeaderText)
+            // The rows' side padding, so each heading sits over its column.
+            .padding(.horizontal, 8)
             .padding(.bottom, 10)
             Divider().overlay(Theme.border)
 
@@ -86,6 +88,7 @@ private struct SessionsContent: View {
                 ForEach(groups) { group in
                     Text(group.day, format: .dateTime.month(.abbreviated).day().year())
                         .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                        .padding(.horizontal, 8)
                         .padding(.top, 18).padding(.bottom, 10)
                     Divider().overlay(Theme.border)
                     ForEach(group.rows) { row in
@@ -229,11 +232,11 @@ private struct SessionRow: View {
         .onTapGesture(count: 2, perform: open)
         .contextMenu {
             Button("Details…", action: open)
-            Button("Resume in Terminal", action: resume).disabled(s.resume == nil)
+            Button("Resume in terminal", action: resume).disabled(s.resume == nil)
             Divider()
             Button("Copy session ID") { copyToPasteboard(s.id) }
             if let cwd = s.cwd {
-                Button("Show Folder in Finder") {
+                Button("Show folder in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: cwd)])
                 }
             }
@@ -261,28 +264,22 @@ private struct SessionRow: View {
     }
 }
 
+/// A session's state as the shared badge; nothing for a finished one.
 private struct StatusBadge: View {
     var status: String?
 
     var body: some View {
-        switch status {
-        case "active": tag("Active", Theme.success)
-        case "error": tag("Error", Theme.danger)
-        case "interrupted": tag("Interrupted", Theme.warning)
-        case "followup": tag("Waiting", Theme.textSecondary)
-        default: EmptyView()
-        }
+        if let title = Self.title(status) { Badge(title) }
     }
 
-    private func tag(_ text: String, _ color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(text)
+    static func title(_ status: String?) -> String? {
+        switch status {
+        case "active": "Active"
+        case "error": "Error"
+        case "interrupted": "Interrupted"
+        case "followup": "Waiting"
+        default: nil
         }
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(Theme.textSecondary)
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(Theme.subtle, in: .capsule)
     }
 }
 
@@ -348,7 +345,7 @@ private struct SessionDetail: View {
                 Button("Copy session ID") { copyToPasteboard(s.id) }.secondaryButton()
                 Spacer()
                 Button("Close", action: close).keyboardShortcut(.cancelAction).secondaryButton()
-                Button("Resume in Terminal") { resume(); close() }
+                Button("Resume in terminal") { resume(); close() }
                     .keyboardShortcut(.defaultAction)
                     .primaryButton()
                     .disabled(s.resume == nil)

@@ -38,8 +38,8 @@ struct PluginsPage: View {
                 let harnesses = report.drift.map(\.harness).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
                 ForEach(harnesses, id: \.self) { harness in
                     let rows = report.drift.filter { $0.harness == harness }
-                    Card(title: UsageFormat.harness(harness),
-                         subtitle: rows.count == 1 ? "1 finding" : "\(rows.count) findings") {
+                    Card {
+                        HarnessTitle(harness: harness, findings: rows.count)
                         ForEach(rows) { finding in
                             DriftRow(finding: finding, running: model.fixing == finding.id,
                                      busy: model.fixing != nil) { confirming = finding }
@@ -55,6 +55,21 @@ struct PluginsPage: View {
             Button("Run") { Task { await model.fix(finding, swe: app.swe) } }
         } message: { finding in
             Text("swe will check the finding still applies, then run:\n\(finding.fix)")
+        }
+    }
+}
+
+/// The card's heading: the harness logo, its name and how many findings.
+private struct HarnessTitle: View {
+    var harness: String
+    var findings: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HarnessIcon(harness: harness, size: 16)
+            Text(UsageFormat.harness(harness)).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+            Text(findings == 1 ? "1 finding" : "\(findings) findings")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
         }
     }
 }
@@ -80,14 +95,27 @@ private struct DriftRow: View {
                     Text(pathsLine).font(Theme.caption).foregroundStyle(Theme.textMuted)
                         .lineLimit(2).truncationMode(.middle)
                 }
-                HStack(spacing: 6) {
-                    Text(finding.fix).font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                HStack(alignment: .top, spacing: 6) {
+                    // A code block: bg.code, 6/8 padding, radius 4, mono 12/16.
+                    Text(finding.fix)
+                        .font(.system(size: 12, design: .monospaced))
+                        .lineSpacing(2)
+                        .foregroundStyle(Theme.textSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .background(Theme.code, in: .rect(cornerRadius: 4))
+                        // bg.code is the card's own colour in dark; the hairline keeps the block visible.
+                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border, lineWidth: 1))
                     Button("Copy", systemImage: "doc.on.doc") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(finding.fix, forType: .string)
                     }
                     .labelStyle(.iconOnly)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 24, height: 28)
+                    .contentShape(.rect)
                     .plainButton(cornerRadius: 4)
                     .help("Copy")
                 }
