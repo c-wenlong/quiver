@@ -88,7 +88,7 @@ private struct DriftRow: View {
                         NSPasteboard.general.setString(finding.fix, forType: .string)
                     }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
+                    .buttonStyle(RingedPlainStyle(cornerRadius: 4))
                     .help("Copy")
                 }
                 if !finding.runnable {

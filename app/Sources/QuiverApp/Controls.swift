@@ -22,7 +22,7 @@ struct SearchField: View {
                     .labelStyle(.iconOnly)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textMuted)
-                    .buttonStyle(.plain)
+                    .buttonStyle(RingedPlainStyle(cornerRadius: 4))
                     .help("Clear")
             }
         }
@@ -32,7 +32,7 @@ struct SearchField: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
             .strokeBorder(focused ? Theme.textSecondary.opacity(0.6) : Theme.border, lineWidth: 1))
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius + 3)
-            .strokeBorder(Theme.accentFill, lineWidth: Theme.focusRing)
+            .strokeBorder(Theme.focus, lineWidth: Theme.focusRing)
             .padding(-3)
             .opacity(focused ? 1 : 0)
             .allowsHitTesting(false))

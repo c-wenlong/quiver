@@ -241,6 +241,7 @@ private struct SessionRow: View {
     var open: () -> Void
     var resume: () -> Void
     @State private var hovering = false
+    @FocusState private var resumeFocused: Bool
 
     var body: some View {
         let s = row.session
@@ -269,7 +270,10 @@ private struct SessionRow: View {
             Button("Resume", systemImage: "play", action: resume)
                 .buttonStyle(IconButtonStyle())
                 .disabled(s.resume == nil)
-                .opacity(hovering ? 1 : 0.0001)
+                // Faint until the row is hovered or the button has focus,
+                // so it and its focus ring are always reachable and visible.
+                .opacity(hovering || resumeFocused ? 1 : 0.25)
+                .focused($resumeFocused)
                 .help(s.resume == nil ? "This harness has no resume command" : "Resume in your terminal")
         }
         .padding(.vertical, 12)

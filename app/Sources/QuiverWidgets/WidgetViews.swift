@@ -269,7 +269,7 @@ struct ModelsView: View {
             ForEach(Array(snapshot.models.enumerated()), id: \.offset) { index, model in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        Circle().fill(Palette.accentFill.opacity(1 - Double(index) * 0.2)).frame(width: 6, height: 6)
+                        Circle().fill(Palette.textSecondary).frame(width: 6, height: 6)
                         Text(model.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
                         Spacer(minLength: 4)
                         Text(UsageFormat.tokens(model.tokens))
