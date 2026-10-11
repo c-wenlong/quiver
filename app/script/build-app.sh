@@ -12,12 +12,22 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
 swift build -c "$config" --product Quiver
-bin="$(swift build -c "$config" --show-bin-path)/Quiver"
+bindir="$(swift build -c "$config" --show-bin-path)"
+bin="$bindir/Quiver"
 
 bundle="$here/build/Quiver.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$bin" "$bundle/Contents/MacOS/Quiver"
+# QuiverCore's resources (the pricing snapshot). Inside Contents/Resources,
+# since codesign refuses anything at the bundle root; CoreResources looks here.
+cp -R "$bindir/Quiver_QuiverCore.bundle" "$bundle/Contents/Resources/"
+for resource in pricing.json pricing-supplement.json; do
+  if [ -z "$(find "$bundle/Contents/Resources/Quiver_QuiverCore.bundle" -name "$resource" -print -quit)" ]; then
+    echo "build-app: $resource missing from the app bundle" >&2
+    exit 1
+  fi
+done
 
 version="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 cat > "$bundle/Contents/Info.plist" <<PLIST

@@ -1,0 +1,197 @@
+import Foundation
+import Testing
+@testable import QuiverCore
+
+/// Serves canned bytes instead of the network.
+struct StubTransport: PricingTransport {
+    var data: Data?
+    var error: (any Error)?
+    func fetch(_ url: URL) async throws -> Data {
+        if let error { throw error }
+        return data ?? Data()
+    }
+}
+
+struct Offline: Error {}
+
+@Suite struct PricingCatalogTests {
+    let liteLLM = Data("""
+        {
+          "claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05,
+            "cache_read_input_token_cost": 2e-07, "cache_creation_input_token_cost": 5e-06,
+            "cache_creation_input_token_cost_above_1hr": 8e-06, "litellm_provider": "anthropic"},
+          "claude-sonnet-4-5": {"input_cost_per_token": 3e-06, "output_cost_per_token": 1.5e-05,
+            "input_cost_per_token_above_200k_tokens": 6e-06, "output_cost_per_token_above_200k_tokens": 2.25e-05,
+            "cache_read_input_token_cost": 3e-07, "litellm_provider": "anthropic"},
+          "claude-sonnet-4-20250514": {"input_cost_per_token": 3e-06, "output_cost_per_token": 1.5e-05, "litellm_provider": "anthropic"},
+          "gpt-6.1-sol": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05,
+            "cache_read_input_token_cost": 1e-07,
+            "input_cost_per_token_above_272k_tokens": 4e-06, "output_cost_per_token_above_272k_tokens": 1.5e-05,
+            "cache_read_input_token_cost_above_272k_tokens": 2e-07,
+            "input_cost_per_token_priority": 4e-06, "output_cost_per_token_priority": 2e-05,
+            "cache_read_input_token_cost_priority": 2e-07, "litellm_provider": "openai"},
+          "gpt-5.6-luna": {"input_cost_per_token": 2e-07, "output_cost_per_token": 1.2e-06, "litellm_provider": "openai"},
+          "o3": {"input_cost_per_token": 2e-06, "output_cost_per_token": 8e-06, "output_cost_per_reasoning_token": 9e-06, "litellm_provider": "openai"},
+          "gemini/gemini-3-pro": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1.2e-05, "litellm_provider": "gemini"},
+          "sample_spec": {"input_cost_per_token": 0, "output_cost_per_token": 0},
+          "dall-e-3": {"mode": "image_generation", "output_cost_per_image": 0.04}
+        }
+        """.utf8)
+
+    func catalog() throws -> PricingCatalog {
+        try PricingCatalog(liteLLM: liteLLM, supplement: PricingSupplement(
+            aliases: ["gpt-reserve": "gpt-5.6-luna"],
+            tierMultipliers: ["claude-opus-5-5": ["fast": 2]],
+            defaultTierMultipliers: ["priority": 2]))
+    }
+
+    @Test func aDatedEntryTakesItsModelsTierMultiplier() throws {
+        let data = Data("""
+            {"claude-opus-4-6-20260205": {"input_cost_per_token": 5e-06, "output_cost_per_token": 2.5e-05, "litellm_provider": "anthropic"},
+             "anthropic/claude-opus-4.6": {"input_cost_per_token": 5e-06, "output_cost_per_token": 2.5e-05, "litellm_provider": "anthropic"}}
+            """.utf8)
+        let catalog = try PricingCatalog(liteLLM: data, supplement: PricingSupplement(
+            tierMultipliers: ["claude-opus-4-6": ["fast": 6]]))
+        // The exact dated entry keeps its own base prices and gains the multiplier.
+        let dated = try #require(catalog.rates(for: "claude-opus-4-6-20260205"))
+        #expect(dated.input == 5e-06)
+        #expect(dated.tierMultipliers["fast"] == 6)
+        #expect(catalog.rates(for: "anthropic/claude-opus-4.6")?.tierMultipliers["fast"] == 6)
+    }
+
+    @Test func liteLLMEntriesBecomeRatesPerTokenKind() throws {
+        let rates = try #require(try catalog().rates(for: "claude-opus-5-5"))
+        #expect(rates.input == 4e-06)
+        #expect(rates.output == 2e-05)
+        #expect(rates.cacheRead == 2e-07)
+        #expect(rates.cacheWrite == 5e-06)
+        #expect(rates.cacheWrite1h == 8e-06)
+        // No separate reasoning price: reasoning bills as output.
+        #expect(rates.reasoning == 2e-05)
+        #expect(try catalog().rates(for: "o3")?.reasoning == 9e-06)
+    }
+
+    @Test func costIsTheSumOfEachKindAtItsOwnRate() throws {
+        let rates = try #require(try catalog().rates(for: "claude-opus-5-5"))
+        // The fixture's msg_A2: 3 input, 21,000 cache read, 200 5m + 300 1h writes, 60 output.
+        let cost = rates.cost(input: 3, output: 60, cacheRead: 21_000, cacheWrite: 500, cacheWrite1h: 300, reasoning: 0)
+        let input: Double = 3 * 4e-06
+        let output: Double = 60 * 2e-05
+        let reads: Double = 21_000 * 2e-07
+        let writes: Double = 200 * 5e-06 + 300 * 8e-06
+        let expected = input + output + reads + writes
+        #expect(abs(cost - expected) < 1e-12)
+    }
+
+    @Test func anthropicOneHourWritesDefaultToTwiceTheInputRate() throws {
+        let rates = try #require(try catalog().rates(for: "claude-sonnet-4-5"))
+        #expect(rates.cacheWrite1h == 6e-06)
+        #expect(rates.cacheWrite == 3e-06)
+    }
+
+    @Test func namesAreMatchedThroughPrefixesSuffixesAndSeparators() throws {
+        let catalog = try catalog()
+        #expect(catalog.rates(for: "anthropic/claude-opus-5-5")?.input == 4e-06)
+        #expect(catalog.rates(for: "us.anthropic.claude-opus-5-5-v1:0")?.input == 4e-06)
+        #expect(catalog.rates(for: "claude-opus-5-5[1m]")?.input == 4e-06)
+        #expect(catalog.rates(for: "claude-opus-5.5")?.input == 4e-06)
+        #expect(catalog.rates(for: "claude-sonnet-4-5-20250929")?.input == 3e-06)
+        #expect(catalog.rates(for: "gpt-6.1-sol-2026-09-30")?.input == 2e-06)
+        #expect(catalog.rates(for: "gemini-3-pro")?.input == 2e-06)
+        #expect(catalog.rates(for: "GPT-6.1-Sol")?.input == 2e-06)
+        #expect(catalog.rates(for: "gpt-reserve")?.input == 2e-07)
+        // Devin logs the reasoning effort as a suffix and dashes for dots.
+        #expect(catalog.rates(for: "gpt-6-1-sol-high")?.input == 2e-06)
+        #expect(catalog.rates(for: "claude-opus-5-5-xhigh")?.input == 4e-06)
+        // A shorter version never borrows a longer one's price, or the reverse.
+        #expect(catalog.rates(for: "claude-sonnet-4")?.input == 3e-06)
+        #expect(catalog.rates(for: "claude-sonnet-4")?.longContext == nil)
+        #expect(catalog.rates(for: "claude-sonnet-4-6") == nil)
+        #expect(catalog.rates(for: "swe-2-max") == nil)
+        #expect(catalog.rates(for: "sample_spec") == nil)
+    }
+
+    @Test func longContextAndPriorityRatesApplyPerRequest() throws {
+        let rates = try #require(try catalog().rates(for: "gpt-6.1-sol"))
+        #expect(rates.longContext?.threshold == 272_000)
+        let long = rates.cost(input: 10_000, output: 200, cacheRead: 290_000, cacheWrite: 0, cacheWrite1h: 0,
+                              reasoning: 0, crossesLongContext: true)
+        #expect(abs(long - (10_000 * 4e-06 + 200 * 1.5e-05 + 290_000 * 2e-07)) < 1e-12)
+        let priority = rates.cost(input: 1_000, output: 100, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0,
+                                  reasoning: 0, tier: "priority")
+        #expect(abs(priority - (1_000 * 4e-06 + 100 * 2e-05)) < 1e-12)
+    }
+
+    @Test func tiersWithoutExplicitRatesUseTheSupplementMultiplier() throws {
+        let catalog = try catalog()
+        let opus = try #require(catalog.rates(for: "claude-opus-5-5"))
+        let fast = opus.cost(input: 1_000, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reasoning: 0, tier: "fast")
+        #expect(abs(fast - 1_000 * 4e-06 * 2) < 1e-12)
+        let luna = try #require(catalog.rates(for: "gpt-5.6-luna"))
+        let priority = luna.cost(input: 1_000, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reasoning: 0, tier: "priority")
+        #expect(abs(priority - 1_000 * 2e-07 * 2) < 1e-12)
+    }
+
+    @Test func theBundledSnapshotPricesTheModelsInUse() throws {
+        let catalog = try PricingCatalog.bundled()
+        for model in ["claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5",
+                      "claude-haiku-4-5-20251001", "gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-sol", "gpt-5.4-mini"] {
+            #expect(catalog.rates(for: model) != nil, "\(model) is unpriced")
+        }
+        #expect(catalog.rates(for: "claude-opus-5")?.tierMultipliers["fast"] == 2)
+    }
+
+    @Test func refreshFetchesThroughTheTransportAndCachesTheResult() async throws {
+        let temp = try TempDir()
+        let cache = temp.path("pricing/litellm.json")
+        let now = utc("2026-10-11T00:00:00Z")
+        let store = PricingStore(cacheFile: cache, transport: StubTransport(data: liteLLM), minimumModels: 1)
+        let refreshed = try #require(await store.refreshIfStale(now: now))
+        #expect(refreshed.rates(for: "gpt-6.1-sol")?.input == 2e-06)
+        #expect(FileManager.default.fileExists(atPath: cache.path))
+
+        // Within a day the cached copy is used and the network is not asked.
+        let offline = PricingStore(cacheFile: cache, transport: StubTransport(error: Offline()), minimumModels: 1)
+        #expect(await offline.refreshIfStale(now: now.addingTimeInterval(3_600)) == nil)
+        #expect(try offline.load().rates(for: "o3")?.reasoning == 9e-06)
+    }
+
+    @Test func aFailedOrGarbledRefreshKeepsWhatWasThere() async throws {
+        let temp = try TempDir()
+        let cache = temp.path("pricing/litellm.json")
+        let offline = PricingStore(cacheFile: cache, transport: StubTransport(error: Offline()), minimumModels: 1)
+        #expect(await offline.refreshIfStale(now: Date()) == nil)
+        let garbled = PricingStore(cacheFile: cache, transport: StubTransport(data: Data("<html>".utf8)), minimumModels: 1)
+        #expect(await garbled.refreshIfStale(now: Date()) == nil)
+        #expect(!FileManager.default.fileExists(atPath: cache.path))
+        // With no refreshed copy, load falls back to the bundled snapshot.
+        #expect(try offline.load().rates(for: "claude-opus-5-5") != nil)
+    }
+}
+
+@Suite struct LedgerPricingTests {
+    @Test func totalsPriceEachEventAndReportUnknownModelsAsUnpriced() async throws {
+        let temp = try TempDir()
+        let home = try temp.copyFixture("claude-home")
+        let pricing = try PricingCatalog(liteLLM: Data("""
+            {"claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05,
+              "cache_read_input_token_cost": 2e-07, "cache_creation_input_token_cost": 5e-06,
+              "cache_creation_input_token_cost_above_1hr": 8e-06, "litellm_provider": "anthropic"}}
+            """.utf8))
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: pricing)
+        try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
+
+        let sessionB = DateInterval(start: utc("2026-10-04T00:00:00Z"), end: utc("2026-10-05T00:00:00Z"))
+        let totals = await ledger.totals(in: sessionB)
+        // B1 on opus 5.5 is priced; its advisor call on opus 5 is not in this catalog.
+        let b1 = 4 * 4e-06 + 22_000 * 2e-07 + 90 * 2e-05
+        #expect(abs(totals.costUSD - b1) < 1e-9)
+        #expect(totals.unpricedTokens == 340)
+        #expect(totals.unpricedModels == ["claude-opus-5"])
+
+        // The legacy line's logged cost wins over any catalog.
+        let september = DateInterval(start: utc("2026-09-01T00:00:00Z"), end: utc("2026-10-01T00:00:00Z"))
+        #expect(await ledger.totals(in: september).costUSD == 0.25)
+        #expect(await ledger.totals(in: september).unpricedTokens == 0)
+    }
+}

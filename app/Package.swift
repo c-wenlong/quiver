@@ -9,7 +9,7 @@ let package = Package(
     ],
     targets: [
         // Everything testable: models, the swe client, scanners, view models.
-        .target(name: "QuiverCore"),
+        .target(name: "QuiverCore", resources: [.process("Resources")]),
         // The SwiftUI shell. Kept thin so behaviour lives in QuiverCore.
         .executableTarget(name: "QuiverApp", dependencies: ["QuiverCore"]),
         .testTarget(
