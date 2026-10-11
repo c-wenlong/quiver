@@ -157,6 +157,37 @@ let harnessesJSON = #"""
         #expect(model.busy.isEmpty)
     }
 
+    @Test func aRenameFromAccountsWaitsForAnEditFromHarnesses() async throws {
+        // Two pages, two models, one harness.json: their writes share one queue.
+        let runner = CountingRunner(counts: { ["harness", "edit"].contains($0.first) }, reply: { args in
+            switch args.first {
+            case "harness": ok(#"{"name": "x", "state": "starred"}"#)
+            case "edit": ok(#"{"name": "codex", "changes": ["display_name"], "harness": {"name": "codex", "command": "codex", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 0, "rate_limit": null}}"#)
+            default: ok(harnessesJSON)
+            }
+        })
+        let swe = SweClient(runner: runner)
+        let model = HarnessesModel(swe: swe)
+        await model.load()
+        let opencode = try #require(model.all.first { $0.name == "opencode" })
+        async let a: Void = model.toggleStar(opencode)
+        async let b: Void = HarnessesModel.rename("codex", to: "Codex CLI", using: swe)
+        _ = try await (a, b)
+        #expect(runner.calls.contains(["edit", "codex", "--display-name=Codex CLI", "--json"]))
+        #expect(runner.peak == 1)
+    }
+
+    @Test func searchFindsAHarnessByItsDisplayName() async {
+        let json = harnessesJSON.replacingOccurrences(of: #""name": "codex","#, with: #""name": "codex", "display_name": "Work assistant","#)
+        let (model, _) = model([(["list"], ok(json))])
+        await model.load()
+        model.query = "work assist"
+        #expect(model.visible.map(\.name) == ["codex"])
+        // The built-in brand name counts too.
+        model.query = "claude code"
+        #expect(model.visible.map(\.name) == ["claude"])
+    }
+
     @Test func aFailedChangeKeepsTheListAndSaysWhy() async throws {
         let (model, _) = model([
             (["harness", "star"], CommandResult(status: 1, stdout: Data(), stderr: "  Tool 'codex' not found. Try 'swe list'.")),

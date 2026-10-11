@@ -118,7 +118,10 @@ public final class HarnessesModel {
     public var showsUnstarred = false
 
     private let swe: SweClient
-    private let gate = SerialGate()
+    /// Every swe run that rewrites harness.json, from any page, waits here:
+    /// two at once can each read the file and one loses the other's change.
+    static let registryWrites = SerialGate()
+    private var gate: SerialGate { Self.registryWrites }
     private var generation = 0
 
     public init(swe: SweClient) {
@@ -158,6 +161,7 @@ public final class HarnessesModel {
             .filter { harness in
                 needle.isEmpty
                     || harness.name.lowercased().contains(needle)
+                    || harness.title.lowercased().contains(needle)
                     || harness.description.lowercased().contains(needle)
                     || harness.tags.contains { $0.lowercased().contains(needle) }
             }
@@ -218,6 +222,15 @@ public final class HarnessesModel {
         }
         await load()
         return nil
+    }
+
+    /// Sets a harness's display name from outside the Harnesses page (the
+    /// Accounts cards), through the same queue as every other registry write.
+    /// An empty name clears it.
+    public static func rename(_ harness: String, to name: String, using swe: SweClient) async throws {
+        await registryWrites.acquire()
+        defer { registryWrites.release() }
+        try await swe.editHarness(harness, flags: ["--display-name=\(name.trimmingCharacters(in: .whitespaces))"])
     }
 
     private func change(_ name: String, _ work: (SweClient) async throws -> HarnessStateChange) async {

@@ -341,6 +341,8 @@ private struct HarnessAccountCard: View {
     var perform: (@escaping () async throws -> Void) -> Void
     @State private var renaming = false
     @State private var newName = ""
+    /// A rename in flight; the menu waits for it.
+    @State private var saving = false
 
     var body: some View {
         let limit = row.limit
@@ -361,8 +363,10 @@ private struct HarnessAccountCard: View {
                         Divider()
                     }
                     Button("Rename…") { newName = name; renaming = true }
+                        .disabled(saving)
                     if name != ownName {
                         Button("Use the name \(ownName)") { rename(to: "") }
+                            .disabled(saving)
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -438,10 +442,14 @@ private struct HarnessAccountCard: View {
     /// The harness's display name lives in harness.json, so a rename goes
     /// through `swe edit` and the cards reload from swe.
     private func rename(to name: String) {
+        guard !saving else { return }
+        saving = true
         let swe = app.swe
         let others = app.others
+        let harness = row.name
         perform {
-            try await swe.editHarness(row.name, flags: ["--display-name=\(name.trimmingCharacters(in: .whitespaces))"])
+            defer { saving = false }
+            try await HarnessesModel.rename(harness, to: name, using: swe)
             await others.load()
         }
     }
