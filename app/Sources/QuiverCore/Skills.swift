@@ -350,7 +350,7 @@ public final class SkillsModel {
     }
 
     /// Runs every fix swe can run for `plugin`, one at a time, then reloads
-    /// the hub. swe checks each gap still exists and builds the commands; the
+    /// the skills and the hub. swe checks each gap still exists and builds the commands; the
     /// app sends only the finding id. Call after the user has confirmed.
     public func fixHub(_ plugin: HubPlugin) async {
         let fixes = plugin.runnableFixes
@@ -371,6 +371,10 @@ public final class SkillsModel {
             hubError = error.localizedDescription
         }
         gate.release()
+        // A fix can add, update or enable a plugin's skills, so the Installed
+        // tab is stale too. Reload both, failure or not: a failed run may
+        // still have changed files.
+        await load()
         await loadHub()
     }
 

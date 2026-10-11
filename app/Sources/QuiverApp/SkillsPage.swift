@@ -354,6 +354,9 @@ private struct HubBrowser: View {
     @Bindable var model: SkillsModel
 
     var body: some View {
+        // Outside the switch: when the reload after a failed fix also fails,
+        // the reason the fix failed must stay on screen.
+        if let error = model.hubError { ErrorCard(message: error) }
         switch model.hub {
         case .idle, .loading:
             ProgressView().frame(maxWidth: .infinity)
@@ -369,7 +372,6 @@ private struct HubBrowser: View {
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Spacer(minLength: 0)
             }
-            if let error = model.hubError { ErrorCard(message: error) }
             if plugins.isEmpty {
                 Card {
                     Text(hub.plugins.isEmpty ? "No plugins in the hub yet." : "No plugins match.")

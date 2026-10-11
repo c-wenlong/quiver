@@ -290,17 +290,21 @@ let hubJSON = #"""
              "fix": "claude plugin update drawer@kit", "runnable": true, "paths": ["SKILL.md"]}}
             """#)),
             (["skills", "hub", "--json"], ok(hubJSON)),
+            (["skills", "--json"], ok(inventoryJSON)),
         ])
         await model.loadHub()
         let drawer = try #require(model.hubPlugins.first { $0.name == "drawer" })
         // codex's half is an edit by hand: shown, never sent to swe.
         #expect(drawer.manualFixes == ["set enabled = true in ~/.codex/config.toml"])
         await model.fixHub(drawer)
+        // The fix can change installed skills too, so both tabs reload.
         #expect(runner.calls == [
             ["skills", "hub", "--json"],
             ["find", "plugins", "--fix=claude:stale:drawer@kit", "--json"],
+            ["skills", "--json"],
             ["skills", "hub", "--json"],
         ])
+        #expect(model.allSkills.count == 4)
         #expect(model.hubError == nil)
         #expect(model.fixingPlugin == nil)
     }
@@ -310,11 +314,12 @@ let hubJSON = #"""
             (["find", "plugins"], CommandResult(status: 1, stdout: Data(),
                                                 stderr: "claude is not on PATH")),
             (["skills", "hub", "--json"], ok(hubJSON)),
+            (["skills", "--json"], ok(inventoryJSON)),
         ])
         await model.loadHub()
         await model.fixHub(try #require(model.hubPlugins.first { $0.name == "toolkit" }))
         #expect(model.hubError == "claude is not on PATH")
-        #expect(runner.calls.last == ["skills", "hub", "--json"])
+        #expect(runner.calls.suffix(2) == [["skills", "--json"], ["skills", "hub", "--json"]])
     }
 
     @Test func aPluginWithNothingToRunNeverCallsSwe() async throws {
