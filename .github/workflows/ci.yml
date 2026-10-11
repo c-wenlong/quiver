@@ -192,3 +192,24 @@ jobs:
           test_home="$(mktemp -d)"
           HOME="$test_home" swe --help
           HOME="$test_home" swe session --help
+
+  app:
+    # The SwiftPM package under app/ targets macOS 26, so it needs the
+    # macOS 26 image and its Xcode; macos-latest may still be older.
+    name: macOS app build and test
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Unit tests
+        run: swift test
+
+      - name: Bundle Quiver.app
+        run: ./script/build-app.sh debug
