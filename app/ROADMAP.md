@@ -16,6 +16,8 @@ remembering CLI commands.
 | Sidebar | Usage: Overview, Sessions. Manage: Accounts, Skills, AGENTS.md, MCP servers. System: Doctor, Settings |
 | Accounts page | Limits merged with Switchboard-style profiles: each account card has its limit bars, when they were fetched, and Open app / Terminal buttons |
 | Dropped from TokenTracker | Leaderboard, Achievements, Pet, IP Check, Service Status, cloud sync |
+| Other apps' data | None shared. Quiver replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted, so it never reads or writes their files, settings or caches, not even to import. |
+| Profile store | Switchboard's model (one config home and one desktop data folder per profile, launched with the env var and `--user-data-dir`), kept under `~/.quiver/accounts` |
 
 ## Borrowed code
 
@@ -45,7 +47,7 @@ remembering CLI commands.
 - [ ] CI job on a macOS 26 runner: build and `swift test`
 
 ### M2. Accounts
-- [ ] Profile store and directory layout (see open questions)
+- [ ] Profile store and directory layout under `~/.quiver/accounts`
 - [ ] Open a desktop app or terminal per profile (Claude, Codex)
 - [ ] Native limit fetchers: Claude, Codex, Devin, Cursor, Copilot
 - [ ] Carry over the safeguards in `rate_limits.py`: honor provider cooldowns
@@ -80,6 +82,4 @@ remembering CLI commands.
 
 ## Open questions
 
-- Profile store: read and write Switchboard's `~/.switchboard/profiles.json` so
-  both apps share the same profiles, or keep our own under `~/.quiver`?
 - App name and icon.

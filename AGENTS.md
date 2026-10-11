@@ -13,6 +13,14 @@ Deeper references, read before touching the relevant area:
 - [ARCHITECTURE.md](ARCHITECTURE.md): layering rules, `~/.quiver` layout, registry states, link-state vocabulary, session engines, caches, drift checks.
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
+## The macOS app (`app/`)
+
+`app/` is a native SwiftUI app on top of `swe`; [app/ROADMAP.md](app/ROADMAP.md) has the plan and [app/README.md](app/README.md) the build steps. It replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted once it covers them. So:
+
+- **Quiver shares no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything Quiver keeps lives under `~/.quiver`.
+- **Borrow ideas and code, not state.** Their source is a reference for how to do something (Switchboard's per-profile directories and launch flags, OpenUsage's menu bar panel and pricing, AIUsage's incremental scanning, TokenTracker's design). Quiver re-implements it against its own files. Keep the licence notices for any code copied.
+- The harnesses' own files (`~/.claude`, `~/.codex`, and so on) are not another app's data. Reading them is the point.
+
 ## Commands
 
 ```bash
