@@ -191,3 +191,77 @@ import Testing
         #expect(docs.onlyPattern == "docs")
     }
 }
+
+@MainActor
+@Suite struct SkillsSnapshotTests {
+    let start = Date(timeIntervalSince1970: 1_791_700_000)
+
+    func model(_ runner: ScriptedRunner, skills: MemorySnapshotStore<Snapshot<SkillInventory>>,
+               hub: MemorySnapshotStore<Snapshot<HubCatalog>>, clock: TestClock) -> SkillsModel {
+        SkillsModel(swe: SweClient(runner: runner), snapshots: skills, hubSnapshots: hub, maxAge: 60,
+                    now: { clock.now })
+    }
+
+    @Test func theLastSkillsAndHubShowAtOnceOnTheNextLaunch() async throws {
+        let skills = MemorySnapshotStore<Snapshot<SkillInventory>>()
+        let hub = MemorySnapshotStore<Snapshot<HubCatalog>>()
+        let clock = TestClock(start)
+        let runner = ScriptedRunner([(["skills", "hub", "--json"], ok(hubJSON)), (["skills", "--json"], ok(inventoryJSON))])
+        let first = model(runner, skills: skills, hub: hub, clock: clock)
+        await first.loadIfStale(for: "/bin/swe")
+        await first.loadHubIfStale(for: "/bin/swe")
+
+        let next = model(ScriptedRunner([]), skills: skills, hub: hub, clock: clock)
+        await next.restore()
+        #expect(next.inventory == first.inventory)
+        #expect(next.hub == first.hub)
+        #expect(next.roots.map(\.link) == first.roots.map(\.link))
+        #expect(next.hubPlugins.first?.runnableFixes.map(\.id) == ["codex:not-installed:toolkit@kit"])
+    }
+
+    @Test func freshListsAreNotFetchedAgain() async throws {
+        let clock = TestClock(start)
+        let runner = ScriptedRunner([(["skills", "hub", "--json"], ok(hubJSON)), (["skills", "--json"], ok(inventoryJSON))])
+        let model = model(runner, skills: MemorySnapshotStore(), hub: MemorySnapshotStore(), clock: clock)
+        await model.loadIfStale(for: "/bin/swe")
+        await model.loadHubIfStale(for: "/bin/swe")
+        await model.loadIfStale(for: "/bin/swe")
+        await model.loadHubIfStale(for: "/bin/swe")
+        #expect(runner.calls == [["skills", "--json"], ["skills", "hub", "--json"]])
+        clock.advance(61)
+        await model.loadIfStale(for: "/bin/swe")
+        #expect(runner.calls.count == 3)
+        // Refresh always lists.
+        await model.load()
+        #expect(runner.calls.count == 4)
+    }
+
+    @Test func aLinkListsAgainAndSavesTheResult() async throws {
+        let skills = MemorySnapshotStore<Snapshot<SkillInventory>>()
+        let runner = ScriptedRunner([
+            (["skills", "link"], ok(#"{"action": "link"}"#)),
+            (["skills", "--json"], ok(inventoryJSON)),
+        ])
+        let model = model(runner, skills: skills, hub: MemorySnapshotStore(), clock: TestClock(start))
+        await model.loadIfStale(for: "/bin/swe")
+        let hermes = try #require(model.roots.first { $0.name == "hermes" })
+        runner.rules.insert((["skills", "--json"], ok(inventoryJSON.replacingOccurrences(
+            of: #""path": "/h/.hermes/skills", "state": "create""#, with: #""path": "/h/.hermes/skills", "state": "linked""#))),
+            at: 0)
+        await model.link(hermes)
+        #expect(runner.calls.filter { $0 == ["skills", "--json"] }.count == 2)
+        #expect(await skills.saved?.value.harnesses.first { $0.name == "hermes" }?.state == "linked")
+        #expect(await skills.saved?.source == "/bin/swe")
+    }
+
+    @Test func aNewSweIsUsedFromTheNextLoad() async throws {
+        let old = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let new = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let model = model(old, skills: MemorySnapshotStore(), hub: MemorySnapshotStore(), clock: TestClock(start))
+        await model.loadIfStale(for: "/old/swe")
+        model.swe = SweClient(runner: new)
+        await model.loadIfStale(for: "/new/swe")
+        #expect(old.calls.count == 1)
+        #expect(new.calls.count == 1)
+    }
+}

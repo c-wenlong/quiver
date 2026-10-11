@@ -3,7 +3,9 @@ import Observation
 
 /// `swe skills --json`: every skill on the machine, and each harness's
 /// skills folder with its link state.
-public struct SkillInventory: Decodable, Sendable, Equatable {
+public struct SkillInventory: SnapshotValue {
+    public static let snapshotVersion = 1
+
     public let sharedDir: String
     public let harnesses: [SkillRoot]
     public let skills: [Skill]
@@ -17,7 +19,7 @@ public struct SkillInventory: Decodable, Sendable, Equatable {
 
 /// The one folder a harness reads skills from. quiver links whole folders,
 /// so this is where linking and unlinking happen.
-public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
+public struct SkillRoot: Codable, Sendable, Equatable, Identifiable {
     /// What the page can do about a folder.
     public enum Link: Sendable, Equatable {
         /// Points at `~/.quiver/skills`.
@@ -92,8 +94,8 @@ public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
     }
 }
 
-public struct Skill: Decodable, Sendable, Equatable, Identifiable {
-    public enum Source: String, Decodable, Sendable, CaseIterable {
+public struct Skill: Codable, Sendable, Equatable, Identifiable {
+    public enum Source: String, Codable, Sendable, CaseIterable {
         case shared, plugin, harness, builtin, catalog, project
 
         public var title: String {
@@ -145,7 +147,9 @@ public struct Skill: Decodable, Sendable, Equatable, Identifiable {
 
 /// `swe skills hub --json`: the plugins in the `~/.quiver/plugins`
 /// marketplaces, and whether each harness has them.
-public struct HubCatalog: Decodable, Sendable, Equatable {
+public struct HubCatalog: SnapshotValue {
+    public static let snapshotVersion = 1
+
     public let hub: String
     public let plugins: [HubPlugin]
 
@@ -155,16 +159,16 @@ public struct HubCatalog: Decodable, Sendable, Equatable {
     }
 }
 
-public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
-    public struct Skill: Decodable, Sendable, Equatable, Identifiable {
+public struct HubPlugin: Codable, Sendable, Equatable, Identifiable {
+    public struct Skill: Codable, Sendable, Equatable, Identifiable {
         public var id: String { path }
         public let name: String
         public let description: String
         public let path: String
     }
 
-    public struct Install: Decodable, Sendable, Equatable {
-        public enum State: String, Decodable, Sendable {
+    public struct Install: Codable, Sendable, Equatable {
+        public enum State: String, Codable, Sendable {
             case installed
             case unregistered
             case notInstalled = "not-installed"
@@ -264,8 +268,8 @@ struct LinkReply: Decodable { let action: String }
 @MainActor
 @Observable
 public final class SkillsModel {
-    public private(set) var inventory: Loadable<SkillInventory> = .idle
-    public private(set) var hub: Loadable<HubCatalog> = .idle
+    public var inventory: Loadable<SkillInventory> { skills.state }
+    public var hub: Loadable<HubCatalog> { hubLoader.state }
     /// Roots with a link or unlink in flight, by path.
     public private(set) var busy: Set<String> = []
     /// The last link or unlink that failed, in swe's words.
@@ -280,47 +284,53 @@ public final class SkillsModel {
     public var harness: String?
     public var source: Skill.Source?
 
-    private let swe: SweClient
+    /// The swe chosen in Settings; a new one is used from the next load.
+    public var swe: SweClient
     private let gate = SerialGate()
-    private var generation = 0
-    private var hubGeneration = 0
+    private let skills: SnapshotLoader<SkillInventory>
+    private let hubLoader: SnapshotLoader<HubCatalog>
 
-    public init(swe: SweClient) {
+    /// - Parameters:
+    ///   - snapshots, hubSnapshots: where the last skills and hub are kept
+    ///     between launches.
+    ///   - maxAge: how long a list counts as fresh, so a page opened again
+    ///     soon after doesn't ask swe again.
+    ///   - timeout: how long swe may take before a list counts as failed.
+    public init(swe: SweClient, snapshots: (any SnapshotStoring<Snapshot<SkillInventory>>)? = nil,
+                hubSnapshots: (any SnapshotStoring<Snapshot<HubCatalog>>)? = nil, maxAge: TimeInterval = 60,
+                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
         self.swe = swe
+        skills = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
+        hubLoader = SnapshotLoader(snapshots: hubSnapshots, maxAge: maxAge, timeout: timeout, now: now)
     }
 
-    public func load() async {
-        generation += 1
-        let mine = generation
-        if case .loaded = inventory {} else { inventory = .loading }
-        let next: Loadable<SkillInventory>
-        do {
-            next = .loaded(try await swe.skills())
-        } catch is CancellationError {
-            // Back to idle, so the next visit loads again instead of spinning.
-            if mine == generation, inventory == .loading { inventory = .idle }
-            return
-        } catch {
-            next = .failed(error.localizedDescription)
-        }
-        if mine == generation { inventory = next }
+    /// Shows the last saved skills and hub until swe answers.
+    public func restore() async {
+        await skills.restore()
+        await hubLoader.restore()
     }
 
-    public func loadHub() async {
-        hubGeneration += 1
-        let mine = hubGeneration
-        if case .loaded = hub {} else { hub = .loading }
-        let next: Loadable<HubCatalog>
-        do {
-            next = .loaded(try await swe.skillsHub())
-        } catch is CancellationError {
-            // Leaving the tab cancels the load; idle lets the next visit retry.
-            if mine == hubGeneration, hub == .loading { hub = .idle }
-            return
-        } catch {
-            next = .failed(error.localizedDescription)
-        }
-        if mine == hubGeneration { hub = next }
+    /// Lists the skills unless this swe's list is fresh; joins a list in flight.
+    /// - Parameter source: the swe asked, as set in Settings.
+    public func loadIfStale(for source: String) async {
+        let swe = swe
+        await skills.loadIfStale(from: source) { try await swe.skills() }
+    }
+
+    public func loadHubIfStale(for source: String) async {
+        let swe = swe
+        await hubLoader.loadIfStale(from: source) { try await swe.skillsHub() }
+    }
+
+    /// Always lists. `source` nil keeps the last swe.
+    public func load(for source: String? = nil) async {
+        let swe = swe
+        await skills.load(from: source) { try await swe.skills() }
+    }
+
+    public func loadHub(for source: String? = nil) async {
+        let swe = swe
+        await hubLoader.load(from: source) { try await swe.skillsHub() }
     }
 
     public func link(_ root: SkillRoot) async {
