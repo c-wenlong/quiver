@@ -63,7 +63,7 @@ private struct Sidebar: View {
     }
 
     private func move(_ offset: Int) -> KeyPress.Result {
-        let next = (model.selection ?? .overview).step(offset)
+        let next = (focused ?? model.selection ?? .overview).step(offset)
         model.selection = next
         if focused != nil { focused = next }
         return .handled
