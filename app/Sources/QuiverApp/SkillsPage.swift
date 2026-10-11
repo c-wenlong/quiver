@@ -25,6 +25,13 @@ struct SkillsPage: View {
             .help("Refresh")
         } content: {
             Tabs(options: [(Tab.installed, "Installed"), (Tab.hub, "Quiver hub")], selection: $tab, style: .underline)
+                // The harness links fold into one line on the tab row, so the
+                // first skill sits right under the filter bar.
+                .overlay(alignment: .trailing) {
+                    if tab == .installed, let model, case .loaded(let inventory) = model.inventory {
+                        HarnessLinksSummary(model: model, sharedDir: inventory.sharedDir)
+                    }
+                }
             if let model {
                 switch tab {
                 case .installed: InstalledSkills(model: model)
@@ -51,95 +58,136 @@ private struct InstalledSkills: View {
     var body: some View {
         switch model.inventory {
         case .idle, .loading:
-            ProgressView().frame(maxWidth: .infinity)
+            LoadingCard(text: "Reading skills…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let inventory):
             if let error = model.actionError { ErrorCard(message: error) }
-            HarnessLinks(model: model, sharedDir: inventory.sharedDir)
             filters(total: inventory.skills.count)
             let skills = model.visibleSkills
             if skills.isEmpty {
-                Card {
-                    Text(inventory.skills.isEmpty ? "No skills on this Mac yet." : "No skills match.")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                }
+                EmptyCard(text: inventory.skills.isEmpty ? "No skills on this Mac yet." : "No skills match.",
+                          icon: "sparkles")
             } else {
-                VStack(spacing: 0) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(skills) { skill in
-                            SkillRow(skill: skill, model: model)
-                            if skill.id != skills.last?.id { Divider().overlay(Theme.border) }
-                        }
+                // Straight on the panel, like TokenTracker's lists: hairlines
+                // between rows, no card around them.
+                LazyVStack(spacing: 0) {
+                    ForEach(skills) { skill in
+                        SkillRow(skill: skill, model: model)
+                        if skill.id != skills.last?.id { Rectangle().fill(Theme.border).frame(height: 1) }
                     }
                 }
-                .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
             }
         }
     }
 
+    /// The page's one filter bar: selects, then search taking the slack,
+    /// then the count.
     private func filters(total: Int) -> some View {
         let harnesses = Array(Set(model.allSkills.flatMap(\.harnesses))).sorted()
         let sources = Skill.Source.allCases.filter { source in model.allSkills.contains { $0.source == source } }
         return HStack(spacing: 8) {
+            // Closed, the menus say "All" so "Harness: All harnesses" never
+            // truncates in a 168pt select.
             SelectMenu(label: "Harness",
                        options: [(String?.none, "All harnesses")] + harnesses.map { (String?.some($0), $0) },
-                       selection: $model.harness)
+                       selection: $model.harness,
+                       title: model.harness ?? "All")
             SelectMenu(label: "Source",
                        options: [(Skill.Source?.none, "All sources")] + sources.map { (Skill.Source?.some($0), $0.title) },
-                       selection: $model.source)
+                       selection: $model.source,
+                       title: model.source?.title ?? "All")
             SearchField(prompt: "Filter skills", text: $model.query)
-                .frame(maxWidth: 320)
+                .frame(maxWidth: .infinity)
             Text("\(model.visibleSkills.count) of \(total) skills")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .monospacedDigit()
-            Spacer(minLength: 0)
+                .lineLimit(1)
+                .fixedSize()
         }
     }
 }
 
-/// One chip per harness skills folder. A click opens what can be done.
-private struct HarnessLinks: View {
+/// "13 of 14 linked" on the tab row. A click opens the harness skills
+/// folders, and a folder opens what can be done with it, in the same popover.
+private struct HarnessLinksSummary: View {
     var model: SkillsModel
     var sharedDir: String
+    @State private var open = false
+    @State private var hovering = false
 
     var body: some View {
         let roots = model.roots
         let linked = roots.filter { $0.link == .linked }.count
-        Card(title: "Harness links",
-             subtitle: "Each harness reads one skills folder. A linked folder points at \(abbreviated(sharedDir)), so every shared skill reaches it.") {
-            Text("\(linked) of \(roots.count) linked")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
-        } content: {
-            if roots.isEmpty {
-                Text("No harness skills folders found. Run swe init to set them up.")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-            } else {
-                FlowLayout(spacing: 6, lineSpacing: 6) {
-                    ForEach(roots) { root in
-                        RootChip(root: root, model: model)
-                    }
-                }
-                LinkLegend()
+        let blocked = roots.contains { $0.link == .blocked }
+        Button { open = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "link").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Text("Harness links").foregroundStyle(Theme.textPrimary)
+                Text(roots.isEmpty ? "None found" : "\(linked) of \(roots.count) linked")
+                    .foregroundStyle(Theme.textSecondary).monospacedDigit()
+                if blocked { LinkDot(link: .blocked) }
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
             }
+            .font(Theme.caption)
+            .padding(.horizontal, 8)
+            .frame(height: Theme.controlHeight)
+            .background(hovering || open ? Theme.tabHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .contentShape(.rect(cornerRadius: Theme.controlRadius))
+        }
+        .plainButton(cornerRadius: Theme.controlRadius)
+        .onHover { hovering = $0 }
+        .help("Which harnesses load the shared skills")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            HarnessLinksPanel(model: model, sharedDir: sharedDir)
         }
     }
 }
 
-private struct RootChip: View {
-    var root: SkillRoot
+/// One chip per harness skills folder; a chip opens its detail in place.
+private struct HarnessLinksPanel: View {
     var model: SkillsModel
-    @State private var open = false
+    var sharedDir: String
+    @State private var selected: SkillRoot.ID?
 
     var body: some View {
-        Button { open = true } label: {
-            LinkChipLabel(name: root.name, link: root.link, busy: model.busy.contains(root.path))
-        }
-        .plainButton(cornerRadius: 999)
-        .help("\(root.name): \(root.link.title.lowercased())")
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            RootDetail(root: root, model: model) { open = false }
+        let roots = model.roots
+        if let id = selected, let root = roots.first(where: { $0.id == id }) {
+            VStack(alignment: .leading, spacing: 0) {
+                Button("Harness links", systemImage: "chevron.left") { selected = nil }
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .plainButton()
+                    .padding([.top, .horizontal], 16)
+                RootDetail(root: root, model: model) { selected = nil }
+            }
+            .frame(width: 320, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Harness links").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    Text("Each harness reads one skills folder. A linked folder points at \(abbreviated(sharedDir)), so every shared skill reaches it.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if roots.isEmpty {
+                    Text("No harness skills folders found. Run swe init to set them up.")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                } else {
+                    FlowLayout(spacing: 6, lineSpacing: 6) {
+                        ForEach(roots) { root in
+                            Button { selected = root.id } label: {
+                                LinkChipLabel(name: root.name, link: root.link, busy: model.busy.contains(root.path))
+                            }
+                            .plainButton(cornerRadius: 999)
+                            .help("\(root.name): \(root.link.title.lowercased())")
+                        }
+                    }
+                    LinkLegend()
+                }
+            }
+            .padding(16)
+            .frame(width: 440, alignment: .leading)
         }
     }
 }
@@ -239,7 +287,7 @@ private struct LinkLegend: View {
                     Text(link.title).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Text("Click a harness to link or unlink it.")
+            Text("Click one to link or unlink it.")
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
         }
     }
@@ -260,7 +308,7 @@ private struct SkillRow: View {
                         if !skill.description.isEmpty {
                             Text(skill.description)
                                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                                .lineLimit(expanded ? nil : 2)
+                                .lineLimit(expanded ? nil : 1)
                                 .multilineTextAlignment(.leading)
                         }
                         Text(abbreviated(skill.path))
@@ -304,9 +352,13 @@ private struct SkillRow: View {
                 .padding(.leading, 2)
             }
         }
-        .padding(.horizontal, Theme.cardPadding)
-        .padding(.vertical, 16)
-        .background(hovering ? Theme.rowHover : .clear)
+        .padding(.vertical, 12)
+        // The fill reaches past the text so the row reads as one target.
+        .background {
+            RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .fill(hovering ? Theme.rowHover : .clear)
+                .padding(.horizontal, -8)
+        }
         .onHover { hovering = $0 }
     }
 
@@ -359,7 +411,7 @@ private struct HubBrowser: View {
         if let error = model.hubError { ErrorCard(message: error) }
         switch model.hub {
         case .idle, .loading:
-            ProgressView().frame(maxWidth: .infinity)
+            LoadingCard(text: "Reading the hub…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let hub):
@@ -367,16 +419,17 @@ private struct HubBrowser: View {
             let markets = Set(hub.plugins.map(\.marketplace)).count
             HStack(spacing: 8) {
                 SearchField(prompt: "Search plugins and skills", text: $model.query)
-                    .frame(maxWidth: 360)
-                Text("\(hub.plugins.count) plugins from \(markets) marketplaces in \(abbreviated(hub.hub))/plugins")
+                    .frame(maxWidth: .infinity)
+                Text("\(plugins.count) of \(hub.plugins.count) plugins")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                Spacer(minLength: 0)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help("From \(markets) marketplaces in \(abbreviated(hub.hub))/plugins")
             }
             if plugins.isEmpty {
-                Card {
-                    Text(hub.plugins.isEmpty ? "No plugins in the hub yet." : "No plugins match.")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                }
+                EmptyCard(text: hub.plugins.isEmpty ? "No plugins in the hub yet." : "No plugins match.",
+                          icon: "shippingbox")
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Theme.gutter, alignment: .top)],
                           spacing: Theme.gutter) {
@@ -398,7 +451,7 @@ private struct PluginCard: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 4) {
-                Text(plugin.name).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Text(plugin.name).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
                 Text([plugin.marketplace, plugin.version.map { "v\($0)" }].compactMap { $0 }.joined(separator: " · "))
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
