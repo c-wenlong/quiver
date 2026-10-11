@@ -118,13 +118,29 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
         self.savedSummary = savedSummary
     }
 
-    /// The server as it may be written to disk: no command line or URL,
-    /// which can hold a key swe didn't know to scrub, only their redacted
-    /// summary; and no health, a probe of the moment whose detail may
-    /// quote a URL. Env and header values never reach the app at all.
+    /// The server as it may be written to disk. No command line or URL:
+    /// a short key in an argument or URL path slips past both swe's and
+    /// the app's scrubbers, so only the program or the scheme and host
+    /// are kept, with "…" for the rest. No health either, a probe of the
+    /// moment whose detail may quote a URL. Env and header values never
+    /// reach the app at all.
     public var saved: McpServer {
         McpServer(name: name, transport: transport, envKeys: envKeys, headerKeys: headerKeys, harnesses: harnesses,
-                  conflict: conflict, variants: variants, savedSummary: summary)
+                  conflict: conflict, variants: variants, savedSummary: savedSummary ?? outline)
+    }
+
+    /// The program or the scheme and host, and "…" when there is more.
+    var outline: String {
+        if let url {
+            let redacted = McpRedaction.url(url)
+            let start = redacted.range(of: "://")?.upperBound ?? redacted.startIndex
+            guard let end = redacted[start...].firstIndex(where: { "/?#".contains($0) }) else { return redacted }
+            return redacted[..<end] + "/…"
+        }
+        let words = McpRedaction.words(command: command ?? "", args: args)
+        guard let program = words.first else { return "" }
+        let shown = McpRedaction.args([program]).first ?? "…"
+        return words.count > 1 ? shown + " …" : shown
     }
 
     /// Definitions grouped by who agrees. Without `variants`, everyone is

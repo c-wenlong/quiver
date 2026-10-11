@@ -101,11 +101,11 @@ import Testing
     let start = Date(timeIntervalSince1970: 1_791_700_000)
     let listing = json(#"""
     {"harnesses": ["claude", "codex"], "servers": [
-      {"name": "github", "transport": "stdio", "command": "npx --token SECRET1", "args": ["gh", "--api-key=SECRET2", "KEY=SECRET3"],
+      {"name": "github", "transport": "stdio", "command": "npx --token SECRET1", "args": ["gh", "SECRETpos", "--api-key=SECRET2", "KEY=SECRET3"],
        "url": null, "env_keys": ["GITHUB_TOKEN"], "header_keys": [], "harnesses": ["claude", "codex"],
        "conflict": false, "variants": [["claude", "codex"]]},
       {"name": "docs", "transport": "http", "command": null, "args": [],
-       "url": "https://me:SECRET4@docs.example/mcp?key=SECRET5#SECRET6",
+       "url": "https://me:SECRET4@docs.example/s/SECRET9ab/mcp?key=SECRET5#SECRET6",
        "env_keys": [], "header_keys": ["Authorization"], "harnesses": ["claude"],
        "conflict": false, "variants": [["claude"]]}
     ]}
@@ -140,8 +140,9 @@ import Testing
         let restored = try #require(inventory(next))
         #expect(restored.harnesses == live.harnesses)
         #expect(restored.servers.map(\.name) == ["github", "docs"])
-        // What the page shows of each server reads the same.
-        #expect(restored.servers.map(\.summary) == live.servers.map(\.summary))
+        // A saved summary keeps only the program or host: a short key in an
+        // argument or URL path can slip past both scrubbers.
+        #expect(restored.servers.map(\.summary) == ["npx …", "https://…@docs.example/…"])
         #expect(restored.servers.map(\.envKeys) == live.servers.map(\.envKeys))
         #expect(restored.servers.map(\.headerKeys) == live.servers.map(\.headerKeys))
         #expect(restored.servers.map(\.groups) == live.servers.map(\.groups))
