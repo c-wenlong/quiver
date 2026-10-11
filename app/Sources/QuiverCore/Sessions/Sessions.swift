@@ -227,7 +227,7 @@ public final class SessionsModel {
     private let now: () -> Date
     private let calendar: Calendar
     private var listed: [SessionInfo] = []
-    private let snapshots: SessionSnapshotStoring?
+    private let snapshots: (any SnapshotStoring<SessionSnapshot>)?
     private let maxAge: TimeInterval
     private let listTimeout: Duration
     /// When the list on show was listed and by which swe; nil until one is.
@@ -253,7 +253,7 @@ public final class SessionsModel {
     ///   - listTimeout: how long swe may take before the listing is stopped
     ///     and counts as failed, so a hung swe can't block the next try.
     public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
-                limit: Int = 100_000, snapshots: SessionSnapshotStoring? = nil, maxAge: TimeInterval = 60,
+                limit: Int = 100_000, snapshots: (any SnapshotStoring<SessionSnapshot>)? = nil, maxAge: TimeInterval = 60,
                 listTimeout: Duration = .seconds(60),
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.source = source

@@ -3,7 +3,7 @@ import Testing
 @testable import QuiverCore
 
 /// Keeps the last snapshot in memory.
-actor MemorySnapshots: SessionSnapshotStoring {
+actor MemorySnapshots: SnapshotStoring {
     var saved: SessionSnapshot?
     private(set) var saves = 0
     init(_ saved: SessionSnapshot? = nil) { self.saved = saved }
@@ -61,7 +61,7 @@ actor HangingSource: SessionListing {
                             firstTimestamp: start.addingTimeInterval(-600), lastTimestamp: start)
     }
 
-    func model(source: SessionListing, ledger: FakeSessionLedger, snapshots: SessionSnapshotStoring,
+    func model(source: SessionListing, ledger: FakeSessionLedger, snapshots: any SnapshotStoring<SessionSnapshot>,
                clock: TestClock) -> SessionsModel {
         SessionsModel(source: source, ledger: ledger, defaultHomes: ["/Users/k/.claude", "/Users/k/.codex"],
                       snapshots: snapshots, maxAge: 60, now: { clock.now })
