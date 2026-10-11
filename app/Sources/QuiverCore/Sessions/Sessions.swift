@@ -135,6 +135,28 @@ public final class SessionsModel {
         public var id: String { session.id }
         public var session: SessionInfo
         public var usage: SessionUsage?
+
+        public init(session: SessionInfo, usage: SessionUsage?) {
+            self.session = session
+            self.usage = usage
+        }
+
+        /// From the first to the last recorded event, when the ledger has any.
+        public var duration: TimeInterval? {
+            usage.map { $0.lastTimestamp.timeIntervalSince($0.firstTimestamp) }
+        }
+    }
+
+    /// What the filters currently match.
+    public struct Summary: Equatable, Sendable {
+        public var sessions = 0
+        public var totals = UsageTotals()
+    }
+
+    public struct DayGroup: Identifiable, Equatable, Sendable {
+        public var id: Date { day }
+        public var day: Date
+        public var rows: [Row]
     }
 
     public enum Window: String, CaseIterable, Identifiable, Sendable {
@@ -208,6 +230,8 @@ public final class SessionsModel {
             if var existing = byId[row.sessionId] {
                 existing.totals.add(row.totals)
                 existing.models = Array(Set(existing.models + row.models)).sorted()
+                existing.firstTimestamp = min(existing.firstTimestamp, row.firstTimestamp)
+                existing.lastTimestamp = max(existing.lastTimestamp, row.lastTimestamp)
                 byId[row.sessionId] = existing
             } else {
                 byId[row.sessionId] = row
@@ -219,6 +243,29 @@ public final class SessionsModel {
             .map { Row(session: $0, usage: byId[$0.id]) }
         failures = list.failures
         error = nil
+    }
+
+    public var summary: Summary {
+        var summary = Summary()
+        for row in visible {
+            summary.sessions += 1
+            if let usage = row.usage { summary.totals.add(usage.totals) }
+        }
+        return summary
+    }
+
+    /// The visible sessions by the local day they were last active, newest first.
+    public func groupedByDay(calendar: Calendar = .current) -> [DayGroup] {
+        var groups: [DayGroup] = []
+        for row in visible {
+            let day = calendar.startOfDay(for: row.session.lastActiveAt)
+            if groups.last?.day == day {
+                groups[groups.count - 1].rows.append(row)
+            } else {
+                groups.append(DayGroup(day: day, rows: [row]))
+            }
+        }
+        return groups
     }
 
     public var harnesses: [String] { Array(Set(rows.map(\.session.harness))).sorted() }
@@ -235,7 +282,8 @@ public final class SessionsModel {
             if let project = filter.project, s.project != project { return false }
             if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
             if !needle.isEmpty {
-                let haystack = [s.title, s.cwd, s.id, s.agent].compactMap { $0 }.joined(separator: " ").lowercased()
+                let haystack = ([s.title, s.cwd, s.project, s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
+                    .compactMap { $0 }.joined(separator: " ").lowercased()
                 if !haystack.contains(needle) { return false }
             }
             return true

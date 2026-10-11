@@ -124,6 +124,43 @@ actor FakeSessionLedger: SessionUsageQuerying {
         model.filter = .init()
         model.filter.search = "ledger"
         #expect(model.visible.map(\.id) == ["a"])
+        // Search covers the project and the models too.
+        model.filter.search = "sonnet"
+        #expect(model.visible.map(\.id) == ["c"])
+        model.filter.search = "quiver"
+        #expect(model.visible.map(\.id) == ["a"])
+    }
+
+    @Test func visibleSessionsAreSummedAndGroupedByDay() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Singapore")!
+        // now is 2026-10-11 12:26 SGT; a and b fall on Oct 11, c on Oct 2.
+        let model = await model([
+            session("a", "claude", cwd: "/c/quiver", at: 1_791_699_000),
+            session("b", "codex", cwd: "/c/site", at: 1_791_650_000),
+            session("c", "claude", cwd: "/c/site", at: 1_790_900_000),
+        ], [usage("a", "claude", models: ["opus"], cost: 4), usage("c", "claude", models: ["sonnet"], cost: 1.5)])
+        await model.load()
+
+        let summary = model.summary
+        #expect(summary.sessions == 3)
+        #expect(summary.totals.totalTokens == 200)
+        #expect(summary.totals.costUSD == 5.5)
+
+        let groups = model.groupedByDay(calendar: calendar)
+        #expect(groups.map { $0.rows.map(\.id) } == [["a", "b"], ["c"]])
+        #expect(groups.first?.day == Date(timeIntervalSince1970: 1_791_648_000))
+
+        model.filter.harness = "codex"
+        #expect(model.summary.sessions == 1)
+        #expect(model.summary.totals.totalTokens == 0)
+    }
+
+    @Test func aSessionsDurationSpansItsFirstAndLastEvent() {
+        var usage = usage("a", "claude", models: [], cost: 0)
+        usage.firstTimestamp = now
+        usage.lastTimestamp = now.addingTimeInterval(2 * 3600 + 5 * 60)
+        #expect(SessionsModel.Row(session: session("a", "claude", cwd: nil, at: 0), usage: usage).duration == 7500)
     }
 
     @Test func aFailedListingIsShown() async {
