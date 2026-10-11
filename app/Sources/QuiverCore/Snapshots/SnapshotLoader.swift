@@ -13,6 +13,7 @@ public final class SnapshotLoader<Value: SnapshotValue> {
     private let maxAge: TimeInterval
     private let timeout: Duration
     private let now: @Sendable () -> Date
+    private let saving: @Sendable (Value) -> Value
     /// When the value on show was fetched and from which swe; nil until one is.
     private var loadedAt: Date?
     private var loadedFrom: String?
@@ -31,12 +32,16 @@ public final class SnapshotLoader<Value: SnapshotValue> {
     ///     again soon after doesn't ask swe again.
     ///   - timeout: how long swe may take before the fetch is stopped and
     ///     counts as failed, so a hung swe can't block the next try.
+    ///   - saving: what of a value goes to disk, for a value holding
+    ///     anything that must stay in memory.
     public init(snapshots: (any SnapshotStoring<Snapshot<Value>>)?, maxAge: TimeInterval = 60,
-                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
+                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init,
+                saving: @escaping @Sendable (Value) -> Value = { $0 }) {
         self.snapshots = snapshots
         self.maxAge = maxAge
         self.timeout = timeout
         self.now = now
+        self.saving = saving
     }
 
     /// Shows the last saved value until swe answers. Does nothing once a
@@ -107,7 +112,7 @@ public final class SnapshotLoader<Value: SnapshotValue> {
         let at = now()
         loadedAt = at
         loadedFrom = key
-        await snapshots?.save(Snapshot(source: key, savedAt: at, value: value))
+        await snapshots?.save(Snapshot(source: key, savedAt: at, value: saving(value)))
         return true
     }
 

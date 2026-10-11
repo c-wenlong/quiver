@@ -5,7 +5,9 @@ import Observation
 ///
 /// Env and header values never reach the app: swe sends only their names,
 /// and scrubs credentials out of commands, arguments and URLs.
-public struct McpInventory: Decodable, Sendable, Equatable {
+public struct McpInventory: SnapshotValue {
+    public static let snapshotVersion = 1
+
     /// Every harness config swe read, servers or not, in its order.
     public let harnesses: [String]
     public let servers: [McpServer]
@@ -28,6 +30,11 @@ public struct McpInventory: Decodable, Sendable, Equatable {
             for name in servers.flatMap(\.harnesses) where !seen.contains(name) { seen.append(name) }
             harnesses = seen
         }
+    }
+
+    /// What may be saved: every server as `McpServer.saved` keeps it.
+    public var saved: McpInventory {
+        McpInventory(harnesses: harnesses, servers: servers.map(\.saved))
     }
 
     /// Harnesses that configure at least one server. One with none is not
@@ -70,7 +77,7 @@ public enum McpFilter: String, CaseIterable, Sendable {
     }
 }
 
-public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
+public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     public var id: String { name }
     public let name: String
     public let transport: String
@@ -88,11 +95,14 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
     /// From `swe mcp status` only: ok, error or unknown.
     public let health: String?
     public let detail: String?
+    /// Set only on a saved server, which keeps `summary` in place of the
+    /// command line or URL.
+    let savedSummary: String?
 
     public init(name: String, transport: String = "stdio", command: String? = nil, args: [String] = [],
                 url: String? = nil, envKeys: [String] = [], headerKeys: [String] = [],
                 harnesses: [String], conflict: Bool = false, variants: [[String]]? = nil,
-                health: String? = nil, detail: String? = nil) {
+                health: String? = nil, detail: String? = nil, savedSummary: String? = nil) {
         self.name = name
         self.transport = transport
         self.command = command
@@ -105,6 +115,32 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
         self.variants = variants
         self.health = health
         self.detail = detail
+        self.savedSummary = savedSummary
+    }
+
+    /// The server as it may be written to disk. No command line or URL:
+    /// a short key in an argument or URL path slips past both swe's and
+    /// the app's scrubbers, so only the program or the scheme and host
+    /// are kept, with "…" for the rest. No health either, a probe of the
+    /// moment whose detail may quote a URL. Env and header values never
+    /// reach the app at all.
+    public var saved: McpServer {
+        McpServer(name: name, transport: transport, envKeys: envKeys, headerKeys: headerKeys, harnesses: harnesses,
+                  conflict: conflict, variants: variants, savedSummary: savedSummary ?? outline)
+    }
+
+    /// The program or the scheme and host, and "…" when there is more.
+    var outline: String {
+        if let url {
+            let redacted = McpRedaction.url(url)
+            let start = redacted.range(of: "://")?.upperBound ?? redacted.startIndex
+            guard let end = redacted[start...].firstIndex(where: { "/?#".contains($0) }) else { return redacted }
+            return redacted[..<end] + "/…"
+        }
+        let words = McpRedaction.words(command: command ?? "", args: args)
+        guard let program = words.first else { return "" }
+        let shown = McpRedaction.args([program]).first ?? "…"
+        return words.count > 1 ? shown + " …" : shown
     }
 
     /// Definitions grouped by who agrees. Without `variants`, everyone is
@@ -137,6 +173,7 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
     /// may be a secret hidden. swe swaps known keys for `${NAME}`, but a
     /// token it doesn't know would otherwise show as typed.
     public var summary: String {
+        if let savedSummary { return savedSummary }
         if let url { return McpRedaction.url(url) }
         let words = McpRedaction.words(command: command ?? "", args: args)
         return McpRedaction.args(words).joined(separator: " ").trimmingCharacters(in: .whitespaces)
@@ -419,33 +456,47 @@ extension SweClient {
 @MainActor
 @Observable
 public final class McpModel {
-    public private(set) var state: Loadable<McpInventory> = .idle
+    public var state: Loadable<McpInventory> { loader.state }
     /// True while `swe mcp status` probes every server.
     public private(set) var checkingHealth = false
-    public private(set) var hasHealth = false
+    /// The list on show came with health, from `swe mcp status`.
+    public var hasHealth: Bool {
+        guard case .loaded(let inventory) = state else { return false }
+        return inventory.servers.contains { $0.health != nil }
+    }
+    private let loader: SnapshotLoader<McpInventory>
     private var generation = 0
 
-    public init() {}
+    /// - Parameter snapshots: where the last list is kept between launches,
+    ///   as `McpInventory.saved` has it.
+    public init(snapshots: (any SnapshotStoring<Snapshot<McpInventory>>)? = nil, maxAge: TimeInterval = 60,
+                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
+        loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now,
+                                saving: \.saved)
+    }
+
+    /// Shows the last saved list, without health, until swe answers.
+    public func restore() async {
+        await loader.restore()
+    }
+
+    /// Reads the list again unless this swe's is fresh; joins a read in flight.
+    public func loadIfStale(swe: SweClient, for source: String) async {
+        await loader.loadIfStale(from: source) { try await swe.mcpServers(health: false) }
+    }
 
     /// The list, or with `health` the list plus a probe of every server,
-    /// which takes a few seconds per unreachable URL.
-    public func load(swe: SweClient, health: Bool = false) async {
+    /// which takes a few seconds per unreachable URL, so it gets longer
+    /// before it counts as hung.
+    /// - Parameter source: the swe asked, as set in Settings; nil keeps the last one.
+    public func load(swe: SweClient, for source: String? = nil, health: Bool = false) async {
         generation += 1
         let mine = generation
-        if case .loaded = state {} else { state = .loading }
         if health { checkingHealth = true }
         defer { if mine == generation { checkingHealth = false } }
-        let next: Loadable<McpInventory>
-        do {
-            next = .loaded(try await swe.mcpServers(health: health))
-        } catch is CancellationError {
-            return
-        } catch {
-            next = .failed(error.localizedDescription)
+        await loader.load(from: source, timeout: health ? .seconds(300) : nil) {
+            try await swe.mcpServers(health: health)
         }
-        guard mine == generation else { return }
-        state = next
-        hasHealth = health && { if case .loaded = next { true } else { false } }()
     }
 
     /// The server as the latest load has it.
