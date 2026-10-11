@@ -35,7 +35,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Callable, Iterable
 
 from quiver import __version__
@@ -61,6 +61,17 @@ def _pie(remaining_percent: int) -> str:
     return f"\033[38;5;{code}m{glyph}\033[0m"
 
 
+def _window(label: str, used: float, reset_at: float, window_seconds: int) -> dict:
+    """One quota window, as ``RateLimitInfo.windows`` holds it."""
+    return {
+        "window": label,
+        "used_percent": int(round(min(100.0, max(0.0, used)))),
+        "limit_reached": used >= 100,
+        "reset_at": reset_at,
+        "window_seconds": window_seconds,
+    }
+
+
 @dataclass
 class RateLimitInfo:
     """Normalised rate limit data for a single tool."""
@@ -82,6 +93,13 @@ class RateLimitInfo:
                                 # backward-compatible.
     remaining_units: float | None = None
     total_units: float | None = None
+    # Every window the provider reported, each a ``_window()`` dict, for
+    # tools with more than one (Devin's daily and weekly, Cursor's included,
+    # auto and API). The fields above stay the most-used one, which the
+    # table shows; the app lists them all. Empty for single-window tools.
+    windows: list = field(default_factory=list)
+    # Prepaid usage left beyond the plan (Devin's overage balance), in USD.
+    extra_usage_usd: float | None = None
     fetched_at: float = 0.0    # when the reading was actually taken;
                                # 0 means "just now", the common case.
                                # Lets a fetcher hand back a saved reading
@@ -111,6 +129,18 @@ class RateLimitInfo:
                           else self.plan_type),
             "remaining_units": self.remaining_units,
             "total_units": self.total_units,
+            "windows": [
+                {
+                    "window": w["window"],
+                    "used_percent": w["used_percent"],
+                    "remaining_percent": 100 - w["used_percent"],
+                    "limit_reached": w["limit_reached"],
+                    "reset_at": w["reset_at"] or None,
+                    "window_seconds": w["window_seconds"] or None,
+                }
+                for w in self.windows
+            ] if status == "ok" else [],
+            "extra_usage_usd": self.extra_usage_usd if status == "ok" else None,
             "fetched_at": self.fetched_at or None,
         }
 
@@ -1762,10 +1792,13 @@ _CURSOR_STATE_DB_CANDIDATES: tuple[str, ...] = (
 # selected model (its ``autoModelSelectedDisplayMessage`` says "You've used
 # 50% of your included total usage" against ``totalPercentUsed: 50.2``);
 # ``autoPercentUsed`` is that bucket's own share and is never shown to the
-# user, so it is deliberately not here. ``apiPercentUsed`` is the figure
-# for a named model. The most-used of the two is surfaced, as for Claude.
+# user, so it is deliberately not here. ``totalPercentUsed`` is the plan's
+# Included figure, ``autoPercentUsed`` the Auto model's and ``apiPercentUsed``
+# a named model's, the three rows `cursor-agent usage` shows. All are listed;
+# the most-used one is surfaced, as for Claude.
 _CURSOR_BUCKETS: tuple[tuple[str, str], ...] = (
-    ("totalPercentUsed", "auto"),
+    ("totalPercentUsed", "included"),
+    ("autoPercentUsed", "auto"),
     ("apiPercentUsed", "api"),
 )
 
@@ -1875,21 +1908,6 @@ def _parse_cursor_usage(data: dict) -> RateLimitInfo | None:
     plan = data.get("planUsage")
     if not isinstance(plan, dict):
         return None
-    best_label = ""
-    best_percent = -1.0
-    for field, label in _CURSOR_BUCKETS:
-        try:
-            percent = float(plan.get(field))
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(percent):
-            continue
-        if percent > best_percent:
-            best_percent = percent
-            best_label = label
-    if best_percent < 0:
-        return None
-
     reset_at = _cursor_ms_to_epoch(data.get("billingCycleEnd"))
     cycle_start = _cursor_ms_to_epoch(data.get("billingCycleStart"))
     window_seconds = (
@@ -1897,15 +1915,37 @@ def _parse_cursor_usage(data: dict) -> RateLimitInfo | None:
         if reset_at and cycle_start and reset_at > cycle_start
         else 0
     )
+    best_label = ""
+    best_percent = -1.0
+    windows = []
+    for name, label in _CURSOR_BUCKETS:
+        try:
+            percent = float(plan.get(name))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(percent):
+            continue
+        windows.append(_window(label, percent, reset_at, window_seconds))
+        if percent > best_percent:
+            best_percent = percent
+            best_label = label
+    if best_percent < 0:
+        return None
+
+    # A team seat's spend limit is the team's pool; the CLI's "Usage · Team".
+    spend = data.get("spendLimitUsage")
+    limit_type = spend.get("limitType") if isinstance(spend, dict) else None
+    plan_type = limit_type.strip().lower() if isinstance(limit_type, str) and limit_type.strip() else "—"
     used_percent = int(round(min(100.0, max(0.0, best_percent))))
     return RateLimitInfo(
         tool_name="cursor",
         used_percent=used_percent,
         limit_reached=best_percent >= 100,
         reset_at=reset_at,
-        plan_type="—",
+        plan_type=plan_type,
         window_seconds=window_seconds,
         window=best_label,
+        windows=windows,
     )
 
 
@@ -1986,8 +2026,8 @@ _DEVIN_USER_STATUS_RPC = (
 )
 
 # Devin's quota windows as they appear under ``userStatus.planStatus``:
-# (remaining-percent field, reset field, column label). The most-used
-# window is surfaced, as for Claude.
+# (remaining-percent field, reset field, column label). Both are listed;
+# the most-used window is surfaced, as for Claude.
 _DEVIN_WINDOWS: tuple[tuple[str, str, str], ...] = (
     ("dailyQuotaRemainingPercent", "dailyQuotaResetAtUnix", "1d"),
     ("weeklyQuotaRemainingPercent", "weeklyQuotaResetAtUnix", "7d"),
@@ -2057,9 +2097,18 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
         else "—"
     )
 
+    # Prepaid usage beyond the quota, in millionths of a dollar: `devin
+    # /usage`'s "Extra usage balance".
+    try:
+        micros = float(plan.get("overageBalanceMicros"))
+        extra_usage_usd = round(micros / 1_000_000, 2) if math.isfinite(micros) and micros >= 0 else None
+    except (TypeError, ValueError):
+        extra_usage_usd = None
+
     best_label = ""
     best_used = -1.0
     best_reset = 0.0
+    windows = []
     for remaining_field, reset_field, label in _DEVIN_WINDOWS:
         remaining = plan.get(remaining_field)
         if isinstance(remaining, bool):
@@ -2071,6 +2120,8 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
         if not math.isfinite(remaining):
             continue
         used = 100.0 - remaining
+        windows.append(_window(label, used, _devin_unix_to_epoch(plan.get(reset_field)),
+                               86400 if label == "1d" else 604800))
         if used > best_used:
             best_used = used
             best_label = label
@@ -2085,6 +2136,8 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
             plan_type=plan_type,
             window_seconds=86400 if best_label == "1d" else 604800,
             window=best_label,
+            windows=windows,
+            extra_usage_usd=extra_usage_usd,
         )
 
     try:
@@ -2107,6 +2160,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
         window_seconds=0,
         remaining_units=remaining,
         total_units=total,
+        extra_usage_usd=extra_usage_usd,
     )
 
 
@@ -2157,6 +2211,10 @@ def _register_devin() -> None:
         return _fetch_devin()
 
     register("devin", fetch)
+
+
+# Tools whose fetchers list every quota window in ``RateLimitInfo.windows``.
+_MULTI_WINDOW_TOOLS = frozenset({"devin", "cursor"})
 
 
 # Register built-in fetchers at import time
@@ -2363,6 +2421,12 @@ def get_all_rate_limits(
                 # costs the deadline again.
                 if (isinstance(raw, dict)
                         and raw.get("plan_type") == "auth-required"):
+                    continue
+                # Saved by an swe from before these tools listed every
+                # window (or by an older swe still running): refetch rather
+                # than serve one window as the whole reading for the TTL.
+                if (name in _MULTI_WINDOW_TOOLS and isinstance(raw, dict)
+                        and "windows" not in raw):
                     continue
                 try:
                     info = RateLimitInfo(**raw)

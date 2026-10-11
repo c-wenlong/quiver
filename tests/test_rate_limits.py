@@ -447,6 +447,44 @@ class RateLimitRegistryTest(unittest.TestCase):
         already_cached.assert_not_called()
         newly_selected.assert_called_once_with()
 
+    def test_an_older_single_window_reading_of_devin_is_refetched(self):
+        """A cache written before windows were listed is not served as current."""
+        saved = _FETCHERS.copy()
+        fresh = RateLimitInfo(
+            tool_name="devin", used_percent=0, limit_reached=False, reset_at=0,
+            plan_type="teams", window_seconds=86400, window="1d",
+            windows=[{"window": "1d", "used_percent": 0, "limit_reached": False,
+                      "reset_at": 0, "window_seconds": 86400}],
+        )
+        devin = MagicMock(return_value=fresh)
+        cursor = MagicMock()
+        _FETCHERS.clear()
+        register("devin", devin)
+        register("cursor", cursor)
+        old = {"tool_name": "devin", "used_percent": 5, "limit_reached": False, "reset_at": 0,
+               "plan_type": "teams", "window_seconds": 86400, "window": "1d"}
+        new_cursor = {"tool_name": "cursor", "used_percent": 2, "limit_reached": False, "reset_at": 0,
+                      "plan_type": "team", "window_seconds": 0, "window": "auto",
+                      "windows": [{"window": "auto", "used_percent": 2, "limit_reached": False,
+                                   "reset_at": 0, "window_seconds": 0}]}
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+
+                _save_cached({"devin": old, "cursor": new_cursor})
+                result = get_all_rate_limits(use_cache=True, tool_names={"devin", "cursor"})
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        devin.assert_called_once_with()
+        cursor.assert_not_called()
+        self.assertEqual(len(result["devin"].windows), 1)
+        self.assertEqual(result["cursor"].windows[0]["window"], "auto")
+
     def test_register_and_fetch(self):
         """A custom fetcher can be registered and queried."""
         saved = _FETCHERS.copy()
@@ -3300,8 +3338,8 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.reset_at, 1789190193.0)
         self.assertEqual(info.window_seconds, 2678400)
 
-    def test_parser_reports_total_usage_when_named_models_are_lower(self):
-        """The auto label carries totalPercentUsed, the dashboard's own figure."""
+    def test_parser_labels_auto_with_autoPercentUsed(self):
+        """totalPercentUsed is the Included figure; Auto is its own field."""
         from quiver.harness.rate_limits import _parse_cursor_usage
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
@@ -3311,17 +3349,46 @@ class CursorFetcherTest(unittest.TestCase):
         info = _parse_cursor_usage(data)
 
         self.assertEqual(info.window, "auto")
-        self.assertEqual(info.used_percent, 50)
+        self.assertEqual(info.used_percent, 99)
         self.assertFalse(info.limit_reached)
+
+    def test_parser_reports_every_bucket_like_the_cli(self):
+        """Included, Auto and API, as `cursor-agent usage` lists them."""
+        from quiver.harness.rate_limits import _parse_cursor_usage
+
+        info = _parse_cursor_usage(self._SAMPLE_RESPONSE)
+
+        self.assertEqual(
+            [(w["window"], w["used_percent"]) for w in info.windows],
+            [("included", 50), ("auto", 41), ("api", 100)],
+        )
+        for window in info.windows:
+            self.assertEqual(window["reset_at"], 1789190193.0)
+            self.assertEqual(window["window_seconds"], 2678400)
+        self.assertTrue(info.windows[2]["limit_reached"])
+        json_windows = info.to_json()["windows"]
+        self.assertEqual(json_windows[0]["remaining_percent"], 50)
+
+    def test_parser_reads_the_team_plan(self):
+        from quiver.harness.rate_limits import _parse_cursor_usage
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        self.assertIsNone(_parse_cursor_usage(data).to_json()["plan_type"])
+        data["spendLimitUsage"] = {"totalSpend": 14032, "limitType": "team"}
+        self.assertEqual(_parse_cursor_usage(data).plan_type, "team")
 
     def test_parser_skips_unusable_buckets(self):
         from quiver.harness.rate_limits import _parse_cursor_usage
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         data["planUsage"]["apiPercentUsed"] = "n/a"
-        self.assertEqual(_parse_cursor_usage(data).window, "auto")
+        info = _parse_cursor_usage(data)
+        self.assertEqual(info.window, "included")
+        self.assertEqual([w["window"] for w in info.windows], ["included", "auto"])
 
         data["planUsage"]["totalPercentUsed"] = None
+        self.assertEqual(_parse_cursor_usage(data).window, "auto")
+        data["planUsage"]["autoPercentUsed"] = None
         self.assertIsNone(_parse_cursor_usage(data))
 
         self.assertIsNone(_parse_cursor_usage({"planUsage": "missing"}))
@@ -3472,7 +3539,7 @@ class CursorFetcherTest(unittest.TestCase):
             "quiver.harness.rate_limits.time.time",
             return_value=1789190193.0 - 3 * 3600,
         ):
-            self.assertEqual(strip_ansi(info.format_column()), "◑ auto:3h0m")
+            self.assertEqual(strip_ansi(info.format_column()), "◑ included:3h0m")
 
 
 class DevinFetcherTest(unittest.TestCase):
@@ -3511,6 +3578,30 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertEqual(info.window_seconds, 604800)
         self.assertEqual(info.plan_type, "teams")
         self.assertFalse(info.limit_reached)
+
+    def test_parser_reports_both_windows_like_the_cli(self):
+        """Daily and weekly, as `devin /usage` lists them."""
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        info = _parse_devin_status(self._SAMPLE_RESPONSE)
+
+        self.assertEqual(
+            [(w["window"], w["used_percent"], w["reset_at"], w["window_seconds"]) for w in info.windows],
+            [("1d", 0, 1789200000.0, 86400), ("7d", 4, 1789286400.0, 604800)],
+        )
+        self.assertEqual([w["window"] for w in info.to_json()["windows"]], ["1d", "7d"])
+
+    def test_parser_reads_the_extra_usage_balance(self):
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        self.assertIsNone(_parse_devin_status(data).extra_usage_usd)
+        data["userStatus"]["planStatus"]["overageBalanceMicros"] = "9868980000"
+        info = _parse_devin_status(data)
+        self.assertEqual(info.extra_usage_usd, 9868.98)
+        self.assertEqual(info.to_json()["extra_usage_usd"], 9868.98)
+        data["userStatus"]["planStatus"]["overageBalanceMicros"] = "lots"
+        self.assertIsNone(_parse_devin_status(data).extra_usage_usd)
 
     def test_parser_picks_daily_when_it_is_the_tighter_window(self):
         from quiver.harness.rate_limits import _parse_devin_status

@@ -329,10 +329,21 @@ private struct OtherLimitRow: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             if limit.status == .ok {
-                // The same bar as an account card: window, reset, percent.
-                UsageBar(window: UsageWindow(label: limit.window ?? "Usage",
-                                             usedPercent: Double(min(max(limit.usedPercent, 0), 100)),
-                                             resetsAt: limit.resetAt))
+                // The same bars as an account card, one per window the
+                // harness reports: window, reset, percent.
+                ForEach(limit.allWindows, id: \.window) { window in
+                    UsageBar(window: UsageWindow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),
+                                                 usedPercent: Double(min(max(window.usedPercent, 0), 100)),
+                                                 resetsAt: window.resetAt))
+                }
+                if let balance = limit.extraUsageUSD {
+                    HStack {
+                        Text("Extra usage balance").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                        Text(UsageFormat.balance(balance)).font(Theme.caption.monospacedDigit())
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
             }
         }
     }
