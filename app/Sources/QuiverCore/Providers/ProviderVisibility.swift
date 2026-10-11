@@ -121,6 +121,8 @@ public final class ProviderVisibilityModel {
     private var installed: Set<String> = []
     private var order: [String] = []
     private var disabled: Set<String> = []
+    /// Bumped by each check; only the newest one writes its result.
+    private var request = 0
 
     public init(store: KeyValueStoring, detect: @escaping @Sendable () async throws -> Set<String>) {
         self.store = store
@@ -131,15 +133,22 @@ public final class ProviderVisibilityModel {
     }
 
     public func load() async {
+        request += 1
+        let mine = request
         isLoading = true
-        defer { isLoading = false }
-        do {
-            installed = try await detect()
+        let result: Result<Set<String>, Error>
+        do { result = .success(try await detect()) } catch { result = .failure(error) }
+        // A check replaced while it ran (another swe was chosen) is dropped.
+        guard mine == request else { return }
+        isLoading = false
+        switch result {
+        case .success(let found):
+            installed = found
             hasChecked = true
             checkError = nil
-        } catch is CancellationError {
+        case .failure(let error) where error is CancellationError:
             return
-        } catch {
+        case .failure(let error):
             // A check that couldn't run says nothing about what is installed.
             checkError = error.localizedDescription
         }

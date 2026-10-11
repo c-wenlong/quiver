@@ -158,7 +158,9 @@ private struct SpendDonut: View {
 
     var slice: SpendSlice? { slices.first { $0.period == period } }
 
-    var unpriced: Int { parts.reduce(0) { $0 + $1.totals.unpricedTokens } }
+    /// Every provider's tokens without a price, hidden ones included: the
+    /// total leaves them all out, so the note must count them all.
+    var unpriced: Int { slice?.byHarness.values.reduce(0) { $0 + $1.unpricedTokens } ?? 0 }
 
     var parts: [(harness: String, totals: UsageTotals)] {
         guard let slice else { return [] }
