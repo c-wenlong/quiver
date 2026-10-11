@@ -126,6 +126,7 @@ private struct HarnessRow: View {
     @State private var archiving = false
     @State private var reason = ""
     @State private var hovering = false
+    @State private var editing = false
 
     private var busy: Bool { model.busy.contains(harness.name) }
 
@@ -176,7 +177,13 @@ private struct HarnessRow: View {
         .padding(.horizontal, Theme.cardPadding)
         .padding(.vertical, 12)
         .background(hovering ? Theme.rowHover : .clear)
+        // A click anywhere but the buttons opens the editor.
+        .contentShape(.rect)
+        .onTapGesture { editing = true }
         .onHover { hovering = $0 }
+        .accessibilityAction(named: "Edit") { editing = true }
+        .help("Click to edit \(harness.name)")
+        .sheet(isPresented: $editing) { HarnessEditor(harness: harness, model: model) }
         .opacity(busy ? 0.6 : 1)
         .disabled(busy)
     }
@@ -258,5 +265,113 @@ private struct HarnessRow: View {
             if let date = local.date(from: text) { return date }
         }
         return nil
+    }
+}
+
+/// Every registry field swe keeps for a harness, edited through `swe edit`.
+private struct HarnessEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    var harness: Harness
+    var model: HarnessesModel
+    @State private var draft: HarnessEdit
+    @State private var error: String?
+    @State private var working = false
+
+    init(harness: Harness, model: HarnessesModel) {
+        self.harness = harness
+        self.model = model
+        _draft = State(initialValue: HarnessEdit(harness))
+    }
+
+    private var unchanged: Bool { draft.flags(from: HarnessEdit(harness)).isEmpty }
+
+    /// State, PATH and usage: what swe knows but the sheet doesn't edit.
+    private var facts: String {
+        let state = switch harness.state {
+        case .starred: "Starred"
+        case .active: "Not starred"
+        case .archived: "Archived"
+        }
+        var parts = [state]
+        if let installed = harness.installed { parts.append(installed ? "Installed" : "Not on PATH") }
+        if let sessions = harness.sessions100d {
+            parts.append(sessions == 1 ? "1 session in 100 days" : "\(sessions) sessions in 100 days")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
+                    HarnessIcon(harness: harness.name, size: 20)
+                    Text("Edit \(harness.name)").font(Theme.sectionTitle).tracking(-0.5)
+                        .foregroundStyle(Theme.textPrimary)
+                }
+                Text(facts).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            field("Command", hint: draft.commandProblem ?? "What swe runs to start it.", problem: draft.commandProblem != nil) {
+                TextField(harness.name, text: $draft.command).quiverField(monospaced: true)
+            }
+            field("Description") {
+                TextField("What it's good for", text: $draft.description, axis: .vertical)
+                    .lineLimit(1...4)
+                    .quiverField(multiline: true)
+            }
+            HStack(alignment: .top, spacing: 12) {
+                field("Version", hint: "Leave empty to clear it.") {
+                    TextField("1.0.0", text: $draft.version).quiverField(monospaced: true)
+                }
+                field("Aliases", hint: "Comma-separated short names.") {
+                    TextField("cc, claude-code", text: $draft.aliases).quiverField(monospaced: true)
+                }
+            }
+            field("Tags", hint: "Comma-separated, like agentic, coding, byok.") {
+                TextField("agentic, coding", text: $draft.tags).quiverField()
+            }
+            field("Notes") {
+                TextField("Anything worth remembering about it", text: $draft.notes, axis: .vertical)
+                    .lineLimit(2...6)
+                    .quiverField(multiline: true)
+            }
+            if let error {
+                Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
+                Button(working ? "Saving…" : "Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .primaryButton()
+                    .disabled(working || unchanged || draft.commandProblem != nil)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .background(Theme.panel)
+    }
+
+    private func field<Content: View>(_ label: String, hint: String? = nil, problem: Bool = false,
+                                      @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(Theme.control).foregroundStyle(Theme.textSecondary)
+            content()
+            if let hint {
+                Text(hint).font(Theme.caption).foregroundStyle(problem ? Theme.dangerText : Theme.textMuted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func save() {
+        working = true
+        error = nil
+        Task {
+            let failure = await model.save(harness, draft)
+            working = false
+            if let failure { error = failure } else { dismiss() }
+        }
     }
 }

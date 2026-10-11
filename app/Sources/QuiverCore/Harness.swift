@@ -18,13 +18,15 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
     public let installed: Bool?
     /// Why and when it was archived; nil unless archived.
     public let archived: Archive?
+    /// Free-form notes from harness.json. Nil when unset or from an older swe.
+    public let notes: String?
 
     enum CodingKeys: String, CodingKey {
         case name, command, description, version, aliases, tags, state
         // convertFromSnakeCase capitalises "100d" to "100D", so the
         // wire key `sessions_100d` arrives as `sessions100D`.
         case sessions100d = "sessions100D"
-        case rateLimit, installed, archived
+        case rateLimit, installed, archived, notes
     }
 
     public struct Archive: Decodable, Sendable, Equatable {
