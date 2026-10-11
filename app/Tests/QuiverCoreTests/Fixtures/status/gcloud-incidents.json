@@ -1,0 +1,158 @@
+[
+ {
+  "id": "41E5S3mkTGDfkZuJZH5k",
+  "number": "6876619551109882402",
+  "begin": "2026-02-27T12:37:00+00:00",
+  "created": "2026-02-27T16:12:30+00:00",
+  "end": "2026-02-27T14:35:00+00:00",
+  "modified": "2026-03-09T05:25:43+00:00",
+  "external_desc": "Vertex AI Gemini API customers experienced increased error rates when accessing the global endpoint.",
+  "updates": [
+   {
+    "created": "2026-03-09T05:25:43+00:00",
+    "modified": "2026-03-09T05:25:43+00:00",
+    "when": "2026-03-09T05:25:43+00:00",
+    "text": "# Incident Report\n## Summary\nOn Friday, 27 February 2026 at 04:37 US/Pacific, customers using Vertex AI Gemini API models experienced increased error rates. Impacted services included Google Cloud Support, Agent Assist, Vertex Gemini API and Dialogflow CX in US regions and the global endpoint. The issue persisted for a duration of 1 hour and 58 minutes.\nThis is not the level of quality and reliability we strive to offer you, and we have taken immediate steps to improve the platform\u2019s performance and availability.\n## Root Cause\nThis incident was caused by a configuration change to a safety filtering service that supports all Gemini models. For some specific requests, this created code paths that eventually led to service disruptions and capacity loss for the safety filtering service. Consequently, customers encountered overload (429 and 503) errors for their queries, with some users reporting elevated error rates for specific models in US regions.\n## Remediation and Prevention\nGoogle engineers were alerted to the issue via our automated monitoring system on Friday, 27 February 2026 04:54 US/Pacific and immediately started an investigation.\nEngineers identified the faulty configuration change and initiated a rollback to restore the previous stable configuration. Engineers also added more capacity to the service to stabilize it. Full service restoration was confirmed by 06:35 US/Pacific as the rollback propagated and servers became healthy. \\ \\\nGoogle is committed to preventing a repeat of this issue and is taking the following actions:\n* Reinforcing rollout processes to include mandatory validation checkpoints.\n* Improving alerting systems to monitor critical dependencies more closely.\n## ## Detailed Description of Impact\nOn Friday, 27 February 2026 between 04:37 and 06:35 US/Pacific, customers accessing Vertex Gemini APIs may have experienced the following:\n* **Affected Models:** All Vertex AI Gemini API models were affected, including gemini-2.5-flash, gemini-2.5-flash-lite, gemini-2.5-pro, gemini-3.0-flash-preview, gemini-3.0-pro-preview, gemini-2.0-flash, gemini-2.0-flash-lite.\n* **Error Experience:** * **PayGo Customers:** Experienced primarily 429 Resource Exhausted errors. * **Provisioned Throughput (PT) Customers:** Received 503 Service Unavailable errors. * For PT customers, most errors stopped at **06:00**. For PayGo customers, most errors stopped at **06:20**.\n* **Geographic Scope:** Global endpoint, us-central1, us-east4, and other US regions were impacted.",
+    "status": "AVAILABLE",
+    "affected_locations": []
+   },
+   {
+    "created": "2026-03-04T23:23:18+00:00",
+    "modified": "2026-03-09T05:25:43+00:00",
+    "when": "2026-03-04T23:23:18+00:00",
+    "text": "# Preliminary Incident Report\nWe apologize for the inconvenience this service disruption may have caused. We would like to provide some information about this incident below. Please note, this information is based on our best knowledge at the time of posting and is subject to change as our investigation continues. A final Incident Report with preventative actions will be posted once our investigation is complete. If you have experienced impact outside of what is listed below, please reach out to Google Cloud Support using https://cloud.google.com/support.\n## Date/Time of the Issue (All time US/Pacific)\nIncident Start: 27 February 2026 04:37\nIncident End: 27 February 2026 06:35\nDuration: 1 hour, 58 minutes\n## Summary\nOn Friday, 27 February 2026 at 04:37 US/Pacific, customers using Vertex AI Gemini API models (including Gemini 2.0, 2.5, and 3.0 previews) experienced increased error rates. Impacted services included Google Cloud Support, Agent Assist, the Vertex Gemini API and Dialogflow CX in US regions and the global endpoint for a duration of 1 hour and 58 minutes.\nThis is not the level of quality and reliability we strive to offer you, and we are taking immediate steps to improve the platform\u2019s performance and availability.\n## Preliminary Root Cause\nThis incident was caused by a configuration change to a safety filtering service that supports all Gemini models. This configuration change enabled a code path that interacted poorly with specific requests, leading to service disruption for the safety filtering service. This in turn led to customers seeing overload (429 and 503) errors for their queries.\nGoogle engineers have begun a full root cause analysis and will provide additional information once it is available.\n## Remediation\nGoogle engineers were alerted to the service disruption via automated alert on Friday, 27 February 2026 04:54 US/Pacific and immediately started an investigation.\nEngineers identified the faulty configuration change for a safety filtering service and initiated a rollback to restore the previous stable configuration. Additionally, engineers added more capacity to the service. Full service restoration was confirmed by 06:35 US/Pacific as the rollback propagated and servers became healthy.\n## Description of Impact\nOn Friday, 27 February 2026 between 04:37 and 06:35 US/Pacific, customers accessing Vertex Gemini APIs may have experienced the following:\n- Affected Models: All Gemini versions were affected, including gemini-2.5-flash, gemini-2.5-flash-lite, gemini-2.5-pro, gemini-3.0-flash-preview, gemini-3.0-pro-preview, gemini-2.0-flash, gemini-2.0-flash-lite.\n- Error Experience: - PayGo Customers: Experienced primarily 429 Resource Exhausted errors. - Provisioned Throughput (PT) Customers: Received 503 Service Unavailable errors. - For PT customers, most errors stopped at 06:00. For PayGo customers, most errors stopped at 06:20.\n- Geographic Scope: Global endpoint, us-central1, us-east4, and other US regions were impacted.",
+    "status": "AVAILABLE",
+    "affected_locations": []
+   }
+  ],
+  "most_recent_update": {
+   "created": "2026-03-09T05:25:43+00:00",
+   "modified": "2026-03-09T05:25:43+00:00",
+   "when": "2026-03-09T05:25:43+00:00",
+   "text": "# Incident Report\n## Summary\nOn Friday, 27 February 2026 at 04:37 US/Pacific, customers using Vertex AI Gemini API models experienced increased error rates. Impacted services included Google Cloud Support, Agent Assist, Vertex Gemini API and Dialogflow CX in US regions and the global endpoint. The issue persisted for a duration of 1 hour and 58 minutes.\nThis is not the level of quality and reliability we strive to offer you, and we have taken immediate steps to improve the platform\u2019s performance and availability.\n## Root Cause\nThis incident was caused by a configuration change to a safety filtering service that supports all Gemini models. For some specific requests, this created code paths that eventually led to service disruptions and capacity loss for the safety filtering service. Consequently, customers encountered overload (429 and 503) errors for their queries, with some users reporting elevated error rates for specific models in US regions.\n## Remediation and Prevention\nGoogle engineers were alerted to the issue via our automated monitoring system on Friday, 27 February 2026 04:54 US/Pacific and immediately started an investigation.\nEngineers identified the faulty configuration change and initiated a rollback to restore the previous stable configuration. Engineers also added more capacity to the service to stabilize it. Full service restoration was confirmed by 06:35 US/Pacific as the rollback propagated and servers became healthy. \\ \\\nGoogle is committed to preventing a repeat of this issue and is taking the following actions:\n* Reinforcing rollout processes to include mandatory validation checkpoints.\n* Improving alerting systems to monitor critical dependencies more closely.\n## ## Detailed Description of Impact\nOn Friday, 27 February 2026 between 04:37 and 06:35 US/Pacific, customers accessing Vertex Gemini APIs may have experienced the following:\n* **Affected Models:** All Vertex AI Gemini API models were affected, including gemini-2.5-flash, gemini-2.5-flash-lite, gemini-2.5-pro, gemini-3.0-flash-preview, gemini-3.0-pro-preview, gemini-2.0-flash, gemini-2.0-flash-lite.\n* **Error Experience:** * **PayGo Customers:** Experienced primarily 429 Resource Exhausted errors. * **Provisioned Throughput (PT) Customers:** Received 503 Service Unavailable errors. * For PT customers, most errors stopped at **06:00**. For PayGo customers, most errors stopped at **06:20**.\n* **Geographic Scope:** Global endpoint, us-central1, us-east4, and other US regions were impacted.",
+   "status": "AVAILABLE",
+   "affected_locations": []
+  },
+  "status_impact": "SERVICE_INFORMATION",
+  "severity": "low",
+  "service_key": "zall",
+  "service_name": "Multiple Products",
+  "affected_products": [
+   {
+    "title": "Agent Assist",
+    "id": "eUntUKqUrHdbBLNcVVXq",
+    "current_title": "Agent Assist"
+   },
+   {
+    "title": "Dialogflow CX",
+    "id": "BnCicQdHSdxaCv8Ya6Vm",
+    "current_title": "Dialogflow CX"
+   },
+   {
+    "title": "Vertex Gemini API",
+    "id": "Z0FZJAMvEB4j3NbCJs6B",
+    "current_title": "Gemini on Agent Platform"
+   },
+   {
+    "title": "Google Cloud Support",
+    "id": "bGThzF7oEGP5jcuDdMuk",
+    "current_title": "Google Cloud Support"
+   }
+  ],
+  "uri": "incidents/41E5S3mkTGDfkZuJZH5k",
+  "currently_affected_locations": [],
+  "previously_affected_locations": [
+   {
+    "title": "Global",
+    "id": "global"
+   },
+   {
+    "title": "Montr\u00e9al (northamerica-northeast1)",
+    "id": "northamerica-northeast1"
+   },
+   {
+    "title": "S\u00e3o Paulo (southamerica-east1)",
+    "id": "southamerica-east1"
+   },
+   {
+    "title": "Iowa (us-central1)",
+    "id": "us-central1"
+   },
+   {
+    "title": "South Carolina (us-east1)",
+    "id": "us-east1"
+   },
+   {
+    "title": "Northern Virginia (us-east4)",
+    "id": "us-east4"
+   },
+   {
+    "title": "Columbus (us-east5)",
+    "id": "us-east5"
+   },
+   {
+    "title": "Oregon (us-west1)",
+    "id": "us-west1"
+   }
+  ]
+ },
+ {
+  "id": "mSFVt6PiP557bjRyYsut",
+  "number": "2779651412601232975",
+  "begin": "2026-10-08T12:19:00+00:00",
+  "created": "2026-10-08T18:24:18+00:00",
+  "end": "2026-10-08T23:30:00+00:00",
+  "modified": "2026-10-09T16:50:52+00:00",
+  "external_desc": "Google Cloud Storage customers are experiencing elevated latencies and error rates when performing upload or write operations.",
+  "updates": [
+   {
+    "created": "2026-10-09T16:44:56+00:00",
+    "modified": "2026-10-09T16:50:52+00:00",
+    "when": "2026-10-09T16:44:56+00:00",
+    "text": "## Preliminary Incident Report\nWe sincerely apologize for the disruption this incident caused to your business. We know how much you rely on Google Cloud, and we regret the impact on your productivity. We are working to address the root cause and prevent this from occurring in the future.\nPlease note, this information is based on our best knowledge at the time of posting and is subject to change as our investigation continues. A final Incident Report with preventative actions will be posted once our investigation is complete.\nIf you have experienced impact outside of what is listed below, please reach out to Google Cloud Support using [https\\://cloud.google.com/support](https://cloud.google.com/support)\n## Date/Time of the Issue (All time US/Pacific)\nIncident Start: 08 October 2026 04:00\nIncident End: 08 October 2026 16:30\nDuration: 12 hours, 30 minutes\n## Summary\nOn Thursday, 08 October 2026, Google Cloud Storage experienced elevated write latency and write error rates in the us-central1 region for a duration of 12 hours, 30 minutes. We are taking immediate steps to ensure this doesn\u2019t happen again.\n## Preliminary Root Cause\nGoogle Cloud Storage relies on a highly distributed backend architecture to process and store incoming data. During the incident window, specific storage backend nodes within the us-central1 region experienced a localized capacity shortfall.\nThe sequence of events leading to customer impact was as follows:\n* A traffic sorting optimization intended to address localized capacity constraints caused severe resource exhaustion on specific backend storage nodes in the affected region.\n* This resource exhaustion caused backend services handling object data ingestion to begin timing out.\n* As a result, incoming upload and write requests routed to these nodes experienced elevated latency and failed to complete, resulting in errors surfaced to customers.\n* Concurrently, a separate issue with the underlying database service contributed to additional metadata processing errors during a portion of the incident window.\nGoogle engineers have begun a full root cause analysis (RCA) and will provide additional information once it is available.\n## Remediation\nThe issue was initially detected by Google engineering teams actively monitoring system telemetry early in the incident window.\nTo mitigate the issue, Google engineers executed the following step-by-step strategy:\n* Engineers initially attempted to dynamically allocate additional emergency capacity to the affected region, but this was blocked by systemic regional capacity limits.\n* To relieve immediate pressure, engineers selectively drained traffic from the most overloaded backend storage nodes.\n* A configuration change was deployed to disable the traffic sorting optimization, significantly reducing resource overhead on the storage backend.\n* For the concurrent metadata issue, engineers rolled back a recent update to the underlying metadata database service.\nOnce traffic levels stabilized and resource utilization returned to normal baseline levels, the previously drained nodes were restored to active service, successfully restoring normal operations.\n## Description of Impact\nOn 08 October, 2026, from 04:00 to 16:30 US/Pacific, customers utilizing the us-central1 region experienced elevated latency and error rates during Cloud Storage upload and write operations.\n* Customers primarily observed HTTP 503 UNAVAILABLE errors on WriteObject operations and client-side timeouts.\n* A minor impact was also observed on read operations during this timeframe.\n* Cloud Storage operations in all other regions, as well as all other Google Cloud services, remained unaffected by this specific event.",
+    "status": "AVAILABLE",
+    "affected_locations": []
+   },
+   {
+    "created": "2026-10-08T20:48:22+00:00",
+    "modified": "2026-10-09T16:44:56+00:00",
+    "when": "2026-10-08T20:48:22+00:00",
+    "text": "**Summary**\nGoogle Cloud Storage customers are experiencing elevated latencies and error rates when performing upload or write operations\n**Description**\nWe are continuing to mitigate the issue with Google Cloud Storage in the us-central1 region that began on Thursday, 2026-10-08 05:19 PDT.\nThe initial mitigations applied by our engineering team continue to show observable improvements in error rates.\nOur engineering team is actively monitoring the environment and rolling out further mitigations to fully stabilize the service.\nWe will provide an update by Thursday, 2026-10-08 16:00 PDT with current details.\n**Customer Symptoms**\n* Customers are experiencing elevated latencies and error rates when performing upload or write operations.\n* A smaller subset of read operations may also experience increased latency and errors\n**Workaround**\nNone at this time.",
+    "status": "SERVICE_DISRUPTION",
+    "affected_locations": [
+     {
+      "title": "Iowa (us-central1)",
+      "id": "us-central1"
+     }
+    ]
+   }
+  ],
+  "most_recent_update": {
+   "created": "2026-10-09T16:44:56+00:00",
+   "modified": "2026-10-09T16:50:52+00:00",
+   "when": "2026-10-09T16:44:56+00:00",
+   "text": "## Preliminary Incident Report\nWe sincerely apologize for the disruption this incident caused to your business. We know how much you rely on Google Cloud, and we regret the impact on your productivity. We are working to address the root cause and prevent this from occurring in the future.\nPlease note, this information is based on our best knowledge at the time of posting and is subject to change as our investigation continues. A final Incident Report with preventative actions will be posted once our investigation is complete.\nIf you have experienced impact outside of what is listed below, please reach out to Google Cloud Support using [https\\://cloud.google.com/support](https://cloud.google.com/support)\n## Date/Time of the Issue (All time US/Pacific)\nIncident Start: 08 October 2026 04:00\nIncident End: 08 October 2026 16:30\nDuration: 12 hours, 30 minutes\n## Summary\nOn Thursday, 08 October 2026, Google Cloud Storage experienced elevated write latency and write error rates in the us-central1 region for a duration of 12 hours, 30 minutes. We are taking immediate steps to ensure this doesn\u2019t happen again.\n## Preliminary Root Cause\nGoogle Cloud Storage relies on a highly distributed backend architecture to process and store incoming data. During the incident window, specific storage backend nodes within the us-central1 region experienced a localized capacity shortfall.\nThe sequence of events leading to customer impact was as follows:\n* A traffic sorting optimization intended to address localized capacity constraints caused severe resource exhaustion on specific backend storage nodes in the affected region.\n* This resource exhaustion caused backend services handling object data ingestion to begin timing out.\n* As a result, incoming upload and write requests routed to these nodes experienced elevated latency and failed to complete, resulting in errors surfaced to customers.\n* Concurrently, a separate issue with the underlying database service contributed to additional metadata processing errors during a portion of the incident window.\nGoogle engineers have begun a full root cause analysis (RCA) and will provide additional information once it is available.\n## Remediation\nThe issue was initially detected by Google engineering teams actively monitoring system telemetry early in the incident window.\nTo mitigate the issue, Google engineers executed the following step-by-step strategy:\n* Engineers initially attempted to dynamically allocate additional emergency capacity to the affected region, but this was blocked by systemic regional capacity limits.\n* To relieve immediate pressure, engineers selectively drained traffic from the most overloaded backend storage nodes.\n* A configuration change was deployed to disable the traffic sorting optimization, significantly reducing resource overhead on the storage backend.\n* For the concurrent metadata issue, engineers rolled back a recent update to the underlying metadata database service.\nOnce traffic levels stabilized and resource utilization returned to normal baseline levels, the previously drained nodes were restored to active service, successfully restoring normal operations.\n## Description of Impact\nOn 08 October, 2026, from 04:00 to 16:30 US/Pacific, customers utilizing the us-central1 region experienced elevated latency and error rates during Cloud Storage upload and write operations.\n* Customers primarily observed HTTP 503 UNAVAILABLE errors on WriteObject operations and client-side timeouts.\n* A minor impact was also observed on read operations during this timeframe.\n* Cloud Storage operations in all other regions, as well as all other Google Cloud services, remained unaffected by this specific event.",
+   "status": "AVAILABLE",
+   "affected_locations": []
+  },
+  "status_impact": "SERVICE_DISRUPTION",
+  "severity": "medium",
+  "service_key": "UwaYoXQ5bHYHG6EdiPB8",
+  "service_name": "Google Cloud Storage",
+  "affected_products": [
+   {
+    "title": "Google Cloud Storage",
+    "id": "UwaYoXQ5bHYHG6EdiPB8",
+    "current_title": "Google Cloud Storage"
+   }
+  ],
+  "uri": "incidents/mSFVt6PiP557bjRyYsut",
+  "currently_affected_locations": [],
+  "previously_affected_locations": [
+   {
+    "title": "Iowa (us-central1)",
+    "id": "us-central1"
+   }
+  ]
+ }
+]
