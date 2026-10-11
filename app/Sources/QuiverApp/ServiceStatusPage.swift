@@ -96,15 +96,14 @@ private struct ServiceCard: View {
     @Environment(\.openURL) private var openURL
 
     private static let nameFont = Font.system(size: 16, weight: .medium)
-    /// Status pages whose logo is filed under the harness's own id.
-    private static let logoIDs = ["openai": "codex", "github": "copilot"]
     private static let componentLimit = 5
     private static let incidentLimit = 3
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                HarnessIcon(harness: Self.logoIDs[status.service.id] ?? status.service.id, size: 16)
+                // Infrastructure (npm, Vercel, Cloudflare) has no harness logo: name only.
+                if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 16) }
                 Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 8)
                 Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
@@ -316,6 +315,12 @@ struct ServiceStatusMenuLine: View {
             } label: {
                 HStack(spacing: 6) {
                     HealthDot(health: app.serviceStatus.worst)
+                    // The logos of the services the line names: both of two,
+                    // else the first ("Claude: …, and 2 more").
+                    let affected = app.serviceStatus.affected
+                    ForEach(affected.prefix(affected.count == 2 ? 2 : 1).compactMap(\.logoID), id: \.self) {
+                        HarnessIcon(harness: $0, size: 12)
+                    }
                     Text(line).font(Theme.caption).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Theme.textMuted)

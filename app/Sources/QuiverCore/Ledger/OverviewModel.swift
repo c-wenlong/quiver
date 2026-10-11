@@ -6,6 +6,8 @@ public protocol LedgerQuerying: Sendable {
     func scan(roots: LedgerRoots) async throws -> ScanReport
     func byHarness(in range: DateInterval) async -> [String: UsageTotals]
     func byAccount(in range: DateInterval) async -> [String: UsageTotals]
+    /// The harness each account home's usage came from.
+    func harnessByAccount(in range: DateInterval) async -> [String: String]
     func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage]
     func setPricing(_ catalog: PricingCatalog) async
 }
@@ -83,6 +85,9 @@ public struct AccountRow: Sendable, Equatable, Identifiable {
     public var home: String
     public var label: String
     public var totals: UsageTotals
+    /// The harness the account's usage came from, for its logo; nil when
+    /// the ledger can't say.
+    public var harness: String? = nil
 }
 
 public struct OverviewSummary: Sendable, Equatable {
@@ -215,6 +220,7 @@ public final class OverviewModel {
         let range = period.range(now: now, calendar: calendar)
         let harnesses = await ledger.byHarness(in: range)
         let accounts = await ledger.byAccount(in: range)
+        let accountHarnesses = await ledger.harnessByAccount(in: range)
         let daily = await ledger.daily(in: range, calendar: calendar)
         var total = UsageTotals()
         for value in harnesses.values { total.add(value) }
@@ -231,7 +237,8 @@ public final class OverviewModel {
                 .sorted { ($0.totals.totalTokens, $1.harness) > ($1.totals.totalTokens, $0.harness) },
             days: Self.combineDays(daily).sorted { $0.day > $1.day },
             accounts: accounts
-                .map { AccountRow(home: $0.key, label: accountLabel($0.key), totals: $0.value) }
+                .map { AccountRow(home: $0.key, label: accountLabel($0.key), totals: $0.value,
+                                  harness: accountHarnesses[$0.key]) }
                 .sorted { $0.totals.costUSD > $1.totals.costUSD },
             models: Self.models(daily))
     }

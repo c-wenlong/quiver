@@ -61,7 +61,13 @@ private struct FindingRow: View {
         HStack(alignment: .top, spacing: 10) {
             Circle().fill(color).frame(width: 8, height: 8).padding(.top, 6)
             VStack(alignment: .leading, spacing: 4) {
-                Text(finding.message).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                HStack(alignment: .top, spacing: 6) {
+                    // A finding about one harness leads with its logo.
+                    if let harness = finding.harness, HarnessIcon.exists(for: harness) {
+                        HarnessIcon(harness: harness, size: 16).padding(.top, 1).help(HarnessMark(harness).name)
+                    }
+                    Text(finding.message).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                }
                 Text(finding.check).font(Self.mono).foregroundStyle(Theme.textSecondary)
                 if let fix = finding.fix {
                     HStack(spacing: 8) {

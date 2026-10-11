@@ -309,6 +309,20 @@ public actor Ledger {
         Dictionary(uniqueKeysWithValues: aggregate(in: range, by: [.account]).map { ($0.key[0], $0.value) })
     }
 
+    /// The harness each account home's usage came from: the one with the
+    /// most tokens, should a home ever hold more than one.
+    public func harnessByAccount(in range: DateInterval) -> [String: String] {
+        var best: [String: (harness: String, tokens: Int)] = [:]
+        for (key, totals) in aggregate(in: range, by: [.account, .harness]) {
+            let (account, harness) = (key[0], key[1])
+            guard !harness.isEmpty else { continue }
+            if let current = best[account],
+               (current.tokens, harness) >= (totals.totalTokens, current.harness) { continue }
+            best[account] = (harness, totals.totalTokens)
+        }
+        return best.mapValues(\.harness)
+    }
+
     /// Usage per harness.
     public func byHarness(in range: DateInterval) -> [String: UsageTotals] {
         Dictionary(uniqueKeysWithValues: aggregate(in: range, by: [.harness]).map { ($0.key[0], $0.value) })

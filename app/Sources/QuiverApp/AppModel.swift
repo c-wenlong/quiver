@@ -78,6 +78,11 @@ final class AppModel {
     let skills: SkillsModel
     let mcp: McpModel
     let plugins: PluginsModel
+    /// Every plugin in every marketplace: the Plugins page's Explore tab,
+    /// and what the Skills page moves plugin skills out by.
+    let pluginCatalog: PluginCatalogModel
+    /// The Plugins page's tab, so another page can open Explore.
+    var pluginsTab: PluginsTab = .health
     private let launcher = ProcessLauncher()
     private let userHome = FileManager.default.homeDirectoryForCurrentUser
 
@@ -127,12 +132,18 @@ final class AppModel {
             sessions = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
-        skills = SkillsModel(swe: client,
-                             snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")),
-                             hubSnapshots: SnapshotFile(url: quiver.appending(path: "cache/skills-hub.json")))
+        skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))
+        // The Skills page's hub tab is now Plugins > Explore, kept in
+        // plugin-catalog.json; its old snapshot has no reader left.
+        try? FileManager.default.removeItem(at: quiver.appending(path: "cache/skills-hub.json"))
         skills.use(client, for: saved)
         mcp = McpModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/mcp-servers.json")))
-        plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")))
+        // One plugin change at a time, whichever Plugins tab starts it.
+        let pluginWork = PluginWork()
+        plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")),
+                               work: pluginWork)
+        pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
+                                           work: pluginWork)
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
         providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {
@@ -171,6 +182,24 @@ final class AppModel {
             Task { [skills] in await skills.restore() },
             Task { [mcp] in await mcp.restore() },
             Task { [plugins] in await plugins.restore() },
+            Task { [pluginCatalog] in await pluginCatalog.restore() },
+            // Skills and Plugins > Explore place one inventory against one
+            // catalog, so each skill shows on exactly one of them: each
+            // model is handed the other's latest.
+            Task { [weak self] in
+                let changes = Observations { [weak self] in self?.skills.inventory }
+                for await _ in changes {
+                    guard let self else { return }
+                    pluginCatalog.skills = skills.allSkills
+                }
+            },
+            Task { [weak self] in
+                let changes = Observations { [weak self] in self?.pluginCatalog.revision }
+                for await _ in changes {
+                    guard let self else { return }
+                    skills.plugins = pluginCatalog.lookup
+                }
+            },
             Task { [weak self] in
                 guard let sessions = self?.sessions else { return }
                 await sessions.restore()

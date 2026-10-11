@@ -56,6 +56,24 @@ import Testing
         #expect(HarnessIcons.icon(for: "no-such-harness") == nil)
     }
 
+    /// What the widgets draw beside a limit's title: the logo HarnessMark
+    /// picks, never a stand-in.
+    @Test func logoResolvesTheWayHarnessMarkDoes() {
+        #expect(HarnessIcons.logo(for: "claude") == HarnessIcons.icon(for: "claude"))
+        #expect(HarnessIcons.logo(for: "claude-desktop") == HarnessIcons.icon(for: "claude"))
+        #expect(HarnessIcons.logo(for: "codex-acc2") == HarnessIcons.icon(for: "codex"))
+        #expect(HarnessIcons.logo(for: "github-copilot") == HarnessIcons.icon(for: "copilot"))
+        #expect(HarnessIcons.logo(for: "factory") == HarnessIcons.icon(for: "droid"))
+        #expect(HarnessIcons.logo(for: "codebuff") == HarnessIcons.icon(for: "freebuff"))
+        #expect(HarnessIcons.logo(for: "claude")?.isColor == true)
+        #expect(HarnessIcons.logo(for: "cursor")?.isColor == false)
+        #expect(HarnessIcons.logo(for: "lmstudio") == nil)
+        #expect(HarnessIcons.logo(for: "zed-agent") == nil)
+        for id in HarnessIcons.available {
+            #expect(HarnessIcons.logo(for: id) == HarnessIcons.icon(for: id), "\(id)")
+        }
+    }
+
     @Test func provenanceIsRecordedForEveryIcon() throws {
         let url = try #require(CoreResources.url("harness-icons", "tsv"))
         let rows = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").dropFirst()
