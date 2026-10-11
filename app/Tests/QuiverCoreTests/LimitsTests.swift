@@ -41,6 +41,11 @@ func reading(
         #expect(readings[1].harness == "claude")
         #expect(readings[1].usedPercent == 71)
         #expect(readings[2].title == "Devin")
+        // A display name reads like an account's: brand, then the name.
+        let named = [OtherLimitsModel.Row(name: "devin", limit: RateLimit(status: .ok, usedPercent: 55, window: "7d",
+                                                                          resetAt: now + 7_200, fetchedAt: now - 30),
+                                          displayName: "Cortex")]
+        #expect(LimitReading.all(cards: [], others: named, now: now).first?.title == "Devin: Cortex")
         #expect(readings[2].harness == "devin")
         #expect(readings[2].fetchedAt == now - 30)
     }
