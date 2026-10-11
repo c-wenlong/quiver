@@ -170,10 +170,16 @@ enum McpRedaction {
                                     "auth", "authorization", "header"]
 
     static func isSecretFlag(_ flag: Substring) -> Bool {
+        let flag = bare(flag)
         guard flag.hasPrefix("-") else { return false }
         if flag == "-H" { return true }
         let name = flag.filter { $0 != "-" && $0 != "_" }.lowercased()
         return !name.isEmpty && secretFlagEndings.contains { name.hasSuffix($0) }
+    }
+
+    /// The flag as the shell reads it: `--"token"` and `--\token` are `--token`.
+    static func bare(_ flag: Substring) -> String {
+        flag.filter { $0 != "\"" && $0 != "'" && $0 != "\\" }
     }
 
     /// The command line as words, so every flag and its value can be judged.
@@ -291,6 +297,7 @@ enum McpRedaction {
 
     /// A header keeps its name (`Authorization:…`); any other value is hidden.
     private static func secretValue(_ value: Substring, after flag: Substring) -> String {
+        let flag = bare(flag)
         let header = flag == "-H" || flag.lowercased().hasSuffix("header")
         if header, let colon = value.firstIndex(of: ":") { return value[...colon] + "…" }
         return "…"
@@ -323,7 +330,12 @@ enum McpRedaction {
             query = rest[rest.index(after: mark)...]
             rest = rest[..<mark]
         }
-        out += SecretText.maskingKeys(rest)
+        // A segment is judged decoded, so `sk%2Dproj%2D…` reads as `sk-proj-…`.
+        out += rest.split(separator: "/", omittingEmptySubsequences: false).map { segment in
+            let decoded = segment.removingPercentEncoding ?? String(segment)
+            if decoded != segment, SecretText.maskingKeys(decoded[...]) != decoded { return "…" }
+            return SecretText.maskingKeys(segment)
+        }.joined(separator: "/")
         if let query {
             out += "?" + query.split(separator: "&", omittingEmptySubsequences: false).map { pair in
                 if pair.isEmpty { return "" }

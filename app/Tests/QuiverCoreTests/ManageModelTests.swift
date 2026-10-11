@@ -503,6 +503,18 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
                 == #"bash -c 'mcp-remote "https://host.example/?k=… …"'"#)
     }
 
+    @Test func aQuotedOrEscapedFlagNameStillHidesItsValue() {
+        #expect(stdio(#"npx --"token" SECRET1 --\token SECRET2 "--key" SECRET3 --'api-key'=SECRET4"#, []).summary
+                == #"npx --"token" … --\token … "--key" … --'api-key'=…"#)
+        #expect(stdio("npx", [#"--"password""#, "SECRET5", #""-H""#, "Authorization: Bearer SECRET6"]).summary
+                == #"npx --"password" … "-H" Authorization:…"#)
+    }
+
+    @Test func aPercentEncodedKeyInTheURLPathIsHidden() {
+        #expect(http("https://h.example/mcp/sk%2Dproj%2DSECRET0123456789abcd/sse").summary == "https://h.example/mcp/…/sse")
+        #expect(http("https://h.example/My%20Docs/mcp").summary == "https://h.example/My%20Docs/mcp")
+    }
+
     @Test func aFlagAndItsValueInOneArgAreSplit() {
         #expect(stdio("npx", ["--token SECRET1", "--api-key=SECRET2 two", "--header Authorization: Bearer SECRET3"]).summary
                 == "npx --token … --api-key=… --header Authorization:…")
