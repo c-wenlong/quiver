@@ -294,12 +294,22 @@ public struct APIKeysFile: Equatable, Sendable {
 
 /// Telling a secret apart from a name or a label.
 enum SecretText {
-    /// A run like `sk-ant-api03-…`, `AKIA…` or `ghp_…`: 16 or more characters
-    /// mixing letters and digits. An upper-case name with underscores such as
-    /// `CLOUDFLARE_R2_ACCESS_KEY_ID` is a variable name, not a key.
+    /// Vendor prefixes that mark a key whatever follows them.
+    static let keyPrefixes = ["sk-", "sk_", "pk_", "rk_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_",
+                              "glpat-", "xoxa-", "xoxb-", "xoxp-", "xoxs-", "xapp-", "AIza", "AKIA", "ASIA",
+                              "hf_", "gsk_", "xai-", "pplx-", "r8_", "npm_"]
+
+    /// A run of 16 or more characters like `sk-ant-api03-…`, `AKIA…` or
+    /// `ghp_…`: a vendor prefix, mixed case, or digits among letters. An
+    /// upper-case name with underscores such as `CLOUDFLARE_R2_ACCESS_KEY_ID`
+    /// is a variable name, and an all-lower-case word is a package or path.
     static func looksLikeKey(_ text: Substring) -> Bool {
-        guard text.count >= 16, text.contains(where: \.isNumber), text.contains(where: \.isLetter) else { return false }
-        return text.contains(where: \.isLowercase) || !text.contains("_")
+        guard text.count >= 16, text.contains(where: \.isLetter) else { return false }
+        if keyPrefixes.contains(where: { text.hasPrefix($0) }) { return true }
+        let lower = text.contains(where: \.isLowercase)
+        let upper = text.contains(where: \.isUppercase)
+        let digit = text.contains(where: \.isNumber)
+        return (lower && upper) || (lower && digit) || (digit && !text.contains("_"))
     }
 
     /// `text` with every key-like run replaced by `…`.

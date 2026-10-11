@@ -100,6 +100,19 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(APIKeysFile.redacted("# \(fakeKey)") == "# sk…")
     }
 
+    @Test func aKeyWithNoDigitsIsStillHidden() {
+        #expect(APIKeysFile.redacted("export ghp_SECRETabcdefghijklmnopqrstuvwxyz") == "export …")
+        #expect(APIKeysFile.redacted("export sk_abcdefghijklmnopqrstuvwxyz") == "export …")
+        let file = APIKeysFile(text: "# Anthropic\n# ghp_SECRETabcdefghijklmnopqrstuvwxyz\nexport ghp_SECRETabcdefghijklmnop\n")
+        #expect(file.problems.map(\.text) == ["# …", "export …"])
+        #expect(file.entries.isEmpty)
+    }
+
+    @Test func anUpperCaseNameWithUnderscoresIsKept() {
+        #expect(APIKeysFile.redacted("export CLOUDFLARE_R2_ACCESS_KEY_ID x") == "export CLOUDFLARE_R2_ACCESS_KEY_ID…")
+        #expect(APIKeysFile.redacted("export ANTHROPIC_API_KEY_BACKUP x") == "export ANTHROPIC_API_KEY_BACKUP…")
+    }
+
     @Test func aLineWithNoNameKeepsOnlyItsKeyword() {
         #expect(APIKeysFile.redacted("export \"\(fakeKey)\"") == "export …")
         #expect(APIKeysFile.redacted(fakeKey) == "sk…")

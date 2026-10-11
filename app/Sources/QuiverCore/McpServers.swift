@@ -138,8 +138,7 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
     /// token it doesn't know would otherwise show as typed.
     public var summary: String {
         if let url { return McpRedaction.url(url) }
-        // A whole command line typed into `command` is split so its flags count.
-        let words = (command ?? "").split(separator: " ").map(String.init) + args
+        let words = McpRedaction.words(command: command ?? "", args: args)
         return McpRedaction.args(words).joined(separator: " ").trimmingCharacters(in: .whitespaces)
     }
 
@@ -175,6 +174,57 @@ enum McpRedaction {
         if flag == "-H" { return true }
         let name = flag.filter { $0 != "-" && $0 != "_" }.lowercased()
         return !name.isEmpty && secretFlagEndings.contains { name.hasSuffix($0) }
+    }
+
+    /// The command line as words, so every flag and its value can be judged.
+    /// A whole command line typed into `command` is split the way a shell
+    /// would, keeping a quoted value with spaces as one word. An argument
+    /// holding a flag and its value (`--token abc`) becomes two.
+    static func words(command: String, args: [String]) -> [String] {
+        var words = shellWords(command)
+        for arg in args {
+            let space = arg.firstIndex(where: \.isWhitespace)
+            if arg.hasPrefix("-"), let space, !arg[..<space].contains("=") {
+                words.append(String(arg[..<space]))
+                words.append(arg[space...].trimmingCharacters(in: .whitespaces))
+            } else {
+                words.append(arg)
+            }
+        }
+        return words
+    }
+
+    /// Words split at unquoted whitespace, quotes kept so the text reads as
+    /// typed. With an unclosed quote every space splits, so no word hides a
+    /// later flag.
+    static func shellWords(_ line: String) -> [String] {
+        var words: [String] = []
+        var word = ""
+        var quote: Character?
+        var escaped = false
+        for character in line {
+            if escaped {
+                word.append(character)
+                escaped = false
+            } else if character == "\\", quote != "'" {
+                word.append(character)
+                escaped = true
+            } else if let open = quote {
+                word.append(character)
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                word.append(character)
+                quote = character
+            } else if character.isWhitespace {
+                if !word.isEmpty { words.append(word) }
+                word = ""
+            } else {
+                word.append(character)
+            }
+        }
+        if quote != nil { return line.split(whereSeparator: \.isWhitespace).map(String.init) }
+        if !word.isEmpty { words.append(word) }
+        return words
     }
 
     static func args(_ args: [String]) -> [String] {

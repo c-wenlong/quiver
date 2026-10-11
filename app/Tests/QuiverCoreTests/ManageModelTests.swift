@@ -469,6 +469,25 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(stdio("uvx", ["server", "sk-proj-SECRET0123456789abcd"]).summary == "uvx server …")
     }
 
+    @Test func aKeyWithNoDigitsIsHidden() {
+        #expect(stdio("uvx", ["server", "ghp_SECRETabcdefghijklmnopqrstuvwxyz", "sk-abcdefghijklmnopqrstu"]).summary
+                == "uvx server … …")
+        #expect(http("https://actions.example.com/mcp/SECRETabcdefghijKLMNOP/sse").summary
+                == "https://actions.example.com/mcp/…/sse")
+    }
+
+    @Test func aQuotedValueInTheCommandStaysOneWord() {
+        let server = stdio(#"npx server --header "Authorization: Bearer SECRET1" --password 'two SECRET2 words' "#
+                           + #"--token="SECRET3 x" API_KEY="SECRET4 y" --name "My Server""#, [])
+        #expect(server.summary == #"npx server --header "Authorization:… --password … --token=… API_KEY=… "#
+                + #"--name "My Server""#)
+    }
+
+    @Test func aFlagAndItsValueInOneArgAreSplit() {
+        #expect(stdio("npx", ["--token SECRET1", "--api-key=SECRET2 two", "--header Authorization: Bearer SECRET3"]).summary
+                == "npx --token … --api-key=… --header Authorization:…")
+    }
+
     @Test func anOrdinaryCommandIsUnchanged() {
         let server = stdio("uvx", ["mcp-server-fetch", "--port", "8080", "@modelcontextprotocol/server-filesystem",
                                     "/Users/me/My Files", "chrome-devtools-mcp@latest"])
