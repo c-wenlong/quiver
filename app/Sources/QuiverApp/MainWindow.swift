@@ -13,7 +13,8 @@ struct MainWindow: View {
             Sidebar()
                 .frame(width: Theme.sidebarWidth)
             PageView(section: model.selection ?? .overview)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // A page never widens the window: it gets the panel's width.
+                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.panel)
                 .clipShape(.rect(cornerRadius: Theme.panelRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.panelRadius).strokeBorder(Theme.border, lineWidth: 1))
@@ -130,32 +131,6 @@ struct PageView: View {
             DoctorPage()
         case .settings:
             SettingsPage()
-        default:
-            Placeholder(section: section)
         }
-    }
-}
-
-/// A page not built yet, saying which milestone brings it.
-struct Placeholder: View {
-    var section: AppSection
-
-    var milestone: String {
-        switch section {
-        case .overview: "M3"
-        case .sessions: "M4"
-        case .accounts, .apiKeys: "M2"
-        case .harnesses, .skills, .agentsMd, .mcpServers, .plugins: "M5"
-        case .doctor, .settings: "M1"
-        case .serviceStatus: "M7"
-        }
-    }
-
-    var body: some View {
-        ContentUnavailableView(
-            section.title,
-            systemImage: section.symbol,
-            description: Text("Coming in \(milestone).")
-        )
     }
 }

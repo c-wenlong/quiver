@@ -107,7 +107,7 @@ private struct TotalCard: View {
                         .foregroundStyle(Theme.accent)
                     if summary.totals.unpricedTokens > 0 {
                         Image(systemName: "info.circle")
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(Theme.textSecondary)
                             .help("Plus \(UsageFormat.tokens(summary.totals.unpricedTokens)) tokens from models with no list price: \(summary.totals.unpricedModels.sorted().joined(separator: ", "))")
                     }
                 }
