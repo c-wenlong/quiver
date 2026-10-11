@@ -183,9 +183,16 @@ func decodedInventory() throws -> [Skill] {
 
     @Test func aSavedCatalogReadsBackTheSame() throws {
         // SnapshotFile writes with a plain encoder and reads with a plain decoder.
-        let value = PluginExplore(catalog: try decodedCatalog(), skills: try decodedInventory())
+        let value = try decodedCatalog()
         let data = try JSONEncoder().encode(value)
-        #expect(try JSONDecoder().decode(PluginExplore.self, from: data) == value)
+        #expect(try JSONDecoder().decode(PluginCatalog.self, from: data) == value)
+    }
+
+    @Test func anObjectWithNoMarketplacesIsNotAnEmptyCatalog() {
+        // Read as empty, every plugin skill would look unowned.
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(PluginCatalog.self, from: Data(#"{"catalog": {}, "skills": []}"#.utf8))
+        }
     }
 
     @Test func anUnknownDriftStateStillDecodes() throws {
@@ -268,13 +275,11 @@ func decodedInventory() throws -> [Skill] {
         let swe = SweClient(runner: runner)
         await model.load(swe: swe)
         await model.run(PluginAction(verb: .install, ref: "linter@official", harness: "codex"), swe: swe)
-        #expect(runner.calls.filter { $0.first == "plugins" } == [
+        #expect(runner.calls == [
             ["plugins", "catalog", "--json"],
             ["plugins", "install", "linter@official", "--harness=codex", "--json"],
             ["plugins", "catalog", "--json"],
         ])
-        // The skills are read with the catalog each time.
-        #expect(runner.calls.filter { $0 == ["skills", "--json"] }.count == 2)
         #expect(model.lastResult == "Installed linter@official in Codex")
         #expect(model.actionError == nil)
         #expect(model.running == nil)
@@ -362,6 +367,7 @@ func decodedInventory() throws -> [Skill] {
     @Test func filtersBySourceHarnessAndText() async throws {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
+        model.skills = try decodedInventory()
         let index = try #require(model.index)
         func refs(_ source: ExploreSource = .all, _ harness: String? = nil, _ query: String = "") -> [String] {
             index.groups(source: source, harness: harness, query: query).flatMap(\.rows).map(\.id)
@@ -381,6 +387,7 @@ func decodedInventory() throws -> [Skill] {
     @Test func aPluginListsItsSkillsAndEveryInstalledCopyOncePerName() async throws {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
+        model.skills = try decodedInventory()
         let index = try #require(model.index)
         let vercel = try #require(index.rows.first { $0.id == "vercel@official" })
         #expect(vercel.skills.map(\.name) == ["ai-sdk", "eve", "release"])
@@ -392,7 +399,7 @@ func decodedInventory() throws -> [Skill] {
     }
 
     @Test func theLastCatalogShowsAtOnceOnTheNextLaunch() async throws {
-        let store = MemorySnapshotStore<Snapshot<PluginExplore>>()
+        let store = MemorySnapshotStore<Snapshot<PluginCatalog>>()
         let runner = catalogRunner()
         let first = PluginCatalogModel(snapshots: store)
         await first.loadIfStale(swe: SweClient(runner: runner), for: "/bin/swe")
@@ -419,15 +426,17 @@ func decodedInventory() throws -> [Skill] {
         #expect(model.index == nil)
     }
 
-    @Test func aFailedSkillsReadLeavesTheCatalogsOwnLists() async throws {
-        let runner = RoutingRunner([
-            (["plugins", "catalog", "--json"], json(catalogJSON)),
-            (["skills", "--json"], CommandResult(status: 1, stdout: Data(), stderr: "boom")),
-        ])
+    @Test func withoutAnInventoryEachPluginListsTheCatalogsOwnSkills() async throws {
         let model = PluginCatalogModel()
-        await model.load(swe: SweClient(runner: runner))
+        await model.load(swe: SweClient(runner: catalogRunner()))
         let vercel = try #require(model.index?.rows.first { $0.id == "vercel@official" })
         #expect(vercel.skills.map(\.name) == ["ai-sdk", "eve"])
+        // The inventory arrives: the rows are worked out again, the catalog
+        // is the same, so the skills model is not told of a new one.
+        let revision = model.revision
+        model.skills = try decodedInventory()
+        #expect(model.index?.rows.first { $0.id == "vercel@official" }?.skills.map(\.name) == ["ai-sdk", "eve", "release"])
+        #expect(model.revision == revision)
     }
 
     // MARK: Every skill shown exactly once
@@ -454,6 +463,33 @@ func decodedInventory() throws -> [Skill] {
         #expect(placement.inPlugins == 0)
     }
 
+    @Test func aSkillFoundThroughASymlinkStillFindsItsPlugin() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "quiver-symlink-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appending(path: "real/kit/toolkit/skills/hammer")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: root.appending(path: "plugins"),
+                                                   withDestinationURL: root.appending(path: "real"))
+        // The catalog names the plugin through the symlink; swe skills
+        // reports the folder it points at.
+        let linked = root.appending(path: "plugins/kit/toolkit").path
+        let plugin = CatalogPlugin(name: "toolkit", marketplace: "kit", sourcePath: linked,
+                                   skills: [CatalogSkill(name: "hammer", path: linked + "/skills/hammer")],
+                                   harnesses: ["claude": PluginHarnessState(available: true, installed: true, path: linked)])
+        let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
+            PluginMarketplace(name: "kit", hub: true, harnesses: ["claude": .init()], plugins: [plugin]),
+        ])
+        let skill = Skill(name: "hammer", path: FolderOwners.realPath(real.path), root: "claude-plugin",
+                          source: .plugin, harnesses: ["claude"])
+        #expect(skill.path != linked + "/skills/hammer")
+        let placement = SkillPlacement(skills: [skill], catalog: catalog)
+        // Off the Skills page, and once in the plugin's row, under its name.
+        #expect(placement.standalone.isEmpty)
+        let shown = placement.skills(of: plugin)
+        #expect(shown.map(\.name) == ["hammer"])
+        #expect(shown[0].paths == [linked + "/skills/hammer", skill.path])
+    }
+
     @Test func twoPluginsSharingAFolderLeaveItsSkillWhereItWas() {
         let state = PluginHarnessState(available: true, installed: true, enabled: true, path: "/p/shared")
         let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
@@ -476,8 +512,10 @@ func decodedInventory() throws -> [Skill] {
         let explore = PluginCatalogModel()
         await explore.load(swe: swe)
         let skillsPage = SkillsModel(swe: swe)
-        skillsPage.plugins = explore.lookup
         await skillsPage.load()
+        // As the app hands them over: one inventory, one catalog.
+        skillsPage.plugins = explore.lookup
+        explore.skills = skillsPage.allSkills
 
         let inventory = try decodedInventory()
         let counts = shownCounts(inventory: inventory, skillsPage: skillsPage, explore: try #require(explore.index))
@@ -496,10 +534,11 @@ func decodedInventory() throws -> [Skill] {
         let swe = SweClient(runner: ProcessRunner(executable: path))
         let explore = PluginCatalogModel(timeout: .seconds(120))
         await explore.load(swe: swe)
-        let index = try #require(explore.index, "\(explore.state)")
         let skillsPage = SkillsModel(swe: swe)
-        skillsPage.plugins = explore.lookup
         await skillsPage.load()
+        skillsPage.plugins = explore.lookup
+        explore.skills = skillsPage.allSkills
+        let index = try #require(explore.index, "\(explore.state)")
         let inventory = skillsPage.allSkills
         let counts = shownCounts(inventory: inventory, skillsPage: skillsPage, explore: index)
         let wrong = inventory.filter { counts[$0.path] != 1 }
@@ -511,7 +550,7 @@ func decodedInventory() throws -> [Skill] {
             coverage: \(inventory.count) skills = \(skillsPage.listedSkills.count) on Skills \
             + \(skillsPage.pluginSkillCount) in plugins; \(pluginSource.count) with source plugin, \
             \(pluginSource.count - unplaced.count) mapped; \(index.total) plugins in \
-            \(index.value.catalog.marketplaces.count) marketplaces
+            \(index.catalog.marketplaces.count) marketplaces
             """)
     }
 

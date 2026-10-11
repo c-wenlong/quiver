@@ -36,17 +36,12 @@ struct SkillsPage: View {
                 app.selection = .plugins
             }
         }
+        // Both at once: which skills stay here depends on the catalog. The
+        // app hands the model each new catalog (AppModel.start).
         .task(id: app.swePath) {
-            model.plugins = app.pluginCatalog.lookup
-            // Both at once: which skills stay here depends on the catalog.
             async let catalog: Void = app.pluginCatalog.loadIfStale(swe: app.swe, for: app.swePath)
             await model.loadIfStale(for: app.swePath)
             await catalog
-        }
-        // The catalog can arrive before or after the skills, or change while
-        // the page is open; the model places the skills again each time.
-        .onChange(of: app.pluginCatalog.revision) {
-            model.plugins = app.pluginCatalog.lookup
         }
     }
 }

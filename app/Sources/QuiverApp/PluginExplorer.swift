@@ -35,7 +35,7 @@ struct PluginExplorer: View {
     }
 
     @ViewBuilder private func content(_ index: PluginExploreIndex) -> some View {
-        let catalog = index.value.catalog
+        let catalog = index.catalog
         let groups = index.groups(source: model.source, harness: model.harness, query: model.query)
         filters(index, shown: groups.reduce(0) { $0 + $1.rows.count })
         if !catalog.errors.isEmpty { Problems(problems: catalog.errors) }
@@ -66,7 +66,7 @@ struct PluginExplorer: View {
     private func filters(_ index: PluginExploreIndex, shown: Int) -> some View {
         let sources: [(ExploreSource, String)] = [(.all, "All sources"), (.hub, "Quiver hub")]
             + index.otherMarketplaces.map { (.marketplace($0), $0) }
-        let harnesses = index.value.catalog.harnesses
+        let harnesses = index.catalog.harnesses
         return HStack(spacing: 8) {
             SelectMenu(label: "Source", options: sources, selection: $model.source, title: sourceTitle)
             SelectMenu(label: "Harness",

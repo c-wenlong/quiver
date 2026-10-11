@@ -171,6 +171,23 @@ final class AppModel {
             Task { [mcp] in await mcp.restore() },
             Task { [plugins] in await plugins.restore() },
             Task { [pluginCatalog] in await pluginCatalog.restore() },
+            // Skills and Plugins > Explore place one inventory against one
+            // catalog, so each skill shows on exactly one of them: each
+            // model is handed the other's latest.
+            Task { [weak self] in
+                let changes = Observations { [weak self] in self?.skills.inventory }
+                for await _ in changes {
+                    guard let self else { return }
+                    pluginCatalog.skills = skills.allSkills
+                }
+            },
+            Task { [weak self] in
+                let changes = Observations { [weak self] in self?.pluginCatalog.revision }
+                for await _ in changes {
+                    guard let self else { return }
+                    skills.plugins = pluginCatalog.lookup
+                }
+            },
             Task { [weak self] in
                 guard let sessions = self?.sessions else { return }
                 await sessions.restore()

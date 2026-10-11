@@ -41,7 +41,7 @@ struct PluginsPage: View {
                     .disabled(model.fixing != nil)
                     .help("Check again")
             case .explore:
-                Button("Refresh", systemImage: "arrow.clockwise") { Task { await catalog.load(swe: app.swe, for: app.swePath) } }
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await refreshExplore() } }
                     .iconButton()
                     .disabled(catalog.running != nil)
                     .help("Read the marketplaces again")
@@ -57,7 +57,7 @@ struct PluginsPage: View {
         }
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
         .task(id: ExploreLoad(swePath: app.swePath, open: app.pluginsTab == .explore)) {
-            if app.pluginsTab == .explore { await catalog.loadIfStale(swe: app.swe, for: app.swePath) }
+            if app.pluginsTab == .explore { await openExplore() }
         }
         .confirmationDialog("Run this fix?", isPresented: .init(
             get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { finding in
@@ -142,17 +142,42 @@ struct PluginsPage: View {
         await refreshCatalog()
     }
 
-    /// A fix changes what Explore shows; read it again if it has been read.
-    private func refreshCatalog() async {
-        guard catalog.index != nil else { return }
-        await catalog.load(swe: app.swe, for: app.swePath)
+    /// The catalog and the skills: each plugin row lists the installed
+    /// copies the Skills page's inventory found inside it.
+    private func openExplore() async {
+        async let skills: Void = app.skills.loadIfStale(for: app.swePath)
+        await catalog.loadIfStale(swe: app.swe, for: app.swePath)
+        await skills
     }
 
-    /// Runs a confirmed action. One in the hub can open or close a gap the
-    /// Health tab reports, so its report is checked again too.
+    private func refreshExplore() async {
+        async let skills: Void = app.skills.load(for: app.swePath)
+        await catalog.load(swe: app.swe, for: app.swePath)
+        await skills
+    }
+
+    /// A fix changes what Explore shows, and the skills a plugin ships;
+    /// read them again if they have been read.
+    private func refreshCatalog() async {
+        guard catalog.index != nil else { return }
+        async let skills: Void = refreshSkills()
+        await catalog.load(swe: app.swe, for: app.swePath)
+        await skills
+    }
+
+    private func refreshSkills() async {
+        guard case .loaded = app.skills.inventory else { return }
+        await app.skills.load(for: app.swePath)
+    }
+
+    /// Runs a confirmed action, then lists the skills again: an install or
+    /// uninstall adds or removes the ones the plugin ships. One in the hub
+    /// can open or close a gap the Health tab reports, so that is checked
+    /// again too.
     private func run(_ action: PluginAction) async {
         let hub = catalog.index?.rows.first { $0.id == action.ref }?.group == .hub
         await catalog.run(action, swe: app.swe, for: app.swePath)
+        await refreshSkills()
         if hub { await model.load(swe: app.swe, for: app.swePath) }
     }
 }

@@ -6,7 +6,10 @@ import Observation
 /// `swe plugins catalog --json`: every plugin in every marketplace a harness
 /// has registered or `~/.quiver/plugins` holds, installed or not, with each
 /// harness's state.
-public struct PluginCatalog: Codable, Sendable, Equatable {
+public struct PluginCatalog: SnapshotValue {
+    /// 2: version 1 was a catalog bundled with the skills, never released.
+    public static let snapshotVersion = 2
+
     /// The harnesses swe read, in its order.
     public let harnesses: [String]
     /// The harnesses swe can install, uninstall, enable and disable in.
@@ -41,7 +44,8 @@ public struct PluginCatalog: Codable, Sendable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         harnesses = try c.decodeIfPresent([String].self, forKey: .harnesses) ?? []
         actions = try c.decodeIfPresent([String].self, forKey: .actions) ?? []
-        marketplaces = try c.decodeIfPresent([PluginMarketplace].self, forKey: .marketplaces) ?? []
+        // Required: without it, any JSON object would read as an empty catalog.
+        marketplaces = try c.decode([PluginMarketplace].self, forKey: .marketplaces)
         errors = (try? c.decodeIfPresent([Problem].self, forKey: .errors)) ?? []
     }
 
@@ -544,21 +548,29 @@ public struct PluginSkill: Sendable, Equatable, Identifiable {
 /// plugin owns its folder: the deepest plugin folder (source, loaded copy or
 /// cached copy) holding it, as `swe` itself decides in
 /// `quiver.plugins.catalog.owners`. Anything else stays on the Skills page.
+///
+/// Both pages must place the same inventory against the same catalog, so the
+/// app keeps one of each (`SkillsModel`, `PluginCatalogModel`) and hands each
+/// model the other's.
 public struct SkillPlacement: Sendable, Equatable {
     /// What the Skills page lists, in inventory order.
     public let standalone: [Skill]
     /// Plugin ref to the skills found inside its folders.
     public let byPlugin: [String: [Skill]]
 
-    /// - Parameter catalog: nil while it is unknown; then every skill stays
-    ///   on the Skills page.
-    public init(skills: [Skill], catalog: PluginCatalog?) {
+    /// - Parameters:
+    ///   - catalog: nil while it is unknown; then every skill stays on the
+    ///     Skills page.
+    ///   - resolve: a path with its symlinks resolved, for a folder the
+    ///     catalog and `swe skills` name differently.
+    public init(skills: [Skill], catalog: PluginCatalog?,
+                resolve: @escaping (String) -> String = FolderOwners.realPath) {
         guard let catalog else {
             standalone = skills
             byPlugin = [:]
             return
         }
-        let owners = FolderOwners(catalog)
+        let owners = FolderOwners(catalog, resolve: resolve)
         var standalone: [Skill] = []
         var byPlugin: [String: [Skill]] = [:]
         for skill in skills {
@@ -600,19 +612,36 @@ public struct SkillPlacement: Sendable, Equatable {
 }
 
 /// Which catalog plugin a folder belongs to.
-struct FolderOwners {
+public final class FolderOwners {
     private let folders: [(folder: String, ref: String)]
+    private let resolve: (String) -> String
+    /// The folders with symlinks resolved, worked out only if a path needs them.
+    private lazy var resolvedFolders: [(folder: String, ref: String)] = folders.map { (Self.trimmed(resolve($0.folder)), $0.ref) }
 
-    init(_ catalog: PluginCatalog) {
+    init(_ catalog: PluginCatalog, resolve: @escaping (String) -> String) {
         folders = catalog.plugins.flatMap { plugin in
             plugin.folders.map { (Self.trimmed($0), plugin.ref) }
         }
+        self.resolve = resolve
     }
 
     /// The one plugin owning the deepest folder holding `path`; nil when
-    /// none does, or when two plugins share that folder.
+    /// none does, or when two plugins share that folder. Paths are compared
+    /// as given first, which settles nearly every skill without touching
+    /// the disk, then with symlinks resolved on both sides, as swe does.
     func owner(of path: String) -> String? {
-        let path = Self.trimmed(path)
+        switch Self.owner(of: Self.trimmed(path), in: folders) {
+        case .one(let ref): return ref
+        case .shared: return nil
+        case .none: break
+        }
+        if case .one(let ref) = Self.owner(of: Self.trimmed(resolve(path)), in: resolvedFolders) { return ref }
+        return nil
+    }
+
+    private enum Found { case none, one(String), shared }
+
+    private static func owner(of path: String, in folders: [(folder: String, ref: String)]) -> Found {
         var best = -1
         var refs: Set<String> = []
         for (folder, ref) in folders where path == folder || path.hasPrefix(folder + "/") {
@@ -623,7 +652,8 @@ struct FolderOwners {
                 refs.insert(ref)
             }
         }
-        return refs.count == 1 ? refs.first : nil
+        if refs.isEmpty { return .none }
+        return refs.count == 1 ? .one(refs.first!) : .shared
     }
 
     static func trimmed(_ path: String) -> String {
@@ -631,23 +661,17 @@ struct FolderOwners {
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
         return path
     }
+
+    /// `path` with every symlink resolved, like Python's `os.path.realpath`;
+    /// as given when it does not exist.
+    public static func realPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
 }
 
 // MARK: - The Explore tab
-
-/// What the Explore tab shows: the catalog, and the skills `swe skills`
-/// found, so each plugin lists the copies installed too.
-public struct PluginExplore: SnapshotValue {
-    public static let snapshotVersion = 1
-
-    public let catalog: PluginCatalog
-    public let skills: [Skill]
-
-    public init(catalog: PluginCatalog, skills: [Skill]) {
-        self.catalog = catalog
-        self.skills = skills
-    }
-}
 
 /// The Explore tab's Source select.
 public enum ExploreSource: Hashable, Sendable {
@@ -695,21 +719,24 @@ public struct ExploreGroup: Sendable, Equatable, Identifiable {
     public let rows: [ExploreRow]
 }
 
-/// The Explore tab's rows, worked out once per catalog so filtering 372
-/// plugins on each keystroke is cheap.
+/// The Explore tab's rows, worked out once per catalog and inventory so
+/// filtering 372 plugins on each keystroke is cheap.
 public struct PluginExploreIndex: Sendable, Equatable {
-    public let value: PluginExplore
+    public let catalog: PluginCatalog
+    /// The skills `swe skills` found, the same list the Skills page places.
+    public let skills: [Skill]
     public let placement: SkillPlacement
     /// Every plugin, hub first, then the other marketplaces, then the ones
     /// no longer registered.
     public let rows: [ExploreRow]
 
-    public init(_ value: PluginExplore) {
-        self.value = value
-        let placement = SkillPlacement(skills: value.skills, catalog: value.catalog)
+    public init(catalog: PluginCatalog, skills: [Skill]) {
+        self.catalog = catalog
+        self.skills = skills
+        let placement = SkillPlacement(skills: skills, catalog: catalog)
         self.placement = placement
         var rows: [ExploreRow] = []
-        for market in value.catalog.marketplaces {
+        for market in catalog.marketplaces {
             let kind: ExploreGroup.Kind = market.hub ? .hub : market.isRegistered ? .other : .unregistered
             for plugin in market.plugins {
                 let skills = placement.skills(of: plugin)
@@ -729,7 +756,7 @@ public struct PluginExploreIndex: Sendable, Equatable {
     /// The marketplaces for the Source select, beyond All and Quiver hub:
     /// every one outside the hub, by name.
     public var otherMarketplaces: [String] {
-        value.catalog.marketplaces.filter { !$0.hub }.map(\.name)
+        catalog.marketplaces.filter { !$0.hub }.map(\.name)
     }
 
     /// The rows matching the filters, grouped, empty groups left out.
@@ -775,10 +802,11 @@ public enum CatalogLookup: Sendable, Equatable {
 @MainActor
 @Observable
 public final class PluginCatalogModel {
-    public var state: Loadable<PluginExplore> { loader.state }
-    /// The rows, worked out from the catalog on show.
+    public var state: Loadable<PluginCatalog> { loader.state }
+    /// The rows, worked out from the catalog on show and `skills`.
     public private(set) var index: PluginExploreIndex?
-    /// Bumped whenever `index` or `lookup` changes, for a page to watch cheaply.
+    /// Bumped whenever the catalog on show or `lookup` changes, for the
+    /// skills model to watch cheaply.
     public private(set) var revision = 0
     /// The action running now.
     public private(set) var running: PluginAction?
@@ -786,16 +814,26 @@ public final class PluginCatalogModel {
     /// The last action that finished, in one line.
     public private(set) var lastResult: String?
 
+    /// The Skills page's inventory, so each plugin row also lists the
+    /// installed copies found inside it. The app hands over the one
+    /// `SkillsModel` holds: both pages must place the same list, or a skill
+    /// could leave one page without reaching the other.
+    public var skills: [Skill] = [] {
+        didSet { if skills != oldValue { reindex() } }
+    }
+
     // The filters, kept with the catalog so a return visit finds them set.
     public var source: ExploreSource = .all
     /// A harness name, or nil for every harness.
     public var harness: String?
     public var query = ""
 
-    private let loader: SnapshotLoader<PluginExplore>
+    private let loader: SnapshotLoader<PluginCatalog>
+    /// The catalog `revision` last counted.
+    private var counted: (catalog: PluginCatalog?, lookup: CatalogLookupKind) = (nil, .pending)
 
     /// - Parameter snapshots: where the last catalog is kept between launches.
-    public init(snapshots: (any SnapshotStoring<Snapshot<PluginExplore>>)? = nil, maxAge: TimeInterval = 60,
+    public init(snapshots: (any SnapshotStoring<Snapshot<PluginCatalog>>)? = nil, maxAge: TimeInterval = 60,
                 timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
         loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
     }
@@ -804,7 +842,7 @@ public final class PluginCatalogModel {
     public var lookup: CatalogLookup {
         switch loader.state {
         case .idle, .loading: .pending
-        case .loaded(let value): .ready(value.catalog)
+        case .loaded(let catalog): .ready(catalog)
         case .failed(let message): .unavailable(message)
         }
     }
@@ -817,23 +855,24 @@ public final class PluginCatalogModel {
 
     /// Reads again unless this swe's catalog is fresh; joins a read in flight.
     public func loadIfStale(swe: SweClient, for source: String) async {
-        await loader.loadIfStale(from: source, fetch: Self.fetch(swe))
+        await loader.loadIfStale(from: source) { try await swe.pluginCatalog() }
         reindex()
     }
 
     /// Always reads. `source` is the swe asked, as set in Settings; nil keeps the last one.
     public func load(swe: SweClient, for source: String? = nil) async {
-        await loader.load(from: source, fetch: Self.fetch(swe))
+        await loader.load(from: source) { try await swe.pluginCatalog() }
         reindex()
     }
 
     /// Runs `action`, then reads the catalog again. Call only after the user
     /// has confirmed the command, and only with an action the catalog on
-    /// show offers.
+    /// show offers. The skills it ships change too; the caller lists those
+    /// again through `SkillsModel`.
     /// - Parameter source: the swe `swe` is, as set in Settings. The reload
     ///   is dropped if another swe was picked meanwhile; nil reloads anyway.
     public func run(_ action: PluginAction, swe: SweClient, for source: String? = nil) async {
-        guard running == nil, let catalog = index?.value.catalog,
+        guard running == nil, let catalog = index?.catalog,
               let plugin = catalog.plugins.first(where: { $0.ref == action.ref }),
               catalog.actions(for: plugin, in: action.harness).contains(action)
         else { return }
@@ -850,40 +889,23 @@ public final class PluginCatalogModel {
         }
         // Reload either way: a failed command may still have changed something.
         if let source {
-            await loader.reload(from: source, fetch: Self.fetch(swe))
+            await loader.reload(from: source) { try await swe.pluginCatalog() }
         } else {
-            await loader.load(from: nil, fetch: Self.fetch(swe))
+            await loader.load(from: nil) { try await swe.pluginCatalog() }
         }
         reindex()
     }
 
-    /// The catalog and the skills inventory, read at the same time. The
-    /// inventory only adds installed copies to each plugin's skills, so a
-    /// failure there leaves the catalog's own lists rather than failing.
-    private static func fetch(_ swe: SweClient) -> @Sendable () async throws -> PluginExplore {
-        {
-            async let catalog = swe.pluginCatalog()
-            async let skills = swe.skills()
-            let read = try await catalog
-            let found = (try? await skills)?.skills ?? []
-            return PluginExplore(catalog: read, skills: found)
-        }
-    }
-
-    private var indexedLookup: CatalogLookupKind = .pending
-
     private func reindex() {
-        var changed = false
-        if case .loaded(let value) = loader.state, index?.value != value {
-            index = PluginExploreIndex(value)
-            changed = true
+        let catalog: PluginCatalog? = if case .loaded(let catalog) = loader.state { catalog } else { nil }
+        if let catalog, index?.catalog != catalog || index?.skills != skills {
+            index = PluginExploreIndex(catalog: catalog, skills: skills)
         }
         let kind = CatalogLookupKind(lookup)
-        if kind != indexedLookup {
-            indexedLookup = kind
-            changed = true
+        if kind != counted.lookup || (catalog != nil && catalog != counted.catalog) {
+            counted = (catalog ?? counted.catalog, kind)
+            revision += 1
         }
-        if changed { revision += 1 }
     }
 }
 
