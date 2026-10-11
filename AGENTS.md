@@ -75,7 +75,7 @@ Common pitfall: if a feature works with `PYTHONPATH=src python -m quiver.cli` bu
 
 ## Architecture in one screen
 
-`src/quiver/cli.py` is dispatch only: a `COMMANDS` dict mapping the first argv token to a `cmd_*` function. Top-level entries are shortcuts for the most-used harness verbs. Everything else lives under a domain command (`harness`, `mcp`, `find`, `providers`, `report`, `skills`, `session`, `config`, `setup`, `init`), each of which owns its own sub-dispatch.
+`src/quiver/cli.py` is dispatch only: a `COMMANDS` dict mapping the first argv token to a `cmd_*` function. Top-level entries are shortcuts for the most-used harness verbs. Everything else lives under a domain command (`harness`, `mcp`, `find`, `plugins`, `providers`, `report`, `skills`, `session`, `config`, `setup`, `init`), each of which owns its own sub-dispatch.
 
 Domain packages under `src/quiver/`:
 
@@ -86,6 +86,7 @@ Domain packages under `src/quiver/`:
 | `skills/` | SKILL.md discovery, catalogs, harness symlink layout (`HARNESS_ROOTS` fallback table) |
 | `mcp/` | hub `~/.quiver/mcp.json`, per-tool format handlers in `formats.py`, sync/diff/validate/doctor, `${NAME}` secret refs |
 | `find/` | read-only views of shared assets (`amd`, `skills`, `plugins`, `mcps`), `PLUGIN_FALLBACK` table; the one write is `swe find plugins --fix=<id>`, which runs a drift finding's harness CLI commands |
+| `plugins/` | `swe plugins`: the catalog of every registered marketplace's plugins with per-harness state (`catalog.py`, read-only), and install/uninstall/enable/disable through the harness CLIs or, for codex enable, a proven one-line `config.toml` edit (`actions.py`) |
 | `init/` | writes the shared `AGENTS.md` and skills tree, symlinks them and per-harness hook scripts (`hooks.py`) into each harness, registers newly found harnesses (`manage.py`), migrates the old `~/.config/swe` root |
 | `reports/` | daily/weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API key file lookup |
