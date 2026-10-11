@@ -100,14 +100,18 @@ HELP = {
   {c('cyan', 'swe edit <name> --aliases=a,b')}        Replace aliases (comma-separated)
   {c('cyan', 'swe edit <name> --tags=t1,t2')}         Replace tags
   {c('cyan', 'swe edit <name> --command=<cmd>')}      Change launch command
+  {c('cyan', 'swe edit <name> --display-name="..."')} Set the human name (e.g. "Qwen Code")
   {c('cyan', 'swe edit <name> --version=<ver>')}      Set version string
   {c('cyan', 'swe edit <name> --notes="..."')}        Set notes
   {c('cyan', 'swe edit <name> --set=field=value')}    Compact multi-set form
   {c('cyan', 'swe edit <name> --notes= --json')}      Apply the flags, print the result as JSON
 
-  Editable fields: command, description, aliases, tags, version, notes.
+  Editable fields: command, display name, description, aliases, tags,
+  version, notes. The display name is how the app (and swe info) names the
+  harness; the registry name and command stay what they are. --display_name
+  and --set=display_name=... work too.
   With no field flags, opens an interactive prompt loop (save / quit).
-  An empty value clears a field: --version= and --notes= become unset,
+  An empty value clears a field: --display-name=, --version= and --notes= become unset,
   --description= becomes "", --aliases= and --tags= become [].
   Alias collisions with other tools are rejected.
   With --json it never prompts: no field flag is an error, and every

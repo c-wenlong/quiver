@@ -222,6 +222,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "edit": [
         ("--set=", "Set field=value"),
         ("--command=", "New launch command"),
+        ("--display-name=", "Human name shown in the app"),
         ("--description=", "New description"),
         ("--aliases=", "Replace aliases"),
         ("--tags=", "Replace tags"),
