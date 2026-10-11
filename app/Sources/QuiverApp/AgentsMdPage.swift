@@ -142,13 +142,13 @@ private struct LinkRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            HarnessMarkView(harness: name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
             // Only what needs attention gets words; a dot says linked.
             if link.state != .linked {
                 Text(link.state.title.lowercased()).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
-        .help("\(link.state.title): \(displayPath(URL(fileURLWithPath: link.path)))")
+        .help("\(HarnessMark(name).name), \(link.state.title.lowercased()): \(displayPath(URL(fileURLWithPath: link.path)))")
         .accessibilityElement(children: .combine)
         // The dot alone says linked, so VoiceOver gets the state in words.
         .accessibilityValue(link.state.title)
