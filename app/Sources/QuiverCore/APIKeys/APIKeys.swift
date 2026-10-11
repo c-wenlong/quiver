@@ -339,9 +339,15 @@ public struct APIKeysStore: Sendable {
                                              attributes: [.posixPermissions: 0o600]) else {
             throw APIKeysError.unwritable("couldn't create a temporary file in \(temp.deletingLastPathComponent().path)")
         }
-        let handle = try FileHandle(forWritingTo: temp)
-        defer { try? handle.close() }
-        try handle.write(contentsOf: data)
+        do {
+            let handle = try FileHandle(forWritingTo: temp)
+            defer { try? handle.close() }
+            try handle.write(contentsOf: data)
+        } catch {
+            // A half-written temp file may hold some of the keys.
+            try? FileManager.default.removeItem(at: temp)
+            throw error
+        }
         return temp
     }
 
