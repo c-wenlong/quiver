@@ -77,7 +77,10 @@ public final class OtherLimitsModel {
             let others = harnesses.filter { !Self.ownAccounts.contains($0.name) && $0.state != .archived }
             cards = (others.filter { $0.state == .starred } + others.filter { $0.state != .starred }).map { harness in
                 Card(name: harness.name, displayName: harness.displayName, command: harness.command,
-                     cliInstalled: harness.installed, isStarred: harness.state == .starred, limit: harness.rateLimit)
+                     cliInstalled: harness.installed, isStarred: harness.state == .starred,
+                     // Only starred harnesses show limits; swe may still hold a
+                     // reading from before one was unstarred.
+                     limit: harness.state == .starred ? harness.rateLimit : nil)
             }
             cliInstalled = harnesses.reduce(into: [:]) { map, harness in
                 if let installed = harness.installed { map[harness.name] = installed }
