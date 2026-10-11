@@ -95,8 +95,9 @@ Modelled on TokenTracker's Sessions page.
 - [ ] Signing, notarization, Sparkle updates
 
 ### M7. Service status
-- [ ] Status of the services the harnesses depend on (Anthropic, OpenAI, GitHub, Cursor and more), from their public status pages
-- [ ] Incidents surfaced in the menu bar when a service is degraded
+- [x] Status of the services the harnesses depend on (Anthropic, OpenAI, GitHub, Cursor and more), from their public status pages
+  (`QuiverCore/Status`: Statuspage feeds plus Google Cloud's for Gemini, cached at `~/.quiver/cache/service-status.json`)
+- [x] Incidents surfaced in the menu bar when a service is degraded
 
 ### Later
 - [ ] Claude IP check (low priority)

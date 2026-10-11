@@ -125,6 +125,7 @@ struct MenuBarContent: View {
                 .buttonStyle(.borderless)
                 .disabled(app.accounts.isLoading)
             }
+            ServiceStatusMenuLine(openMain: openMain)
             if let spend = app.overview?.spend {
                 SpendDonut(slices: spend)
                 Divider()
