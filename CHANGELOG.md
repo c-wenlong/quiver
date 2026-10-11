@@ -70,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe edit <name> --field=value --json`.** The app's edit sheet needs to
+  change a harness's command, description, aliases, tags, version and notes
+  without a terminal. With `--json` the flags are applied (an empty value
+  clears the field, as before) and stdout carries `{"name": <canonical
+  name>, "changes": [<fields that changed>], "harness": <that harness's
+  `swe list --json` row>}`. It never prompts: no field flag, an unknown
+  harness, an alias collision, an empty command or an unknown flag print a
+  message on stderr, leave stdout empty and exit 1. Without `--json`
+  nothing changes. `swe list --json` rows also gain `notes` (null when
+  unset) so the form can prefill it.
 - **JSON for the app's Skills and Harnesses pages.** `swe skills --json`
   lists every skill on the machine with where it came from (`shared`,
   `plugin`, `harness`, `builtin`, `catalog`) and which harnesses can see
