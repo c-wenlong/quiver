@@ -83,20 +83,6 @@ private struct HarnessRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            if harness.state != .archived {
-                Button(harness.state == .starred ? "Unstar" : "Star",
-                       systemImage: harness.state == .starred ? "star.fill" : "star") {
-                    Task { await model.toggleStar(harness) }
-                }
-                .labelStyle(.iconOnly)
-                .font(.system(size: 14))
-                .foregroundStyle(harness.state == .starred ? Theme.textPrimary : Theme.textMuted)
-                .frame(width: 24, height: 24)
-                .contentShape(.rect)
-                .plainButton(cornerRadius: 6)
-                .help(harness.state == .starred ? "Unstar: stop pinning it to the top" : "Star: pin it to the top and track its limits")
-                .padding(.top, -2)
-            }
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     HarnessIcon(harness: harness.name, size: 16)
@@ -152,33 +138,46 @@ private struct HarnessRow: View {
             Button("Restore") { Task { await model.restore(harness) } }
                 .secondaryButton()
         } else {
-            Button("Archive", systemImage: "archivebox") { archiving = true }
-                .iconButton()
-                .help("Archive: hide it from swe list and record why")
-                .popover(isPresented: $archiving, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Archive \(harness.name)").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                        Text("It drops out of swe list. Nothing is uninstalled, and the reason is kept so you remember why.")
-                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        TextField("Why? Like: too slow, or no MCP support", text: $reason)
-                            .quiverField()
-                            .onSubmit(archive)
-                        HStack {
-                            Spacer()
-                            Button("Cancel") { archiving = false }
-                                .secondaryButton()
-                                .keyboardShortcut(.cancelAction)
-                            Button("Archive", action: archive)
-                                .primaryButton()
-                                .disabled(reason.trimmingCharacters(in: .whitespaces).isEmpty)
-                                .keyboardShortcut(.defaultAction)
-                        }
-                    }
-                    .padding(16)
-                    .frame(width: 340)
+            // Archive on top, star under it, one column of icon buttons.
+            VStack(spacing: 6) {
+                archiveButton
+                Button(harness.state == .starred ? "Unstar" : "Star",
+                       systemImage: harness.state == .starred ? "star.fill" : "star") {
+                    Task { await model.toggleStar(harness) }
                 }
+                .iconButton()
+                .help(harness.state == .starred ? "Unstar: stop pinning it to the top" : "Star: pin it to the top and track its limits")
+            }
         }
+    }
+
+    private var archiveButton: some View {
+        Button("Archive", systemImage: "archivebox") { archiving = true }
+            .iconButton()
+            .help("Archive: hide it from swe list and record why")
+            .popover(isPresented: $archiving, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Archive \(harness.name)").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    Text("It drops out of swe list. Nothing is uninstalled, and the reason is kept so you remember why.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    TextField("Why? Like: too slow, or no MCP support", text: $reason)
+                        .quiverField()
+                        .onSubmit(archive)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { archiving = false }
+                            .secondaryButton()
+                            .keyboardShortcut(.cancelAction)
+                        Button("Archive", action: archive)
+                            .primaryButton()
+                            .disabled(reason.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .keyboardShortcut(.defaultAction)
+                    }
+                }
+                .padding(16)
+                .frame(width: 340)
+            }
     }
 
     private func archive() {
