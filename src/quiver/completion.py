@@ -105,7 +105,8 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--full", "Show every match, not just counts"),
         ("--interactive", "Browse matches with arrow keys"),
         ("-i", "Short for --interactive"),
-        ("--json", "Skills only: print the roots as JSON"),
+        ("--json", "Skills or plugins: print as JSON"),
+        ("--fix=", "Plugins only: run one drift finding's fix by id"),
     ],
     "find mcp": [
         ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
@@ -168,6 +169,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--dry-run", "Show what would change"),
         ("--strict", "Exit nonzero on any conflict"),
         ("--prune", "Delete target servers not in the selection"),
+        ("--json", "Print what moved as JSON (implies --no-interactive)"),
     ],
     "mcp doctor": [
         ("--strict", "Exit nonzero on warnings"),

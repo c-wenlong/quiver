@@ -20,7 +20,13 @@ from quiver.find.tree import (
     scan_skill_roots,
     skills_tree,
 )
-from quiver.find.plugin_drift import KINDS as DRIFT_KINDS, plugin_drift, quiver_plugins
+from quiver.find.plugin_drift import (
+    KINDS as DRIFT_KINDS,
+    FixError,
+    apply_fix,
+    plugin_drift,
+    quiver_plugins,
+)
 from quiver.find.plugins import discover_plugins, filter_plugins
 from quiver.find.summary import Group, plural, print_sections
 from quiver.find.tree import filter_scope
@@ -882,6 +888,45 @@ def _quiver_drift(home: Path, visible) -> list | None:
     return [f for f in plugin_drift(home) if visible(f.harness)]
 
 
+def _drift_json(f) -> dict:
+    return {
+        "id": f.id,
+        "harness": f.harness,
+        "marketplace": f.marketplace,
+        "plugin": f.plugin or None,
+        "ref": f.ref,
+        "kind": f.kind,
+        "detail": f.detail,
+        "fix": f.fix,
+        "runnable": bool(f.argv),
+        "paths": list(f.paths),
+    }
+
+
+def _plugins_json(home: Path, harness: str) -> dict:
+    """The ``swe find plugins --json`` document: drift, with fix ids.
+
+    ``sources`` counts the plugins under ~/.quiver/plugins, so a caller can
+    tell "nothing to reach the harnesses" (0) from "all reached" (drift []).
+    """
+    visible, _ = harness_filter(load_registry_if_present(), normalise_harness(harness))
+    drift = _quiver_drift(home, visible) or []
+    return {"sources": len(quiver_plugins(home)),
+            "drift": [_drift_json(f) for f in drift]}
+
+
+def _fix_plugin_drift(fix_id: str, json_view: bool, fail) -> int:
+    """``swe find plugins --fix=<id>``: run the commands one finding names."""
+    try:
+        finding = apply_fix(Path.home(), fix_id)
+    except FixError as exc:
+        return fail(c("red", str(exc)))
+    if json_view:
+        return emit({"fixed": _drift_json(finding)})
+    print(f"  {c('green', '✓')} {finding.harness} {finding.ref}: {finding.fix}")
+    return 0
+
+
 def _drift_groups(drift: list) -> list[Group]:
     groups = []
     for kind in DRIFT_KINDS:
@@ -1057,12 +1102,13 @@ def cmd_find(args) -> int:
     args = [a for a in args if a not in ("--root", "-r")]
 
     try:
-        args = expand_value_flags(args, {"--scope", "--harness"})
+        args = expand_value_flags(args, {"--scope", "--harness", "--fix"})
     except ValueError as exc:
         return fail(c("red", str(exc)))
 
     scope = "global"
     harness = HARNESS_DEFAULT
+    fix_id = None
     i = 0
     while i < len(args):
         if args[i] == "--scope":
@@ -1070,6 +1116,9 @@ def cmd_find(args) -> int:
             del args[i : i + 2]
         elif args[i] == "--harness":
             harness = args[i + 1]
+            del args[i : i + 2]
+        elif args[i] == "--fix":
+            fix_id = args[i + 1]
             del args[i : i + 2]
         else:
             i += 1
@@ -1099,11 +1148,18 @@ def cmd_find(args) -> int:
     rest = args[1:]
     if rest:
         return fail(f"Unexpected args: {' '.join(rest)}")
+    if fix_id is not None:
+        if topic not in ("plugins", "plugin"):
+            return fail("--fix is only available for plugins: "
+                        "swe find plugins --fix=<id>")
+        return _fix_plugin_drift(fix_id, json_view, fail)
     if json_view:
         if interactive:
             return fail("--json cannot be combined with --interactive")
+        if topic in ("plugins", "plugin"):
+            return emit(_plugins_json(Path.home(), harness))
         if topic not in ("skills", "skill"):
-            return fail("--json is only available for skills: "
+            return fail("--json is only available for skills and plugins: "
                         "swe find skills --json")
         return cmd_find_skills(args[1:], root_flag, scope, harness,
                                json_view=True)
@@ -1187,6 +1243,9 @@ def print_find_help() -> None:
     registered, plugins it never installed, copies that differ from the
     source, and plugins disabled in one harness but enabled in the other.
     {c('cyan', '--full')} lists each one with the command that fixes it. Read-only.
+    {c('cyan', 'swe find plugins --json')} prints the findings with an id each, and
+    {c('cyan', '--fix=<id>')} runs that finding's commands (no shell) after checking
+    it still applies. The one write in swe find, and only when asked.
 
   {c('dim', 'swe mcp list gives the tool-by-server matrix once you know what')}
   {c('dim', 'you are looking for; swe find mcps answers what the hub holds.')}
@@ -1194,7 +1253,7 @@ def print_find_help() -> None:
   {c('bold', 'Machine-readable')}  {c('cyan', 'swe find skills --json')}
     One JSON document on stdout, nothing else: the shared skills and each
     skills root with its link state. Honours --root, --scope and --harness.
-    Skills only for now; read-only.
+    {c('cyan', 'swe find plugins --json')} prints plugin drift the same way.
 
   {c('bold', 'Browse instead of print')}  {c('cyan', '--interactive')} / {c('cyan', '-i')}
     Works on {c('cyan', 'amd')}, {c('cyan', 'skills')} and {c('cyan', 'plugins')}. Three panes: where you came
