@@ -2069,8 +2069,8 @@ def cmd_edit(args):
     try:
         return _edit(args, json_view)
     except ConfigurationError as exc:
-        # An unreadable registry would otherwise reach the dispatcher, which
-        # prints to stdout, and the app decodes stdout whole.
+        # The dispatcher does the same for every command; handled here too so
+        # a direct call (and its tests) keeps --json stdout empty.
         print(c("red", str(exc)), file=sys.stderr if json_view else sys.stdout)
         return 1
 

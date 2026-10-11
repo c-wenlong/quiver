@@ -1799,7 +1799,8 @@ def main(argv=None):
     try:
         return COMMANDS[cmd](args[1:])
     except ConfigurationError as exc:
-        print(c("red", str(exc)))
+        # Under --json stdout is one document, so the error goes to stderr.
+        print(c("red", str(exc)), file=sys.stderr if "--json" in args else sys.stdout)
         return 1
 
 
