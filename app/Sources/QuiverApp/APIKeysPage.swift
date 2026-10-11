@@ -73,7 +73,7 @@ struct APIKeysPage: View {
                 Text("Provider").frame(width: 150, alignment: .leading)
                 Text("Variable and value").frame(maxWidth: .infinity, alignment: .leading)
                 Text("New terminals").frame(width: 120, alignment: .leading)
-                Color.clear.frame(width: 104, height: 1)
+                Color.clear.frame(width: KeyRow.actionsWidth, height: 1)
             }
             .font(Theme.tableHeader).foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -123,13 +123,9 @@ struct APIKeysPage: View {
     }
 }
 
-/// `~/…` for paths in the home folder.
-func displayPath(_ path: String) -> String {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
-}
-
 private struct KeyRow: View {
+    /// Three 36pt icon buttons 4pt apart.
+    static let actionsWidth: CGFloat = 3 * Theme.iconButton + 2 * 4
     var row: APIKeysModel.Row
     var showsProvider: Bool
     var isRevealed: Bool
@@ -162,8 +158,7 @@ private struct KeyRow: View {
                 Button("Copy", systemImage: "doc.on.doc", action: copy).help("Copy the value").iconButton()
                 Button("Edit", systemImage: "pencil", action: edit).help("Edit or remove").iconButton()
             }
-            .controlSize(.small)
-            .frame(width: 104, alignment: .trailing)
+            .frame(width: Self.actionsWidth, alignment: .trailing)
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(hovering ? Theme.rowHover : .clear)

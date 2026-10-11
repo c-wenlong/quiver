@@ -12,7 +12,9 @@ struct AgentsMdPage: View {
 
     var body: some View {
         let model = app.agentsMd
-        Page(title: "AGENTS.md", subtitle: "The instructions every harness reads, and each project's own.") {
+        // The editor fills the page and scrolls itself, so the page doesn't.
+        Page(title: "AGENTS.md", subtitle: "The instructions every harness reads, and each project's own.",
+             scrolls: false) {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe) }
                 model.checkDisk()
@@ -41,11 +43,12 @@ private struct GlobalInstructions: View {
         let model = app.agentsMd
         switch model.check {
         case .idle, .loading:
-            ProgressView().frame(maxWidth: .infinity)
+            LoadingCard(text: "Checking links…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let report):
-            HStack(alignment: .top, spacing: Theme.gutter) {
+            VStack(alignment: .leading, spacing: 12) {
+                LinksStrip(report: report)
                 if let document = model.global {
                     let linked = report.instructionRows.filter { $0.instructions?.state == .linked }.count
                     InstructionEditor(
@@ -53,26 +56,56 @@ private struct GlobalInstructions: View {
                         title: displayPath(document.url),
                         subtitle: linked == 1 ? "Linked into 1 harness" : "Linked into \(linked) harnesses")
                 }
-                LinksCard(report: report)
-                    .frame(width: 300)
             }
         }
     }
 }
 
-/// Where each harness's instruction file points, from `swe init --check`.
-private struct LinksCard: View {
+/// A compact bordered band above the editor: a label, then what it's about.
+private struct Strip<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) { content }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card, in: .rect(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+    }
+}
+
+/// Where each harness's instruction file points, from `swe init --check`,
+/// as one strip of dots and names so the editor keeps the full width.
+private struct LinksStrip: View {
     @Environment(AppModel.self) private var app
     var report: InitCheck
 
     var body: some View {
         let model = app.agentsMd
-        Card(title: "Harnesses", subtitle: "From swe init --check") {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(report.instructionRows) { row in
-                    if let link = row.instructions {
-                        LinkRow(name: row.name, link: link)
+        Strip {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("Harnesses").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    .help("From swe init --check")
+                FlowLayout(spacing: 14, lineSpacing: 6) {
+                    ForEach(report.instructionRows) { row in
+                        if let link = row.instructions {
+                            LinkRow(name: row.name, link: link)
+                        }
                     }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if report.instructionsNeedInit || model.linking {
+                    HStack(spacing: 8) {
+                        if model.linking { ProgressView().controlSize(.small) }
+                        Button(model.linking ? "Linking…" : "Link with swe init", systemImage: "link") {
+                            Task { await model.link(swe: app.swe) }
+                        }
+                        .primaryButton()
+                        .disabled(model.linking)
+                        .help("Runs swe init, which links what is missing and never replaces a real file.")
+                    }
+                    .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                 }
             }
             if report.instructionRows.contains(where: { $0.instructions?.state.isBlocked == true }) {
@@ -81,22 +114,15 @@ private struct LinksCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = model.linkError {
-                Text(error).font(Theme.caption).foregroundStyle(Theme.danger)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if report.instructionsNeedInit || model.linking {
-                Divider().overlay(Theme.border)
-                HStack(spacing: 8) {
-                    Button(model.linking ? "Linking…" : "Link with swe init", systemImage: "link") {
-                        Task { await model.link(swe: app.swe) }
-                    }
-                    .primaryButton()
-                    .disabled(model.linking)
-                    if model.linking { ProgressView().controlSize(.small) }
+                // swe init can fail with pages of output; bounded, so the
+                // editor below keeps its room on this non-scrolling page.
+                ScrollView {
+                    Text(error).font(Theme.caption).foregroundStyle(Theme.danger)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Text("Runs swe init, which links what is missing and never replaces a real file.")
-                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
+                .frame(maxHeight: 64)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -114,14 +140,18 @@ private struct LinkRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
-            Spacer(minLength: 8)
-            Text(link.state.title).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            // Only what needs attention gets words; a dot says linked.
+            if link.state != .linked {
+                Text(link.state.title.lowercased()).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
         }
-        .help(displayPath(URL(fileURLWithPath: link.path)))
+        .help("\(link.state.title): \(displayPath(URL(fileURLWithPath: link.path)))")
         .accessibilityElement(children: .combine)
+        // The dot alone says linked, so VoiceOver gets the state in words.
+        .accessibilityValue(link.state.title)
     }
 }
 
@@ -134,8 +164,8 @@ private struct ProjectInstructions: View {
 
     var body: some View {
         let model = app.agentsMd
-        VStack(alignment: .leading, spacing: Theme.gutter) {
-            Card {
+        VStack(alignment: .leading, spacing: 12) {
+            Strip {
                 HStack(spacing: 12) {
                     Image(systemName: "folder").foregroundStyle(Theme.textSecondary)
                     if let folder = model.projectFolder {
@@ -223,6 +253,7 @@ struct InstructionEditor: View {
     var subtitle: String
     var onSaved: () -> Void = {}
     @State private var error: String?
+    @FocusState private var editing: Bool
 
     var body: some View {
         Card(title: title, subtitle: subtitle) {
@@ -245,7 +276,7 @@ struct InstructionEditor: View {
         } content: {
             switch document.state {
             case .loading:
-                ProgressView().frame(maxWidth: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger)
             case .ready:
@@ -258,13 +289,18 @@ struct InstructionEditor: View {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(Theme.caption).foregroundStyle(Theme.danger)
                 }
+                // Fills the card, and the card fills what the page has left.
                 TextEditor(text: $document.text)
                     .font(.system(size: 13, design: .monospaced))
                     .scrollContentBackground(.hidden)
+                    .focused($editing)
+                    .focusEffectDisabled()
                     .padding(10)
-                    .background(Theme.subtle, in: .rect(cornerRadius: Theme.controlRadius))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
-                    .frame(height: 540)
+                    .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                        .strokeBorder(editing ? Theme.borderHover : Theme.border, lineWidth: 1))
+                    .focusRing(editing, cornerRadius: Theme.controlRadius)
+                    .frame(minHeight: 160, maxHeight: .infinity)
                     .accessibilityLabel(title)
             }
         }
@@ -301,11 +337,4 @@ private struct ChangedOnDiskBanner: View {
         .background(Theme.warning.opacity(0.08), in: .rect(cornerRadius: Theme.controlRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.warning.opacity(0.4), lineWidth: 1))
     }
-}
-
-/// A path with the home folder written as `~`.
-func displayPath(_ url: URL) -> String {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let path = url.path
-    return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
 }
