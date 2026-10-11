@@ -42,9 +42,21 @@ export MIMO_API_KEY="sk-new-000000000000000000000000beef"
         #expect(file.entries.map(\.provider) == [""])
     }
 
+    @Test func anUppercaseCommentedOutExportIsNotAHeading() {
+        let file = APIKeysFile(text: "# EXPORT MIMO_API_KEY=\"sk-old-5555\"\nexport MIMO_API_KEY=sk-new-6666\n")
+        #expect(file.entries.map(\.provider) == [""])
+        #expect(file.problems.map(\.reason) == ["a commented-out key still holds a value; delete the line"])
+        #expect(!file.problems.contains { $0.text.contains("sk-old") })
+    }
+
+    @Test func aCommentWithAnAssignmentAnywhereIsNotAHeading() {
+        let file = APIKeysFile(text: "# old: MIMO_API_KEY=sk-old-7777\nexport MIMO_API_KEY=sk-new-8888\n")
+        #expect(file.entries.map(\.provider) == [""])
+    }
+
     @Test func noProviderEverHoldsAnAssignment() {
         let texts = [commentedKeysFile, sampleKeysFile,
-                     "#  export   A_KEY = x\n# B_KEY=y # note\n#export C_KEY='z'\nexport D_KEY=w\n"]
+                     "#  export   A_KEY = x\n# B_KEY=y # note\n#export C_KEY='z'\n# Export E_KEY=v\n# was F_KEY = u\nexport D_KEY=w\n"]
         for text in texts {
             for entry in APIKeysFile(text: text).entries {
                 #expect(!entry.provider.contains("="), "provider \(entry.provider) holds an assignment")

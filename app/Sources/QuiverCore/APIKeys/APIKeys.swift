@@ -169,13 +169,14 @@ public struct APIKeysFile: Equatable, Sendable {
     }
 
     /// A comment line's text, used as the provider for the keys below it.
-    /// A commented-out assignment (`# export NAME=value`, `#NAME=value`) is
-    /// not a heading: its text would carry the value, so it neither names
-    /// nor resets the provider.
+    /// A comment holding `NAME=` anywhere (`# export NAME=value`,
+    /// `# EXPORT NAME=value`, `# old: NAME=value`) is not a heading: its text
+    /// may carry a value, so it neither names nor resets the provider.
     static func heading(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasPrefix("#"), commentedAssignment(line) == nil else { return nil }
+        guard trimmed.hasPrefix("#") else { return nil }
         let text = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+        guard !text.contains(/\b[A-Za-z_][A-Za-z0-9_]*\s*=/) else { return nil }
         return text.isEmpty ? nil : text
     }
 
@@ -184,7 +185,7 @@ public struct APIKeysFile: Equatable, Sendable {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("#") else { return nil }
         let text = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
-        guard let match = text.firstMatch(of: /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/) else { return nil }
+        guard let match = text.firstMatch(of: /^(?:(?i:export)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/) else { return nil }
         return String(match.1)
     }
 
