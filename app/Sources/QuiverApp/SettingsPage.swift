@@ -206,7 +206,7 @@ struct SettingRow<Control: View>: View {
                         Text(warning).foregroundStyle(Theme.textSecondary)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(danger ? Theme.danger : Theme.warning)
+                            .foregroundStyle(danger ? Theme.dangerText : Theme.warningText)
                     }
                     .font(Theme.caption)
                 } else {

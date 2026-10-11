@@ -41,7 +41,7 @@ private struct SessionsContent: View {
             SummaryStrip(summary: model.summary)
             if let error = model.error ?? actionError {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.warning)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
             }
             if !model.failures.isEmpty {
                 Label("Couldn't read: \(model.failures.joined(separator: "; "))", systemImage: "exclamationmark.circle")

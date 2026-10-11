@@ -408,7 +408,7 @@ struct ErrorCard: View {
         Card {
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(Theme.bodySmall)
-                .foregroundStyle(Theme.danger)
+                .foregroundStyle(Theme.dangerText)
                 .textSelection(.enabled)
         }
     }
