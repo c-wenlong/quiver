@@ -60,3 +60,28 @@ struct ChartSwatch: View {
             .accessibilityHidden(true)
     }
 }
+
+/// A harness as its logo, plus a word only where the logo alone is
+/// ambiguous ("CLI" and "Desktop" for Claude's two, "acc2" for a second
+/// account). The full name is the tooltip and what VoiceOver reads. The word
+/// takes the surrounding font and colour.
+struct HarnessMarkView: View {
+    var harness: String
+    var size: CGFloat = 16
+
+    var body: some View {
+        let mark = HarnessMark(harness)
+        HStack(spacing: 4) {
+            if let icon = mark.icon { HarnessIcon(harness: icon, size: size) }
+            if let word = mark.word { Text(word).lineLimit(1) }
+        }
+        .help(mark.name)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(mark.name)
+    }
+}
+
+/// Full harness names for prose, menus and VoiceOver: "Claude Code, Codex".
+func harnessNames(_ harnesses: [String]) -> String {
+    harnesses.map { HarnessMark($0).name }.joined(separator: ", ")
+}

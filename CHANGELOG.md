@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe find plugins` flagged Claude Code plugins as out of date when
+  they weren't.** Claude Code reads a directory-marketplace plugin straight
+  from its folder, so the copy under `~/.claude/plugins/cache` is a leftover
+  it never loads, and `claude plugin update` reports nothing to update.
+  Comparing against that copy raised "N files differ" findings no fix could
+  clear. Claude is no longer checked for stale copies; Codex, which runs its
+  own copy, still is.
+
 - **`swe skills unlink ~/.x/skills` unlinked the wrong thing.** A path to a
   linked harness root resolved to the shared tree it points at, so the
   command tried to unlink `shared` and refused. A symlink given by path is

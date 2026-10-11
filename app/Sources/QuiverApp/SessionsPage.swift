@@ -194,8 +194,9 @@ private struct SessionRow: View {
         let s = row.session
         HStack(alignment: .top, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: 3).fill(Theme.harness(s.harness))
-                    .frame(width: 10, height: 10).padding(.top, 5)
+                HarnessIcon(harness: HarnessMark(s.harness).icon ?? s.harness, size: 16)
+                    .padding(.top, 1)
+                    .help(HarnessMark(s.harness).name)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(s.title ?? s.id).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
@@ -294,7 +295,7 @@ private struct SessionDetail: View {
         let s = row.session
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 3).fill(Theme.harness(s.harness)).frame(width: 10, height: 10)
+                HarnessIcon(harness: HarnessMark(s.harness).icon ?? s.harness, size: 20)
                 Text(s.title ?? s.id).font(Theme.sectionTitle).tracking(-0.5).lineLimit(2)
                 StatusBadge(status: s.status)
             }
