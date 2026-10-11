@@ -10,39 +10,31 @@ struct ProviderVisibilityCard: View {
     @State private var dragging: String?
 
     var body: some View {
-        Card {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Provider visibility").font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                    Text(model.hasChecked ? "\(model.enabledCount) / \(model.rows.count) providers enabled"
-                         : model.checkError != nil ? "Couldn't check which providers are installed"
-                         : "Checking which providers are installed…")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary).monospacedDigit()
-                }
-                Spacer()
-                HStack(spacing: 0) {
-                    Button("Enable all") { model.enableAll() }
-                        .focusRing(cornerRadius: Theme.controlRadius)
-                    Button("Disable all") { model.disableAll() }
-                        .focusRing(cornerRadius: Theme.controlRadius)
-                }
-                .buttonStyle(QuietTextButtonStyle())
-                .padding(.horizontal, 4)
-                .frame(height: 36)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border, lineWidth: 1))
-            }
-            if let error = model.checkError {
-                HStack(spacing: 10) {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(Theme.caption).foregroundStyle(Theme.warning)
-                        .lineLimit(2)
-                    Spacer()
-                    Button("Try again") { Task { await model.load() } }
-                        .secondaryButton()
-                        .disabled(model.isLoading)
+        SettingsCard {
+            SettingRow(title: "Provider visibility",
+                       detail: model.hasChecked ? "\(model.enabledCount) / \(model.rows.count) providers enabled"
+                           : "Checking which providers are installed…",
+                       warning: model.checkError) {
+                HStack(spacing: 8) {
+                    if model.checkError != nil {
+                        Button("Try again") { Task { await model.load() } }
+                            .secondaryButton()
+                            .disabled(model.isLoading)
+                    }
+                    HStack(spacing: 2) {
+                        Button("Enable all") { model.enableAll() }
+                            .focusRing(cornerRadius: Theme.controlRadius)
+                        Button("Disable all") { model.disableAll() }
+                            .focusRing(cornerRadius: Theme.controlRadius)
+                    }
+                    .buttonStyle(SegmentActionStyle())
+                    .padding(2)
+                    .background(Theme.segmentTrack, in: .rect(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+                    .fixedSize()
                 }
             }
-            Divider().overlay(Theme.border)
+            SettingsDivider()
             VStack(spacing: 0) {
                 ForEach(model.rows) { row in
                     ProviderRow(row: row, checked: model.hasChecked, failed: model.checkError != nil,
@@ -75,6 +67,7 @@ struct ProviderVisibilityCard: View {
                         return true
                     }
             }
+            .padding(.vertical, 8)
         }
         // Again whenever a different swe is chosen.
         .task(id: app.swePath) { await model.load() }
@@ -94,7 +87,7 @@ private struct ProviderRow: View {
             GripDots()
             HStack(spacing: 14) {
                 HarnessIcon(harness: row.provider.icon, size: 20)
-                Text(row.provider.name).font(.system(size: 15)).foregroundStyle(Theme.textPrimary)
+                Text(row.provider.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 if !checked && failed {
                     Text("Couldn't check").font(Theme.caption).foregroundStyle(Theme.textMuted)
                 } else if !checked {
@@ -138,26 +131,28 @@ private struct GripDots: View {
     }
 }
 
-/// Plain 13pt text buttons that brighten on hover, for grouped actions.
-struct QuietTextButtonStyle: ButtonStyle {
+/// Actions in a segmented track: 12/500 labels at 28pt that brighten and
+/// take the selected fill under the pointer. Nothing stays selected.
+struct SegmentActionStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        QuietTextButton(configuration: configuration)
+        SegmentAction(configuration: configuration)
     }
 }
 
-private struct QuietTextButton: View {
+private struct SegmentAction: View {
     let configuration: ButtonStyleConfiguration
     @State private var hovering = false
 
     var body: some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            .font(Theme.control)
+            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textTab)
             .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(hovering ? Theme.hover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .frame(height: Theme.controlHeight)
+            .background(hovering ? Theme.segmentSelected : .clear, in: .rect(cornerRadius: Theme.controlRadius))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(.rect)
+            .animation(.easeOut(duration: 0.15), value: hovering)
             .onHover { hovering = $0 }
     }
 }

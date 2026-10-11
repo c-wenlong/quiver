@@ -47,6 +47,8 @@ enum Theme {
     static let secondaryBackground = Color(light: "#fafafa", dark: "#171717")
     static let code = Color(light: "#f5f5f5", dark: "#17171799")
     static let dialog = Color(light: "#ffffff", dark: "#0a0a0a")
+    /// A footer link under the pointer.
+    static let footerLinkHover = Color(light: "#404040", dark: "#d4d4d4")
     /// A period or table tab under the pointer.
     static let tabHover = Color(light: "#fafafa", dark: "#26262680")
 
