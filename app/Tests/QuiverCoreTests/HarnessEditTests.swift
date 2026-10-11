@@ -19,6 +19,7 @@ import Testing
         let (model, _) = await loaded([])
         let harness = try codex(model)
         let draft = HarnessEdit(harness)
+        #expect(draft.displayName == "")
         #expect(draft.command == "codex")
         #expect(draft.description == "OpenAI's")
         #expect(draft.version == "0.144.1")
@@ -37,8 +38,9 @@ import Testing
         draft.aliases = " cx "
         draft.version = ""
         draft.notes = "Pinned for CI"
+        draft.displayName = " Codex CLI "
         #expect(draft.flags(from: original) == [
-            "--description=OpenAI's CLI", "--version=", "--tags=agentic,coding", "--notes=Pinned for CI",
+            "--display-name=Codex CLI", "--description=OpenAI's CLI", "--version=", "--tags=agentic,coding", "--notes=Pinned for CI",
         ])
     }
 
@@ -79,6 +81,20 @@ import Testing
         let error = await model.save(harness, draft)
         #expect(error?.contains("already used by 'claude'") == true)
         #expect(model.all.count == 4)
+    }
+
+    @Test func aDisplayNameIsTheTitleAndTheBrandNameIsTheFallback() async throws {
+        let json = harnessesJSON.replacingOccurrences(of: #""name": "codex","#, with: #""name": "codex", "display_name": "Codex CLI","#)
+            .replacingOccurrences(of: #""name": "opencode","#, with: #""name": "opencode", "display_name": "  ","#)
+        let runner = ScriptedRunner([(["list"], ok(json))])
+        let model = HarnessesModel(swe: SweClient(runner: runner))
+        await model.load()
+        func title(_ name: String) -> String? { model.all.first { $0.name == name }?.title }
+        #expect(title("codex") == "Codex CLI")
+        // Blank or missing: the brand name Quiver already knows, else the id capitalised.
+        #expect(title("opencode") == "OpenCode")
+        #expect(title("goose") == "Goose")
+        #expect(HarnessEdit(try #require(model.all.first { $0.name == "codex" })).displayName == "Codex CLI")
     }
 
     @Test func notesDecodeWhenSweSendsThem() async throws {

@@ -12,10 +12,18 @@ public final class OtherLimitsModel {
         public var id: String { name }
         public var name: String
         public var limit: RateLimit
+        /// Its display name from harness.json, if set.
+        public var displayName: String? = nil
         /// What swe runs for it, from harness.json.
         public var command: String = ""
         /// Whether that command is on PATH; nil from an older swe.
         public var cliInstalled: Bool? = nil
+
+        /// The display name, else the brand name, else the id capitalised.
+        public var title: String {
+            let set = displayName?.trimmingCharacters(in: .whitespaces) ?? ""
+            return set.isEmpty ? UsageFormat.harness(name) : set
+        }
     }
 
     /// Covered by Accounts, one card per signed-in account.
@@ -45,7 +53,7 @@ public final class OtherLimitsModel {
             }
             rows = harnesses.compactMap { harness in
                 guard !Self.ownAccounts.contains(harness.name), let limit = harness.rateLimit else { return nil }
-                return Row(name: harness.name, limit: limit, command: harness.command,
+                return Row(name: harness.name, limit: limit, displayName: harness.displayName, command: harness.command,
                            cliInstalled: harness.installed)
             }
             cliInstalled = harnesses.reduce(into: [:]) { map, harness in

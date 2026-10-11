@@ -74,8 +74,6 @@ final class AppModel {
     private(set) var others: OtherLimitsModel
     /// Every limit together: the status item, notifications and widgets.
     let limits: LimitsMonitor
-    /// Names given to harness cards on the Accounts page.
-    let harnessNames = HarnessDisplayNames()
     /// Where each harness's desktop app is installed, if anywhere.
     let apps = AppLocator()
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.

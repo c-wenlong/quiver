@@ -76,20 +76,6 @@ import Testing
     }
 }
 
-@MainActor
-@Suite struct HarnessDisplayNamesTests {
-    @Test func aRenameIsRememberedAndAnEmptyNameClearsIt() throws {
-        let defaults = try #require(UserDefaults(suiteName: "names-\(UUID().uuidString)"))
-        let names = HarnessDisplayNames(defaults: defaults)
-        #expect(names.name(for: "devin") == nil)
-        names.set("Devin (team)", for: "devin")
-        #expect(names.name(for: "devin") == "Devin (team)")
-        #expect(HarnessDisplayNames(defaults: defaults).name(for: "devin") == "Devin (team)")
-        names.set("   ", for: "devin")
-        #expect(names.name(for: "devin") == nil)
-    }
-}
-
 @Suite struct CLIPathTests {
     @Test func aCommandIsOnPathOnlyAsAnExecutableFile() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "path-\(UUID().uuidString)")

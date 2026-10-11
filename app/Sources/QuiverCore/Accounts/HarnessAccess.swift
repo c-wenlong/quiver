@@ -78,27 +78,3 @@ public enum CLIPath {
         return await LoginShell.cachedEnvironment()["PATH"] ?? ""
     }
 }
-
-/// Names the user gave harness cards on the Accounts page. A harness has no
-/// Quiver profile to hold one, so they live in the app's own defaults.
-@MainActor
-@Observable
-public final class HarnessDisplayNames {
-    private let defaults: UserDefaults
-    private static let key = "harnessDisplayNames"
-    private var names: [String: String]
-
-    public init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        names = defaults.dictionary(forKey: Self.key) as? [String: String] ?? [:]
-    }
-
-    public func name(for harness: String) -> String? { names[harness] }
-
-    /// A blank name goes back to the harness's own.
-    public func set(_ name: String?, for harness: String) {
-        let trimmed = name?.trimmingCharacters(in: .whitespaces) ?? ""
-        names[harness] = trimmed.isEmpty ? nil : trimmed
-        defaults.set(names, forKey: Self.key)
-    }
-}
