@@ -3,20 +3,28 @@ import SwiftUI
 import WidgetKit
 
 /// What Quiver shows in the menu bar and on the desktop, after
-/// TokenTracker's Menu Bar & Widgets page: a live preview of the status
-/// item with its switch and figures, then the four widgets, marked when
-/// they're on the desktop. macOS has no way for an app to add a widget, so
-/// the page says how.
+/// TokenTracker's Menu Bar & Widgets page, in three tabs: the status item
+/// (a live preview, its switch and figures), the popup it opens (incidents,
+/// spend, and which harnesses and limits), and the four desktop widgets,
+/// marked when they're placed. macOS has no way for an app to add a widget,
+/// so that tab says how.
 struct MenuBarWidgetsPage: View {
-    @Environment(AppModel.self) private var app
+    enum Tab: String { case menuBar, popup, widgets }
+
+    @AppStorage("menuBarPageTab") private var tab = Tab.menuBar
 
     var body: some View {
         Page(title: "Menu bar and widgets",
              subtitle: "What Quiver shows at the top of your screen and on your desktop.",
              maxWidth: 1024) {
-            VStack(alignment: .leading, spacing: 32) {
-                MenuBarSection()
-                WidgetsSection()
+            VStack(alignment: .leading, spacing: 24) {
+                Tabs(options: [(Tab.menuBar, "Menu bar"), (.popup, "Menu bar popup"), (.widgets, "Desktop widgets")],
+                     selection: $tab, style: .underline)
+                switch tab {
+                case .menuBar: MenuBarSection()
+                case .popup: PopupSection()
+                case .widgets: WidgetsSection()
+                }
             }
         }
     }
@@ -138,6 +146,120 @@ private struct MenuBarPreview: View {
         } else {
             Image(systemName: "gauge.with.dots.needle.67percent").foregroundStyle(Theme.textPrimary)
         }
+    }
+}
+
+// MARK: - Popup
+
+private struct PopupSection: View {
+    @Environment(AppModel.self) private var app
+
+    /// Accounts' harnesses in account order, then other harnesses in swe's
+    /// order, so the rows stay put as usage changes. An account whose limits
+    /// haven't come in yet is listed too, so it can be hidden before they do.
+    private var harnesses: [MenuBarPopup.Harness] {
+        let order = app.accounts.cards.map(\.profile.vendor.rawValue)
+            + app.others.rows.filter { $0.limit.status == .ok }.map(\.name)
+        return MenuBarPopup.harnesses(in: app.limits.readings, order: order)
+    }
+
+    var body: some View {
+        @Bindable var app = app
+        VStack(alignment: .leading, spacing: 32) {
+            VStack(alignment: .leading, spacing: 16) {
+                SectionHeading(title: "Menu bar popup", detail: "What opens when you click the menu bar item.")
+                SettingsCard {
+                    SettingRow(title: "Show incidents",
+                               detail: "A line at the top when a service your harnesses use has a problem.") {
+                        SettingSwitch(title: "Show incidents", isOn: $app.popup.showIncidents)
+                    }
+                    SettingsDivider()
+                    SettingRow(title: "Show spend",
+                               detail: "Spend by harness for today, yesterday or the last 30 days.") {
+                        SettingSwitch(title: "Show spend", isOn: $app.popup.showStats)
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 16) {
+                SectionHeading(title: "Harnesses and limits",
+                               detail: "Which harnesses the popup lists, and which of their limits.")
+                SettingsCard {
+                    let harnesses = harnesses
+                    if harnesses.isEmpty {
+                        Text("No limits yet. Add an account on the Accounts page, or star a harness on Harnesses.")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            .padding(.vertical, 14)
+                    }
+                    ForEach(harnesses) { harness in
+                        PopupHarnessRow(harness: harness)
+                        if harness.id != harnesses.last?.id { SettingsDivider() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A harness's switch, then a chip per limit window it reports.
+private struct PopupHarnessRow: View {
+    @Environment(AppModel.self) private var app
+    var harness: MenuBarPopup.Harness
+
+    var body: some View {
+        let shown = app.popup.shows(harness: harness.harness)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                HarnessIcon(harness: harness.harness, size: 16)
+                Text(UsageFormat.harness(harness.harness)).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                Spacer(minLength: 16)
+                SettingSwitch(title: "Show \(UsageFormat.harness(harness.harness))",
+                              isOn: Binding(get: { shown },
+                                            set: { app.popup.setShown($0, harness: harness.harness) }))
+            }
+            .padding(.vertical, 12)
+            if !harness.windows.isEmpty {
+                FlowLayout(spacing: 6, lineSpacing: 6) {
+                    ForEach(harness.windows, id: \.self) { window in
+                        WindowChip(title: window,
+                                   isOn: Binding(get: { app.popup.shows(window: window, of: harness.harness) },
+                                                 set: { app.popup.setShown($0, window: window, of: harness.harness) }))
+                    }
+                }
+                .padding(.leading, 26)
+                .padding(.bottom, 12)
+                .disabled(!shown)
+            }
+        }
+    }
+}
+
+/// A limit window that toggles: a check and full text when shown, muted
+/// when hidden. 28pt, like the other chips.
+private struct WindowChip: View {
+    var title: String
+    @Binding var isOn: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "checkmark" : "minus").font(.system(size: 10, weight: .semibold))
+                Text(title).font(Theme.caption)
+            }
+            .foregroundStyle(isOn ? Theme.textPrimary : Theme.textMuted)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(isOn ? Theme.selected : hovering ? Theme.hover : .clear,
+                        in: .rect(cornerRadius: Theme.selectRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.selectRadius)
+                .strokeBorder(isOn ? Theme.borderStrong : Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.selectRadius))
+        }
+        .plainButton(cornerRadius: Theme.selectRadius)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(title)
+        .accessibilityValue(isOn ? "shown" : "hidden")
+        .help(isOn ? "Hide \(title) in the popup" : "Show \(title) in the popup")
     }
 }
 
