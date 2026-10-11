@@ -3643,6 +3643,33 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.plan_type, "team")
         self.assertEqual(info.on_demand["state"], "unlimited")
 
+    def test_slow_extras_do_not_hold_up_the_usage_reading(self):
+        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+
+        usage = copy.deepcopy(self._SAMPLE_RESPONSE)
+        usage["spendLimitUsage"] = {"limitType": "team", "pooledLimit": "500000"}
+
+        def reply(request, **_):
+            if request.full_url == _CURSOR_USAGE_URL:
+                return usage
+            time.sleep(2)
+            return {"hardLimit": 0}
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply), patch(
+            "quiver.harness.rate_limits._CURSOR_EXTRAS_BUDGET", 0.1,
+        ):
+            started = time.monotonic()
+            info = _fetch_cursor()
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(info.used_percent, 100)
+        # The hard limit never came, so the CLI's no-hard-limit team rule applies.
+        self.assertEqual(info.on_demand["state"], "unlimited")
+        self.assertEqual(info.plan_type, "team")
+
     def test_fetch_failure_reports_no_reading(self):
         from quiver.harness.rate_limits import _fetch_cursor
 

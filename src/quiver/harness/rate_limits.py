@@ -1782,6 +1782,9 @@ def _register_freebuff() -> None:
 _CURSOR_USAGE_URL = "https://cursor.com/api/dashboard/get-current-period-usage"
 _CURSOR_HARD_LIMIT_URL = "https://cursor.com/api/dashboard/get-hard-limit"
 _CURSOR_PLAN_INFO_URL = "https://cursor.com/api/dashboard/get-plan-info"
+# How long the plan and hard-limit calls may take, counted from the start of
+# the fetch; well inside the aggregator's 2s piped deadline.
+_CURSOR_EXTRAS_BUDGET = 1.2
 
 # Where the Cursor editor keeps its session tokens, per platform. The
 # ``ItemTable`` row ``cursorAuth/accessToken`` is the same session JWT the
@@ -2074,15 +2077,27 @@ def _fetch_cursor() -> RateLimitInfo | None:
             return None
         return reply if isinstance(reply, dict) else None
 
-    # All three at once, as the CLI does, so the extras cost no time
-    # against the aggregator's deadline.
-    from concurrent.futures import ThreadPoolExecutor
+    # The extras run alongside the usage call, as the CLI's do, on daemon
+    # threads with their own small budget: a slow one is given up on rather
+    # than waited for, so it can't push the usage reading past the
+    # aggregator's deadline, and it never holds up the process at exit.
+    extras: dict[str, dict | None] = {}
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        usage = pool.submit(_fetch_json, post(_CURSOR_USAGE_URL), on_401=_warn_cursor_401)
-        hard_reply = pool.submit(optional, _CURSOR_HARD_LIMIT_URL)
-        plan_reply = pool.submit(optional, _CURSOR_PLAN_INFO_URL)
-        data, hard, plan_info = usage.result(), hard_reply.result(), plan_reply.result()
+    def fetch_extra(url: str) -> None:
+        extras[url] = optional(url)
+
+    started = time.monotonic()
+    workers = [
+        threading.Thread(target=fetch_extra, args=(url,), daemon=True)
+        for url in (_CURSOR_HARD_LIMIT_URL, _CURSOR_PLAN_INFO_URL)
+    ]
+    for worker in workers:
+        worker.start()
+    data = _fetch_json(post(_CURSOR_USAGE_URL), on_401=_warn_cursor_401)
+    for worker in workers:
+        worker.join(max(0.0, started + _CURSOR_EXTRAS_BUDGET - time.monotonic()))
+    hard = extras.get(_CURSOR_HARD_LIMIT_URL)
+    plan_info = extras.get(_CURSOR_PLAN_INFO_URL)
     info = _parse_cursor_usage(data) if isinstance(data, dict) else None
     if info is None:
         return None
