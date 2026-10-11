@@ -62,7 +62,11 @@ enum StatusParser {
             name: name,
             impact: maintenance ? .maintenance : max(impact ?? .minor, .minor),
             stage: UsageJSON.string(raw["status"]).map(stageTitle),
-            startedAt: UsageJSON.date(raw["started_at"]) ?? UsageJSON.date(raw["scheduled_for"])
+            // A maintenance's `started_at` is when it was announced; it
+            // begins at `scheduled_for`.
+            startedAt: (maintenance
+                ? UsageJSON.date(raw["scheduled_for"]) ?? UsageJSON.date(raw["started_at"])
+                : UsageJSON.date(raw["started_at"]) ?? UsageJSON.date(raw["scheduled_for"]))
                 ?? UsageJSON.date(raw["created_at"]),
             latestUpdate: latest.flatMap { UsageJSON.string($0.0["body"]) },
             updatedAt: latest?.1 ?? UsageJSON.date(raw["updated_at"]),
@@ -101,9 +105,13 @@ enum StatusParser {
             case "medium": .partialOutage
             default: .degraded
             }
+            // Two open incidents can hit the same product; keep the worse state.
             for product in matched {
-                if let name = UsageJSON.string(product["current_title"]) ?? UsageJSON.string(product["title"]),
-                   !components.contains(where: { $0.name == name }) {
+                guard let name = UsageJSON.string(product["current_title"]) ?? UsageJSON.string(product["title"])
+                else { continue }
+                if let index = components.firstIndex(where: { $0.name == name }) {
+                    components[index].state = max(components[index].state, state)
+                } else {
                     components.append(AffectedComponent(name: name, state: state))
                 }
             }

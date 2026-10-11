@@ -43,9 +43,16 @@ public actor ServiceStatusService {
         var services: [String: Entry]
     }
 
-    /// The last readings on disk, without touching the network.
+    /// Every entry this process has seen, so the polling limits hold even
+    /// when the cache file cannot be written.
+    private var memory: [String: Entry] = [:]
+    /// Requests under way. An overlapping call (the page opening during a
+    /// background poll) waits for these instead of sending its own.
+    private var inFlight: [String: Task<Entry, Never>] = [:]
+
+    /// The last readings, without touching the network.
     public func cached(for services: [StatusService]) -> [ServiceStatus] {
-        let entries = load()
+        let entries = current()
         let now = now()
         return services.map { status(for: $0, entries[$0.id], now: now) }
     }
@@ -53,29 +60,50 @@ public actor ServiceStatusService {
     /// Every service's status, asking the pages that are due. `force` cuts
     /// the five-minute wait to one minute but never skips a cooldown.
     public func statuses(for services: [StatusService], force: Bool) async -> [ServiceStatus] {
-        let entries = load()
+        let entries = current()
         let start = now()
         let floor = force ? manualFloor : interval
-        let due = services.filter { service in
+        let transport = self.transport
+        var tasks: [String: Task<Entry, Never>] = [:]
+        for service in services {
+            if let running = inFlight[service.id] {
+                tasks[service.id] = running
+                continue
+            }
             let entry = entries[service.id]
-            if let until = entry?.cooldownUntil, until > start { return false }
-            if let attempted = entry?.attemptedAt, start.timeIntervalSince(attempted) < floor { return false }
-            return true
+            if let until = entry?.cooldownUntil, until > start { continue }
+            if let attempted = entry?.attemptedAt, start.timeIntervalSince(attempted) < floor { continue }
+            var attempt = entry ?? Entry()
+            attempt.attemptedAt = start
+            // Recorded before the request goes out, so the next call sees it.
+            memory[service.id] = attempt
+            let task = Task { await Self.check(service, attempt, transport: transport, now: start) }
+            inFlight[service.id] = task
+            tasks[service.id] = task
         }
 
-        let transport = self.transport
-        let updated = await withTaskGroup(of: (String, Entry).self) { group in
-            for service in due {
-                let entry = entries[service.id] ?? Entry()
-                group.addTask { (service.id, await Self.check(service, entry, transport: transport, now: start)) }
-            }
-            var out: [String: Entry] = [:]
-            for await (id, entry) in group { out[id] = entry }
-            return out
+        var updated: [String: Entry] = [:]
+        for (id, task) in tasks {
+            updated[id] = await task.value
+            if inFlight[id] == task { inFlight[id] = nil }
         }
-        let merged = updated.isEmpty ? entries : save(updated)
+        if !updated.isEmpty { save(updated) }
+        let merged = current()
         let now = now()
         return services.map { status(for: $0, merged[$0.id], now: now) }
+    }
+
+    /// Of two entries for one page, the one from the later attempt: another
+    /// running copy may have saved a newer reading or cooldown.
+    static func newer(_ mine: Entry?, _ theirs: Entry?) -> Entry? {
+        guard let mine else { return theirs }
+        guard let theirs else { return mine }
+        return (theirs.attemptedAt ?? .distantPast) > (mine.attemptedAt ?? .distantPast) ? theirs : mine
+    }
+
+    /// The disk and this process's memory, newest per page.
+    private func current() -> [String: Entry] {
+        load().merging(memory) { disk, mine in Self.newer(mine, disk)! }
     }
 
     private func status(for service: StatusService, _ entry: Entry?, now: Date) -> ServiceStatus {
@@ -91,7 +119,6 @@ public actor ServiceStatusService {
     /// One request, folded into the page's entry.
     private static func check(_ service: StatusService, _ entry: Entry, transport: HTTPTransport, now: Date) async -> Entry {
         var entry = entry
-        entry.attemptedAt = now
         var request = URLRequest(url: service.feedURL)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Quiver (macOS)", forHTTPHeaderField: "User-Agent")
@@ -154,22 +181,23 @@ public actor ServiceStatusService {
         return (try? decoder.decode(File.self, from: data))?.services ?? [:]
     }
 
-    /// Writes `updated` over what is on disk now, under a lock shared with
-    /// any other running copy, and returns the merged result.
-    private func save(_ updated: [String: Entry]) -> [String: Entry] {
+    /// Folds `updated` into memory and into what is on disk now, under a
+    /// lock shared with any other running copy. A failed write loses
+    /// nothing for this process: memory still has every entry.
+    private func save(_ updated: [String: Entry]) {
+        for (id, entry) in updated { memory[id] = Self.newer(entry, memory[id]) }
         let manager = FileManager.default
         try? manager.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true,
                                      attributes: [.posixPermissions: 0o700])
         let lock = try? FileLock(at: cacheURL.appendingPathExtension("lock"))
         defer { lock?.release() }
         var entries = load()
-        entries.merge(updated) { _, new in new }
+        for (id, entry) in updated { entries[id] = Self.newer(entry, entries[id]) }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .deferredToDate
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(File(services: entries)) {
             try? data.write(to: cacheURL, options: .atomic)
         }
-        return entries
     }
 }
