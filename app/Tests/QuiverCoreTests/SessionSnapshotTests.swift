@@ -41,6 +41,15 @@ actor HangingSource: SessionListing {
     }
 }
 
+/// A swe that shrugs off SIGTERM: its runner returns only when it exits.
+struct StubbornSource: SessionListing {
+    func sessions(days: Int, limit: Int) async throws -> SessionList {
+        let until = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(10)) }
+        return SessionList(sessions: [], failures: [])
+    }
+}
+
 @MainActor
 @Suite struct SessionSnapshotTests {
     let start = Date(timeIntervalSince1970: 1_791_700_000)
@@ -136,6 +145,16 @@ actor HangingSource: SessionListing {
         #expect(model.error != nil)
         await model.loadIfStale(for: "/bin/swe")
         #expect(await source.calls == 2)
+    }
+
+    @Test func aListingThatIgnoresCancellationStillTimesOutOnTime() async throws {
+        let model = SessionsModel(source: StubbornSource(), ledger: FakeSessionLedger(),
+                                  snapshots: MemorySnapshots(), listTimeout: .milliseconds(50),
+                                  now: { [start] in start })
+        let elapsed = await ContinuousClock().measure { await model.load(for: "/bin/swe") }
+        #expect(elapsed < .seconds(1))
+        #expect(model.error != nil)
+        #expect(!model.isLoading)
     }
 
     @Test func aSavedListIsRefreshedOnceItIsOld() async throws {

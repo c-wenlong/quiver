@@ -16,6 +16,8 @@ public final class SnapshotLoader<Value: SnapshotValue> {
     /// When the value on show was fetched and from which swe; nil until one is.
     private var loadedAt: Date?
     private var loadedFrom: String?
+    /// The swe most recently asked for, which a load with no source uses.
+    private var requested: String?
     /// The fetch in flight and the swe it asks. It runs in a task of its
     /// own, so a page that closes doesn't cancel it, and a page that
     /// reopens waits for it instead of starting another.
@@ -52,6 +54,7 @@ public final class SnapshotLoader<Value: SnapshotValue> {
     /// fetch already in flight from the same swe rather than starting
     /// another. Refresh calls `load` instead, which always fetches.
     public func loadIfStale(from source: String, fetch: @escaping @Sendable () async throws -> Value) async {
+        requested = source
         if let inflight, inflight.source == source {
             _ = await inflight.task.value
             return
@@ -59,6 +62,13 @@ public final class SnapshotLoader<Value: SnapshotValue> {
         if case .loaded = state, loadedFrom == source, let loadedAt, now().timeIntervalSince(loadedAt) < maxAge {
             return
         }
+        await load(from: source, fetch: fetch)
+    }
+
+    /// Fetches again after a change made through `source`'s swe, unless
+    /// another swe has been asked for since: its value is the one to keep.
+    public func reload(from source: String, fetch: @escaping @Sendable () async throws -> Value) async {
+        guard requested == nil || requested == source else { return }
         await load(from: source, fetch: fetch)
     }
 
@@ -73,7 +83,8 @@ public final class SnapshotLoader<Value: SnapshotValue> {
                      fetch: @escaping @Sendable () async throws -> Value) async -> Bool {
         generation += 1
         let mine = generation
-        let key = source ?? loadedFrom ?? ""
+        if let source { requested = source }
+        let key = source ?? requested ?? loadedFrom ?? ""
         if case .loaded = state {} else { state = .loading }
         let limit = timeout ?? self.timeout
         let task = Task { await self.run(fetch, from: key, within: limit, generation: mine) }
@@ -86,7 +97,7 @@ public final class SnapshotLoader<Value: SnapshotValue> {
         defer { if mine == generation { inflight = nil } }
         let next: Loadable<Value>
         do {
-            next = .loaded(try await Self.fetching(fetch, within: limit))
+            next = .loaded(try await withDeadline(limit, onTimeout: { TimedOut(timeout: limit) }, fetch))
         } catch {
             next = .failed(error.localizedDescription)
         }
@@ -104,22 +115,6 @@ public final class SnapshotLoader<Value: SnapshotValue> {
         var timeout: Duration
         var errorDescription: String? {
             "swe didn't answer within \(timeout.components.seconds) seconds. Refresh to try again."
-        }
-    }
-
-    /// The fetch's value, or `TimedOut` once `timeout` passes. Losing the
-    /// race cancels the fetch, which stops the swe process.
-    nonisolated static func fetching(_ fetch: @escaping @Sendable () async throws -> Value,
-                                     within timeout: Duration) async throws -> Value {
-        try await withThrowingTaskGroup(of: Value.self) { group in
-            group.addTask { try await fetch() }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw TimedOut(timeout: timeout)
-            }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw CancellationError() }
-            return first
         }
     }
 }

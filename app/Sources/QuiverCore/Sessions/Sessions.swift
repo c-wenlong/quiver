@@ -358,15 +358,8 @@ public final class SessionsModel {
     /// cancels the listing, which stops the swe process.
     nonisolated static func listing(from source: SessionListing, limit: Int,
                                     within timeout: Duration) async throws -> SessionList {
-        try await withThrowingTaskGroup(of: SessionList.self) { group in
-            group.addTask { try await source.sessions(days: days, limit: limit) }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw ListingTimedOut(timeout: timeout)
-            }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw CancellationError() }
-            return first
+        try await withDeadline(timeout, onTimeout: { ListingTimedOut(timeout: timeout) }) {
+            try await source.sessions(days: days, limit: limit)
         }
     }
 

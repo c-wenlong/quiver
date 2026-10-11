@@ -55,7 +55,7 @@ struct PluginsPage: View {
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
         .confirmationDialog("Run this fix?", isPresented: .init(
             get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { finding in
-            Button("Run") { Task { await model.fix(finding, swe: app.swe) } }
+            Button("Run") { Task { await model.fix(finding, swe: app.swe, for: app.swePath) } }
         } message: { finding in
             Text("swe will check the finding still applies, then run:\n\(finding.fix)")
         }

@@ -21,6 +21,20 @@ actor MemorySnapshotStore<Content: SnapshotContent>: SnapshotStoring {
     }
 }
 
+/// A saved snapshot whose read waits until released.
+actor PausedReadStore<Content: SnapshotContent>: SnapshotStoring {
+    let saved: Content
+    private var gate: CheckedContinuation<Void, Never>?
+    init(_ saved: Content) { self.saved = saved }
+    func load() async -> Content? {
+        await withCheckedContinuation { gate = $0 }
+        return saved
+    }
+    func save(_ content: Content) async {}
+    var waiting: Bool { gate != nil }
+    func release() { gate?.resume(); gate = nil }
+}
+
 /// Answers each fetch with the next value, counting calls.
 actor NamesSource {
     private var replies: [Result<Names, Error>]
@@ -158,6 +172,50 @@ actor NamesSource {
         await loader.load(from: "/bin/swe") { Names(names: ["live"]) }
         await loader.restore()
         #expect(names(loader) == ["live"])
+    }
+
+    @Test func aSlowSavedReadNeverReplacesALoadThatFinishedMeanwhile() async throws {
+        for live in [Result<Names, Error>.success(Names(names: ["live"])), .failure(Down())] {
+            let saved = Snapshot(source: "/bin/swe", savedAt: start, value: Names(names: ["saved"]))
+            let store = PausedReadStore(saved)
+            let loader = SnapshotLoader(snapshots: store, now: { [start] in start })
+            let restoring = Task { await loader.restore() }
+            while await !store.waiting { await Task.yield() }
+            await loader.load(from: "/bin/swe") { try live.get() }
+            let shown = loader.state
+            await store.release()
+            await restoring.value
+            #expect(loader.state == shown)
+            if case .loaded(let value) = loader.state { #expect(value.names == ["live"]) }
+        }
+    }
+
+    @Test func aFetchThatIgnoresCancellationStillTimesOutOnTime() async throws {
+        // A swe that shrugs off SIGTERM: its runner returns only when it exits.
+        let stubborn: @Sendable () async throws -> Names = {
+            let until = ContinuousClock.now + .seconds(2)
+            while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(10)) }
+            return Names(names: ["late"])
+        }
+        let loader = loader(clock: TestClock(start), timeout: .milliseconds(50))
+        let elapsed = await ContinuousClock().measure {
+            await loader.load(from: "/bin/swe", fetch: stubborn)
+        }
+        #expect(elapsed < .seconds(1))
+        #expect(!loader.isLoading)
+        guard case .failed = loader.state else { Issue.record("\(loader.state)"); return }
+    }
+
+    @Test func aReloadAfterAChangeIsDroppedOnceAnotherSweIsAskedFor() async throws {
+        let loader = loader(clock: TestClock(start))
+        await loader.load(from: "/a/swe") { Names(names: ["a"]) }
+        await loader.loadIfStale(from: "/b/swe") { Names(names: ["b"]) }
+        // A change made through /a/swe finishes after Settings moved to /b/swe.
+        await loader.reload(from: "/a/swe") { Names(names: ["a, changed"]) }
+        #expect(names(loader) == ["b"])
+        // Through the swe in use, it reloads.
+        await loader.reload(from: "/b/swe") { Names(names: ["b, changed"]) }
+        #expect(names(loader) == ["b, changed"])
     }
 
     @Test func aSavedValueDoesNotHideAFailure() async throws {

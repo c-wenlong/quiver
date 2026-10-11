@@ -108,7 +108,9 @@ public final class PluginsModel {
 
     /// Runs the fix for `finding`, then reloads. Call only after the user
     /// has confirmed the command.
-    public func fix(_ finding: PluginDrift, swe: SweClient) async {
+    /// - Parameter source: the swe `swe` is, as set in Settings. The reload
+    ///   is dropped if another swe was picked meanwhile; nil reloads anyway.
+    public func fix(_ finding: PluginDrift, swe: SweClient, for source: String? = nil) async {
         guard fixing == nil, finding.runnable else { return }
         fixing = finding.id
         fixError = nil
@@ -120,6 +122,10 @@ public final class PluginsModel {
         } catch {
             fixError = error.localizedDescription
         }
-        await load(swe: swe)
+        if let source {
+            await loader.reload(from: source) { try await swe.pluginDrift() }
+        } else {
+            await load(swe: swe)
+        }
     }
 }

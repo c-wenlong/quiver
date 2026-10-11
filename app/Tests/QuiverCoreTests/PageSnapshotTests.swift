@@ -73,4 +73,24 @@ import Testing
         #expect(await store.saved?.value.drift.isEmpty == true)
         #expect(await store.saved?.source == "/bin/swe")
     }
+
+    @Test func aFixFinishingAfterAnotherSweWasPickedDoesNotReplaceItsReport() async throws {
+        let a = RoutingRunner([
+            (["find", "plugins", "--json"], drift),
+            (["find", "plugins", "--fix="], json(#"""
+            {"fixed": {"id": "claude:stale:tool@mk", "harness": "claude", "marketplace": "mk", "plugin": "tool",
+             "ref": "tool@mk", "kind": "stale", "detail": "d", "fix": "claude plugin update tool@mk",
+             "runnable": true, "paths": []}}
+            """#)),
+        ])
+        let b = RoutingRunner([(["find", "plugins", "--json"], json(#"{"sources": 0, "drift": []}"#))])
+        let model = model(MemorySnapshotStore(), clock: TestClock(start))
+        await model.load(swe: SweClient(runner: a), for: "/a/swe")
+        guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
+        await model.loadIfStale(swe: SweClient(runner: b), for: "/b/swe")
+        await model.fix(report.drift[0], swe: SweClient(runner: a), for: "/a/swe")
+        #expect(a.calls.count == 2)
+        guard case .loaded(let shown) = model.state else { Issue.record("\(model.state)"); return }
+        #expect(shown.sources == 0)
+    }
 }
