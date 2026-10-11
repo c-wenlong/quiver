@@ -57,6 +57,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json` for `swe list`, `swe session`, `swe find skills` and `swe init
+  --check`.** The macOS app under `app/` reads these. `list` gives each
+  harness's state, aliases and 100-day session count, and with `--usage`
+  its rate limit, where `status` replaces the `no-sub` / `auth-required` /
+  `timeout` sentinels and `fetched_at` is when the reading was really
+  taken, never the time it was served from cache. `session` gives each
+  session's harness, cwd, title, `last_active_at`, status and the `argv`
+  that resumes it. `find skills` gives the shared skills and each harness
+  root's link state; `init --check` gives each harness's instruction file
+  and skills root with its link state. Under `--json`, errors go to stderr
+  and stdout stays empty.
+- **`--json` for `swe mcp list`, `swe mcp status` and `swe doctor`.** Each
+  prints one `{"schema": 1, "data": ...}` document for the macOS app.
+  `mcp list` and `mcp status` give one entry per server name (transport,
+  command, args, url, the names of its env vars and headers, the harnesses
+  it appears in, and `conflict` when they define it differently); `status`
+  adds `health` and `detail` from the checks it already ran. `doctor` gives
+  `ok` and a list of findings with `check`, `severity`, `message` and
+  `fix`, and keeps its exit status. Secret values never appear: env and
+  header values are not printed, `${NAME}` references are never resolved,
+  and credentials in a URL or argument are hidden.
 - **Devin joins the discover catalog.** `HARNESS_CATALOG` now names the
   `devin` binary (alias `dv`), so `swe discover` finds it on PATH the
   same way it finds kilo. `swe init` gets a signature for

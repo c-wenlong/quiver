@@ -31,20 +31,21 @@ remembering CLI commands.
 ## Milestones
 
 ### M0. `swe` speaks JSON
-- [ ] `python -m quiver.mcp_server` starts the server ([#124](https://github.com/c-wenlong/quiver/pull/124), in review)
-- [ ] `--json` on `swe list --usage` (rate limits per harness, with `fetched_at`)
-- [ ] `--json` on `swe session` (id, harness, cwd, title, timestamp, status)
-- [ ] `--json` on `swe find skills` and `swe init --check` (link state per harness)
-- [ ] `--json` on `swe mcp list|status` and `swe doctor` (findings with fix commands)
-- [ ] One shared envelope: `{"schema": 1, "data": …}`, documented in ARCHITECTURE.md
+- [x] `python -m quiver.mcp_server` starts the server ([#124](https://github.com/c-wenlong/quiver/pull/124))
+- [x] `--json` on `swe list --usage` (rate limits per harness, with `fetched_at`)
+- [x] `--json` on `swe session` (id, harness, cwd, title, timestamp, status)
+- [x] `--json` on `swe find skills` and `swe init --check` (link state per harness)
+- [x] `--json` on `swe mcp list|status` and `swe doctor` (findings with fix commands)
+- [x] One shared envelope: `{"schema": 1, "data": …}`, documented in ARCHITECTURE.md
 
 ### M1. App shell
-- [ ] `app/` SwiftPM package, macOS 26, app target plus a testable core library
-- [ ] Main window: `NavigationSplitView` sidebar, glass background, empty pages
-- [ ] Menu bar item with a panel (OpenUsage pattern)
-- [ ] `SweClient`: runs `swe` with the login-shell PATH, decodes the M0 envelope
-- [ ] Doctor page as the first real consumer of `swe --json`
-- [ ] CI job on a macOS 26 runner: build and `swift test`
+- [x] `app/` SwiftPM package, macOS 26, app target plus a testable core library
+- [x] Main window: `NavigationSplitView` sidebar, glass background, empty pages
+- [x] Menu bar item with a panel (OpenUsage pattern)
+- [x] `SweClient`: runs `swe` with the login-shell PATH, decodes the M0 envelope
+- [x] Doctor page as the first real consumer of `swe --json`
+- [x] Settings: choose which `swe` to run, and a clear message when it predates `--json`
+- [x] CI job on a macOS 26 runner: build and `swift test`
 
 ### M2. Accounts
 - [ ] Profile store and directory layout under `~/.quiver/accounts`

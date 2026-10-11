@@ -31,6 +31,7 @@ from quiver.harness.stars import (
     unstar as unstar_name,
 )
 from quiver.harness.tools import extract_version_number, is_installed, live_version
+from quiver.json_output import emit, take_json_flag
 from quiver.prompt import read_line
 from quiver.table import Table
 
@@ -542,12 +543,40 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str]) -> dict:
     return holder["result"]
 
 
+def _harness_json(name, info, starred, archived, counts, rate) -> dict:
+    """One ``swe list --json`` row."""
+    if name in archived:
+        state = "archived"
+    elif name in starred:
+        state = "starred"
+    else:
+        state = "active"
+    return {
+        "name": name,
+        "command": info.get("command") or name,
+        "description": info.get("description") or "",
+        "version": info.get("version") or None,
+        "aliases": [a for a in info.get("aliases", []) if a != name],
+        "tags": list(info.get("tags", [])),
+        "state": state,
+        "sessions_100d": counts.get(name),
+        "rate_limit": rate.to_json() if rate is not None else None,
+    }
+
+
 def cmd_list(args):
-    args = list(args or [])
+    args, json_view = take_json_flag(list(args or []))
+    # Under --json a refusal must leave stdout empty: the app decodes it whole.
+    err = sys.stderr if json_view else sys.stdout
     try:
         args = expand_value_flags(args, {"--scope"})
     except ValueError as exc:
-        print(c("red", str(exc)))
+        print(c("red", str(exc)), file=err)
+        return 1
+    if json_view and args and args[0] in ("edit", "legend", "--legend", "key"):
+        # Refused before dispatch: `edit --reset` writes config, and neither
+        # subcommand has a JSON form.
+        print(c("red", f"swe list {args[0]} has no --json output"), file=err)
         return 1
     if args and args[0] == "edit":
         return cmd_list_edit(args[1:])
@@ -595,15 +624,16 @@ def cmd_list(args):
         else:
             i += 1
     if scope not in LIST_SCOPES:
-        print(f"Unknown scope: {scope or '(empty)'}. Use {', '.join(LIST_SCOPES)}.")
+        print(f"Unknown scope: {scope or '(empty)'}. Use {', '.join(LIST_SCOPES)}.",
+              file=err)
         return 1
 
     bad = next((a for a in args if a.startswith("-")), None)
     if bad:
-        print(c("red", f"Unknown flag: {bad}"))
+        print(c("red", f"Unknown flag: {bad}"), file=err)
         return 1
     if len(args) > 1:
-        print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
+        print(c("red", f"Unexpected args: {' '.join(args[1:])}"), file=err)
         return 1
 
     tools = load_registry()
@@ -615,6 +645,8 @@ def cmd_list(args):
     # fresh install lands here with nothing to render. Say what to run
     # instead of printing a header over an empty table.
     if not tools and not archived:
+        if json_view:
+            return emit({"harnesses": []})
         print(f"\n  {c('dim', 'No harnesses registered yet.')}")
         print(f"  {c('dim', 'Run')} {c('cyan', 'swe discover --apply')} "
               f"{c('dim', 'to register what is installed here.')}\n")
@@ -640,6 +672,25 @@ def cmd_list(args):
     shows_usage = any(n in archived for n in tools)
     stars = load_stars()
     starred_set = set(stars)
+
+    if json_view:
+        rate_limits = (
+            _fetch_rate_limits(
+                refresh=refresh,
+                tool_names={name for name in starred_set if name in tools},
+            )
+            if usage_view
+            else {}
+        )
+        # The field is named for a fixed window, whatever window the table
+        # is set to show.
+        counts_100d = _session_counts(100)
+        return emit({"harnesses": [
+            _harness_json(name, info, starred_set, archived, counts_100d,
+                          rate_limits.get(name))
+            for name, info in tools.items()
+            if not tag_filter or tag_filter in info.get("tags", [])
+        ]})
 
     # Fetch rate limits (cached 5min by default, refresh flags bypass;
     # override TTL with SWE_RATE_LIMITS_TTL=<seconds>)
@@ -1406,11 +1457,70 @@ def cmd_aliases(args):
     print()
 
 
+def _doctor_finding(check, severity, message, fix=None) -> dict:
+    return {"check": check, "severity": severity, "message": message, "fix": fix}
+
+
+def _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> list:
+    """Every problem ``swe doctor`` knows about, as ``--json`` rows.
+
+    Severity ``error`` is exactly what makes the exit status 1: an off-PATH
+    harness, an npm global bin missing from PATH, or an error-level drift
+    finding. A missing node or npm, nvm bins off PATH and drift warnings
+    are warnings, and a differing preferred npm is info, so ``ok`` and the
+    exit status always agree.
+    """
+    from quiver.harness.path_health import is_dir_on_path
+
+    findings = []
+    if not env.node:
+        findings.append(_doctor_finding(
+            "node", "warning", "node not found on PATH"))
+    if not env.npm:
+        findings.append(_doctor_finding(
+            "npm", "warning", "npm not found on PATH",
+            "Install Node/npm, or put npm on PATH."))
+    if env.global_bin and not env.global_bin_on_path:
+        findings.append(_doctor_finding(
+            "npm.global-bin", "error",
+            f"npm global bin {env.global_bin} is not on PATH",
+            f'export PATH="{env.global_bin}:$PATH"'))
+    if preferred and which_npm and Path(preferred).resolve() != Path(which_npm).resolve():
+        findings.append(_doctor_finding(
+            "npm.preferred", "info",
+            f"which npm is {which_npm}; swe prefers {preferred}"))
+    if nvm_dirs and not any(is_dir_on_path(d) for d in nvm_dirs):
+        findings.append(_doctor_finding(
+            "nvm", "warning",
+            "nvm node bins are not on PATH, so nvm globals are invisible "
+            "to swe and non-interactive shells",
+            "Avoid `npm install -g` under nvm unless nvm is always on PATH. "
+            "Prefer: swe install <name>"))
+    for name, command, hit in orphans:
+        findings.append(_doctor_finding(
+            "off-path", "error",
+            f"{name} ({command}) is at {hit.path} [{hit.source}], not on PATH",
+            f"swe install {name}"))
+    for finding in drift:
+        findings.append(_doctor_finding(
+            f"drift.{finding.area}",
+            "error" if finding.severity == "error" else "warning",
+            finding.message))
+    return findings
+
+
 def cmd_doctor(args):
     """Diagnose Node/PATH mismatches that hide globally installed harnesses."""
+    args, json_view = take_json_flag(list(args or []))
     if args:
-        print(c("red", f"  Unexpected args: {' '.join(args)}"))
+        message = f"  Unexpected args: {' '.join(args)}"
+        if json_view:
+            # stdout is one JSON document or nothing.
+            print(message, file=sys.stderr)
+        else:
+            print(c("red", message))
         return 1
+    from quiver.harness.drift import run_drift_checks
     from quiver.harness.path_health import (
         find_off_path_tools,
         is_dir_on_path,
@@ -1422,6 +1532,17 @@ def cmd_doctor(args):
     tools = load_registry()
     env = probe_node_env()
     home = Path.home()
+    nvm_dirs = nvm_bin_dirs(home)
+    preferred = preferred_npm_bin()
+    which_npm = shutil.which("npm")
+    orphans = find_off_path_tools(tools)
+    drift = run_drift_checks()
+    found = _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift)
+    failed = any(f["severity"] == "error" for f in found)
+
+    if json_view:
+        emit({"ok": not failed, "findings": found})
+        return 1 if failed else 0
 
     print(f"\n{c('bold', 'swe doctor')} — environment health\n")
 
@@ -1434,14 +1555,11 @@ def cmd_doctor(args):
         on = c("green", "on PATH") if env.global_bin_on_path else c("red", "NOT on PATH")
         print(f"    global prefix:{' ' if True else ''} {env.global_prefix}")
         print(f"    global bin:    {env.global_bin or '—'}  ({on})")
-    preferred = preferred_npm_bin()
-    which_npm = shutil.which("npm")
     if preferred and which_npm and Path(preferred).resolve() != Path(which_npm).resolve():
         print(c("yellow", f"    note: which npm → {which_npm}; swe prefers {preferred}"))
     print()
 
     print(c("bold", "  nvm"))
-    nvm_dirs = nvm_bin_dirs(home)
     nvm_root = Path(os.environ.get("NVM_DIR", home / ".nvm"))
     if not nvm_root.exists():
         print(c("dim", "    not installed (or NVM_DIR unset)"))
@@ -1461,7 +1579,6 @@ def cmd_doctor(args):
     n_inst = sum(1 for i in tools.values() if is_installed(i.get("command", "")))
     print(f"    registered:   {len(tools)}")
     print(f"    on PATH:      {c('green', str(n_inst))}/{len(tools)}")
-    orphans = find_off_path_tools(tools)
     if orphans:
         print(f"    off-PATH:     {c('yellow', str(len(orphans)))}")
         print()
@@ -1489,21 +1606,17 @@ def cmd_doctor(args):
         print(c("green", "    • Environment looks healthy for swe."))
     print()
 
-    from quiver.harness.drift import run_drift_checks
-
-    findings = run_drift_checks()
     print(c("bold", "  Drift"))
-    if not findings:
+    if not drift:
         print(c("dim", "    none detected"))
     else:
-        for finding in findings:
+        for finding in drift:
             icon, color = ("✗", "red") if finding.severity == "error" else ("!", "yellow")
             print(f"    {c(color, icon)} [{finding.area}] {finding.message}")
     print()
     print(c("dim", "  Related: swe check  ·  swe install <name>  ·  swe help doctor\n"))
 
-    has_error_findings = any(f.severity == "error" for f in findings)
-    return 1 if orphans or (env.global_bin and not env.global_bin_on_path) or has_error_findings else 0
+    return 1 if failed else 0
 
 
 def cmd_install(args):

@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "data": {
+    "harnesses": [
+      {
+        "name": "claude",
+        "command": "claude",
+        "description": "Anthropic CLI",
+        "version": "2.1.0",
+        "aliases": [
+          "cc"
+        ],
+        "tags": [
+          "vendor"
+        ],
+        "state": "starred",
+        "sessions_100d": 0,
+        "rate_limit": {
+          "status": "ok",
+          "used_percent": 28,
+          "remaining_percent": 72,
+          "limit_reached": false,
+          "reset_at": 1791718000.0,
+          "window": "5h",
+          "window_seconds": 18000,
+          "plan_type": "max",
+          "remaining_units": null,
+          "total_units": null,
+          "fetched_at": 1791656526.4260511
+        }
+      },
+      {
+        "name": "codex",
+        "command": "codex",
+        "description": "OpenAI CLI",
+        "version": null,
+        "aliases": [
+          "cx"
+        ],
+        "tags": [
+          "vendor"
+        ],
+        "state": "starred",
+        "sessions_100d": 0,
+        "rate_limit": null
+      },
+      {
+        "name": "gemini",
+        "command": "gemini",
+        "description": "Google CLI",
+        "version": null,
+        "aliases": [],
+        "tags": [],
+        "state": "active",
+        "sessions_100d": 0,
+        "rate_limit": null
+      }
+    ]
+  }
+}
