@@ -45,6 +45,20 @@ struct Offline: Error {}
             defaultTierMultipliers: ["priority": 2]))
     }
 
+    @Test func aDatedEntryTakesItsModelsTierMultiplier() throws {
+        let data = Data("""
+            {"claude-opus-4-6-20260205": {"input_cost_per_token": 5e-06, "output_cost_per_token": 2.5e-05, "litellm_provider": "anthropic"},
+             "anthropic/claude-opus-4.6": {"input_cost_per_token": 5e-06, "output_cost_per_token": 2.5e-05, "litellm_provider": "anthropic"}}
+            """.utf8)
+        let catalog = try PricingCatalog(liteLLM: data, supplement: PricingSupplement(
+            tierMultipliers: ["claude-opus-4-6": ["fast": 6]]))
+        // The exact dated entry keeps its own base prices and gains the multiplier.
+        let dated = try #require(catalog.rates(for: "claude-opus-4-6-20260205"))
+        #expect(dated.input == 5e-06)
+        #expect(dated.tierMultipliers["fast"] == 6)
+        #expect(catalog.rates(for: "anthropic/claude-opus-4.6")?.tierMultipliers["fast"] == 6)
+    }
+
     @Test func liteLLMEntriesBecomeRatesPerTokenKind() throws {
         let rates = try #require(try catalog().rates(for: "claude-opus-5-5"))
         #expect(rates.input == 4e-06)

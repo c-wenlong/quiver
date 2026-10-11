@@ -208,7 +208,7 @@ public actor Ledger {
             try store.db.execute("COMMIT")
             report.skippedLines += result.skippedLines
         } catch {
-            try? store.db.execute("ROLLBACK")
+            store.rollback()
             throw error
         }
         report.filesRead += 1

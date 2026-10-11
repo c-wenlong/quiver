@@ -107,4 +107,62 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(await ledger.events(in: allTime).count == 3)
         #expect(await ledger.totals(in: allTime).totalTokens == 1_160 + 450 + 10)
     }
+
+    @Test func aReplacedDatabaseIsReadFromTheStart() async throws {
+        let temp = try TempDir()
+        let db = temp.path("devin/cli/sessions.db")
+        try makeDatabase("devin.sql", at: db)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
+        #expect(await ledger.events(in: allTime).count == 2)
+
+        // Devin recreates the file: row ids start over below the old watermark.
+        for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: db.path + suffix) }
+        try execute("""
+            CREATE TABLE message_nodes (row_id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+              node_id INTEGER NOT NULL, parent_node_id INTEGER, chat_message TEXT NOT NULL, created_at INTEGER NOT NULL);
+            INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES ('dev-9', 1,
+              '{"role":"assistant","metadata":{"request_id":"r9","generation_model":"swe-2-medium","metrics":{"input_tokens":7,"output_tokens":3}}}', 1791200000);
+            """, on: db)
+        try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
+        #expect(await ledger.events(in: allTime).map(\.sessionId).contains("dev-9"))
+    }
+}
+
+@Suite struct LedgerOpenCodeReplacementTests {
+    @Test func aReplacedDatabaseIsReadFromTheStart() async throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
+        let before = await ledger.events(in: allTime).count
+
+        // A restored copy whose rows are older than the old watermark.
+        for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: db.path + suffix) }
+        try makeDatabase("opencode.sql", at: db)
+        try execute("""
+            INSERT INTO message VALUES ('msg_old', 'ses_1', 1791000000000, 1791000000000,
+              '{"role":"assistant","modelID":"gpt-5.4","time":{"created":1791000000000},"tokens":{"input":7,"output":3,"reasoning":0,"cache":{"read":0,"write":0}}}');
+            """, on: db)
+        try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
+        #expect(await ledger.events(in: allTime).count == before + 1)
+    }
+}
+
+@Suite struct LedgerRollbackTests {
+    @Test func aRolledBackScanLeavesNoStaleDimensionIds() throws {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        let event = UsageEvent(harness: "claude", accountHome: "/h", sessionId: "s", model: "m",
+                               timestamp: utc("2026-10-01T00:00:00Z"), inputTokens: 5)
+        try store.db.execute("BEGIN IMMEDIATE")
+        try store.upsert(LedgerRecord(key: "a", event: event))
+        store.rollback()
+
+        try store.db.execute("BEGIN IMMEDIATE")
+        try store.upsert(LedgerRecord(key: "a", event: event))
+        try store.db.execute("COMMIT")
+        #expect(try store.events(in: allTime).map(\.sessionId) == ["s"])
+    }
 }

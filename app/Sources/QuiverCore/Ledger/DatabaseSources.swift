@@ -9,12 +9,22 @@ import Foundation
 enum DatabaseSources {
     struct Fingerprint: Equatable {
         var text: String
+        var inode: UInt64
 
         init?(_ url: URL) {
             guard let db = FileInfo(path: url.path) else { return nil }
             let wal = FileInfo(path: url.path + "-wal")
+            inode = db.inode
             text = "\(db.inode):\(db.size):\(db.modified):\(wal?.size ?? 0):\(wal?.modified ?? 0)"
         }
+    }
+
+    /// The saved watermark, or 0 when the database is no longer the file it
+    /// was taken from: a recreated or restored file starts its row ids and
+    /// timestamps over, and every row is keyed, so reading it all is safe.
+    static func watermark(_ metaKey: String, _ fingerprint: Fingerprint, store: LedgerStore) throws -> Int64 {
+        guard try store.meta(metaKey + ":inode") == String(fingerprint.inode) else { return 0 }
+        return Int64(try store.meta(metaKey + ":watermark") ?? "") ?? 0
     }
 
     // MARK: - OpenCode
@@ -33,7 +43,7 @@ enum DatabaseSources {
         guard let fingerprint = Fingerprint(url) else { return false }
         let metaKey = "opencode:\(url.path)"
         if try store.meta(metaKey + ":fingerprint") == fingerprint.text { return false }
-        let watermark = Int64(try store.meta(metaKey + ":watermark") ?? "") ?? 0
+        let watermark = try watermark(metaKey, fingerprint, store: store)
 
         let source = try SQLiteDatabase(readOnly: url)
         let statement = try source.prepare("""
@@ -72,10 +82,11 @@ enum DatabaseSources {
                 try store.upsert(LedgerRecord(key: "opencode:\(statement.text(0) ?? "")", event: event))
             }
             try store.setMeta(metaKey + ":watermark", String(highest))
+            try store.setMeta(metaKey + ":inode", String(fingerprint.inode))
             try store.setMeta(metaKey + ":fingerprint", fingerprint.text)
             try store.db.execute("COMMIT")
         } catch {
-            try? store.db.execute("ROLLBACK")
+            store.rollback()
             throw error
         }
         return true
@@ -98,9 +109,13 @@ enum DatabaseSources {
         guard let fingerprint = Fingerprint(url) else { return false }
         let metaKey = "devin:\(url.path)"
         if try store.meta(metaKey + ":fingerprint") == fingerprint.text { return false }
-        let watermark = Int64(try store.meta(metaKey + ":watermark") ?? "") ?? 0
+        var watermark = try watermark(metaKey, fingerprint, store: store)
 
         let source = try SQLiteDatabase(readOnly: url)
+        // Row ids only grow, so a highest id below the watermark means the
+        // file was rebuilt in place.
+        let top = try source.prepare("SELECT COALESCE(MAX(row_id), 0) FROM message_nodes")
+        if try top.step(), top.int(0) < watermark { watermark = 0 }
         let hasSessions = try source.prepare(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").step()
         let statement = try source.prepare("""
@@ -147,10 +162,11 @@ enum DatabaseSources {
             }
             let pendingFloor = pending.values.min().map { $0 - 1 }
             try store.setMeta(metaKey + ":watermark", String(pendingFloor ?? highest))
+            try store.setMeta(metaKey + ":inode", String(fingerprint.inode))
             try store.setMeta(metaKey + ":fingerprint", fingerprint.text)
             try store.db.execute("COMMIT")
         } catch {
-            try? store.db.execute("ROLLBACK")
+            store.rollback()
             throw error
         }
         return true

@@ -156,6 +156,8 @@ private struct SpendDonut: View {
 
     var slice: SpendSlice? { slices.first { $0.period == period } }
 
+    var unpriced: Int { parts.reduce(0) { $0 + $1.totals.unpricedTokens } }
+
     var parts: [(harness: String, totals: UsageTotals)] {
         guard let slice else { return [] }
         let known = Theme.harnessOrder.compactMap { id in slice.byHarness[id].map { (id, $0) } }
@@ -200,10 +202,19 @@ private struct SpendDonut: View {
                             RoundedRectangle(cornerRadius: 2).fill(Theme.harness(part.harness)).frame(width: 8, height: 8)
                             Text(UsageFormat.harness(part.harness)).font(.caption)
                             Spacer()
+                            if part.totals.unpricedTokens > 0 {
+                                Image(systemName: "questionmark.circle").font(.caption2).foregroundStyle(.secondary)
+                                    .help("\(UsageFormat.tokens(part.totals.unpricedTokens)) tokens with no list price")
+                            }
                             Text(UsageFormat.dollars(part.totals.costUSD)).font(.caption).monospacedDigit()
                         }
                     }
                 }
+            }
+            if unpriced > 0 {
+                // The total leaves these out, so say so rather than look complete.
+                Text("Plus \(UsageFormat.tokens(unpriced)) tokens with no list price, not in the total.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

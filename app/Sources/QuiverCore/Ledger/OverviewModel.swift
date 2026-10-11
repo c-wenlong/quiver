@@ -101,7 +101,11 @@ public final class OverviewModel {
     private let now: () -> Date
     private let calendar: Calendar
     private let refreshPricing: @Sendable () async -> PricingCatalog?
-    private var generation = 0
+    /// Bumped by every full load: only the newest writes spend and activity.
+    private var loadGeneration = 0
+    /// Bumped by every load and period reload: only the newest writes the summary.
+    private var summaryGeneration = 0
+    private var inFlight = 0 { didSet { isLoading = inFlight > 0 } }
 
     /// - Parameter refreshPricing: a newer price list when one is due, else nil;
     ///   asked before every scan.
@@ -119,10 +123,12 @@ public final class OverviewModel {
 
     /// Optionally scan the logs for new usage, then rebuild every figure.
     public func load(scan: Bool) async {
-        generation += 1
-        let mine = generation
-        isLoading = true
-        defer { if mine == generation { isLoading = false } }
+        loadGeneration += 1
+        summaryGeneration += 1
+        let mine = loadGeneration
+        let mySummary = summaryGeneration
+        inFlight += 1
+        defer { inFlight -= 1 }
         if scan {
             if let catalog = await refreshPricing() { await ledger.setPricing(catalog) }
             do {
@@ -149,8 +155,8 @@ public final class OverviewModel {
         let halfYear = DateInterval(start: calendar.date(byAdding: .day, value: -182, to: todayStart) ?? todayStart, end: now)
         let activity = Self.combineDays(await ledger.daily(in: halfYear, calendar: calendar))
 
-        guard mine == generation else { return }
-        self.summary = summary
+        if mySummary == summaryGeneration { self.summary = summary }
+        guard mine == loadGeneration else { return }
         self.spend = spend
         self.activity = activity
         updatedAt = now
@@ -159,12 +165,12 @@ public final class OverviewModel {
     /// Rebuild only the period's figures, after the picker changes. The menu
     /// bar's spend and the heatmap don't depend on the period.
     public func reloadPeriod() async {
-        generation += 1
-        let mine = generation
-        isLoading = true
-        defer { if mine == generation { isLoading = false } }
+        summaryGeneration += 1
+        let mine = summaryGeneration
+        inFlight += 1
+        defer { inFlight -= 1 }
         let summary = await summarize(period, now: now())
-        guard mine == generation else { return }
+        guard mine == summaryGeneration else { return }
         self.summary = summary
     }
 

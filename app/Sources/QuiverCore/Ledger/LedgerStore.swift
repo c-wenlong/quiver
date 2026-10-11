@@ -154,6 +154,13 @@ final class LedgerStore {
         ]).run()
     }
 
+    /// Abandons the open transaction. Dimension ids inserted in it are gone
+    /// from the database, so they must not stay cached either.
+    func rollback() {
+        try? db.execute("ROLLBACK")
+        dimIDs.removeAll()
+    }
+
     private func dimID(_ key: DimKey) throws -> Int64 {
         if let id = dimIDs[key] { return id }
         let values: [SQLiteValue?] = [

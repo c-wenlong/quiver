@@ -17,6 +17,16 @@ actor FakeLedger: LedgerQuerying {
     var days: [DailyUsage] = []
     var scanError: Error?
     private(set) var scans = 0
+    private var scanGate: CheckedContinuation<Void, Never>?
+    private var holdScans = false
+    private(set) var scanWaiting = false
+
+    func holdNextScan() { holdScans = true }
+    func releaseScan() {
+        holdScans = false
+        scanGate?.resume()
+        scanGate = nil
+    }
     private(set) var pricingUpdates = 0
 
     func setPricing(_ catalog: PricingCatalog) { pricingUpdates += 1 }
@@ -32,6 +42,11 @@ actor FakeLedger: LedgerQuerying {
 
     func scan(roots: LedgerRoots) async throws -> ScanReport {
         scans += 1
+        if holdScans {
+            scanWaiting = true
+            await withCheckedContinuation { scanGate = $0 }
+            scanWaiting = false
+        }
         if let scanError { throw scanError }
         return ScanReport()
     }
@@ -163,6 +178,23 @@ struct ScanFailed: Error, LocalizedError {
         #expect(model.spend == spend)
         #expect(model.summary?.period == .today)
         #expect(await ledger.scans == 0)
+    }
+
+    @Test func aPeriodSwitchDuringAScanKeepsTheScansOtherFigures() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 2)])
+        await ledger.holdNextScan()
+        let model = model(ledger)
+        let scan = Task { await model.load(scan: true) }
+        while !(await ledger.scanWaiting) { await Task.yield() }
+        model.period = .today
+        await model.reloadPeriod()
+        await ledger.releaseScan()
+        await scan.value
+        #expect(model.spend != nil)
+        #expect(model.updatedAt != nil)
+        // The scan's summary was for the old period; the newer one stays.
+        #expect(model.summary?.period == .today)
     }
 
     @Test func aNewerPriceListIsAppliedBeforeScanning() async {

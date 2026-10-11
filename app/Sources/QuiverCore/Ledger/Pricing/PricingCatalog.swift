@@ -52,9 +52,12 @@ public struct PricingCatalog: Sendable {
             if let rates = Self.rates(from: value) { entries[key] = rates }
         }
         for key in entries.keys {
-            let bare = Self.bareName(key)
+            // The model's own multipliers, found through its dated or dotted
+            // variants too (`claude-opus-4-6-20260205`, `claude-opus-4.6`).
+            let specific = Self.forms(of: key, stripDates: true).lazy
+                .compactMap { supplement.tierMultipliers[$0] }.first
             var multipliers = supplement.defaultTierMultipliers
-            multipliers.merge(supplement.tierMultipliers[bare] ?? [:]) { _, specific in specific }
+            multipliers.merge(specific ?? [:]) { _, specific in specific }
             entries[key]?.tierMultipliers = multipliers
         }
         self.init(entries: entries, supplement: supplement)
@@ -66,7 +69,7 @@ public struct PricingCatalog: Sendable {
     }
 
     static func bundledLiteLLM() throws -> Data {
-        guard let url = Bundle.module.url(forResource: "pricing", withExtension: "json") else {
+        guard let url = CoreResources.url("pricing", "json") else {
             throw PricingError.missingResource
         }
         return try Data(contentsOf: url)
@@ -233,7 +236,7 @@ public struct PricingSupplement {
     }
 
     public static func bundled() throws -> PricingSupplement {
-        guard let url = Bundle.module.url(forResource: "pricing-supplement", withExtension: "json") else {
+        guard let url = CoreResources.url("pricing-supplement", "json") else {
             throw PricingError.missingResource
         }
         return try decode(Data(contentsOf: url))
