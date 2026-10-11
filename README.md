@@ -161,6 +161,8 @@ swe check                    # probe installed tools and refresh versions
 swe doctor                   # diagnose Node/npm/PATH issues, plus registry drift
 swe find                     # where shared assets live and what links to them, as counts
 swe find plugins --full      # every plugin row, not just the counts
+swe plugins                  # every marketplace's plugins, installed or not
+swe plugins install swift-lsp@claude-plugins-official --harness=codex
 swe find skills --harness=all # include archived harnesses' rows too
 
 swe use cc                   # launch Claude Code (alias for `claude`)

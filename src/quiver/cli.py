@@ -24,6 +24,7 @@ from quiver.find import cmd_find
 from quiver.help_text import cmd_help
 from quiver.init import cmd_init
 from quiver.mcp import main as mcp_main
+from quiver.plugins import cmd_plugins
 from quiver.providers import cli as providers_cli
 from quiver.reports.commands import cmd_report
 from quiver.sessions.commands import cmd_models, cmd_session
@@ -143,6 +144,7 @@ COMMANDS = {
     "setup": cmd_setup,
     "init": cmd_init,
     "find": cmd_find,
+    "plugins": cmd_plugins,
     "providers": cmd_providers,
     "pv": cmd_providers,
     "config": cmd_config,

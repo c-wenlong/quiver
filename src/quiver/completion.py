@@ -24,6 +24,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("mcp", "Manage MCP servers"),
     ("harness", "Harness registry utils"),
     ("find", "Locate shared assets across harnesses"),
+    ("plugins", "Browse every marketplace, install per harness"),
     ("providers", "Manage API keys"),
     ("config", "View or update configuration"),
     ("report", "Summarize coding sessions"),
@@ -111,6 +112,14 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("-i", "Short for --interactive"),
         ("--json", "Skills or plugins: print as JSON"),
         ("--fix=", "Plugins only: run one drift finding's fix by id"),
+    ],
+    "plugins catalog": [
+        ("--json", "Every marketplace and plugin as JSON"),
+    ],
+    "plugins install": [
+        ("--harness=claude", "Act in Claude Code"),
+        ("--harness=codex", "Act in Codex"),
+        ("--json", "Print the result as JSON"),
     ],
     "find mcp": [
         ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
@@ -278,6 +287,12 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "plugins": "find", "plugin": "find",
         "mcp": "find mcp", "mcps": "find mcp", "servers": "find mcp",
     },
+    "plugins": {
+        "catalog": "plugins catalog",
+        # every action takes the same flags
+        "install": "plugins install", "uninstall": "plugins install",
+        "enable": "plugins install", "disable": "plugins install",
+    },
     "providers": {
         "list": "providers list", "ls": "providers list", "add": "providers add",
     },
@@ -377,6 +392,13 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("skills", "Locate skill folders"),
         ("plugins", "Locate installed plugins"),
         ("mcp", "Locate MCP server configs"),
+    ],
+    "plugins": [
+        ("catalog", "Every plugin in every registered marketplace"),
+        ("install", "Install a plugin in one harness"),
+        ("uninstall", "Uninstall a plugin from one harness"),
+        ("enable", "Enable an installed plugin"),
+        ("disable", "Disable an installed plugin"),
     ],
     "skills": [
         ("list", "List skills (bare `swe skills` does the same)"),

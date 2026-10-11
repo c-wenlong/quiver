@@ -96,6 +96,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe plugins`: the whole plugin catalog, and install per harness.** The
+  app's Plugins page gets an Explore tab listing every plugin in every
+  marketplace Claude Code, Codex or Cursor has registered, installed or not
+  (the 315 in claude-plugins-official included), and the hub cards move
+  there from the Skills page. `swe plugins catalog --json` reads files only,
+  never the network: each marketplace's source type, location and manifest
+  per harness, and each plugin's metadata, its `components` and `skills`
+  read from the copy each harness loads (the source folder for a Claude
+  directory marketplace), its install and enable state per harness, and for
+  `~/.quiver/plugins` plugins the same `drift` state and fix ids `swe skills
+  hub --json` gives. Plugins installed from a marketplace with no readable
+  manifest are listed too, so nothing installed goes missing, and every
+  plugin skill `swe skills --json` reports belongs to exactly one catalog
+  plugin. A malformed file costs only the marketplace or harness it
+  describes, and URLs lose any credentials. `swe plugins
+  install|uninstall|enable|disable <ref> --harness=claude|codex` checks the
+  state first, does nothing when there is nothing to do, and otherwise runs
+  `claude plugin <verb>` or `codex plugin add|remove` without a shell.
+  Codex has no enable verb, so enable and disable rewrite the one
+  `enabled` line in `~/.codex/config.toml` atomically, after proving the
+  edited file parses to the original with only that flag changed; when it
+  cannot prove it, nothing is written and the error says what to edit by
+  hand. Cursor is listed read-only: it keeps no install record swe can read.
+
 - **`swe edit <name> --field=value --json`.** The app's edit sheet needs to
   change a harness's command, description, aliases, tags, version and notes
   without a terminal. With `--json` the flags are applied (an empty value
