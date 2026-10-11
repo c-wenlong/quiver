@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         FocusVisibility.start()
         statusItem = StatusItemController(model: AppModel.shared)
+        AppModel.shared.applyAppIcon()
         AppModel.shared.start()
     }
 
