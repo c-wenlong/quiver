@@ -72,9 +72,14 @@ public final class SnapshotLoader<Value: SnapshotValue> {
 
     /// Fetches again after a change made through `source`'s swe, unless
     /// another swe has been asked for since: its value is the one to keep.
-    public func reload(from source: String, fetch: @escaping @Sendable () async throws -> Value) async {
-        guard requested == nil || requested == source else { return }
+    /// - Returns: false when another swe has been asked for, before or
+    ///   during the reload, so the value on show is no longer `source`'s.
+    ///   A newer load from the same swe still counts: it is as fresh.
+    @discardableResult
+    public func reload(from source: String, fetch: @escaping @Sendable () async throws -> Value) async -> Bool {
+        guard requested == nil || requested == source else { return false }
         await load(from: source, fetch: fetch)
+        return requested == nil || requested == source
     }
 
     /// Fetches from swe and shows the result.

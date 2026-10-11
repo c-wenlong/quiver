@@ -7,6 +7,8 @@ import SwiftUI
 struct PluginsPage: View {
     @Environment(AppModel.self) private var app
     @State private var confirming: PluginDrift?
+    /// What the Fix all confirmation listed; only these run.
+    @State private var confirmingAll: [String]?
 
     /// App-wide, so a check outlives a trip to another page and the last
     /// report shows at once.
@@ -15,6 +17,12 @@ struct PluginsPage: View {
     var body: some View {
         Page(title: "Plugins",
              subtitle: "Where the copies Claude Code and Codex run no longer match ~/.quiver/plugins.") {
+            if model.fixAllCount > 0 || model.fixAllProgress != nil {
+                Button(fixAllTitle) { confirmingAll = model.fixAllIDs }
+                    .primaryButton()
+                    .disabled(model.fixing != nil)
+                    .help("Run every fix swe can run, one at a time")
+            }
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe, for: app.swePath) } }
                 .iconButton()
                 .disabled(model.fixing != nil)
@@ -59,6 +67,24 @@ struct PluginsPage: View {
         } message: { finding in
             Text("swe will check the finding still applies, then run:\n\(finding.fix)")
         }
+        .confirmationDialog(confirmingAll?.count == 1 ? "Run 1 fix?" : "Run \(confirmingAll?.count ?? 0) fixes?",
+                            isPresented: .init(get: { confirmingAll != nil }, set: { if !$0 { confirmingAll = nil } }),
+                            presenting: confirmingAll) { ids in
+            Button("Run all") { Task { await model.fixAll(confirmed: ids, swe: app.swe, for: app.swePath) } }
+        } message: { ids in
+            Text("One at a time, stopping at the first that fails. swe checks each still applies before it runs:\n\n"
+                 + fixes(for: ids).joined(separator: "\n"))
+        }
+    }
+
+    private var fixAllTitle: String {
+        guard let progress = model.fixAllProgress else { return "Fix all" }
+        return "Fixing \(min(progress.done + 1, progress.total)) of \(progress.total)…"
+    }
+
+    private func fixes(for ids: [String]) -> [String] {
+        guard case .loaded(let report) = model.state else { return [] }
+        return ids.compactMap { id in report.drift.first { $0.id == id }?.fix }
     }
 }
 
