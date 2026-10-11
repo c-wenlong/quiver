@@ -17,6 +17,68 @@ alias ll='ls -l'
 EXPORT GEMINI_API_KEY="AIza-test"
 """
 
+/// A retired key left commented out above its replacement, as editors do.
+/// Synthetic values only.
+let commentedKeysFile = """
+# MiMo (Xiaomi)
+# export MIMO_API_KEY="sk-old-000000000000000000000000dead"
+export MIMO_API_KEY="sk-new-000000000000000000000000beef"
+"""
+
+@Suite struct APIKeysCommentedOutTests {
+    @Test func aCommentedOutExportIsNotAHeading() {
+        let file = APIKeysFile(text: commentedKeysFile)
+        #expect(file.entries.map(\.provider) == ["MiMo (Xiaomi)"])
+        #expect(file.entries.map(\.name) == ["MIMO_API_KEY"])
+    }
+
+    @Test func aCommentedOutBareAssignmentIsNotAHeading() {
+        let file = APIKeysFile(text: "# DeepSeek\n#DEEPSEEK_API_KEY=sk-old-1111\nexport DEEPSEEK_API_KEY=sk-new-2222\n")
+        #expect(file.entries.map(\.provider) == ["DeepSeek"])
+    }
+
+    @Test func aCommentedOutKeyWithNoHeadingLeavesTheProviderEmpty() {
+        let file = APIKeysFile(text: "# export OLD_KEY=sk-old-3333\nexport NEW_KEY=sk-new-4444\n")
+        #expect(file.entries.map(\.provider) == [""])
+    }
+
+    @Test func anUppercaseCommentedOutExportIsNotAHeading() {
+        let file = APIKeysFile(text: "# EXPORT MIMO_API_KEY=\"sk-old-5555\"\nexport MIMO_API_KEY=sk-new-6666\n")
+        #expect(file.entries.map(\.provider) == [""])
+        #expect(file.problems.map(\.reason) == ["a commented-out key still holds a value; delete the line"])
+        #expect(!file.problems.contains { $0.text.contains("sk-old") })
+    }
+
+    @Test func aCommentWithAnAssignmentAnywhereIsNotAHeading() {
+        let file = APIKeysFile(text: "# old: MIMO_API_KEY=sk-old-7777\nexport MIMO_API_KEY=sk-new-8888\n")
+        #expect(file.entries.map(\.provider) == [""])
+    }
+
+    @Test func noProviderEverHoldsAnAssignment() {
+        let texts = [commentedKeysFile, sampleKeysFile,
+                     "#  export   A_KEY = x\n# B_KEY=y # note\n#export C_KEY='z'\n# Export E_KEY=v\n# was F_KEY = u\nexport D_KEY=w\n"]
+        for text in texts {
+            for entry in APIKeysFile(text: text).entries {
+                #expect(!entry.provider.contains("="), "provider \(entry.provider) holds an assignment")
+            }
+        }
+    }
+
+    @Test func aCommentedOutKeyIsReportedWithItsValueHidden() {
+        let file = APIKeysFile(text: commentedKeysFile)
+        #expect(file.problems == [.init(line: 2, text: "# export MIMO_API_KEY=…",
+                                        reason: "a commented-out key still holds a value; delete the line")])
+        #expect(!file.problems.contains { $0.text.contains("sk-old") })
+    }
+
+    @Test func removingTheLastKeyKeepsACommentedOutKeyLine() throws {
+        var file = APIKeysFile(text: commentedKeysFile)
+        try file.remove(name: "MIMO_API_KEY")
+        #expect(file.text.contains("# export MIMO_API_KEY="))
+        #expect(!file.text.contains("sk-new"))
+    }
+}
+
 @Suite struct APIKeysFileTests {
     @Test func entriesAreGroupedUnderTheCommentAboveThem() throws {
         let file = APIKeysFile(text: sampleKeysFile)
