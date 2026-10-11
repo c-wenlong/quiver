@@ -192,31 +192,45 @@ extension Card where Accessory == EmptyView {
 
 /// Page scaffold inside the content panel: 36/40 title, 16/24 subtitle,
 /// actions top right, content up to 1152pt wide and centred.
+///
+/// `scrolls: false` is for a page whose content scrolls itself (an
+/// editor): the content gets the panel's remaining height to fill, so
+/// there is never a scroll inside a scroll.
 struct Page<Content: View, Actions: View>: View {
     var title: String
     var subtitle: String
     var maxWidth: CGFloat = 1152
+    var scrolls = true
     @ViewBuilder var actions: Actions
     @ViewBuilder var content: Content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                PageHeader(title: title, subtitle: subtitle) { actions }
-                content
-            }
-            .padding(.horizontal, 40)
-            .padding(.vertical, 36)
-            .frame(maxWidth: maxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
+        if scrolls {
+            ScrollView { stack }
+                .scrollContentBackground(.hidden)
+        } else {
+            stack
         }
-        .scrollContentBackground(.hidden)
+    }
+
+    private var stack: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            PageHeader(title: title, subtitle: subtitle) { actions }
+            content
+        }
+        .frame(maxHeight: scrolls ? nil : .infinity, alignment: .top)
+        .padding(.horizontal, 40)
+        .padding(.vertical, 36)
+        .frame(maxWidth: maxWidth, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 }
 
 extension Page where Actions == EmptyView {
-    init(title: String, subtitle: String, maxWidth: CGFloat = 1152, @ViewBuilder content: () -> Content) {
-        self.init(title: title, subtitle: subtitle, maxWidth: maxWidth, actions: { EmptyView() }, content: content)
+    init(title: String, subtitle: String, maxWidth: CGFloat = 1152, scrolls: Bool = true,
+         @ViewBuilder content: () -> Content) {
+        self.init(title: title, subtitle: subtitle, maxWidth: maxWidth, scrolls: scrolls,
+                  actions: { EmptyView() }, content: content)
     }
 }
 
