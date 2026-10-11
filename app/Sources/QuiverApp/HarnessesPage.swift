@@ -53,12 +53,20 @@ private struct HarnessList: View {
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }
             } else {
+                let shown = model.shown
                 VStack(spacing: 0) {
-                    ForEach(rows) { harness in
+                    ForEach(shown) { harness in
                         HarnessRow(harness: harness, model: model)
-                        if harness.id != rows.last?.id { Divider().overlay(Theme.border) }
+                        if harness.id != shown.last?.id { Divider().overlay(Theme.border) }
+                    }
+                    if model.canCollapse {
+                        if !shown.isEmpty { Divider().overlay(Theme.border) }
+                        ExpandRow(isExpanded: model.showsUnstarred, hidden: model.collapsedCount) {
+                            withAnimation(.easeOut(duration: 0.15)) { model.showsUnstarred.toggle() }
+                        }
                     }
                 }
+                .clipShape(.rect(cornerRadius: Theme.cardRadius))
                 .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
             }
@@ -69,6 +77,34 @@ private struct HarnessList: View {
         if all.isEmpty { return "No harnesses registered yet. Run swe discover --apply to register what is installed." }
         if !model.query.isEmpty { return "No harnesses match." }
         return model.scope == .archived ? "Nothing archived." : "Every harness is archived."
+    }
+}
+
+/// The last row of the list: unfolds the unstarred harnesses, or folds
+/// them away again.
+private struct ExpandRow: View {
+    var isExpanded: Bool
+    var hidden: Int
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(isExpanded ? "Show less" : hidden == 1 ? "Show 1 more" : "Show \(hidden) more")
+                    .font(Theme.control)
+            }
+            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(hovering ? Theme.rowHover : .clear)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 0)
+        .onHover { hovering = $0 }
+        .help(isExpanded ? "Hide the harnesses you haven't starred" : "Show the harnesses you haven't starred")
     }
 }
 
