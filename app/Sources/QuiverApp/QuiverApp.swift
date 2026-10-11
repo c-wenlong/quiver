@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// Before launch finishes, so a hidden Dock icon never flashes in.
     func applicationWillFinishLaunching(_ notification: Notification) {
         if !AppModel.shared.dockIconShown { NSApp.setActivationPolicy(.accessory) }
+        AppModel.shared.applyAppearance()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
