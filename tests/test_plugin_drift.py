@@ -10,6 +10,7 @@ breaks one thing and asserts that exactly that thing is reported.
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import time
 import unittest
@@ -27,9 +28,20 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _codex_copy(src: Path, dst: Path) -> None:
+    """Copy a plugin the way ``codex plugin add`` does: every symlink dropped.
+
+    Seen with codex-cli 0.162.1: a symlinked manifest folder, a symlinked
+    skill folder or file, and a dangling link are all left out of the copy.
+    """
+    shutil.copytree(src, dst, ignore=lambda d, names: [
+        n for n in names if os.path.islink(os.path.join(d, n))])
+
+
 class _FakeHome:
     """A home with marketplace ``mk`` holding plugin ``tool`` 1.0.0, installed
-    and enabled in both claude and codex, every copy identical to the source."""
+    and enabled in both claude and codex, every copy identical to the source
+    as that harness copies it."""
 
     def setUp(self):
         super().setUp()
@@ -52,7 +64,11 @@ class _FakeHome:
                json.dumps({"name": "tool", "version": "1.0.0"}))
         _write(self.plugin / "skills" / "go" / "SKILL.md", "---\nname: go\n---\nbody\n")
         _write(self.plugin / "agents" / "helper.md", "helper\n")
-        os.symlink(".claude-plugin", self.plugin / ".codex-plugin")
+        # codex reads its own manifest folder, so it has to be a real one;
+        # a symlinked .codex-plugin is LinkedManifestTest's subject. Other
+        # harnesses' folders can stay links: codex drops them, harmlessly.
+        shutil.copytree(self.plugin / ".claude-plugin", self.plugin / ".codex-plugin")
+        os.symlink(".claude-plugin", self.plugin / ".cursor-plugin")
 
         # claude: registered, installed as a copy that keeps the symlink
         self.claude_copy = self.home / ".claude" / "plugins" / "cache" / "mk" / "tool" / "1.0.0"
@@ -64,9 +80,9 @@ class _FakeHome:
         self.settings = {"enabledPlugins": {"tool@mk": True}}
         self._write_claude()
 
-        # codex: registered, installed as a copy with the symlink dereferenced
+        # codex: registered, installed as a copy with every symlink dropped
         self.codex_copy = self.home / ".codex" / "plugins" / "cache" / "mk" / "tool" / "1.0.0"
-        shutil.copytree(self.plugin, self.codex_copy, symlinks=False)
+        _codex_copy(self.plugin, self.codex_copy)
         self.codex_enabled = "true"
         self._write_codex()
 
@@ -86,6 +102,25 @@ class _FakeHome:
         body += '[marketplaces.other]\nsource_type = "git"\nsource = "https://example.com/o.git"\n\n'
         body += f'[plugins."tool@mk"]\nenabled = {self.codex_enabled}\n'
         _write(self.home / ".codex" / "config.toml", body)
+
+    def link_manifest(self, target: str) -> None:
+        """Make the source's .codex-plugin a symlink to ``target`` and
+        reinstall into codex the way codex does then."""
+        manifest = self.plugin / ".codex-plugin"
+        if manifest.is_symlink():
+            manifest.unlink()
+        else:
+            shutil.rmtree(manifest)
+        os.symlink(target, manifest)
+        self.reinstall_codex("local")
+        # what codex-cli 0.162.1 generated for a plugin like this one
+        _write(self.codex_copy / ".codex-plugin" / "plugin.json", json.dumps(
+            {"name": "tool", "interface": {"developerName": "me"}}, indent=2))
+
+    def reinstall_codex(self, version: str) -> None:
+        shutil.rmtree(self.codex_copy.parent)
+        self.codex_copy = self.codex_copy.parent / version
+        _codex_copy(self.plugin, self.codex_copy)
 
     def drift(self, **kw):
         return plugin_drift(self.home, **kw)
@@ -248,10 +283,9 @@ class StaleTest(_FakeHome, unittest.TestCase):
         _write(self.plugin / "skills" / "new" / "SKILL.md", "new\n")
         codex = [f for f in self.drift() if f.harness == "codex"][0]
         self.assertEqual(codex.kind, "stale")
-        # the symlinked .codex-plugin reads as its target, so it differs too
-        self.assertEqual(codex.detail, "installed 1.0.0 vs source 1.1.0, 3 files differ")
+        # the symlinked .cursor-plugin is not compared: codex never copies it
+        self.assertEqual(codex.detail, "installed 1.0.0 vs source 1.1.0, 2 files differ")
         self.assertEqual(codex.paths, (".claude-plugin/plugin.json",
-                                       ".codex-plugin/plugin.json",
                                        "skills/new/SKILL.md"))
 
     def test_file_only_in_copy(self):
@@ -282,11 +316,180 @@ class StaleTest(_FakeHome, unittest.TestCase):
         os.symlink("..", self.codex_copy / "skills" / "loop")
         self.assertEqual(self.drift(), [])
 
-    def test_dangling_symlink(self):
+    def test_symlinks_codex_drops_are_not_drift(self):
+        # codex copies no symlink at all, so a fresh install of a source
+        # holding these lacks them, and the source must not count them
+        # either: a reinstall could never make the copy match.
         os.symlink("nowhere", self.plugin / "agents" / "ghost.md")
+        os.symlink("../agents", self.plugin / "skills" / "linked")
+        os.symlink("../../agents/helper.md", self.plugin / "skills" / "go" / "helper.md")
+        self.assertEqual(self.drift(), [])
+
+    def test_symlink_in_the_copy_is_not_followed(self):
+        # The source's file is compared with what codex wrote, not with a
+        # link in the cache that happens to point back at the source.
+        _write(self.plugin / "agents" / "helper.md", "HELPER\n")
+        (self.codex_copy / "agents" / "helper.md").unlink()
+        os.symlink(self.plugin / "agents" / "helper.md",
+                   self.codex_copy / "agents" / "helper.md")
         found = self.drift()
         self.assertEqual([(f.harness, f.kind, f.paths) for f in found],
-                         [("codex", "stale", ("agents/ghost.md",))])
+                         [("codex", "stale", ("agents/helper.md",))])
+
+
+class LinkedManifestTest(_FakeHome, unittest.TestCase):
+    """A symlinked ``.codex-plugin``: codex skips it when it copies the plugin
+    and writes a manifest of its own from the marketplace entry, with no
+    version, into a copy named ``local``. Reinstalling changes nothing, so
+    the finding must point at the link, not at the copy."""
+
+    def setUp(self):
+        super().setUp()
+        self.link_manifest(".claude-plugin")
+
+    def test_reported_instead_of_stale(self):
+        [finding] = self.drift()
+        self.assertEqual((finding.harness, finding.kind, finding.ref),
+                         ("codex", "linked-manifest", "tool@mk"))
+        self.assertEqual(finding.id, "codex:linked-manifest:tool@mk")
+        self.assertEqual(finding.detail,
+                         ".codex-plugin is a symlink to .claude-plugin; codex doesn't "
+                         "follow symlinks, so it installs a generated manifest "
+                         "without the version")
+        self.assertEqual(finding.paths, ())
+
+    def test_fix_replaces_the_link_with_a_copy_of_its_target(self):
+        [finding] = self.drift()
+        real = Path(os.path.realpath(self.plugin))
+        link, target = str(real / ".codex-plugin"), str(real / ".claude-plugin")
+        staged = link + ".quiver-tmp"
+        # copy to a new path first, so a copy that fails leaves the link and
+        # its finding; the link is the only thing removed
+        self.assertEqual(finding.argv, (("cp", "-R", target, staged),
+                                        ("rm", link),
+                                        ("mv", staged, link)))
+        self.assertEqual(finding.fix, f"cp -R {target} {staged} && rm {link} && mv {staged} {link}")
+
+    def test_a_failed_copy_keeps_the_link_and_the_finding(self):
+        from quiver.find.plugin_drift import FixError, apply_fix
+
+        def fail_on_cp(argv, **kwargs):
+            if argv[0] == "cp":
+                return subprocess.CompletedProcess(argv, 1, "", "cp: Permission denied\n")
+            return subprocess.run(argv, **kwargs)
+
+        with self.assertRaisesRegex(FixError, "Permission denied"):
+            apply_fix(self.home, "codex:linked-manifest:tool@mk", run=fail_on_cp)
+        self.assertTrue((self.plugin / ".codex-plugin").is_symlink())
+        [finding] = self.drift()
+        self.assertEqual(finding.kind, "linked-manifest")
+        self.assertTrue(finding.argv)
+
+    def test_anything_at_the_staging_path_makes_it_a_hand_fix(self):
+        # cp into an existing folder writes through any link in it, and
+        # clearing the path first could delete a real folder, so neither
+        # happens: the fix names what is in the way and runs nothing.
+        from quiver.find.plugin_drift import FixError, apply_fix
+
+        staged = self.plugin / ".codex-plugin.quiver-tmp"
+        outside = self.home / "outside"
+        _write(outside / "plugin.json", "keep me\n")
+
+        def leftover():
+            _write(staged / "plugin.json", "half-copied\n")
+
+        def link_out():
+            os.symlink(outside, staged)
+
+        def link_to_it():
+            # .codex-plugin -> .codex-plugin.quiver-tmp, a real folder
+            _write(staged / "plugin.json", "keep me\n")
+            self.link_manifest(staged.name)
+
+        for setup in (leftover, link_out, link_to_it):
+            setup()
+            before = sorted((str(q), q.lstat().st_mtime_ns) for q in self.home.rglob("*"))
+            # a real folder there is also a stale path; that one is honest
+            [finding] = [f for f in self.drift() if f.kind == "linked-manifest"]
+            self.assertEqual(finding.argv, (), setup.__name__)
+            in_the_way = os.path.join(os.path.realpath(self.plugin), staged.name)
+            self.assertTrue(finding.fix.endswith(f"{in_the_way} is in the way"))
+            with self.assertRaisesRegex(FixError, "nothing to run"):
+                apply_fix(self.home, "codex:linked-manifest:tool@mk")
+            after = sorted((str(q), q.lstat().st_mtime_ns) for q in self.home.rglob("*"))
+            self.assertEqual(after, before, setup.__name__)
+            self.assertEqual((outside / "plugin.json").read_text(), "keep me\n")
+            if staged.is_symlink():
+                staged.unlink()
+            else:
+                shutil.rmtree(staged)
+
+    def test_target_outside_the_plugin_is_resolved(self):
+        shared = self.market / "shared-manifest"
+        shutil.copytree(self.plugin / ".claude-plugin", shared)
+        self.link_manifest("../shared-manifest")
+        [finding] = self.drift()
+        self.assertEqual(finding.argv[0][2], os.path.realpath(shared))
+        self.assertIn("a symlink to ../shared-manifest;", finding.detail)
+
+    def test_no_command_for_a_target_outside_the_marketplace_or_around_the_link(self):
+        # Copying a folder from anywhere on the machine into the plugin, or a
+        # folder into itself, is not something a click should do.
+        elsewhere = self.home / "elsewhere"
+        shutil.copytree(self.plugin / ".claude-plugin", elsewhere)
+        for target in (str(elsewhere), "."):
+            self.link_manifest(target)
+            [finding] = self.drift()
+            self.assertEqual((finding.kind, finding.argv), ("linked-manifest", ()), target)
+
+    def test_paths_with_spaces_and_quotes_stay_one_word(self):
+        import shlex
+
+        odd = self.market / "it's my tool"
+        self.plugin.rename(odd)
+        self.plugin = odd
+        self.manifest["plugins"][0]["source"] = "./it's my tool"
+        self._write_manifest()
+        [finding] = self.drift()
+        self.assertEqual([shlex.split(part) for part in finding.fix.split(" && ")],
+                         [list(argv) for argv in finding.argv])
+        self.assertEqual(finding.argv[1][0], "rm")
+        self.assertTrue(finding.argv[1][1].endswith("/it's my tool/.codex-plugin"))
+
+    def test_dangling_link_has_no_command(self):
+        self.link_manifest("nowhere")
+        [finding] = self.drift()
+        self.assertEqual(finding.kind, "linked-manifest")
+        self.assertEqual(finding.argv, ())
+        self.assertIn("with a folder holding plugin.json", finding.fix)
+
+    def test_generated_manifest_is_not_also_stale(self):
+        # One finding per cause: other drift is still stale, but the
+        # manifest codex wrote itself is not one of its paths.
+        _write(self.plugin / "agents" / "helper.md", "HELPER\n")
+        found = self.drift()
+        self.assertEqual([(f.kind, f.paths) for f in found],
+                         [("linked-manifest", ()), ("stale", ("agents/helper.md",))])
+        self.assertEqual(found[1].detail, "installed local vs source 1.0.0, 1 file differs")
+
+    def test_not_installed_comes_first(self):
+        shutil.rmtree(self.codex_copy.parent)
+        self.assertEqual(self.kinds(), [("codex", "not-installed")])
+
+    def test_running_the_fix_then_reinstalling_clears_it(self):
+        from quiver.find.plugin_drift import apply_fix
+
+        apply_fix(self.home, "codex:linked-manifest:tool@mk")
+        manifest = self.plugin / ".codex-plugin"
+        self.assertFalse(manifest.is_symlink())
+        self.assertEqual((manifest / "plugin.json").read_bytes(),
+                         (self.plugin / ".claude-plugin" / "plugin.json").read_bytes())
+        # the source is right now, and the copy codex made from the link is
+        # an ordinary stale copy whose fix is the reinstall
+        [stale] = self.drift()
+        self.assertEqual((stale.kind, stale.paths), ("stale", (".codex-plugin/plugin.json",)))
+        self.reinstall_codex("1.0.0")
+        self.assertEqual(self.drift(), [])
 
 
 class DisabledHereTest(_FakeHome, unittest.TestCase):

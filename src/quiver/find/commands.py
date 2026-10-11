@@ -870,9 +870,12 @@ def _plugin_state(p) -> str:
 DRIFT_WORD = {
     "unregistered": ("unregistered", "red"),
     "not-installed": ("not installed", "yellow"),
+    "linked-manifest": ("linked manifest", "yellow"),
     "stale": ("stale", "yellow"),
     "disabled-here": ("disabled here", "yellow"),
 }
+# The kind column fits the longest word above and a two-space gap.
+DRIFT_WORD_W = max(len(word) for word, _ in DRIFT_WORD.values()) + 2
 DRIFT_TITLE = "Drift"
 DRIFT_NONE = "none, claude and codex run what ~/.quiver/plugins holds"
 
@@ -949,8 +952,8 @@ def _render_drift_full(drift: list) -> None:
         print(f"  {c('dim', TREE_END if last else TREE_MID)}"
               f"{c('bold', f.harness.ljust(8))}"
               f"{c(colour, elide(f.ref, ref_w - 1).ljust(ref_w))}"
-              f"{c(colour, word.ljust(15))}"
-              f"{c('dim', elide(f.detail, _path_budget(ref_w + 29)))}")
+              f"{c(colour, word.ljust(DRIFT_WORD_W))}"
+              f"{c('dim', elide(f.detail, _path_budget(ref_w + 14 + DRIFT_WORD_W)))}")
         bar = "   " if last else TREE_BAR
         print(f"  {c('dim', bar)}{c('cyan', f.fix)}")
     print()

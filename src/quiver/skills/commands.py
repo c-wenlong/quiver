@@ -184,6 +184,7 @@ def _skills_json(args) -> int:
 _HUB_STATES = {
     "unregistered": ("red", "marketplace not added"),
     "not-installed": ("yellow", "not installed"),
+    "linked-manifest": ("yellow", "linked manifest"),
     "stale": ("yellow", "stale"),
     "disabled-here": ("yellow", "disabled"),
     "disabled": ("yellow", "disabled"),

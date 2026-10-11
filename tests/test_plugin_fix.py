@@ -216,5 +216,57 @@ class PluginsJsonCliTest(_FakeHome, unittest.TestCase):
         self.assertIn("only available for plugins", result.stdout)
 
 
+class LinkedManifestCliTest(_FakeHome, unittest.TestCase):
+    """A symlinked .codex-plugin, end to end through the installed command."""
+
+    def setUp(self):
+        super().setUp()
+        self.link_manifest(".claude-plugin")
+
+    def test_reported_as_runnable_and_not_as_stale(self):
+        result = run_swe(self.home, "find", "plugins", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [row] = decode(result)["data"]["drift"]
+        self.assertEqual((row["id"], row["kind"], row["runnable"], row["paths"]),
+                         ("codex:linked-manifest:tool@mk", "linked-manifest", True, []))
+
+    def test_fix_replaces_the_link_in_the_source(self):
+        # The inherited PATH: rm and cp are not under /usr/bin in Nix's sandbox.
+        result = run_swe(self.home, "find", "plugins", "--fix=codex:linked-manifest:tool@mk",
+                         "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(decode(result)["data"]["fixed"]["kind"], "linked-manifest")
+        manifest = self.plugin / ".codex-plugin"
+        self.assertFalse(manifest.is_symlink())
+        self.assertTrue((manifest / "plugin.json").is_file())
+
+    def test_listing_names_the_kind(self):
+        result = run_swe(self.home, "find", "plugins", "--full")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("linked manifest", result.stdout)
+        self.assertIn("rm ", result.stdout)
+
+    def test_hub_shows_the_link_before_a_stale_copy(self):
+        from quiver.skills.inventory import hub_plugins
+
+        (self.plugin / "agents" / "helper.md").write_text("changed\n")
+        self.assertEqual(self.kinds(), [("codex", "linked-manifest"), ("codex", "stale")])
+        [plugin] = hub_plugins(self.home)["plugins"]
+        codex = plugin["install"]["codex"]
+        self.assertEqual((codex["state"], codex["id"]),
+                         ("linked-manifest", "codex:linked-manifest:tool@mk"))
+
+
+class KindLabelsTest(unittest.TestCase):
+    def test_every_kind_reads_as_words_in_both_listings(self):
+        from quiver.find.commands import DRIFT_WORD
+        from quiver.find.plugin_drift import KINDS
+        from quiver.skills.commands import _HUB_STATES
+
+        for kind in KINDS:
+            self.assertIn(kind, DRIFT_WORD)
+            self.assertIn(kind, _HUB_STATES)
+
+
 if __name__ == "__main__":
     unittest.main()

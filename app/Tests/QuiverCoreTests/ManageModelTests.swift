@@ -562,6 +562,24 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(!report.drift[1].runnable)
     }
 
+    @Test func aLinkedManifestReadsInSentenceCase() async throws {
+        let linked = json(#"""
+        {"sources": 1, "drift": [
+          {"id": "codex:linked-manifest:tool@mk", "harness": "codex", "marketplace": "mk", "plugin": "tool",
+           "ref": "tool@mk", "kind": "linked-manifest",
+           "detail": ".codex-plugin is a symlink to .claude-plugin; codex doesn't follow symlinks, so it installs a generated manifest without the version",
+           "fix": "cp -R /p/tool/.claude-plugin /p/tool/.codex-plugin.quiver-tmp && rm /p/tool/.codex-plugin && mv /p/tool/.codex-plugin.quiver-tmp /p/tool/.codex-plugin",
+           "runnable": true, "paths": []}
+        ]}
+        """#)
+        let model = PluginsModel()
+        await model.load(swe: SweClient(runner: RoutingRunner([(["find", "plugins", "--json"], linked)])))
+        guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
+        #expect(report.drift.map(\.kindTitle) == ["Linked manifest"])
+        #expect(report.drift[0].runnable)
+        #expect(!report.drift[0].isSevere)
+    }
+
     @Test func fixAsksSweByIdThenReloads() async throws {
         let runner = RoutingRunner([
             (["find", "plugins", "--json"], drift),
