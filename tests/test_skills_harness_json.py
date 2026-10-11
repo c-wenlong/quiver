@@ -287,6 +287,7 @@ class SkillsHubJsonTest(unittest.TestCase):
         claude = plugin["install"]["claude"]
         self.assertEqual(claude["state"], "unregistered")
         self.assertIn("claude plugin marketplace add", claude["fix"])
+        self.assertEqual(claude["id"], f"claude:unregistered:{self.market}")
         # No ~/.codex here, so codex is not reported at all.
         self.assertNotIn("codex", plugin["install"])
 
@@ -311,6 +312,27 @@ class SkillsHubJsonTest(unittest.TestCase):
         self.install_current()
         (plugin,) = self.data()["plugins"]
         self.assertEqual(plugin["install"]["claude"], {"state": "installed", "fix": None, "id": None})
+
+    def test_the_id_runs_the_same_fix_through_find_plugins(self):
+        self.register()
+        (plugin,) = self.data()["plugins"]
+        fix_id = plugin["install"]["claude"]["id"]
+        bin_dir = self.home / "bin"
+        bin_dir.mkdir()
+        log = self.home / "ran.txt"
+        fake = bin_dir / "claude"
+        fake.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
+        fake.chmod(0o755)
+        import os, subprocess, sys
+        env = {"HOME": str(self.home), "NO_COLOR": "1",
+               "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+               "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+        env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
+        result = subprocess.run(
+            [sys.executable, "-m", "quiver.cli", "find", "plugins", f"--fix={fix_id}", "--json"],
+            capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(log.read_text().strip(), "plugin install toolkit@kit")
 
     def test_disabled_in_the_only_harness_is_not_installed(self):
         self.install_current()

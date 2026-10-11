@@ -190,13 +190,17 @@ public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
         public let state: State
         /// The shell command that closes the gap, nil when installed.
         public let fix: String?
+        /// What `swe find plugins --fix=` takes, when swe can run the fix
+        /// itself. Nil for a fix that is an edit by hand.
+        public let id: String?
 
-        enum CodingKeys: String, CodingKey { case state, fix }
+        enum CodingKeys: String, CodingKey { case state, fix, id }
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             state = (try? c.decode(State.self, forKey: .state)) ?? .unknown
             fix = try c.decodeIfPresent(String.self, forKey: .fix)
+            id = try c.decodeIfPresent(String.self, forKey: .id)
         }
     }
 
@@ -216,6 +220,16 @@ public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
 
     /// Every fix this plugin needs, one per line.
     public var fixes: [String] { harnesses.compactMap { install[$0]?.fix } }
+
+    /// The gaps swe can close itself, in harness order.
+    public var runnableFixes: [Install] {
+        harnesses.compactMap { install[$0] }.filter { $0.id != nil && $0.fix != nil }
+    }
+
+    /// The gaps left for you to close by hand.
+    public var manualFixes: [String] {
+        harnesses.compactMap { install[$0] }.filter { $0.id == nil }.compactMap(\.fix)
+    }
 }
 
 extension SweClient {
@@ -253,6 +267,10 @@ public final class SkillsModel {
     public private(set) var busy: Set<String> = []
     /// The last link or unlink that failed, in swe's words.
     public var actionError: String?
+    /// The hub plugin whose fixes are running, by id.
+    public private(set) var fixingPlugin: String?
+    /// The last hub fix that failed, in swe's words.
+    public var hubError: String?
 
     public var query = ""
     /// A harness name, or nil for every harness.
@@ -329,6 +347,35 @@ public final class SkillsModel {
         }
         // Reload either way: a failed change may still have moved something.
         await load()
+    }
+
+    /// Runs every fix swe can run for `plugin`, one at a time, then reloads
+    /// the skills and the hub. swe checks each gap still exists and builds the commands; the
+    /// app sends only the finding id. Call after the user has confirmed.
+    public func fixHub(_ plugin: HubPlugin) async {
+        let fixes = plugin.runnableFixes
+        guard fixingPlugin == nil, !fixes.isEmpty else { return }
+        fixingPlugin = plugin.id
+        defer { fixingPlugin = nil }
+        hubError = nil
+        await gate.acquire()
+        do {
+            for fix in fixes {
+                guard let id = fix.id else { continue }
+                try await swe.fixPluginDrift(id: id)
+            }
+        } catch is CancellationError {
+            gate.release()
+            return
+        } catch {
+            hubError = error.localizedDescription
+        }
+        gate.release()
+        // A fix can add, update or enable a plugin's skills, so the Installed
+        // tab is stale too. Reload both, failure or not: a failed run may
+        // still have changed files.
+        await load()
+        await loadHub()
     }
 
     public var roots: [SkillRoot] {
