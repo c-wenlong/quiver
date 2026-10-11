@@ -257,6 +257,31 @@ public final class McpModel {
         hasHealth = health && { if case .loaded = next { true } else { false } }()
     }
 
+    /// The server as the latest load has it.
+    public func server(named name: String) -> McpServer? {
+        guard case .loaded(let inventory) = state else { return nil }
+        return inventory.servers.first { $0.name == name }
+    }
+
+    /// Copies `server` from `source`: to `adding` without `--force`, so a
+    /// definition that appeared there since is left alone, and to the
+    /// approved `replacing` targets with it. One report for both.
+    public func sync(_ server: McpServer, from source: String, adding: [String], replacing: [String],
+                     dryRun: Bool, swe: SweClient) async throws -> McpSyncReport {
+        var parts: [McpSyncReport] = []
+        if !adding.isEmpty {
+            parts.append(try await swe.mcpSync(server: server, from: source, to: adding,
+                                               overwrite: false, dryRun: dryRun))
+        }
+        if !replacing.isEmpty {
+            parts.append(try await swe.mcpSync(server: server, from: source, to: replacing,
+                                               overwrite: true, dryRun: dryRun))
+        }
+        return McpSyncReport(source: source, dryRun: dryRun,
+                             selected: parts.first?.selected ?? [],
+                             targets: parts.flatMap(\.targets))
+    }
+
     /// What a sync of `server` from `source` can reach: harnesses without
     /// the server (picked by default) and ones with a different definition
     /// (left for the user to opt into, since that overwrites theirs).

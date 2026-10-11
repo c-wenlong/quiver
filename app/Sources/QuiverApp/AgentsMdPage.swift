@@ -15,7 +15,7 @@ struct AgentsMdPage: View {
         Page(title: "AGENTS.md", subtitle: "The instructions every harness reads, and each project's own.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe) }
-                model.global?.checkDisk()
+                model.checkDisk()
             }
             .buttonStyle(IconButtonStyle())
             .help("Check links and reread the file")
@@ -29,7 +29,7 @@ struct AgentsMdPage: View {
         .task(id: app.swePath) { await model.load(swe: app.swe) }
         // Agents rewrite these files while they work; pick that up on return.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.global?.checkDisk()
+            model.checkDisk()
         }
     }
 }
@@ -163,11 +163,6 @@ private struct ProjectInstructions: View {
             }
         }
         .onAppear(perform: restore)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            if let file = model.projectFiles.first(where: { $0.name == selectedFile }) {
-                model.document(for: file).checkDisk()
-            }
-        }
         .confirmationDialog("Discard unsaved changes?", isPresented: .init(
             get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } })) {
             Button("Discard and switch", role: .destructive) {

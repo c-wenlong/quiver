@@ -67,7 +67,7 @@ struct McpServersPage: View {
         .task(id: app.swePath) { await model.load(swe: app.swe) }
         .sheet(item: $selected) { server in
             if case .loaded(let inventory) = model.state {
-                ServerSheet(server: server, harnesses: inventory.harnesses,
+                ServerSheet(initial: server, harnesses: inventory.harnesses,
                             active: inventory.activeHarnesses.filter { !hidden.contains($0) }, model: model) {
                     await model.load(swe: app.swe, health: model.hasHealth)
                 }
@@ -164,8 +164,9 @@ private struct ServerRow: View {
                     }
                 }
                 .frame(width: ServerGrid.nameWidth, alignment: .leading)
+                let differs = server.conflicts(among: harnesses)
                 ForEach(harnesses, id: \.self) { harness in
-                    Cell(server: server, harness: harness).frame(width: ServerGrid.cellWidth)
+                    Cell(server: server, harness: harness, differs: differs).frame(width: ServerGrid.cellWidth)
                 }
             }
             .padding(.vertical, 8)
@@ -181,10 +182,12 @@ private struct ServerRow: View {
 private struct Cell: View {
     var server: McpServer
     var harness: String
+    /// Whether the compared harnesses disagree; letters show only then.
+    var differs: Bool
 
     var body: some View {
         if let group = server.group(of: harness) {
-            if server.groups.count > 1 {
+            if differs {
                 Text(variantLetter(group))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(group == 0 ? Theme.textPrimary : Theme.warning)
@@ -216,7 +219,7 @@ func healthColor(_ health: String) -> Color {
 
 /// One server: what it is, who has which definition, and a sync.
 private struct ServerSheet: View {
-    var server: McpServer
+    var initial: McpServer
     /// Every harness swe reads, the sync targets.
     var harnesses: [String]
     /// The harnesses the grid compares; missing ones are picked by default.
@@ -234,7 +237,9 @@ private struct ServerSheet: View {
     @State private var running = false
     @State private var confirmingOverwrite = false
 
-    var source: String { server.groups[sourceGroup].first ?? "" }
+    /// The server as the latest load has it, so a finished sync shows its effect.
+    var server: McpServer { model.server(named: initial.name) ?? initial }
+    var source: String { server.groups[min(sourceGroup, server.groups.count - 1)].first ?? "" }
     var targets: SyncTargets { model.targets(for: server, from: source, in: harnesses) }
 
     var body: some View {
@@ -249,6 +254,11 @@ private struct ServerSheet: View {
             }
             Text(server.summary).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                 .foregroundStyle(Theme.textSecondary).lineLimit(3)
+            if server.groups.count > 1 {
+                // swe describes a server by the first harness that defines it.
+                Text("Command, URL and key names are definition A's.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
             if !server.envKeys.isEmpty {
                 Facts(label: "Env vars", value: server.envKeys.joined(separator: ", "))
             }
@@ -356,10 +366,11 @@ private struct ServerSheet: View {
         running = true
         error = nil
         defer { running = false }
-        let ordered = harnesses.filter { chosen.contains($0) }
+        let adding = harnesses.filter { chosen.contains($0) && targets.missing.contains($0) }
+        let replacing = harnesses.filter { chosen.contains($0) && targets.differing.contains($0) }
         do {
-            let report = try await app.swe.mcpSync(server: server, from: source, to: ordered,
-                                                   overwrite: targets.needsOverwrite(chosen), dryRun: dryRun)
+            let report = try await model.sync(server, from: source, adding: adding, replacing: replacing,
+                                              dryRun: dryRun, swe: app.swe)
             if dryRun {
                 preview = report
             } else {

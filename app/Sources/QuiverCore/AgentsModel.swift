@@ -107,11 +107,22 @@ public final class AgentsModel {
         }
     }
 
+    /// Looks at the disk again: rereads open files that changed with nothing
+    /// to lose, flags ones with edits, and notices files created or relinked.
+    public func checkDisk() {
+        global?.checkDisk()
+        rescanProject()
+        projectDocuments.values.forEach { $0.checkDisk() }
+    }
+
     /// The document for one of `projectFiles`, read on first use.
+    ///
+    /// Opened at the link's target, the same path it is cached under, so it
+    /// always reads and writes that one file even if the link moves later.
     public func document(for file: ProjectFile) -> InstructionDocument {
         let key = InstructionDocument.resolveLinks(file.url).standardizedFileURL
         if let open = projectDocuments[key] { return open }
-        let document = InstructionDocument(url: file.url)
+        let document = InstructionDocument(url: key)
         document.load()
         projectDocuments[key] = document
         return document

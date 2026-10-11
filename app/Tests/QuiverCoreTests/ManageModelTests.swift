@@ -128,6 +128,38 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(model.projectHasUnsavedChanges)
     }
 
+    @Test func aDocumentAlwaysWritesTheFileItIsCachedUnder() throws {
+        let folder = try TempFolder()
+        _ = try folder.write("AGENTS.md", "agents\n")
+        _ = try folder.write("OTHER.md", "other\n")
+        try folder.link("CLAUDE.md", to: "AGENTS.md")
+        let model = AgentsModel()
+        model.openProject(folder.url)
+        _ = model.document(for: model.projectFiles[1])   // CLAUDE.md first
+
+        // The link now points elsewhere; AGENTS.md must still edit AGENTS.md.
+        try FileManager.default.removeItem(at: folder.url.appending(path: "CLAUDE.md"))
+        try folder.link("CLAUDE.md", to: "OTHER.md")
+        model.rescanProject()
+        let agents = model.document(for: model.projectFiles[0])
+        #expect(agents.writeURL.lastPathComponent == "AGENTS.md")
+        #expect(agents.text == "agents\n")
+        #expect(model.document(for: model.projectFiles[1]).text == "other\n")
+    }
+
+    @Test func checkDiskRereadsOpenProjectFilesAndRescans() throws {
+        let folder = try TempFolder()
+        _ = try folder.write("AGENTS.md", "v1\n")
+        let model = AgentsModel()
+        model.openProject(folder.url)
+        let doc = model.document(for: model.projectFiles[0])
+        _ = try folder.write("AGENTS.md", "v2\n")
+        _ = try folder.write("CLAUDE.md", "new\n")
+        model.checkDisk()
+        #expect(doc.text == "v2\n")
+        #expect(model.projectFiles[1].exists)
+    }
+
     @Test func aMissingProjectFileCanBeCreated() throws {
         let folder = try TempFolder()
         let model = AgentsModel()
@@ -276,6 +308,45 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(runner.calls == [["mcp", "sync", "claude", "cursor", "codex", "--only=docs",
                                   "--no-interactive", "--json", "--force", "--dry-run"]])
         #expect(result.sentence == "Would add to cursor. Would update codex.")
+    }
+
+    @Test func onlyApprovedReplacementsRunWithForce() async throws {
+        let report = { (target: String, key: String) in json(#"""
+            {"source": "claude", "dry_run": false, "selected": ["docs"], "targets": [
+              {"name": "\#(target)", "added": \#(key == "added" ? #"["docs"]"# : "[]"), "updated": \#(key == "updated" ? #"["docs"]"# : "[]"), "skipped": [], "pruned": []}]}
+            """#) }
+        let runner = RoutingRunner([
+            (["mcp", "sync", "claude", "cursor"], report("cursor", "added")),
+            (["mcp", "sync", "claude", "codex"], report("codex", "updated")),
+        ])
+        let server = McpServer(name: "docs", harnesses: ["claude", "codex"], conflict: true,
+                               variants: [["claude"], ["codex"]])
+        let model = McpModel()
+        let result = try await model.sync(server, from: "claude", adding: ["cursor"], replacing: ["codex"],
+                                          dryRun: false, swe: SweClient(runner: runner))
+        #expect(runner.calls == [
+            ["mcp", "sync", "claude", "cursor", "--only=docs", "--no-interactive", "--json"],
+            ["mcp", "sync", "claude", "codex", "--only=docs", "--no-interactive", "--json", "--force"],
+        ])
+        #expect(result.targets.map(\.name) == ["cursor", "codex"])
+        #expect(result.sentence == "Added to cursor. Updated codex.")
+    }
+
+    @Test func aSyncWithNothingToReplaceNeverForces() async throws {
+        let runner = RoutingRunner([(["mcp", "sync"], json(#"{"source": "claude", "dry_run": true, "selected": [], "targets": []}"#))])
+        _ = try await McpModel().sync(McpServer(name: "x", harnesses: ["claude"]), from: "claude",
+                                      adding: ["cursor"], replacing: [], dryRun: true,
+                                      swe: SweClient(runner: runner))
+        #expect(runner.calls.count == 1)
+        #expect(!runner.calls[0].contains("--force"))
+    }
+
+    @Test func serverCanBeLookedUpInTheCurrentInventory() async throws {
+        let runner = RoutingRunner([(["mcp", "list", "--json"], listing)])
+        let model = McpModel()
+        await model.load(swe: SweClient(runner: runner))
+        #expect(model.server(named: "docs")?.harnesses == ["claude", "codex"])
+        #expect(model.server(named: "nope") == nil)
     }
 
     @Test func aServerNameIsMatchedLiterallyNotAsAGlob() {
