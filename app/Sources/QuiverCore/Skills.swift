@@ -340,6 +340,8 @@ public final class SkillsModel {
     /// Clears a harness or source filter the list on show no longer has,
     /// which the menus can't offer and which would hide every row.
     private func dropMissingFilters() {
+        // A failed list shows nothing, which says nothing about the filters.
+        guard case .loaded = inventory else { return }
         if let harness, !allSkills.contains(where: { $0.harnesses.contains(harness) }) { self.harness = nil }
         if let source, !allSkills.contains(where: { $0.source == source }) { self.source = nil }
     }

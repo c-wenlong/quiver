@@ -330,6 +330,19 @@ import Testing
         #expect(model.visibleSkills.map(\.name) == ["x"])
     }
 
+    @Test func aFailedRefreshKeepsTheFilters() async throws {
+        let runner = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
+        let model = SkillsModel(swe: SweClient(runner: runner))
+        await model.load(for: "/bin/swe")
+        model.harness = "codex"
+        model.source = .harness
+        runner.rules = [(["skills", "--json"], CommandResult(status: 1, stdout: Data(), stderr: "boom"))]
+        await model.load(for: "/bin/swe")
+        #expect(model.inventory == .failed("boom"))
+        #expect(model.harness == "codex")
+        #expect(model.source == .harness)
+    }
+
     @Test func skillsAndHubRoundTripThroughTheirFiles() async throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "quiver-skills-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
