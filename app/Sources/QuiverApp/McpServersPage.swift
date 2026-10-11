@@ -7,7 +7,6 @@ import SwiftUI
 /// through `swe mcp sync` to even them out.
 struct McpServersPage: View {
     @Environment(AppModel.self) private var app
-    @State private var model = McpModel()
     @State private var filter: McpFilter = .all
     @State private var selected: McpServer?
     /// Harnesses left out of the comparison, remembered on this Mac.
@@ -15,17 +14,21 @@ struct McpServersPage: View {
 
     static let hiddenKey = "mcpHiddenHarnesses"
 
+    /// App-wide, so a read outlives a trip to another page and the last
+    /// list shows at once.
+    private var model: McpModel { app.mcp }
+
     var body: some View {
         Page(title: "MCP servers",
              subtitle: "Every server your harnesses configure, where each is missing, and where two disagree.") {
             Button(model.checkingHealth ? "Checking…" : "Check health", systemImage: "waveform.path.ecg") {
-                Task { await model.load(swe: app.swe, health: true) }
+                Task { await model.load(swe: app.swe, for: app.swePath, health: true) }
             }
             .secondaryButton()
             .disabled(model.checkingHealth)
             .help("Run each server's command check and reach each URL")
             Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.load(swe: app.swe, health: model.hasHealth) }
+                Task { await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth) }
             }
             .iconButton()
             .help("Read the configs again")
@@ -65,7 +68,7 @@ struct McpServersPage: View {
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
-        .task(id: app.swePath) { await model.load(swe: app.swe) }
+        .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
         .sheet(item: $selected) { server in
             if case .loaded(let inventory) = model.state {
                 ServerSheet(initial: server, harnesses: inventory.harnesses,
