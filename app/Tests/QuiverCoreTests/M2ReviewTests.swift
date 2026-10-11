@@ -175,4 +175,17 @@ import Testing
         UsageCacheStore(url: url).save(StoredAccount(fingerprint: "new", reading: reading, cooldownUntil: nil), for: key)
         #expect(other.entry(for: key)?.cooldownUntil == nil)
     }
+
+    @Test func theCooldownCheckUsesTheServiceClock() {
+        let url = FileManager.default.temporaryDirectory.appending(path: "clock-\(UUID().uuidString)/app-usage.json")
+        let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)
+        // Long past by the wall clock, still ahead by the injected one.
+        let then = Date(timeIntervalSince1970: 1_000_000)
+        let until = then.addingTimeInterval(600)
+        let store = UsageCacheStore(url: url, now: { then })
+        store.save(StoredAccount(fingerprint: "same", reading: nil, cooldownUntil: until), for: key)
+        let reading = StoredReading(plan: nil, email: nil, windows: [], fetchedAt: then)
+        store.save(StoredAccount(fingerprint: "same", reading: reading, cooldownUntil: nil), for: key)
+        #expect(store.entry(for: key)?.cooldownUntil == until)
+    }
 }

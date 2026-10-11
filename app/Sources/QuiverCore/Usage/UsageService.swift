@@ -37,7 +37,7 @@ public actor UsageService {
         self.transport = transport
         self.secrets = secrets
         self.files = files
-        self.store = UsageCacheStore(url: cacheURL)
+        self.store = UsageCacheStore(url: cacheURL, now: now)
         self.now = now
     }
 

@@ -24,6 +24,9 @@ struct StoredAccount: Codable, Equatable {
 /// rewritten per change, so two running copies of the app share one cooldown.
 struct UsageCacheStore {
     let url: URL
+    /// The owning service's clock, so its idea of an active cooldown and
+    /// this file's agree.
+    var now: @Sendable () -> Date = Date.init
 
     private struct File: Codable {
         var version = 1
@@ -54,7 +57,7 @@ struct UsageCacheStore {
         // erase it, or the next refresh would ignore Retry-After.
         if var next = entry, next.cooldownUntil == nil,
            let current = accounts[Self.id(key)], current.fingerprint == next.fingerprint,
-           let until = current.cooldownUntil, until > Date() {
+           let until = current.cooldownUntil, until > now() {
             next.cooldownUntil = until
             entry = next
         }

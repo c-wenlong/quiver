@@ -6,11 +6,13 @@ import Testing
 final class FakeUsage: UsageFetching, @unchecked Sendable {
     private let lock = NSLock()
     var byHome: [String: AccountUsage] = [:]
-    private(set) var requests: [(AccountKey, Bool)] = []
+    private var recorded: [(AccountKey, Bool)] = []
+    /// A snapshot taken under the lock: the model's child tasks append concurrently.
+    var requests: [(AccountKey, Bool)] { lock.withLock { recorded } }
 
     func usage(for key: AccountKey, force: Bool) async -> AccountUsage {
         lock.withLock {
-            requests.append((key, force))
+            recorded.append((key, force))
             return byHome[key.configHome]
                 ?? AccountUsage(status: .signedOut, plan: nil, email: nil, windows: [], fetchedAt: nil, isStale: false)
         }
