@@ -14,11 +14,25 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
     public let state: State
     public let sessions100d: Int?
     public let rateLimit: RateLimit?
+    /// Whether its command is on PATH. Nil from a swe that predates the field.
+    public let installed: Bool?
+    /// Why and when it was archived; nil unless archived.
+    public let archived: Archive?
 
     enum CodingKeys: String, CodingKey {
         case name, command, description, version, aliases, tags, state
-        case sessions100d = "sessions100d"
-        case rateLimit
+        // convertFromSnakeCase capitalises "100d" to "100D", so the
+        // wire key `sessions_100d` arrives as `sessions100D`.
+        case sessions100d = "sessions100D"
+        case rateLimit, installed, archived
+    }
+
+    public struct Archive: Decodable, Sendable, Equatable {
+        public let reason: String
+        /// ISO 8601, as swe wrote it.
+        public let archivedAt: String
+        /// unknown, none, trial, used or heavy.
+        public let usage: String
     }
 }
 
