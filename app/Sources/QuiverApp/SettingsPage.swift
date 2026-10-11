@@ -145,6 +145,10 @@ private struct SettingsSectionView: View {
                     SettingRow(title: "Terminal", detail: "Used by Terminal, Sign in and Resume.") {
                         Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal)
                     }
+                    SettingsDivider()
+                    SettingRow(title: "App icon", detail: "The Dock shows this one. Finder keeps the light icon.") {
+                        Tabs(options: AppIconStyle.allCases.map { ($0, $0.title) }, selection: $app.appIcon)
+                    }
                 }
             case .notifications:
                 SettingsCard {

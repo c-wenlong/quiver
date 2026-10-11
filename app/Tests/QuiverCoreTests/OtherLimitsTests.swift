@@ -31,6 +31,20 @@ import Testing
         #expect(runner.calls == [["list", "--usage", "--json", "--exclude=claude,codex"]])
     }
 
+    @Test func rowsCarryTheirCommandAndWhetherItIsOnPath() async {
+        let json = String(decoding: body, as: UTF8.self)
+            .replacingOccurrences(of: #""name": "devin", "command": "devin","#, with: #""name": "devin", "command": "devin", "installed": true,"#)
+            .replacingOccurrences(of: #""name": "cursor", "command": "cursor-agent","#, with: #""name": "cursor", "command": "cursor-agent", "installed": false,"#)
+            .replacingOccurrences(of: #""name": "claude", "command": "claude","#, with: #""name": "claude", "command": "claude", "installed": true,"#)
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
+        await model.load()
+        #expect(model.rows.map(\.command) == ["devin", "cursor-agent"])
+        #expect(model.rows.map(\.cliInstalled) == [true, false])
+        // Every harness's PATH check, Claude's too, for the account cards.
+        #expect(model.cliInstalled["claude"] == true)
+        #expect(model.cliInstalled["gemini"] == nil)
+    }
+
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner))

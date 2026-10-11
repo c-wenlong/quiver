@@ -23,29 +23,26 @@ struct AccountsPage: View {
             if let error = model.error ?? actionError {
                 ErrorCard(message: error)
             }
-            // One grid for every account, vendors in a fixed order; each
-            // card carries its vendor's logo, so no per-vendor heading.
+            // One grid for every account: Quiver's own profiles first, vendors
+            // in a fixed order, then the starred harnesses swe reads limits for.
+            // Each card carries its logo, so there are no per-vendor headings.
             let cards = Vendor.allCases.flatMap { vendor in model.cards.filter { $0.profile.vendor == vendor } }
-            if !cards.isEmpty {
+            let harnesses = app.others.rows
+            if !cards.isEmpty || !harnesses.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter, alignment: .top)], spacing: Theme.gutter) {
                     ForEach(cards) { card in
                         AccountCard(card: card, perform: perform, reloadAll: reloadAll)
                     }
+                    ForEach(harnesses) { row in
+                        HarnessAccountCard(row: row, perform: perform)
+                    }
                 }
             }
-            if !app.others.rows.isEmpty || app.others.note != nil {
-                SectionTitle("Other harnesses")
-                Card {
-                    if let note = app.others.note {
-                        Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    }
-                    ForEach(app.others.rows) { row in
-                        OtherLimitRow(row: row)
-                        if row != app.others.rows.last { Divider().overlay(Theme.border) }
-                    }
-                    Text("From swe, which polls the harnesses you starred.")
-                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                }
+            if let note = app.others.note {
+                Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else if !harnesses.isEmpty {
+                Text("Limits for other harnesses come from swe, which polls the ones you starred.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
         .sheet(isPresented: $adding) {
@@ -135,10 +132,12 @@ private struct AccountCard: View {
             HStack {
                 StatusLine(usage: card.usage)
                 Spacer()
-                Button("Open app") { perform { try await model.openApp(profile) } }
-                    .secondaryButton()
-                Button("Terminal") { perform { try await model.openTerminal(profile) } }
-                    .secondaryButton()
+                LaunchButtons(
+                    appPath: app.apps.installedApp(for: profile.vendor.rawValue),
+                    // swe's answer when its registry lists the CLI, else a direct PATH check.
+                    cliInstalled: app.others.cliInstalled[profile.vendor.rawValue] ?? model.cliOnPath[profile.vendor],
+                    openApp: { path in perform { try await model.openApp(profile, at: path) } },
+                    openTerminal: { perform { try await model.openTerminal(profile) } })
             }
         }
         .alert("Rename account", isPresented: $renaming) {
@@ -306,27 +305,76 @@ func planTitle(_ plan: String) -> String {
         .joined(separator: " ")
 }
 
-private struct OtherLimitRow: View {
+/// Open app and Terminal, each only when a static check found it: the app in
+/// /Applications or ~/Applications, the CLI on PATH (as swe reports). Before
+/// swe has answered, Terminal is offered rather than hidden.
+private struct LaunchButtons: View {
+    var appPath: String?
+    var cliInstalled: Bool?
+    var openApp: (String) -> Void
+    var openTerminal: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let appPath {
+                Button("Open app") { openApp(appPath) }
+                    .secondaryButton()
+                    .help(appPath)
+            }
+            if cliInstalled != false {
+                Button("Terminal") { openTerminal() }
+                    .secondaryButton()
+            }
+            if appPath == nil && cliInstalled == false {
+                Text("Not installed").font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+        }
+    }
+}
+
+/// A starred harness with no Quiver profile, laid out like an account card:
+/// its limit from swe, a rename, its CLI's own sign-in where it has one, and
+/// whichever of its app and CLI are installed.
+private struct HarnessAccountCard: View {
+    @Environment(AppModel.self) private var app
     var row: OtherLimitsModel.Row
+    var perform: (@escaping () async throws -> Void) -> Void
+    @State private var renaming = false
+    @State private var newName = ""
 
     var body: some View {
         let limit = row.limit
-        let name = UsageFormat.harness(row.name)
-        VStack(alignment: .leading, spacing: 8) {
+        let ownName = UsageFormat.harness(row.name)
+        let name = app.harnessNames.name(for: row.name) ?? ownName
+        let model = app.accounts
+        Card {
             HStack(spacing: 8) {
                 HarnessIcon(harness: row.name, size: 16)
+                    .help(ownName)
                 Text(name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    .accessibilityLabel(name == ownName ? name : "\(name), \(ownName)")
                 if let plan = limit.planType { Badge(planTitle(plan)) }
                 Spacer()
-                Group {
-                    switch limit.status {
-                    case .ok: EmptyView()
-                    case .authRequired: Text("Sign in again in \(name)")
-                    case .noSubscription: Text("No subscription")
-                    case .timeout: Text("Didn't answer in time")
+                Menu {
+                    if HarnessAccess.loginCommand(for: row.name) != nil {
+                        Button("Sign in…") { perform { try await model.signIn(harness: row.name) } }
+                        Divider()
                     }
+                    Button("Rename…") { newName = name; renaming = true }
+                    if name != ownName {
+                        Button("Use the name \(ownName)") { app.harnessNames.set(nil, for: row.name) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 24, height: 20)
+                        .contentShape(.rect)
                 }
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .menuStyle(.button)
+                .plainButton(cornerRadius: 6)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More")
             }
             if limit.status == .ok {
                 // The same bar as an account card: window, reset, percent.
@@ -334,6 +382,37 @@ private struct OtherLimitRow: View {
                                              usedPercent: Double(min(max(limit.usedPercent, 0), 100)),
                                              resetsAt: limit.resetAt))
             }
+            HStack {
+                Group {
+                    switch limit.status {
+                    case .ok:
+                        if let fetched = limit.fetchedAt {
+                            Text("Fetched \(fetched, format: .relative(presentation: .named))")
+                        } else {
+                            Text("No reading yet")
+                        }
+                    case .authRequired:
+                        Text(HarnessAccess.loginCommand(for: row.name) != nil
+                             ? "Signed out. Use Sign in from the menu." : "Sign in again in \(ownName).")
+                    case .noSubscription: Text("No subscription")
+                    case .timeout: Text("Didn't answer in time")
+                    }
+                }
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                LaunchButtons(
+                    appPath: app.apps.installedApp(for: row.name),
+                    cliInstalled: row.cliInstalled,
+                    openApp: { path in perform { try await model.openApp(at: path) } },
+                    openTerminal: { perform { try await model.openTerminal(command: row.command) } })
+            }
+        }
+        .alert("Rename \(ownName)", isPresented: $renaming) {
+            TextField("Name", text: $newName)
+            Button("Rename") { app.harnessNames.set(newName, for: row.name) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Only the name on this card changes. Leave it empty to go back to \(ownName).")
         }
     }
 }

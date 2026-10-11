@@ -50,6 +50,17 @@ check_core_resources() {
 }
 check_core_resources "$bundle"
 
+# App icons: light is the bundle's icon; Settings can switch the Dock icon
+# to dark at runtime. Both come from square art in Icons/.
+for style in light dark; do
+  art="$here/Icons/AppIcon-$style.png"
+  if [ ! -f "$art" ]; then
+    echo "build-app: $art missing" >&2
+    exit 1
+  fi
+  swift "$here/script/make-icon.swift" "$art" "$bundle/Contents/Resources/AppIcon-$style.icns"
+done
+
 version="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -60,6 +71,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Quiver</string>
   <key>CFBundleIdentifier</key><string>com.cwenlong.quiver</string>
   <key>CFBundleExecutable</key><string>Quiver</string>
+  <key>CFBundleIconFile</key><string>AppIcon-light</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${version}</string>
