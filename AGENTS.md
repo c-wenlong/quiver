@@ -85,7 +85,7 @@ Domain packages under `src/quiver/`:
 | `sessions/` | three parser engines (`engines/jsonl_engine`, `json_engine`, `sqlite_engine`), per-tool `*ParserConfig` adapters in `parsers.py`, aggregator with 60s disk cache, `identity.py` maps session tool names to launch binaries and registry keys |
 | `skills/` | SKILL.md discovery, catalogs, harness symlink layout (`HARNESS_ROOTS` fallback table) |
 | `mcp/` | hub `~/.quiver/mcp.json`, per-tool format handlers in `formats.py`, sync/diff/validate/doctor, `${NAME}` secret refs |
-| `find/` | read-only views of shared assets (`amd`, `skills`, `plugins`, `mcps`), `PLUGIN_FALLBACK` table |
+| `find/` | read-only views of shared assets (`amd`, `skills`, `plugins`, `mcps`), `PLUGIN_FALLBACK` table; the one write is `swe find plugins --fix=<id>`, which runs a drift finding's harness CLI commands |
 | `init/` | writes the shared `AGENTS.md` and skills tree, symlinks them and per-harness hook scripts (`hooks.py`) into each harness, registers newly found harnesses (`manage.py`), migrates the old `~/.config/swe` root |
 | `reports/` | daily/weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API key file lookup |

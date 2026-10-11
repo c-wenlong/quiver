@@ -293,7 +293,7 @@ class FindSkillsJsonTest(unittest.TestCase):
             ("find", "skills", "--json", "--harness=bogus"),
             ("find", "skills", "--json", "--interactive"),
             ("find", "skills", "--json", "extra"),
-            ("find", "plugins", "--json"),
+            ("find", "mcps", "--json"),
             ("find", "--json"),
         ):
             with self.subTest(args=args):
