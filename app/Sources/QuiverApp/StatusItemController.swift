@@ -193,7 +193,7 @@ struct MenuBarContent: View {
                 .plainButton(cornerRadius: 4)
                 .disabled(app.accounts.isLoading)
             }
-            ServiceStatusMenuLine(openMain: openMain)
+            if app.popup.showIncidents { ServiceStatusMenuLine(openMain: openMain) }
             // Everything else stays put; the limits scroll once there are
             // more than the screen can hold.
             ViewThatFits(in: .vertical) {
@@ -201,7 +201,7 @@ struct MenuBarContent: View {
                 ScrollView { PanelLimits() }.scrollIndicators(.automatic)
             }
             .frame(maxHeight: Self.limitsMaxHeight)
-            if let spend = app.overview?.spend {
+            if app.popup.showStats, let spend = app.overview?.spend {
                 Divider()
                 SpendDonut(slices: spend)
             }
@@ -229,19 +229,41 @@ struct MenuBarContent: View {
     }
 }
 
-/// Every account's windows, then the harnesses swe reports.
+/// Every account's windows, then the harnesses swe reports, less whatever
+/// the Menu bar and widgets page hides.
 private struct PanelLimits: View {
     @Environment(AppModel.self) private var app
 
+    /// Accounts whose harness is shown and that have something left to show:
+    /// a shown window, or no windows at all (so its status line explains why).
+    private var cards: [AccountsModel.Card] {
+        app.accounts.cards.filter { card in
+            let harness = card.profile.vendor.rawValue
+            guard app.popup.shows(harness: harness) else { return false }
+            guard let windows = card.usage?.windows, !windows.isEmpty else { return true }
+            return windows.contains { app.popup.shows(window: $0.label, of: harness) }
+        }
+    }
+
+    private var others: [OtherLimitsModel.Row] {
+        app.others.rows.filter { row in
+            row.limit.status == .ok && app.popup.shows(harness: row.name)
+                && app.popup.shows(window: row.limit.window ?? "", of: row.name)
+        }
+    }
+
     var body: some View {
+        let others = others
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(app.accounts.cards) { card in
+            ForEach(cards) { card in
                 PanelAccountRow(card: card)
             }
             if app.accounts.cards.isEmpty {
                 Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else if cards.isEmpty && others.isEmpty {
+                Text("Every limit is hidden in Menu bar and widgets.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            let others = app.others.rows.filter { $0.limit.status == .ok }
             if !others.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Other harnesses").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
@@ -249,7 +271,7 @@ private struct PanelLimits: View {
                         // swe hands back its last reading, status ok, for up to
                         // a day when a provider fails; dim one that old.
                         let old = row.limit.fetchedAt.map { Date.now.timeIntervalSince($0) > LimitReading.sweStaleAfter } ?? true
-                        PanelLimitRow(label: UsageFormat.harness(row.name), window: row.limit.window,
+                        PanelLimitRow(harness: row.name, label: UsageFormat.harness(row.name), window: row.limit.window,
                                       percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
                             .opacity(old ? 0.55 : 1)
                             .help(row.limit.fetchedAt.map { "Fetched \(UsageFormat.ago($0, now: .now))" } ?? "Fetch time unknown")
@@ -348,17 +370,19 @@ private struct SpendDonut: View {
 
 /// One account in the panel: its name, then every window it reports.
 private struct PanelAccountRow: View {
+    @Environment(AppModel.self) private var app
     var card: AccountsModel.Card
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Circle().fill(Color(hex: card.profile.color)).frame(width: 7, height: 7)
+                HarnessIcon(harness: card.profile.vendor.rawValue, size: 14)
                 Text("\(card.profile.vendor.title): \(card.profile.name)").font(Theme.rowTitle)
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
             }
             if let usage = card.usage, !usage.windows.isEmpty {
-                ForEach(usage.windows, id: \.label) { window in
+                ForEach(usage.windows.filter { app.popup.shows(window: $0.label, of: card.profile.vendor.rawValue) },
+                        id: \.label) { window in
                     PanelLimitRow(label: window.label, percent: window.usedPercent, resetsAt: window.resetsAt)
                 }
                 .opacity(usage.isStale ? 0.55 : 1)
@@ -372,6 +396,9 @@ private struct PanelAccountRow: View {
 
 /// One limit window on a single line: name, bar, percentage, reset.
 private struct PanelLimitRow: View {
+    /// Shown as its logo before the label; nil for an account's windows,
+    /// whose account line above already has it.
+    var harness: String? = nil
     var label: String
     var window: String? = nil
     var percent: Double
@@ -381,6 +408,7 @@ private struct PanelLimitRow: View {
         let whole = Int(percent.rounded())
         HStack(spacing: 8) {
             HStack(spacing: 4) {
+                if let harness { HarnessIcon(harness: harness, size: 12) }
                 Text(label).font(Theme.caption).foregroundStyle(Theme.textPrimary)
                 if let window { Text(window).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
             }

@@ -79,7 +79,7 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
         }
         let harnesses = others.compactMap { row -> LimitReading? in
             guard row.limit.status == .ok else { return nil }
-            return LimitReading(source: row.name, harness: row.name, title: row.name.capitalized,
+            return LimitReading(source: row.name, harness: row.name, title: UsageFormat.harness(row.name),
                                 window: row.limit.window ?? "", usedPercent: Double(row.limit.usedPercent),
                                 resetsAt: row.limit.resetAt, fetchedAt: row.limit.fetchedAt,
                                 isStale: row.limit.fetchedAt.map { now.timeIntervalSince($0) > sweStaleAfter } ?? true)

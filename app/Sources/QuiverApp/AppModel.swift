@@ -38,6 +38,11 @@ final class AppModel {
         didSet { menuBar.save(to: .standard) }
     }
 
+    /// What the menu bar popup lists.
+    var popup = MenuBarPopup(defaults: .standard) {
+        didSet { popup.save(to: .standard) }
+    }
+
     var terminal: TerminalApp {
         didSet { UserDefaults.standard.set(terminal.rawValue, forKey: "terminalApp") }
     }
