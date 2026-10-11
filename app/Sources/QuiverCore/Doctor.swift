@@ -19,6 +19,9 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
         public let severity: Severity
         public let message: String
         public let fix: String?
+        /// The harness the finding is about (an off-PATH install), when it
+        /// is about one; older swe builds leave it out.
+        public let harness: String?
     }
 }
 

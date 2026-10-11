@@ -262,7 +262,7 @@ private struct AddAccountSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add an account").font(Theme.sectionTitle).tracking(-0.5)
-            Tabs(options: Vendor.allCases.map { ($0, $0.title) }, selection: $vendor)
+            Tabs(options: Vendor.allCases.map { ($0, $0.title, $0.rawValue) }, selection: $vendor)
             TextField("Name, like Work or Personal", text: $name)
                 .quiverField()
             Text("Quiver gives the account its own folders, then opens the CLI's sign-in in your terminal. Open the desktop app once afterwards to sign in there too.")

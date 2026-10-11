@@ -24,6 +24,25 @@ import Testing
         #expect(report.findings.map(\.severity) == [.error, .warning])
         #expect(report.findings[0].fix == #"export PATH="$HOME/.local/bin:$PATH""#)
         #expect(report.findings[1].fix == nil)
+        #expect(report.findings.map(\.harness) == [nil, nil])
+    }
+
+    /// An off-PATH finding names its harness, so the page can show its logo.
+    @Test func aFindingAboutOneHarnessNamesIt() async {
+        let offPath = Data(#"""
+        {"schema": 1, "data": {"ok": false, "findings": [
+          {"check": "off-path", "severity": "error", "message": "codex (codex) is at /tmp/codex [nvm], not on PATH",
+           "fix": "swe install codex", "harness": "codex"},
+          {"check": "node", "severity": "warning", "message": "node not found on PATH", "fix": null}
+        ]}}
+        """#.utf8)
+        let model = DoctorModel(swe: SweClient(runner: FakeRunner(.init(status: 1, stdout: offPath, stderr: ""))))
+        await model.load()
+        guard case .loaded(let report) = model.state else {
+            Issue.record("expected loaded, got \(model.state)")
+            return
+        }
+        #expect(report.findings.map(\.harness) == ["codex", nil])
     }
 
     @Test func aCleanReportIsAllClear() async {

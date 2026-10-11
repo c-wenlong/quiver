@@ -100,7 +100,7 @@ private struct InstalledSkills: View {
             // Closed, the menus say "All" so "Harness: All harnesses" never
             // truncates in a 168pt select.
             SelectMenu(label: "Harness",
-                       options: [(String?.none, "All harnesses")] + harnesses.map { (String?.some($0), $0) },
+                       options: [(String?.none, "All harnesses", nil)] + harnesses.map { (String?.some($0), $0, $0) },
                        selection: $model.harness,
                        title: model.harness ?? "All")
             SelectMenu(label: "Source",
@@ -246,7 +246,8 @@ private struct RootDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text(root.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                if HarnessIcon.exists(for: root.name) { HarnessIcon(harness: root.name, size: 16) }
+                Text(HarnessMark(root.name).name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 Badge(root.link.title)
             }
             Text(displayPath(root.path))
@@ -364,7 +365,7 @@ private struct SkillRow: View {
                     Spacer(minLength: 12)
                     HStack(spacing: 10) {
                         Badge(skill.source.title)
-                        Text(seenBy)
+                        SeenBy(harnesses: skill.harnesses)
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .monospacedDigit()
                             .frame(minWidth: 86, alignment: .trailing)
@@ -408,14 +409,6 @@ private struct SkillRow: View {
         .onHover { hovering = $0 }
     }
 
-    private var seenBy: String {
-        switch skill.harnesses.count {
-        case 0: "No harness"
-        case 1: skill.harnesses[0]
-        default: "\(skill.harnesses.count) harnesses"
-        }
-    }
-
     private var note: String {
         switch skill.source {
         case .shared:
@@ -433,6 +426,41 @@ private struct SkillRow: View {
         case .project:
             "In a project's own skills folder."
         }
+    }
+}
+
+/// Which harnesses load a skill: one harness as its mark, several as up to
+/// three logos and the count. The names are the tooltip and what VoiceOver
+/// reads.
+private struct SeenBy: View {
+    var harnesses: [String]
+
+    var body: some View {
+        switch harnesses.count {
+        case 0:
+            Text("No harness")
+        case 1:
+            HarnessMarkView(harness: harnesses[0], size: 14)
+        default:
+            HStack(spacing: 6) {
+                HStack(spacing: 3) {
+                    ForEach(logos, id: \.self) { HarnessIcon(harness: $0, size: 14) }
+                }
+                Text("\(harnesses.count) harnesses")
+            }
+            .help(harnessNames(harnesses))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(harnesses.count) harnesses: \(harnessNames(harnesses))")
+        }
+    }
+
+    /// The first three distinct logos: Claude Code and Claude Desktop share one.
+    private var logos: [String] {
+        var seen = Set<URL>()
+        return Array(harnesses.filter { harness in
+            guard let url = HarnessIcons.logo(for: harness)?.url else { return false }
+            return seen.insert(url).inserted
+        }.prefix(3))
     }
 }
 

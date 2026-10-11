@@ -1496,8 +1496,14 @@ def cmd_aliases(args):
     print()
 
 
-def _doctor_finding(check, severity, message, fix=None) -> dict:
-    return {"check": check, "severity": severity, "message": message, "fix": fix}
+def _doctor_finding(check, severity, message, fix=None, harness=None) -> dict:
+    """One ``--json`` row. ``harness`` names the registry harness a finding
+    is about, so the app can show its logo; it is left out of rows that are
+    about the machine rather than one harness."""
+    finding = {"check": check, "severity": severity, "message": message, "fix": fix}
+    if harness:
+        finding["harness"] = harness
+    return finding
 
 
 def _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> list:
@@ -1539,7 +1545,7 @@ def _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
         findings.append(_doctor_finding(
             "off-path", "error",
             f"{name} ({command}) is at {hit.path} [{hit.source}], not on PATH",
-            f"swe install {name}"))
+            f"swe install {name}", harness=name))
     for finding in drift:
         findings.append(_doctor_finding(
             f"drift.{finding.area}",

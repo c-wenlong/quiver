@@ -69,6 +69,7 @@ import Testing
         let sessions = await ledger.bySession(in: october2026)
         #expect(Set(sessions.map(\.sessionId)) == [legacySession, forkSession, recordSession])
         #expect(await ledger.byAccount(in: october2026).keys.sorted() == [home.path])
+        #expect(await ledger.harnessByAccount(in: october2026) == [home.path: "codex"])
     }
 
     @Test func anAppendedRolloutResumesWithItsModelAndTotals() async throws {

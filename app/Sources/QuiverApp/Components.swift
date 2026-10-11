@@ -230,6 +230,8 @@ private struct PlainBody: View {
 ///   one raised with `shadow.sm`.
 /// - `.underline`: switches a page between views (Skills, AGENTS.md).
 ///   14/500 labels over a hairline, the current one underlined.
+/// A tab that stands for a harness can carry its id (`icons`, or the
+/// three-part options initialiser) to draw its logo before the title.
 struct Tabs<Value: Hashable>: View {
     enum Style { case period, table, segmented, underline }
 
@@ -239,6 +241,8 @@ struct Tabs<Value: Hashable>: View {
     /// Sits straight on the panel rather than on a card, so a tab under
     /// the pointer takes `panelHover`; `tabHover` vanishes on the panel.
     var onPanel = false
+    /// The harness id whose logo goes before a tab's title, by tab value.
+    var icons: [Value: String] = [:]
     @FocusState private var focused: Int?
 
     var body: some View {
@@ -266,7 +270,7 @@ struct Tabs<Value: Hashable>: View {
 
     private var buttons: some View {
         ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
-            TabButton(title: option.title, isSelected: option.value == selection,
+            TabButton(title: option.title, icon: icons[option.value], isSelected: option.value == selection,
                       isFocused: focused == index, style: style, onPanel: onPanel) { selection = option.value }
                 .focused($focused, equals: index)
         }
@@ -282,8 +286,20 @@ struct Tabs<Value: Hashable>: View {
     }
 }
 
+extension Tabs {
+    /// Tabs as (value, title, harness id or nil).
+    init(options: [(value: Value, title: String, icon: String?)], selection: Binding<Value>,
+         style: Style = .segmented, onPanel: Bool = false) {
+        var icons: [Value: String] = [:]
+        for option in options { if let icon = option.icon { icons[option.value] = icon } }
+        self.init(options: options.map { ($0.value, $0.title) }, selection: selection, style: style,
+                  onPanel: onPanel, icons: icons)
+    }
+}
+
 private struct TabButton<Value: Hashable>: View {
     var title: String
+    var icon: String?
     var isSelected: Bool
     var isFocused: Bool
     var style: Tabs<Value>.Style
@@ -303,9 +319,21 @@ private struct TabButton<Value: Hashable>: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    /// The logo before the title, only when there is one to draw.
+    @ViewBuilder private var titleLabel: some View {
+        if let icon, HarnessIcon.exists(for: icon) {
+            HStack(spacing: 6) {
+                HarnessIcon(harness: icon, size: 14)
+                Text(title)
+            }
+        } else {
+            Text(title)
+        }
+    }
+
     @ViewBuilder private var label: some View {
         if style == .underline {
-            Text(title)
+            titleLabel
                 .font(Theme.rowTitle)
                 .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textSecondary)
                 .padding(.vertical, 8)
@@ -313,7 +341,7 @@ private struct TabButton<Value: Hashable>: View {
                     Rectangle().fill(isSelected ? Theme.textPrimary : .clear).frame(height: 2)
                 }
         } else {
-            Text(title)
+            titleLabel
                 .font(Theme.control)
                 .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textTab)
                 .padding(.horizontal, 12)
