@@ -48,6 +48,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--scope=all", "Show everything, archived marked"),
         ("--usage", "Show rate-limit column"),
         ("-u", "Short for --usage"),
+        ("--exclude=", "Skip these harnesses when polling usage (comma-separated)"),
         ("--links", "Show skills/instruction link state"),
         ("-L", "Short for --links"),
         ("--refresh", "Fetch new data"),

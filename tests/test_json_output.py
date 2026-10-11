@@ -200,6 +200,19 @@ class ListUsageJsonTest(unittest.TestCase):
         rows = self.usage_rows({"claude": reading()})
         self.assertIsNone(rows["codex"]["rate_limit"])
 
+    def test_a_placeholder_plan_is_no_plan(self):
+        rows = self.usage_rows({"claude": reading(plan_type="\u2014")})
+        self.assertEqual(rows["claude"]["rate_limit"]["status"], "ok")
+        self.assertIsNone(rows["claude"]["rate_limit"]["plan_type"])
+
+    def test_excluded_harnesses_are_listed_but_not_polled(self):
+        write_rate_cache(self.home, {"claude": reading()}, self.taken_at)
+        result = run_swe(self.home, "list", "--usage", "--json", "--exclude=claude,codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = {row["name"]: row for row in decode(result)["data"]["harnesses"]}
+        self.assertEqual(set(rows), {"claude", "codex"})
+        self.assertIsNone(rows["claude"]["rate_limit"])
+
     def test_sentinel_plan_types_become_a_status(self):
         rows = self.usage_rows(
             {"claude": reading(plan_type="no-sub", used_percent=0)})
