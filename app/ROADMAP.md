@@ -68,16 +68,16 @@ remembering CLI commands.
 - [x] Cost donut in the menu bar panel (Today, Yesterday, 30 days)
 
 ### Restyle
-- [ ] Shell, cards, controls and Overview after the TokenTracker style package ([#133](https://github.com/c-wenlong/quiver/pull/133))
+- [x] Shell, cards, controls and Overview after the TokenTracker style package ([#133](https://github.com/c-wenlong/quiver/pull/133))
 
 ### M4. Sessions
 Modelled on TokenTracker's Sessions page.
-- [ ] List from `swe session --json`, joined with M3 token and cost data by session id
-- [ ] Search plus tool, time, project and model filters
-- [ ] Summary strip: matching sessions, tokens, cost
-- [ ] Rows grouped by date, with models, duration and project on a second line
-- [ ] Resume action: opens the session in your terminal, in its folder and account
-- [ ] Session detail sheet
+- [x] List from `swe session --json`, joined with M3 token and cost data by session id
+- [x] Search plus tool, time, project and model filters
+- [x] Summary strip: matching sessions, tokens, cost
+- [x] Rows grouped by date, with models, duration and project on a second line
+- [x] Resume action: opens the session in your terminal, in its folder and account
+- [x] Session detail sheet
 
 ### M5. Manage
 - [x] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills` ([#144](https://github.com/c-wenlong/quiver/pull/144))

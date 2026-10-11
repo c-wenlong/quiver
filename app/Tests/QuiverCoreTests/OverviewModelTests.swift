@@ -182,6 +182,7 @@ struct ScanFailed: Error, LocalizedError {
         await model.load(scan: true)
         #expect(await ledger.scans == 1)
         #expect(model.error == "Couldn't read your usage logs: disk unreadable")
+        #expect(model.completedScans == 0)
     }
 
     @Test func switchingPeriodOnlyRequeriesThatPeriod() async throws {
@@ -224,6 +225,16 @@ struct ScanFailed: Error, LocalizedError {
         #expect(await ledger.pricingUpdates == 0)
         await model.load(scan: true)
         #expect(await ledger.pricingUpdates == 1)
+    }
+
+    @Test func eachSuccessfulScanIsCounted() async {
+        let ledger = FakeLedger()
+        let model = model(ledger)
+        await model.load(scan: false)
+        #expect(model.completedScans == 0)
+        await model.load(scan: true)
+        await model.load(scan: true)
+        #expect(model.completedScans == 2)
     }
 
     @Test func spendForTheMenuBarCoversTodayYesterdayAndThirtyDays() async throws {

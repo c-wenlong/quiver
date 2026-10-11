@@ -1,0 +1,16 @@
+{"schema": 1, "data": {
+  "sessions": [
+    {"id": "aaa-111", "harness": "claude", "agent": "Claude Code",
+     "cwd": "/Users/k/code/quiver/.claude/worktrees/m4-sessions", "title": "Sessions page",
+     "title_source": "rename", "last_active_at": 1791694778.5, "status": "active",
+     "resume": {"argv": ["claude", "--resume", "aaa-111"], "cwd": "/Users/k/code/quiver/.claude/worktrees/m4-sessions"}},
+    {"id": "bbb-222", "harness": "codex", "agent": "Codex", "cwd": "/Users/k/code/site",
+     "title": "Fix the build", "title_source": "first_prompt", "last_active_at": 1791600000,
+     "status": null, "resume": {"argv": ["codex", "resume", "bbb-222"], "cwd": "/Users/k/code/site"}},
+    {"id": "ccc-333", "harness": "cursor", "agent": "Cursor", "cwd": null, "title": null,
+     "title_source": null, "last_active_at": 1791500000, "status": "done", "resume": null},
+    {"id": null, "harness": "crush", "agent": "Crush", "cwd": "/Users/k/code/notes", "title": "notes",
+     "title_source": null, "last_active_at": 1791400000, "status": null, "resume": null}
+  ],
+  "failures": [{"harness": "droid", "error": "unreadable"}]
+}}

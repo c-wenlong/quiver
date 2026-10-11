@@ -107,6 +107,8 @@ public final class OverviewModel {
     public private(set) var activity: [DayRow] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
+    /// Successful scans so far; other views reload their ledger figures when it changes.
+    public private(set) var completedScans = 0
     /// When the figures were last rebuilt.
     public private(set) var updatedAt: Date?
 
@@ -149,6 +151,7 @@ public final class OverviewModel {
             do {
                 _ = try await ledger.scan(roots: roots())
                 error = nil
+                completedScans += 1
             } catch is CancellationError {
                 return
             } catch {
