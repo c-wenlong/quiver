@@ -145,107 +145,9 @@ public struct Skill: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// `swe skills hub --json`: the plugins in the `~/.quiver/plugins`
-/// marketplaces, and whether each harness has them.
-public struct HubCatalog: SnapshotValue {
-    public static let snapshotVersion = 1
-
-    public let hub: String
-    public let plugins: [HubPlugin]
-
-    public init(hub: String, plugins: [HubPlugin]) {
-        self.hub = hub
-        self.plugins = plugins
-    }
-}
-
-public struct HubPlugin: Codable, Sendable, Equatable, Identifiable {
-    public struct Skill: Codable, Sendable, Equatable, Identifiable {
-        public var id: String { path }
-        public let name: String
-        public let description: String
-        public let path: String
-    }
-
-    public struct Install: Codable, Sendable, Equatable {
-        public enum State: String, Codable, Sendable {
-            case installed
-            case unregistered
-            case notInstalled = "not-installed"
-            /// The source's `.codex-plugin` is a symlink, which Codex skips.
-            case linkedManifest = "linked-manifest"
-            case stale
-            case disabledHere = "disabled-here"
-            /// Disabled in every harness that has it.
-            case disabled
-            /// A state from a newer swe.
-            case unknown
-
-            public var title: String {
-                switch self {
-                case .installed: "Installed"
-                case .unregistered: "Marketplace not added"
-                case .notInstalled: "Not installed"
-                case .linkedManifest: "Linked manifest"
-                case .stale: "Out of date"
-                case .disabledHere, .disabled: "Disabled"
-                case .unknown: "Unknown"
-                }
-            }
-        }
-
-        public let state: State
-        /// The shell command that closes the gap, nil when installed.
-        public let fix: String?
-        /// What `swe find plugins --fix=` takes, when swe can run the fix
-        /// itself. Nil for a fix that is an edit by hand.
-        public let id: String?
-
-        enum CodingKeys: String, CodingKey { case state, fix, id }
-
-        public init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            state = (try? c.decode(State.self, forKey: .state)) ?? .unknown
-            fix = try c.decodeIfPresent(String.self, forKey: .fix)
-            id = try c.decodeIfPresent(String.self, forKey: .id)
-        }
-    }
-
-    public var id: String { "\(name)@\(marketplace)" }
-    public let name: String
-    public let marketplace: String
-    public let description: String
-    public let version: String?
-    public let path: String
-    public let components: [String: Int]
-    public let skills: [Skill]
-    /// Keyed by harness (`claude`, `codex`), only those on this machine.
-    public let install: [String: Install]
-
-    /// Harness names in a fixed order, so the footer never shuffles.
-    public var harnesses: [String] { install.keys.sorted() }
-
-    /// Every fix this plugin needs, one per line.
-    public var fixes: [String] { harnesses.compactMap { install[$0]?.fix } }
-
-    /// The gaps swe can close itself, in harness order.
-    public var runnableFixes: [Install] {
-        harnesses.compactMap { install[$0] }.filter { $0.id != nil && $0.fix != nil }
-    }
-
-    /// The gaps left for you to close by hand.
-    public var manualFixes: [String] {
-        harnesses.compactMap { install[$0] }.filter { $0.id == nil }.compactMap(\.fix)
-    }
-}
-
 extension SweClient {
     public func skills() async throws -> SkillInventory {
         try await call(["skills", "--json"])
-    }
-
-    public func skillsHub() async throws -> HubCatalog {
-        try await call(["skills", "hub", "--json"])
     }
 
     /// Points the folder at `~/.quiver/skills`. By path: some harnesses
@@ -264,20 +166,25 @@ extension SweClient {
 
 struct LinkReply: Decodable { let action: String }
 
-/// The Skills page: installed skills, the per-harness links, and the hub.
+/// The Skills page: the skills that stand alone, and the per-harness links.
+/// Skills that ship inside a plugin are listed with it on the Plugins page.
 @MainActor
 @Observable
 public final class SkillsModel {
     public var inventory: Loadable<SkillInventory> { skills.state }
-    public var hub: Loadable<HubCatalog> { hubLoader.state }
     /// Roots with a link or unlink in flight, by path.
     public private(set) var busy: Set<String> = []
     /// The last link or unlink that failed, in swe's words.
     public var actionError: String?
-    /// The hub plugin whose fixes are running, by id.
-    public private(set) var fixingPlugin: String?
-    /// The last hub fix that failed, in swe's words.
-    public var hubError: String?
+    /// The plugin catalog, which decides which skills move to the Plugins
+    /// page. Until it is known the page waits, rather than flash plugin
+    /// skills that are about to move.
+    public var plugins: CatalogLookup = .pending {
+        didSet { place() }
+    }
+    /// Which skills this page lists and which ship inside plugins; nil
+    /// until both the inventory and the catalog are known.
+    public private(set) var placement: SkillPlacement?
 
     public var query = ""
     /// A harness name, or nil for every harness.
@@ -289,20 +196,19 @@ public final class SkillsModel {
     private var sweSource: String?
     private let gate = SerialGate()
     private let skills: SnapshotLoader<SkillInventory>
-    private let hubLoader: SnapshotLoader<HubCatalog>
+    /// What `placement` was worked out from, so it is redone only on a change.
+    private var placedFrom: (inventory: SkillInventory, plugins: CatalogLookup)?
 
     /// - Parameters:
-    ///   - snapshots, hubSnapshots: where the last skills and hub are kept
-    ///     between launches.
+    ///   - snapshots: where the last skills are kept between launches.
     ///   - maxAge: how long a list counts as fresh, so a page opened again
     ///     soon after doesn't ask swe again.
     ///   - timeout: how long swe may take before a list counts as failed.
     public init(swe: SweClient, snapshots: (any SnapshotStoring<Snapshot<SkillInventory>>)? = nil,
-                hubSnapshots: (any SnapshotStoring<Snapshot<HubCatalog>>)? = nil, maxAge: TimeInterval = 60,
-                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
+                maxAge: TimeInterval = 60, timeout: Duration = .seconds(60),
+                now: @escaping @Sendable () -> Date = Date.init) {
         self.swe = swe
         skills = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
-        hubLoader = SnapshotLoader(snapshots: hubSnapshots, maxAge: maxAge, timeout: timeout, now: now)
     }
 
     /// Switches to the swe picked in Settings.
@@ -311,10 +217,10 @@ public final class SkillsModel {
         sweSource = source
     }
 
-    /// Shows the last saved skills and hub until swe answers.
+    /// Shows the last saved skills until swe answers.
     public func restore() async {
         await skills.restore()
-        await hubLoader.restore()
+        place()
     }
 
     /// Lists the skills unless this swe's list is fresh; joins a list in flight.
@@ -322,33 +228,47 @@ public final class SkillsModel {
     public func loadIfStale(for source: String) async {
         let swe = swe
         await skills.loadIfStale(from: source) { try await swe.skills() }
-        dropMissingFilters()
-    }
-
-    public func loadHubIfStale(for source: String) async {
-        let swe = swe
-        await hubLoader.loadIfStale(from: source) { try await swe.skillsHub() }
+        place()
     }
 
     /// Always lists. `source` nil keeps the last swe.
     public func load(for source: String? = nil) async {
         let swe = swe
         await skills.load(from: source) { try await swe.skills() }
+        place()
+    }
+
+    /// Works out which skills this page lists, once the inventory and the
+    /// catalog are both known.
+    private func place() {
+        guard case .loaded(let inventory) = inventory else {
+            placement = nil
+            placedFrom = nil
+            return
+        }
+        if let placedFrom, placedFrom.inventory == inventory, placedFrom.plugins == plugins {
+            dropMissingFilters()
+            return
+        }
+        switch plugins {
+        case .pending:
+            placement = nil
+            placedFrom = nil
+            return
+        // swe couldn't read the catalog: every skill stays here, so none is lost.
+        case .unavailable: placement = SkillPlacement(skills: inventory.skills, catalog: nil)
+        case .ready(let catalog): placement = SkillPlacement(skills: inventory.skills, catalog: catalog)
+        }
+        placedFrom = (inventory, plugins)
         dropMissingFilters()
     }
 
     /// Clears a harness or source filter the list on show no longer has,
     /// which the menus can't offer and which would hide every row.
     private func dropMissingFilters() {
-        // A failed list shows nothing, which says nothing about the filters.
-        guard case .loaded = inventory else { return }
-        if let harness, !allSkills.contains(where: { $0.harnesses.contains(harness) }) { self.harness = nil }
-        if let source, !allSkills.contains(where: { $0.source == source }) { self.source = nil }
-    }
-
-    public func loadHub(for source: String? = nil) async {
-        let swe = swe
-        await hubLoader.load(from: source) { try await swe.skillsHub() }
+        guard placement != nil else { return }
+        if let harness, !listedSkills.contains(where: { $0.harnesses.contains(harness) }) { self.harness = nil }
+        if let source, !listedSkills.contains(where: { $0.source == source }) { self.source = nil }
     }
 
     public func link(_ root: SkillRoot) async {
@@ -383,46 +303,14 @@ public final class SkillsModel {
 
     /// Lists again after a change made through `swe`, unless another swe
     /// has been picked since, page open or not: its list is the one to keep.
-    private func reload(through swe: SweClient, _ source: String?, hub: Bool = false) async {
+    private func reload(through swe: SweClient, _ source: String?) async {
         guard let source else {
             await load()
-            if hub { await loadHub() }
             return
         }
         guard source == sweSource else { return }
         await skills.reload(from: source) { try await swe.skills() }
-        dropMissingFilters()
-        guard hub, source == sweSource else { return }
-        await hubLoader.reload(from: source) { try await swe.skillsHub() }
-    }
-
-    /// Runs every fix swe can run for `plugin`, one at a time, then reloads
-    /// the skills and the hub. swe checks each gap still exists and builds the commands; the
-    /// app sends only the finding id. Call after the user has confirmed.
-    public func fixHub(_ plugin: HubPlugin) async {
-        let fixes = plugin.runnableFixes
-        guard fixingPlugin == nil, !fixes.isEmpty else { return }
-        fixingPlugin = plugin.id
-        defer { fixingPlugin = nil }
-        let (swe, source) = (swe, sweSource)
-        hubError = nil
-        await gate.acquire()
-        do {
-            for fix in fixes {
-                guard let id = fix.id else { continue }
-                try await swe.fixPluginDrift(id: id)
-            }
-        } catch is CancellationError {
-            gate.release()
-            return
-        } catch {
-            hubError = error.localizedDescription
-        }
-        gate.release()
-        // A fix can add, update or enable a plugin's skills, so the Installed
-        // tab is stale too. Reload both, failure or not: a failed run may
-        // still have changed files.
-        await reload(through: swe, source, hub: true)
+        place()
     }
 
     public var roots: [SkillRoot] {
@@ -430,17 +318,24 @@ public final class SkillsModel {
         return inventory.harnesses
     }
 
+    /// Every skill on the Mac, plugin skills included.
     public var allSkills: [Skill] {
         guard case .loaded(let inventory) = inventory else { return [] }
         return inventory.skills
     }
 
-    /// The skills matching the harness, source and search text: your own
-    /// library first, then what harnesses, catalogs and plugins bring.
+    /// The skills this page lists: every one not shipped inside a plugin.
+    public var listedSkills: [Skill] { placement?.standalone ?? [] }
+
+    /// How many skills ship inside plugins, listed on the Plugins page.
+    public var pluginSkillCount: Int { placement?.inPlugins ?? 0 }
+
+    /// The listed skills matching the harness, source and search text: your
+    /// own library first, then what harnesses and catalogs bring.
     public var visibleSkills: [Skill] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         let rank: [Skill.Source: Int] = [.shared: 0, .harness: 1, .catalog: 2, .project: 3, .plugin: 4, .builtin: 5]
-        return allSkills.filter { skill in
+        return listedSkills.filter { skill in
             (harness == nil || skill.harnesses.contains(harness!))
                 && (source == nil || skill.source == source)
                 && (needle.isEmpty
@@ -467,18 +362,6 @@ public final class SkillsModel {
         return roots.map { root in
             if seeing.contains(root.name) { return (root, .linked) }
             return (root, root.link == .blocked ? .blocked : .notLinked)
-        }
-    }
-
-    public var hubPlugins: [HubPlugin] {
-        guard case .loaded(let hub) = hub else { return [] }
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return hub.plugins }
-        return hub.plugins.filter { plugin in
-            plugin.name.lowercased().contains(needle)
-                || plugin.marketplace.lowercased().contains(needle)
-                || plugin.description.lowercased().contains(needle)
-                || plugin.skills.contains { $0.name.lowercased().contains(needle) }
         }
     }
 }
