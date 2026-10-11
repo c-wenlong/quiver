@@ -415,8 +415,11 @@ private struct SeenBy: View {
 
     /// The first three distinct logos: Claude Code and Claude Desktop share one.
     private var logos: [String] {
-        var seen = Set<String>()
-        return Array(harnesses.compactMap(HarnessIcon.logoID).filter { seen.insert($0).inserted }.prefix(3))
+        var seen = Set<URL>()
+        return Array(harnesses.filter { harness in
+            guard let url = HarnessIcons.logo(for: harness)?.url else { return false }
+            return seen.insert(url).inserted
+        }.prefix(3))
     }
 }
 

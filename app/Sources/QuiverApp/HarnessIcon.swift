@@ -36,23 +36,14 @@ struct HarnessIcon: View {
     /// Whether `harness` (or the harness a raw id like "codex-acc2" names)
     /// has a bundled logo.
     static func exists(for harness: String) -> Bool {
-        logoID(for: harness) != nil
-    }
-
-    /// The bundled logo id for a harness id or a raw id that only
-    /// `HarnessMark` resolves ("claude-desktop", "codex-acc2").
-    static func logoID(for harness: String) -> String? {
-        if HarnessIcons.icon(for: harness) != nil { return harness }
-        if let base = HarnessMark(harness).icon, HarnessIcons.icon(for: base) != nil { return base }
-        return nil
+        HarnessIcons.logo(for: harness) != nil
     }
 
     @MainActor private static var cache: [String: (NSImage, Bool)] = [:]
 
     @MainActor static func image(for harness: String) -> (NSImage, Bool)? {
         if let cached = cache[harness] { return cached }
-        guard let id = logoID(for: harness), let icon = HarnessIcons.icon(for: id),
-              let image = NSImage(contentsOf: icon.url) else { return nil }
+        guard let icon = HarnessIcons.logo(for: harness), let image = NSImage(contentsOf: icon.url) else { return nil }
         image.isTemplate = !icon.isColor
         cache[harness] = (image, icon.isColor)
         return (image, icon.isColor)
