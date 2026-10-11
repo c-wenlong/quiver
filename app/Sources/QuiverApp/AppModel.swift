@@ -165,7 +165,7 @@ final class AppModel {
         plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")),
                                work: pluginWork)
         pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
-                                           work: pluginWork)
+                                           work: pluginWork, disclosure: UserDefaultsStore())
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
         providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {
@@ -301,7 +301,7 @@ final class AppModel {
     }
 }
 
-/// Provider visibility lives in the app's own preferences.
+/// Provider visibility and the Explore tab's open state live in the app's own preferences.
 private struct UserDefaultsStore: KeyValueStoring {
     func strings(forKey key: String) -> [String]? { UserDefaults.standard.stringArray(forKey: key) }
     func set(_ strings: [String], forKey key: String) { UserDefaults.standard.set(strings, forKey: key) }

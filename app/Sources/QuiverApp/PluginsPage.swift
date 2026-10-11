@@ -177,7 +177,7 @@ struct PluginsPage: View {
     /// can open or close a gap the Health tab reports, so that is checked
     /// again too.
     private func run(_ action: PluginAction) async {
-        let hub = catalog.index?.rows.first { $0.id == action.ref }?.group == .hub
+        let hub = catalog.index?.rows.first { $0.id == action.ref }?.isHub == true
         await catalog.run(action, swe: app.swe, for: app.swePath)
         await refreshSkills()
         if hub { await model.load(swe: app.swe, for: app.swePath) }

@@ -349,43 +349,243 @@ func decodedInventory() throws -> [Skill] {
 
     // MARK: The Explore tab
 
-    @Test func groupsPutTheHubFirstAndTheUnregisteredLast() async throws {
+    /// Source id to its marketplaces' ids, and each marketplace's rows.
+    private func tree(_ sources: [ExploreSource]) -> [String: [String: [String]]] {
+        Dictionary(uniqueKeysWithValues: sources.map { source in
+            (source.id, Dictionary(uniqueKeysWithValues: source.marketplaces.map { ($0.id, $0.plugins.map(\.row.id)) }))
+        })
+    }
+
+    @Test func eachMarketplaceSitsUnderItsSourceAndEachRowShowsThatSourcesChips() async throws {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
         let index = try #require(model.index)
         #expect(index.total == 9)
-        let groups = index.groups()
-        #expect(groups.map(\.kind) == [.hub, .other, .unregistered])
-        #expect(groups[0].rows.map(\.id) == ["drawer@kit", "toolkit@kit"])
-        #expect(groups[1].rows.map(\.id) == ["bundle@official", "linter@official", "nested@official",
-                                             "tool@official", "vercel@official", "cursor-thing@cursor-public"])
-        #expect(groups[2].rows.map(\.id) == ["canva@openai-curated"])
-        #expect(ExploreGroup.Kind.unregistered.note != nil)
-        #expect(index.otherMarketplaces == ["official", "openai-curated", "cursor-public"])
+        let sources = index.sources
+        #expect(sources.map(\.id) == ["local", "claude", "codex", "cursor", "unregistered"])
+        #expect(sources.map(\.title) == ["Local", "Claude Code", "Codex", "Cursor", "Not registered"])
+        #expect(tree(sources) == [
+            "local": ["local/kit": ["drawer@kit", "toolkit@kit"]],
+            // Registered in two harnesses: under each, with the plugins
+            // that harness lists or has.
+            "claude": ["claude/official": ["bundle@official", "linter@official", "nested@official", "vercel@official"]],
+            "codex": ["codex/official": ["linter@official", "tool@official", "vercel@official"]],
+            "cursor": ["cursor/cursor-public": ["cursor-thing@cursor-public"]],
+            "unregistered": ["unregistered/openai-curated": ["canva@openai-curated"]],
+        ])
+        // Every plugin is somewhere.
+        #expect(PluginExploreIndex.distinctPlugins(in: sources) == index.total)
+
+        func chips(_ source: String, _ ref: String) -> [String]? {
+            sources.first { $0.id == source }?.marketplaces.flatMap(\.plugins).first { $0.row.id == ref }?.harnesses
+        }
+        // The hub shows both harnesses swe acts in, a missing one included.
+        #expect(chips("local", "toolkit@kit") == ["claude", "codex"])
+        #expect(chips("claude", "vercel@official") == ["claude"])
+        #expect(chips("codex", "vercel@official") == ["codex"])
+        #expect(chips("cursor", "cursor-thing@cursor-public") == ["cursor"])
+        // Unregistered: wherever it is installed.
+        #expect(chips("unregistered", "canva@openai-curated") == ["codex"])
+        // Two rows of one plugin keep apart.
+        #expect(sources[1].marketplaces[0].plugins.last?.id == "claude/vercel@official")
+
+        // What the catalog calls each marketplace's source; a folder is local.
+        #expect(sources.flatMap(\.marketplaces).map(\.tag) == ["local", "github", "git", "cache", nil])
+        #expect(sources[3].note == "Read only")
+        #expect(sources[1].note == "Marketplaces Claude Code registers")
+        let rows = try #require(index.rows.first { $0.id == "drawer@kit" })
+        #expect(rows.isHub)
     }
 
-    @Test func filtersBySourceHarnessAndText() async throws {
+    @Test func installedCountsAreForTheSourcesHarness() async throws {
+        let model = PluginCatalogModel()
+        await model.load(swe: SweClient(runner: catalogRunner()))
+        let sources = try #require(model.index).sources
+        func market(_ id: String) -> ExploreMarketplace? { sources.flatMap(\.marketplaces).first { $0.id == id } }
+        // official: vercel is installed in Claude Code, tool in Codex.
+        #expect(market("claude/official")?.installed == 1)
+        #expect(market("codex/official")?.installed == 1)
+        #expect(market("claude/official")?.countLine(searching: false) == "4 plugins · 1 installed")
+        // The hub counts a plugin installed in either harness.
+        #expect(market("local/kit")?.installed == 2)
+        // Cursor's cached copy is how Cursor has a plugin.
+        #expect(market("cursor/cursor-public")?.installed == 1)
+        #expect(market("unregistered/openai-curated")?.installed == 1)
+        #expect(sources[0].countLine(searching: false) == "1 marketplace · 2 plugins")
+        #expect(sources[1].countLine(searching: false) == "1 marketplace · 4 plugins")
+    }
+
+    @Test func sourcesComeInOrderAndNoPluginIsLost() {
+        func plugin(_ name: String, _ market: String, _ states: [String: PluginHarnessState]) -> CatalogPlugin {
+            CatalogPlugin(name: name, marketplace: market, harnesses: states)
+        }
+        let absent = PluginHarnessState(available: false, installed: false)
+        let listed = PluginHarnessState(available: true, installed: false)
+        let catalog = PluginCatalog(harnesses: ["claude", "codex"], actions: ["claude", "codex"], marketplaces: [
+            PluginMarketplace(name: "zeta", harnesses: ["gemini": .init(sourceType: "url")],
+                              plugins: [plugin("g", "zeta", ["gemini": listed])]),
+            PluginMarketplace(name: "beta", harnesses: ["codex": .init(sourceType: "directory"),
+                                                        "claude": .init(sourceType: "github")],
+                              // No harness it is registered in lists it.
+                              plugins: [plugin("lost", "beta", ["claude": absent, "codex": absent])]),
+            PluginMarketplace(name: "alpha", harnesses: ["claude": .init(sourceType: "github")],
+                              plugins: [plugin("a", "alpha", ["claude": listed])]),
+            PluginMarketplace(name: "old", harnesses: [:],
+                              plugins: [plugin("o", "old", ["codex": PluginHarnessState(available: false, installed: true)])]),
+            // The hub comes first wherever the catalog lists it.
+            PluginMarketplace(name: "hub", hub: true, harnesses: [:],
+                              plugins: [plugin("h", "hub", ["claude": listed, "codex": absent])]),
+        ])
+        let index = PluginExploreIndex(catalog: catalog, skills: [])
+        // swe's harnesses in its order, then any other by name, then the
+        // unregistered. Codex lists nothing of beta, so it has no source.
+        #expect(index.sources.map(\.id) == ["local", "claude", "gemini", "unregistered"])
+        // Within a source, the catalog's order.
+        #expect(index.sources[1].marketplaces.map(\.id) == ["claude/beta", "claude/alpha"])
+        #expect(tree(index.sources)["claude"]?["claude/beta"] == ["lost@beta"])
+        // swe cannot act in it.
+        #expect(index.sources[2].note == "Read only")
+        #expect(PluginExploreIndex.distinctPlugins(in: index.sources) == index.total)
+        // A hub registered nowhere is still a folder.
+        #expect(index.sources[0].marketplaces[0].tag == "local")
+        #expect(index.sources[0].marketplaces[0].plugins[0].harnesses == ["claude", "codex"])
+    }
+
+    @Test func aCopyInstalledWhereTheMarketplaceIsNoLongerRegisteredKeepsItsControls() {
+        let catalog = PluginCatalog(harnesses: ["claude", "codex"], actions: ["claude", "codex"], marketplaces: [
+            // Claude Code still registers it; Codex dropped it, keeping the install.
+            PluginMarketplace(name: "split", harnesses: ["claude": .init(sourceType: "github")], plugins: [
+                CatalogPlugin(name: "p", marketplace: "split", harnesses: [
+                    "claude": PluginHarnessState(available: true, installed: false),
+                    "codex": PluginHarnessState(available: false, installed: true, enabled: true)]),
+                // Only the Codex copy is left of this one.
+                CatalogPlugin(name: "q", marketplace: "split", harnesses: [
+                    "claude": PluginHarnessState(available: false, installed: false),
+                    "codex": PluginHarnessState(available: false, installed: true, enabled: false)]),
+            ]),
+        ])
+        let index = PluginExploreIndex(catalog: catalog, skills: [])
+        #expect(tree(index.sources) == [
+            "claude": ["claude/split": ["p@split"]],
+            "unregistered": ["unregistered/split": ["p@split", "q@split"]],
+        ])
+        let orphan = index.sources[1].marketplaces[0]
+        #expect(orphan.plugins.map(\.harnesses) == [["codex"], ["codex"]])
+        #expect(orphan.installed == 2)
+        // The Codex copy can still be turned off or removed from here.
+        #expect(catalog.actions(for: orphan.plugins[0].row.plugin, in: "codex").map(\.verb) == [.disable, .uninstall])
+        #expect(index.sources(harness: "codex").flatMap(\.marketplaces).flatMap(\.plugins).map(\.id)
+                == ["unregistered/p@split", "unregistered/q@split"])
+        #expect(PluginExploreIndex.distinctPlugins(in: index.sources) == index.total)
+    }
+
+    @Test func filtersByHarnessAndText() async throws {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
         model.skills = try decodedInventory()
         let index = try #require(model.index)
-        func refs(_ source: ExploreSource = .all, _ harness: String? = nil, _ query: String = "") -> [String] {
-            index.groups(source: source, harness: harness, query: query).flatMap(\.rows).map(\.id)
+        func refs(_ harness: String? = nil, _ query: String = "") -> [String] {
+            index.sources(harness: harness, query: query).flatMap(\.marketplaces).flatMap(\.plugins).map(\.id)
         }
-        #expect(refs(.hub) == ["drawer@kit", "toolkit@kit"])
-        #expect(refs(.marketplace("openai-curated")) == ["canva@openai-curated"])
-        #expect(refs(.all, "cursor") == ["cursor-thing@cursor-public"])
-        #expect(refs(.hub, "codex") == ["drawer@kit", "toolkit@kit"])
+        #expect(refs() == index.sources.flatMap(\.marketplaces).flatMap(\.plugins).map(\.id))
+        // A harness keeps the rows showing its chip: the hub's, its own
+        // source's and the unregistered ones installed there.
+        #expect(refs("codex") == ["local/drawer@kit", "local/toolkit@kit", "codex/linter@official",
+                                  "codex/tool@official", "codex/vercel@official", "unregistered/canva@openai-curated"])
+        #expect(refs("cursor") == ["cursor/cursor-thing@cursor-public"])
         // A skill's name finds the plugin that ships it, an installed copy's too.
-        #expect(refs(.all, nil, " BRAND ") == ["canva@openai-curated"])
-        #expect(refs(.all, nil, "release") == ["vercel@official"])
-        #expect(refs(.all, nil, "deploy") == ["vercel@official"])
-        #expect(refs(.all, nil, "tool kit") == ["toolkit@kit"])
-        #expect(refs(.hub, nil, "deploy").isEmpty)
-        // A marketplace's name finds its plugins, so typing what a ref or a
-        // chip says works too.
-        #expect(refs(.all, nil, "openai-curated") == ["canva@openai-curated"])
-        #expect(refs(.all, nil, "canva@openai") == ["canva@openai-curated"])
+        #expect(refs(nil, " BRAND ") == ["unregistered/canva@openai-curated"])
+        #expect(refs(nil, "release") == ["claude/vercel@official", "codex/vercel@official"])
+        #expect(refs(nil, "tool kit") == ["local/toolkit@kit"])
+        #expect(refs("codex", "deploy") == ["codex/vercel@official"])
+        // A marketplace's name finds its plugins, so typing what a ref says works too.
+        #expect(refs(nil, "canva@openai") == ["unregistered/canva@openai-curated"])
+        #expect(refs(nil, "nothing like it").isEmpty)
+
+        let found = index.sources(query: "deploy")
+        #expect(found.map(\.id) == ["claude", "codex"])
+        // One plugin under two sources is one plugin in the total.
+        #expect(PluginExploreIndex.distinctPlugins(in: found) == 1)
+        #expect(found[0].countLine(searching: true) == "1 match")
+        #expect(found[0].marketplaces[0].countLine(searching: true) == "1 match")
+        // Counts are of what the filter kept.
+        #expect(index.sources(harness: "codex").first { $0.id == "local" }?.marketplaces[0].installed == 2)
+    }
+
+    @Test func theHubStartsOpenAndEverythingElseClosed() async throws {
+        let model = PluginCatalogModel()
+        await model.load(swe: SweClient(runner: catalogRunner()))
+        let index = try #require(model.index)
+        let lines = ExploreLine.lines(index.sources, disclosure: model.disclosure, searching: false)
+        #expect(lines.map(\.id) == ["s:local", "m:local/kit", "p:local/drawer@kit", "p:local/toolkit@kit",
+                                    "s:claude", "s:codex", "s:cursor", "s:unregistered"])
+        #expect(lines[3] == .plugin(index.sources[0].marketplaces[0].plugins[1], last: true))
+
+        // An open source with a closed marketplace: its plugins are no lines.
+        model.toggle("claude")
+        let opened = ExploreLine.lines(index.sources, disclosure: model.disclosure, searching: false)
+        #expect(opened.map(\.id).contains("m:claude/official"))
+        #expect(!opened.map(\.id).contains { $0.hasPrefix("p:claude/") })
+        #expect(opened.contains(.marketplace(index.sources[1].marketplaces[0], open: false)))
+    }
+
+    @Test func openStateIsKeptAcrossLaunchesByStableIDs() async throws {
+        let store = MemoryStore()
+        let model = PluginCatalogModel(disclosure: store)
+        model.toggle("claude")
+        model.toggle("claude/official")
+        model.toggle("local/kit")
+        #expect(store.values["pluginsExploreOpened"] == ["claude", "claude/official"])
+        #expect(store.values["pluginsExploreClosed"] == ["local/kit"])
+        // Back to its default: nothing kept for it, so it follows the default.
+        model.toggle("claude/official")
+        #expect(store.values["pluginsExploreOpened"] == ["claude"])
+
+        let next = PluginCatalogModel(disclosure: store)
+        #expect(next.isOpen("claude"))
+        #expect(!next.isOpen("claude/official"))
+        #expect(!next.isOpen("local/kit"))
+        #expect(next.isOpen("local"))
+        // A hub marketplace never seen before starts open.
+        #expect(next.isOpen("local/new"))
+        #expect(!next.isOpen("codex/new"))
+    }
+
+    @Test func aSearchOpensWhatItFindsAndLeavesTheKeptStateAlone() async throws {
+        let store = MemoryStore()
+        let model = PluginCatalogModel(disclosure: store)
+        await model.load(swe: SweClient(runner: catalogRunner()))
+        model.toggle("local/kit")
+        model.toggle("codex")
+        let kept = store.values
+
+        model.query = "deploy"
+        #expect(model.isSearching)
+        let index = try #require(model.index)
+        let found = index.sources(query: model.query)
+        let lines = ExploreLine.lines(found, disclosure: model.disclosure, searching: model.isSearching)
+        #expect(lines.map(\.id) == ["s:claude", "m:claude/official", "p:claude/vercel@official",
+                                    "s:codex", "m:codex/official", "p:codex/vercel@official"])
+        #expect(model.isOpen("local/kit"))
+        // Closing one during the search lasts only as long as the search.
+        model.toggle("claude/official")
+        #expect(!model.isOpen("claude/official"))
+        #expect(store.values == kept)
+        model.query = "deploy "
+        #expect(!model.isOpen("claude/official"))
+        model.query = "deplo"
+        #expect(model.isOpen("claude/official"))
+        model.toggle("claude")
+
+        // Cleared: what was open before the search is open again.
+        model.query = ""
+        #expect(!model.isSearching)
+        #expect(store.values == kept)
+        #expect(model.isOpen("local"))
+        #expect(!model.isOpen("local/kit"))
+        #expect(model.isOpen("codex"))
+        #expect(!model.isOpen("claude"))
+        #expect(!model.isOpen("claude/official"))
     }
 
     @Test func aPluginListsItsSkillsAndEveryInstalledCopyOncePerName() async throws {
