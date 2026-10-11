@@ -415,6 +415,127 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 }
 
+/// Synthetic secrets only: SECRET marks what must never be shown.
+@Suite struct McpSummaryTests {
+    func stdio(_ command: String?, _ args: [String]) -> McpServer {
+        McpServer(name: "s", command: command, args: args, harnesses: ["claude"])
+    }
+
+    func http(_ url: String) -> McpServer {
+        McpServer(name: "s", transport: "http", url: url, harnesses: ["claude"])
+    }
+
+    @Test func urlQueryValuesUserinfoAndFragmentAreHidden() {
+        let server = http("https://me:SECRETpass@mcp.example.com/v1/mcp?api_key=SECRET1&region=us&flag#token=SECRET2")
+        #expect(server.summary == "https://…@mcp.example.com/v1/mcp?api_key=…&region=…&…#…")
+    }
+
+    @Test func aKeyInTheURLPathIsHidden() {
+        #expect(http("https://actions.example.com/mcp/sk-ak-SECRET0123456789abcdef/sse").summary
+                == "https://actions.example.com/mcp/…/sse")
+    }
+
+    @Test func anOrdinaryURLIsUnchanged() {
+        #expect(http("https://docs.example/mcp").summary == "https://docs.example/mcp")
+        #expect(http("http://localhost:8080/mcp/sse").summary == "http://localhost:8080/mcp/sse")
+    }
+
+    @Test func secretFlagsHideTheirValue() {
+        let server = stdio("npx", [
+            "-y", "server", "--token", "SECRET1", "--api-key=SECRET2", "--key", "SECRET3", "--secret", "SECRET4",
+            "--password", "SECRET5", "--access-token", "SECRET6", "--header", "Authorization: Bearer SECRET7",
+            "-H", "X-Api-Key:SECRET8", "--port", "8080",
+        ])
+        #expect(server.summary == "npx -y server --token … --api-key=… --key … --secret … --password … "
+                + "--access-token … --header Authorization:… -H X-Api-Key:… --port 8080")
+    }
+
+    @Test func assignmentArgsHideTheirValue() {
+        #expect(stdio("env", ["API_KEY=SECRET1", "GITHUB_TOKEN=SECRET2", "node", "server.js"]).summary
+                == "env API_KEY=… GITHUB_TOKEN=… node server.js")
+    }
+
+    @Test func aURLInsideTheArgsIsRedacted() {
+        #expect(stdio("npx", ["mcp-remote", "https://mcp.example.com/sse?token=SECRET1"]).summary
+                == "npx mcp-remote https://mcp.example.com/sse?token=…")
+    }
+
+    @Test func aWholeCommandLineInTheCommandIsRedacted() {
+        #expect(stdio("npx server --token SECRET1 --api-key=SECRET2", []).summary
+                == "npx server --token … --api-key=…")
+    }
+
+    @Test func aPositionalKeyIsHidden() {
+        #expect(stdio("uvx", ["server", "sk-proj-SECRET0123456789abcd"]).summary == "uvx server …")
+    }
+
+    @Test func aKeyWithNoDigitsIsHidden() {
+        #expect(stdio("uvx", ["server", "ghp_SECRETabcdefghijklmnopqrstuvwxyz", "sk-abcdefghijklmnopqrstu"]).summary
+                == "uvx server … …")
+        #expect(http("https://actions.example.com/mcp/SECRETabcdefghijKLMNOP/sse").summary
+                == "https://actions.example.com/mcp/…/sse")
+    }
+
+    @Test func aQuotedValueInTheCommandStaysOneWord() {
+        let server = stdio(#"npx server --header "Authorization: Bearer SECRET1" --password 'two SECRET2 words' "#
+                           + #"--token="SECRET3 x" API_KEY="SECRET4 y" --name "My Server""#, [])
+        #expect(server.summary == #"npx server --header "Authorization:… --password … --token=… API_KEY=… "#
+                + #"--name "My Server""#)
+    }
+
+    @Test func aCommandInsideQuotesOrOneArgIsRedactedToo() {
+        #expect(stdio("bash -c 'server --token SECRET1 --name x'", []).summary == "bash -c 'server --token … --name x'")
+        #expect(stdio("bash", ["-c", "server --api-key SECRET2 KEY=SECRET3"]).summary
+                == "bash -c server --api-key … KEY=…")
+        #expect(stdio(#"sh -c "bash -c 'x --password SECRET4'""#, []).summary == #"sh -c "bash -c 'x --password …'""#)
+        #expect(stdio(#"npx mcp-remote "https://x.example.com/sse?token=SECRET5""#, []).summary
+                == #"npx mcp-remote "https://x.example.com/sse?token=…""#)
+        #expect(stdio("sh", [#"-c"#, #"x"--token SECRET6""#]).summary.contains("SECRET") == false)
+        #expect(stdio(#"npx "--token SECRET7"#, []).summary.contains("SECRET") == false)
+    }
+
+    @Test func aURLWithASpaceIsNeverSplitOpen() {
+        #expect(stdio(#"npx mcp-remote "https://host.example/mcp?token=two SECRET1""#, []).summary
+                == #"npx mcp-remote "https://host.example/mcp?token=… …""#)
+        #expect(stdio("npx", ["mcp-remote", "https://host.example/a b --token SECRET2"]).summary
+                == "npx mcp-remote https://host.example/a …")
+        #expect(stdio("bash -c 'mcp-remote \"https://host.example/?k=a SECRET3\"'", []).summary
+                == #"bash -c 'mcp-remote "https://host.example/?k=… …"'"#)
+    }
+
+    @Test func aQuotedOrEscapedFlagNameStillHidesItsValue() {
+        #expect(stdio(#"npx --"token" SECRET1 --\token SECRET2 "--key" SECRET3 --'api-key'=SECRET4"#, []).summary
+                == #"npx --"token" … --\token … "--key" … --'api-key'=…"#)
+        #expect(stdio("npx", [#"--"password""#, "SECRET5", #""-H""#, "Authorization: Bearer SECRET6"]).summary
+                == #"npx --"password" … "-H" Authorization:…"#)
+    }
+
+    @Test func aPercentEncodedKeyInTheURLPathIsHidden() {
+        #expect(http("https://h.example/mcp/sk%2Dproj%2DSECRET0123456789abcd/sse").summary == "https://h.example/mcp/…/sse")
+        #expect(http("https://h.example/My%20Docs/mcp").summary == "https://h.example/My%20Docs/mcp")
+    }
+
+    @Test func aFlagAndItsValueInOneArgAreSplit() {
+        #expect(stdio("npx", ["--token SECRET1", "--api-key=SECRET2 two", "--header Authorization: Bearer SECRET3"]).summary
+                == "npx --token … --api-key=… --header Authorization:…")
+    }
+
+    @Test func anOrdinaryCommandIsUnchanged() {
+        let server = stdio("uvx", ["mcp-server-fetch", "--port", "8080", "@modelcontextprotocol/server-filesystem",
+                                    "/Users/me/My Files", "chrome-devtools-mcp@latest"])
+        #expect(server.summary == "uvx mcp-server-fetch --port 8080 @modelcontextprotocol/server-filesystem "
+                + "/Users/me/My Files chrome-devtools-mcp@latest")
+    }
+
+    @Test func noSummaryEverShowsASecret() {
+        let servers = [
+            http("https://me:SECRETpass@mcp.example.com/v1/mcp?api_key=SECRET1#SECRET2"),
+            stdio("npx --token SECRET3", ["--api-key", "SECRET4", "KEY=SECRET5", "--password=SECRET6"]),
+        ]
+        for server in servers { #expect(!server.summary.contains("SECRET"), "\(server.summary)") }
+    }
+}
+
 // MARK: - Plugins
 
 @MainActor
