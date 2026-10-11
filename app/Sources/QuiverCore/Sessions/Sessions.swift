@@ -229,6 +229,7 @@ public final class SessionsModel {
     private var listed: [SessionInfo] = []
     private let snapshots: SessionSnapshotStoring?
     private let maxAge: TimeInterval
+    private let listTimeout: Duration
     /// When the list on show was listed and by which swe; nil until one is.
     private var listedAt: Date?
     private var listedFrom: String?
@@ -249,8 +250,11 @@ public final class SessionsModel {
     ///   - snapshots: where the last list is kept between launches.
     ///   - maxAge: how long a list counts as fresh, so opening the page again
     ///     soon after doesn't ask swe again.
+    ///   - listTimeout: how long swe may take before the listing is stopped
+    ///     and counts as failed, so a hung swe can't block the next try.
     public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
                 limit: Int = 100_000, snapshots: SessionSnapshotStoring? = nil, maxAge: TimeInterval = 60,
+                listTimeout: Duration = .seconds(60),
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.source = source
         self.ledger = ledger
@@ -258,6 +262,7 @@ public final class SessionsModel {
         self.limit = limit
         self.snapshots = snapshots
         self.maxAge = maxAge
+        self.listTimeout = listTimeout
         self.now = now
         self.calendar = calendar
     }
@@ -306,7 +311,7 @@ public final class SessionsModel {
         }
         let list: SessionList
         do {
-            list = try await source.sessions(days: Self.days, limit: limit)
+            list = try await Self.listing(from: source, limit: limit, within: listTimeout)
         } catch is CancellationError {
             return
         } catch {
@@ -340,6 +345,29 @@ public final class SessionsModel {
         latestUsage = usage
         rows = join(listed, usage)
         await save()
+    }
+
+    struct ListingTimedOut: LocalizedError {
+        var timeout: Duration
+        var errorDescription: String? {
+            "swe didn't list the sessions within \(timeout.components.seconds) seconds. Refresh to try again."
+        }
+    }
+
+    /// swe's list, or `ListingTimedOut` once `timeout` passes. Losing the race
+    /// cancels the listing, which stops the swe process.
+    nonisolated static func listing(from source: SessionListing, limit: Int,
+                                    within timeout: Duration) async throws -> SessionList {
+        try await withThrowingTaskGroup(of: SessionList.self) { group in
+            group.addTask { try await source.sessions(days: days, limit: limit) }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw ListingTimedOut(timeout: timeout)
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw CancellationError() }
+            return first
+        }
     }
 
     /// Writes what is on show for the next launch, once something was listed.

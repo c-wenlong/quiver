@@ -31,6 +31,16 @@ actor CancellableGatedSource: SessionListing {
     func release() { gate?.resume(); gate = nil }
 }
 
+/// A swe that never answers, until it is cancelled.
+actor HangingSource: SessionListing {
+    private(set) var calls = 0
+    func sessions(days: Int, limit: Int) async throws -> SessionList {
+        calls += 1
+        try await Task.sleep(for: .seconds(3600))
+        return SessionList(sessions: [], failures: [])
+    }
+}
+
 @MainActor
 @Suite struct SessionSnapshotTests {
     let start = Date(timeIntervalSince1970: 1_791_700_000)
@@ -115,6 +125,17 @@ actor CancellableGatedSource: SessionListing {
         #expect(model.rows.map(\.id) == ["a"])
         #expect(model.isLoading == false)
         #expect(await source.calls == 1)
+    }
+
+    @Test func aListingThatNeverAnswersGivesUpAndCanBeRetried() async throws {
+        let source = HangingSource()
+        let model = SessionsModel(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshots(),
+                                  listTimeout: .milliseconds(50), now: { [start] in start })
+        await model.load(for: "/bin/swe")
+        #expect(model.isLoading == false)
+        #expect(model.error != nil)
+        await model.loadIfStale(for: "/bin/swe")
+        #expect(await source.calls == 2)
     }
 
     @Test func aSavedListIsRefreshedOnceItIsOld() async throws {
