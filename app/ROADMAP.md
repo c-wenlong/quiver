@@ -88,10 +88,10 @@ Modelled on TokenTracker's Sessions page.
 - [ ] Launch a session in the right folder with one click
 
 ### M6. Menu bar, widgets and shipping
-- [ ] Limits in the menu bar: every account's bars at a glance
-- [ ] WidgetKit widgets after TokenTracker's designs (`screenshots/widgets-dark-full.png`): usage summary, activity heatmap, top models, usage limits
-- [ ] Notifications when a limit resets or crosses 90%
-- [ ] Launch at login
+- [x] Limits in the menu bar: the status item shows the tightest limit; the panel lists every account's windows and the other harnesses
+- [x] WidgetKit widgets after TokenTracker's designs (`screenshots/widgets-dark-full.png`): usage summary, activity heatmap, top models, usage limits
+- [x] Notifications when a limit resets or crosses 90%, once per crossing
+- [x] Launch at login (`SMAppService.mainApp`, a switch in Settings)
 - [ ] Signing, notarization, Sparkle updates
 
 ### M7. Service status

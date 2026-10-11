@@ -61,6 +61,19 @@ public enum UsageFormat {
         }
     }
 
+    /// "in 12m", "in 4h 28m", "in 25d": how long until a limit resets.
+    public static func resetIn(_ date: Date, now: Date) -> String {
+        let seconds = date.timeIntervalSince(now)
+        guard seconds > 0 else { return "now" }
+        let minutes = Int((seconds / 60).rounded(.up))
+        if minutes < 60 { return "in \(minutes)m" }
+        if minutes < 24 * 60 {
+            let rest = minutes % 60
+            return rest == 0 ? "in \(minutes / 60)h" : "in \(minutes / 60)h \(rest)m"
+        }
+        return "in \(minutes / (24 * 60))d"
+    }
+
     private static func compact(_ value: Double) -> String {
         let rounded = (value * 10).rounded() / 10
         return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)

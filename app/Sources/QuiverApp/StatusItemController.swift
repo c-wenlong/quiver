@@ -11,7 +11,7 @@ import SwiftUI
 /// dead on the first one.
 @MainActor
 final class StatusItemController: NSObject {
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var panel: MenuBarPanel!
     private var outsideClickMonitor: Any?
     private var localClickMonitor: Any?
@@ -25,11 +25,36 @@ final class StatusItemController: NSObject {
         host.sizingOptions = [.preferredContentSize]
         panel = MenuBarPanel(contentViewController: host)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent",
-                                   accessibilityDescription: "Quiver")
             button.action = #selector(toggle)
             button.target = self
+            button.imagePosition = .imageLeading
         }
+        show(nil)
+        Task { [weak self] in
+            let changes = Observations { [weak model] in model?.limits.tightest }
+            for await tightest in changes { self?.show(tightest) }
+        }
+    }
+
+    /// The tightest limit at a glance: a ring filled to its used share and
+    /// the percentage. Red from 90%, like the bars; monochrome below.
+    private func show(_ tightest: LimitReading??) {
+        guard let button = item.button else { return }
+        guard let reading = tightest ?? nil else {
+            button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent",
+                                   accessibilityDescription: "Quiver")
+            button.attributedTitle = NSAttributedString()
+            button.toolTip = "Quiver"
+            return
+        }
+        let percent = reading.percent
+        button.image = LimitRing.image(fraction: reading.usedPercent / 100, critical: percent >= 90)
+        button.attributedTitle = NSAttributedString(
+            string: " \(percent)%",
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)])
+        let window = reading.window.isEmpty ? "" : " \(reading.window)"
+        button.toolTip = "Tightest limit: \(reading.title)\(window) at \(percent)%"
+        button.setAccessibilityLabel("Quiver. \(reading.title)\(window) limit at \(percent) percent")
     }
 
     @objc private func toggle() {
@@ -91,6 +116,34 @@ final class StatusItemController: NSObject {
     }
 }
 
+/// The status item's gauge, drawn so it follows the menu bar's appearance.
+enum LimitRing {
+    static func image(fraction: Double, critical: Bool) -> NSImage {
+        let fraction = max(0, min(1, fraction))
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            let ring = rect.insetBy(dx: 2.5, dy: 2.5)
+            let center = NSPoint(x: ring.midX, y: ring.midY)
+            let radius = ring.width / 2
+            let track = NSBezierPath(ovalIn: ring)
+            track.lineWidth = 2.2
+            (critical ? NSColor.secondaryLabelColor : NSColor.black.withAlphaComponent(0.3)).setStroke()
+            track.stroke()
+            guard fraction > 0 else { return true }
+            let arc = NSBezierPath()
+            arc.appendArc(withCenter: center, radius: radius, startAngle: 90,
+                          endAngle: 90 - 360 * fraction, clockwise: true)
+            arc.lineWidth = 2.2
+            arc.lineCapStyle = .round
+            (critical ? NSColor(Theme.danger) : NSColor.black).setStroke()
+            arc.stroke()
+            return true
+        }
+        // A template image takes the menu bar's own colour; the red one can't.
+        image.isTemplate = !critical
+        return image
+    }
+}
+
 final class MenuBarPanel: NSPanel {
     init(contentViewController: NSViewController) {
         super.init(contentRect: .zero,
@@ -119,21 +172,32 @@ struct MenuBarContent: View {
                 Spacer()
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await app.accounts.load(force: true) }
+                    Task { await app.others.load() }
                     Task { await app.overview?.load(scan: true) }
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .disabled(app.accounts.isLoading)
             }
-            if let spend = app.overview?.spend {
-                SpendDonut(slices: spend)
-                Divider()
-            }
             ForEach(app.accounts.cards) { card in
                 PanelAccountRow(card: card)
             }
             if app.accounts.cards.isEmpty {
                 Text("No accounts yet.").foregroundStyle(.secondary)
+            }
+            let others = app.others.rows.filter { $0.limit.status == .ok }
+            if !others.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Other harnesses").font(Theme.rowTitle)
+                    ForEach(others) { row in
+                        PanelLimitRow(label: row.name.capitalized, window: row.limit.window,
+                                      percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
+                    }
+                }
+            }
+            if let spend = app.overview?.spend {
+                Divider()
+                SpendDonut(slices: spend)
             }
             Divider()
             HStack {
@@ -145,7 +209,6 @@ struct MenuBarContent: View {
         .padding(16)
         .frame(width: 340)
         .glassEffect(in: .rect(cornerRadius: 18))
-        .task { await app.accounts.keepFresh() }
     }
 }
 
@@ -216,23 +279,54 @@ private struct SpendDonut: View {
     }
 }
 
-/// One account in the panel: its name and its most-used window.
+/// One account in the panel: its name, then every window it reports.
 private struct PanelAccountRow: View {
     var card: AccountsModel.Card
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Circle().fill(Color(hex: card.profile.color)).frame(width: 7, height: 7)
                 Text("\(card.profile.vendor.title): \(card.profile.name)").font(Theme.rowTitle)
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
             }
-            if let window = card.usage?.windows.max(by: { $0.usedPercent < $1.usedPercent }) {
-                UsageBar(window: window)
-                    .opacity(card.usage?.isStale == true ? 0.55 : 1)
+            if let usage = card.usage, !usage.windows.isEmpty {
+                ForEach(usage.windows, id: \.label) { window in
+                    PanelLimitRow(label: window.label, percent: window.usedPercent, resetsAt: window.resetsAt)
+                }
+                .opacity(usage.isStale ? 0.55 : 1)
+                if usage.isStale { StatusLine(usage: usage) }
             } else {
                 StatusLine(usage: card.usage)
             }
         }
+    }
+}
+
+/// One limit window on a single line: name, bar, percentage, reset.
+private struct PanelLimitRow: View {
+    var label: String
+    var window: String? = nil
+    var percent: Double
+    var resetsAt: Date?
+
+    var body: some View {
+        let whole = Int(percent.rounded())
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Text(label).font(Theme.caption).foregroundStyle(Theme.textPrimary)
+                if let window { Text(window).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
+            }
+            .lineLimit(1)
+            .frame(width: 86, alignment: .leading)
+            UsageTrack(fraction: percent / 100, color: Theme.usage(whole))
+            Text("\(whole)%").font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                .frame(width: 34, alignment: .trailing)
+            Text(resetsAt.map { $0 > .now ? UsageFormat.resetIn($0, now: .now) : "" } ?? "")
+            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            .lineLimit(1)
+            .frame(width: 64, alignment: .trailing)
+        }
+        .accessibilityElement(children: .combine)
     }
 }

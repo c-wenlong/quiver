@@ -3,7 +3,9 @@
 #
 #   app/script/build-app.sh [debug|release]   # default: release
 #
-# Writes app/build/Quiver.app, ad-hoc signed. Open it with
+# Writes app/build/Quiver.app with the widget extension embedded at
+# Contents/PlugIns/QuiverWidgets.appex, ad-hoc signed unless
+# QUIVER_SIGN_IDENTITY names a codesigning identity. Open it with
 # `open app/build/Quiver.app`.
 set -euo pipefail
 
@@ -12,6 +14,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
 swift build -c "$config" --product Quiver
+swift build -c "$config" --product QuiverWidgets
 bindir="$(swift build -c "$config" --show-bin-path)"
 bin="$bindir/Quiver"
 
@@ -49,5 +52,34 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --sign - "$bundle" >/dev/null
+# The widget extension: SwiftPM's executable in an .appex. Its @main
+# WidgetBundle is the whole entry point, so no Xcode project is needed.
+appex="$bundle/Contents/PlugIns/QuiverWidgets.appex"
+mkdir -p "$appex/Contents/MacOS"
+cp "$bindir/QuiverWidgets" "$appex/Contents/MacOS/QuiverWidgets"
+cat > "$appex/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>QuiverWidgets</string>
+  <key>CFBundleDisplayName</key><string>Quiver</string>
+  <key>CFBundleIdentifier</key><string>com.cwenlong.quiver.widgets</string>
+  <key>CFBundleExecutable</key><string>QuiverWidgets</string>
+  <key>CFBundlePackageType</key><string>XPC!</string>
+  <key>CFBundleShortVersionString</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${version}</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
+  <key>NSExtension</key>
+  <dict>
+    <key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+
+# Inside out: the extension with its sandbox, then the app around it.
+identity="${QUIVER_SIGN_IDENTITY:--}"
+codesign --force --sign "$identity" --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
+codesign --force --sign "$identity" "$bundle" >/dev/null
 echo "$bundle"

@@ -6,7 +6,6 @@ struct AccountsPage: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
     @State private var actionError: String?
-    @State private var others: OtherLimitsModel?
 
     var body: some View {
         let model = app.accounts
@@ -35,15 +34,15 @@ struct AccountsPage: View {
                     }
                 }
             }
-            if let others, !others.rows.isEmpty || others.note != nil {
+            if !app.others.rows.isEmpty || app.others.note != nil {
                 SectionTitle("Other harnesses")
                 Card {
-                    if let note = others.note {
+                    if let note = app.others.note {
                         Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
-                    ForEach(others.rows) { row in
+                    ForEach(app.others.rows) { row in
                         OtherLimitRow(row: row)
-                        if row != others.rows.last { Divider().overlay(Theme.border) }
+                        if row != app.others.rows.last { Divider().overlay(Theme.border) }
                     }
                     Text("From swe, which polls the harnesses you starred.")
                         .font(Theme.caption).foregroundStyle(Theme.textMuted)
@@ -65,16 +64,12 @@ struct AccountsPage: View {
         // Reloads while the page is open, so a reading never sits on screen
         // past the age the usage service would still show it.
         .task { await model.keepFresh() }
-        .task(id: app.swePath) {
-            let model = OtherLimitsModel(swe: app.swe)
-            others = model
-            await model.load()
-        }
+        .task { await app.others.load() }
     }
 
     private func reloadAll(force: Bool) async {
         await app.accounts.load(force: force)
-        await others?.load()
+        await app.others.load()
     }
 
     /// Runs an account action and shows its failure on the page.
