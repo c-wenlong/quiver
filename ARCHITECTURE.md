@@ -373,7 +373,7 @@ and the app refuses a schema it does not know rather than misreading it.
 | `swe harness archive <name> [why] --json` | `name`, `state`, and the `archived` record (null after a restore) |
 | `swe session [filters] --json` | `sessions`: id, harness, agent, cwd, title, title_source, `last_active_at` (epoch seconds), status, `resume` (`argv` and `cwd`, or null); `failures` names any parser that crashed, so a broken reader is not mistaken for no history |
 | `swe skills --json` | `shared_dir`; `harnesses`: each harness skills root (name, label, path, init's link `state` and `detail`, `archived`); `skills`: every SKILL.md with name, description, path, root, `source` (shared, plugin, harness, builtin, catalog, project) and the `harnesses` that load it |
-| `swe skills hub --json` | `hub` and `plugins`: each plugin in `~/.quiver/plugins` with marketplace, description, version, components, `skills`, and `install` per harness (`state`: installed, unregistered, not-installed, stale, disabled-here, disabled; `fix`) |
+| `swe skills hub --json` | `hub` and `plugins`: each plugin in `~/.quiver/plugins` with marketplace, description, version, components, `skills`, and `install` per harness (`state`: installed, unregistered, not-installed, stale, disabled-here, disabled; `fix`; `id` for `swe find plugins --fix`) |
 | `swe skills link\|unlink\|move ... --json` | what was done: `action`, `harness`, and the paths |
 | `swe find skills -r --json` | `shared_dir`, `skills` (the shared library), `roots` (per-harness skills root with its link state and skill count) |
 | `swe init --check --json` | `agents_file`, `agents_file_exists`, `harnesses` with `instructions` and `skills`, each a path and link state or null |

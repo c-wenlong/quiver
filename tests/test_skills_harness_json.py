@@ -237,6 +237,7 @@ class SkillsHubJsonTest(unittest.TestCase):
         claude = plugin["install"]["claude"]
         self.assertEqual(claude["state"], "not-installed")
         self.assertEqual(claude["fix"], "claude plugin install toolkit@kit")
+        self.assertEqual(claude["id"], "claude:not-installed:toolkit@kit")
 
     def install_current(self):
         self.register()
@@ -250,7 +251,7 @@ class SkillsHubJsonTest(unittest.TestCase):
     def test_installed_and_current(self):
         self.install_current()
         (plugin,) = self.data()["plugins"]
-        self.assertEqual(plugin["install"]["claude"], {"state": "installed", "fix": None})
+        self.assertEqual(plugin["install"]["claude"], {"state": "installed", "fix": None, "id": None})
 
     def test_disabled_in_the_only_harness_is_not_installed(self):
         self.install_current()
@@ -258,7 +259,7 @@ class SkillsHubJsonTest(unittest.TestCase):
             json.dumps({"enabledPlugins": {"toolkit@kit": False}}))
         (plugin,) = self.data()["plugins"]
         self.assertEqual(plugin["install"]["claude"],
-                         {"state": "disabled", "fix": "claude plugin enable toolkit@kit"})
+                         {"state": "disabled", "fix": "claude plugin enable toolkit@kit", "id": None})
 
     def test_an_empty_hub_is_an_empty_list(self):
         import shutil

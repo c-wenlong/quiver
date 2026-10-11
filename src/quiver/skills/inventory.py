@@ -261,10 +261,11 @@ def hub_plugins(home: Path | None = None) -> dict:
             # harness has it enabled; disabled everywhere it is silent.
             ref = f"{plugin.name}@{registered}"
             if registered is not None and view.enabled.get(ref) is False:
-                return {"state": "disabled", "fix": view.fix_enable(ref)}
-            return {"state": "installed", "fix": None}
+                return {"state": "disabled", "fix": view.fix_enable(ref).text, "id": None}
+            return {"state": "installed", "fix": None, "id": None}
         first = min(mine, key=lambda f: rank[f.kind])
-        return {"state": first.kind, "fix": first.fix}
+        # `id` is what `swe find plugins --fix=<id>` takes.
+        return {"state": first.kind, "fix": first.fix, "id": first.id}
 
     plugins = []
     for plugin in sources:
