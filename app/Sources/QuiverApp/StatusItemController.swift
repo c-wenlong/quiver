@@ -412,6 +412,11 @@ private struct PanelOtherRow: View {
                               percent: Double(window.usedPercent), resetsAt: window.resetAt)
             }
             .opacity(old ? 0.55 : 1)
+            if let onDemand = row.limit.onDemand {
+                Text("On-demand \(onDemand.value) · \(onDemand.detail)")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .opacity(old ? 0.55 : 1)
+            }
             if let balance = row.limit.extraUsageUSD {
                 // As old as the windows above it, so dimmed with them.
                 Text("Extra usage balance \(UsageFormat.balance(balance))")
