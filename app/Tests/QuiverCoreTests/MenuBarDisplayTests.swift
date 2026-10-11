@@ -100,6 +100,20 @@ private var today: UsageTotals {
         #expect(MenuBarDisplay.today(in: [SpendSlice(period: .yesterday, byHarness: [:])]) == nil)
     }
 
+    @Test func aStaleOrResetWatchedLimitFallsBackToACurrentOne() {
+        var stale = reading("personal", "7d", 40)
+        stale.isStale = true
+        var reset = reading("side", "5h", 95)
+        reset.resetsAt = now.addingTimeInterval(-60)
+        let readings = [reading("work", "5h", 81), stale, reset]
+        var display = MenuBarDisplay(defaults: defaults())
+        display.watchedLimit = "personal|7d"
+        #expect(display.limit(in: readings, now: now)?.id == "work|5h")
+        display.watchedLimit = "side|5h"
+        #expect(display.limit(in: readings, now: now)?.id == "work|5h")
+        #expect(display.limit(in: [stale], now: now) == nil)
+    }
+
     @Test func everyFigureHasASentenceCaseTitle() {
         #expect(MenuBarFigure.allCases.map(\.title) == ["Nothing", "Limit", "Today's spend", "Today's tokens"])
     }

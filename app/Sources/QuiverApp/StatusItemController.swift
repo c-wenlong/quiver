@@ -31,11 +31,14 @@ final class StatusItemController: NSObject {
         }
         show(model.menuBar, limit: nil, today: nil)
         Task { [weak self] in
+            // `tightest` too: the minute timer moves it when a window resets,
+            // even if the readings themselves don't change.
             let changes = Observations { [weak model] in
-                model.map { ($0.menuBar, $0.limits.readings, MenuBarDisplay.today(in: $0.overview?.spend)) }
+                model.map { ($0.menuBar, $0.limits.readings, $0.limits.tightest,
+                             MenuBarDisplay.today(in: $0.overview?.spend)) }
             }
             for await change in changes {
-                guard let (display, readings, today) = change else { continue }
+                guard let (display, readings, _, today) = change else { continue }
                 self?.show(display, limit: display.limit(in: readings, now: .now), today: today)
             }
         }
@@ -63,7 +66,9 @@ final class StatusItemController: NSObject {
         button.image = LimitRing.image(fraction: limit.usedPercent / 100, critical: percent >= 90)
         let window = limit.window.isEmpty ? "" : " \(limit.window)"
         button.toolTip = "\(limit.title)\(window) at \(percent)%"
-        button.setAccessibilityLabel("Quiver. \(limit.title)\(window) limit at \(percent) percent")
+        // VoiceOver hears the same figures the item shows.
+        let shown = text.isEmpty ? "" : ". Showing \(text)"
+        button.setAccessibilityLabel("Quiver. \(limit.title)\(window) limit at \(percent) percent\(shown)")
     }
 
     @objc private func toggle() {

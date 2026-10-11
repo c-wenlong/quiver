@@ -46,10 +46,14 @@ public struct MenuBarDisplay: Equatable, Sendable {
         defaults.set(watchedLimit, forKey: Key.watchedLimit)
     }
 
-    /// The watched limit, or the tightest when none is chosen or the chosen
-    /// one is gone (its account removed, say).
+    /// The watched limit, or the tightest current one when none is chosen
+    /// or the chosen one is gone (its account removed), stale (its last
+    /// fetch failed) or past its reset. An old percentage never shows as now.
     public func limit(in readings: [LimitReading], now: Date) -> LimitReading? {
-        if let watchedLimit, let reading = readings.first(where: { $0.id == watchedLimit }) { return reading }
+        if let watchedLimit, let reading = readings.first(where: { $0.id == watchedLimit }),
+           reading.isCurrent(now: now) {
+            return reading
+        }
         return LimitReading.tightest(readings, now: now)
     }
 
