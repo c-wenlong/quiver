@@ -23,17 +23,13 @@ struct AccountsPage: View {
             if let error = model.error ?? actionError {
                 ErrorCard(message: error)
             }
-            ForEach(Vendor.allCases, id: \.self) { vendor in
-                let cards = model.cards.filter { $0.profile.vendor == vendor }
-                if !cards.isEmpty {
-                    HStack(spacing: 10) {
-                        HarnessIcon(harness: vendor.rawValue, size: 20).padding(.top, 8)
-                        SectionTitle(vendor.title)
-                    }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter)], spacing: Theme.gutter) {
-                        ForEach(cards) { card in
-                            AccountCard(card: card, perform: perform, reloadAll: reloadAll)
-                        }
+            // One grid for every account, vendors in a fixed order; each
+            // card carries its vendor's logo, so no per-vendor heading.
+            let cards = Vendor.allCases.flatMap { vendor in model.cards.filter { $0.profile.vendor == vendor } }
+            if !cards.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter, alignment: .top)], spacing: Theme.gutter) {
+                    ForEach(cards) { card in
+                        AccountCard(card: card, perform: perform, reloadAll: reloadAll)
                     }
                 }
             }
@@ -98,8 +94,9 @@ private struct AccountCard: View {
         let profile = card.profile
         let model = app.accounts
         Card {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Circle().fill(Color(hex: profile.color)).frame(width: 9, height: 9)
+            HStack(spacing: 8) {
+                HarnessIcon(harness: profile.vendor.rawValue, size: 16)
+                    .help(profile.vendor.title)
                 Text(profile.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 // The default account is already named Default; a badge would repeat it.
                 if profile.isDefault && profile.name != "Default" { Badge("Default") }
@@ -310,33 +307,28 @@ private struct OtherLimitRow: View {
 
     var body: some View {
         let limit = row.limit
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
+        let name = UsageFormat.harness(row.name)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
                 HarnessIcon(harness: row.name, size: 16)
-                Text(row.name.capitalized).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                Text(name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 if let plan = limit.planType { Badge(planTitle(plan)) }
                 Spacer()
-                switch limit.status {
-                case .ok:
-                    if let reset = limit.resetAt, reset > .now {
-                        Text("Resets \(reset, format: .relative(presentation: .named))")
-                            .font(.caption).foregroundStyle(.secondary)
+                Group {
+                    switch limit.status {
+                    case .ok: EmptyView()
+                    case .authRequired: Text("Sign in again in \(name)")
+                    case .noSubscription: Text("No subscription")
+                    case .timeout: Text("Didn't answer in time")
                     }
-                    Text("\(limit.usedPercent)%").font(.caption.monospacedDigit())
-                case .authRequired:
-                    Text("Sign in again in \(row.name.capitalized)").font(.caption).foregroundStyle(.secondary)
-                case .noSubscription:
-                    Text("No subscription").font(.caption).foregroundStyle(.secondary)
-                case .timeout:
-                    Text("Didn't answer in time").font(.caption).foregroundStyle(.secondary)
                 }
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             if limit.status == .ok {
-                ProgressView(value: Double(min(max(limit.usedPercent, 0), 100)), total: 100)
-                    .tint(Theme.usage(limit.usedPercent))
-                if let window = limit.window {
-                    Text(window).font(.caption2).foregroundStyle(.secondary)
-                }
+                // The same bar as an account card: window, reset, percent.
+                UsageBar(window: UsageWindow(label: limit.window ?? "Usage",
+                                             usedPercent: Double(min(max(limit.usedPercent, 0), 100)),
+                                             resetsAt: limit.resetAt))
             }
         }
     }
