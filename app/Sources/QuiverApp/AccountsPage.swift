@@ -98,6 +98,8 @@ private struct AccountCard: View {
                 HarnessIcon(harness: profile.vendor.rawValue, size: 16)
                     .help(profile.vendor.title)
                 Text(profile.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    // The logo is hidden from VoiceOver, so the name carries the vendor.
+                    .accessibilityLabel("\(profile.name), \(profile.vendor.title)")
                 // The default account is already named Default; a badge would repeat it.
                 if profile.isDefault && profile.name != "Default" { Badge("Default") }
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
