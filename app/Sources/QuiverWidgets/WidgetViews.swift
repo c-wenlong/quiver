@@ -141,7 +141,7 @@ private struct LimitLine: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 HarnessLogo(harness: reading.harness, size: 12)
-                Text(reading.window.isEmpty ? reading.title : "\(reading.title) · \(reading.window)")
+                Text(reading.window.isEmpty ? reading.title : "\(reading.title) · \(UsageFormat.window(reading.window))")
                     .font(.system(size: 11, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 4)
                 if !compact, !reset, old, let taken = reading.fetchedAt {

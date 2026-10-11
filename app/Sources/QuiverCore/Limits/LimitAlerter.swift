@@ -12,7 +12,7 @@ public struct LimitAlert: Sendable, Equatable {
     }
 
     public var title: String {
-        let window = reading.window.isEmpty ? "" : "\(reading.window) "
+        let window = reading.window.isEmpty ? "" : "\(UsageFormat.window(reading.window)) "
         switch kind {
         case .crossed: return "\(reading.title) is at \(reading.percent)% of its \(window)limit"
         case .reset: return "\(reading.title): \(window)limit has reset"

@@ -3603,7 +3603,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(od(None, None)["state"], "unavailable")
 
     def test_fetch_reads_the_plan_and_on_demand_like_the_cli(self):
-        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
 
         usage = copy.deepcopy(self._SAMPLE_RESPONSE)
         usage["spendLimitUsage"] = {"totalSpend": 14032, "pooledLimit": "500000", "limitType": "team"}
@@ -3612,6 +3612,7 @@ class CursorFetcherTest(unittest.TestCase):
             _CURSOR_USAGE_URL: usage,
             f"{base}/get-hard-limit": {"hardLimit": 3000},
             f"{base}/get-plan-info": {"planInfo": {"planName": "Team"}},
+            _CURSOR_GROK_BOT_URL: {},
         }
         with patch(
             "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
@@ -3621,10 +3622,85 @@ class CursorFetcherTest(unittest.TestCase):
         ) as fetch:
             info = _fetch_cursor()
 
-        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual(fetch.call_count, 4)
         self.assertEqual(info.plan_type, "team")
         self.assertEqual(info.to_json()["on_demand"],
                          {"state": "unlimited", "scope": "team-member", "used_usd": 0.0, "limit_usd": None})
+
+    def test_grok_bot_is_its_own_weekly_window(self):
+        from quiver.harness.rate_limits import _cursor_grok_bot_window as grok
+
+        window = grok({
+            "usagePercent": 37.5,
+            "currentPeriodStart": "2026-08-20T00:00:00Z",
+            "nextResetTimestampUtc": "2026-08-27T00:00:00Z",
+            "hasNonZeroIncludedLimit": True,
+        })
+        self.assertEqual(window, {
+            "window": "grok_bot", "used_percent": 38, "limit_reached": False,
+            "reset_at": 1787788800.0, "window_seconds": 7 * 24 * 3600,
+        })
+        # No period start: still a week. Overage clamps; epoch millis work.
+        over = grok({"usagePercent": 125, "nextResetTimestampUtc": "1787788800000"})
+        self.assertEqual((over["used_percent"], over["limit_reached"]), (100, True))
+        self.assertEqual((over["reset_at"], over["window_seconds"]), (1787788800.0, 7 * 24 * 3600))
+        self.assertEqual(grok({"usagePercent": 0})["used_percent"], 0)
+
+    def test_grok_bot_without_a_personal_meter_has_no_window(self):
+        from quiver.harness.rate_limits import _cursor_grok_bot_window as grok
+
+        for reply in (
+            None, {}, {"usagePercent": 42, "usesPooledEnterpriseAllowance": True},
+            {"usagePercent": 0, "hasNonZeroIncludedLimit": False},
+            {"usagePercent": 0, "includedLimitZero": True},
+            {"usagePercent": True}, {"usagePercent": -1}, {"usagePercent": "12"},
+            {"usagePercent": float("nan")}, {"hasNonZeroIncludedLimit": True},
+        ):
+            self.assertIsNone(grok(reply), reply)
+
+    def test_fetch_adds_grok_bot_with_the_bearer_token(self):
+        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+
+        token = self._token()
+        replies = {
+            _CURSOR_USAGE_URL: copy.deepcopy(self._SAMPLE_RESPONSE),
+            _CURSOR_GROK_BOT_URL: {"usagePercent": 12, "nextResetTimestampUtc": "2026-08-27T00:00:00Z"},
+        }
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=token,
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            side_effect=lambda request, **_: replies.get(request.full_url),
+        ) as fetch:
+            info = _fetch_cursor()
+
+        request = next(call[0][0] for call in fetch.call_args_list
+                       if call[0][0].full_url == _CURSOR_GROK_BOT_URL)
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.data, b"{}")
+        self.assertEqual(request.get_header("Authorization"), f"Bearer {token}")
+        self.assertEqual(request.get_header("Connect-protocol-version"), "1")
+        self.assertIsNone(request.get_header("Cookie"))
+        self.assertEqual(info.windows[-1]["window"], "grok_bot")
+        self.assertEqual(info.windows[-1]["used_percent"], 12)
+        # The headline stays Cursor's own allowance.
+        self.assertEqual(info.window, "api")
+
+    def test_a_failed_grok_bot_call_leaves_the_reading_alone(self):
+        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+
+        def reply(request, **_):
+            if request.full_url == _CURSOR_GROK_BOT_URL:
+                raise OSError("boom")
+            return copy.deepcopy(self._SAMPLE_RESPONSE) if request.full_url == _CURSOR_USAGE_URL else None
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+            info = _fetch_cursor()
+
+        self.assertEqual(info.used_percent, 100)
+        self.assertNotIn("grok_bot", [w["window"] for w in info.windows])
 
     def test_on_demand_and_plan_calls_are_optional(self):
         from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
@@ -3669,6 +3745,33 @@ class CursorFetcherTest(unittest.TestCase):
         # The hard limit never came, so the CLI's no-hard-limit team rule applies.
         self.assertEqual(info.on_demand["state"], "unlimited")
         self.assertEqual(info.plan_type, "team")
+
+    def test_slow_extras_end_before_the_callers_deadline(self):
+        from quiver.harness import rate_limits
+        from quiver.harness.rate_limits import _CURSOR_USAGE_URL
+
+        usage = copy.deepcopy(self._SAMPLE_RESPONSE)
+
+        def reply(request, **_):
+            if request.full_url == _CURSOR_USAGE_URL:
+                return usage
+            time.sleep(2)
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", Path(tmp) / "rate_limits_cache.json",
+        ), patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply), patch.dict(
+            "quiver.harness.rate_limits._FETCHERS", {"cursor": rate_limits._fetch_cursor}, clear=True,
+        ):
+            # The 3s extras budget is longer than this caller waits.
+            started = time.monotonic()
+            result = rate_limits.get_all_rate_limits(use_cache=False, tool_names={"cursor"}, deadline=0.6)
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(result["cursor"].used_percent, 100)
 
     def test_fetch_failure_reports_no_reading(self):
         from quiver.harness.rate_limits import _fetch_cursor
