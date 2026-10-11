@@ -72,6 +72,24 @@ final class AppModel {
         NSApp.applicationIconImage = NSImage(contentsOf: url)
     }
 
+    /// Light, dark, or macOS's own setting (the default).
+    var appearance: AppearanceMode {
+        didSet {
+            UserDefaults.standard.set(appearance.rawValue, forKey: AppearanceMode.defaultsKey)
+            applyAppearance()
+        }
+    }
+
+    /// Every window and the menu bar panel follow NSApp's appearance; the
+    /// Theme colours resolve against it.
+    func applyAppearance() {
+        NSApp.appearance = switch appearance {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+
     /// On by default. Off makes Quiver a menu bar app: no Dock icon and no
     /// place in the app switcher, unless the menu bar item is hidden too.
     var showsInDock: Bool {
@@ -143,6 +161,7 @@ final class AppModel {
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
         appIcon = AppIconStyle(saved: UserDefaults.standard.string(forKey: "appIcon"))
+        appearance = AppearanceMode(saved: UserDefaults.standard.string(forKey: AppearanceMode.defaultsKey))
         showsInDock = UserDefaults.standard.object(forKey: DockPresence.defaultsKey) == nil
             || UserDefaults.standard.bool(forKey: DockPresence.defaultsKey)
 
