@@ -135,6 +135,7 @@ HELP = {
         "Diagnose Node/PATH issues that hide global installs",
         f"""\
   {c('cyan', 'swe doctor')}                   Report node/npm, global bin PATH, nvm, off-PATH tools
+  {c('cyan', 'swe doctor --json')}            Findings as JSON: ok, plus check, severity, message, fix
 
   Catches the common failure mode: {c('dim', 'npm install -g')} under nvm while
   interactive/non-interactive shells use Homebrew Node (tool missing from PATH).

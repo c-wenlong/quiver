@@ -151,6 +151,120 @@ def redact(value, secrets: dict[str, str] | None = None, home: Path | None = Non
     return walk(value)
 
 
+# ── Display scrubbing ───────────────────────────────────────────────
+#
+# redact() only knows values that are in the store. A harness config can
+# also hold a credential nobody ever put there, in a URL or an argument, and
+# a machine-readable listing must not carry it. scrub_url / scrub_args hide
+# anything credential-shaped, keeping ${NAME} references (they name a secret
+# without being one) and the structure around the hidden part.
+
+MASK = "***"
+
+_REF_ONLY_RE = re.compile(r"(?:\$\{[A-Za-z_][A-Za-z0-9_]*\})+")
+_SCHEME_VALUE_RE = re.compile(r"(?:Bearer|Basic|Token)\s+(.+)", re.IGNORECASE)
+_SECRET_FLAG_RE = re.compile(
+    r"key|token|secret|passw|bearer|credential|cookie|signature"
+    r"|authori[sz]ation",
+    re.IGNORECASE,
+)
+_HEADER_FLAGS = frozenset({"--header", "--headers", "-H"})
+_OPAQUE_SEGMENT_RE = re.compile(r"[A-Za-z0-9_\-=.%~+]{24,}")
+
+
+def _hide(value: str) -> str:
+    """``***``, unless the value is only ``${NAME}`` references."""
+    if _REF_ONLY_RE.fullmatch(value):
+        return value
+    scheme = _SCHEME_VALUE_RE.fullmatch(value)
+    if scheme and _REF_ONLY_RE.fullmatch(scheme.group(1)):
+        return value
+    return MASK
+
+
+def _hide_header(value: str) -> str:
+    """Keep a header's name, hide what follows the colon."""
+    name, colon, rest = value.partition(":")
+    if not colon:
+        return _hide(value)
+    return f"{name}: {_hide(rest.strip())}"
+
+
+def _looks_opaque(segment: str) -> bool:
+    """A long run of token characters with letters and digits in it.
+
+    Webhook-style MCP URLs carry their credential as a path segment
+    (``/s/<token>/mcp``). Real path words ("mcp", "sse", "v1") are short
+    or have no digits, so only credential-shaped segments are hidden.
+    """
+    return (
+        _OPAQUE_SEGMENT_RE.fullmatch(segment) is not None
+        and any(ch.isdigit() for ch in segment)
+        and any(ch.isalpha() for ch in segment)
+    )
+
+
+def scrub_url(url: str, secrets: dict[str, str] | None = None) -> str:
+    """A URL safe to print: no password, query value, fragment or token path."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    url = redact(url, secrets)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return MASK
+    netloc = parts.netloc
+    userinfo, at, hostport = netloc.rpartition("@")
+    if at:
+        user, colon, password = userinfo.partition(":")
+        userinfo = f"{user}:{_hide(password)}" if colon else _hide(userinfo)
+        netloc = f"{userinfo}@{hostport}"
+    path = "/".join(
+        _hide(seg) if _looks_opaque(seg) else seg
+        for seg in parts.path.split("/")
+    )
+    query = "&".join(
+        f"{key}{eq}{_hide(value) if value else value}"
+        for key, eq, value in (
+            pair.partition("=") for pair in parts.query.split("&") if pair)
+    )
+    fragment = _hide(parts.fragment) if parts.fragment else ""
+    return urlunsplit((parts.scheme, netloc, path, query, fragment))
+
+
+def scrub_args(args, secrets: dict[str, str] | None = None) -> list[str]:
+    """Command-line arguments safe to print.
+
+    Hides the value of a credential-named flag (``--token X``,
+    ``--api-key=X``), the value of a header flag (``--header "Name: X"``),
+    and the credential parts of any URL argument. Everything else stays.
+    """
+    out: list[str] = []
+    pending = None  # "secret" or "header": the next bare arg is its value
+    for arg in redact([str(a) for a in args], secrets):
+        if pending and not arg.startswith("-"):
+            out.append(_hide_header(arg) if pending == "header" else _hide(arg))
+            pending = None
+            continue
+        pending = None
+        if arg.startswith("-"):
+            flag, eq, value = arg.partition("=")
+            if flag in _HEADER_FLAGS:
+                if eq:
+                    arg = f"{flag}={_hide_header(value)}"
+                else:
+                    pending = "header"
+            elif _SECRET_FLAG_RE.search(flag):
+                if eq:
+                    arg = f"{flag}={_hide(value)}"
+                else:
+                    pending = "secret"
+        elif "://" in arg:
+            arg = scrub_url(arg, secrets)
+        out.append(arg)
+    return out
+
+
 def store_env(home: Path | None = None) -> dict[str, str]:
     """The store merged over os.environ, for callers that want a full env."""
     return {**os.environ, **load_secrets(home)}

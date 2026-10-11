@@ -57,6 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json` for `swe mcp list`, `swe mcp status` and `swe doctor`.** Each
+  prints one `{"schema": 1, "data": ...}` document for the macOS app.
+  `mcp list` and `mcp status` give one entry per server name (transport,
+  command, args, url, the names of its env vars and headers, the harnesses
+  it appears in, and `conflict` when they define it differently); `status`
+  adds `health` and `detail` from the checks it already ran. `doctor` gives
+  `ok` and a list of findings with `check`, `severity`, `message` and
+  `fix`, and keeps its exit status. Secret values never appear: env and
+  header values are not printed, `${NAME}` references are never resolved,
+  and credentials in a URL or argument are hidden.
 - **Devin joins the discover catalog.** `HARNESS_CATALOG` now names the
   `devin` binary (alias `dv`), so `swe discover` finds it on PATH the
   same way it finds kilo. `swe init` gets a signature for
