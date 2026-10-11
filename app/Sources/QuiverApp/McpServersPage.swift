@@ -1,3 +1,4 @@
+import AppKit
 import QuiverCore
 import SwiftUI
 
@@ -82,7 +83,8 @@ private struct HarnessChips: View {
     @Binding var hidden: Set<String>
 
     var body: some View {
-        HStack(spacing: 6) {
+        // Wraps in a narrow window rather than squeezing the names.
+        FlowLayout(spacing: 6, lineSpacing: 6) {
             Text("Compare").font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.trailing, 4)
             ForEach(harnesses, id: \.self) { harness in
                 let on = !hidden.contains(harness)
@@ -96,12 +98,12 @@ private struct HarnessChips: View {
                     .font(Theme.control)
                     .foregroundStyle(on ? Theme.textPrimary : Theme.textMuted)
                     .padding(.horizontal, 10)
-                    .frame(height: 26)
+                    .frame(height: Theme.controlHeight)
                     .background(on ? Theme.selected : .clear, in: .capsule)
                     .overlay(Capsule().strokeBorder(on ? Theme.borderStrong : Theme.border, lineWidth: 1))
                     .contentShape(.capsule)
                 }
-                .plainButton(cornerRadius: 13)
+                .plainButton(cornerRadius: Theme.controlHeight / 2)
                 .accessibilityAddTraits(on ? .isSelected : [])
                 .help(on ? "Leave \(harness) out of the comparison" : "Compare \(harness) too")
             }
@@ -115,22 +117,35 @@ private struct ServerGrid: View {
     var showHealth: Bool
     var open: (McpServer) -> Void
 
-    static let nameWidth: CGFloat = 200
-    static let cellWidth: CGFloat = 72
+    /// The name column takes whatever the cells leave, but never less than this.
+    static let nameMinWidth: CGFloat = 180
+    static let cellWidth: CGFloat = 88
+
+    /// At least 88pt, wider when the harness name needs it, so a heading
+    /// like "claude-desktop" shows whole.
+    static func columnWidth(_ harness: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let text = (harness as NSString).size(withAttributes: [.font: font, .kern: 0.12]).width
+        return max(cellWidth, ceil(text) + 16)
+    }
+
+    /// The card's inner width: the grid fills it, and scrolls only past it.
+    @State private var available: CGFloat = 0
 
     var body: some View {
         ScrollView(.horizontal) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 0) {
-                    Text("Server").frame(width: Self.nameWidth, alignment: .leading)
+                    Text("Server").frame(minWidth: Self.nameMinWidth, maxWidth: .infinity, alignment: .leading)
                     ForEach(harnesses, id: \.self) { harness in
                         Text(harness).lineLimit(1).truncationMode(.tail)
-                            .frame(width: Self.cellWidth)
+                            .frame(width: Self.columnWidth(harness))
                             .help(harness)
                     }
                 }
                 .font(Theme.tableHeader)
-                .foregroundStyle(Theme.textSecondary)
+                .tracking(0.12)
+                .foregroundStyle(Theme.tableHeaderText)
                 .padding(.bottom, 8)
                 Divider().overlay(Theme.border)
                 ForEach(servers) { server in
@@ -138,8 +153,13 @@ private struct ServerGrid: View {
                     if server != servers.last { Divider().overlay(Theme.border) }
                 }
             }
+            // Exactly the card's width, or the columns' minimum if wider, so a
+            // long name truncates instead of pushing the harness columns away.
+            .frame(width: max(available, Self.nameMinWidth + harnesses.map(Self.columnWidth).reduce(0, +)),
+                   alignment: .leading)
         }
         .scrollIndicators(.automatic)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { available = $0 }
     }
 }
 
@@ -163,10 +183,10 @@ private struct ServerRow: View {
                         Text(server.transport).font(Theme.caption).foregroundStyle(Theme.textMuted)
                     }
                 }
-                .frame(width: ServerGrid.nameWidth, alignment: .leading)
+                .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
                 let differs = server.conflicts(among: harnesses)
                 ForEach(harnesses, id: \.self) { harness in
-                    Cell(server: server, harness: harness, differs: differs).frame(width: ServerGrid.cellWidth)
+                    Cell(server: server, harness: harness, differs: differs).frame(width: ServerGrid.columnWidth(harness))
                 }
             }
             .padding(.vertical, 8)
@@ -304,29 +324,28 @@ private struct ServerSheet: View {
             Text("Every harness already has this definition.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
         } else {
             if server.groups.count > 1 {
-                Picker("Copy from", selection: Binding(
-                    get: { server.group(of: source).flatMap { server.groups[$0].first } ?? source },
-                    set: { sourceHarness = $0; resetChoice() })) {
-                    ForEach(Array(server.groups.enumerated()), id: \.offset) { index, group in
-                        Text("Definition \(variantLetter(index)) (\(group.joined(separator: ", ")))")
-                            .tag(group.first ?? "")
-                    }
+                HStack(spacing: 10) {
+                    Text("Copy from").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 96, alignment: .leading)
+                    SelectMenu(options: server.groups.enumerated().map { index, group in
+                                   (group.first ?? "", "Definition \(variantLetter(index)) (\(group.joined(separator: ", ")))")
+                               },
+                               selection: Binding(
+                                   get: { server.group(of: source).flatMap { server.groups[$0].first } ?? source },
+                                   set: { sourceHarness = $0; resetChoice() }),
+                               width: 366)
                 }
             } else {
                 Facts(label: "Copy from", value: source)
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(targets.missing, id: \.self) { harness in
-                    Toggle(harness, isOn: binding(harness))
+                    TargetToggle(harness: harness, replaces: false, isOn: binding(harness))
                 }
                 ForEach(targets.differing, id: \.self) { harness in
-                    Toggle(isOn: binding(harness)) {
-                        Text("\(harness)  \(Text("replaces its own definition").foregroundStyle(Theme.textMuted))")
-                    }
+                    TargetToggle(harness: harness, replaces: true, isOn: binding(harness))
                 }
             }
-            .toggleStyle(.checkbox)
-            .font(Theme.bodySmall)
         }
         if let report = done ?? preview {
             Label(report.sentence, systemImage: done != nil ? "checkmark.circle" : "eye")
@@ -405,6 +424,27 @@ private struct ServerSheet: View {
             }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+/// A sync target: the harness, a note when it would lose its own
+/// definition, and the themed switch.
+private struct TargetToggle: View {
+    var harness: String
+    var replaces: Bool
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HarnessIcon(harness: harness, size: 16)
+            Text(harness).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            if replaces {
+                Text("replaces its own definition").font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+            Spacer(minLength: 8)
+            Toggle(replaces ? "\(harness), replaces its own definition" : harness, isOn: $isOn)
+                .toggleStyle(GreenSwitchStyle())
         }
     }
 }
