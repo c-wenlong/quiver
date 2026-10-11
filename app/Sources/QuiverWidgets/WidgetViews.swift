@@ -125,7 +125,8 @@ struct LimitsView: View {
                     .font(.system(size: 11)).foregroundStyle(Palette.textSecondary)
             }
             ForEach(Array(limits), id: \.id) { reading in
-                LimitLine(reading: reading, now: now, compact: family == .systemSmall)
+                LimitLine(reading: reading, now: now, compact: family == .systemSmall,
+                          old: reading.isOld(now: now, fallback: snapshot.generatedAt))
             }
             Spacer(minLength: 0)
         }
@@ -137,10 +138,12 @@ private struct LimitLine: View {
     var reading: LimitReading
     var now: Date
     var compact: Bool
+    /// Stale, or not refreshed lately (Quiver isn't running).
+    var old: Bool
 
     var body: some View {
-        // Stale readings keep their last figure, dimmed; only a window whose
-        // reset time has passed says "reset".
+        // Old readings keep their last figure, dimmed and dated; only a
+        // window whose reset time has passed says "reset".
         let reset = reading.hasReset(now: now)
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
@@ -148,7 +151,10 @@ private struct LimitLine: View {
                 Text(reading.window.isEmpty ? reading.title : "\(reading.title) · \(reading.window)")
                     .font(.system(size: 11, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 4)
-                if !compact, !reset, let resetsAt = reading.resetsAt {
+                if !compact, !reset, old, let taken = reading.fetchedAt {
+                    Text(UsageFormat.ago(taken, now: now))
+                        .font(.system(size: 10)).foregroundStyle(Palette.textSecondary)
+                } else if !compact, !reset, let resetsAt = reading.resetsAt {
                     Text(UsageFormat.resetIn(resetsAt, now: now))
                         .font(.system(size: 10)).foregroundStyle(Palette.textSecondary)
                 }
@@ -157,7 +163,7 @@ private struct LimitLine: View {
             }
             ThinBar(fraction: reset ? 0 : reading.usedPercent / 100, color: Palette.usage(reading.percent))
         }
-        .opacity(reading.isStale ? 0.5 : 1)
+        .opacity(old ? 0.5 : 1)
     }
 }
 

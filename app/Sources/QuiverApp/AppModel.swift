@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import QuiverCore
@@ -124,7 +125,14 @@ final class AppModel {
                 }
                 for await _ in changes { self?.limits.writeWidgets(overview: self?.overview) }
             },
-            Task { await limits.checkNotificationPermission() },
+            // Notifications may be switched on or off in System Settings
+            // while Quiver is in the background.
+            Task { [weak self] in
+                await self?.limits.checkNotificationPermission()
+                for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+                    await self?.limits.checkNotificationPermission()
+                }
+            },
         ]
     }
 

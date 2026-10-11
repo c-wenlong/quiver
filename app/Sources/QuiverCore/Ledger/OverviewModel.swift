@@ -185,7 +185,8 @@ public final class OverviewModel {
         let halfYearRows = await ledger.daily(in: halfYear, calendar: calendar)
         let activity = Self.combineDays(halfYearRows)
         let thirtyDays = OverviewPeriod.thirtyDays.range(now: now, calendar: calendar)
-        let recentModels = Self.models(halfYearRows.filter { $0.day >= calendar.startOfDay(for: thirtyDays.start) })
+        // The same rolling range as the Overview's "30 days", to the minute.
+        let recentModels = Self.models(await ledger.daily(in: thirtyDays, calendar: calendar))
 
         if mySummary == summaryGeneration { self.summary = summary }
         guard mine == loadGeneration else { return }

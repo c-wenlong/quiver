@@ -75,6 +75,18 @@ func reading(
         #expect(reading("a", used: 80).hasReset(now: now) == false)
     }
 
+    @Test func aReadingAgesWhenTheAppStopsRefreshing() {
+        // The widget keeps drawing after Quiver quits; an hours-old figure
+        // must not look current.
+        let fresh = reading("a", used: 50, resetsAt: now + 86_400, fetchedAt: now - 600)
+        #expect(!fresh.isOld(now: now))
+        #expect(fresh.isOld(now: now + 2 * 3_600))
+        #expect(reading("a", used: 50, stale: true).isOld(now: now))
+        // No fetch time: judged by when the snapshot was written instead.
+        #expect(!reading("a", used: 50).isOld(now: now, fallback: now - 60))
+        #expect(reading("a", used: 50).isOld(now: now, fallback: now - 7_200))
+    }
+
     @Test func theTightestIsTheMostUsedFreshWindowThatHasNotReset() {
         let readings = [
             reading("a", used: 60, resetsAt: now + 600),

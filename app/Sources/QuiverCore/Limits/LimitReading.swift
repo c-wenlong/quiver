@@ -47,6 +47,18 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
         !isStale && !hasReset(now: now)
     }
 
+    /// How old a reading may be before the widgets dim it. The app refetches
+    /// every five minutes while it runs; older means it stopped.
+    public static let widgetMaxAge: TimeInterval = 30 * 60
+
+    /// Stale, or not refreshed for `widgetMaxAge`. `fallback` stands in for a
+    /// missing fetch time, such as when the snapshot was written.
+    public func isOld(now: Date, fallback: Date? = nil) -> Bool {
+        guard !isStale else { return true }
+        guard let taken = fetchedAt ?? fallback else { return false }
+        return now.timeIntervalSince(taken) > Self.widgetMaxAge
+    }
+
     /// How old a reading from swe may be before it counts as stale. swe
     /// refreshes every five minutes and the app asks as often, so anything
     /// older is swe's outage fallback (up to a day old), not a fresh fetch.
