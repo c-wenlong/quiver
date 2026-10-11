@@ -413,8 +413,10 @@ private struct PanelOtherRow: View {
             }
             .opacity(old ? 0.55 : 1)
             if let balance = row.limit.extraUsageUSD {
+                // As old as the windows above it, so dimmed with them.
                 Text("Extra usage balance \(UsageFormat.balance(balance))")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .opacity(old ? 0.55 : 1)
             }
         }
         .help(row.limit.fetchedAt.map { "Fetched \(UsageFormat.ago($0, now: .now))" } ?? "Fetch time unknown")

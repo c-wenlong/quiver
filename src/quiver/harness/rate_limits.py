@@ -1787,13 +1787,9 @@ _CURSOR_STATE_DB_CANDIDATES: tuple[str, ...] = (
     "~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
 )
 
-# The two figures Cursor's dashboard quotes, as payload field and column
-# label. ``totalPercentUsed`` is what the dashboard reports when Auto is the
-# selected model (its ``autoModelSelectedDisplayMessage`` says "You've used
-# 50% of your included total usage" against ``totalPercentUsed: 50.2``);
-# ``autoPercentUsed`` is that bucket's own share and is never shown to the
-# user, so it is deliberately not here. ``totalPercentUsed`` is the plan's
-# Included figure, ``autoPercentUsed`` the Auto model's and ``apiPercentUsed``
+# Cursor's usage figures, as payload field and column label.
+# ``totalPercentUsed`` is the plan's Included figure (the dashboard's "You've
+# used 50% of your included total usage" against ``totalPercentUsed: 50.2``), ``autoPercentUsed`` the Auto model's and ``apiPercentUsed``
 # a named model's, the three rows `cursor-agent usage` shows. All are listed;
 # the most-used one is surfaced, as for Claude.
 _CURSOR_BUCKETS: tuple[tuple[str, str], ...] = (
@@ -2405,6 +2401,8 @@ def get_all_rate_limits(
     fetcher_names = {name for name, _fetcher in fetchers}
     raw_cache: dict[str, dict] = {}
     cache_updated_at: dict[str, float] = {}
+    # Older-format readings set aside for a refetch (see the upgrade check).
+    upgrade_fallback: dict[str, RateLimitInfo] = {}
 
     if use_cache:
         loaded = _load_cached()
@@ -2425,8 +2423,15 @@ def get_all_rate_limits(
                 # Saved by an swe from before these tools listed every
                 # window (or by an older swe still running): refetch rather
                 # than serve one window as the whole reading for the TTL.
+                # Kept as the fallback in case that refetch fails.
                 if (name in _MULTI_WINDOW_TOOLS and isinstance(raw, dict)
                         and "windows" not in raw):
+                    try:
+                        old = RateLimitInfo(**raw)
+                        old.fetched_at = old.fetched_at or fresh_at[name]
+                        upgrade_fallback[name] = old
+                    except (TypeError, ValueError):
+                        pass
                     continue
                 try:
                     info = RateLimitInfo(**raw)
@@ -2488,6 +2493,14 @@ def get_all_rate_limits(
     empty_fetchers: set[str] = set()
     for tool_name, _fetcher in fetchers:
         info = completed.get(tool_name)
+        if not info and tool_name in upgrade_fallback and tool_name not in result:
+            # The refetch of an older-format reading failed: keep that
+            # reading, dated, rather than drop the provider.
+            old = upgrade_fallback[tool_name]
+            result[tool_name] = old
+            raw_cache[tool_name] = asdict(old)
+            cache_updated_at[tool_name] = old.fetched_at
+            continue
         if info:
             info.fetched_at = info.fetched_at or time.time()
             result[tool_name] = info

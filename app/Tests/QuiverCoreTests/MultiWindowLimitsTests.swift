@@ -48,6 +48,39 @@ private let older = #"""
         #expect(readings.last?.resetsAt == Date(timeIntervalSince1970: 1789286400))
     }
 
+    @Test func aMalformedWindowListOrBalanceLeavesTheReadingIntact() throws {
+        let bad = older.replacingOccurrences(of: #""fetched_at""#,
+            with: #""windows":[{"window":7}],"extra_usage_usd":"lots","fetched_at""#)
+        let limit = try decode(bad)
+        #expect(limit.usedPercent == 5)
+        #expect(limit.allWindows.map(\.window) == ["1d"])
+        #expect(limit.extraUsageUSD == nil)
+    }
+
+    @Test func anEmptyWindowListFallsBackToTheTopLevelReading() throws {
+        let empty = older.replacingOccurrences(of: #""fetched_at""#, with: #""windows":[],"fetched_at""#)
+        #expect(try decode(empty).allWindows.map(\.window) == ["1d"])
+    }
+
+    @Test func savedCursorAutoChoicesMoveToIncludedOnce() {
+        let name = "MultiWindowLimitsTests.\(UUID().uuidString)"
+        let store = UserDefaults(suiteName: name)!
+        store.removePersistentDomain(forName: name)
+        store.set("cursor|auto", forKey: MenuBarDisplay.Key.watchedLimit)
+        store.set(["cursor": ["auto", "api"], "claude": ["auto"]], forKey: MenuBarPopup.Key.hiddenWindows)
+        MenuBarMigrations.run(on: store)
+        #expect(MenuBarDisplay(defaults: store).watchedLimit == "cursor|included")
+        let popup = MenuBarPopup(defaults: store)
+        #expect(!popup.shows(window: "included", of: "cursor"))
+        #expect(popup.shows(window: "auto", of: "cursor"))
+        #expect(!popup.shows(window: "api", of: "cursor"))
+        #expect(!popup.shows(window: "auto", of: "claude"))
+        // A choice made after the upgrade is left alone.
+        store.set("cursor|auto", forKey: MenuBarDisplay.Key.watchedLimit)
+        MenuBarMigrations.run(on: store)
+        #expect(MenuBarDisplay(defaults: store).watchedLimit == "cursor|auto")
+    }
+
     @Test func aBalanceShowsToTheCent() {
         #expect(UsageFormat.balance(9868.98) == "$9,868.98")
         #expect(UsageFormat.balance(0) == "$0.00")

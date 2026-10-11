@@ -33,6 +33,9 @@ final class AppModel {
     }
 
     /// Which terminal Open in Terminal and Sign in use.
+    /// Saved menu bar choices brought up to date before they're read.
+    @ObservationIgnored private let migrated: Void = MenuBarMigrations.run(on: .standard)
+
     /// What the menu bar item shows, and whether it's there at all.
     var menuBar = MenuBarDisplay(defaults: .standard) {
         didSet { menuBar.save(to: .standard) }
