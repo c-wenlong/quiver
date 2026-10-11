@@ -509,6 +509,53 @@ class SkillsListLivePluginTest(unittest.TestCase):
         self.assertNotIn("saw", skills)
         self.assertEqual(skills["hammer"]["harnesses"], [])
 
+    def test_an_empty_install_record_is_not_an_install(self):
+        (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+            json.dumps({"version": 2, "plugins": {"toolkit@kit": []}}))
+        skills, _ = self.plugin_skills()
+        self.assertNotIn("saw", skills)
+        self.assertEqual(skills["hammer"]["harnesses"], [])
+
+    def test_a_skill_folder_two_plugins_share_loads_if_either_is_enabled(self):
+        (self.market / ".claude-plugin" / "marketplace.json").write_text(json.dumps({
+            "name": "kit", "plugins": [{"name": "toolkit", "source": "./src/probe-dir"},
+                                       {"name": "spare", "source": "./spare"}]}))
+        (self.market / "spare").mkdir()
+        (self.market / "spare" / "skills").symlink_to(self.source / "skills")
+        spare = self.home / ".claude" / "plugins" / "cache" / "kit" / "spare" / "1.0.0"
+        write_skill(spare / "skills", "hammer")
+        (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps({
+            "version": 2,
+            "plugins": {"toolkit@kit": [{"scope": "user", "installPath": str(self.cache / "1.0.0")}],
+                        "spare@kit": [{"scope": "user", "installPath": str(spare)}]}}))
+        for disabled in ("spare@kit", "toolkit@kit"):
+            (self.home / ".claude" / "settings.json").write_text(
+                json.dumps({"enabledPlugins": {disabled: False}}))
+            skills, names = self.plugin_skills()
+            self.assertEqual(sorted(names), ["hammer", "saw"])
+            self.assertEqual(skills["hammer"]["harnesses"], ["claude"])
+
+    def test_a_source_linked_to_another_harness_keeps_both(self):
+        import shutil
+        shutil.rmtree(self.source / "skills")
+        builtin = self.home / ".cursor" / "skills-cursor"
+        write_skill(builtin, "hammer")
+        write_skill(builtin, "saw")
+        (self.source / "skills").symlink_to(builtin)
+        result = run_swe(self.home, "skills", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = [s for s in decode(result)["data"]["skills"] if s["name"] == "hammer"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["root"], "claude-plugin")
+        self.assertEqual(rows[0]["harnesses"], ["claude", "cursor"])
+
+    def test_skills_are_found_the_way_the_cache_walk_found_them(self):
+        # discover_skills does not skip dot folders, so neither does the source.
+        write_skill(self.source / "skills" / ".internal", "check")
+        skills, _ = self.plugin_skills()
+        self.assertEqual(skills["check"]["path"],
+                         str((self.source / "skills" / ".internal" / "check").resolve()))
+
     def test_the_listing_writes_nothing(self):
         before = snapshot(self.home)
         self.plugin_skills()

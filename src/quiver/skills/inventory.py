@@ -171,6 +171,12 @@ def _claude_plugin_loads(home: Path):
     live_cache: set[tuple[str, str]] = set()   # (marketplace, plugin) cache dirs
     live: dict[Path, bool] = {}
     for ref, entries in (plugins.items() if isinstance(plugins, dict) else []):
+        paths = [entry["installPath"]
+                 for entry in (entries if isinstance(entries, list) else [entries])
+                 if isinstance(entry, dict) and isinstance(entry.get("installPath"), str)
+                 and entry["installPath"]]
+        if not paths:
+            continue   # no usable install record: claude has not installed it
         source = _claude_live_source(markets, ref)
         if source is not None:
             real_source = _real_path(source)
@@ -179,9 +185,8 @@ def _claude_plugin_loads(home: Path):
                 live[real_source] = live.get(real_source, False) or loads
                 plugin, _, market = ref.partition("@")
                 live_cache.add((market, plugin))
-        for entry in entries if isinstance(entries, list) else [entries]:
-            path = entry.get("installPath") if isinstance(entry, dict) else None
-            if not isinstance(path, str) or not path or cache_real is None:
+        for path in paths:
+            if cache_real is None:
                 continue
             real = _real_path(Path(path).expanduser())
             if real is None or not _under(real, cache_real):
@@ -263,40 +268,47 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
     claude_loads, claude_live = _claude_plugin_loads(home)
     # Claude reads these plugins from their source folder, so their skills
     # are listed from there and from nowhere else: not from the cache
-    # snapshot, and not a second time under a catalog that covers the folder.
-    live: dict[Path, tuple[dict, bool]] = {}
+    # snapshot, and not a second time under another root that reaches the
+    # same folder (a catalog, a second plugin linking to it). Such a row's
+    # harness still sees the skill, so its owner joins the one row.
+    live: dict[Path, list] = {}   # real folder -> [name, description, owners]
     for source, loads in sorted(claude_live.items()):
-        for skill in _plugin_skills(source):
-            real = _real_path(Path(skill["path"]))
-            if real is not None:
-                live.setdefault(real, (skill, loads))
+        for folder, name, description in _walk_skills(source / "skills"):
+            real = _real_path(folder)
+            if real is None:
+                continue
+            row = live.setdefault(real, [name, description, set()])
+            if loads:
+                row[2].add("claude")
 
-    rows = []   # (name, description, folder, root label, harness that owns it)
+    rows = []   # (name, description, folder, root label, harnesses that own it)
     for skill in discover_skills(home=home, cwd=cwd, visibility=False):
         folder = Path(skill["path"]).parent
-        if _real_path(folder) in live:
-            continue
         owner = PLUGIN_ROOTS.get(skill["scope"]) or BUILTIN_ROOTS.get(skill["scope"])
+        real = _real_path(folder)
+        if real in live:
+            if owner and skill["scope"] != "claude-plugin":
+                live[real][2].add(owner)
+            continue
         if skill["scope"] == "claude-plugin":
             load = claude_loads(folder)
             if load in ("superseded", "live"):
                 continue
             if load == "unloaded":
                 owner = None
-        rows.append((skill["name"], skill["description"], folder, skill["scope"], owner))
-    for skill, loads in live.values():
-        rows.append((skill["name"], skill["description"], Path(skill["path"]),
-                     "claude-plugin", "claude" if loads else None))
+        rows.append((skill["name"], skill["description"], folder, skill["scope"],
+                     {owner} if owner else set()))
+    for real, (name, description, owners) in live.items():
+        rows.append((name, description, real, "claude-plugin", owners))
 
     skills = []
-    for name, description, folder, label, owner in rows:
+    for name, description, folder, label, owners in rows:
         real = _real_path(folder)
         seen_by: list[str] = []
         for harness, root in real_roots:
             if real is not None and _under(real, root) and harness not in seen_by:
                 seen_by.append(harness)
-        if owner and owner not in seen_by:
-            seen_by.append(owner)
+        seen_by += [owner for owner in owners if owner not in seen_by]
         skills.append({
             "name": name,
             "description": description,
@@ -311,6 +323,22 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
         "harnesses": harnesses,
         "skills": skills,
     }
+
+
+def _walk_skills(root: Path):
+    """``(folder, name, description)`` for each SKILL.md under ``root``.
+
+    The same walk ``discover_skills`` makes of a root, so a plugin read from
+    its source shows exactly the skills its cached copy would have.
+    """
+    try:
+        root_real = root.resolve()
+    except (OSError, RuntimeError):
+        return
+    for dirpath, _dirnames, filenames in os.walk(root_real):
+        if "SKILL.md" in filenames:
+            name, description = parse_skill_md(Path(dirpath) / "SKILL.md")
+            yield Path(dirpath), name, description
 
 
 def _plugin_skills(plugin_dir: Path) -> list[dict]:
