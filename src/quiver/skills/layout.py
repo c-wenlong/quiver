@@ -284,6 +284,12 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
             f"Pass a known root ({', '.join(known[:8])}...) "
             f"or an explicit path like ./{ref}."
         )
+    if path.name == "skills":
+        # ~/.hermes/skills is hermes's root, not a root called "skills":
+        # the label is what the link record and the --json reply carry.
+        from quiver.init.layout import skill_root_label
+
+        return skill_root_label(path, home), path
     slug = path.name or "custom"
     return slug, path
 

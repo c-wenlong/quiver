@@ -105,6 +105,21 @@ class SkillsLinkJsonTest(unittest.TestCase):
         self.assertEqual(data["harness"], "claude")
         self.assertEqual(root.resolve(), self.shared.resolve())
 
+    def test_a_root_without_a_label_is_named_after_its_harness(self):
+        # hermes is not in swe skills' label table, so only a path reaches it.
+        root = self.home / ".hermes" / "skills"
+        root.parent.mkdir()
+        result = run_swe(self.home, "skills", "link", str(root), "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(decode(result)["data"]["harness"], "hermes")
+        self.assertEqual(root.resolve(), self.shared.resolve())
+
+        result = run_swe(self.home, "skills", "unlink", str(root), "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(decode(result)["data"]["harness"], "hermes")
+        self.assertFalse(root.is_symlink())
+        self.assertTrue((self.shared / "alpha" / "SKILL.md").is_file())
+
     def test_a_refused_link_leaves_stdout_empty(self):
         # codex holds a skill nobody else has: linking without --force refuses.
         root = self.home / ".codex" / "skills"
