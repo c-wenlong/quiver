@@ -149,6 +149,13 @@ private struct SettingsSectionView: View {
                     SettingRow(title: "App icon", detail: "The Dock shows this one. Finder keeps the light icon.") {
                         Tabs(options: AppIconStyle.allCases.map { ($0, $0.title) }, selection: $app.appIcon)
                     }
+                    SettingsDivider()
+                    SettingRow(title: "Show in Dock",
+                               detail: "Off keeps Quiver out of the Dock and the app switcher. Open it from the menu bar.",
+                               warning: !app.showsInDock && !app.menuBar.isVisible
+                                   ? "The menu bar item is off in Menu bar and widgets, so Quiver stays in the Dock." : nil) {
+                        SettingSwitch(title: "Show in Dock", isOn: $app.showsInDock)
+                    }
                 }
             case .notifications:
                 SettingsCard {
