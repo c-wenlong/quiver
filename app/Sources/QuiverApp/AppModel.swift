@@ -32,6 +32,11 @@ final class AppModel {
     }
 
     /// Which terminal Open in Terminal and Sign in use.
+    /// What the menu bar item shows, and whether it's there at all.
+    var menuBar = MenuBarDisplay(defaults: .standard) {
+        didSet { menuBar.save(to: .standard) }
+    }
+
     var terminal: TerminalApp {
         didSet { UserDefaults.standard.set(terminal.rawValue, forKey: "terminalApp") }
     }

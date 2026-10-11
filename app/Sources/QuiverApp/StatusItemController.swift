@@ -29,32 +29,46 @@ final class StatusItemController: NSObject {
             button.target = self
             button.imagePosition = .imageLeading
         }
-        show(nil)
+        show(model.menuBar, limit: nil, today: nil)
         Task { [weak self] in
-            let changes = Observations { [weak model] in model?.limits.tightest }
-            for await tightest in changes { self?.show(tightest) }
+            // `tightest` too: the minute timer moves it when a window resets,
+            // even if the readings themselves don't change.
+            let changes = Observations { [weak model] in
+                model.map { ($0.menuBar, $0.limits.readings, $0.limits.tightest,
+                             MenuBarDisplay.today(in: $0.overview?.spend)) }
+            }
+            for await change in changes {
+                guard let (display, readings, _, today) = change else { continue }
+                self?.show(display, limit: display.limit(in: readings, now: .now), today: today)
+            }
         }
     }
 
-    /// The tightest limit at a glance: a ring filled to its used share and
-    /// the percentage. Red from 90%, like the bars; monochrome below.
-    private func show(_ tightest: LimitReading??) {
+    /// The watched limit's ring, then whatever figures the Menu bar and
+    /// widgets page chose (nothing by default). Red from 90%, like the bars;
+    /// monochrome below. Hidden altogether when switched off there.
+    private func show(_ display: MenuBarDisplay, limit: LimitReading?, today: UsageTotals?) {
+        item.isVisible = display.isVisible
+        if !display.isVisible { close() }
         guard let button = item.button else { return }
-        guard let reading = tightest ?? nil else {
+        let text = display.text(limit: limit, today: today)
+        button.attributedTitle = NSAttributedString(
+            string: text.isEmpty ? "" : " \(text)",
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)])
+        guard let limit else {
             button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent",
                                    accessibilityDescription: "Quiver")
-            button.attributedTitle = NSAttributedString()
-            button.toolTip = "Quiver"
+            button.toolTip = text.isEmpty ? "Quiver" : "Quiver: \(text)"
+            button.setAccessibilityLabel(text.isEmpty ? "Quiver" : "Quiver. \(text)")
             return
         }
-        let percent = reading.percent
-        button.image = LimitRing.image(fraction: reading.usedPercent / 100, critical: percent >= 90)
-        button.attributedTitle = NSAttributedString(
-            string: " \(percent)%",
-            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)])
-        let window = reading.window.isEmpty ? "" : " \(reading.window)"
-        button.toolTip = "Tightest limit: \(reading.title)\(window) at \(percent)%"
-        button.setAccessibilityLabel("Quiver. \(reading.title)\(window) limit at \(percent) percent")
+        let percent = limit.percent
+        button.image = LimitRing.image(fraction: limit.usedPercent / 100, critical: percent >= 90)
+        let window = limit.window.isEmpty ? "" : " \(limit.window)"
+        button.toolTip = "\(limit.title)\(window) at \(percent)%"
+        // VoiceOver hears the same figures the item shows.
+        let shown = text.isEmpty ? "" : ". Showing \(text)"
+        button.setAccessibilityLabel("Quiver. \(limit.title)\(window) limit at \(percent) percent\(shown)")
     }
 
     @objc private func toggle() {
