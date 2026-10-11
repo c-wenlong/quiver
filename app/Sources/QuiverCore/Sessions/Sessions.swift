@@ -135,11 +135,15 @@ public enum SessionResume {
 @Observable
 public final class SessionsModel {
     public struct Row: Identifiable, Equatable, Sendable {
-        public var id: String { session.id }
+        /// The session id, or for a session from an extra account the
+        /// account home plus id: one session copied into two accounts is
+        /// two rows.
+        public var id: String
         public var session: SessionInfo
         public var usage: SessionUsage?
 
-        public init(session: SessionInfo, usage: SessionUsage?) {
+        public init(session: SessionInfo, usage: SessionUsage?, id: String? = nil) {
+            self.id = id ?? session.id
             self.session = session
             self.usage = usage
         }
@@ -267,49 +271,79 @@ public final class SessionsModel {
         rows = join(listed, usage)
     }
 
-    private var latestUsage: [String: SessionUsage]?
+    private var latestUsage: [UsageKey: SessionUsage]?
+
+    /// Usage per harness, account home and session.
+    struct UsageKey: Hashable {
+        var harness: String
+        var account: String
+        var session: String
+    }
 
     /// Every session's usage over its whole history: a session resumed
     /// today may have started months ago.
-    private func usageBySession() async -> [String: SessionUsage] {
+    private func usageBySession() async -> [UsageKey: SessionUsage] {
         let usage = await ledger.bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0), end: now()))
-        var byId: [String: SessionUsage] = [:]
+        var byKey: [UsageKey: SessionUsage] = [:]
         for row in usage {
-            if var existing = byId[row.sessionId] {
+            let key = UsageKey(harness: row.harness, account: row.accountHome, session: row.sessionId)
+            if var existing = byKey[key] {
                 existing.totals.add(row.totals)
                 existing.models = Array(Set(existing.models + row.models)).sorted()
                 existing.firstTimestamp = min(existing.firstTimestamp, row.firstTimestamp)
                 existing.lastTimestamp = max(existing.lastTimestamp, row.lastTimestamp)
                 existing.cwd = existing.cwd ?? row.cwd
-                byId[row.sessionId] = existing
+                byKey[key] = existing
             } else {
-                byId[row.sessionId] = row
+                byKey[key] = row
             }
         }
-        return byId
+        return byKey
     }
 
-    private func join(_ sessions: [SessionInfo], _ usage: [String: SessionUsage]) -> [Row] {
-        var rows = sessions.map { Row(session: $0, usage: usage[$0.id]) }
-        let listedIds = Set(sessions.map(\.id))
+    /// Harnesses Quiver keeps extra accounts for; swe reads only their default home.
+    private static let accountHarnesses: Set<String> = ["claude", "codex"]
+
+    private func join(_ sessions: [SessionInfo], _ usage: [UsageKey: SessionUsage]) -> [Row] {
+        var byHarnessAndId: [String: [SessionUsage]] = [:]
+        for (key, use) in usage { byHarnessAndId["\(key.harness)|\(key.session)", default: []].append(use) }
+
+        // swe's rows: Claude and Codex from their default home only; other
+        // harnesses have one store each, whatever its folder.
+        var rows = sessions.map { session -> Row in
+            let candidates = byHarnessAndId["\(session.harness)|\(session.id)"] ?? []
+            let use = Self.accountHarnesses.contains(session.harness)
+                ? candidates.first { defaultHomes.contains($0.accountHome) }
+                : candidates.max { $0.lastTimestamp < $1.lastTimestamp }
+            return Row(session: session, usage: use)
+        }
+        // Sessions in extra accounts, which swe never lists.
         let since = now().addingTimeInterval(-Double(Self.days) * 86_400)
-        for (id, use) in usage where !listedIds.contains(id) && !defaultHomes.contains(use.accountHome)
-            && use.lastTimestamp >= since {
-            guard let resume = Self.resumeArgv(harness: use.harness, id: id) else { continue }
+        for (key, use) in usage where Self.accountHarnesses.contains(key.harness)
+            && !defaultHomes.contains(key.account) && use.lastTimestamp >= since {
+            let argv = Self.resumeArgv(harness: key.harness, id: key.session)
             let session = SessionInfo(
-                id: id, harness: use.harness, agent: UsageFormat.harness(use.harness), cwd: use.cwd,
+                id: key.session, harness: key.harness, agent: UsageFormat.harness(key.harness), cwd: use.cwd,
                 title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil,
-                resume: .init(argv: resume, cwd: use.cwd))
-            rows.append(Row(session: session, usage: use))
+                resume: argv.map { .init(argv: $0, cwd: use.cwd) })
+            rows.append(Row(session: session, usage: use, id: "\(key.account)|\(key.session)"))
         }
         return rows.sorted { ($0.session.lastActiveAt, $1.id) > ($1.session.lastActiveAt, $0.id) }
+    }
+
+    static func codexThreadId(_ id: String) -> String? {
+        guard let range = id.range(of: #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#,
+                                   options: .regularExpression) else { return nil }
+        return id[range].lowercased()
     }
 
     /// How each CLI resumes a session by id.
     static func resumeArgv(harness: String, id: String) -> [String]? {
         switch harness {
         case "claude": ["claude", "--resume", id]
-        case "codex": ["codex", "resume", id]
+        // The ledger's Codex id is the rollout file's stem; `codex resume`
+        // takes the thread uuid at its end (as swe's `_codex_resume_args`).
+        case "codex": codexThreadId(id).map { ["codex", "resume", $0] }
         default: nil
         }
     }

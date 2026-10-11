@@ -229,7 +229,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         let stray = usage("d1", "claude", models: [], cost: 1)
         let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)], [work, old, stray])
         await model.load()
-        #expect(model.rows.map(\.id) == ["a", "w1"])
+        #expect(model.rows.map(\.session.id) == ["a", "w1"])
         let row = try #require(model.rows.last)
         #expect(row.session.harness == "claude")
         #expect(row.session.cwd == "/c/quiver")
@@ -237,6 +237,34 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(row.session.resume == SessionInfo.Resume(argv: ["claude", "--resume", "w1"], cwd: "/c/quiver"))
         #expect(row.session.lastActiveAt == work.lastTimestamp)
         #expect(row.usage?.accountHome == "/Users/k/.quiver/accounts/claude/w/home")
+    }
+
+    @Test func codexSessionsResumeByTheirThreadId() async throws {
+        let home = "/Users/k/.quiver/accounts/codex/x/home"
+        var rollout = usage("rollout-2026-09-09T14-52-42-0199ABCD-1111-2222-3333-444455556666", "codex",
+                            models: [], cost: 1, home: home)
+        rollout.lastTimestamp = now
+        var odd = usage("no-uuid-here", "codex", models: [], cost: 1, home: home)
+        odd.lastTimestamp = now.addingTimeInterval(-60)
+        let model = await model([], [rollout, odd])
+        await model.load()
+        #expect(model.rows.map { $0.session.resume?.argv } == [
+            ["codex", "resume", "0199abcd-1111-2222-3333-444455556666"], nil,
+        ])
+    }
+
+    @Test func aSessionCopiedAcrossAccountsKeepsEachAccountApart() async throws {
+        let extra = "/Users/k/.quiver/accounts/claude/w/home"
+        var mine = usage("s1", "claude", models: [], cost: 1)
+        mine.lastTimestamp = now
+        var theirs = usage("s1", "claude", models: [], cost: 2, home: extra)
+        theirs.lastTimestamp = now.addingTimeInterval(-3600)   // before swe's row
+        let model = await model([session("s1", "claude", cwd: nil, at: 1_791_699_000)], [theirs, mine])
+        await model.load()
+        #expect(model.rows.count == 2)
+        #expect(Set(model.rows.map(\.id)).count == 2)
+        #expect(model.rows.map(\.usage?.accountHome) == ["/Users/k/.claude", extra])
+        #expect(model.rows.map(\.usage?.totals.costUSD) == [1, 2])
     }
 
     @Test func usageRefreshesWithoutListingAgain() async throws {
