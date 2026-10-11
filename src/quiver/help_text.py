@@ -435,6 +435,35 @@ to use their own login state and environment."""
 
   Read-only. {c('cyan', 'swe init')} is what changes anything."""
     ),
+    "plugins": (
+        "Every plugin in every marketplace, and install it per harness",
+        f"""\
+  {c('cyan', 'swe plugins')}                       Every marketplace claude, codex or cursor has registered
+  {c('cyan', 'swe plugins catalog <marketplace>')}   One marketplace's plugins and their state per harness
+  {c('cyan', 'swe plugins catalog --json')}          The whole catalog as JSON (the app's Plugins page)
+  {c('cyan', 'swe plugins install <ref> --harness=claude|codex')}
+  {c('cyan', 'swe plugins uninstall <ref> --harness=claude|codex')}
+  {c('cyan', 'swe plugins enable <ref> --harness=claude|codex')}
+  {c('cyan', 'swe plugins disable <ref> --harness=claude|codex')}
+
+  A {c('bold', 'ref')} is {c('cyan', '<plugin>@<marketplace>')}, the name both CLIs use. The catalog
+  lists installed and uninstalled plugins alike, plus anything installed
+  whose marketplace has no readable manifest. It reads files only, never
+  the network: a marketplace shows what its last fetch left on disk.
+
+{c('bold', 'Actions')}  Each one checks first and does nothing if the plugin is
+  already in that state, then runs the harness's own CLI:
+  claude   claude plugin install|uninstall|enable|disable <ref>
+  codex    codex plugin add|remove <ref>
+  Codex has no enable verb, so enable and disable set
+  [plugins."<ref>"] enabled in ~/.codex/config.toml, an edit swe checks
+  parses back to the same file with only that flag changed. When it cannot
+  prove that, it writes nothing and says what to edit by hand.
+  Cursor is read-only: it keeps no install record swe can read.
+
+  {c('dim', 'Collision: swe find also has a --harness, but it means active|all there.')}
+  {c('dim', 'swe find plugins shows drift between ~/.quiver/plugins and each harness.')}"""
+    ),
     "init": (
         "Create ~/.quiver and symlink every harness to it",
         f"""\
@@ -551,6 +580,7 @@ COMMAND_CATEGORIES = [
     ]),
     ("Reference", [
         ("find",    None),
+        ("plugins", None),
         ("skills",  "sk"),
         ("tags",    None),
         ("aliases", None),

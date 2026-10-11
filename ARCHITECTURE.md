@@ -382,6 +382,8 @@ and the app refuses a schema it does not know rather than misreading it.
 | `swe mcp sync <source> <targets…> --json` | `source`, `dry_run`, `selected`, `targets`: name with `added`, `updated`, `skipped`, `pruned` server names; implies `--no-interactive` |
 | `swe find plugins --json` | `sources` (plugins under `~/.quiver/plugins`), `drift`: id, harness, marketplace, plugin, ref, kind, detail, fix, `runnable`, paths |
 | `swe find plugins --fix=<id> --json` | `fixed`: the finding whose commands ran |
+| `swe plugins catalog --json` | `harnesses` read, `actions` (harnesses swe can act in), `errors`, and `marketplaces`: name, `hub`, `path`, `description`, per-harness `source_type`/`location`/`manifest`/`readable`, and `plugins`: name, `ref`, metadata, `listed`, `source_path`, `components`, `skills` (with the `harnesses` whose loaded copy has each), per-harness `available`/`installed`/`enabled`/`version`/`scope`/`path`/`copies`, and `drift` (hub plugins only, as in `swe skills hub`) |
+| `swe plugins install\|uninstall\|enable\|disable <ref> --harness=claude\|codex --json` | `action`, `harness`, `ref`, `changed`, `detail` (why nothing changed), `ran` (argv lists), `edited` (config.toml for a codex enable/disable), `output`, and the new `state` |
 | `swe doctor --json` | `ok` and `findings` (check, severity, message, fix); exit status unchanged |
 
 A rate limit's `fetched_at` is when the reading was taken. A value served
@@ -408,6 +410,7 @@ swe <domain> <verb>                 domains: everything else
   harness    star · archive · discover · list · edit
   mcp        discover · list · status · sync · diff · edit · validate · doctor
   find       amd · skills · plugins · mcps
+  plugins    catalog · install · uninstall · enable · disable
   providers  list · info · add · remove
   report     daily · weekly · followups · warnings
   skills     list · tree · link · unlink · move · discover · catalog · scope
