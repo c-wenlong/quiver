@@ -527,9 +527,11 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
         from quiver.harness import commands
 
         asked = []
+        self.deadlines = []
 
         def fake_get_all(use_cache=True, tool_names=None, deadline=None):
             asked.append(set(tool_names))
+            self.deadlines.append(deadline)
             return {}
 
         registry = {name: {"command": name, "tags": []} for name in ("claude", "codex", "devin")}
@@ -552,6 +554,18 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
             # The table path ends without an explicit status; JSON returns 0.
             self.assertIn(commands.cmd_list(list(args)), (0, None))
         return asked
+
+    def test_json_usage_waits_out_a_slow_first_fetch(self):
+        # The app reads limits through --json from a fresh process each time,
+        # where a provider's first fetch can take over the 2s piped cap; under
+        # that cap it would always fall back to an old cached reading.
+        from quiver.harness.rate_limits import _RATE_LIMIT_FETCH_DEADLINE_TTY
+        self.run_list("--usage", "--json")
+        self.assertEqual(self.deadlines, [_RATE_LIMIT_FETCH_DEADLINE_TTY])
+
+    def test_piped_table_keeps_the_short_cap(self):
+        self.run_list("--usage")
+        self.assertEqual(self.deadlines, [None])
 
     def test_json_refresh_never_asks_an_excluded_provider(self):
         asked = self.run_list("--usage", "--json", "-r", "--exclude=claude,codex")
