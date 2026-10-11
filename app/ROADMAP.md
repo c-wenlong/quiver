@@ -80,11 +80,11 @@ Modelled on TokenTracker's Sessions page.
 - [ ] Session detail sheet
 
 ### M5. Manage
-- [ ] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills`
-- [x] AGENTS.md and CLAUDE.md, global and per project: edit in place, link status per harness
-- [x] MCP servers: list by harness, diff, sync (`swe mcp sync --json`)
-- [x] Plugins: drift findings with one-click fixes (`swe find plugins --fix=<id>`)
-- [ ] Harnesses: discover installed ones, star and archive them
+- [x] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills` ([#144](https://github.com/c-wenlong/quiver/pull/144))
+- [x] AGENTS.md and CLAUDE.md, global and per project: edit in place, link status per harness ([#142](https://github.com/c-wenlong/quiver/pull/142))
+- [x] MCP servers: list by harness, diff, sync (`swe mcp sync --json`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
+- [x] Plugins: drift findings with one-click fixes (`swe find plugins --fix=<id>`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
+- [x] Harnesses: discover installed ones, star and archive them ([#144](https://github.com/c-wenlong/quiver/pull/144))
 - [ ] Launch a session in the right folder with one click
 
 ### M6. Menu bar, widgets and shipping
