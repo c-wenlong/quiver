@@ -124,6 +124,8 @@ struct PageView: View {
             PluginsPage()
         case .apiKeys:
             APIKeysPage()
+        case .menuBar:
+            MenuBarWidgetsPage()
         case .serviceStatus:
             ServiceStatusPage()
         case .harnesses:
