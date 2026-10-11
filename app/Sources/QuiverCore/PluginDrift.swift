@@ -3,7 +3,9 @@ import Observation
 
 /// `swe find plugins --json`: where the plugins in `~/.quiver/plugins` have
 /// not reached Claude Code or Codex.
-public struct PluginDriftReport: Decodable, Sendable, Equatable {
+public struct PluginDriftReport: SnapshotValue {
+    public static let snapshotVersion = 1
+
     /// Plugins under `~/.quiver/plugins`; 0 means there is nothing to reach.
     public let sources: Int
     public let drift: [PluginDrift]
@@ -14,7 +16,7 @@ public struct PluginDriftReport: Decodable, Sendable, Equatable {
     }
 }
 
-public struct PluginDrift: Decodable, Sendable, Equatable, Identifiable {
+public struct PluginDrift: Codable, Sendable, Equatable, Identifiable {
     /// `<harness>:<kind>:<ref>`, which `swe find plugins --fix=` takes.
     public let id: String
     public let harness: String
@@ -76,34 +78,40 @@ struct FixedDrift: Decodable { let fixed: PluginDrift }
 @MainActor
 @Observable
 public final class PluginsModel {
-    public private(set) var state: Loadable<PluginDriftReport> = .idle
+    public var state: Loadable<PluginDriftReport> { loader.state }
     /// The finding whose fix is running.
     public private(set) var fixing: String?
     public private(set) var fixError: String?
     /// The last fix that ran, for a one-line confirmation.
     public private(set) var lastFixed: String?
-    private var generation = 0
+    private let loader: SnapshotLoader<PluginDriftReport>
 
-    public init() {}
+    /// - Parameter snapshots: where the last report is kept between launches.
+    public init(snapshots: (any SnapshotStoring<Snapshot<PluginDriftReport>>)? = nil, maxAge: TimeInterval = 60,
+                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
+        loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
+    }
 
-    public func load(swe: SweClient) async {
-        generation += 1
-        let mine = generation
-        if case .loaded = state {} else { state = .loading }
-        let next: Loadable<PluginDriftReport>
-        do {
-            next = .loaded(try await swe.pluginDrift())
-        } catch is CancellationError {
-            return
-        } catch {
-            next = .failed(error.localizedDescription)
-        }
-        if mine == generation { state = next }
+    /// Shows the last saved report until swe answers.
+    public func restore() async {
+        await loader.restore()
+    }
+
+    /// Checks again unless this swe's report is fresh; joins a check in flight.
+    public func loadIfStale(swe: SweClient, for source: String) async {
+        await loader.loadIfStale(from: source) { try await swe.pluginDrift() }
+    }
+
+    /// Always checks. `source` is the swe asked, as set in Settings; nil keeps the last one.
+    public func load(swe: SweClient, for source: String? = nil) async {
+        await loader.load(from: source) { try await swe.pluginDrift() }
     }
 
     /// Runs the fix for `finding`, then reloads. Call only after the user
     /// has confirmed the command.
-    public func fix(_ finding: PluginDrift, swe: SweClient) async {
+    /// - Parameter source: the swe `swe` is, as set in Settings. The reload
+    ///   is dropped if another swe was picked meanwhile; nil reloads anyway.
+    public func fix(_ finding: PluginDrift, swe: SweClient, for source: String? = nil) async {
         guard fixing == nil, finding.runnable else { return }
         fixing = finding.id
         fixError = nil
@@ -115,6 +123,10 @@ public final class PluginsModel {
         } catch {
             fixError = error.localizedDescription
         }
-        await load(swe: swe)
+        if let source {
+            await loader.reload(from: source) { try await swe.pluginDrift() }
+        } else {
+            await load(swe: swe)
+        }
     }
 }
