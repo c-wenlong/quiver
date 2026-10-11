@@ -284,8 +284,9 @@ public final class SkillsModel {
     public var harness: String?
     public var source: Skill.Source?
 
-    /// The swe chosen in Settings; a new one is used from the next load.
-    public var swe: SweClient
+    /// The swe chosen in Settings and its path; a new one is used from the next load.
+    public private(set) var swe: SweClient
+    private var sweSource: String?
     private let gate = SerialGate()
     private let skills: SnapshotLoader<SkillInventory>
     private let hubLoader: SnapshotLoader<HubCatalog>
@@ -302,6 +303,12 @@ public final class SkillsModel {
         self.swe = swe
         skills = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
         hubLoader = SnapshotLoader(snapshots: hubSnapshots, maxAge: maxAge, timeout: timeout, now: now)
+    }
+
+    /// Switches to the swe picked in Settings.
+    public func use(_ swe: SweClient, for source: String) {
+        self.swe = swe
+        sweSource = source
     }
 
     /// Shows the last saved skills and hub until swe answers.
@@ -345,6 +352,7 @@ public final class SkillsModel {
 
     private func change(_ root: SkillRoot, _ work: (SweClient) async throws -> Void) async {
         guard !busy.contains(root.path) else { return }
+        let (swe, source) = (swe, sweSource)
         busy.insert(root.path)
         defer { busy.remove(root.path) }
         // swe rewrites skill_links.json on every link; one at a time.
@@ -359,7 +367,19 @@ public final class SkillsModel {
             actionError = error.localizedDescription
         }
         // Reload either way: a failed change may still have moved something.
-        await load()
+        await reload(through: swe, source)
+    }
+
+    /// Lists again after a change made through `swe`, unless another swe
+    /// has been picked since: its list is the one to keep.
+    private func reload(through swe: SweClient, _ source: String?, hub: Bool = false) async {
+        guard let source else {
+            await load()
+            if hub { await loadHub() }
+            return
+        }
+        await skills.reload(from: source) { try await swe.skills() }
+        if hub { await hubLoader.reload(from: source) { try await swe.skillsHub() } }
     }
 
     /// Runs every fix swe can run for `plugin`, one at a time, then reloads
@@ -370,6 +390,7 @@ public final class SkillsModel {
         guard fixingPlugin == nil, !fixes.isEmpty else { return }
         fixingPlugin = plugin.id
         defer { fixingPlugin = nil }
+        let (swe, source) = (swe, sweSource)
         hubError = nil
         await gate.acquire()
         do {
@@ -387,8 +408,7 @@ public final class SkillsModel {
         // A fix can add, update or enable a plugin's skills, so the Installed
         // tab is stale too. Reload both, failure or not: a failed run may
         // still have changed files.
-        await load()
-        await loadHub()
+        await reload(through: swe, source, hub: true)
     }
 
     public var roots: [SkillRoot] {

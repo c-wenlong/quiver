@@ -259,9 +259,50 @@ import Testing
         let new = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
         let model = model(old, skills: MemorySnapshotStore(), hub: MemorySnapshotStore(), clock: TestClock(start))
         await model.loadIfStale(for: "/old/swe")
-        model.swe = SweClient(runner: new)
+        model.use(SweClient(runner: new), for: "/new/swe")
         await model.loadIfStale(for: "/new/swe")
         #expect(old.calls.count == 1)
         #expect(new.calls.count == 1)
     }
+
+    @Test func aLinkFinishingAfterAnotherSweWasPickedDoesNotReplaceItsList() async throws {
+        let old = HeldLinkRunner(ScriptedRunner([
+            (["skills", "link"], ok(#"{"action": "link"}"#)),
+            (["skills", "--json"], ok(inventoryJSON)),
+        ]))
+        let new = ScriptedRunner([(["skills", "--json"], ok(#"{"shared_dir": "/n", "harnesses": [], "skills": []}"#))])
+        let model = SkillsModel(swe: SweClient(runner: old), snapshots: MemorySnapshotStore(),
+                                hubSnapshots: MemorySnapshotStore())
+        model.use(SweClient(runner: old), for: "/old/swe")
+        await model.loadIfStale(for: "/old/swe")
+        let hermes = try #require(model.roots.first { $0.name == "hermes" })
+        let link = Task { await model.link(hermes) }
+        while !old.held { await Task.yield() }
+        // Settings moves to another swe while the link is running.
+        model.use(SweClient(runner: new), for: "/new/swe")
+        await model.loadIfStale(for: "/new/swe")
+        old.release()
+        await link.value
+        #expect(old.inner.calls.filter { $0 == ["skills", "--json"] }.count == 1)
+        guard case .loaded(let shown) = model.inventory else { Issue.record("\(model.inventory)"); return }
+        #expect(shown.sharedDir == "/n")
+    }
+}
+
+/// Holds a link until released; everything else answers at once.
+final class HeldLinkRunner: CommandRunning, @unchecked Sendable {
+    let inner: ScriptedRunner
+    private let lock = NSLock()
+    private var waiter: CheckedContinuation<Void, Never>?
+    init(_ inner: ScriptedRunner) { self.inner = inner }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        if arguments.contains("link") {
+            await withCheckedContinuation { continuation in lock.withLock { waiter = continuation } }
+        }
+        return try await inner.run(arguments)
+    }
+
+    var held: Bool { lock.withLock { waiter != nil } }
+    func release() { lock.withLock { () -> CheckedContinuation<Void, Never>? in defer { waiter = nil }; return waiter }?.resume() }
 }

@@ -26,7 +26,7 @@ final class AppModel {
         didSet {
             UserDefaults.standard.set(swePath, forKey: SweLocation.defaultsKey)
             swe = Self.client(for: swePath)
-            skills.swe = swe
+            skills.use(swe, for: swePath)
             others = OtherLimitsModel(swe: swe)
             Task { await others.load() }
         }
@@ -122,6 +122,7 @@ final class AppModel {
         skills = SkillsModel(swe: client,
                              snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")),
                              hubSnapshots: SnapshotFile(url: quiver.appending(path: "cache/skills-hub.json")))
+        skills.use(client, for: saved)
         mcp = McpModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/mcp-servers.json")))
         plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")))
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
