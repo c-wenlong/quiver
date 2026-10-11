@@ -55,3 +55,17 @@ public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
         }
     }
 }
+
+extension SidebarGroup {
+    /// Every page, top to bottom.
+    public static var order: [AppSection] { allCases.flatMap(\.sections) }
+}
+
+extension AppSection {
+    /// The page `offset` rows away in the sidebar, stopping at either end.
+    public func step(_ offset: Int) -> AppSection {
+        let order = SidebarGroup.order
+        guard let index = order.firstIndex(of: self) else { return self }
+        return order[min(max(index + offset, 0), order.count - 1)]
+    }
+}

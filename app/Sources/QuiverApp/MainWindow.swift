@@ -31,6 +31,7 @@ struct MainWindow: View {
 
 private struct Sidebar: View {
     @Environment(AppModel.self) private var model
+    @FocusState private var focused: AppSection?
 
     var body: some View {
         ScrollView {
@@ -46,6 +47,7 @@ private struct Sidebar: View {
                             NavItem(section: section, isSelected: model.selection == section) {
                                 model.selection = section
                             }
+                            .focused($focused, equals: section)
                         }
                     }
                 }
@@ -53,8 +55,18 @@ private struct Sidebar: View {
             .padding(.horizontal, 8)
             // Clear of the traffic lights.
             .padding(.top, 52)
+            // Like a source list: up and down move the selection and focus.
+            .onKeyPress(.upArrow) { move(-1) }
+            .onKeyPress(.downArrow) { move(1) }
         }
         .scrollIndicators(.never)
+    }
+
+    private func move(_ offset: Int) -> KeyPress.Result {
+        let next = (model.selection ?? .overview).step(offset)
+        model.selection = next
+        if focused != nil { focused = next }
+        return .handled
     }
 }
 
