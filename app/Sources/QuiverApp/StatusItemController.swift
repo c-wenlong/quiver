@@ -168,7 +168,7 @@ struct MenuBarContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Quiver").font(Theme.rowTitle)
+                Text("Quiver").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await app.accounts.load(force: true) }
@@ -200,7 +200,13 @@ struct MenuBarContent: View {
         }
         .padding(16)
         .frame(width: 340)
-        .glassEffect(in: .rect(cornerRadius: 18))
+        // TokenTracker's dialog: bg.dialog at radius 16 with the 1px ring in
+        // the border colour; the drop comes from the panel's window shadow,
+        // which follows this shape. Solid rather than glass, so the theme's
+        // text colours keep their contrast whatever the wallpaper is.
+        .background(Theme.dialog, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: Theme.cardRadius))
     }
 
     /// The screen's height less the header, status line, spend donut and buttons.
@@ -219,17 +225,17 @@ private struct PanelLimits: View {
                 PanelAccountRow(card: card)
             }
             if app.accounts.cards.isEmpty {
-                Text("No accounts yet.").foregroundStyle(.secondary)
+                Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             let others = app.others.rows.filter { $0.limit.status == .ok }
             if !others.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Other harnesses").font(Theme.rowTitle)
+                    Text("Other harnesses").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     ForEach(others) { row in
                         // swe hands back its last reading, status ok, for up to
                         // a day when a provider fails; dim one that old.
                         let old = row.limit.fetchedAt.map { Date.now.timeIntervalSince($0) > LimitReading.sweStaleAfter } ?? true
-                        PanelLimitRow(label: row.name.capitalized, window: row.limit.window,
+                        PanelLimitRow(label: UsageFormat.harness(row.name), window: row.limit.window,
                                       percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
                             .opacity(old ? 0.55 : 1)
                             .help(row.limit.fetchedAt.map { "Fetched \(UsageFormat.ago($0, now: .now))" } ?? "Fetch time unknown")
@@ -281,13 +287,13 @@ private struct SpendDonut: View {
                                 .foregroundStyle(Theme.harness(part.harness))
                         }
                     } else {
-                        Circle().stroke(Color.primary.opacity(0.1), lineWidth: 14).padding(7)
+                        Circle().stroke(Theme.usageTrack, lineWidth: 14).padding(7)
                     }
                     VStack(spacing: 0) {
                         Text(UsageFormat.dollars(totalCost))
-                            .font(.system(size: 17, weight: .semibold)).monospacedDigit()
+                            .font(Theme.figure).monospacedDigit()
                             .foregroundStyle(Theme.accent)
-                        Text("spent").font(.caption2).foregroundStyle(.secondary)
+                        Text("spent").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                 }
                 .frame(width: 104, height: 104)
@@ -295,31 +301,32 @@ private struct SpendDonut: View {
                     if parts.isEmpty {
                         Text((slice?.byHarness.values.contains { $0.totalTokens > 0 } ?? false)
                              ? "Every provider with usage is hidden in Settings." : "No usage yet.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                     ForEach(parts, id: \.harness) { part in
                         HStack(spacing: 6) {
                             ChartSwatch(harness: part.harness, size: 6)
                             HarnessIcon(harness: part.harness, size: 12)
-                            Text(UsageFormat.harness(part.harness)).font(.caption)
+                            Text(UsageFormat.harness(part.harness)).font(Theme.caption).foregroundStyle(Theme.textPrimary)
                             Spacer()
                             if part.totals.unpricedTokens > 0 {
-                                Image(systemName: "questionmark.circle").font(.caption2).foregroundStyle(.secondary)
+                                Image(systemName: "questionmark.circle").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                                     .help("\(UsageFormat.tokens(part.totals.unpricedTokens)) tokens with no list price")
                             }
-                            Text(UsageFormat.dollars(part.totals.costUSD)).font(.caption).monospacedDigit()
+                            Text(UsageFormat.dollars(part.totals.costUSD)).font(Theme.caption).monospacedDigit()
+                                .foregroundStyle(Theme.textPrimary)
                         }
                     }
                 }
             }
             if hiddenCost >= 0.01 {
                 Text("Includes \(UsageFormat.dollars(hiddenCost)) from providers hidden in Settings.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             if unpriced > 0 {
                 // The total leaves these out, so say so rather than look complete.
                 Text("Plus \(UsageFormat.tokens(unpriced)) tokens with no list price, not in the total.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
     }
