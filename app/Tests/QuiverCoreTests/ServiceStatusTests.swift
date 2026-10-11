@@ -88,6 +88,8 @@ private func openGeminiIncident() throws -> Data {
         #expect(maintenance.isMaintenance)
         #expect(maintenance.stage == "In progress")
         #expect(maintenance.name == "ZRH (Zurich) on 2026-10-12")
+        // When it is scheduled for, not when it was announced (2026-10-08).
+        #expect(maintenance.startedAt == UsageJSON.iso8601("2026-10-12T00:00:00.000Z"))
     }
 
     @Test func notAStatusPage() {
@@ -118,6 +120,22 @@ private func openGeminiIncident() throws -> Data {
         let update = try #require(incident.latestUpdate)
         #expect(!update.contains("#") && !update.contains("**"))
         #expect(update.hasPrefix("On Friday, 27 February 2026"))
+    }
+
+    /// Two open incidents on one product: the component takes the worse
+    /// state whichever comes first in the feed.
+    @Test(arguments: [false, true]) func googleCloudWorstStatePerProduct(reversed: Bool) throws {
+        var incidents = try #require(
+            try JSONSerialization.jsonObject(with: openGeminiIncident()) as? [[String: Any]])
+        var minor = incidents[0]
+        minor["id"] = "minor-one"
+        minor["severity"] = "low"
+        incidents = reversed ? [incidents[0], minor] : [minor, incidents[0]]
+        let report = try #require(StatusParser.googleCloud(
+            try JSONSerialization.data(withJSONObject: incidents), products: ["Vertex Gemini API"], now: usageEpoch))
+        #expect(report.health == .critical)
+        #expect(report.components == [AffectedComponent(name: "Gemini on Agent Platform", state: .majorOutage)])
+        #expect(report.incidents.map(\.id).last == "minor-one")
     }
 
     /// An incident for another product never counts against Gemini.
@@ -283,6 +301,53 @@ private func openGeminiIncident() throws -> Data {
         #expect(transport.requests.count == 1)
     }
 
+    /// A second call while the first is waiting on the network joins its
+    /// request instead of sending another.
+    @Test func overlappingCallsShareOneRequest() async throws {
+        let transport = DelayedTransport()
+        transport.inner.reply(200, body: try statusFixture("statuspage-github"))
+        let clock = TestClock()
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let status = ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
+                                          now: { clock.now })
+        let github = [try service("github")]
+        async let first = status.statuses(for: github, force: false)
+        async let second = status.statuses(for: github, force: true)
+        let (a, b) = await (first, second)
+        #expect(transport.inner.requests.count == 1)
+        #expect(a.first?.report?.health == .operational)
+        #expect(b.first?.report?.health == .operational)
+    }
+
+    /// With a cache that cannot be written, the limits still hold in memory.
+    @Test func unwritableCacheKeepsTheCooldown() async throws {
+        let blocker = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        try Data().write(to: blocker)
+        let transport = FakeTransport()
+        transport.reply(429, headers: ["Retry-After": "1200"])
+        let clock = TestClock()
+        let status = ServiceStatusService(transport: transport, cacheURL: blocker.appending(path: "service-status.json"),
+                                          now: { clock.now })
+        let cursor = [try service("cursor")]
+        _ = await status.statuses(for: cursor, force: false)
+        clock.advance(600)
+        let waiting = try #require(await status.statuses(for: cursor, force: true).first)
+        #expect(transport.requests.count == 1)
+        #expect(waiting.problem?.hasPrefix("status.cursor.com asked us to wait until") == true)
+    }
+
+    /// Another running copy's later attempt wins over this one's older entry.
+    @Test func newerEntryWins() {
+        var early = ServiceStatusService.Entry()
+        early.attemptedAt = usageEpoch
+        var late = ServiceStatusService.Entry()
+        late.attemptedAt = usageEpoch.addingTimeInterval(30)
+        late.cooldownUntil = usageEpoch.addingTimeInterval(900)
+        #expect(ServiceStatusService.newer(early, late) == late)
+        #expect(ServiceStatusService.newer(late, early) == late)
+        #expect(ServiceStatusService.newer(nil, early) == early)
+    }
+
     @Test func googleCloudFeed() async throws {
         let transport = FakeTransport()
         transport.reply(200, body: try openGeminiIncident())
@@ -314,5 +379,15 @@ private func openGeminiIncident() throws -> Data {
         #expect(ServiceStatusSummary.menuLine([try status("cloudflare", .major), try status("github", .maintenance),
                                                try status("cursor", nil)]) == nil)
         #expect(ServiceStatusSummary.worst([try status("cloudflare", .major), try status("claude", .minor)]) == .minor)
+    }
+}
+
+/// The fake network, answering only after a pause so calls can overlap.
+private final class DelayedTransport: HTTPTransport {
+    let inner = FakeTransport()
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        try await Task.sleep(for: .milliseconds(200))
+        return try await inner.send(request)
     }
 }
