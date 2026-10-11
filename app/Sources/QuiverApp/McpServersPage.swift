@@ -42,7 +42,7 @@ struct McpServersPage: View {
                 HStack(alignment: .center, spacing: 12) {
                     Tabs(options: McpFilter.allCases.map {
                         ($0, "\($0.title) \(inventory.servers($0, across: compared).count)")
-                    }, selection: $filter, style: .period)
+                    }, selection: $filter, style: .period, onPanel: true)
                     Spacer(minLength: 8)
                 }
                 HarnessChips(harnesses: inventory.activeHarnesses, hidden: $hidden)

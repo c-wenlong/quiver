@@ -227,7 +227,7 @@ private struct SessionRow: View {
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 8)
-        .background(hovering ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+        .background(hovering ? Theme.panelHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
         .contentShape(.rect)
         .onHover { hovering = $0 }
         .onTapGesture(count: 2, perform: open)

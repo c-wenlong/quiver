@@ -1,4 +1,5 @@
 import AppKit
+import QuiverCore
 import SwiftUI
 
 // The shared controls, sized and coloured from the TokenTracker package's
@@ -30,7 +31,9 @@ extension View {
 /// Whether the last input was a key press, like CSS `:focus-visible`. The
 /// window hands its first control focus at launch and a sheet does the same
 /// when it opens; neither came from the keyboard, so neither gets a ring
-/// until a key is pressed. A click puts the rings away again.
+/// until a key is pressed. A click puts the rings away again. A shortcut
+/// (⌘S, a menu key) says nothing about how focus moves, so it changes
+/// nothing; the rule is `FocusModality.fromKeyboard(after:)` in QuiverCore.
 @MainActor @Observable
 final class FocusVisibility {
     static let shared = FocusVisibility()
@@ -43,7 +46,11 @@ final class FocusVisibility {
 
     private init() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]) { event in
-            let keyboard = event.type == .keyDown
+            let flags = event.modifierFlags
+            let input: FocusModality.Input = event.type == .keyDown
+                ? .key(command: flags.contains(.command), control: flags.contains(.control), option: flags.contains(.option))
+                : .pointer
+            guard let keyboard = FocusModality.fromKeyboard(after: input) else { return event }
             MainActor.assumeIsolated {
                 if FocusVisibility.shared.fromKeyboard != keyboard { FocusVisibility.shared.fromKeyboard = keyboard }
             }
@@ -89,7 +96,8 @@ extension View {
         buttonStyle(PrimaryButtonStyle()).focusRing(cornerRadius: Theme.controlRadius)
     }
 
-    /// 32pt on the field fill with a strong hairline.
+    /// 32pt on the field fill with a strong hairline. A button made with
+    /// `role: .destructive` gets its label in `dangerText`.
     func secondaryButton() -> some View {
         buttonStyle(SecondaryButtonStyle()).focusRing(cornerRadius: Theme.controlRadius)
     }
@@ -149,13 +157,20 @@ private struct SecondaryButtonBody: View {
             .labelStyle(.titleAndIcon)
             .padding(.horizontal, 12)
             .frame(height: Theme.controlMedium)
-            .foregroundStyle(hovering ? Theme.textStrong : Theme.textPrimary)
+            .foregroundStyle(foreground)
             .background(hovering ? Theme.hover : Theme.secondaryBackground, in: .rect(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
             .animation(.easeOut(duration: 0.2), value: hovering)
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
             .onHover { hovering = $0 }
+    }
+
+    /// The style sets the label's colour, so a `.foregroundStyle` on the
+    /// button can't reach it; a destructive role is how a caller asks for red.
+    private var foreground: Color {
+        if configuration.role == .destructive { return Theme.dangerText }
+        return hovering ? Theme.textStrong : Theme.textPrimary
     }
 }
 
@@ -221,6 +236,9 @@ struct Tabs<Value: Hashable>: View {
     var options: [(value: Value, title: String)]
     @Binding var selection: Value
     var style: Style = .segmented
+    /// Sits straight on the panel rather than on a card, so a tab under
+    /// the pointer takes `panelHover`; `tabHover` vanishes on the panel.
+    var onPanel = false
     @FocusState private var focused: Int?
 
     var body: some View {
@@ -249,7 +267,7 @@ struct Tabs<Value: Hashable>: View {
     private var buttons: some View {
         ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
             TabButton(title: option.title, isSelected: option.value == selection,
-                      isFocused: focused == index, style: style) { selection = option.value }
+                      isFocused: focused == index, style: style, onPanel: onPanel) { selection = option.value }
                 .focused($focused, equals: index)
         }
     }
@@ -269,6 +287,7 @@ private struct TabButton<Value: Hashable>: View {
     var isSelected: Bool
     var isFocused: Bool
     var style: Tabs<Value>.Style
+    var onPanel: Bool
     var action: () -> Void
     @State private var hovering = false
 
@@ -307,7 +326,7 @@ private struct TabButton<Value: Hashable>: View {
 
     private var fill: Color {
         if isSelected { return style == .segmented ? Theme.segmentSelected : Theme.selected }
-        return hovering ? Theme.tabHover : .clear
+        return hovering ? (onPanel ? Theme.panelHover : Theme.tabHover) : .clear
     }
 }
 
@@ -341,7 +360,6 @@ struct GreenSwitchStyle: ToggleStyle {
 
 private struct GreenSwitch: View {
     let configuration: ToggleStyleConfiguration
-    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button {
@@ -358,8 +376,8 @@ private struct GreenSwitch: View {
             .animation(.easeOut(duration: 0.15), value: configuration.isOn)
             .contentShape(Capsule())
         }
+        // plainButton already dims a disabled switch to 0.4; no second dim.
         .plainButton(cornerRadius: 12)
-        .opacity(isEnabled ? 1 : 0.5)
         .accessibilityElement()
         .accessibilityLabel { _ in configuration.label }
         .accessibilityAddTraits(.isToggle)

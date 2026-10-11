@@ -69,8 +69,9 @@ struct ProviderVisibilityCard: View {
             }
             .padding(.vertical, 8)
         }
-        // Again whenever a different swe is chosen.
-        .task(id: app.swePath) { await model.load() }
+        // Once per swe: this card is rebuilt on every visit and at the
+        // 720pt layout flip, and each check starts a swe process.
+        .task(id: app.swePath) { await model.loadIfNeeded(for: app.swePath) }
     }
 }
 
@@ -98,7 +99,7 @@ private struct ProviderRow: View {
             }
             .opacity(row.isInstalled || !checked ? 1 : 0.4)
             Spacer()
-            Toggle(row.provider.name, isOn: Binding(get: { row.isEnabled }, set: toggle))
+            Toggle(row.provider.name, isOn: Binding(get: { row.isEnabled }, set: { toggle($0) }))
                 .toggleStyle(GreenSwitchStyle())
                 .labelsHidden()
                 .disabled(!row.isInstalled)

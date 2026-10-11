@@ -96,8 +96,6 @@ private struct ServiceCard: View {
     @Environment(\.openURL) private var openURL
 
     private static let nameFont = Font.system(size: 16, weight: .medium)
-    /// `status-row` hover: #fafafa in light, #262626 at 60% in dark.
-    private static let hoverFill = Color(light: "#fafafa", dark: "#26262699")
     /// Status pages whose logo is filed under the harness's own id.
     private static let logoIDs = ["openai": "codex", "github": "copilot"]
     private static let componentLimit = 5
@@ -160,7 +158,7 @@ private struct ServiceCard: View {
         }
         .padding(Theme.cardPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(hovering ? Self.hoverFill : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .background(hovering ? Theme.cardHover : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
             .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .onHover { hovering = $0 }
@@ -325,7 +323,7 @@ struct ServiceStatusMenuLine: View {
                 .contentShape(.rect)
             }
             .plainButton(cornerRadius: 4)
-            .help("Open Service status")
+            .help("Open service status")
             .accessibilityLabel("Service status: \(line)")
         }
     }

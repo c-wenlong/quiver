@@ -133,7 +133,7 @@ private struct HarnessLinksSummary: View {
             .font(Theme.caption)
             .padding(.horizontal, 8)
             .frame(height: Theme.controlHeight)
-            .background(hovering || open ? Theme.tabHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .background(hovering || open ? Theme.panelHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
         }
         .plainButton(cornerRadius: Theme.controlRadius)
@@ -364,7 +364,7 @@ private struct SkillRow: View {
         // The fill reaches past the text so the row reads as one target.
         .background {
             RoundedRectangle(cornerRadius: Theme.controlRadius)
-                .fill(hovering ? Theme.rowHover : .clear)
+                .fill(hovering ? Theme.panelHover : .clear)
                 .padding(.horizontal, -8)
         }
         .onHover { hovering = $0 }
