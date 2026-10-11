@@ -267,6 +267,11 @@ class FindSkillsJsonTest(unittest.TestCase):
         self.assertNotIn(codex, self.roots())
         self.assertIn(codex, self.roots("--harness=all"))
 
+    def test_a_dot_named_shared_skill_is_listed_like_the_root_counts_it(self):
+        write_skill(self.shared, ".review")
+        names = [s["name"] for s in self.find_skills()["skills"]]
+        self.assertIn(".review", names)
+
     def test_nested_shared_skills_are_listed_at_their_real_path(self):
         write_skill(self.shared / "team", "review")
         skills = {s["name"]: s["path"] for s in self.find_skills()["skills"]}

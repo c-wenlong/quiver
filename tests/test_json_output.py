@@ -110,6 +110,18 @@ class ListJsonTest(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
                 self.assertNotEqual(result.stderr.strip(), "")
 
+    def test_json_with_edit_or_legend_is_refused_before_any_write(self):
+        config = self.home / ".quiver" / "config" / "config.json"
+        config.write_text(json.dumps({"list": {"session_window": 7}}))
+        before = config.read_text()
+        for args in (["edit", "--reset", "--json"], ["legend", "--json"]):
+            with self.subTest(args=args):
+                result = run_swe(self.home, "list", *args)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("--json", result.stderr)
+        self.assertEqual(config.read_text(), before)
+
     def test_session_count_is_100_days_whatever_the_table_window(self):
         import time
 

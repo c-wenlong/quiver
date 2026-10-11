@@ -547,7 +547,9 @@ def _shared_skill_folders(shared: Path) -> list[Path]:
             dirnames[:] = []
             continue
         seen.add((st.st_dev, st.st_ino))
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        # No dot filter: skill_folder_names counts a dot-named skill in a
+        # root's total, and the two lists must agree.
+        dirnames[:] = sorted(dirnames)
         if "SKILL.md" in filenames:
             found.append(Path(dirpath))
     return sorted(found, key=lambda path: (path.name, str(path)))

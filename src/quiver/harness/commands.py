@@ -573,6 +573,11 @@ def cmd_list(args):
     except ValueError as exc:
         print(c("red", str(exc)), file=err)
         return 1
+    if json_view and args and args[0] in ("edit", "legend", "--legend", "key"):
+        # Refused before dispatch: `edit --reset` writes config, and neither
+        # subcommand has a JSON form.
+        print(c("red", f"swe list {args[0]} has no --json output"), file=err)
+        return 1
     if args and args[0] == "edit":
         return cmd_list_edit(args[1:])
     if args and args[0] in ("legend", "--legend", "key"):
