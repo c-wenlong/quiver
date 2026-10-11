@@ -146,7 +146,10 @@ enum RetryAfter {
 enum PlanNames {
     private static let families: [(String, String)] = [
         ("enterprise", "Enterprise"), ("business", "Business"), ("team", "Team"),
-        ("edu", "Edu"), ("max", "Max"), ("pro", "Pro"), ("plus", "Plus"), ("free", "Free"),
+        // Codex's education plans; checked before "pro" and "plus" so
+        // "edu_pro" stays an Edu plan, and longest first since all share "edu".
+        ("edu_plus", "Edu Plus"), ("edu_pro", "Edu Pro"), ("education", "Education"), ("edu", "Edu"),
+        ("max", "Max"), ("pro", "Pro"), ("plus", "Plus"), ("free", "Free"),
     ]
 
     static func name(_ provider: UsageProvider, _ slugs: String?...) -> String? {
