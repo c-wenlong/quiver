@@ -58,6 +58,42 @@ let harnessesJSON = #"""
         #expect(model.visible.map(\.name) == ["opencode", "codex"])
     }
 
+    @Test func unstarredHarnessesAreCollapsedUntilExpanded() async {
+        let (model, _) = model([(["list"], ok(harnessesJSON))])
+        await model.load()
+        #expect(model.shown.map(\.name) == ["claude"])
+        #expect(model.collapsedCount == 2)
+        #expect(model.canCollapse)
+        model.showsUnstarred = true
+        #expect(model.shown.map(\.name) == ["claude", "opencode", "codex"])
+        #expect(model.collapsedCount == 0)
+        #expect(model.canCollapse)
+    }
+
+    @Test func searchingShowsEveryMatchWithoutTheExpandRow() async {
+        let (model, _) = model([(["list"], ok(harnessesJSON))])
+        await model.load()
+        model.query = "open"
+        #expect(model.shown.map(\.name) == ["opencode", "codex"])
+        #expect(!model.canCollapse)
+    }
+
+    @Test func theArchivedListIsNeverCollapsed() async {
+        let (model, _) = model([(["list"], ok(harnessesJSON))])
+        await model.load()
+        model.scope = .archived
+        #expect(model.shown.map(\.name) == ["goose"])
+        #expect(!model.canCollapse)
+    }
+
+    @Test func nothingToFoldWhenEveryHarnessIsStarred() async {
+        let json = harnessesJSON.replacingOccurrences(of: #""state": "active""#, with: #""state": "starred""#)
+        let (model, _) = model([(["list"], ok(json))])
+        await model.load()
+        #expect(model.shown.count == 3)
+        #expect(!model.canCollapse)
+    }
+
     @Test func starTogglesThroughSweThenReloads() async throws {
         let (model, runner) = model([
             (["harness", "star"], ok(#"{"name": "codex", "state": "starred"}"#)),

@@ -48,6 +48,8 @@ public final class HarnessesModel {
     public var actionError: String?
     public var scope: Scope = .inUse
     public var query = ""
+    /// Unstarred harnesses in the In use list stay folded until expanded.
+    public var showsUnstarred = false
 
     private let swe: SweClient
     private let gate = SerialGate()
@@ -99,6 +101,23 @@ public final class HarnessesModel {
                 return a.name < b.name
             }
     }
+
+    /// Whether the In use list has unstarred rows to fold or unfold. A
+    /// search shows every match, and the archived list is never folded.
+    public var canCollapse: Bool {
+        scope == .inUse
+            && query.trimmingCharacters(in: .whitespaces).isEmpty
+            && visible.contains { $0.state != .starred }
+    }
+
+    /// The rows on screen: `visible`, minus the unstarred ones while folded.
+    public var shown: [Harness] {
+        guard canCollapse, !showsUnstarred else { return visible }
+        return visible.filter { $0.state == .starred }
+    }
+
+    /// How many rows the fold is hiding.
+    public var collapsedCount: Int { visible.count - shown.count }
 
     public func toggleStar(_ harness: Harness) async {
         await change(harness.name) { try await $0.toggleStar(harness.name) }

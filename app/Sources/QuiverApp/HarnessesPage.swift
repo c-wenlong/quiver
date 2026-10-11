@@ -53,10 +53,17 @@ private struct HarnessList: View {
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }
             } else {
+                let shown = model.shown
                 VStack(spacing: 0) {
-                    ForEach(rows) { harness in
+                    ForEach(shown) { harness in
                         HarnessRow(harness: harness, model: model)
-                        if harness.id != rows.last?.id { Divider().overlay(Theme.border) }
+                        if harness.id != shown.last?.id { Divider().overlay(Theme.border) }
+                    }
+                    if model.canCollapse {
+                        if !shown.isEmpty { Divider().overlay(Theme.border) }
+                        ExpandRow(isExpanded: model.showsUnstarred, hidden: model.collapsedCount) {
+                            withAnimation(.easeOut(duration: 0.15)) { model.showsUnstarred.toggle() }
+                        }
                     }
                 }
                 .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
@@ -69,6 +76,47 @@ private struct HarnessList: View {
         if all.isEmpty { return "No harnesses registered yet. Run swe discover --apply to register what is installed." }
         if !model.query.isEmpty { return "No harnesses match." }
         return model.scope == .archived ? "Nothing archived." : "Every harness is archived."
+    }
+}
+
+/// The last row of the list: unfolds the unstarred harnesses, or folds
+/// them away again. It is the card's bottom edge, so its hover fill and its
+/// focus ring follow the card's bottom corners and stay inside the card.
+private struct ExpandRow: View {
+    var isExpanded: Bool
+    var hidden: Int
+    var action: () -> Void
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    private var shape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(bottomLeadingRadius: Theme.cardRadius, bottomTrailingRadius: Theme.cardRadius)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(isExpanded ? "Show less" : hidden == 1 ? "Show 1 more" : "Show \(hidden) more")
+                    .font(Theme.control)
+            }
+            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(hovering ? Theme.rowHover : .clear, in: shape)
+            .contentShape(shape)
+        }
+        .buttonStyle(RingedPlainStyle(cornerRadius: 0))
+        .focused($focused)
+        .focusEffectDisabled()
+        .overlay(
+            shape.inset(by: 2)
+                .stroke(Theme.focus, lineWidth: Theme.focusRing)
+                .opacity(focused && FocusVisibility.shared.fromKeyboard ? 1 : 0)
+                .allowsHitTesting(false))
+        .onHover { hovering = $0 }
+        .help(isExpanded ? "Hide the harnesses you haven't starred" : "Show the harnesses you haven't starred")
     }
 }
 
