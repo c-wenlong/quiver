@@ -26,7 +26,7 @@ public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
         /// somewhere else: linking it loses nothing.
         case notLinked
         /// Holds skills that exist nowhere else, or is ignored on purpose
-        /// (`.linkignore`, an archived harness). Quiver will not link it.
+        /// (`.linkignore`, not a coding harness). Quiver will not link it.
         case blocked
     }
 
@@ -38,8 +38,8 @@ public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
     /// ignored, skipped.
     public let state: String
     public let detail: String
-    /// Archived in harness.json. `swe init` leaves such a folder alone, so
-    /// once unlinked it reads `ignored`; a click here can still link it.
+    /// Archived in harness.json. `swe init` leaves such a folder alone; swe
+    /// still reports what it holds, so a click here can link it.
     public let archived: Bool
 
     public init(name: String, path: String, state: String, detail: String = "", archived: Bool = false) {
@@ -65,8 +65,6 @@ public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
         switch state {
         case "linked": .linked
         case "create", "relink", "absorb": .notLinked
-        // Ignored only because it is archived: unlinked here, so linkable here.
-        case "ignored" where archived && !detail.contains("linkignore"): .notLinked
         default: .blocked
         }
     }
@@ -80,7 +78,7 @@ public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
         switch state {
         case "linked" where archived: "Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it, but you can link it here."
         case "linked": "Reads the shared skills in ~/.quiver/skills."
-        case "ignored" where link == .notLinked: "Archived in swe, so swe init leaves it alone. You can still link it here."
+        case "create" where archived: "No skills folder yet. Archived in swe, so swe init leaves it alone; linking here creates it."
         case "create": "No skills folder yet. Linking creates it."
         case "relink": detail.isEmpty ? "Points somewhere else." : "Points somewhere else: \(detail.replacingOccurrences(of: "points at ", with: ""))."
         case "absorb": detail == "empty"
@@ -172,6 +170,10 @@ public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
             case notInstalled = "not-installed"
             case stale
             case disabledHere = "disabled-here"
+            /// Disabled in every harness that has it.
+            case disabled
+            /// A state from a newer swe.
+            case unknown
 
             public var title: String {
                 switch self {
@@ -179,7 +181,8 @@ public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
                 case .unregistered: "Marketplace not added"
                 case .notInstalled: "Not installed"
                 case .stale: "Out of date"
-                case .disabledHere: "Disabled"
+                case .disabledHere, .disabled: "Disabled"
+                case .unknown: "Unknown"
                 }
             }
         }
@@ -187,6 +190,14 @@ public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
         public let state: State
         /// The shell command that closes the gap, nil when installed.
         public let fix: String?
+
+        enum CodingKeys: String, CodingKey { case state, fix }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = (try? c.decode(State.self, forKey: .state)) ?? .unknown
+            fix = try c.decodeIfPresent(String.self, forKey: .fix)
+        }
     }
 
     public var id: String { "\(name)@\(marketplace)" }
@@ -249,6 +260,7 @@ public final class SkillsModel {
     public var source: Skill.Source?
 
     private let swe: SweClient
+    private let gate = SerialGate()
     private var generation = 0
     private var hubGeneration = 0
 
@@ -264,6 +276,8 @@ public final class SkillsModel {
         do {
             next = .loaded(try await swe.skills())
         } catch is CancellationError {
+            // Back to idle, so the next visit loads again instead of spinning.
+            if mine == generation, inventory == .loading { inventory = .idle }
             return
         } catch {
             next = .failed(error.localizedDescription)
@@ -279,6 +293,8 @@ public final class SkillsModel {
         do {
             next = .loaded(try await swe.skillsHub())
         } catch is CancellationError {
+            // Leaving the tab cancels the load; idle lets the next visit retry.
+            if mine == hubGeneration, hub == .loading { hub = .idle }
             return
         } catch {
             next = .failed(error.localizedDescription)
@@ -300,6 +316,9 @@ public final class SkillsModel {
         guard !busy.contains(root.path) else { return }
         busy.insert(root.path)
         defer { busy.remove(root.path) }
+        // swe rewrites skill_links.json on every link; one at a time.
+        await gate.acquire()
+        defer { gate.release() }
         actionError = nil
         do {
             try await work(swe)

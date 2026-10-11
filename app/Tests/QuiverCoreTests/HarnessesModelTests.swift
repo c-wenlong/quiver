@@ -104,6 +104,23 @@ let harnessesJSON = #"""
         #expect(runner.calls.count == 1)
     }
 
+    @Test func changesToDifferentHarnessesRunOneAtATime() async throws {
+        // Each swe run rewrites harness.json; overlapping runs lose a change.
+        let runner = CountingRunner(counts: { $0.first == "harness" }, reply: { args in
+            args.first == "harness" ? ok(#"{"name": "x", "state": "starred"}"#) : ok(harnessesJSON)
+        })
+        let model = HarnessesModel(swe: SweClient(runner: runner))
+        await model.load()
+        let codex = try #require(model.all.first { $0.name == "codex" })
+        let opencode = try #require(model.all.first { $0.name == "opencode" })
+        async let a: Void = model.toggleStar(codex)
+        async let b: Void = model.archive(opencode, reason: "slow")
+        _ = await (a, b)
+        #expect(runner.calls.filter { $0.first == "harness" }.count == 2)
+        #expect(runner.peak == 1)
+        #expect(model.busy.isEmpty)
+    }
+
     @Test func aFailedChangeKeepsTheListAndSaysWhy() async throws {
         let (model, _) = model([
             (["harness", "star"], CommandResult(status: 1, stdout: Data(), stderr: "  Tool 'codex' not found. Try 'swe list'.")),

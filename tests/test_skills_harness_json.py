@@ -55,7 +55,10 @@ class SkillsListJsonTest(unittest.TestCase):
         write_registry(self.home, registry)
         rows = {row["name"]: row for row in self.data()["harnesses"]}
         self.assertTrue(rows["codex"]["archived"])
-        self.assertEqual(rows["codex"]["state"], "ignored")
+        # init reports it `ignored`; the folder still holds a skill nobody
+        # else has, so linking it by hand would refuse. Say that instead.
+        self.assertEqual(rows["codex"]["state"], "keep")
+        self.assertIn("exist nowhere else", rows["codex"]["detail"])
         self.assertFalse(rows["claude"]["archived"])
 
     def test_shared_skills_list_the_harnesses_that_see_them(self):
@@ -74,12 +77,30 @@ class SkillsListJsonTest(unittest.TestCase):
         self.assertEqual(own["root"], "codex")
         self.assertEqual(own["harnesses"], ["codex"])
 
-    def test_plugin_cache_skills_belong_to_their_harness(self):
-        cache = self.home / ".claude" / "plugins" / "cache" / "mk" / "tool" / "1.0" / "skills"
-        write_skill(cache, "from-plugin")
-        skills = {s["name"]: s for s in self.data()["skills"]}
-        self.assertEqual(skills["from-plugin"]["source"], "plugin")
-        self.assertEqual(skills["from-plugin"]["harnesses"], ["claude"])
+    def install_plugin(self, enabled=None):
+        """tool@mk 1.0 in claude's cache, with or without an install record."""
+        version = self.home / ".claude" / "plugins" / "cache" / "mk" / "tool" / "1.0"
+        write_skill(version / "skills", "from-plugin")
+        if enabled is not None:
+            (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps({
+                "version": 2,
+                "plugins": {"tool@mk": [{"scope": "user", "installPath": str(version)}]}}))
+            (self.home / ".claude" / "settings.json").write_text(
+                json.dumps({"enabledPlugins": {"tool@mk": enabled}}))
+        return {s["name"]: s for s in self.data()["skills"]}["from-plugin"]
+
+    def test_an_installed_plugin_skill_belongs_to_its_harness(self):
+        skill = self.install_plugin(enabled=True)
+        self.assertEqual(skill["source"], "plugin")
+        self.assertEqual(skill["harnesses"], ["claude"])
+
+    def test_a_disabled_plugin_skill_loads_nowhere(self):
+        self.assertEqual(self.install_plugin(enabled=False)["harnesses"], [])
+
+    def test_a_cached_plugin_with_no_install_record_loads_nowhere(self):
+        skill = self.install_plugin()
+        self.assertEqual(skill["source"], "plugin")
+        self.assertEqual(skill["harnesses"], [])
 
     def test_only_the_installed_version_of_a_cached_plugin_is_listed(self):
         # Claude keeps an old version's folder after an update; it no longer loads.
@@ -217,7 +238,7 @@ class SkillsHubJsonTest(unittest.TestCase):
         self.assertEqual(claude["state"], "not-installed")
         self.assertEqual(claude["fix"], "claude plugin install toolkit@kit")
 
-    def test_installed_and_current(self):
+    def install_current(self):
         self.register()
         copy = self.home / ".claude" / "plugins" / "cache" / "kit" / "toolkit" / "1.2.0"
         import shutil
@@ -225,8 +246,19 @@ class SkillsHubJsonTest(unittest.TestCase):
         (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps({
             "plugins": {"toolkit@kit": [{"scope": "user", "version": "1.2.0",
                                          "installPath": str(copy)}]}}))
+
+    def test_installed_and_current(self):
+        self.install_current()
         (plugin,) = self.data()["plugins"]
         self.assertEqual(plugin["install"]["claude"], {"state": "installed", "fix": None})
+
+    def test_disabled_in_the_only_harness_is_not_installed(self):
+        self.install_current()
+        (self.home / ".claude" / "settings.json").write_text(
+            json.dumps({"enabledPlugins": {"toolkit@kit": False}}))
+        (plugin,) = self.data()["plugins"]
+        self.assertEqual(plugin["install"]["claude"],
+                         {"state": "disabled", "fix": "claude plugin enable toolkit@kit"})
 
     def test_an_empty_hub_is_an_empty_list(self):
         import shutil

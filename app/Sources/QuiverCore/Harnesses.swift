@@ -50,6 +50,7 @@ public final class HarnessesModel {
     public var query = ""
 
     private let swe: SweClient
+    private let gate = SerialGate()
     private var generation = 0
 
     public init(swe: SweClient) {
@@ -64,6 +65,7 @@ public final class HarnessesModel {
         do {
             next = .loaded(try await swe.allHarnesses())
         } catch is CancellationError {
+            if mine == generation, state == .loading { state = .idle }
             return
         } catch {
             next = .failed(error.localizedDescription)
@@ -115,6 +117,10 @@ public final class HarnessesModel {
         guard !busy.contains(name) else { return }
         busy.insert(name)
         defer { busy.remove(name) }
+        // Each swe run reads harness.json, changes one row and writes it
+        // back, so two at once can lose one change. Run them in turn.
+        await gate.acquire()
+        defer { gate.release() }
         actionError = nil
         do {
             _ = try await work(swe)
@@ -125,5 +131,28 @@ public final class HarnessesModel {
             return
         }
         await load()
+    }
+}
+
+/// Runs async work one piece at a time, in the order it arrived.
+@MainActor
+final class SerialGate {
+    private var running = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        guard running else {
+            running = true
+            return
+        }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func release() {
+        if waiting.isEmpty {
+            running = false
+        } else {
+            waiting.removeFirst().resume()
+        }
     }
 }

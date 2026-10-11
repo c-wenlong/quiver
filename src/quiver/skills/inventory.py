@@ -21,8 +21,10 @@ from quiver import paths
 from quiver.find.plugin_drift import KINDS, _READERS, _real, plugin_drift, quiver_plugins
 from quiver.find.plugins import _load_json, count_components
 from quiver.init.layout import (
+    ARCHIVED_DETAIL,
     LinkIgnoreError,
     archived_names,
+    classify_skill_root,
     load_linkignore,
     load_registry,
     plan,
@@ -71,41 +73,52 @@ def _under(child: Path, parent: Path) -> bool:
         return False
 
 
-def _superseded_plugin_dirs(home: Path):
-    """A test for claude plugin-cache skills from a version no longer installed.
+def _claude_plugin_loads(home: Path):
+    """Whether claude loads a skill found in its plugin cache.
 
-    Claude keeps the old version's folder after an update (a running session
-    may still hold it), so the cache lists every skill twice. The install
-    record names the one version that loads; a plugin it does not mention is
-    kept as found rather than guessed at.
+    Returns ``(folder) -> "loaded" | "unloaded" | "superseded"``. Claude keeps
+    an old version's folder after an update (a running session may still hold
+    it), so the cache lists every skill twice; the install record names the
+    one version that loads, and anything else of that plugin is superseded.
+    A version claude has installed loads unless settings.json disables the
+    plugin. A cached plugin with no install record does not load.
     """
-    cache = home / ".claude" / "plugins" / "cache"
-    record = _load_json(home / ".claude" / "plugins" / "installed_plugins.json")
+    base = home / ".claude" / "plugins"
+    cache_real = _real_path(base / "cache")
+    record = _load_json(base / "installed_plugins.json")
     plugins = record.get("plugins") if isinstance(record, dict) else None
-    installed: dict[tuple[str, str], set[Path]] = {}
-    for entries in (plugins.values() if isinstance(plugins, dict) else []):
+    settings = _load_json(home / ".claude" / "settings.json")
+    flags = settings.get("enabledPlugins") if isinstance(settings, dict) else None
+    enabled = flags if isinstance(flags, dict) else {}
+
+    installed: dict[Path, str] = {}       # version dir -> "plugin@marketplace"
+    by_plugin: set[tuple[str, str]] = set()
+    for ref, entries in (plugins.items() if isinstance(plugins, dict) else []):
         for entry in entries if isinstance(entries, list) else [entries]:
             path = entry.get("installPath") if isinstance(entry, dict) else None
-            if not isinstance(path, str) or not path:
+            if not isinstance(path, str) or not path or cache_real is None:
                 continue
             real = _real_path(Path(path).expanduser())
-            cache_real = _real_path(cache)
-            if real is None or cache_real is None or not _under(real, cache_real):
+            if real is None or not _under(real, cache_real):
                 continue
             parts = real.relative_to(cache_real).parts
             if len(parts) >= 3:
-                installed.setdefault(parts[:2], set()).add(real)
+                installed[Path(cache_real, *parts[:3])] = ref
+                by_plugin.add(parts[:2])
 
-    def superseded(folder: Path) -> bool:
-        real, cache_real = _real_path(folder), _real_path(cache)
+    def state(folder: Path) -> str:
+        real = _real_path(folder)
         if real is None or cache_real is None or not _under(real, cache_real):
-            return False
+            return "unloaded"
         parts = real.relative_to(cache_real).parts
-        if len(parts) < 3 or parts[:2] not in installed:
-            return False
-        return Path(cache_real, *parts[:3]) not in installed[parts[:2]]
+        if len(parts) < 3:
+            return "unloaded"
+        ref = installed.get(Path(cache_real, *parts[:3]))
+        if ref is None:
+            return "superseded" if parts[:2] in by_plugin else "unloaded"
+        return "unloaded" if enabled.get(ref) is False else "loaded"
 
-    return superseded
+    return state
 
 
 def _source(label: str, catalogs: set[str]) -> str:
@@ -135,19 +148,22 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
     home = home or Path.home()
     roots = _plan_skill_roots(home)
     archived = archived_names(load_registry(home))
-    harnesses = [
-        {
+    harnesses = []
+    for s in roots:
+        state, detail = s.state, s.detail
+        if state == "ignored" and detail == ARCHIVED_DETAIL:
+            # init leaves an archived harness's folder alone and says only
+            # that. Linking it by hand still depends on what the folder
+            # holds, so report that; `archived` keeps the init view.
+            state, detail = classify_skill_root(s.path, home)
+        harnesses.append({
             "name": registry_name(s.label),
             "label": s.label,
             "path": str(s.path),
-            "state": s.state,
-            "detail": s.detail,
-            # init leaves an archived harness alone, so its root reads
-            # `ignored` once unlinked; the app still lets you link it back.
+            "state": state,
+            "detail": detail,
             "archived": registry_name(s.label) in archived,
-        }
-        for s in roots
-    ]
+        })
     real_roots = [
         (registry_name(s.label), real)
         for s in roots
@@ -155,18 +171,22 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
     ]
     catalogs = {str(entry.get("label", "catalog")) for entry in load_skill_catalogs()}
 
-    superseded = _superseded_plugin_dirs(home)
+    claude_loads = _claude_plugin_loads(home)
     skills = []
     for skill in discover_skills(home=home, cwd=cwd, visibility=False):
         folder = Path(skill["path"]).parent
-        if skill["scope"] == "claude-plugin" and superseded(folder):
-            continue
+        owner = PLUGIN_ROOTS.get(skill["scope"]) or BUILTIN_ROOTS.get(skill["scope"])
+        if skill["scope"] == "claude-plugin":
+            load = claude_loads(folder)
+            if load == "superseded":
+                continue
+            if load == "unloaded":
+                owner = None
         real = _real_path(folder)
         seen_by: list[str] = []
         for name, root in real_roots:
             if real is not None and _under(real, root) and name not in seen_by:
                 seen_by.append(name)
-        owner = PLUGIN_ROOTS.get(skill["scope"]) or BUILTIN_ROOTS.get(skill["scope"])
         if owner and owner not in seen_by:
             seen_by.append(owner)
         skills.append({
@@ -214,9 +234,10 @@ def hub_plugins(home: Path | None = None) -> dict:
     """The ``swe skills hub --json`` document: the plugins ``~/.quiver`` offers.
 
     ``install`` is keyed by each harness that runs plugins and exists on this
-    machine. Its ``state`` is ``installed`` or the first gap ``swe find
+    machine. Its ``state`` is ``installed``, the first gap ``swe find
     plugins`` reports (``unregistered``, ``not-installed``, ``stale``,
-    ``disabled-here``), with the command that closes it as ``fix``.
+    ``disabled-here``), or ``disabled`` when it is disabled in every harness,
+    with the command that closes it as ``fix``.
     """
     home = home or Path.home()
     sources = quiver_plugins(home)
@@ -236,6 +257,11 @@ def hub_plugins(home: Path | None = None) -> dict:
                 or (f.plugin == plugin.name and f.marketplace == registered))
         ]
         if not mine:
+            # plugin_drift reports a disabled plugin only when another
+            # harness has it enabled; disabled everywhere it is silent.
+            ref = f"{plugin.name}@{registered}"
+            if registered is not None and view.enabled.get(ref) is False:
+                return {"state": "disabled", "fix": view.fix_enable(ref)}
             return {"state": "installed", "fix": None}
         first = min(mine, key=lambda f: rank[f.kind])
         return {"state": first.kind, "fix": first.fix}

@@ -19,6 +19,53 @@ final class ScriptedRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
+/// Never answers until cancelled, like a swe stuck behind the login shell.
+final class StuckRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var started: Int { lock.withLock { count } }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        lock.withLock { count += 1 }
+        try await Task.sleep(for: .seconds(60))
+        return CommandResult(status: 0, stdout: Data(), stderr: "")
+    }
+}
+
+/// Takes a moment per call and records the most calls `counts` picks out
+/// that were ever running at once.
+final class CountingRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private let reply: @Sendable ([String]) -> CommandResult
+    private let counts: @Sendable ([String]) -> Bool
+    private var inFlight = 0
+    private var top = 0
+    private var log: [[String]] = []
+
+    init(counts: @escaping @Sendable ([String]) -> Bool,
+         reply: @escaping @Sendable ([String]) -> CommandResult) {
+        self.counts = counts
+        self.reply = reply
+    }
+
+    var calls: [[String]] { lock.withLock { log } }
+    var peak: Int { lock.withLock { top } }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let counted = counts(arguments)
+        lock.withLock {
+            log.append(arguments)
+            if counted {
+                inFlight += 1
+                top = max(top, inFlight)
+            }
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        if counted { lock.withLock { inFlight -= 1 } }
+        return reply(arguments)
+    }
+}
+
 func ok(_ json: String) -> CommandResult {
     CommandResult(status: 0, stdout: Data(#"{"schema": 1, "data": \#(json)}"#.utf8), stderr: "")
 }
@@ -85,14 +132,13 @@ let hubJSON = #"""
         }
     }
 
-    @Test func anArchivedHarnessCanBeLinkedBackButALinkignoredOneCannot() {
-        let archived = SkillRoot(name: "hermes", path: "/h/.hermes/skills", state: "ignored",
-                                 detail: "archived in harness.json", archived: true)
-        #expect(archived.link == .notLinked)
-        let ignored = SkillRoot(name: "pinokio", path: "/h/.pinokio/skills", state: "ignored",
-                                detail: "listed in ~/.quiver/.linkignore", archived: true)
-        #expect(ignored.link == .blocked)
-        #expect(SkillRoot(name: "x", path: "/x", state: "ignored", detail: "archived in harness.json").link == .blocked)
+    @Test func anArchivedHarnessIsJudgedByWhatItsFolderHolds() {
+        // swe reports an archived root's real state, so the app needs no special case.
+        #expect(SkillRoot(name: "hermes", path: "/h/.hermes/skills", state: "create", archived: true).link == .notLinked)
+        #expect(SkillRoot(name: "codex", path: "/h/.codex/skills", state: "keep",
+                          detail: "1 of 1 skills exist nowhere else", archived: true).link == .blocked)
+        #expect(SkillRoot(name: "pinokio", path: "/h/.pinokio/skills", state: "ignored",
+                          detail: "listed in ~/.quiver/.linkignore").link == .blocked)
     }
 
     @Test func onlyAFolderOfCopiesNeedsForce() {
@@ -212,6 +258,38 @@ let hubJSON = #"""
         #expect(model.hubPlugins.count == 1)
         model.query = "nothing"
         #expect(model.hubPlugins.isEmpty)
+    }
+
+    @Test func anUnknownInstallStateStillDecodes() async throws {
+        let json = hubJSON.replacingOccurrences(of: #""state": "installed""#, with: #""state": "quarantined""#)
+        let (model, _) = model([(["skills", "hub", "--json"], ok(json))])
+        await model.loadHub()
+        #expect(model.hubPlugins.first?.install["claude"]?.state == .unknown)
+    }
+
+    @Test func leavingTheHubMidLoadLetsTheNextVisitRetry() async {
+        let runner = StuckRunner()
+        let model = SkillsModel(swe: SweClient(runner: runner))
+        let load = Task { await model.loadHub() }
+        while runner.started == 0 { await Task.yield() }
+        load.cancel()
+        await load.value
+        #expect(model.hub == .idle)
+    }
+
+    @Test func linksRunOneAtATime() async throws {
+        let runner = CountingRunner(counts: { $0.contains("link") }, reply: { args in
+            args.contains("link") ? ok(#"{"action": "link"}"#) : ok(inventoryJSON)
+        })
+        let model = SkillsModel(swe: SweClient(runner: runner))
+        await model.load()
+        let hermes = try #require(model.roots.first { $0.name == "hermes" })
+        let droid = try #require(model.roots.first { $0.name == "droid" })
+        async let a: Void = model.link(hermes)
+        async let b: Void = model.link(droid)
+        _ = await (a, b)
+        #expect(runner.peak == 1)
+        #expect(runner.calls.filter { $0.contains("link") }.count == 2)
     }
 
     @Test func aFailedLoadSaysWhy() async {
