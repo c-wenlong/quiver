@@ -716,7 +716,7 @@ public struct ExploreRow: Sendable, Equatable, Identifiable {
     public let plugin: CatalogPlugin
     public let group: ExploreGroup.Kind
     public let skills: [PluginSkill]
-    /// Lowercased name, description and skill names, for search.
+    /// Lowercased name, ref, marketplace, description and skill names, for search.
     let haystack: String
 }
 
@@ -770,7 +770,8 @@ public struct PluginExploreIndex: Sendable, Equatable {
             let kind: ExploreGroup.Kind = market.hub ? .hub : market.isRegistered ? .other : .unregistered
             for plugin in market.plugins {
                 let skills = placement.skills(of: plugin)
-                let haystack = ([plugin.name, plugin.displayName ?? "", plugin.description ?? ""]
+                let haystack = ([plugin.name, plugin.ref, plugin.marketplace,
+                                 plugin.displayName ?? "", plugin.description ?? ""]
                     + skills.map(\.name)).joined(separator: "\n").lowercased()
                 rows.append(ExploreRow(plugin: plugin, group: kind, skills: skills, haystack: haystack))
             }
@@ -793,7 +794,7 @@ public struct PluginExploreIndex: Sendable, Equatable {
     /// - Parameters:
     ///   - harness: only plugins with something in this harness (listed,
     ///     installed or cached there); nil for all.
-    ///   - query: matched against the name, description and the names of
+    ///   - query: matched against the name, ref, marketplace, description and the names of
     ///     the skills a plugin ships.
     public func groups(source: ExploreSource = .all, harness: String? = nil, query: String = "") -> [ExploreGroup] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()

@@ -382,6 +382,10 @@ func decodedInventory() throws -> [Skill] {
         #expect(refs(.all, nil, "deploy") == ["vercel@official"])
         #expect(refs(.all, nil, "tool kit") == ["toolkit@kit"])
         #expect(refs(.hub, nil, "deploy").isEmpty)
+        // A marketplace's name finds its plugins, so typing what a ref or a
+        // chip says works too.
+        #expect(refs(.all, nil, "openai-curated") == ["canva@openai-curated"])
+        #expect(refs(.all, nil, "canva@openai") == ["canva@openai-curated"])
     }
 
     @Test func aPluginListsItsSkillsAndEveryInstalledCopyOncePerName() async throws {
