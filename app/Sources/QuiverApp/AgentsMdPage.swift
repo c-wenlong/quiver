@@ -114,8 +114,15 @@ private struct LinksStrip: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = model.linkError {
-                Text(error).font(Theme.caption).foregroundStyle(Theme.danger)
-                    .fixedSize(horizontal: false, vertical: true)
+                // swe init can fail with pages of output; bounded, so the
+                // editor below keeps its room on this non-scrolling page.
+                ScrollView {
+                    Text(error).font(Theme.caption).foregroundStyle(Theme.danger)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 64)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -143,6 +150,8 @@ private struct LinkRow: View {
         }
         .help("\(link.state.title): \(displayPath(URL(fileURLWithPath: link.path)))")
         .accessibilityElement(children: .combine)
+        // The dot alone says linked, so VoiceOver gets the state in words.
+        .accessibilityValue(link.state.title)
     }
 }
 
