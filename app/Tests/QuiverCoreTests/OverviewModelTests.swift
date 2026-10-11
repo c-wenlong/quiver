@@ -142,6 +142,25 @@ struct ScanFailed: Error, LocalizedError {
         #expect(days.map(\.totals.totalTokens) == [5, 1])
     }
 
+    @Test func topModelsAndModelsPerHarnessComeFromThePeriodsDays() async throws {
+        let ledger = FakeLedger()
+        let oct10 = Date(timeIntervalSince1970: 1_791_561_600)
+        let oct11 = Date(timeIntervalSince1970: 1_791_648_000)
+        await ledger.set(harnesses: ["claude": totals(tokens: 9, cost: 9), "codex": totals(tokens: 1, cost: 1)], days: [
+            DailyUsage(day: oct10, harness: "claude", model: "opus", totals: totals(tokens: 5, cost: 5)),
+            DailyUsage(day: oct11, harness: "claude", model: "opus", totals: totals(tokens: 2, cost: 2)),
+            DailyUsage(day: oct11, harness: "claude", model: "sonnet", totals: totals(tokens: 2, cost: 2)),
+            DailyUsage(day: oct11, harness: "codex", model: "gpt", totals: totals(tokens: 1, cost: 1)),
+        ])
+        let model = model(ledger)
+        await model.load(scan: false)
+        let summary = try #require(model.summary)
+        #expect(summary.models.map(\.model) == ["opus", "sonnet", "gpt"])
+        #expect(summary.models.map(\.share) == [0.7, 0.2, 0.1])
+        #expect(summary.harnesses.map(\.modelCount) == [2, 1])
+        #expect(summary.activeDays == 2)
+    }
+
     @Test func accountsAreNamedAndOrderedBySpend() async throws {
         let ledger = FakeLedger()
         await ledger.set(harnesses: [:], accounts: [

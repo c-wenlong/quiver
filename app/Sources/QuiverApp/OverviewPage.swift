@@ -1,16 +1,17 @@
-import Charts
 import QuiverCore
 import SwiftUI
 
 /// Tokens and spend across every harness on this Mac, from the ledger.
+/// Laid out like TokenTracker's Tokens page: the period's total and split
+/// on the right, quick figures, top models and the heatmap on the left.
 struct OverviewPage: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        Page(title: "Overview", subtitle: "Tokens and spend across every harness on this Mac.") {
-            if let model = app.overview {
-                OverviewContent(model: model)
-            } else {
+        if let model = app.overview {
+            OverviewContent(model: model)
+        } else {
+            Page(title: "Overview", subtitle: "Tokens and spend across every harness on this Mac.") {
                 Card { Label(app.overviewError ?? "The usage ledger is unavailable.", systemImage: "exclamationmark.triangle") }
             }
         }
@@ -21,41 +22,37 @@ private struct OverviewContent: View {
     @Bindable var model: OverviewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.gutter) {
-            HStack(spacing: 12) {
-                Picker("Period", selection: $model.period) {
-                    ForEach(OverviewPeriod.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 380)
-                Spacer()
-                if let updated = model.updatedAt {
-                    Text("Updated \(updated, format: .relative(presentation: .named))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Button("Rescan", systemImage: "arrow.clockwise") {
-                    Task { await model.load(scan: true) }
-                }
-                .disabled(model.isLoading)
+        Page(title: "Overview", subtitle: "Tokens and spend across every harness on this Mac.", maxWidth: 1280) {
+            if let updated = model.updatedAt {
+                Text("Updated \(updated, format: .relative(presentation: .named))")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .frame(height: Theme.iconButton)
             }
+            Button("Rescan", systemImage: "arrow.clockwise") { Task { await model.load(scan: true) } }
+                .buttonStyle(IconButtonStyle())
+                .disabled(model.isLoading)
+                .help("Read new usage from the harness logs")
+        } content: {
             if let error = model.error {
-                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warning)
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.warning)
             }
             if let summary = model.summary {
-                Group {
-                    Totals(summary: summary)
-                    HarnessCard(summary: summary)
+                let current = summary.period == model.period
+                ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: Theme.gutter) {
-                        DailyCard(summary: summary, period: summary.period)
-                        AccountsCard(accounts: summary.accounts)
-                            .frame(maxWidth: 360)
+                        side(summary).frame(width: 360)
+                        main(summary)
+                    }
+                    .frame(minWidth: 940)
+                    VStack(spacing: Theme.gutter) {
+                        main(summary)
+                        side(summary)
                     }
                 }
                 // Still the previous period's figures while the new ones load.
-                .opacity(summary.period == model.period ? 1 : 0.4)
-                .animation(.easeOut(duration: 0.15), value: summary.period == model.period)
-                ActivityCard(days: model.activity)
+                .opacity(current ? 1 : 0.45)
+                .animation(.easeOut(duration: 0.15), value: current)
             } else {
                 Card { ProgressView("Reading your usage logs…").frame(maxWidth: .infinity) }
             }
@@ -64,90 +61,73 @@ private struct OverviewContent: View {
             if model.summary?.period != model.period { await model.reloadPeriod() }
         }
     }
-}
 
-// MARK: - Headline numbers
+    @ViewBuilder private func main(_ summary: OverviewSummary) -> some View {
+        VStack(spacing: Theme.gutter) {
+            TotalCard(summary: summary, period: $model.period)
+            BreakdownCard(summary: summary)
+        }
+    }
 
-private struct Totals: View {
-    var summary: OverviewSummary
-
-    var busiest: DayRow? { summary.days.max { $0.totals.totalTokens < $1.totals.totalTokens } }
-
-    var body: some View {
-        HStack(spacing: Theme.gutter) {
-            StatTile(title: "Tokens", value: UsageFormat.tokens(summary.totals.totalTokens),
-                     detail: "\(UsageFormat.tokens(summary.totals.inputTokens + summary.totals.cacheReadTokens + summary.totals.cacheWriteTokens)) in · \(UsageFormat.tokens(summary.totals.outputTokens)) out")
-            StatTile(title: "Spend", value: UsageFormat.dollars(summary.totals.costUSD),
-                     detail: summary.totals.unpricedTokens > 0
-                        ? "+ \(UsageFormat.tokens(summary.totals.unpricedTokens)) tokens with no list price"
-                        : "At API list prices")
-            StatTile(title: "Busiest day",
-                     value: busiest.map { $0.day.formatted(.dateTime.month(.abbreviated).day()) } ?? "None",
-                     detail: busiest.map { "\(UsageFormat.tokens($0.totals.totalTokens)) tokens · \(UsageFormat.dollars($0.totals.costUSD))" } ?? "No usage in this period")
+    @ViewBuilder private func side(_ summary: OverviewSummary) -> some View {
+        VStack(spacing: Theme.gutter) {
+            QuickFigures(summary: summary)
+            ActivityCard(days: model.activity)
         }
     }
 }
 
-private struct StatTile: View {
-    var title: String
-    var value: String
-    var detail: String
+// MARK: - Total
 
-    var body: some View {
-        Card(title: title) {
-            Text(value)
-                .font(.system(size: 34, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        }
-    }
-}
-
-// MARK: - Harness split
-
-private struct HarnessCard: View {
+private struct TotalCard: View {
     var summary: OverviewSummary
+    @Binding var period: OverviewPeriod
 
     var shares: [HarnessShare] { summary.harnesses.filter { $0.totals.totalTokens > 0 } }
 
     var body: some View {
-        Card(title: "By harness") {
+        Card {
+            Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period)
+            VStack(spacing: 6) {
+                Text("Total tokens").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                Text(UsageFormat.tokens(summary.totals.totalTokens))
+                    .font(Theme.display).tracking(-1.8).monospacedDigit()
+                    .foregroundStyle(Theme.textPrimary)
+                    .contentTransition(.numericText())
+                HStack(spacing: 6) {
+                    Text(UsageFormat.dollars(summary.totals.costUSD))
+                        .font(.system(size: 28, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(Theme.accent)
+                    if summary.totals.unpricedTokens > 0 {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(Theme.accent)
+                            .help("Plus \(UsageFormat.tokens(summary.totals.unpricedTokens)) tokens from models with no list price: \(summary.totals.unpricedModels.sorted().joined(separator: ", "))")
+                    }
+                }
+                Text(rangeText).font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
             if shares.isEmpty {
-                Text("No usage in this period.").foregroundStyle(.secondary)
+                Text("No usage in this period.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             } else {
                 ShareBar(shares: shares)
-                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
-                    GridRow {
-                        Text("Harness"); Text("Share"); Text("Tokens"); Text("Spend")
-                    }
-                    .font(.caption).foregroundStyle(.secondary)
-                    ForEach(shares) { share in
-                        GridRow {
-                            HStack(spacing: 8) {
-                                RoundedRectangle(cornerRadius: 3).fill(Theme.harness(share.harness)).frame(width: 10, height: 10)
-                                Text(UsageFormat.harness(share.harness))
-                            }
-                            Text(share.share, format: .percent.precision(.fractionLength(share.share < 0.1 ? 1 : 0)))
-                            Text(UsageFormat.tokens(share.totals.totalTokens))
-                            HStack(spacing: 4) {
-                                Text(UsageFormat.dollars(share.totals.costUSD))
-                                if share.totals.unpricedTokens > 0 {
-                                    Image(systemName: "questionmark.circle")
-                                        .foregroundStyle(.secondary)
-                                        .help("\(UsageFormat.tokens(share.totals.unpricedTokens)) tokens from models with no list price: \(share.totals.unpricedModels.sorted().joined(separator: ", "))")
-                                }
-                            }
-                        }
-                        .monospacedDigit()
-                    }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                    ForEach(shares) { HarnessTile(share: $0) }
                 }
             }
         }
     }
+
+    var rangeText: String {
+        let range = summary.range
+        let start = range.start.formatted(.dateTime.month(.abbreviated).day())
+        let end = range.end.formatted(.dateTime.month(.abbreviated).day())
+        return start == end ? start : "\(start) to \(end)"
+    }
 }
 
-/// One bar split by harness, with a 2pt gap between segments.
+/// One thin bar split by harness, 2pt surface gaps between segments.
 private struct ShareBar: View {
     var shares: [HarnessShare]
 
@@ -156,149 +136,231 @@ private struct ShareBar: View {
             let gaps = CGFloat(shares.count - 1) * 2
             HStack(spacing: 2) {
                 ForEach(shares) { share in
-                    RoundedRectangle(cornerRadius: 4)
+                    Capsule()
                         .fill(Theme.harness(share.harness))
                         .frame(width: max(3, (geo.size.width - gaps) * share.share))
                         .help("\(UsageFormat.harness(share.harness)): \(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD))")
                 }
             }
         }
-        .frame(height: 14)
+        .frame(height: Theme.usageTrackHeight)
     }
 }
 
-// MARK: - Daily
-
-private struct DailyCard: View {
-    var summary: OverviewSummary
-    var period: OverviewPeriod
-    @State private var hovered: Date?
-
-    var hoveredRow: DayRow? { summary.days.first { $0.day == hovered } }
+/// A harness's share: the legend for the bar, with its numbers.
+private struct HarnessTile: View {
+    var share: HarnessShare
 
     var body: some View {
-        Card(title: "Daily") {
-            if summary.days.isEmpty {
-                Text("No usage in this period.").foregroundStyle(.secondary)
-            } else {
-                if period != .today {
-                    Chart(summary.days) { row in
-                        BarMark(x: .value("Day", row.day, unit: .day),
-                                y: .value("Tokens", row.totals.totalTokens))
-                            .foregroundStyle(Theme.accent.opacity(hovered == nil || hovered == row.day ? 1 : 0.45))
-                            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
-                    }
-                    .chartYAxis {
-                        AxisMarks(position: .leading) { value in
-                            AxisGridLine().foregroundStyle(.separator)
-                            AxisValueLabel { if let n = value.as(Int.self) { Text(UsageFormat.tokens(n)) } }
-                        }
-                    }
-                    .chartXAxis { AxisMarks(values: .stride(by: .day, count: period == .week ? 1 : 7)) { _ in
-                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                    } }
-                    .chartXSelection(value: $hovered)
-                    .overlay(alignment: .topTrailing) {
-                        if let row = hoveredRow {
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text(row.day, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
-                                    .font(.caption.weight(.medium))
-                                Text("\(UsageFormat.tokens(row.totals.totalTokens)) tokens · \(UsageFormat.dollars(row.totals.costUSD))")
-                                    .font(.caption).monospacedDigit()
-                            }
-                            .padding(8)
-                            .background(.regularMaterial, in: .rect(cornerRadius: 8))
-                        }
-                    }
-                    .frame(height: 160)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 3).fill(Theme.harness(share.harness)).frame(width: 10, height: 10)
+                Text(UsageFormat.harness(share.harness)).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            }
+            Text(share.share > 0 && share.share < 0.001 ? "<0.1%"
+                 : share.share.formatted(.percent.precision(.fractionLength(share.share < 0.1 ? 1 : 0))))
+                .font(Theme.figure).monospacedDigit().foregroundStyle(Theme.textPrimary)
+            HStack(spacing: 4) {
+                Text(share.modelCount == 1 ? "1 model" : "\(share.modelCount) models")
+                Text("·")
+                Text(UsageFormat.dollars(share.totals.costUSD)).foregroundStyle(Theme.accent)
+                if share.totals.unpricedTokens > 0 {
+                    Image(systemName: "questionmark.circle")
+                        .help("\(UsageFormat.tokens(share.totals.unpricedTokens)) tokens with no list price: \(share.totals.unpricedModels.sorted().joined(separator: ", "))")
                 }
-                Grid(alignment: .trailing, horizontalSpacing: 18, verticalSpacing: 6) {
-                    GridRow {
-                        Text("Day").gridColumnAlignment(.leading); Text("Tokens"); Text("Spend")
-                    }
-                    .font(.caption).foregroundStyle(.secondary)
-                    ForEach(summary.days.prefix(14)) { row in
-                        GridRow {
-                            Text(row.day, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
-                            Text(UsageFormat.tokens(row.totals.totalTokens))
-                            Text(UsageFormat.dollars(row.totals.costUSD))
-                        }
-                        .monospacedDigit()
-                    }
-                }
-                if summary.days.count > 14 {
-                    Text("Showing the latest 14 of \(summary.days.count) days.").font(.caption).foregroundStyle(.secondary)
+            }
+            .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: .rect(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.borderStrong.opacity(0.7), lineWidth: 1))
+    }
+}
+
+// MARK: - Breakdown
+
+private struct BreakdownCard: View {
+    enum Tab: Hashable { case daily, accounts }
+    var summary: OverviewSummary
+    @State private var tab: Tab = .daily
+
+    var body: some View {
+        Card {
+            Tabs(options: [(Tab.daily, "Daily breakdown"), (Tab.accounts, "By account")], selection: $tab)
+            switch tab {
+            case .daily: daily
+            case .accounts: accounts
+            }
+        }
+    }
+
+    @ViewBuilder private var daily: some View {
+        if summary.days.isEmpty {
+            Text("No usage in this period.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+        } else {
+            VStack(spacing: 0) {
+                DailyRow(cells: ["Date", "Total", "Input", "Output", "Cached", "Spend"])
+                    .font(Theme.tableHeader).foregroundStyle(Theme.textSecondary)
+                    .padding(.bottom, 8)
+                ForEach(summary.days) { row in
+                    Divider().overlay(Theme.border)
+                    DailyRow(cells: [
+                        row.day.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day()),
+                        UsageFormat.tokens(row.totals.totalTokens),
+                        UsageFormat.tokens(row.totals.inputTokens),
+                        UsageFormat.tokens(row.totals.outputTokens),
+                        UsageFormat.tokens(row.totals.cacheReadTokens + row.totals.cacheWriteTokens),
+                        UsageFormat.dollars(row.totals.costUSD),
+                    ], moneyLast: true)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).monospacedDigit()
+                    .padding(.vertical, 9)
                 }
             }
         }
     }
-}
 
-// MARK: - Accounts
-
-private struct AccountsCard: View {
-    var accounts: [AccountRow]
-
-    var shown: [AccountRow] { accounts.filter { $0.totals.totalTokens > 0 } }
-
-    var body: some View {
-        Card(title: "By account") {
-            if shown.isEmpty {
-                Text("No usage in this period.").foregroundStyle(.secondary)
-            }
+    @ViewBuilder private var accounts: some View {
+        let shown = summary.accounts.filter { $0.totals.totalTokens > 0 }
+        if shown.isEmpty {
+            Text("No usage in this period.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+        }
+        VStack(spacing: 0) {
             ForEach(shown) { row in
                 HStack {
                     Text(row.label).lineLimit(1).truncationMode(.middle).help(row.home)
                     Spacer()
-                    Text(UsageFormat.tokens(row.totals.totalTokens)).foregroundStyle(.secondary)
-                    Text(UsageFormat.dollars(row.totals.costUSD)).frame(minWidth: 64, alignment: .trailing)
+                    Text(UsageFormat.tokens(row.totals.totalTokens)).foregroundStyle(Theme.textSecondary)
+                    Text(UsageFormat.dollars(row.totals.costUSD)).foregroundStyle(Theme.accent)
+                        .frame(minWidth: 72, alignment: .trailing)
                 }
-                .monospacedDigit()
+                .font(Theme.bodySmall).monospacedDigit()
+                .padding(.vertical, 10)
+                if row != shown.last { Divider().overlay(Theme.border) }
             }
         }
     }
 }
 
-// MARK: - Activity
+/// The date takes the slack; the figures sit in equal right-aligned columns.
+private struct DailyRow: View {
+    var cells: [String]
+    var moneyLast = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(cells[0]).frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(1..<cells.count, id: \.self) { index in
+                Text(cells[index])
+                    .foregroundStyle(moneyLast && index == cells.count - 1 ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.foreground))
+                    .frame(width: 76, alignment: .trailing)
+            }
+        }
+    }
+}
+
+// MARK: - Side column
+
+private struct QuickFigures: View {
+    var summary: OverviewSummary
+
+    var busiest: DayRow? { summary.days.max { $0.totals.totalTokens < $1.totals.totalTokens } }
+
+    var body: some View {
+        Card {
+            HStack(spacing: 8) {
+                Chip(value: "\(summary.activeDays)", label: summary.activeDays == 1 ? "active day" : "active days")
+                Chip(value: UsageFormat.tokens(summary.totals.totalTokens / max(summary.activeDays, 1)), label: "a day")
+                Chip(value: busiest.map { $0.day.formatted(.dateTime.month(.abbreviated).day()) } ?? "None",
+                     label: "busiest")
+            }
+            if !summary.models.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(summary.models.prefix(5).enumerated()), id: \.element.id) { index, model in
+                        HStack(spacing: 10) {
+                            Text("\(index + 1)")
+                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                .frame(width: 20, height: 20)
+                                .background(Theme.subtle, in: .circle)
+                            Text(model.model).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                                .lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Text(model.share, format: .percent.precision(.fractionLength(1)))
+                                .font(Theme.rowTitle).monospacedDigit().foregroundStyle(Theme.textPrimary)
+                        }
+                        .padding(.vertical, 9)
+                        if index < min(summary.models.count, 5) - 1 { Divider().overlay(Theme.border) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct Chip: View {
+    var value: String
+    var label: String
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(value).font(Theme.rowTitle).monospacedDigit().foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(Theme.subtle, in: .rect(cornerRadius: 12))
+    }
+}
 
 private struct ActivityCard: View {
     var days: [DayRow]
 
     var body: some View {
         let map = Heatmap(days: days, weeks: 26, now: Date(), calendar: .current)
-        Card(title: "Last 26 weeks") {
-            HStack(alignment: .bottom, spacing: 3) {
-                ForEach(map.columns.indices, id: \.self) { week in
-                    Text(Self.monthLabel(map.columns, week) ?? "")
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .fixedSize()
-                        .frame(width: 13, alignment: .leading)
+        let weeks = map.columns.suffix(18)
+        Card(title: "Activity", subtitle: "Tokens a day, last \(weeks.count) weeks") {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 3) {
+                    Color.clear.frame(width: 24, height: 1)
+                    ForEach(Array(weeks.enumerated()), id: \.offset) { index, column in
+                        Text(Self.monthLabel(Array(weeks), index) ?? "")
+                            .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                            .fixedSize()
+                            .frame(width: Theme.heatmapCell, alignment: .leading)
+                    }
                 }
-            }
-            HStack(alignment: .top, spacing: 3) {
-                ForEach(map.columns.indices, id: \.self) { week in
-                    VStack(spacing: 3) {
-                        ForEach(0..<7, id: \.self) { weekday in
-                            if let cell = map.columns[week][weekday] {
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(Self.fill(cell.level))
-                                    .frame(width: 13, height: 13)
+                ForEach(0..<7, id: \.self) { weekday in
+                    HStack(spacing: 3) {
+                        Text(weekday % 2 == 1 ? Self.weekdayName(weekday) : "")
+                            .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                            .frame(width: 24, alignment: .leading)
+                        ForEach(Array(weeks.enumerated()), id: \.offset) { _, column in
+                            if let cell = column[weekday] {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Theme.heatmap[cell.level])
+                                    .frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
                                     .help("\(cell.day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())): \(UsageFormat.tokens(cell.tokens)) tokens")
                             } else {
-                                Color.clear.frame(width: 13, height: 13)
+                                Color.clear.frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
                             }
                         }
                     }
                 }
             }
             HStack(spacing: 4) {
-                Text("Less").font(.caption).foregroundStyle(.secondary)
+                Text("Less").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 ForEach(0..<5, id: \.self) { level in
-                    RoundedRectangle(cornerRadius: 3).fill(Self.fill(level)).frame(width: 11, height: 11)
+                    RoundedRectangle(cornerRadius: 2).fill(Theme.heatmap[level]).frame(width: 10, height: 10)
                 }
-                Text("More").font(.caption).foregroundStyle(.secondary)
+                Text("More").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
+    }
+
+    static func weekdayName(_ index: Int) -> String {
+        let calendar = Calendar.current
+        let symbols = calendar.shortWeekdaySymbols
+        return symbols[(index + calendar.firstWeekday - 1) % 7]
     }
 
     /// The month's short name over the first week that starts in it.
@@ -307,11 +369,9 @@ private struct ActivityCard: View {
         let calendar = Calendar.current
         if week > 0, let previous = columns[week - 1].first??.day,
            calendar.component(.month, from: previous) == calendar.component(.month, from: day) { return nil }
+        // Skip a label squeezed against the next one.
+        if week + 1 < columns.count, let next = columns[week + 1].first??.day,
+           calendar.component(.month, from: next) != calendar.component(.month, from: day) { return nil }
         return day.formatted(.dateTime.month(.abbreviated))
-    }
-
-    /// One hue, light to dark by level; an empty day is a quiet outline fill.
-    static func fill(_ level: Int) -> Color {
-        level == 0 ? Color.primary.opacity(0.07) : Theme.accent.opacity([0, 0.3, 0.5, 0.75, 1][level])
     }
 }

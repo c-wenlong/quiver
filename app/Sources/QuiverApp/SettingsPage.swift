@@ -6,30 +6,27 @@ struct SettingsPage: View {
     @State private var draft = ""
 
     var body: some View {
-        Page(title: "Settings", subtitle: "Where the app finds swe, and how it looks.") {
+        Page(title: "Settings", subtitle: "Where the app finds swe, and which terminal it opens.", maxWidth: 960) {
             Card(title: "swe") {
                 Text("Leave empty to use the swe your login shell finds. Point it at a specific install if that one is older than the app.")
-                    .foregroundStyle(.secondary)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 HStack {
                     TextField("/opt/homebrew/bin/swe", text: $draft)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
                         .onSubmit(apply)
-                    Button("Choose…", action: choose)
-                    Button("Use", action: apply).keyboardShortcut(.defaultAction)
+                    Button("Choose…", action: choose).buttonStyle(SecondaryButtonStyle())
+                    Button("Use", action: apply).keyboardShortcut(.defaultAction).buttonStyle(PrimaryButtonStyle())
                 }
                 Text("Running: \(SweLocation.executable(override: app.swePath))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.textSecondary)
             }
             Card(title: "Terminal") {
                 @Bindable var app = app
-                Picker("Open accounts in", selection: $app.terminal) {
-                    ForEach(TerminalApp.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                Text("Used by Terminal and Sign in on the Accounts page.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal)
+                Text("Used by Terminal, Sign in and Resume.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
         .onAppear { draft = app.swePath }

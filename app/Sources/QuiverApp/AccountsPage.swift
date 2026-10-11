@@ -12,14 +12,23 @@ struct AccountsPage: View {
         let model = app.accounts
         Page(title: "Accounts",
              subtitle: "Each account keeps its own sign-in. Open it in its app or a terminal without logging out.") {
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                Task { await reloadAll(force: true) }
+            }
+            .buttonStyle(IconButtonStyle())
+            .disabled(model.isLoading)
+            .help("Refresh")
+            Button("Add account", systemImage: "plus") { adding = true }
+                .buttonStyle(PrimaryButtonStyle())
+        } content: {
             if let error = model.error ?? actionError {
                 Card { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
             }
             ForEach(Vendor.allCases, id: \.self) { vendor in
                 let cards = model.cards.filter { $0.profile.vendor == vendor }
                 if !cards.isEmpty {
-                    Text(vendor.title).font(.title3.weight(.semibold)).padding(.top, 4)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 14)], spacing: 14) {
+                    SectionTitle(vendor.title)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter)], spacing: Theme.gutter) {
                         ForEach(cards) { card in
                             AccountCard(card: card, perform: perform, reloadAll: reloadAll)
                         }
@@ -27,26 +36,19 @@ struct AccountsPage: View {
                 }
             }
             if let others, !others.rows.isEmpty || others.note != nil {
-                Text("Other harnesses").font(.title3.weight(.semibold)).padding(.top, 4)
+                SectionTitle("Other harnesses")
                 Card {
                     if let note = others.note {
-                        Text(note).font(.caption).foregroundStyle(.secondary)
+                        Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                     ForEach(others.rows) { row in
                         OtherLimitRow(row: row)
-                        if row != others.rows.last { Divider() }
+                        if row != others.rows.last { Divider().overlay(Theme.border) }
                     }
                     Text("From swe, which polls the harnesses you starred.")
-                        .font(.caption).foregroundStyle(.tertiary)
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 }
             }
-        }
-        .toolbar {
-            Button("Add account", systemImage: "plus") { adding = true }
-            Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await reloadAll(force: true) }
-            }
-            .disabled(model.isLoading)
         }
         .sheet(isPresented: $adding) {
             AddAccountSheet { vendor, name, color in
@@ -103,7 +105,7 @@ private struct AccountCard: View {
         Card {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Circle().fill(Color(hex: profile.color)).frame(width: 9, height: 9)
-                Text(profile.name).font(.headline)
+                Text(profile.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 // The default account is already named Default; a badge would repeat it.
                 if profile.isDefault && profile.name != "Default" { Badge("Default") }
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
@@ -119,22 +121,26 @@ private struct AccountCard: View {
                         Button("Remove…", role: .destructive) { confirmingRemove = true }
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(systemName: "ellipsis")
+                        .foregroundStyle(Theme.textSecondary)
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
+                .help("More")
             }
             if let email = card.usage?.email {
-                Text(email).font(.caption).foregroundStyle(.secondary)
+                Text(email).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             UsageBars(usage: card.usage)
             HStack {
                 StatusLine(usage: card.usage)
                 Spacer()
                 Button("Open app") { perform { try await model.openApp(profile) } }
+                    .buttonStyle(SecondaryButtonStyle())
                 Button("Terminal") { perform { try await model.openTerminal(profile) } }
+                    .buttonStyle(SecondaryButtonStyle())
             }
-            .controlSize(.small)
         }
         .alert("Rename account", isPresented: $renaming) {
             TextField("Name", text: $newName)
@@ -174,18 +180,18 @@ struct UsageBar: View {
 
     var body: some View {
         let percent = Int(window.usedPercent.rounded())
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(window.label).font(.caption.weight(.medium))
+                Text(window.label).font(Theme.control).foregroundStyle(Theme.textPrimary)
                 Spacer()
                 if let reset = window.resetsAt, reset > .now {
                     Text("Resets \(reset, format: .relative(presentation: .named))")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
-                Text("\(percent)%").font(.caption.monospacedDigit()).frame(width: 40, alignment: .trailing)
+                Text("\(percent)%").font(Theme.control.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                    .frame(width: 40, alignment: .trailing)
             }
-            ProgressView(value: min(max(window.usedPercent, 0), 100), total: 100)
-                .tint(Theme.usage(percent))
+            UsageTrack(fraction: window.usedPercent / 100, color: Theme.usage(percent))
         }
     }
 }
@@ -215,20 +221,36 @@ struct StatusLine: View {
                 Text(message).lineLimit(1)
             }
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        .font(Theme.caption)
+        .foregroundStyle(Theme.textSecondary)
     }
 }
 
-struct Badge: View {
+/// The 6pt usage bar: a quiet track and a rounded fill.
+struct UsageTrack: View {
+    var fraction: Double
+    var color: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.usageTrack)
+                Capsule().fill(color).frame(width: max(0, min(1, fraction)) * geo.size.width)
+            }
+        }
+        .frame(height: Theme.usageTrackHeight)
+        .accessibilityElement()
+        .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
+    }
+}
+
+/// A heading between groups of cards: 20/28 semibold.
+struct SectionTitle: View {
     var text: String
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text)
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(.quaternary, in: .capsule)
+        Text(text).font(Theme.sectionTitle).tracking(-0.5).foregroundStyle(Theme.textPrimary).padding(.top, 8)
     }
 }
 
@@ -240,11 +262,8 @@ private struct AddAccountSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add an account").font(.title3.weight(.semibold))
-            Picker("Vendor", selection: $vendor) {
-                ForEach(Vendor.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
+            Text("Add an account").font(Theme.sectionTitle).tracking(-0.5)
+            Tabs(options: Vendor.allCases.map { ($0, $0.title) }, selection: $vendor)
             TextField("Name, like Work or Personal", text: $name)
                 .textFieldStyle(.roundedBorder)
             Text("Quiver gives the account its own folders, then opens the CLI's sign-in in your terminal. Open the desktop app once afterwards to sign in there too.")
@@ -252,10 +271,12 @@ private struct AddAccountSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(SecondaryButtonStyle())
                 Button("Add and sign in") {
                     onAdd(vendor, name.trimmingCharacters(in: .whitespaces), nil)
                     dismiss()
                 }
+                .buttonStyle(PrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -293,7 +314,7 @@ private struct OtherLimitRow: View {
         let limit = row.limit
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(row.name.capitalized).font(.subheadline.weight(.medium))
+                Text(row.name.capitalized).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 if let plan = limit.planType { Badge(planTitle(plan)) }
                 Spacer()
                 switch limit.status {
