@@ -299,7 +299,7 @@ struct InstructionEditor: View {
                     .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
                     .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
                         .strokeBorder(editing ? Theme.borderHover : Theme.border, lineWidth: 1))
-                    .focusRing(editing, cornerRadius: Theme.controlRadius)
+                    .focusRing(editing, cornerRadius: Theme.controlRadius, afterPointer: true)
                     .frame(minHeight: 160, maxHeight: .infinity)
                     .accessibilityLabel(title)
             }

@@ -32,7 +32,7 @@ struct SearchField: View {
         .background(Theme.field, in: .rect(cornerRadius: Theme.fieldRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius)
             .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
-        .focusRing(focused, cornerRadius: Theme.fieldRadius)
+        .focusRing(focused, cornerRadius: Theme.fieldRadius, afterPointer: true)
         .layoutPriority(1)
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // The shared controls, sized and coloured from the TokenTracker package's
@@ -19,8 +20,35 @@ extension View {
 
     /// The ring for a control whose focus is tracked elsewhere (a tab in a
     /// group, a sidebar row), so it doesn't take a second focus binding.
-    func focusRing(_ isFocused: Bool, cornerRadius: CGFloat) -> some View {
-        modifier(RingOverlay(isFocused: isFocused, cornerRadius: cornerRadius))
+    /// `afterPointer` keeps it on when the focus came from a click, as a
+    /// text field's does.
+    func focusRing(_ isFocused: Bool, cornerRadius: CGFloat, afterPointer: Bool = false) -> some View {
+        modifier(RingOverlay(isFocused: isFocused, cornerRadius: cornerRadius, afterPointer: afterPointer))
+    }
+}
+
+/// Whether the last input was a key press, like CSS `:focus-visible`. The
+/// window hands its first control focus at launch and a sheet does the same
+/// when it opens; neither came from the keyboard, so neither gets a ring
+/// until a key is pressed. A click puts the rings away again.
+@MainActor @Observable
+final class FocusVisibility {
+    static let shared = FocusVisibility()
+    private(set) var fromKeyboard = false
+    @ObservationIgnored private var monitor: Any?
+
+    /// Starts watching input; call once at launch, before any key press,
+    /// so the first Tab already counts as keyboard.
+    static func start() { _ = shared }
+
+    private init() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]) { event in
+            let keyboard = event.type == .keyDown
+            MainActor.assumeIsolated {
+                if FocusVisibility.shared.fromKeyboard != keyboard { FocusVisibility.shared.fromKeyboard = keyboard }
+            }
+            return event
+        }
     }
 }
 
@@ -38,6 +66,7 @@ private struct OwnFocusRing: ViewModifier {
 private struct RingOverlay: ViewModifier {
     var isFocused: Bool
     var cornerRadius: CGFloat
+    var afterPointer = false
 
     func body(content: Content) -> some View {
         content
@@ -46,7 +75,7 @@ private struct RingOverlay: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius + 3)
                     .strokeBorder(Theme.focus, lineWidth: Theme.focusRing)
                     .padding(-3)
-                    .opacity(isFocused ? 1 : 0)
+                    .opacity(isFocused && (afterPointer || FocusVisibility.shared.fromKeyboard) ? 1 : 0)
                     .allowsHitTesting(false))
     }
 }
@@ -365,7 +394,7 @@ private struct QuiverField: ViewModifier {
             .background(Theme.field, in: .rect(cornerRadius: Theme.fieldRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius)
                 .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
-            .focusRing(focused, cornerRadius: Theme.fieldRadius)
+            .focusRing(focused, cornerRadius: Theme.fieldRadius, afterPointer: true)
     }
 }
 
