@@ -196,6 +196,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Plugins > Explore nests plugins under source and marketplace.** The
+  flat list of about 385 plugins becomes two levels you open and close:
+  Local (the hub), then each harness's own marketplaces (Claude Code,
+  Codex, Cursor), then Not registered, and under each its marketplaces
+  with "N plugins · K installed". A row shows only that source's harness
+  chip; the hub's show both. The hub and its marketplaces start open,
+  everything else closed, and what you open or close is kept across
+  launches. A search opens everything it matches without changing that,
+  and clearing it puts it back. The Source select is gone: the sources
+  are now the list's top level.
 - **The app's Skills page lists standalone skills; plugin skills move to
   Plugins > Explore.** Explore lists every plugin from `swe plugins
   catalog --json`, grouped Quiver hub first, then the other marketplaces,

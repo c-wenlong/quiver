@@ -36,39 +36,55 @@ struct PluginExplorer: View {
 
     @ViewBuilder private func content(_ index: PluginExploreIndex) -> some View {
         let catalog = index.catalog
-        let groups = index.groups(source: model.source, harness: model.harness, query: model.query)
-        filters(index, shown: groups.reduce(0) { $0 + $1.rows.count })
+        let searching = model.isSearching
+        let sources = index.sources(harness: model.harness, query: model.query)
+        filters(index, shown: PluginExploreIndex.distinctPlugins(in: sources))
         if !catalog.errors.isEmpty { Problems(problems: catalog.errors) }
         if index.total == 0 {
             EmptyCard(text: "No plugin marketplaces registered in Claude Code, Codex or Cursor.",
                       icon: "puzzlepiece.extension")
-        } else if groups.isEmpty {
+        } else if sources.isEmpty {
             EmptyCard(text: "No plugins match.", icon: "puzzlepiece.extension")
         } else {
-            // 372 plugins on one machine: a lazy stack builds only the rows
-            // on screen. Straight on the panel, hairlines between rows.
+            // Source, then marketplace, then plugin, flattened into one lazy
+            // stack: it builds only the lines on screen, and a closed
+            // marketplace's plugins are not lines at all. Straight on the
+            // panel, hairlines between plugin rows.
+            let lines = ExploreLine.lines(sources, disclosure: model.disclosure, searching: searching)
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(groups) { group in
-                    GroupHeader(group: group)
-                        .padding(.top, group.kind == groups.first?.kind ? 0 : 28)
-                    ForEach(group.rows) { row in
-                        PluginRow(row: row, catalog: catalog, running: model.running, busy: model.work.isBusy,
-                                  openHealth: openHealth, confirm: confirm)
-                        if row.id != group.rows.last?.id { Rectangle().fill(Theme.border).frame(height: 1) }
+                ForEach(lines) { line in
+                    switch line {
+                    case .source(let source, let open):
+                        SourceHeader(source: source, open: open, searching: searching) { model.toggle(source.id) }
+                            .padding(.top, source.id == sources.first?.id ? 0 : 16)
+                    case .marketplace(let market, let open):
+                        MarketplaceHeader(market: market, open: open, searching: searching) { model.toggle(market.id) }
+                            .padding(.leading, Self.marketIndent)
+                    case .plugin(let entry, let last):
+                        VStack(spacing: 0) {
+                            PluginRow(entry: entry, catalog: catalog, running: model.running, busy: model.work.isBusy,
+                                      openHealth: openHealth, confirm: confirm)
+                            if !last { Rectangle().fill(Theme.border).frame(height: 1) }
+                        }
+                        .padding(.leading, Self.pluginIndent)
+                        .padding(.bottom, last ? 8 : 0)
                     }
                 }
             }
         }
     }
 
-    /// The tab's one filter bar: selects, then search taking the slack,
-    /// then the count.
+    /// A marketplace's chevron sits under its source's title; a plugin's
+    /// name under its marketplace's.
+    private static let marketIndent: CGFloat = 20
+    private static let pluginIndent: CGFloat = 40
+
+    /// The tab's one filter bar: the harness select, then search taking
+    /// the slack, then the count. No source select: the sources are the
+    /// list's top level, and a marketplace is opened in place.
     private func filters(_ index: PluginExploreIndex, shown: Int) -> some View {
-        let sources: [(ExploreSource, String)] = [(.all, "All sources"), (.hub, "Quiver hub")]
-            + index.otherMarketplaces.map { (.marketplace($0), $0) }
         let harnesses = index.catalog.harnesses
         return HStack(spacing: 8) {
-            SelectMenu(label: "Source", options: sources, selection: $model.source, title: sourceTitle)
             SelectMenu(label: "Harness",
                        options: [(String?.none, "All harnesses")] + harnesses.map { (String?.some($0), HarnessMark($0).name) },
                        selection: $model.harness,
@@ -80,14 +96,6 @@ struct PluginExplorer: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize()
-        }
-    }
-
-    private var sourceTitle: String {
-        switch model.source {
-        case .all: "All"
-        case .hub: "Quiver hub"
-        case .marketplace(let name): name
         }
     }
 }
@@ -113,28 +121,124 @@ private struct Problems: View {
     }
 }
 
-private struct GroupHeader: View {
-    var group: ExploreGroup
+/// A source: Local, a harness, or Not registered. The whole line is the
+/// button that opens or closes it.
+private struct SourceHeader: View {
+    var source: ExploreSource
+    var open: Bool
+    var searching: Bool
+    var toggle: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(group.kind.title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                Text(group.rows.count == 1 ? "1 plugin" : "\(group.rows.count) plugins")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
-            }
-            if let note = group.kind.note {
-                Text(note)
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        let count = source.countLine(searching: searching)
+        DisclosureHeader(open: open, verticalPadding: 10, label: "\(source.title), \(source.note), \(count)",
+                         toggle: toggle) {
+            Text(source.title)
+                // Body size at the section weight: above a marketplace's
+                // 14/500 name, well under the page title.
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .fixedSize()
+            Text(source.note)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(count)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
         }
-        .padding(.bottom, 4)
+    }
+}
+
+/// A marketplace under its source: its name, where it comes from, and
+/// how many of its plugins the source's harness has installed.
+private struct MarketplaceHeader: View {
+    var market: ExploreMarketplace
+    var open: Bool
+    var searching: Bool
+    var toggle: () -> Void
+
+    var body: some View {
+        let count = market.countLine(searching: searching)
+        DisclosureHeader(open: open, verticalPadding: 8,
+                         label: [market.name, market.tag, count].compactMap { $0 }.joined(separator: ", "),
+                         toggle: toggle) {
+            Text(market.name)
+                .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+            if let tag = market.tag { SourceTag(text: tag) }
+            Spacer(minLength: 8)
+            Text(count)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
+        }
+    }
+}
+
+/// A full-width button that opens or closes what is under it: a chevron
+/// that turns down when open, then the caller's line. VoiceOver reads it
+/// as a header with an expanded or collapsed value; the focus ring is the
+/// shared one.
+private struct DisclosureHeader<Content: View>: View {
+    var open: Bool
+    var verticalPadding: CGFloat
+    var label: String
+    var toggle: () -> Void
+    @ViewBuilder var content: Content
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(hovering ? Theme.textPrimary : Theme.textMuted)
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .animation(.easeOut(duration: 0.15), value: open)
+                    .frame(width: 12)
+                content
+            }
+            .padding(.vertical, verticalPadding)
+            // The fill reaches past the text, which stays in line with the
+            // rows; the stack's own edge is outside the page's padding.
+            .padding(.horizontal, 8)
+            .background(hovering ? Theme.panelHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .contentShape(.rect(cornerRadius: Theme.controlRadius))
+        }
+        .plainButton(cornerRadius: Theme.controlRadius)
+        .padding(.horizontal, -8)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(label)
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
+        .accessibilityAddTraits(.isHeader)
+        .help(open ? "Collapse" : "Expand")
+    }
+}
+
+/// Where a marketplace comes from (local, github, git, cache): quieter
+/// than a skill badge, a hairline and secondary text.
+private struct SourceTag: View {
+    var text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+            .fixedSize()
     }
 }
 
 private struct PluginRow: View {
-    var row: ExploreRow
+    var entry: ExplorePlugin
     var catalog: PluginCatalog
     var running: PluginAction?
     /// An action or a Health fix is running: one change at a time.
@@ -145,12 +249,16 @@ private struct PluginRow: View {
     private static let shownSkills = 8
 
     var body: some View {
+        let row = entry.row
         let plugin = row.plugin
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(plugin.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    // The marketplace is the header above; the version is all that is left.
+                    if let version = plugin.version {
+                        Text("v\(version)").font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    }
                     if let drift = plugin.worstDrift {
                         DriftBadge(state: drift.state, harnesses: drift.harnesses, action: openHealth)
                     }
@@ -176,7 +284,9 @@ private struct PluginRow: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 6) {
-                ForEach(plugin.shownHarnesses(in: catalog.harnesses), id: \.self) { harness in
+                // Only the source's own harness, both of the hub's, or
+                // wherever an unregistered plugin is installed.
+                ForEach(entry.harnesses, id: \.self) { harness in
                     if let state = plugin.harnesses[harness] {
                         HarnessChip(harness: harness, state: state,
                                     actions: catalog.actions(for: plugin, in: harness),
@@ -189,9 +299,6 @@ private struct PluginRow: View {
         .padding(.vertical, 12)
     }
 
-    private var subtitle: String {
-        [row.plugin.marketplace, row.plugin.version.map { "v\($0)" }].compactMap { $0 }.joined(separator: " · ")
-    }
 }
 
 /// A hub plugin the Health tab has a finding for. A click opens Health,

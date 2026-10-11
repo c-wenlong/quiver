@@ -701,119 +701,6 @@ public final class FolderOwners {
     }
 }
 
-// MARK: - The Explore tab
-
-/// The Explore tab's Source select.
-public enum ExploreSource: Hashable, Sendable {
-    case all
-    case hub
-    case marketplace(String)
-}
-
-/// One plugin as the Explore tab lists it.
-public struct ExploreRow: Sendable, Equatable, Identifiable {
-    public var id: String { plugin.ref }
-    public let plugin: CatalogPlugin
-    public let group: ExploreGroup.Kind
-    public let skills: [PluginSkill]
-    /// Lowercased name, ref, marketplace, description and skill names, for search.
-    let haystack: String
-}
-
-public struct ExploreGroup: Sendable, Equatable, Identifiable {
-    public enum Kind: Int, Sendable, Comparable {
-        case hub, other, unregistered
-
-        public static func < (a: Kind, b: Kind) -> Bool { a.rawValue < b.rawValue }
-
-        public var title: String {
-            switch self {
-            case .hub: "Quiver hub"
-            case .other: "Other marketplaces"
-            case .unregistered: "No longer registered"
-            }
-        }
-
-        /// Said under the title, when the group needs explaining.
-        public var note: String? {
-            switch self {
-            case .unregistered:
-                "Installed from marketplaces no harness has registered any more. They stay installed until you uninstall them, and nothing new can come from them."
-            default: nil
-            }
-        }
-    }
-
-    public var id: Kind { kind }
-    public let kind: Kind
-    public let rows: [ExploreRow]
-}
-
-/// The Explore tab's rows, worked out once per catalog and inventory so
-/// filtering 372 plugins on each keystroke is cheap.
-public struct PluginExploreIndex: Sendable, Equatable {
-    public let catalog: PluginCatalog
-    /// The skills `swe skills` found, the same list the Skills page places.
-    public let skills: [Skill]
-    public let placement: SkillPlacement
-    /// Every plugin, hub first, then the other marketplaces, then the ones
-    /// no longer registered.
-    public let rows: [ExploreRow]
-
-    public init(catalog: PluginCatalog, skills: [Skill]) {
-        self.catalog = catalog
-        self.skills = skills
-        let placement = SkillPlacement(skills: skills, catalog: catalog)
-        self.placement = placement
-        var rows: [ExploreRow] = []
-        for market in catalog.marketplaces {
-            let kind: ExploreGroup.Kind = market.hub ? .hub : market.isRegistered ? .other : .unregistered
-            for plugin in market.plugins {
-                let skills = placement.skills(of: plugin)
-                let haystack = ([plugin.name, plugin.ref, plugin.marketplace,
-                                 plugin.displayName ?? "", plugin.description ?? ""]
-                    + skills.map(\.name)).joined(separator: "\n").lowercased()
-                rows.append(ExploreRow(plugin: plugin, group: kind, skills: skills, haystack: haystack))
-            }
-        }
-        // Stable: within a group, the catalog's own order.
-        self.rows = rows.enumerated()
-            .sorted { ($0.element.group, $0.offset) < ($1.element.group, $1.offset) }
-            .map(\.element)
-    }
-
-    public var total: Int { rows.count }
-
-    /// The marketplaces for the Source select, beyond All and Quiver hub:
-    /// every one outside the hub, by name.
-    public var otherMarketplaces: [String] {
-        catalog.marketplaces.filter { !$0.hub }.map(\.name)
-    }
-
-    /// The rows matching the filters, grouped, empty groups left out.
-    /// - Parameters:
-    ///   - harness: only plugins with something in this harness (listed,
-    ///     installed or cached there); nil for all.
-    ///   - query: matched against the name, ref, marketplace, description and the names of
-    ///     the skills a plugin ships.
-    public func groups(source: ExploreSource = .all, harness: String? = nil, query: String = "") -> [ExploreGroup] {
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let matching = rows.filter { row in
-            switch source {
-            case .all: break
-            case .hub: guard row.group == .hub else { return false }
-            case .marketplace(let name): guard row.plugin.marketplace == name else { return false }
-            }
-            if let harness, (row.plugin.harnesses[harness]?.status ?? .absent) == .absent { return false }
-            return needle.isEmpty || row.haystack.contains(needle)
-        }
-        return [ExploreGroup.Kind.hub, .other, .unregistered].compactMap { kind in
-            let rows = matching.filter { $0.group == kind }
-            return rows.isEmpty ? nil : ExploreGroup(kind: kind, rows: rows)
-        }
-    }
-}
-
 /// What a page knows of the plugin catalog.
 public enum CatalogLookup: Sendable, Equatable {
     /// Not read yet.
@@ -875,10 +762,19 @@ public final class PluginCatalogModel {
     }
 
     // The filters, kept with the catalog so a return visit finds them set.
-    public var source: ExploreSource = .all
     /// A harness name, or nil for every harness.
     public var harness: String?
-    public var query = ""
+    public var query = "" {
+        didSet {
+            if PluginExploreIndex.needle(query) != PluginExploreIndex.needle(oldValue) { disclosure.searchChanged() }
+        }
+    }
+
+    /// Which sources and marketplaces are open, kept across launches.
+    public private(set) var disclosure: ExploreDisclosure
+    private let disclosureStore: (any KeyValueStoring)?
+    static let openedKey = "pluginsExploreOpened"
+    static let closedKey = "pluginsExploreClosed"
 
     /// Held while an action runs, shared with the Health tab's fixes.
     public let work: PluginWork
@@ -892,9 +788,31 @@ public final class PluginCatalogModel {
     ///     run at once.
     public init(snapshots: (any SnapshotStoring<Snapshot<PluginCatalog>>)? = nil, maxAge: TimeInterval = 60,
                 timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init,
-                work: PluginWork = PluginWork()) {
+                work: PluginWork = PluginWork(), disclosure: (any KeyValueStoring)? = nil) {
         loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
         self.work = work
+        disclosureStore = disclosure
+        self.disclosure = ExploreDisclosure(opened: Set(disclosure?.strings(forKey: Self.openedKey) ?? []),
+                                            closed: Set(disclosure?.strings(forKey: Self.closedKey) ?? []))
+    }
+
+    /// A search is on: everything it matches shows open.
+    public var isSearching: Bool { !PluginExploreIndex.needle(query).isEmpty }
+
+    /// Whether the source or marketplace `id` shows its contents now.
+    public func isOpen(_ id: String) -> Bool {
+        disclosure.isOpen(id, searching: isSearching)
+    }
+
+    /// Opens or closes a source or marketplace. Kept across launches,
+    /// except during a search, which opens what it matches and leaves the
+    /// kept state alone.
+    public func toggle(_ id: String) {
+        let searching = isSearching
+        disclosure.toggle(id, searching: searching)
+        guard !searching, let store = disclosureStore else { return }
+        store.set(disclosure.opened.sorted(), forKey: Self.openedKey)
+        store.set(disclosure.closed.sorted(), forKey: Self.closedKey)
     }
 
     /// What the Skills page places skills with.
