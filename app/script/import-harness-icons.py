@@ -116,9 +116,11 @@ def drop_box_subpath(d, box):
     w, h = float(box[2]), float(box[3])
     corners = {(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)}
     kept = []
+    dropped_start = None  # where the pen is after a dropped box closes
     for n, i in enumerate(starts):
         sub = tokens[i:starts[n + 1] if n + 1 < len(starts) else len(tokens)]
         points, x, y, k, absolute = set(), 0.0, 0.0, 0, True
+        start = None
         try:
             while k < len(sub):
                 command = sub[k]
@@ -128,6 +130,7 @@ def drop_box_subpath(d, box):
                 if command.upper() in "ML":
                     nx, ny = float(sub[k]), float(sub[k + 1])
                     x, y = (nx, ny) if absolute else (x + nx, y + ny)
+                    start = start or (x, y)
                     k += 2
                 elif command.upper() == "H":
                     x = float(sub[k]) if absolute else x + float(sub[k])
@@ -142,9 +145,20 @@ def drop_box_subpath(d, box):
                 points.add((x, y))
         except (ValueError, IndexError):
             points = set()
-        if points != corners:
-            kept.append(" ".join(sub))
+        if points == corners:
+            # A box closes back at its first point, which is where a
+            # following relative move is measured from.
+            dropped_start = start
+            continue
+        if dropped_start and sub[0] == "m":
+            sub = ["M", fmt(dropped_start[0] + float(sub[1])), fmt(dropped_start[1] + float(sub[2]))] + sub[3:]
+        dropped_start = None
+        kept.append(" ".join(sub))
     return " ".join(kept) if kept else d
+
+
+def fmt(value):
+    return f"{value:g}"
 
 
 def normalise(text, mono):
@@ -196,12 +210,20 @@ def normalise(text, mono):
     return re.sub(r"<!--.*?-->", "", out, flags=re.S)
 
 
+REQUIRED = ("id", "kind", "file", "source_url", "licence")
+
+
 def main(sources):
-    rows = list(csv.DictReader(open(sources), delimiter="\t"))
+    with open(sources) as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        missing = [c for c in REQUIRED if c not in (reader.fieldnames or [])]
+        rows = list(reader)
+    if missing:
+        sys.exit(f"refusing to import: {sources} has no {', '.join(missing)} column")
     base = Path(sources).parent
     outputs, problems = {}, []
     for row in rows:
-        kind = row.get("kind", "mono")
+        kind = row["kind"]
         if kind not in ("mono", "color"):
             problems.append(f"{row['id']}: kind must be mono or color, not {kind!r}")
             continue
@@ -219,6 +241,9 @@ def main(sources):
     if problems:
         # Nothing is written, so icons and their provenance stay in step.
         sys.exit("refusing to import:\n  " + "\n  ".join(problems))
+    provenance = [[row["id"], row["kind"], row["source_url"], row["licence"], row.get("notes") or ""]
+                  for row in sorted(rows, key=lambda r: r["id"])]
+    # Everything is checked and built; only now is anything changed.
     for stale in OUT.glob("harness-*.svg"):
         if stale.name not in outputs:
             stale.unlink()
@@ -228,8 +253,7 @@ def main(sources):
     with open(OUT / "harness-icons.tsv", "w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(["id", "kind", "source_url", "licence", "notes"])
-        for row in sorted(rows, key=lambda r: r["id"]):
-            writer.writerow([row["id"], row.get("kind", "mono"), row["source_url"], row["licence"], row.get("notes", "")])
+        writer.writerows(provenance)
 
 
 if __name__ == "__main__":

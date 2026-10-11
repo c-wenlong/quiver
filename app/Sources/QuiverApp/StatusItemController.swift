@@ -196,6 +196,7 @@ private struct SpendDonut: View {
                     }
                     ForEach(parts, id: \.harness) { part in
                         HStack(spacing: 6) {
+                            ChartSwatch(harness: part.harness, size: 6)
                             HarnessIcon(harness: part.harness, size: 12)
                             Text(UsageFormat.harness(part.harness)).font(.caption)
                             Spacer()
