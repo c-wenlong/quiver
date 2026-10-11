@@ -96,6 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe doctor --json` names the harness an off-PATH finding is about.**
+  An `off-path` row now carries `"harness": "<registry name>"`, so the app's
+  Doctor page can show that harness's logo. Rows about the machine (node,
+  npm, nvm, drift) leave the key out, so they read as before.
 - **`swe plugins`: the whole plugin catalog, and install per harness.** The
   app's Plugins page gets an Explore tab listing every plugin in every
   marketplace Claude Code, Codex or Cursor has registered, installed or not

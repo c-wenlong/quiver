@@ -164,6 +164,16 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     /// The feed's host, for messages ("Couldn't reach status.claude.com").
     public var host: String { feedURL.host() ?? feedURL.absoluteString }
 
+    /// Status pages whose logo is filed under the harness's own id.
+    static let logoIDs = ["openai": "codex", "github": "copilot"]
+
+    /// The bundled harness logo for this service, or nil when there is none
+    /// (npm, Vercel and Cloudflare are not harnesses, so they show no icon).
+    public var logoID: String? {
+        let id = Self.logoIDs[id] ?? id
+        return HarnessIcons.icon(for: id) != nil ? id : nil
+    }
+
     private static func statuspage(_ id: String, _ name: String, _ base: String, _ group: Group) -> StatusService {
         let page = URL(string: base)!
         return StatusService(id: id, name: name, pageURL: page,
@@ -199,14 +209,20 @@ public enum ServiceStatusSummary {
         statuses.filter { $0.service.group == .providers }.compactMap(\.report?.health).max()
     }
 
-    /// "Claude: minor incident" for providers with an incident, worst first;
-    /// nil when every provider is up or under maintenance.
-    public static func menuLine(_ statuses: [ServiceStatus]) -> String? {
-        let hit = statuses
+    /// The providers with an incident, worst first and in catalog order
+    /// among equals; empty when every provider is up or under maintenance.
+    public static func affected(_ statuses: [ServiceStatus]) -> [ServiceStatus] {
+        statuses
             .filter { $0.service.group == .providers && ($0.report?.health ?? .operational) >= .minor }
             .enumerated()
             .sorted { ($0.element.report!.health, -$0.offset) > ($1.element.report!.health, -$1.offset) }
             .map(\.element)
+    }
+
+    /// "Claude: minor incident" for providers with an incident, worst first;
+    /// nil when every provider is up or under maintenance.
+    public static func menuLine(_ statuses: [ServiceStatus]) -> String? {
+        let hit = affected(statuses)
         guard let first = hit.first else { return nil }
         func part(_ status: ServiceStatus) -> String {
             "\(status.service.name): \(status.report!.health.title.lowercased())"

@@ -501,3 +501,29 @@ struct FakeShell: ShellEnvironmentReading {
         }
     }
 }
+
+@Suite struct APIKeyProviderLogoTests {
+    @Test func headingsMatchOnWordsIgnoringCase() {
+        #expect(APIKeyProviderLogo.logoID(for: "ANTHROPIC") == "claude")
+        #expect(APIKeyProviderLogo.logoID(for: "Claude") == "claude")
+        #expect(APIKeyProviderLogo.logoID(for: "OpenAI") == "codex")
+        #expect(APIKeyProviderLogo.logoID(for: "Moonshot / Kimi") == "kimi")
+        #expect(APIKeyProviderLogo.logoID(for: "Google AI Studio") == "gemini")
+        #expect(APIKeyProviderLogo.logoID(for: "GEMINI") == "gemini")
+        #expect(APIKeyProviderLogo.logoID(for: "xAI") == "grok")
+        #expect(APIKeyProviderLogo.logoID(for: "x.ai") == "grok")
+        #expect(APIKeyProviderLogo.logoID(for: "Grok") == "grok")
+        #expect(APIKeyProviderLogo.logoID(for: "Mistral") == "mistral-vibe")
+        #expect(APIKeyProviderLogo.logoID(for: "Qwen") == "qwen-code")
+        #expect(APIKeyProviderLogo.logoID(for: "Alibaba Cloud") == "qwen-code")
+    }
+
+    /// A name only inside another word is no match, and other providers get no logo.
+    @Test func otherProvidersHaveNoLogo() {
+        #expect(APIKeyProviderLogo.logoID(for: "Keys for every harness") == nil)
+        #expect(APIKeyProviderLogo.logoID(for: "OPENROUTER") == nil)
+        #expect(APIKeyProviderLogo.logoID(for: "Groq") == nil)
+        #expect(APIKeyProviderLogo.logoID(for: "Stripe") == nil)
+        #expect(APIKeyProviderLogo.logoID(for: "") == nil)
+    }
+}

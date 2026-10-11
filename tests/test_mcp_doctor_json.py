@@ -584,7 +584,8 @@ class DoctorJsonTest(unittest.TestCase):
         self.assertIsInstance(doc["data"]["ok"], bool)
         self.assertEqual(doc["data"]["ok"], result.returncode == 0)
         for finding in doc["data"]["findings"]:
-            self.assertEqual(set(finding), self.FINDING_KEYS)
+            # "harness" appears only on a finding about one harness.
+            self.assertEqual(set(finding) - {"harness"}, self.FINDING_KEYS)
             self.assertIn(finding["severity"], {"error", "warning", "info"})
             self.assertTrue(finding["fix"] is None or isinstance(finding["fix"], str))
 
@@ -615,6 +616,7 @@ class DoctorJsonTest(unittest.TestCase):
         found = self.finding(doc, "off-path")
         self.assertEqual(found["severity"], "error")
         self.assertEqual(found["fix"], "swe install zzfake")
+        self.assertEqual(found["harness"], "zzfake")
         self.assertIn("zz-fake-harness", found["message"])
         self.assertIn(str(binary.resolve()), found["message"])
         self.assertFalse(doc["data"]["ok"])
@@ -708,7 +710,16 @@ class DoctorJsonChecksTest(unittest.TestCase):
             "message": "claude (claude) is at /tmp/npm/bin/claude [nvm], "
                        "not on PATH",
             "fix": "swe install claude",
+            "harness": "claude",
         }])
+
+    def test_only_a_finding_about_one_harness_names_it(self):
+        hit = OffPathHit("cc", "/tmp/npm/bin/cc", "nvm")
+        env = NodeEnv(None, "/usr/bin/npm", None, "10.0.0", None, None, False)
+        _, doc = self.run_doctor(env, orphans=[("claude-code", "cc", hit)])
+        by_check = {f["check"]: f for f in doc["data"]["findings"]}
+        self.assertEqual(by_check["off-path"]["harness"], "claude-code")
+        self.assertNotIn("harness", by_check["node"])
 
     def test_nvm_bins_missing_from_path_warn(self):
         code, doc = self.run_doctor(nvm=[Path("/nonexistent/nvm/v22/bin")])

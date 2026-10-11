@@ -30,6 +30,8 @@ public final class ServiceStatusModel {
     public var lastChecked: Date? { statuses.compactMap(\.checkedAt).max() }
 
     public var menuLine: String? { ServiceStatusSummary.menuLine(statuses) }
+    /// The services `menuLine` names, worst first.
+    public var affected: [StatusService] { ServiceStatusSummary.affected(statuses).map(\.service) }
     public var worst: ServiceHealth? { ServiceStatusSummary.worst(statuses) }
 
     public func load(force: Bool) async {
