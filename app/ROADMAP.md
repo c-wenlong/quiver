@@ -59,10 +59,12 @@ remembering CLI commands.
 - [x] Ask `swe` only for the harnesses Quiver has no account for (`--exclude`, #131), so Claude and Codex are not polled twice
 
 ### M3. Overview
-- [ ] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
-- [ ] Pricing from a bundled LiteLLM snapshot, refreshed daily
-- [ ] Overview page: total tokens and cost, harness split, daily table, heatmap
-- [ ] Cost donut in the menu bar panel (Today, Yesterday, 30 days)
+- [x] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
+  (`QuiverCore/Ledger`, persisted to `~/.quiver/cache/ledger/ledger.sqlite`)
+- [x] Pricing from a bundled LiteLLM snapshot, refreshed daily before a scan
+  (`PricingStore`, cached at `~/.quiver/cache/pricing/litellm.json`)
+- [x] Overview page: total tokens and cost, harness split, daily table, heatmap
+- [x] Cost donut in the menu bar panel (Today, Yesterday, 30 days)
 
 ### M4. Sessions
 - [ ] List from `swe session --json`, joined with M3 token and cost data by session id

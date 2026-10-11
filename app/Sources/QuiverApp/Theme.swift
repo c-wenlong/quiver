@@ -11,6 +11,21 @@ enum Theme {
     static let cardRadius: CGFloat = 14
     static let gutter: CGFloat = 20
 
+    /// One fixed hue per harness, validated together for colour-blind
+    /// separation on both the dark and light surface. Anything else is grey.
+    static func harness(_ id: String) -> Color {
+        switch id {
+        case "claude": Color(hex: "#cf6848")
+        case "codex": Color(hex: "#3b7ff0")
+        case "opencode": Color(hex: "#139f8b")
+        case "devin": Color(hex: "#c4860f")
+        default: .gray
+        }
+    }
+
+    /// Order the harnesses always appear in, so a colour never moves.
+    static let harnessOrder = ["claude", "codex", "opencode", "devin"]
+
     /// Bar colour for a used percentage: calm, then amber at 70, red at 90.
     static func usage(_ percent: Int) -> Color {
         percent >= 90 ? danger : percent >= 70 ? warning : accent

@@ -1,3 +1,4 @@
+import Charts
 import AppKit
 import QuiverCore
 import SwiftUI
@@ -118,10 +119,15 @@ struct MenuBarContent: View {
                 Spacer()
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await app.accounts.load(force: true) }
+                    Task { await app.overview?.load(scan: true) }
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .disabled(app.accounts.isLoading)
+            }
+            if let spend = app.overview?.spend {
+                SpendDonut(slices: spend)
+                Divider()
             }
             ForEach(app.accounts.cards) { card in
                 PanelAccountRow(card: card)
@@ -140,6 +146,77 @@ struct MenuBarContent: View {
         .frame(width: 340)
         .glassEffect(in: .rect(cornerRadius: 18))
         .task { await app.accounts.keepFresh() }
+    }
+}
+
+/// Spend by harness for today, yesterday or the last 30 days.
+private struct SpendDonut: View {
+    var slices: [SpendSlice]
+    @State private var period: SpendSlice.Period = .today
+
+    var slice: SpendSlice? { slices.first { $0.period == period } }
+
+    var unpriced: Int { parts.reduce(0) { $0 + $1.totals.unpricedTokens } }
+
+    var parts: [(harness: String, totals: UsageTotals)] {
+        guard let slice else { return [] }
+        let known = Theme.harnessOrder.compactMap { id in slice.byHarness[id].map { (id, $0) } }
+        let rest = slice.byHarness.filter { !Theme.harnessOrder.contains($0.key) }.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+        return (known + rest).filter { $0.1.totalTokens > 0 }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Spend", selection: $period) {
+                Text("Today").tag(SpendSlice.Period.today)
+                Text("Yesterday").tag(SpendSlice.Period.yesterday)
+                Text("30 days").tag(SpendSlice.Period.thirtyDays)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            HStack(spacing: 16) {
+                ZStack {
+                    if (slice?.costUSD ?? 0) > 0 {
+                        Chart(parts, id: \.harness) { part in
+                            SectorMark(angle: .value("Spend", part.totals.costUSD),
+                                       innerRadius: .ratio(0.68), angularInset: 1.5)
+                                .cornerRadius(3)
+                                .foregroundStyle(Theme.harness(part.harness))
+                        }
+                    } else {
+                        Circle().stroke(Color.primary.opacity(0.1), lineWidth: 14).padding(7)
+                    }
+                    VStack(spacing: 0) {
+                        Text(UsageFormat.dollars(slice?.costUSD ?? 0))
+                            .font(.system(.headline, design: .rounded)).monospacedDigit()
+                        Text("spent").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 104, height: 104)
+                VStack(alignment: .leading, spacing: 5) {
+                    if parts.isEmpty {
+                        Text("No usage yet.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(parts, id: \.harness) { part in
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2).fill(Theme.harness(part.harness)).frame(width: 8, height: 8)
+                            Text(UsageFormat.harness(part.harness)).font(.caption)
+                            Spacer()
+                            if part.totals.unpricedTokens > 0 {
+                                Image(systemName: "questionmark.circle").font(.caption2).foregroundStyle(.secondary)
+                                    .help("\(UsageFormat.tokens(part.totals.unpricedTokens)) tokens with no list price")
+                            }
+                            Text(UsageFormat.dollars(part.totals.costUSD)).font(.caption).monospacedDigit()
+                        }
+                    }
+                }
+            }
+            if unpriced > 0 {
+                // The total leaves these out, so say so rather than look complete.
+                Text("Plus \(UsageFormat.tokens(unpriced)) tokens with no list price, not in the total.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

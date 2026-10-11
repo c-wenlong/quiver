@@ -3,6 +3,13 @@ import Foundation
 /// A vendor with both a CLI and a desktop app that can run under a profile.
 public enum Vendor: String, Codable, Sendable, CaseIterable {
     case claude, codex
+
+    public var title: String {
+        switch self {
+        case .claude: "Claude"
+        case .codex: "Codex"
+        }
+    }
 }
 
 /// One account slot for one vendor.
