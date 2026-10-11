@@ -81,7 +81,7 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
             guard row.limit.status == .ok else { return [] }
             let isStale = row.limit.fetchedAt.map { now.timeIntervalSince($0) > sweStaleAfter } ?? true
             return row.limit.allWindows.map { window in
-                LimitReading(source: row.name, harness: row.name, title: UsageFormat.harness(row.name),
+                LimitReading(source: row.name, harness: row.name, title: row.accountTitle,
                              window: window.window, usedPercent: Double(window.usedPercent),
                              resetsAt: window.resetAt, fetchedAt: row.limit.fetchedAt, isStale: isStale)
             }
