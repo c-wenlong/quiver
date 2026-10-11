@@ -27,6 +27,11 @@ class DropBoxSubpathTest(unittest.TestCase):
         self.assertEqual(self.mod.drop_box_subpath(d, ["0", "0", "512", "512"]),
                          "M 112 112 h 100 v 100 h -100 z")
 
+    def test_implicit_lines_after_the_move_stay_relative(self):
+        d = self.mod.spell_out("M512 512H0V0H512V512Zm-400-400 100 0 0 100-100 0z")
+        self.assertEqual(self.mod.drop_box_subpath(d, ["0", "0", "512", "512"]),
+                         "M 112 112 l 100 0 0 100 -100 0 z")
+
     def test_a_lone_box_is_kept(self):
         d = "M 0 0 H 10 V 10 H 0 Z"
         self.assertEqual(self.mod.drop_box_subpath(d, ["0", "0", "10", "10"]), d)
