@@ -9,6 +9,13 @@ sees this skill" is derived: a skill is visible to a harness when the skill's
 real folder sits under that harness's real skills root. A shared skill is
 therefore visible to every harness whose root links to ``~/.quiver/skills``,
 and a skill in a harness's own folder to that harness alone.
+
+A plugin's skills are read from where its harness loads them. Claude runs a
+plugin from a directory marketplace (every one in ``~/.quiver/plugins``)
+straight from the marketplace's folder, so those skills are listed from the
+plugin's source; the copy under ``~/.claude/plugins/cache`` is a snapshot
+it never loads. Plugins claude fetched (github, git, a URL) run from that
+cache, and are listed from it.
 """
 
 from __future__ import annotations
@@ -18,8 +25,15 @@ import sys
 from pathlib import Path
 
 from quiver import paths
-from quiver.find.plugin_drift import KINDS, _READERS, _real, plugin_drift, quiver_plugins
-from quiver.find.plugins import _load_json, count_components
+from quiver.find.plugin_drift import (
+    KINDS,
+    _READERS,
+    _local_source,
+    _real,
+    plugin_drift,
+    quiver_plugins,
+)
+from quiver.find.plugins import _expand_root, _load_json, count_components
 from quiver.init.layout import (
     ARCHIVED_DETAIL,
     LinkIgnoreError,
@@ -73,15 +87,75 @@ def _under(child: Path, parent: Path) -> bool:
         return False
 
 
-def _claude_plugin_loads(home: Path):
-    """Whether claude loads a skill found in its plugin cache.
+def _claude_directory_marketplaces(home: Path, settings) -> dict[str, Path]:
+    """Marketplace name -> folder, for each one claude reads from a directory.
 
-    Returns ``(folder) -> "loaded" | "unloaded" | "superseded"``. Claude keeps
-    an old version's folder after an update (a running session may still hold
-    it), so the cache lists every skill twice; the install record names the
-    one version that loads, and anything else of that plugin is superseded.
-    A version claude has installed loads unless settings.json disables the
-    plugin. A cached plugin with no install record does not load.
+    known_marketplaces.json is what claude has materialised, and wins over
+    settings' extraKnownMarketplaces, which it materialises at startup.
+    """
+    known = _load_json(home / ".claude" / "plugins" / "known_marketplaces.json")
+    extra = settings.get("extraKnownMarketplaces") if isinstance(settings, dict) else None
+    found: dict[str, Path] = {}
+    for table in (known, extra):
+        for name, entry in (table.items() if isinstance(table, dict) else []):
+            if name in found or not isinstance(entry, dict):
+                continue
+            src = entry.get("source")
+            if not isinstance(src, dict):
+                continue
+            path = src.get("path")
+            if src.get("source") == "directory" and isinstance(path, str) and path:
+                found[name] = _expand_root(path, home)
+            else:
+                # Known as something else (github, git, url): claude fetched
+                # it, so a declaration in settings must not turn it back
+                # into a directory.
+                found[name] = None
+    return {name: path for name, path in found.items() if path is not None}
+
+
+def _claude_live_source(markets: dict[str, Path], ref: str) -> Path | None:
+    """The folder claude reads plugin ``ref`` from live, or None.
+
+    Claude Code loads a plugin from a directory marketplace straight from
+    the marketplace's folder (``claude plugin update`` says "read from its
+    folder ... nothing to update"), at the path the marketplace manifest's
+    ``source`` gives, which need not be the plugin's name. A plugin the
+    manifest fetches from elsewhere (git-subdir, github, a URL) runs from
+    claude's cached copy, as does one whose folder is not there.
+    """
+    plugin, _, market = ref.partition("@")
+    mdir = markets.get(market)
+    if mdir is None or not plugin:
+        return None
+    manifest = _load_json(mdir / ".claude-plugin" / "marketplace.json")
+    entries = manifest.get("plugins") if isinstance(manifest, dict) else None
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and entry.get("name") == plugin:
+            rel = _local_source(entry.get("source"))
+            if rel is None:
+                return None
+            pdir = mdir / rel
+            return pdir if pdir.is_dir() else None
+    return None
+
+
+def _claude_plugin_loads(home: Path):
+    """Whether claude loads a skill found in its plugin cache, and what it
+    reads live instead.
+
+    Returns ``(state, live)``. ``state`` is ``(folder) -> "loaded" |
+    "unloaded" | "superseded" | "live"``. Claude keeps an old version's
+    folder after an update (a running session may still hold it), so the
+    cache lists every skill twice; the install record names the one version
+    that loads, and anything else of that plugin is superseded. A version
+    claude has installed loads unless settings.json disables the plugin. A
+    cached plugin with no install record does not load.
+
+    A plugin installed from a directory marketplace is read from its source
+    folder, so every cached version of it is ``live``: a snapshot claude
+    never loads. ``live`` maps each such source folder (realpath) to whether
+    claude loads it, which is the same enabled test.
     """
     base = home / ".claude" / "plugins"
     cache_real = _real_path(base / "cache")
@@ -90,13 +164,29 @@ def _claude_plugin_loads(home: Path):
     settings = _load_json(home / ".claude" / "settings.json")
     flags = settings.get("enabledPlugins") if isinstance(settings, dict) else None
     enabled = flags if isinstance(flags, dict) else {}
+    markets = _claude_directory_marketplaces(home, settings)
 
     installed: dict[Path, str] = {}       # version dir -> "plugin@marketplace"
     by_plugin: set[tuple[str, str]] = set()
+    live_cache: set[tuple[str, str]] = set()   # (marketplace, plugin) cache dirs
+    live: dict[Path, bool] = {}
     for ref, entries in (plugins.items() if isinstance(plugins, dict) else []):
-        for entry in entries if isinstance(entries, list) else [entries]:
-            path = entry.get("installPath") if isinstance(entry, dict) else None
-            if not isinstance(path, str) or not path or cache_real is None:
+        paths = [entry["installPath"]
+                 for entry in (entries if isinstance(entries, list) else [entries])
+                 if isinstance(entry, dict) and isinstance(entry.get("installPath"), str)
+                 and entry["installPath"]]
+        if not paths:
+            continue   # no usable install record: claude has not installed it
+        source = _claude_live_source(markets, ref)
+        if source is not None:
+            real_source = _real_path(source)
+            if real_source is not None:
+                loads = enabled.get(ref) is not False
+                live[real_source] = live.get(real_source, False) or loads
+                plugin, _, market = ref.partition("@")
+                live_cache.add((market, plugin))
+        for path in paths:
+            if cache_real is None:
                 continue
             real = _real_path(Path(path).expanduser())
             if real is None or not _under(real, cache_real):
@@ -105,6 +195,8 @@ def _claude_plugin_loads(home: Path):
             if len(parts) >= 3:
                 installed[Path(cache_real, *parts[:3])] = ref
                 by_plugin.add(parts[:2])
+                if source is not None:
+                    live_cache.add(parts[:2])
 
     def state(folder: Path) -> str:
         real = _real_path(folder)
@@ -113,12 +205,14 @@ def _claude_plugin_loads(home: Path):
         parts = real.relative_to(cache_real).parts
         if len(parts) < 3:
             return "unloaded"
+        if parts[:2] in live_cache:
+            return "live"
         ref = installed.get(Path(cache_real, *parts[:3]))
         if ref is None:
             return "superseded" if parts[:2] in by_plugin else "unloaded"
         return "unloaded" if enabled.get(ref) is False else "loaded"
 
-    return state
+    return state, live
 
 
 def _source(label: str, catalogs: set[str]) -> str:
@@ -171,30 +265,56 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
     ]
     catalogs = {str(entry.get("label", "catalog")) for entry in load_skill_catalogs()}
 
-    claude_loads = _claude_plugin_loads(home)
-    skills = []
+    claude_loads, claude_live = _claude_plugin_loads(home)
+    # Claude reads these plugins from their source folder, so their skills
+    # are listed from there and from nowhere else: not from the cache
+    # snapshot, and not a second time under another root that reaches the
+    # same folder (a catalog, a second plugin linking to it). Such a row's
+    # harness still sees the skill, so its owner joins the one row.
+    live: dict[Path, list] = {}   # real folder -> [name, description, owners]
+    for source, loads in sorted(claude_live.items()):
+        for folder, name, description in _walk_skills(source / "skills"):
+            real = _real_path(folder)
+            if real is None:
+                continue
+            row = live.setdefault(real, [name, description, set()])
+            if loads:
+                row[2].add("claude")
+
+    rows = []   # (name, description, folder, root label, harnesses that own it)
     for skill in discover_skills(home=home, cwd=cwd, visibility=False):
         folder = Path(skill["path"]).parent
         owner = PLUGIN_ROOTS.get(skill["scope"]) or BUILTIN_ROOTS.get(skill["scope"])
+        real = _real_path(folder)
+        if real in live:
+            if owner and skill["scope"] != "claude-plugin":
+                live[real][2].add(owner)
+            continue
         if skill["scope"] == "claude-plugin":
             load = claude_loads(folder)
-            if load == "superseded":
+            if load in ("superseded", "live"):
                 continue
             if load == "unloaded":
                 owner = None
+        rows.append((skill["name"], skill["description"], folder, skill["scope"],
+                     {owner} if owner else set()))
+    for real, (name, description, owners) in live.items():
+        rows.append((name, description, real, "claude-plugin", owners))
+
+    skills = []
+    for name, description, folder, label, owners in rows:
         real = _real_path(folder)
         seen_by: list[str] = []
-        for name, root in real_roots:
-            if real is not None and _under(real, root) and name not in seen_by:
-                seen_by.append(name)
-        if owner and owner not in seen_by:
-            seen_by.append(owner)
+        for harness, root in real_roots:
+            if real is not None and _under(real, root) and harness not in seen_by:
+                seen_by.append(harness)
+        seen_by += [owner for owner in owners if owner not in seen_by]
         skills.append({
-            "name": skill["name"],
-            "description": skill["description"],
+            "name": name,
+            "description": description,
             "path": str(folder),
-            "root": skill["scope"],
-            "source": _source(skill["scope"], catalogs),
+            "root": label,
+            "source": _source(label, catalogs),
             "harnesses": sorted(seen_by),
         })
     skills.sort(key=lambda s: (s["name"].lower(), s["path"]))
@@ -203,6 +323,22 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
         "harnesses": harnesses,
         "skills": skills,
     }
+
+
+def _walk_skills(root: Path):
+    """``(folder, name, description)`` for each SKILL.md under ``root``.
+
+    The same walk ``discover_skills`` makes of a root, so a plugin read from
+    its source shows exactly the skills its cached copy would have.
+    """
+    try:
+        root_real = root.resolve()
+    except (OSError, RuntimeError):
+        return
+    for dirpath, _dirnames, filenames in os.walk(root_real):
+        if "SKILL.md" in filenames:
+            name, description = parse_skill_md(Path(dirpath) / "SKILL.md")
+            yield Path(dirpath), name, description
 
 
 def _plugin_skills(plugin_dir: Path) -> list[dict]:
