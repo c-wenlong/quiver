@@ -9,6 +9,10 @@ import SwiftUI
 struct SettingsPage: View {
     @AppStorage("settingsSection") private var saved = SettingsSection.general.rawValue
     @State private var width: CGFloat = 0
+    /// Unsaved path edits, kept here so switching sections or crossing the
+    /// narrow-layout cutoff doesn't drop them.
+    @State private var drafts = PathDrafts()
+    @Environment(AppModel.self) private var app
 
     private var section: Binding<SettingsSection> {
         Binding(get: { SettingsSection(saved: saved) }, set: { saved = $0.rawValue })
@@ -21,12 +25,12 @@ struct SettingsPage: View {
                 if width == 0 || width >= 720 {
                     HStack(alignment: .top, spacing: 40) {
                         SettingsSubNav(selection: section).frame(width: 176)
-                        SettingsSectionView(section: section.wrappedValue)
+                        SettingsSectionView(section: section.wrappedValue, drafts: $drafts)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 24) {
                         Tabs(options: SettingsGroup.order.map { ($0, $0.title) }, selection: section, style: .underline)
-                        SettingsSectionView(section: section.wrappedValue)
+                        SettingsSectionView(section: section.wrappedValue, drafts: $drafts)
                     }
                 }
             }
@@ -34,7 +38,13 @@ struct SettingsPage: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             SettingsFooter()
         }
+        .onAppear { drafts = PathDrafts(swe: app.swePath, apiKeys: app.apiKeysPath) }
     }
+}
+
+struct PathDrafts: Equatable {
+    var swe = ""
+    var apiKeys = ""
 }
 
 // MARK: - Sub-nav
@@ -107,6 +117,7 @@ private struct SubNavItem: View {
 
 private struct SettingsSectionView: View {
     var section: SettingsSection
+    @Binding var drafts: PathDrafts
     @Environment(AppModel.self) private var app
 
     var body: some View {
@@ -146,11 +157,11 @@ private struct SettingsSectionView: View {
             case .paths:
                 SettingsCard {
                     PathRow(title: "swe executable", placeholder: "/opt/homebrew/bin/swe",
-                            stored: app.swePath, running: SweLocation.executable(override: app.swePath),
+                            stored: app.swePath, draft: $drafts.swe, running: SweLocation.executable(override: app.swePath),
                             hint: "Empty uses the swe your login shell finds.") { app.swePath = $0 }
                     SettingsDivider()
                     PathRow(title: "API keys file", placeholder: "~/.api_keys",
-                            stored: app.apiKeysPath, running: app.apiKeys.path,
+                            stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,
                             hint: "Empty uses ~/.api_keys.") { app.apiKeysPath = $0 }
                 }
             }
@@ -225,10 +236,10 @@ private struct PathRow: View {
     var title: String
     var placeholder: String
     var stored: String
+    @Binding var draft: String
     var running: String
     var hint: String
     var apply: (String) -> Void
-    @State private var draft = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -249,7 +260,6 @@ private struct PathRow: View {
             }
         }
         .padding(.vertical, 14)
-        .onAppear { draft = stored }
         .onChange(of: stored) { draft = stored }
     }
 
