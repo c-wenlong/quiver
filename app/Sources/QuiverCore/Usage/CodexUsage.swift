@@ -43,13 +43,15 @@ enum CodexUsageAPI {
         var windows: [UsageWindow] = []
         windows += window(rateLimit?["primary_window"], slot: "5h", prefix: "", now: now)
         windows += window(rateLimit?["secondary_window"], slot: "7d", prefix: "", now: now)
+        let monthly = spendLimit(body["spend_control"], now: now)
+        windows += monthly
         for case let extra as [String: Any] in body["additional_rate_limits"] as? [Any] ?? [] {
             let name = displayName(UsageJSON.string(extra["limit_name"]))
             let limits = extra["rate_limit"] as? [String: Any]
             windows += window(limits?["primary_window"], slot: "5h", prefix: name, now: now)
             windows += window(limits?["secondary_window"], slot: "7d", prefix: name, now: now)
         }
-        guard rateLimit != nil else { return nil }
+        guard rateLimit != nil || !monthly.isEmpty else { return nil }
         return ParsedUsage(
             plan: PlanNames.name(.codex, UsageJSON.string(body["plan_type"])) ?? credential.plan,
             email: credential.email,
@@ -76,6 +78,19 @@ enum CodexUsageAPI {
             label: prefix.isEmpty ? label : "\(prefix) \(label)",
             usedPercent: min(100, max(0, used)),
             resetsAt: resetsAt)]
+    }
+
+    /// A workspace's monthly credit cap (Edu, Business and Enterprise seats),
+    /// which the Codex CLI shows as "Monthly limit". Labelled "30d" like the
+    /// other harnesses' monthly windows. Used credits can pass the cap, so the
+    /// percent is clamped.
+    private static func spendLimit(_ value: Any?, now: Date) -> [UsageWindow] {
+        guard let control = value as? [String: Any],
+              let limit = control["individual_limit"] as? [String: Any],
+              let used = UsageJSON.number(limit["used_percent"]) else { return [] }
+        let resetsAt = UsageJSON.date(limit["reset_at"])
+            ?? UsageJSON.number(limit["reset_after_seconds"]).map { now.addingTimeInterval($0) }
+        return [UsageWindow(label: "30d", usedPercent: min(100, max(0, used)), resetsAt: resetsAt)]
     }
 
     /// "GPT-5.3-Codex-Spark" reads as "5.3 Spark".
