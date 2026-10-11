@@ -72,6 +72,14 @@ import Testing
         ])
     }
 
+    @Test(arguments: [
+        ("education", "Education"), ("edu", "Edu"), ("edu_plus", "Edu Plus"), ("edu_pro", "Edu Pro"),
+        ("pro", "Pro 20x"), ("self_serve_business_prolite", "Business 5x"),
+    ])
+    func educationPlansKeepTheirOwnNames(slug: String, name: String) {
+        #expect(PlanNames.name(.codex, slug) == name)
+    }
+
     @Test func aSpendCapAloneStillCounts() async throws {
         let h = UsageHarness()
         h.files.set("\(codexHome)/auth.json", codexAuthJSON())
