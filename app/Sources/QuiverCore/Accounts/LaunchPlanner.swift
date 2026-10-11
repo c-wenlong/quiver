@@ -54,8 +54,9 @@ public enum LaunchPlanner {
     /// Opens the desktop app. A non-default profile starts a second instance
     /// (`-n`) with its own home and Chromium data directory; the default just
     /// opens or focuses the app as the user would.
-    public static func desktopApp(for profile: Profile, paths: ProfilePaths) -> LaunchCommand {
-        let app = desktopAppPath(for: profile.vendor)
+    public static func desktopApp(for profile: Profile, paths: ProfilePaths,
+                                  appPath: String? = nil) -> LaunchCommand {
+        let app = appPath ?? desktopAppPath(for: profile.vendor)
         guard !profile.isDefault else {
             return LaunchCommand(executable: "/usr/bin/open", arguments: ["-a", app])
         }
@@ -125,7 +126,7 @@ public enum LaunchPlanner {
     }
 
     /// Single-quotes `value` for sh: `it's` becomes `'it'\''s'`.
-    static func shellQuote(_ value: String) -> String {
+    public static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
 

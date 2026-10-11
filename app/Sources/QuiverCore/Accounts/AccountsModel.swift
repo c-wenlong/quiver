@@ -183,6 +183,31 @@ public final class AccountsModel {
         try await launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile)))
     }
 
+    /// The desktop app found at `path`, for an account whose app isn't in
+    /// the usual place.
+    public func openApp(_ profile: Profile, at path: String) async throws {
+        try await launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile), appPath: path))
+    }
+
+    /// A harness's desktop app, as the user would open it.
+    public func openApp(at path: String) async throws {
+        try await launcher.launch(LaunchCommand(executable: "/usr/bin/open", arguments: ["-a", path]))
+    }
+
+    /// A harness's CLI in a terminal. The command comes from harness.json,
+    /// so it is quoted as one word rather than run as shell text.
+    public func openTerminal(command: String) async throws {
+        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: LaunchPlanner.shellQuote(command)))
+    }
+
+    /// A harness's own sign-in in a terminal, where its CLI has one.
+    public func signIn(harness: String) async throws {
+        guard let login = HarnessAccess.loginCommand(for: harness) else {
+            throw LaunchError.failed("\(harness) signs in from inside its own app or CLI.")
+        }
+        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: login))
+    }
+
     /// The CLI in a terminal, as this account.
     public func openTerminal(_ profile: Profile) async throws {
         let paths = store.paths(for: profile)
