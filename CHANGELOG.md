@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and its cached versions are skipped, so no skill appears twice. Plugins
   Claude fetched (github, git, a URL) still run from the cache and are
   listed from there.
+- **A broken config file no longer corrupts `--json` output.** When a
+  `--json` command hit an unreadable config (a malformed `harness.json`, say),
+  the error went to stdout, where the app expects only JSON. It now goes to
+  stderr for every `--json` command; without `--json` nothing changes.
 - **`swe find plugins` flagged Claude Code plugins as out of date when
   they weren't.** Claude Code reads a directory-marketplace plugin straight
   from its folder, so the copy under `~/.claude/plugins/cache` is a leftover
