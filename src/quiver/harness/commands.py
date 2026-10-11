@@ -391,9 +391,13 @@ def cmd_archive(args):
         unarchive,
     )
 
-    args = list(args or [])
+    args, json_view = take_json_flag(list(args or []))
+    # Under --json a refusal must leave stdout empty: the app decodes it whole.
+    err = sys.stderr if json_view else sys.stdout
     entries = load_archive()
 
+    if json_view and (not args or args[0] in ("list", "ls")):
+        return emit({"archived": entries})
     if not args or args[0] in ("list", "ls"):
         if not entries:
             print(f"\n  {c('dim', 'nothing archived')}")
@@ -432,7 +436,7 @@ def cmd_archive(args):
     try:
         args = expand_value_flags(args, {"--usage"})
     except ValueError as exc:
-        print(c("red", str(exc)))
+        print(c("red", str(exc)), file=err)
         return 1
     usage = None
     i = 0
@@ -444,10 +448,10 @@ def cmd_archive(args):
             i += 1
     if usage is not None and normalise_usage(usage, "") == "":
         print(c("red", f"  Unknown usage level: {usage or '(empty)'}. "
-                       f"Use {', '.join(USAGE_LEVELS)}."))
+                       f"Use {', '.join(USAGE_LEVELS)}."), file=err)
         return 1
     if not args:
-        print(c("red", "  Usage: swe hs archive <name> [why] [--usage=<level>]"))
+        print(c("red", "  Usage: swe hs archive <name> [why] [--usage=<level>]"), file=err)
         return 1
 
     tools = load_registry()
@@ -461,17 +465,21 @@ def cmd_archive(args):
         if key in entries:
             name = key
         else:
-            print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
+            print(c("red", f"  Tool '{key}' not found. Try 'swe list'."), file=err)
             return 1
 
     if name in entries and not reason and usage is None:
         old = unarchive(name)
+        if json_view:
+            return emit({"name": name, "state": _registry_state(name), "archived": None})
         print(f"  {c('green', '✓')} Restored {c('bold', name)}")
         print(f"    {c('dim', 'was archived ' + _fmt_when(old['archived_at']))}"
               f"{c('dim', ': ' + old['reason'] if old['reason'] else '')}")
         return 0
 
     entry = archive(name, reason, usage=usage)
+    if json_view:
+        return emit({"name": name, "state": "archived", "archived": entry})
     verb = "Re-archived" if name in entries else "Archived"
     print(f"  {c('dim', '▪')} {verb} {c('bold', name)} "
           f"{c('dim', _fmt_when(entry['archived_at']))} "
@@ -561,6 +569,8 @@ def _harness_json(name, info, starred, archived, counts, rate) -> dict:
         "state": state,
         "sessions_100d": counts.get(name),
         "rate_limit": rate.to_json() if rate is not None else None,
+        "installed": is_installed(info.get("command") or name),
+        "archived": archived.get(name),
     }
 
 
@@ -920,8 +930,24 @@ def cmd_list(args):
     print(f"  {c('dim', 'tags:')}  {c('cyan', tag_str)}\n")
 
 
+def _registry_state(name: str) -> str:
+    """A harness's standing after a change: starred, archived or active."""
+    from quiver.harness.archive import load_archive
+
+    if name in load_archive():
+        return "archived"
+    return "starred" if is_starred(name) else "active"
+
+
 def cmd_star(args):
     """Favourite / pin harnesses to the top of `swe list`."""
+    args, json_view = take_json_flag(list(args or []))
+    if json_view and (len(args) != 1 or args[0] in ("clear", "--clear", "list", "ls")):
+        # Only the toggle has a JSON form; `swe list --json` already says
+        # which harnesses are starred.
+        print("swe hs star --json takes exactly one harness name", file=sys.stderr)
+        return 1
+    err = sys.stderr if json_view else sys.stdout
     tools = load_registry()
 
     if not args:
@@ -965,10 +991,12 @@ def cmd_star(args):
         if is_starred(key):
             name = key
         else:
-            print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
+            print(c("red", f"  Tool '{key}' not found. Try 'swe list'."), file=err)
             return 1
 
     now_starred = toggle_star(name)
+    if json_view:
+        return emit({"name": name, "state": _registry_state(name)})
     if now_starred:
         print(f"  {c('neon_pink', '★')} Starred {c('neon', name)} — pinned to top of {c('cyan', 'swe list')}")
     else:

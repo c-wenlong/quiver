@@ -57,6 +57,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **JSON for the app's Skills and Harnesses pages.** `swe skills --json`
+  lists every skill on the machine with where it came from (`shared`,
+  `plugin`, `harness`, `builtin`, `catalog`) and which harnesses can see
+  it, plus each harness's skills-root link state in `swe init`'s
+  vocabulary. `swe skills hub [--json]` lists the plugins in the
+  `~/.quiver/plugins` marketplaces, the skills each ships, and whether
+  Claude Code and Codex have them installed, with the command that closes
+  any gap. `swe harness star <name> --json` and `swe harness archive <name>
+  [why] --json` report the harness's new state, and `swe list --json` rows
+  gain `installed` and `archived` (reason, date, usage).
+
+### Changed
+
+- **`swe skills link|unlink|move --json` print the shared envelope.** They
+  printed a bare object; they now print `{"schema": 1, "data": …}` like
+  every other `--json` command, and a refusal goes to stderr so stdout
+  stays empty.
+
+### Fixed
+
+- **`swe skills unlink ~/.x/skills` unlinked the wrong thing.** A path to a
+  linked harness root resolved to the shared tree it points at, so the
+  command tried to unlink `shared` and refused. A symlink given by path is
+  now the root it names. This bit every harness `swe skills` has no label
+  for (`claude-work`, `opencode`, `droid`, `hermes`, …).
+
+### Added
+
 - **`swe list --usage --exclude=a,b`.** Lists those harnesses but skips
   polling their usage. The macOS app fetches Claude and Codex per account
   itself and passes them here, so their rate-limited endpoints are not hit

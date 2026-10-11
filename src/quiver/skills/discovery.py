@@ -93,8 +93,15 @@ def parse_skill_md(md_path: Path) -> tuple[str, str]:
     return (name or md_path.parent.name), desc
 
 
-def discover_skills(home: Path | None = None, cwd: Path | None = None) -> list[dict]:
-    """Walk every skill root and return skill metadata dicts."""
+def discover_skills(home: Path | None = None, cwd: Path | None = None,
+                    visibility: bool = True) -> list[dict]:
+    """Walk every skill root and return skill metadata dicts.
+
+    ``visibility=False`` leaves ``visible_via`` empty. Working it out walks
+    every known root once per skill, which is most of the cost on a machine
+    with a few hundred plugin skills, and ``swe skills --json`` derives
+    visibility its own way.
+    """
     skills: list[dict] = []
     for label, root in skill_roots(home=home, cwd=cwd):
         try:
@@ -112,7 +119,8 @@ def discover_skills(home: Path | None = None, cwd: Path | None = None) -> list[d
                     "scope": label,
                     "path": str(md),
                     "description": desc,
-                    "visible_via": shared_scopes_for_skill(md, home=home),
+                    "visible_via": (shared_scopes_for_skill(md, home=home)
+                                    if visibility else []),
                 }
             )
     return skills

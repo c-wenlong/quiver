@@ -250,6 +250,16 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
     if not path.is_absolute():
         path = Path.cwd() / path
     for label, candidate in all_skill_root_candidates(home, cwd):
+        if candidate == path:
+            return label, candidate
+    if path.is_symlink():
+        # A linked harness root resolves to the shared tree, so matching on
+        # the resolved path below turned `swe skills unlink ~/.x/skills` into
+        # an attempt to unlink `shared` itself. The link is the root named.
+        from quiver.init.layout import skill_root_label
+
+        return skill_root_label(path, home), path
+    for label, candidate in all_skill_root_candidates(home, cwd):
         try:
             if candidate.resolve() == path.resolve():
                 return label, candidate
