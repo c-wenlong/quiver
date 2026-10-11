@@ -229,8 +229,13 @@ private struct ServerSheet: View {
 
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @State private var sourceGroup = 0
+    /// The harness whose definition is copied. A name, not a group index, so
+    /// a reload that regroups definitions can't switch it to another one.
+    @State private var sourceHarness: String?
     @State private var chosen: Set<String> = []
+    /// Harnesses ticked while shown as having their own definition: the only
+    /// ones a sync may replace.
+    @State private var approvedReplace: Set<String> = []
     @State private var preview: McpSyncReport?
     @State private var done: McpSyncReport?
     @State private var error: String?
@@ -239,7 +244,10 @@ private struct ServerSheet: View {
 
     /// The server as the latest load has it, so a finished sync shows its effect.
     var server: McpServer { model.server(named: initial.name) ?? initial }
-    var source: String { server.groups[min(sourceGroup, server.groups.count - 1)].first ?? "" }
+    var source: String {
+        if let sourceHarness, server.harnesses.contains(sourceHarness) { return sourceHarness }
+        return server.groups.first?.first ?? ""
+    }
     var targets: SyncTargets { model.targets(for: server, from: source, in: harnesses) }
 
     var body: some View {
@@ -283,7 +291,7 @@ private struct ServerSheet: View {
         .confirmationDialog("Replace their definitions?", isPresented: $confirmingOverwrite) {
             Button("Replace", role: .destructive) { Task { await run(dryRun: false) } }
         } message: {
-            Text("\(chosen.intersection(targets.differing).sorted().joined(separator: ", ")) will get \(source)'s definition of \(server.name) instead of their own.")
+            Text("\(approvedReplace.intersection(targets.differing).sorted().joined(separator: ", ")) will get \(source)'s definition of \(server.name) instead of their own.")
         }
     }
 
@@ -296,12 +304,14 @@ private struct ServerSheet: View {
             Text("Every harness already has this definition.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
         } else {
             if server.groups.count > 1 {
-                Picker("Copy from", selection: $sourceGroup) {
+                Picker("Copy from", selection: Binding(
+                    get: { server.group(of: source).flatMap { server.groups[$0].first } ?? source },
+                    set: { sourceHarness = $0; resetChoice() })) {
                     ForEach(Array(server.groups.enumerated()), id: \.offset) { index, group in
-                        Text("Definition \(variantLetter(index)) (\(group.joined(separator: ", ")))").tag(index)
+                        Text("Definition \(variantLetter(index)) (\(group.joined(separator: ", ")))")
+                            .tag(group.first ?? "")
                     }
                 }
-                .onChange(of: sourceGroup) { resetChoice() }
             } else {
                 Facts(label: "Copy from", value: source)
             }
@@ -336,7 +346,7 @@ private struct ServerSheet: View {
                     .buttonStyle(SecondaryButtonStyle())
                     .disabled(chosen.isEmpty || running)
                 Button("Sync") {
-                    if targets.needsOverwrite(chosen) {
+                    if targets.needsOverwrite(approvedReplace) {
                         confirmingOverwrite = true
                     } else {
                         Task { await run(dryRun: false) }
@@ -352,6 +362,11 @@ private struct ServerSheet: View {
     private func binding(_ harness: String) -> Binding<Bool> {
         Binding(get: { chosen.contains(harness) }, set: { on in
             if on { chosen.insert(harness) } else { chosen.remove(harness) }
+            if on && targets.differing.contains(harness) {
+                approvedReplace.insert(harness)
+            } else if !on {
+                approvedReplace.remove(harness)
+            }
             preview = nil
         })
     }
@@ -359,6 +374,7 @@ private struct ServerSheet: View {
     private func resetChoice() {
         // Harnesses that use MCP and lack the server; empty ones stay opt-in.
         chosen = Set(targets.missing).intersection(active)
+        approvedReplace = []
         preview = nil
     }
 
@@ -366,8 +382,10 @@ private struct ServerSheet: View {
         running = true
         error = nil
         defer { running = false }
+        // Recomputed from the latest inventory: a harness that gained its own
+        // definition since it was ticked is neither added nor replaced.
         let adding = harnesses.filter { chosen.contains($0) && targets.missing.contains($0) }
-        let replacing = harnesses.filter { chosen.contains($0) && targets.differing.contains($0) }
+        let replacing = harnesses.filter { approvedReplace.contains($0) && targets.differing.contains($0) }
         do {
             let report = try await model.sync(server, from: source, adding: adding, replacing: replacing,
                                               dryRun: dryRun, swe: app.swe)
