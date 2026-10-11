@@ -180,7 +180,7 @@ private struct HarnessLinksPanel: View {
                                 LinkChipLabel(name: root.name, link: root.link, busy: model.busy.contains(root.path))
                             }
                             .plainButton(cornerRadius: 999)
-                            .help("\(root.name): \(root.link.title.lowercased())")
+                            .help("\(HarnessMark(root.name).name): \(root.link.title.lowercased())")
                         }
                     }
                     LinkLegend()
@@ -262,7 +262,7 @@ private struct LinkChipLabel: View {
             } else {
                 LinkDot(link: link)
             }
-            Text(name)
+            HarnessMarkView(harness: name, size: compact ? 12 : 14)
                 .font(.system(size: compact ? 11 : 12, weight: .medium))
                 .foregroundStyle(link == .linked ? Theme.textPrimary : Theme.textSecondary)
         }
@@ -348,7 +348,7 @@ private struct SkillRow: View {
                         FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(chips, id: \.root.id) { chip in
                                 LinkChipLabel(name: chip.root.name, link: chip.link, compact: true)
-                                    .help("\(chip.root.name): \(chip.link.title.lowercased())")
+                                    .help("\(HarnessMark(chip.root.name).name): \(chip.link.title.lowercased())")
                             }
                         }
                     }
@@ -486,10 +486,11 @@ private struct PluginCard: View {
                             Circle()
                                 .fill(install.state == .installed ? Theme.accentFill : Theme.warning)
                                 .frame(width: 7, height: 7)
-                            Text(harness).font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textPrimary)
+                            HarnessMarkView(harness: harness, size: 14)
+                                .font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textPrimary)
                             Text(install.state.title.lowercased()).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         }
-                        .help(install.fix ?? "\(harness) has the current version")
+                        .help(install.fix ?? "\(HarnessMark(harness).name) has the current version")
                     }
                 }
                 Spacer(minLength: 0)

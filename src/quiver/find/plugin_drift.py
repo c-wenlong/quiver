@@ -2,14 +2,18 @@
 
 ``~/.quiver/plugins`` holds the user's own marketplaces: one directory each,
 with a ``.claude-plugin/marketplace.json`` naming its plugins. Claude Code and
-Codex both register such a directory in place, but neither runs the plugin
-from it. Each installs a cached copy and runs that, so an edit under
-``~/.quiver`` changes nothing until the harness reinstalls. This module finds
-the gap, per harness, in four kinds:
+Codex both register such a directory in place. Codex installs a cached copy
+and runs that, so an edit under ``~/.quiver`` changes nothing in Codex until
+it reinstalls. Claude Code reads a directory-marketplace plugin from the
+folder itself (``claude plugin update`` says "read from its folder ... nothing
+to update"); the copy it leaves under ``~/.claude/plugins/cache`` is never
+loaded, so it is not compared. This module finds the gap, per harness, in
+four kinds:
 
   unregistered   the marketplace directory is not registered in the harness
-  not-installed  registered, but the plugin has no installed copy
+  not-installed  registered, but the plugin has no install record or copy
   stale          the installed copy's content differs from the source
+                 (only for a harness that runs its own copy: Codex)
   disabled-here  installed but disabled here, while enabled in the other one
 
 Every finding carries a copy-pasteable ``fix``, and ``argv`` when that fix is
@@ -225,6 +229,10 @@ class _Harness:
     fix_install: Callable[[str], Fix]
     fix_update: Callable[[str], Fix]
     fix_enable: Callable[[str], Fix]
+    # Whether the harness runs its own copy of a plugin. When it reads the
+    # marketplace folder live there is no copy to fall behind, so a "stale"
+    # check would compare against a leftover it never loads.
+    copies_source: bool = True
 
 
 def _claude(home: Path) -> _Harness | None:
@@ -283,6 +291,10 @@ def _claude(home: Path) -> _Harness | None:
         fix_install=lambda ref: _commands(("claude", "plugin", "install", ref)),
         fix_update=lambda ref: _commands(("claude", "plugin", "update", ref)),
         fix_enable=lambda ref: _commands(("claude", "plugin", "enable", ref)),
+        # Claude Code loads a directory-marketplace plugin from its folder
+        # (`claude plugin update` says "read from its folder ... nothing to
+        # update"), and every marketplace checked here is a directory.
+        copies_source=False,
     )
 
 
@@ -507,7 +519,7 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
                     *_fix_fields(view.fix_install(ref))))
                 continue
 
-            src = source_snapshot(sp)
+            src = source_snapshot(sp) if view.copies_source else None
             copy = _snapshot(inst.path) if src is not None else None
             if src is not None and copy is not None:
                 diff = _differing(src, copy)
