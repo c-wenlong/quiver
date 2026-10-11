@@ -83,7 +83,14 @@ private struct TotalCard: View {
     var summary: OverviewSummary
     @Binding var period: OverviewPeriod
 
-    var shares: [HarnessShare] { summary.harnesses.filter { $0.totals.totalTokens > 0 } }
+    @Environment(AppModel.self) private var app
+
+    /// In the order and with the providers chosen in Settings.
+    var shares: [HarnessShare] {
+        let shown = summary.harnesses.filter { $0.totals.totalTokens > 0 && !app.providers.isHidden($0.harness) }
+        let order = app.providers.ordered(shown.map(\.harness))
+        return order.compactMap { id in shown.first { $0.harness == id } }
+    }
 
     var body: some View {
         Card {
@@ -109,7 +116,10 @@ private struct TotalCard: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             if shares.isEmpty {
-                Text("No usage in this period.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                Text(summary.totals.totalTokens > 0
+                     ? "Every provider with usage this period is hidden in Settings."
+                     : "No usage in this period.")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             } else {
                 ShareBar(shares: shares)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {

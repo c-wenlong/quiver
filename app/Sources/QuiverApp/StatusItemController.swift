@@ -243,19 +243,29 @@ private struct PanelLimits: View {
 
 /// Spend by harness for today, yesterday or the last 30 days.
 private struct SpendDonut: View {
+    @Environment(AppModel.self) private var app
     var slices: [SpendSlice]
     @State private var period: SpendSlice.Period = .today
 
     var slice: SpendSlice? { slices.first { $0.period == period } }
 
-    var unpriced: Int { parts.reduce(0) { $0 + $1.totals.unpricedTokens } }
+    /// Every provider's tokens without a price, hidden ones included: the
+    /// total leaves them all out, so the note must count them all.
+    var unpriced: Int { slice?.byHarness.values.reduce(0) { $0 + $1.unpricedTokens } ?? 0 }
 
     var parts: [(harness: String, totals: UsageTotals)] {
         guard let slice else { return [] }
         let known = Theme.harnessOrder.compactMap { id in slice.byHarness[id].map { (id, $0) } }
         let rest = slice.byHarness.filter { !Theme.harnessOrder.contains($0.key) }.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-        return (known + rest).filter { $0.1.totalTokens > 0 }
+        let shown = (known + rest).filter { $0.1.totalTokens > 0 && !app.providers.isHidden($0.0) }
+        // In the order chosen in Settings.
+        return app.providers.ordered(shown.map(\.0)).compactMap { id in shown.first { $0.0 == id } }
     }
+
+    /// Every provider's spend: hiding one in Settings hides its entry, not its money.
+    var totalCost: Double { slice?.costUSD ?? 0 }
+    /// Spend of providers hidden in Settings, said in a line under the legend.
+    var hiddenCost: Double { totalCost - parts.reduce(0) { $0 + $1.totals.costUSD } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -263,7 +273,7 @@ private struct SpendDonut: View {
                  selection: $period)
             HStack(spacing: 16) {
                 ZStack {
-                    if (slice?.costUSD ?? 0) > 0 {
+                    if (totalCost) > 0 {
                         Chart(parts, id: \.harness) { part in
                             SectorMark(angle: .value("Spend", part.totals.costUSD),
                                        innerRadius: .ratio(0.68), angularInset: 1.5)
@@ -274,7 +284,7 @@ private struct SpendDonut: View {
                         Circle().stroke(Color.primary.opacity(0.1), lineWidth: 14).padding(7)
                     }
                     VStack(spacing: 0) {
-                        Text(UsageFormat.dollars(slice?.costUSD ?? 0))
+                        Text(UsageFormat.dollars(totalCost))
                             .font(.system(size: 17, weight: .semibold)).monospacedDigit()
                             .foregroundStyle(Theme.accent)
                         Text("spent").font(.caption2).foregroundStyle(.secondary)
@@ -283,7 +293,9 @@ private struct SpendDonut: View {
                 .frame(width: 104, height: 104)
                 VStack(alignment: .leading, spacing: 5) {
                     if parts.isEmpty {
-                        Text("No usage yet.").font(.caption).foregroundStyle(.secondary)
+                        Text((slice?.byHarness.values.contains { $0.totalTokens > 0 } ?? false)
+                             ? "Every provider with usage is hidden in Settings." : "No usage yet.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(parts, id: \.harness) { part in
                         HStack(spacing: 6) {
@@ -299,6 +311,10 @@ private struct SpendDonut: View {
                         }
                     }
                 }
+            }
+            if hiddenCost >= 0.01 {
+                Text("Includes \(UsageFormat.dollars(hiddenCost)) from providers hidden in Settings.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if unpriced > 0 {
                 // The total leaves these out, so say so rather than look complete.
