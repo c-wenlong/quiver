@@ -2,14 +2,18 @@
 
 ``~/.quiver/plugins`` holds the user's own marketplaces: one directory each,
 with a ``.claude-plugin/marketplace.json`` naming its plugins. Claude Code and
-Codex both register such a directory in place, but neither runs the plugin
-from it. Each installs a cached copy and runs that, so an edit under
-``~/.quiver`` changes nothing until the harness reinstalls. This module finds
-the gap, per harness, in four kinds:
+Codex both register such a directory in place. Codex installs a cached copy
+and runs that, so an edit under ``~/.quiver`` changes nothing in Codex until
+it reinstalls. Claude Code reads a directory-marketplace plugin from the
+folder itself (``claude plugin update`` says "read from its folder ... nothing
+to update"); the copy it leaves under ``~/.claude/plugins/cache`` is never
+loaded, so it is not compared. This module finds the gap, per harness, in
+four kinds:
 
   unregistered   the marketplace directory is not registered in the harness
-  not-installed  registered, but the plugin has no installed copy
+  not-installed  registered, but the plugin has no install record or copy
   stale          the installed copy's content differs from the source
+                 (only for a harness that runs its own copy: Codex)
   disabled-here  installed but disabled here, while enabled in the other one
 
 Every finding carries a copy-pasteable ``fix``, and ``argv`` when that fix is
