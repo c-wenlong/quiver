@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe skills unlink ~/.x/skills` unlinked the wrong thing.** A path to a
+  linked harness root resolved to the shared tree it points at, so the
+  command tried to unlink `shared` and refused. A symlink given by path is
+  now the root it names. This bit every harness `swe skills` has no label
+  for (`claude-work`, `opencode`, `droid`, `hermes`, …).
 - **`swe init` no longer registers and links every app with a `skills/`
   folder.** A non-terminal run (a nix rebuild's activation script, say)
   used to register each unknown `~/.<name>/skills` as a harness and link
@@ -67,24 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any gap. `swe harness star <name> --json` and `swe harness archive <name>
   [why] --json` report the harness's new state, and `swe list --json` rows
   gain `installed` and `archived` (reason, date, usage).
-
-### Changed
-
-- **`swe skills link|unlink|move --json` print the shared envelope.** They
-  printed a bare object; they now print `{"schema": 1, "data": …}` like
-  every other `--json` command, and a refusal goes to stderr so stdout
-  stays empty.
-
-### Fixed
-
-- **`swe skills unlink ~/.x/skills` unlinked the wrong thing.** A path to a
-  linked harness root resolved to the shared tree it points at, so the
-  command tried to unlink `shared` and refused. A symlink given by path is
-  now the root it names. This bit every harness `swe skills` has no label
-  for (`claude-work`, `opencode`, `droid`, `hermes`, …).
-
-### Added
-
 - **`swe list --usage --exclude=a,b`.** Lists those harnesses but skips
   polling their usage. The macOS app fetches Claude and Codex per account
   itself and passes them here, so their rate-limited endpoints are not hit
@@ -137,6 +124,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`swe skills link|unlink|move --json` print the shared envelope.** They
+  printed a bare object; they now print `{"schema": 1, "data": …}` like
+  every other `--json` command, and a refusal goes to stderr so stdout
+  stays empty.
 - **`swe list` waits out slow usage fetchers on a terminal.** The REMAINING
   fetchers ran under a 2s deadline so a hung provider can't stall the
   listing, but slow-but-working endpoints rendered `…` and cached the
