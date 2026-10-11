@@ -25,6 +25,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppModel.shared.start()
     }
 
+    /// Both quit paths (the app menu and the panel's Quit) come through
+    /// here; AGENTS.md drafts live only in memory.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard AppModel.shared.agentsMd.hasUnsavedChanges else { return .terminateNow }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Quit with unsaved AGENTS.md edits?"
+        alert.informativeText = "Your changes haven't been saved and will be lost."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Quit anyway")
+        NSApp.activate()
+        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         true
     }
