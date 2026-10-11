@@ -129,6 +129,11 @@ public final class ProviderVisibilityModel {
     private var disabled: Set<String> = []
     /// Bumped by each check; only the newest one writes its result.
     private var request = 0
+    /// What the checks run against (the swe path), and the key whose
+    /// successful check is what the rows show now. Nil once a later check
+    /// fails, since the rows then mix that error with older results.
+    private var key: String?
+    private var checkedKey: String?
 
     public init(store: KeyValueStoring, detect: @escaping @Sendable () async throws -> Set<String>) {
         self.store = store
@@ -138,9 +143,43 @@ public final class ProviderVisibilityModel {
         rebuild()
     }
 
+    /// Checks once per `key` (the swe path in use), so a view that is
+    /// rebuilt or visited again doesn't run swe again. It skips only when
+    /// the rows already show a finished, successful check of this key.
+    /// A check that failed or was cancelled hasn't counted, so the next
+    /// call runs it again. A check still running is replaced rather than
+    /// waited on: it may be for another swe, and the view that started it
+    /// may be gone with its task cancelled.
+    public func loadIfNeeded(for key: String) async {
+        // Always the current key, so "Try again" and any check started
+        // from here are saved under the swe they actually ran against.
+        self.key = key
+        guard key != checkedKey || isLoading else { return }
+        await load()
+    }
+
+    /// Checks again, for a harness installed while Quiver was in the
+    /// background (call it when the app becomes active). `key` is the swe
+    /// path in use now, which may have changed since the last check; the
+    /// result is saved under it. Quiet when the rows already show this
+    /// key: they keep their result while it runs, and if it fails they
+    /// stay as they were with no error, since nobody asked for it. Does
+    /// nothing before the first check, or while one is running.
+    public func recheck(for key: String) async {
+        guard self.key != nil, !isLoading else { return }
+        let same = key == checkedKey
+        self.key = key
+        await load(quiet: same)
+    }
+
     public func load() async {
+        await load(quiet: false)
+    }
+
+    private func load(quiet: Bool) async {
         request += 1
         let mine = request
+        let key = self.key
         isLoading = true
         let result: Result<Set<String>, Error>
         do { result = .success(try await detect()) } catch { result = .failure(error) }
@@ -151,12 +190,16 @@ public final class ProviderVisibilityModel {
         case .success(let found):
             installed = found
             hasChecked = true
+            checkedKey = key
             checkError = nil
         case .failure(let error) where error is CancellationError:
+            return
+        case .failure where quiet && hasChecked:
             return
         case .failure(let error):
             // A check that couldn't run says nothing about what is installed.
             checkError = error.localizedDescription
+            checkedKey = nil
         }
         rebuild()
     }

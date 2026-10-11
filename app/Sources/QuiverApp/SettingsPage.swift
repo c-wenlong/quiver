@@ -12,6 +12,8 @@ struct SettingsPage: View {
     /// Unsaved path edits, kept here so switching sections or crossing the
     /// narrow-layout cutoff doesn't drop them.
     @State private var drafts = PathDrafts()
+    /// Why Open at login couldn't change, kept here for the same reason.
+    @State private var loginFailure: String?
     @Environment(AppModel.self) private var app
 
     private var section: Binding<SettingsSection> {
@@ -25,12 +27,12 @@ struct SettingsPage: View {
                 if width == 0 || width >= 720 {
                     HStack(alignment: .top, spacing: 40) {
                         SettingsSubNav(selection: section).frame(width: 176)
-                        SettingsSectionView(section: section.wrappedValue, drafts: $drafts)
+                        SettingsSectionView(section: section.wrappedValue, drafts: $drafts, loginFailure: $loginFailure)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 24) {
                         Tabs(options: SettingsGroup.order.map { ($0, $0.title) }, selection: section, style: .underline)
-                        SettingsSectionView(section: section.wrappedValue, drafts: $drafts)
+                        SettingsSectionView(section: section.wrappedValue, drafts: $drafts, loginFailure: $loginFailure)
                     }
                 }
             }
@@ -83,7 +85,8 @@ private struct SettingsSubNav: View {
 }
 
 /// 40pt, 8/12 padding, radius 8, a 16pt symbol and 14/20 at 500. The current
-/// one on `bg.selected`; hover lifts the text and adds a faint fill.
+/// one on `bg.selected`; hover lifts the text and adds the sidebar's
+/// `bg.hover` wash.
 private struct SubNavItem: View {
     var section: SettingsSection
     var isSelected: Bool
@@ -101,7 +104,7 @@ private struct SubNavItem: View {
             .foregroundStyle(isSelected ? Theme.textStrong : hovering ? Theme.textLabel : Theme.textSecondary)
             .padding(.horizontal, 12)
             .frame(height: 40)
-            .background(isSelected ? Theme.selected : hovering ? Theme.panel : .clear,
+            .background(isSelected ? Theme.selected : hovering ? Theme.hover : .clear,
                         in: .rect(cornerRadius: Theme.controlRadius))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
             .animation(.easeOut(duration: 0.15), value: hovering)
@@ -118,6 +121,7 @@ private struct SubNavItem: View {
 private struct SettingsSectionView: View {
     var section: SettingsSection
     @Binding var drafts: PathDrafts
+    @Binding var loginFailure: String?
     @Environment(AppModel.self) private var app
 
     var body: some View {
@@ -135,7 +139,7 @@ private struct SettingsSectionView: View {
             switch section {
             case .general:
                 SettingsCard {
-                    LoginItemRow()
+                    LoginItemRow(failure: $loginFailure)
                     SettingsDivider()
                     @Bindable var app = app
                     SettingRow(title: "Terminal", detail: "Used by Terminal, Sign in and Resume.") {
@@ -294,7 +298,7 @@ extension TerminalApp {
 /// the switch shows what it reports rather than a saved preference.
 private struct LoginItemRow: View {
     @State private var status = SMAppService.mainApp.status
-    @State private var failure: String?
+    @Binding var failure: String?
 
     var body: some View {
         SettingRow(title: "Open at login",
