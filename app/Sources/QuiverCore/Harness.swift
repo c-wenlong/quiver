@@ -6,6 +6,8 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
 
     public var id: String { name }
     public let name: String
+    /// The name to show, from harness.json; nil or blank when unset.
+    public let displayName: String?
     public let command: String
     public let description: String
     public let version: String?
@@ -22,11 +24,18 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
     public let notes: String?
 
     enum CodingKeys: String, CodingKey {
-        case name, command, description, version, aliases, tags, state
+        case name, displayName, command, description, version, aliases, tags, state
         // convertFromSnakeCase capitalises "100d" to "100D", so the
         // wire key `sessions_100d` arrives as `sessions100D`.
         case sessions100d = "sessions100D"
         case rateLimit, installed, archived, notes
+    }
+
+    /// What the app calls it: the display name when set, else the brand
+    /// name Quiver knows, else the id capitalised.
+    public var title: String {
+        let set = displayName?.trimmingCharacters(in: .whitespaces) ?? ""
+        return set.isEmpty ? UsageFormat.harness(name) : set
     }
 
     public struct Archive: Decodable, Sendable, Equatable {

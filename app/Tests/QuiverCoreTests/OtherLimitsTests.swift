@@ -34,12 +34,13 @@ import Testing
     @Test func rowsCarryTheirCommandAndWhetherItIsOnPath() async {
         let json = String(decoding: body, as: UTF8.self)
             .replacingOccurrences(of: #""name": "devin", "command": "devin","#, with: #""name": "devin", "command": "devin", "installed": true,"#)
-            .replacingOccurrences(of: #""name": "cursor", "command": "cursor-agent","#, with: #""name": "cursor", "command": "cursor-agent", "installed": false,"#)
+            .replacingOccurrences(of: #""name": "cursor", "command": "cursor-agent","#, with: #""name": "cursor", "display_name": "Cursor", "command": "cursor-agent", "installed": false,"#)
             .replacingOccurrences(of: #""name": "claude", "command": "claude","#, with: #""name": "claude", "command": "claude", "installed": true,"#)
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
         await model.load()
         #expect(model.rows.map(\.command) == ["devin", "cursor-agent"])
         #expect(model.rows.map(\.cliInstalled) == [true, false])
+        #expect(model.rows.map(\.title) == ["Devin", "Cursor"])
         // Every harness's PATH check, Claude's too, for the account cards.
         #expect(model.cliInstalled["claude"] == true)
         #expect(model.cliInstalled["gemini"] == nil)

@@ -54,6 +54,7 @@ extension SweClient {
 /// The edit sheet's draft of a harness's registry fields. Lists are kept as
 /// the comma-separated text the user types.
 public struct HarnessEdit: Equatable, Sendable {
+    public var displayName: String
     public var command: String
     public var description: String
     public var version: String
@@ -62,6 +63,7 @@ public struct HarnessEdit: Equatable, Sendable {
     public var notes: String
 
     public init(_ harness: Harness) {
+        displayName = harness.displayName ?? ""
         command = harness.command
         description = harness.description
         version = harness.version ?? ""
@@ -78,6 +80,7 @@ public struct HarnessEdit: Equatable, Sendable {
     /// fixed order. An empty value clears the field, as `swe edit` does.
     public func flags(from original: HarnessEdit) -> [String] {
         let fields: [(String, KeyPath<HarnessEdit, String>, Bool)] = [
+            ("display-name", \.displayName, false),
             ("command", \.command, false), ("description", \.description, false),
             ("version", \.version, false), ("aliases", \.aliases, true),
             ("tags", \.tags, true), ("notes", \.notes, false),
@@ -115,7 +118,10 @@ public final class HarnessesModel {
     public var showsUnstarred = false
 
     private let swe: SweClient
-    private let gate = SerialGate()
+    /// Every swe run that rewrites harness.json, from any page, waits here:
+    /// two at once can each read the file and one loses the other's change.
+    static let registryWrites = SerialGate()
+    private var gate: SerialGate { Self.registryWrites }
     private var generation = 0
 
     public init(swe: SweClient) {
@@ -155,6 +161,7 @@ public final class HarnessesModel {
             .filter { harness in
                 needle.isEmpty
                     || harness.name.lowercased().contains(needle)
+                    || harness.title.lowercased().contains(needle)
                     || harness.description.lowercased().contains(needle)
                     || harness.tags.contains { $0.lowercased().contains(needle) }
             }
@@ -215,6 +222,15 @@ public final class HarnessesModel {
         }
         await load()
         return nil
+    }
+
+    /// Sets a harness's display name from outside the Harnesses page (the
+    /// Accounts cards), through the same queue as every other registry write.
+    /// An empty name clears it.
+    public static func rename(_ harness: String, to name: String, using swe: SweClient) async throws {
+        await registryWrites.acquire()
+        defer { registryWrites.release() }
+        try await swe.editHarness(harness, flags: ["--display-name=\(name.trimmingCharacters(in: .whitespaces))"])
     }
 
     private func change(_ name: String, _ work: (SweClient) async throws -> HarnessStateChange) async {
