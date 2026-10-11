@@ -161,6 +161,23 @@ struct ScanFailed: Error, LocalizedError {
         #expect(summary.activeDays == 2)
     }
 
+    @Test func recentModelsCoverTheLastThirtyDaysWhateverThePeriod() async throws {
+        // The widget's top models must not change with the Overview's picker.
+        let ledger = FakeLedger()
+        let oct11 = Date(timeIntervalSince1970: 1_791_648_000)
+        let sep1 = Date(timeIntervalSince1970: 1_788_192_000)    // 2026-09-01: 40 days back
+        await ledger.set(harnesses: [:], days: [
+            DailyUsage(day: sep1, harness: "claude", model: "old", totals: totals(tokens: 900, cost: 0)),
+            DailyUsage(day: oct11, harness: "claude", model: "a", totals: totals(tokens: 30, cost: 0)),
+            DailyUsage(day: oct11, harness: "codex", model: "b", totals: totals(tokens: 10, cost: 0)),
+        ])
+        let model = model(ledger)
+        model.period = .today
+        await model.load(scan: false)
+        #expect(model.recentModels.map(\.model) == ["a", "b"])
+        #expect(model.recentModels.map(\.share) == [0.75, 0.25])
+    }
+
     @Test func accountsAreNamedAndOrderedBySpend() async throws {
         let ledger = FakeLedger()
         await ledger.set(harnesses: [:], accounts: [
@@ -182,6 +199,7 @@ struct ScanFailed: Error, LocalizedError {
         await model.load(scan: true)
         #expect(await ledger.scans == 1)
         #expect(model.error == "Couldn't read your usage logs: disk unreadable")
+        #expect(model.completedScans == 0)
     }
 
     @Test func switchingPeriodOnlyRequeriesThatPeriod() async throws {
@@ -224,6 +242,16 @@ struct ScanFailed: Error, LocalizedError {
         #expect(await ledger.pricingUpdates == 0)
         await model.load(scan: true)
         #expect(await ledger.pricingUpdates == 1)
+    }
+
+    @Test func eachSuccessfulScanIsCounted() async {
+        let ledger = FakeLedger()
+        let model = model(ledger)
+        await model.load(scan: false)
+        #expect(model.completedScans == 0)
+        await model.load(scan: true)
+        await model.load(scan: true)
+        #expect(model.completedScans == 2)
     }
 
     @Test func spendForTheMenuBarCoversTodayYesterdayAndThirtyDays() async throws {

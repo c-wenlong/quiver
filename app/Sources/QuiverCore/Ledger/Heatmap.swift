@@ -12,6 +12,10 @@ public struct Heatmap: Sendable, Equatable {
     /// Oldest week first. A day still in the future is nil.
     public let columns: [[Cell?]]
 
+    /// Tokens across the days drawn, and how many of them had any.
+    public var totalTokens: Int { columns.joined().compactMap { $0?.tokens }.reduce(0, +) }
+    public var activeDays: Int { columns.joined().filter { ($0?.tokens ?? 0) > 0 }.count }
+
     public init(days: [DayRow], weeks: Int, now: Date, calendar: Calendar) {
         let today = calendar.startOfDay(for: now)
         let weekStart = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today

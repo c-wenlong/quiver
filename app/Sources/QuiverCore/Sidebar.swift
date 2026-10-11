@@ -1,7 +1,7 @@
 /// The main window's sidebar, as app/ROADMAP.md lays it out.
 public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case overview, sessions
-    case accounts, apiKeys, harnesses, skills, agentsMd, mcpServers
+    case accounts, apiKeys, harnesses, skills, agentsMd, mcpServers, plugins
     case serviceStatus, doctor, settings
 
     public var id: String { rawValue }
@@ -16,6 +16,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .skills: "Skills"
         case .agentsMd: "AGENTS.md"
         case .mcpServers: "MCP servers"
+        case .plugins: "Plugins"
         case .serviceStatus: "Service status"
         case .doctor: "Doctor"
         case .settings: "Settings"
@@ -33,6 +34,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .skills: "sparkles"
         case .agentsMd: "doc.text"
         case .mcpServers: "powerplug"
+        case .plugins: "puzzlepiece.extension"
         case .serviceStatus: "waveform.path.ecg"
         case .doctor: "stethoscope"
         case .settings: "gearshape"
@@ -56,8 +58,22 @@ public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
     public var sections: [AppSection] {
         switch self {
         case .usage: [.overview, .sessions]
-        case .manage: [.accounts, .apiKeys, .harnesses, .skills, .agentsMd, .mcpServers]
+        case .manage: [.accounts, .apiKeys, .harnesses, .skills, .agentsMd, .mcpServers, .plugins]
         case .system: [.serviceStatus, .doctor, .settings]
         }
+    }
+}
+
+extension SidebarGroup {
+    /// Every page, top to bottom.
+    public static var order: [AppSection] { allCases.flatMap(\.sections) }
+}
+
+extension AppSection {
+    /// The page `offset` rows away in the sidebar, stopping at either end.
+    public func step(_ offset: Int) -> AppSection {
+        let order = SidebarGroup.order
+        guard let index = order.firstIndex(of: self) else { return self }
+        return order[min(max(index + offset, 0), order.count - 1)]
     }
 }

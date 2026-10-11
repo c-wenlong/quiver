@@ -63,6 +63,22 @@ public struct RateLimit: Decodable, Sendable, Equatable {
         case windowSeconds, planType, remainingUnits, totalUnits, fetchedAt
     }
 
+    /// For tests and previews; the app only ever decodes these from swe.
+    init(status: Status, usedPercent: Int, window: String? = nil, resetAt: Date? = nil,
+         planType: String? = nil, fetchedAt: Date? = nil) {
+        self.status = status
+        self.usedPercent = usedPercent
+        remainingPercent = 100 - usedPercent
+        limitReached = usedPercent >= 100
+        self.resetAt = resetAt
+        self.window = window
+        windowSeconds = nil
+        self.planType = planType
+        remainingUnits = nil
+        totalUnits = nil
+        self.fetchedAt = fetchedAt
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         status = try c.decode(Status.self, forKey: .status)
