@@ -313,18 +313,39 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
     @Test func aHarnessInstalledLaterShowsUpOnTheQuietRecheck() async {
         let swe = FakeSwe(results: ["A": ["claude"]])
         let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
-        await model.recheck()   // nothing checked yet: no swe call of its own
+        await model.recheck(for: "A")   // nothing checked yet: no swe call of its own
         #expect(await swe.calls == 0)
         await swe.use("A"); await model.loadIfNeeded(for: "A")
         #expect(model.rows.first { $0.id == "codex" }?.isInstalled == false)
         await swe.set("A", ["claude", "codex"])   // installed in a terminal
         await model.loadIfNeeded(for: "A")           // the cache still holds
         #expect(await swe.calls == 1)
-        await model.recheck()                        // Quiver is active again
+        await model.recheck(for: "A")                        // Quiver is active again
         #expect(await swe.calls == 2)
         #expect(model.isVisible("codex"))
         await model.loadIfNeeded(for: "A")
         #expect(await swe.calls == 2)
+    }
+
+    @Test func aRecheckAfterTheSwePathChangedIsSavedUnderTheNewPath() async {
+        // A checked, B chosen in Settings > Paths, then Quiver active again.
+        let swe = FakeSwe(results: ["A": ["claude"], "B": ["codex"]])
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
+        await swe.use("A"); await model.loadIfNeeded(for: "A")
+        await swe.use("B"); await model.recheck(for: "B")
+        #expect(model.isVisible("codex"))
+        #expect(await swe.calls == 2)
+        await model.loadIfNeeded(for: "B")   // B's result is B's
+        #expect(await swe.calls == 2)
+        await swe.use("A"); await model.loadIfNeeded(for: "A")   // A isn't taken as checked
+        #expect(await swe.calls == 3)
+        #expect(model.isVisible("claude"))
+        #expect(!model.isVisible("codex"))
+
+        // A failing new path is reported, not hidden as a quiet recheck.
+        await swe.set("C", nil)
+        await swe.use("C"); await model.recheck(for: "C")
+        #expect(model.checkError != nil)
     }
 
     @Test func aQuietRecheckKeepsTheRowsAndHidesItsOwnFailure() async {
@@ -332,7 +353,7 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
         await swe.use("A"); await model.loadIfNeeded(for: "A")
         await swe.set("A", nil)
-        await model.recheck()
+        await model.recheck(for: "A")
         #expect(model.checkError == nil)
         #expect(model.hasChecked)
         #expect(model.isVisible("claude"))
@@ -344,7 +365,7 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         let gate = HeldCheck()
         let model = ProviderVisibilityModel(store: MemoryStore(), detect: { await gate.next() })
         await model.loadIfNeeded(for: "A")
-        let recheck = Task { await model.recheck() }
+        let recheck = Task { await model.recheck(for: "A") }
         while !(await gate.parked) { await Task.yield() }
         #expect(model.hasChecked)   // rows keep their result, no "Checking…"
         #expect(model.isVisible("claude"))

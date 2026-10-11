@@ -172,7 +172,7 @@ final class AppModel {
                 await self?.limits.checkNotificationPermission()
                 for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
                     await self?.limits.checkNotificationPermission()
-                    await self?.providers.recheck()
+                    if let self { await self.providers.recheck(for: self.swePath) }
                 }
             },
         ]

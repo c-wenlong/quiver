@@ -158,14 +158,18 @@ public final class ProviderVisibilityModel {
         await load()
     }
 
-    /// Checks the last-checked swe again, for a harness installed while
-    /// Quiver was in the background (call it when the app becomes active).
-    /// Quiet: the rows keep their result while it runs, and if it fails
-    /// they stay as they were with no error, since nobody asked for it.
-    /// Does nothing before the first check, or while one is running.
-    public func recheck() async {
-        guard key != nil, !isLoading else { return }
-        await load(quiet: true)
+    /// Checks again, for a harness installed while Quiver was in the
+    /// background (call it when the app becomes active). `key` is the swe
+    /// path in use now, which may have changed since the last check; the
+    /// result is saved under it. Quiet when the rows already show this
+    /// key: they keep their result while it runs, and if it fails they
+    /// stay as they were with no error, since nobody asked for it. Does
+    /// nothing before the first check, or while one is running.
+    public func recheck(for key: String) async {
+        guard self.key != nil, !isLoading else { return }
+        let same = key == checkedKey
+        self.key = key
+        await load(quiet: same)
     }
 
     public func load() async {
