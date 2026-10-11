@@ -36,6 +36,69 @@ extension SweClient {
     }
 }
 
+/// What `swe edit <name> --json` reports back.
+public struct HarnessEditResult: Decodable, Sendable, Equatable {
+    public let name: String
+    public let changes: [String]
+    public let harness: Harness
+}
+
+extension SweClient {
+    /// Applies registry edits, given as `--field=value` flags.
+    @discardableResult
+    public func editHarness(_ name: String, flags: [String]) async throws -> HarnessEditResult {
+        try await call(["edit", name] + flags + ["--json"])
+    }
+}
+
+/// The edit sheet's draft of a harness's registry fields. Lists are kept as
+/// the comma-separated text the user types.
+public struct HarnessEdit: Equatable, Sendable {
+    public var command: String
+    public var description: String
+    public var version: String
+    public var aliases: String
+    public var tags: String
+    public var notes: String
+
+    public init(_ harness: Harness) {
+        command = harness.command
+        description = harness.description
+        version = harness.version ?? ""
+        aliases = harness.aliases.joined(separator: ", ")
+        tags = harness.tags.joined(separator: ", ")
+        notes = harness.notes ?? ""
+    }
+
+    public var commandProblem: String? {
+        command.trimmingCharacters(in: .whitespaces).isEmpty ? "Enter the command that runs it." : nil
+    }
+
+    /// `--field=value` for each field that differs from `original`, in a
+    /// fixed order. An empty value clears the field, as `swe edit` does.
+    public func flags(from original: HarnessEdit) -> [String] {
+        let fields: [(String, KeyPath<HarnessEdit, String>, Bool)] = [
+            ("command", \.command, false), ("description", \.description, false),
+            ("version", \.version, false), ("aliases", \.aliases, true),
+            ("tags", \.tags, true), ("notes", \.notes, false),
+        ]
+        return fields.compactMap { name, path, isList in
+            let new = Self.normalised(self[keyPath: path], isList: isList)
+            let old = Self.normalised(original[keyPath: path], isList: isList)
+            return new == old ? nil : "--\(name)=\(new)"
+        }
+    }
+
+    private static func normalised(_ text: String, isList: Bool) -> String {
+        guard isList else { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var seen = Set<String>()
+        return text.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+            .joined(separator: ",")
+    }
+}
+
 /// The Harnesses page: every AI coding CLI swe knows about.
 @MainActor
 @Observable
@@ -130,6 +193,28 @@ public final class HarnessesModel {
     public func restore(_ harness: Harness) async {
         guard harness.state == .archived else { return }
         await change(harness.name) { try await $0.restore(harness.name) }
+    }
+
+    /// Saves an edit through `swe edit`, then reloads. Returns what went
+    /// wrong, for the sheet to show, or nil when it saved or had nothing to do.
+    public func save(_ harness: Harness, _ edit: HarnessEdit) async -> String? {
+        let flags = edit.flags(from: HarnessEdit(harness))
+        guard !flags.isEmpty else { return nil }
+        if let problem = edit.commandProblem { return problem }
+        guard !busy.contains(harness.name) else { return "\(harness.name) is still saving." }
+        busy.insert(harness.name)
+        defer { busy.remove(harness.name) }
+        await gate.acquire()
+        defer { gate.release() }
+        do {
+            try await swe.editHarness(harness.name, flags: flags)
+        } catch is CancellationError {
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+        await load()
+        return nil
     }
 
     private func change(_ name: String, _ work: (SweClient) async throws -> HarnessStateChange) async {

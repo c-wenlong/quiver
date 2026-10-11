@@ -374,13 +374,15 @@ extension View {
     /// A themed text field for Settings and sheets: 36pt, radius 8,
     /// `bg.field`, a hairline that strengthens on focus, 14/20 text.
     /// Apply to a `TextField` or `SecureField`.
-    func quiverField(monospaced: Bool = false) -> some View {
-        modifier(QuiverField(monospaced: monospaced))
+    /// `multiline` lets a vertical-axis TextField grow from 36pt as it wraps.
+    func quiverField(monospaced: Bool = false, multiline: Bool = false) -> some View {
+        modifier(QuiverField(monospaced: monospaced, multiline: multiline))
     }
 }
 
 private struct QuiverField: ViewModifier {
     var monospaced: Bool
+    var multiline = false
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
@@ -390,7 +392,8 @@ private struct QuiverField: ViewModifier {
             .foregroundStyle(Theme.textPrimary)
             .focused($focused)
             .padding(.horizontal, 12)
-            .frame(height: Theme.fieldHeight)
+            .padding(.vertical, multiline ? 9 : 0)
+            .frame(minHeight: Theme.fieldHeight, maxHeight: multiline ? nil : Theme.fieldHeight)
             .background(Theme.field, in: .rect(cornerRadius: Theme.fieldRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius)
                 .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
