@@ -169,8 +169,10 @@ private struct SpendDonut: View {
         return app.providers.ordered(shown.map(\.0)).compactMap { id in shown.first { $0.0 == id } }
     }
 
-    /// Spend of the providers shown, so the ring and its total agree.
-    var shownCost: Double { parts.reduce(0) { $0 + $1.totals.costUSD } }
+    /// Every provider's spend: hiding one in Settings hides its entry, not its money.
+    var totalCost: Double { slice?.costUSD ?? 0 }
+    /// Spend of providers hidden in Settings, said in a line under the legend.
+    var hiddenCost: Double { totalCost - parts.reduce(0) { $0 + $1.totals.costUSD } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -178,7 +180,7 @@ private struct SpendDonut: View {
                  selection: $period)
             HStack(spacing: 16) {
                 ZStack {
-                    if (shownCost) > 0 {
+                    if (totalCost) > 0 {
                         Chart(parts, id: \.harness) { part in
                             SectorMark(angle: .value("Spend", part.totals.costUSD),
                                        innerRadius: .ratio(0.68), angularInset: 1.5)
@@ -189,7 +191,7 @@ private struct SpendDonut: View {
                         Circle().stroke(Color.primary.opacity(0.1), lineWidth: 14).padding(7)
                     }
                     VStack(spacing: 0) {
-                        Text(UsageFormat.dollars(shownCost))
+                        Text(UsageFormat.dollars(totalCost))
                             .font(.system(size: 17, weight: .semibold)).monospacedDigit()
                             .foregroundStyle(Theme.accent)
                         Text("spent").font(.caption2).foregroundStyle(.secondary)
@@ -214,6 +216,10 @@ private struct SpendDonut: View {
                         }
                     }
                 }
+            }
+            if hiddenCost >= 0.01 {
+                Text("Includes \(UsageFormat.dollars(hiddenCost)) from providers hidden in Settings.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if unpriced > 0 {
                 // The total leaves these out, so say so rather than look complete.

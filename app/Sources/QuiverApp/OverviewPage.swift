@@ -116,7 +116,10 @@ private struct TotalCard: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             if shares.isEmpty {
-                Text("No usage in this period.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                Text(summary.totals.totalTokens > 0
+                     ? "Every provider with usage this period is hidden in Settings."
+                     : "No usage in this period.")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             } else {
                 ShareBar(shares: shares)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {

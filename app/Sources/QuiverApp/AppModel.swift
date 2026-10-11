@@ -78,7 +78,8 @@ final class AppModel {
             // swe's installed harnesses, plus the extra providers' own signs.
             let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
             let swe = SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
-            let harnesses = (try? await swe.harnesses(withUsage: false)) ?? []
+            // A failure is passed on, not read as "nothing installed".
+            let harnesses = try await swe.harnesses(withUsage: false)
             let shellPath = await LoginShell.cachedEnvironment()["PATH"] ?? ""
             return Set(ProviderDetection.installed(
                 sweHarnesses: Set(harnesses.map(\.name)),

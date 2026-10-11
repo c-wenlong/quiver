@@ -2,6 +2,17 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
+/// Installed providers the first time, a failure after that.
+actor Flaky {
+    struct Failed: Error {}
+    var calls = 0
+    func next() throws -> Set<String> {
+        calls += 1
+        if calls > 1 { throw Failed() }
+        return ["claude"]
+    }
+}
+
 /// An in-memory stand-in for UserDefaults.
 final class MemoryStore: KeyValueStoring, @unchecked Sendable {
     var values: [String: [String]] = [:]
@@ -118,6 +129,31 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         let partial = await self.model(installed: ["claude"], store: store)
         #expect(partial.rows.count == ProviderCatalog.all.count)
         #expect(Array(partial.rows.prefix(2).map(\.id)) == ["gemini", "claude"])
+    }
+
+    @Test func aFailedCheckIsReportedNotTakenAsNothingInstalled() async {
+        struct Broken: Error, LocalizedError { var errorDescription: String? { "swe is too old" } }
+        let failing = ProviderVisibilityModel(store: MemoryStore(), detect: { throw Broken() })
+        await failing.load()
+        #expect(failing.checkError == "swe is too old")
+        #expect(failing.hasChecked == false)
+
+        // A later check that works clears it; one that fails keeps what was known.
+        let store = MemoryStore()
+        let flaky = Flaky()
+        let model = ProviderVisibilityModel(store: store, detect: { try await flaky.next() })
+        await model.load()
+        #expect(model.isVisible("claude"))
+        await model.load()
+        #expect(model.checkError != nil)
+        #expect(model.isVisible("claude"))
+        #expect(model.hasChecked)
+    }
+
+    @Test func aRowCanBeDraggedToTheEnd() async {
+        let model = await model(installed: ["claude"])
+        model.moveToEnd("claude")
+        #expect(model.rows.last?.id == "claude")
     }
 
     @Test func orderingFollowsTheUsersOrder() async {

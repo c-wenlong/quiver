@@ -5,6 +5,7 @@ import SwiftUI
 /// per installed provider, Enable all / Disable all. Providers that aren't
 /// installed are greyed out and their switch is off and locked.
 struct ProviderVisibilityCard: View {
+    @Environment(AppModel.self) private var app
     @Bindable var model: ProviderVisibilityModel
     @State private var dragging: String?
 
@@ -14,7 +15,8 @@ struct ProviderVisibilityCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Provider visibility").font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary)
                     Text(model.hasChecked ? "\(model.enabledCount) / \(model.rows.count) providers enabled"
-                                          : "Checking which providers are installed…")
+                         : model.checkError != nil ? "Couldn't check which providers are installed"
+                         : "Checking which providers are installed…")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary).monospacedDigit()
                 }
                 Spacer()
@@ -27,10 +29,22 @@ struct ProviderVisibilityCard: View {
                 .frame(height: 36)
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border, lineWidth: 1))
             }
+            if let error = model.checkError {
+                HStack(spacing: 10) {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(Theme.caption).foregroundStyle(Theme.warning)
+                        .lineLimit(2)
+                    Spacer()
+                    Button("Try again") { Task { await model.load() } }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(model.isLoading)
+                }
+            }
             Divider().overlay(Theme.border)
             VStack(spacing: 0) {
                 ForEach(model.rows) { row in
-                    ProviderRow(row: row, checked: model.hasChecked, isDragging: dragging == row.id) {
+                    ProviderRow(row: row, checked: model.hasChecked, failed: model.checkError != nil,
+                                isDragging: dragging == row.id) {
                         model.setEnabled(row.id, $0)
                     }
                         .draggable(row.id) {
@@ -48,15 +62,27 @@ struct ProviderVisibilityCard: View {
                             if !targeted, dragging == row.id { dragging = nil }
                         }
                 }
+                // Dropping below the last row moves a provider to the end.
+                Color.clear
+                    .frame(height: 16)
+                    .contentShape(.rect)
+                    .dropDestination(for: String.self) { ids, _ in
+                        guard let id = ids.first else { return false }
+                        withAnimation(.easeOut(duration: 0.15)) { model.moveToEnd(id) }
+                        dragging = nil
+                        return true
+                    }
             }
         }
-        .task { await model.load() }
+        // Again whenever a different swe is chosen.
+        .task(id: app.swePath) { await model.load() }
     }
 }
 
 private struct ProviderRow: View {
     var row: ProviderVisibilityModel.Row
     var checked: Bool
+    var failed = false
     var isDragging: Bool
     var toggle: (Bool) -> Void
     @State private var hovering = false
@@ -67,7 +93,9 @@ private struct ProviderRow: View {
             HStack(spacing: 14) {
                 HarnessIcon(harness: row.provider.icon, size: 20)
                 Text(row.provider.name).font(.system(size: 15)).foregroundStyle(Theme.textPrimary)
-                if !checked {
+                if !checked && failed {
+                    Text("Couldn't check").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                } else if !checked {
                     Text("Checking…").font(Theme.caption).foregroundStyle(Theme.textMuted)
                 } else if !row.isInstalled {
                     Text("Not installed").font(Theme.caption).foregroundStyle(Theme.textMuted)
