@@ -41,7 +41,7 @@ private struct OverviewContent: View {
         } content: {
             if let error = model.error {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.warning)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
             }
             if let summary = model.summary {
                 let current = summary.period == model.period

@@ -189,7 +189,7 @@ private struct HarnessLinksPanel: View {
                 // the page's own error card is behind the popover.
                 if let error = model.actionError {
                     Label(error, systemImage: "exclamationmark.triangle")
-                        .font(Theme.caption).foregroundStyle(Theme.danger)
+                        .font(Theme.caption).foregroundStyle(Theme.dangerText)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }

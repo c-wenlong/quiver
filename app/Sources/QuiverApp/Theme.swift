@@ -56,6 +56,11 @@ enum Theme {
     static let success = Color(light: "#10b981", dark: "#34d399")
     static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
     static let danger = Color(light: "#ef4444", dark: "#f87171")
+    /// Danger and warning for text and glyphs. The roles above are for
+    /// dots, bars and fills; as 12 to 14pt text they fall under 4.5:1 on
+    /// the light surfaces (red about 3.8, amber about 2.1).
+    static let dangerText = Color(light: "#dc2626", dark: "#f87171")
+    static let warningText = Color(light: "#b45309", dark: "#fbbf24")
 
     /// Heatmap steps, empty to busiest.
     static let heatmap: [Color] = [
