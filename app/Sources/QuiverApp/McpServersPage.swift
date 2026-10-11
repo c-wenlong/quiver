@@ -153,7 +153,10 @@ private struct ServerGrid: View {
                     if server != servers.last { Divider().overlay(Theme.border) }
                 }
             }
-            .frame(minWidth: available, alignment: .leading)
+            // Exactly the card's width, or the columns' minimum if wider, so a
+            // long name truncates instead of pushing the harness columns away.
+            .frame(width: max(available, Self.nameMinWidth + harnesses.map(Self.columnWidth).reduce(0, +)),
+                   alignment: .leading)
         }
         .scrollIndicators(.automatic)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { available = $0 }
