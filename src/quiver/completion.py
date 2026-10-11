@@ -67,6 +67,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--agent=", "Filter by agent"), ("--here", "Current project only"),
         ("--interactive", "Pick a session with arrow keys"),
         ("-i", "Short for --interactive"),
+        ("--json", "Print the listing as JSON"),
     ],
     "models": [
         ("--by-tool", "Group by harness"), ("-t", "Short for --by-tool"),
@@ -103,6 +104,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--full", "Show every match, not just counts"),
         ("--interactive", "Browse matches with arrow keys"),
         ("-i", "Short for --interactive"),
+        ("--json", "Skills only: print the roots as JSON"),
     ],
     "find mcp": [
         ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
@@ -169,6 +171,15 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "mcp doctor": [
         ("--strict", "Exit nonzero on warnings"),
     ],
+    "mcp list": [
+        ("--json", "Machine-readable output"),
+    ],
+    "mcp status": [
+        ("--json", "Machine-readable output"),
+    ],
+    "doctor": [
+        ("--json", "Machine-readable output"),
+    ],
     "harness archive": [
         ("--usage=none", "Mark the harness as unused"),
         ("--usage=trial", "Mark the harness as tried once"),
@@ -207,6 +218,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--full", "List every path, not just the counts"),
         ("--check", "Show what would change, write nothing"),
         ("-n", "Short for --check"),
+        ("--json", "With --check, print link states as JSON"),
         ("--force", "Replace real files too (backed up first)"),
         ("--migrate", "Move a pre-0.2.7 ~/.config/swe into ~/.quiver"),
         ("--yes", "Register every new harness without asking"),
@@ -234,6 +246,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     },
     "mcp": {
         "discover": "mcp discover", "sync": "mcp sync", "doctor": "mcp doctor",
+        "list": "mcp list", "ls": "mcp list", "status": "mcp status",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",

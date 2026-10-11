@@ -29,12 +29,12 @@ remembering CLI commands.
 ## Milestones
 
 ### M0. `swe` speaks JSON
-- [ ] `python -m quiver.mcp_server` starts the server ([#124](https://github.com/c-wenlong/quiver/pull/124), in review)
-- [ ] `--json` on `swe list --usage` (rate limits per harness, with `fetched_at`)
-- [ ] `--json` on `swe session` (id, harness, cwd, title, timestamp, status)
-- [ ] `--json` on `swe find skills` and `swe init --check` (link state per harness)
-- [ ] `--json` on `swe mcp list|status` and `swe doctor` (findings with fix commands)
-- [ ] One shared envelope: `{"schema": 1, "data": …}`, documented in ARCHITECTURE.md
+- [x] `python -m quiver.mcp_server` starts the server ([#124](https://github.com/c-wenlong/quiver/pull/124))
+- [x] `--json` on `swe list --usage` (rate limits per harness, with `fetched_at`)
+- [x] `--json` on `swe session` (id, harness, cwd, title, timestamp, status)
+- [x] `--json` on `swe find skills` and `swe init --check` (link state per harness)
+- [x] `--json` on `swe mcp list|status` and `swe doctor` (findings with fix commands)
+- [x] One shared envelope: `{"schema": 1, "data": …}`, documented in ARCHITECTURE.md
 
 ### M1. App shell
 - [ ] `app/` SwiftPM package, macOS 26, app target plus a testable core library
