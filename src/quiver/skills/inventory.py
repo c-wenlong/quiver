@@ -20,7 +20,14 @@ from pathlib import Path
 from quiver import paths
 from quiver.find.plugin_drift import KINDS, _READERS, _real, plugin_drift, quiver_plugins
 from quiver.find.plugins import _load_json, count_components
-from quiver.init.layout import LinkIgnoreError, load_linkignore, plan, registry_name
+from quiver.init.layout import (
+    LinkIgnoreError,
+    archived_names,
+    load_linkignore,
+    load_registry,
+    plan,
+    registry_name,
+)
 from quiver.skills.catalogs import load_skill_catalogs
 from quiver.skills.discovery import discover_skills, parse_skill_md
 
@@ -64,6 +71,43 @@ def _under(child: Path, parent: Path) -> bool:
         return False
 
 
+def _superseded_plugin_dirs(home: Path):
+    """A test for claude plugin-cache skills from a version no longer installed.
+
+    Claude keeps the old version's folder after an update (a running session
+    may still hold it), so the cache lists every skill twice. The install
+    record names the one version that loads; a plugin it does not mention is
+    kept as found rather than guessed at.
+    """
+    cache = home / ".claude" / "plugins" / "cache"
+    record = _load_json(home / ".claude" / "plugins" / "installed_plugins.json")
+    plugins = record.get("plugins") if isinstance(record, dict) else None
+    installed: dict[tuple[str, str], set[Path]] = {}
+    for entries in (plugins.values() if isinstance(plugins, dict) else []):
+        for entry in entries if isinstance(entries, list) else [entries]:
+            path = entry.get("installPath") if isinstance(entry, dict) else None
+            if not isinstance(path, str) or not path:
+                continue
+            real = _real_path(Path(path).expanduser())
+            cache_real = _real_path(cache)
+            if real is None or cache_real is None or not _under(real, cache_real):
+                continue
+            parts = real.relative_to(cache_real).parts
+            if len(parts) >= 3:
+                installed.setdefault(parts[:2], set()).add(real)
+
+    def superseded(folder: Path) -> bool:
+        real, cache_real = _real_path(folder), _real_path(cache)
+        if real is None or cache_real is None or not _under(real, cache_real):
+            return False
+        parts = real.relative_to(cache_real).parts
+        if len(parts) < 3 or parts[:2] not in installed:
+            return False
+        return Path(cache_real, *parts[:3]) not in installed[parts[:2]]
+
+    return superseded
+
+
 def _source(label: str, catalogs: set[str]) -> str:
     if label == "shared":
         return "shared"
@@ -90,6 +134,7 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
     """
     home = home or Path.home()
     roots = _plan_skill_roots(home)
+    archived = archived_names(load_registry(home))
     harnesses = [
         {
             "name": registry_name(s.label),
@@ -97,6 +142,9 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
             "path": str(s.path),
             "state": s.state,
             "detail": s.detail,
+            # init leaves an archived harness alone, so its root reads
+            # `ignored` once unlinked; the app still lets you link it back.
+            "archived": registry_name(s.label) in archived,
         }
         for s in roots
     ]
@@ -107,9 +155,12 @@ def installed_skills(home: Path | None = None, cwd: Path | None = None) -> dict:
     ]
     catalogs = {str(entry.get("label", "catalog")) for entry in load_skill_catalogs()}
 
+    superseded = _superseded_plugin_dirs(home)
     skills = []
     for skill in discover_skills(home=home, cwd=cwd, visibility=False):
         folder = Path(skill["path"]).parent
+        if skill["scope"] == "claude-plugin" and superseded(folder):
+            continue
         real = _real_path(folder)
         seen_by: list[str] = []
         for name, root in real_roots:
