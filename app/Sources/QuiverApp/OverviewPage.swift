@@ -22,6 +22,9 @@ private struct OverviewContent: View {
     @Bindable var model: OverviewModel
     /// The content width, to pick between two columns and one.
     @State private var width: CGFloat = 0
+    /// Kept here: crossing the column cutoff builds the cards again, which
+    /// would put the breakdown back on Daily.
+    @State private var breakdownTab: BreakdownCard.Tab = .daily
 
     /// A 300pt side column plus a main column of at least about 524pt, so
     /// the default window (about 868pt of content) gets two columns.
@@ -75,7 +78,7 @@ private struct OverviewContent: View {
     @ViewBuilder private func main(_ summary: OverviewSummary) -> some View {
         VStack(spacing: Theme.gutter) {
             TotalCard(summary: summary, period: $model.period)
-            BreakdownCard(summary: summary)
+            BreakdownCard(summary: summary, tab: $breakdownTab)
         }
     }
 
@@ -239,7 +242,7 @@ private struct HarnessTile: View {
 private struct BreakdownCard: View {
     enum Tab: Hashable { case daily, accounts }
     var summary: OverviewSummary
-    @State private var tab: Tab = .daily
+    @Binding var tab: Tab
 
     var body: some View {
         Card {

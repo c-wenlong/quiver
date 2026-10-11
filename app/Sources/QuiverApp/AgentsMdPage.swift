@@ -182,7 +182,7 @@ private struct ProjectInstructions: View {
             }
             if model.projectFolder != nil {
                 let files = model.projectFiles
-                Tabs(options: files.map { ($0.name, tabTitle($0)) }, selection: $selectedFile, style: .table)
+                Tabs(options: files.map { ($0.name, tabTitle($0)) }, selection: $selectedFile, style: .table, onPanel: true)
                 if let file = files.first(where: { $0.name == selectedFile }) {
                     let document = model.document(for: file)
                     InstructionEditor(document: document, title: file.name, subtitle: subtitle(file, document)) {

@@ -129,6 +129,10 @@ public final class ProviderVisibilityModel {
     private var disabled: Set<String> = []
     /// Bumped by each check; only the newest one writes its result.
     private var request = 0
+    /// What the checks run against (the swe path), and what the last one
+    /// that worked ran against.
+    private var key: String?
+    private var checkedKey: String?
 
     public init(store: KeyValueStoring, detect: @escaping @Sendable () async throws -> Set<String>) {
         self.store = store
@@ -138,9 +142,21 @@ public final class ProviderVisibilityModel {
         rebuild()
     }
 
+    /// Checks once per `key` (the swe path in use), so a view that is
+    /// rebuilt or visited again doesn't run swe again. A check that failed
+    /// or was cancelled hasn't counted, so the next call runs it again;
+    /// a check still running is replaced rather than waited on, because
+    /// the view that started it may be gone and its task cancelled.
+    public func loadIfNeeded(for key: String) async {
+        guard key != checkedKey else { return }
+        self.key = key
+        await load()
+    }
+
     public func load() async {
         request += 1
         let mine = request
+        let key = self.key
         isLoading = true
         let result: Result<Set<String>, Error>
         do { result = .success(try await detect()) } catch { result = .failure(error) }
@@ -151,6 +167,7 @@ public final class ProviderVisibilityModel {
         case .success(let found):
             installed = found
             hasChecked = true
+            checkedKey = key
             checkError = nil
         case .failure(let error) where error is CancellationError:
             return

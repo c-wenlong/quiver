@@ -31,6 +31,23 @@ actor Flaky {
     }
 }
 
+/// Counts calls.
+actor Counter {
+    var count = 0
+    func tick() { count += 1 }
+}
+
+/// A failure the first time, installed providers after that.
+actor FailsFirst {
+    struct Failed: Error, LocalizedError { var errorDescription: String? { "swe didn't answer" } }
+    var calls = 0
+    func next() throws -> Set<String> {
+        calls += 1
+        if calls == 1 { throw Failed() }
+        return ["claude"]
+    }
+}
+
 /// An in-memory stand-in for UserDefaults.
 final class MemoryStore: KeyValueStoring, @unchecked Sendable {
     var values: [String: [String]] = [:]
@@ -188,6 +205,42 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         #expect(model.checkError == nil)
         #expect(model.isLoading == false)
         #expect(model.isVisible("claude"))
+    }
+
+    @Test func checksOncePerSwePath() async {
+        let counter = Counter()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { await counter.tick(); return ["claude"] })
+        await model.loadIfNeeded(for: "/usr/local/bin/swe")
+        await model.loadIfNeeded(for: "/usr/local/bin/swe")   // the card built again
+        #expect(await counter.count == 1)
+        #expect(model.isVisible("claude"))
+        await model.loadIfNeeded(for: "/opt/homebrew/bin/swe")   // another swe chosen
+        #expect(await counter.count == 2)
+        await model.loadIfNeeded(for: "/opt/homebrew/bin/swe")
+        #expect(await counter.count == 2)
+    }
+
+    @Test func aFailedOrCancelledCheckRunsAgainNextTime() async {
+        let flaky = FailsFirst()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await flaky.next() })
+        await model.loadIfNeeded(for: "swe")
+        #expect(model.checkError != nil)
+        await model.loadIfNeeded(for: "swe")
+        #expect(model.checkError == nil)
+        #expect(model.isVisible("claude"))
+        #expect(await flaky.calls == 2)
+
+        let calls = Counter()
+        let retried = ProviderVisibilityModel(store: MemoryStore(), detect: {
+            await calls.tick()
+            if await calls.count == 1 { throw CancellationError() }
+            return ["claude"]
+        })
+        await retried.loadIfNeeded(for: "swe")   // the view went away mid-check
+        #expect(retried.hasChecked == false)
+        await retried.loadIfNeeded(for: "swe")   // the rebuilt one checks again
+        #expect(await calls.count == 2)
+        #expect(retried.hasChecked)
     }
 
     @Test func aRowCanBeDraggedToTheEnd() async {

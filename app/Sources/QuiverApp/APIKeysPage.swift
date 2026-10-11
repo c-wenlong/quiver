@@ -171,7 +171,7 @@ private struct StatusLabel: View {
 
     var body: some View {
         switch status {
-        case .loaded: label("Loaded", "checkmark.circle", Theme.success, help: "A new terminal gets this value.")
+        case .loaded: label("Loaded", "checkmark.circle", Theme.textSecondary, help: "A new terminal gets this value.")
         case .overridden: label("Overridden", "exclamationmark.triangle", Theme.warningText,
                                 help: "A new terminal gets a different value: something later in your shell setup sets it again.")
         case .notLoaded: label("Not loaded", "minus.circle", Theme.textSecondary,
@@ -237,12 +237,8 @@ private struct KeyEditor: View {
                     TextField("ANTHROPIC", text: $draft.provider).quiverField()
                         .disabled(!draft.isNew)
                     if draft.isNew && !providers.isEmpty {
-                        Menu("Existing") {
-                            ForEach(providers, id: \.self) { provider in
-                                Button(provider) { draft.provider = provider }
-                            }
-                        }
-                        .fixedSize()
+                        SelectMenu(options: providers.map { ($0, $0) }, selection: $draft.provider,
+                                   width: nil, title: "Existing")
                     }
                 }
             }
@@ -276,9 +272,8 @@ private struct KeyEditor: View {
                 if !draft.isNew {
                     if confirmingRemove {
                         Text("Remove \(draft.name)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        Button("Remove") { run { try await remove(draft.name) } }
+                        Button("Remove", role: .destructive) { run { try await remove(draft.name) } }
                             .secondaryButton()
-                            .foregroundStyle(Theme.dangerText)
                         Button("Keep") { confirmingRemove = false }.secondaryButton()
                     } else {
                         Button("Remove…") { confirmingRemove = true }.secondaryButton()

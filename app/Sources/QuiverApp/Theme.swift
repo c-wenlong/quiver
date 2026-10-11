@@ -40,7 +40,6 @@ enum Theme {
     /// Money and "on": cost figures, usage fill, heatmap, switches.
     static let accent = Color(light: "#059669", dark: "#059669")
     static let accentFill = Color(light: "#10b981", dark: "#10b981")
-    static let accentHover = Color(light: "#047857", dark: "#10b981")
 
     static let primaryBackground = Color(light: "#171717", dark: "#fafafa")
     static let primaryForeground = Color(light: "#ffffff", dark: "#171717")
@@ -49,8 +48,15 @@ enum Theme {
     static let dialog = Color(light: "#ffffff", dark: "#0a0a0a")
     /// A footer link under the pointer.
     static let footerLinkHover = Color(light: "#404040", dark: "#d4d4d4")
-    /// A period or table tab under the pointer.
+    /// A period or table tab under the pointer, on a card.
     static let tabHover = Color(light: "#fafafa", dark: "#26262680")
+    /// A row or tab under the pointer that sits straight on the panel.
+    /// `rowHover` and `tabHover` were measured on white cards and vanish
+    /// on the #fafafa panel, so light takes the next step, `bg.selected`.
+    static let panelHover = Color(light: "#f5f5f5", dark: "#26262680")
+    /// A whole card under the pointer (`status-row` hover): #fafafa in
+    /// light, #262626 at 60% in dark.
+    static let cardHover = Color(light: "#fafafa", dark: "#26262699")
 
     static let usageTrack = Color(light: "#f5f5f5", dark: "#40404080")
     static let success = Color(light: "#10b981", dark: "#34d399")
