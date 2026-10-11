@@ -48,6 +48,16 @@ struct UsageCacheStore {
 
     private func write(_ entry: StoredAccount?, for key: AccountKey) {
         var accounts = loadAll()
+        var entry = entry
+        // Another running copy may have saved a cooldown for this same login
+        // after this one started its request. A success saved now must not
+        // erase it, or the next refresh would ignore Retry-After.
+        if var next = entry, next.cooldownUntil == nil,
+           let current = accounts[Self.id(key)], current.fingerprint == next.fingerprint,
+           let until = current.cooldownUntil, until > Date() {
+            next.cooldownUntil = until
+            entry = next
+        }
         accounts[Self.id(key)] = entry
         let encoder = JSONEncoder()
         // Reference-date seconds, so a date comes back bit-for-bit equal.

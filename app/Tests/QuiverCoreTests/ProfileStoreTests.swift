@@ -293,7 +293,9 @@ private func makeStore(_ home: URL) -> ProfileStore {
         #expect(performing: { try store.remove(id: "claude-x") }, throws: isMalformed)
 
         #expect(try String(contentsOf: file, encoding: .utf8) == text)
+        // The lock file is shared by every running copy and may stay behind.
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: root(of: home).path)
+            .filter { $0 != "profiles.lock" }
         #expect(leftovers == ["profiles.json"], "no temp files or profile directories")
     }
 

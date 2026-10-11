@@ -131,26 +131,30 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
     /// A line with a path that has a space and a single quote, so it carries a backslash.
     private let line = #"export CLAUDE_CONFIG_DIR='/Users/me/it'\''s a dir/home'; claude"#
 
-    @Test func terminalAppRunsTheLineWithDoScript() {
-        #expect(LaunchPlanner.terminal(.terminal, running: line) == LaunchCommand(
+    /// Terminal and iTerm hand the line to whatever shell the profile uses,
+    /// which may be csh; wrapping it in zsh keeps `export` and `unset` working.
+    private let simple = "export CLAUDE_CONFIG_DIR='/Users/me/home'; claude"
+
+    @Test func terminalAppRunsTheLineInZshWithDoScript() {
+        #expect(LaunchPlanner.terminal(.terminal, running: simple) == LaunchCommand(
             executable: "/usr/bin/osascript",
             arguments: [
                 "-e", #"tell application "Terminal""#,
                 "-e", "activate",
-                // The backslash in the line is doubled inside the AppleScript string.
-                "-e", #"do script "export CLAUDE_CONFIG_DIR='/Users/me/it'\\''s a dir/home'; claude""#,
+                // sh-quoted for zsh, then backslashes doubled for AppleScript.
+                "-e", #"do script "/bin/zsh -ilc 'export CLAUDE_CONFIG_DIR='\\''/Users/me/home'\\''; claude'""#,
                 "-e", "end tell",
             ]))
     }
 
-    @Test func itermWritesTheLineIntoANewWindow() {
-        #expect(LaunchPlanner.terminal(.iterm, running: line) == LaunchCommand(
+    @Test func itermWritesTheLineIntoANewWindowInZsh() {
+        #expect(LaunchPlanner.terminal(.iterm, running: simple) == LaunchCommand(
             executable: "/usr/bin/osascript",
             arguments: [
                 "-e", #"tell application "iTerm""#,
                 "-e", "activate",
                 "-e", "set w to (create window with default profile)",
-                "-e", #"tell current session of w to write text "export CLAUDE_CONFIG_DIR='/Users/me/it'\\''s a dir/home'; claude""#,
+                "-e", #"tell current session of w to write text "/bin/zsh -ilc 'export CLAUDE_CONFIG_DIR='\\''/Users/me/home'\\''; claude'""#,
                 "-e", "end tell",
             ]))
     }
@@ -158,7 +162,7 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
     @Test func doubleQuotesAndNewlinesAreEscapedForAppleScript() {
         let tricky = "echo \"hi\"\necho 'a\\b'"
         let command = LaunchPlanner.terminal(.terminal, running: tricky)
-        #expect(command.arguments[5] == #"do script "echo \"hi\"\necho 'a\\b'""#)
+        #expect(command.arguments[5] == #"do script "/bin/zsh -ilc 'echo \"hi\"\necho '\\''a\\b'\\'''""#)
     }
 
     @Test func ghosttyPassesTheLineToZshAsOneArgument() {

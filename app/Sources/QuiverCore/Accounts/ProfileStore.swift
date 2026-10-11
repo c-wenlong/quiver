@@ -134,6 +134,8 @@ public final class ProfileStore: @unchecked Sendable {
 
         lock.lock()
         defer { lock.unlock() }
+        let held = try FileLock(at: lockFile())
+        defer { held.release() }
         var profiles = try loadLocked()
 
         // A directory left behind by an interrupted removal is never adopted by
@@ -178,6 +180,8 @@ public final class ProfileStore: @unchecked Sendable {
 
         lock.lock()
         defer { lock.unlock() }
+        let held = try FileLock(at: lockFile())
+        defer { held.release() }
         var profiles = try loadLocked()
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw ProfileStoreError.notFound(id) }
         profiles[index].name = clean
@@ -191,6 +195,8 @@ public final class ProfileStore: @unchecked Sendable {
     public func remove(id: String) throws {
         lock.lock()
         defer { lock.unlock() }
+        let held = try FileLock(at: lockFile())
+        defer { held.release() }
         var profiles = try loadLocked()
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw ProfileStoreError.notFound(id) }
         let profile = profiles[index]
@@ -286,6 +292,14 @@ public final class ProfileStore: @unchecked Sendable {
 
     /// Creates the accounts root, mode 0700. Its parents (`~/.quiver`) are
     /// shared with `swe`, so they keep the default mode.
+    /// The lock every running copy of Quiver takes around a whole read,
+    /// change and save of profiles.json, so two copies never overwrite each
+    /// other's change.
+    private func lockFile() throws -> URL {
+        try createRoot()
+        return root.appendingPathComponent("profiles.lock")
+    }
+
     private func createRoot() throws {
         try FileManager.default.createDirectory(
             at: root.deletingLastPathComponent(), withIntermediateDirectories: true)

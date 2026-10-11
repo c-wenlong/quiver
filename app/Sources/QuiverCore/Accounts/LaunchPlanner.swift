@@ -86,12 +86,16 @@ public enum LaunchPlanner {
 
     /// Opens `shellLine` in a new window of the chosen terminal.
     public static func terminal(_ app: TerminalApp, running shellLine: String) -> LaunchCommand {
+        // Terminal and iTerm type the line into whatever shell the profile
+        // runs, which may be csh, where `export` fails and the CLI would then
+        // start as the default account. zsh -ilc runs it the same everywhere.
+        let wrapped = "/bin/zsh -ilc \(shellQuote(shellLine))"
         switch app {
         case .terminal:
             return osascript([
                 #"tell application "Terminal""#,
                 "activate",
-                "do script \(appleScriptString(shellLine))",
+                "do script \(appleScriptString(wrapped))",
                 "end tell",
             ])
         case .iterm:
@@ -99,7 +103,7 @@ public enum LaunchPlanner {
                 #"tell application "iTerm""#,
                 "activate",
                 "set w to (create window with default profile)",
-                "tell current session of w to write text \(appleScriptString(shellLine))",
+                "tell current session of w to write text \(appleScriptString(wrapped))",
                 "end tell",
             ])
         case .ghostty:

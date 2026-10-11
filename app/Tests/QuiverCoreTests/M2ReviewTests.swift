@@ -127,14 +127,52 @@ import Testing
         let usage = FakeUsage()
         let model = AccountsModel(store: ProfileStore(root: home.appending(path: "a"), userHome: home),
                                   usage: usage, launcher: FakeLauncher(), terminal: { .terminal })
-        let task = Task { await model.keepFresh(every: .milliseconds(30)) }
-        try await Task.sleep(for: .milliseconds(200))
+        let task = Task { await model.keepFresh(every: .milliseconds(10)) }
+        // Wait for three reloads (two default accounts each) rather than
+        // counting what fits in a fixed window: CI runners are slow.
+        let deadline = Date().addingTimeInterval(10)
+        while usage.requests.count < 6 && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         task.cancel()
         await task.value
-        let loads = usage.requests.count / 2   // two default accounts per load
-        #expect(loads >= 3)
+        #expect(usage.requests.count >= 6)
         let afterCancel = usage.requests.count
         try await Task.sleep(for: .milliseconds(100))
         #expect(usage.requests.count == afterCancel)
+    }
+}
+
+@Suite struct CrossProcessTests {
+    @Test func twoStoresAddingAtOnceKeepBothAccounts() async throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "multi-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let root = home.appending(path: ".quiver/accounts")
+        // Two stores on one folder stand in for two running copies of the app.
+        await withTaskGroup(of: Void.self) { group in
+            for copy in 0..<2 {
+                group.addTask {
+                    let store = ProfileStore(root: root, userHome: home)
+                    for n in 0..<15 { _ = try? store.add(vendor: .codex, name: "c\(copy)-\(n)") }
+                }
+            }
+        }
+        let names = try ProfileStore(root: root, userHome: home).load().map(\.name)
+        #expect(names.count == 2 + 30)
+    }
+
+    @Test func aSuccessSavedLaterKeepsAnotherCopysActiveCooldown() {
+        let url = FileManager.default.temporaryDirectory.appending(path: "cool-\(UUID().uuidString)/app-usage.json")
+        let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)
+        let until = Date().addingTimeInterval(600)
+        let other = UsageCacheStore(url: url)
+        other.save(StoredAccount(fingerprint: "same", reading: nil, cooldownUntil: until), for: key)
+        let reading = StoredReading(plan: nil, email: nil, windows: [], fetchedAt: Date())
+        UsageCacheStore(url: url).save(StoredAccount(fingerprint: "same", reading: reading, cooldownUntil: nil), for: key)
+        #expect(other.entry(for: key)?.cooldownUntil == until)
+        #expect(other.entry(for: key)?.reading == reading)
+        // A different login does not inherit it.
+        UsageCacheStore(url: url).save(StoredAccount(fingerprint: "new", reading: reading, cooldownUntil: nil), for: key)
+        #expect(other.entry(for: key)?.cooldownUntil == nil)
     }
 }
