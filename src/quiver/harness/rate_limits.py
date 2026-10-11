@@ -105,7 +105,10 @@ class RateLimitInfo:
             "reset_at": self.reset_at or None,
             "window": self.window or None,
             "window_seconds": self.window_seconds or None,
-            "plan_type": None if status != "ok" else (self.plan_type or None),
+            # "—" is the table's placeholder for a provider that names no
+            # plan; in JSON that is null, not a plan called "—".
+            "plan_type": (None if status != "ok" or self.plan_type in ("", "\u2014", "-")
+                          else self.plan_type),
             "remaining_units": self.remaining_units,
             "total_units": self.total_units,
             "fetched_at": self.fetched_at or None,

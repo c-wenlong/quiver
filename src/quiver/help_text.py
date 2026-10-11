@@ -13,6 +13,7 @@ HELP = {
   {c('dim', 'Short for')} {c('cyan', 'swe harness list')}{c('dim', '; every harness verb lives under swe harness.')}
   {c('cyan', 'swe list <tag>')}               Filter by tag (e.g. swe list agentic)
   {c('cyan', 'swe list --usage')}             Add 100d sessions and remaining quota
+  {c('cyan', 'swe list -u --exclude=a,b')}     Same, without polling usage for a and b
   {c('cyan', 'swe list --links')}             Add AGENTS.MD and SKILLS link status
   {c('cyan', 'swe list -n')}                  Fetch new session and rate-limit data
   {c('cyan', 'swe list edit')}                Choose which columns to show

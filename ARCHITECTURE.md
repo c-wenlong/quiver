@@ -358,7 +358,7 @@ and the app refuses a schema it does not know rather than misreading it.
 
 | Command | `data` |
 |---|---|
-| `swe list [tag] [--usage] --json` | `harnesses`: name, command, version, aliases, tags, `state` (active, starred, archived), `sessions_100d`, `rate_limit` (null unless `--usage` and starred) |
+| `swe list [tag] [--usage [--exclude=a,b]] --json` | `harnesses`: name, command, version, aliases, tags, `state` (active, starred, archived), `sessions_100d`, `rate_limit` (null unless `--usage` and starred) |
 | `swe session [filters] --json` | `sessions`: id, harness, agent, cwd, title, title_source, `last_active_at` (epoch seconds), status, `resume` (`argv` and `cwd`, or null); `failures` names any parser that crashed, so a broken reader is not mistaken for no history |
 | `swe find skills -r --json` | `shared_dir`, `skills` (the shared library), `roots` (per-harness skills root with its link state and skill count) |
 | `swe init --check --json` | `agents_file`, `agents_file_exists`, `harnesses` with `instructions` and `skills`, each a path and link state or null |
