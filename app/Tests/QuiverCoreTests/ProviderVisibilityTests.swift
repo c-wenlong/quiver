@@ -2,6 +2,24 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
+/// Holds the first check until released, so a second one can finish first.
+actor Gate {
+    struct Failed: Error, LocalizedError { var errorDescription: String? { "old check failed" } }
+    var calls = 0
+    var waiting: CheckedContinuation<Void, Never>?
+    var parked = false
+    func next() async throws -> Set<String> {
+        calls += 1
+        if calls == 1 {
+            parked = true
+            await withCheckedContinuation { waiting = $0 }
+            throw Failed()
+        }
+        return ["claude"]
+    }
+    func release() { waiting?.resume(); waiting = nil }
+}
+
 /// Installed providers the first time, a failure after that.
 actor Flaky {
     struct Failed: Error {}
@@ -148,6 +166,21 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         #expect(model.checkError != nil)
         #expect(model.isVisible("claude"))
         #expect(model.hasChecked)
+    }
+
+    @Test func anOlderCheckFinishingLateChangesNothing() async {
+        let gate = Gate()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await gate.next() })
+        let old = Task { await model.load() }
+        while !(await gate.parked) { await Task.yield() }
+        await model.load()
+        #expect(model.isVisible("claude"))
+        #expect(model.isLoading == false)   // the newest check is done
+        await gate.release()
+        await old.value
+        #expect(model.checkError == nil)
+        #expect(model.isLoading == false)
+        #expect(model.isVisible("claude"))
     }
 
     @Test func aRowCanBeDraggedToTheEnd() async {
