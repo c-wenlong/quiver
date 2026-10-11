@@ -15,10 +15,6 @@ swift test                      # QuiverCore unit tests
 open build/Quiver.app
 ```
 
-Set `QUIVER_SIGN_IDENTITY` to a codesigning identity (see
-`security find-identity -v -p codesigning`) to sign with it instead of
-ad hoc.
-
 The app runs `swe … --json`, so it needs a quiver with JSON output (M0).
 If the `swe` your login shell finds is older, the app says so; point it at
 a newer one in Settings.
@@ -35,7 +31,7 @@ a newer one in Settings.
 | `Sources/QuiverApp` | The SwiftUI shell: window, sidebar, pages, menu bar panel |
 | `Sources/QuiverWidgets` | The WidgetKit extension: usage limits, usage summary, activity heatmap, top models |
 | `Tests/QuiverCoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
-| `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both |
+| `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Apple Development identity if you have one, else ad-hoc) |
 | `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.quiver/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
 | `THIRD_PARTY_NOTICES.md` | Licences for the LiteLLM snapshot and ported OpenUsage rules |
@@ -99,6 +95,8 @@ exceptions.
 
 ## Known rough edges
 
-- The bundle is ad-hoc signed, so every rebuild looks like a new app to
-  macOS. Permissions you granted (for example reading a `swe` installed
-  under `~/Desktop`) are asked for again after each build.
+- Privacy grants (Desktop folder access, Accessibility) stick across
+  rebuilds only when the app is signed with a stable identity.
+  `build-app.sh` uses your first "Apple Development" certificate, or
+  `QUIVER_SIGN_IDENTITY`. Without one it falls back to ad-hoc signing, and
+  every rebuild looks like a new app that asks again.

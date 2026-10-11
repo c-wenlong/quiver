@@ -4,9 +4,16 @@
 #   app/script/build-app.sh [debug|release]   # default: release
 #
 # Writes app/build/Quiver.app with the widget extension embedded at
-# Contents/PlugIns/QuiverWidgets.appex, ad-hoc signed unless
-# QUIVER_SIGN_IDENTITY names a codesigning identity. Open it with
+# Contents/PlugIns/QuiverWidgets.appex. Open it with
 # `open app/build/Quiver.app`.
+#
+# Signing: macOS remembers privacy grants (Desktop and Documents access,
+# Accessibility) against the app's signing identity. An ad-hoc signature
+# changes with every build, so each rebuild would ask again. The script
+# therefore signs with a stable identity when it can find one:
+#   QUIVER_SIGN_IDENTITY="Apple Development: …"  # or a certificate hash
+# else the first "Apple Development" identity in the keychain, else ad-hoc
+# (CI, or a Mac without a certificate). QUIVER_SIGN_IDENTITY=- forces ad-hoc.
 set -euo pipefail
 
 config="${1:-release}"
@@ -48,6 +55,8 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Desktop folder.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Documents folder.</string>
 </dict>
 </plist>
 PLIST
@@ -78,8 +87,23 @@ cat > "$appex/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+identity="${QUIVER_SIGN_IDENTITY:-}"
+if [ -z "$identity" ]; then
+  # Optional: a failed lookup falls back to ad-hoc rather than stopping the
+  # build. A failure signing with an identity that was found, or one asked
+  # for in QUIVER_SIGN_IDENTITY, still stops it.
+  if identities="$(security find-identity -v -p codesigning 2>&1)"; then
+    identity="$(printf '%s\n' "$identities" \
+      | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) "Apple Development: .*/\1/p' | head -n 1)"
+  else
+    echo "build-app: couldn't list signing identities: $identities" >&2
+  fi
+fi
+if [ -z "$identity" ] || [ "$identity" = "-" ]; then
+  echo "build-app: ad-hoc signing; privacy grants won't survive a rebuild" >&2
+  identity="-"
+fi
 # Inside out: the extension with its sandbox, then the app around it.
-identity="${QUIVER_SIGN_IDENTITY:--}"
 codesign --force --sign "$identity" --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
 codesign --force --sign "$identity" "$bundle" >/dev/null
 echo "$bundle"
