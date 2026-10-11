@@ -88,6 +88,29 @@ class RateLimitInfo:
                                # (Claude's refresh-pending path) without
                                # the aggregator stamping it fresh.
 
+    def to_json(self) -> dict:
+        """The ``swe list --usage --json`` shape.
+
+        The sentinel plan types become ``status`` so the app never shows
+        "no-sub" as a plan name.
+        """
+        status = (self.plan_type
+                  if self.plan_type in ("no-sub", "auth-required", "timeout")
+                  else "ok")
+        return {
+            "status": status,
+            "used_percent": self.used_percent,
+            "remaining_percent": self.remaining_percent,
+            "limit_reached": self.limit_reached,
+            "reset_at": self.reset_at or None,
+            "window": self.window or None,
+            "window_seconds": self.window_seconds or None,
+            "plan_type": None if status != "ok" else (self.plan_type or None),
+            "remaining_units": self.remaining_units,
+            "total_units": self.total_units,
+            "fetched_at": self.fetched_at or None,
+        }
+
     @property
     def remaining_percent(self) -> int:
         """Percentage of the selected quota window still available."""
@@ -2339,11 +2362,13 @@ def get_all_rate_limits(
                         and raw.get("plan_type") == "auth-required"):
                     continue
                 try:
-                    result[name] = RateLimitInfo(**raw)
+                    info = RateLimitInfo(**raw)
                     # Each hydrated value keeps its real fetch time — a
                     # partial refetch must not re-age the untouched
                     # providers or the stale-fallback bound leaks.
                     cache_updated_at[name] = fresh_at[name]
+                    info.fetched_at = info.fetched_at or fresh_at[name]
+                    result[name] = info
                 except (TypeError, ValueError):
                     pass
             # A provider that answered "nothing to report" last time is
@@ -2364,6 +2389,7 @@ def get_all_rate_limits(
                 info = RateLimitInfo(**raw)
             except (TypeError, ValueError):
                 continue
+            info.fetched_at = info.fetched_at or stale_updated_at[name]
             result[name] = info
             raw_cache[name] = raw
             cache_updated_at[name] = stale_updated_at[name]
@@ -2396,9 +2422,10 @@ def get_all_rate_limits(
     for tool_name, _fetcher in fetchers:
         info = completed.get(tool_name)
         if info:
+            info.fetched_at = info.fetched_at or time.time()
             result[tool_name] = info
             raw_cache[tool_name] = asdict(info)
-            cache_updated_at[tool_name] = info.fetched_at or time.time()
+            cache_updated_at[tool_name] = info.fetched_at
         elif tool_name in completed:
             # Ran to completion and produced nothing. Distinct from a worker
             # that hit the deadline, which is absent from ``completed`` and

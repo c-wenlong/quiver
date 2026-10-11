@@ -34,9 +34,11 @@ from quiver.configuration import (
     parse_json_object,
 )
 from quiver.console import c, cpad, sanitize, strip_ansi, terminal_width, truncate, visible_len
+from quiver.json_output import emit, take_json_flag
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
+from quiver.mcp.secrets import load_secrets, scrub_args, scrub_url
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
 from quiver.mcp.secrets import unresolved_names
@@ -588,55 +590,76 @@ def server_summary(cfg: dict) -> str:
     return "unknown"
 
 
-def check_server_health(name: str, cfg: dict) -> str:
+def _head_ok(url: str) -> bool:
+    """True when a HEAD request to ``url`` is answered within five seconds."""
+    import urllib.request
+
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request(url, method="HEAD"), timeout=5)
+    except Exception:
+        return False
+    return True
+
+
+def probe_server_health(name: str, cfg: dict) -> tuple[str, str | None]:
+    """Run the health check for one server: ``(state, detail)``.
+
+    ``state`` is ``ok``, ``error`` or ``unknown``. ``detail`` says what is
+    wrong, and is None when nothing is. Details name env vars, never their
+    values. Both ``swe mcp status`` renderings come from here, so the table
+    and ``--json`` cannot disagree.
+    """
     cfg = normalize_server(cfg)
     st = server_type(cfg)
 
     if st == "http":
         url = cfg.get("url", "")
-        if not url.lower().startswith(("http://", "https://")):
-            return c("red", "✗ invalid URL scheme")
-        try:
-            import urllib.request
-            req = urllib.request.Request(url, method="HEAD")
-            urllib.request.urlopen(req, timeout=5)
-            return c("green", "✓")
-        except Exception:
-            return c("red", "✗ url unreachable")
+        if not (isinstance(url, str)
+                and url.lower().startswith(("http://", "https://"))):
+            return "error", "invalid URL scheme"
+        if _head_ok(url):
+            return "ok", None
+        return "error", "url unreachable"
 
     if st == "stdio":
         cmd = cfg.get("command", "")
         if cmd.startswith("/") or cmd.startswith("~"):
             resolved = os.path.expanduser(cmd)
-            if os.path.isfile(resolved) and os.access(resolved, os.X_OK):
-                pass
-            else:
-                return c("red", "✗ binary not found")
+            if not (os.path.isfile(resolved) and os.access(resolved, os.X_OK)):
+                return "error", "binary not found"
         else:
             if not shutil.which(cmd):
                 # ``cmd`` is config text: a name carrying escapes would
                 # otherwise print them straight to the terminal.
-                return c("red", f"✗ '{sanitize(cmd)}' not in PATH")
+                return "error", f"'{sanitize(cmd)}' not in PATH"
         env = cfg.get("env", {})
-        missing = [k for k, v in env.items() if not v or v.startswith("YOUR_")]
+        missing = [k for k, v in env.items()
+                   if not v or (isinstance(v, str) and v.startswith("YOUR_"))]
         if missing:
             shown = ", ".join(sanitize(k) for k in missing)
-            return c("red", f"✗ missing env: {shown}")
-        return c("green", "✓")
+            return "error", f"missing env: {shown}"
+        return "ok", None
 
     if st == "wrapped":
         args = cfg.get("args", [])
-        url = next((a for a in args if a.lower().startswith(("http://", "https://"))), None)
+        url = next((a for a in args if isinstance(a, str)
+                    and a.lower().startswith(("http://", "https://"))), None)
         if url:
-            try:
-                import urllib.request
-                req = urllib.request.Request(url, method="HEAD")
-                urllib.request.urlopen(req, timeout=5)
-                return c("green", "✓")
-            except Exception:
-                return c("red", "✗ url unreachable")
-        return c("red", "✗ no url found")
+            if _head_ok(url):
+                return "ok", None
+            return "error", "url unreachable"
+        return "error", "no url found"
 
+    return "unknown", "no command or url"
+
+
+def check_server_health(name: str, cfg: dict) -> str:
+    state, detail = probe_server_health(name, cfg)
+    if state == "ok":
+        return c("green", "✓")
+    if state == "error":
+        return c("red", f"✗ {detail}")
     return c("yellow", "? unknown")
 
 
@@ -688,22 +711,103 @@ def _tool_header(name: str, width: int) -> str:
     return label.center(width)
 
 
+def _transport(raw, canonical: dict) -> str:
+    """How a server is reached: stdio, http, sse, wrapped or unknown.
+
+    The canonical shape drops ``type``, so the one distinction it cannot
+    carry, legacy SSE against streamable HTTP, is read from the raw entry.
+    """
+    kind = server_type(canonical)
+    if (kind == "http" and isinstance(raw, dict)
+            and str(raw.get("type", "")).lower() == "sse"):
+        return "sse"
+    return kind
+
+
+def _identity(raw, canonical: dict) -> tuple:
+    """What makes two definitions of one server the same server.
+
+    Compared on canonical fields with absent and empty treated alike, so a
+    harness that spells out ``args: []`` or ``type: stdio`` does not
+    disagree with one that leaves them off. Only ever compared, never
+    printed: it holds the env and header values.
+    """
+    return (
+        # SSE and streamable HTTP at one URL are different servers to a
+        # client, and only the raw entry still says which one it is.
+        _transport(raw, canonical),
+        canonical.get("command") or "",
+        tuple(canonical.get("args") or ()),
+        tuple(sorted((canonical.get("env") or {}).items())),
+        canonical.get("url") or "",
+        tuple(sorted((canonical.get("headers") or {}).items())),
+    )
+
+
+def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
+    """One ``(json_row, first_raw_config)`` per server name, sorted by name.
+
+    ``tool_data`` maps each tool to its raw ``{name: config}``. The row is
+    what ``--json`` prints: identity taken from the first tool that defines
+    the server, every tool it appears in, and whether those tools disagree.
+    Env and header values stay out; only their names go into the row. The
+    command, arguments and URL are scrubbed, since a credential can sit in
+    any of them (see ``quiver.mcp.secrets.scrub_url``).
+    """
+    secrets = load_secrets()
+    seen: dict[str, dict] = {}
+    for tool, servers in tool_data.items():
+        handler = get_mcp_handler(tool)
+        for name, raw in servers.items():
+            canonical = handler.parse(raw) if isinstance(raw, dict) else {}
+            entry = seen.setdefault(
+                name, {"raw": raw, "canonical": canonical, "tools": [],
+                       "identities": []})
+            entry["tools"].append(tool)
+            entry["identities"].append(_identity(raw, canonical))
+    inventory = []
+    for name in sorted(seen):
+        entry = seen[name]
+        canonical = entry["canonical"]
+        env = canonical.get("env") or {}
+        headers = canonical.get("headers") or {}
+        inventory.append(({
+            "name": name,
+            "transport": _transport(entry["raw"], canonical),
+            "command": (redact_secrets(str(canonical["command"]), secrets)
+                        if canonical.get("command") else None),
+            "args": scrub_args(canonical.get("args") or [], secrets),
+            "url": (scrub_url(str(canonical["url"]), secrets)
+                    if canonical.get("url") else None),
+            "env_keys": sorted(str(k) for k in env),
+            "header_keys": sorted(str(k) for k in headers),
+            "harnesses": entry["tools"],
+            "conflict": any(i != entry["identities"][0]
+                            for i in entry["identities"]),
+        }, entry["raw"]))
+    return inventory
+
+
 def cmd_list(args):
+    args, json_view = take_json_flag(list(args))
     if args and args[0] in ("-h", "--help", "help"):
         print(MCP_HELP["list"])
         return 0
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
+    # Under --json stdout is one document, so refusals go to stderr.
+    refusal = sys.stderr if json_view else sys.stdout
 
     target = None
     if args:
         target = resolve_tool_arg(registry, args[0])
         if _unsafe_registry_name(target):
-            print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+            print(c("red", f"Unsafe harness name in registry: {args[0]}"),
+                  file=refusal)
             return 1
         if not target:
-            print(f"Unknown tool: {args[0]}")
-            print(f"Available: {', '.join(mcp_tools.keys())}")
+            print(f"Unknown tool: {args[0]}", file=refusal)
+            print(f"Available: {', '.join(mcp_tools.keys())}", file=refusal)
             return 1
 
     # The value is never read — only the name loops into get_tool_servers,
@@ -716,6 +820,9 @@ def cmd_list(args):
         servers = get_tool_servers(name)
         tool_data[name] = servers
         all_servers.update(servers.keys())
+
+    if json_view:
+        return emit({"servers": [row for row, _ in server_inventory(tool_data)]})
 
     if not all_servers:
         print("No MCP servers found.")
@@ -781,20 +888,24 @@ def cmd_list(args):
 
 
 def cmd_status(args):
+    args, json_view = take_json_flag(list(args))
     if args and args[0] in ("-h", "--help", "help"):
         print(MCP_HELP["status"])
         return 0
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
+    # Under --json stdout is one document, so refusals go to stderr.
+    refusal = sys.stderr if json_view else sys.stdout
 
     target = None
     if args:
         target = resolve_tool_arg(registry, args[0])
         if _unsafe_registry_name(target):
-            print(c("red", f"Unsafe harness name in registry: {args[0]}"))
+            print(c("red", f"Unsafe harness name in registry: {args[0]}"),
+                  file=refusal)
             return 1
         if not target:
-            print(f"Unknown tool: {args[0]}")
+            print(f"Unknown tool: {args[0]}", file=refusal)
             return 1
 
     tools = {target: mcp_tools.get(target, {})} if target else _display_tools(mcp_tools)
@@ -805,6 +916,14 @@ def cmd_status(args):
         servers = get_tool_servers(name)
         tool_data[name] = servers
         all_servers.update(servers.keys())
+
+    if json_view:
+        rows = []
+        for row, first_cfg in server_inventory(tool_data):
+            row["health"], row["detail"] = probe_server_health(
+                row["name"], first_cfg)
+            rows.append(row)
+        return emit({"servers": rows})
 
     if not all_servers:
         print("No MCP servers found.")
@@ -1416,17 +1535,30 @@ MCP_HELP = {
     "list": f"""\
   {c('cyan', 'swe mcp list')}                 Matrix of all MCP servers across all tools
   {c('cyan', 'swe mcp list <tool>')}          Show servers for one tool only
+  {c('cyan', 'swe mcp list --json')}          One JSON document, one entry per server name
 
 {c('bold', 'Args')}
   <tool>              Tool name or alias (e.g. cc, cs, oc)
 
+{c('bold', 'JSON')}
+  Each server carries name, transport (stdio, http, sse, wrapped, unknown),
+  command, args, url, env_keys, header_keys, the harnesses it appears in,
+  and conflict (true when those harnesses define it differently). Env and
+  header values are never printed, only their names; credentials in a URL
+  or argument are hidden.
+
 {c('bold', 'Examples')}
   swe mcp list
-  swe mcp list cc""",
+  swe mcp list cc
+  swe mcp list --json""",
 
     "status": f"""\
   {c('cyan', 'swe mcp status')}               Matrix with health checks for every server
   {c('cyan', 'swe mcp status <tool>')}        Health check for one tool only
+  {c('cyan', 'swe mcp status --json')}        Same fields as list --json, plus health and detail
+
+  --json health is ok, error or unknown; detail says what failed (binary
+  not found, missing env: NAME, url unreachable) and is null when healthy.
 
 {c('bold', 'Health indicators')}
   {c('green', '✓')}   Server binary found / URL reachable

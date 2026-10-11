@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, elide, sanitize, terminal_width, truncate
 from quiver.flags import expand_value_flags
 from quiver.harness.registry import load_registry_if_present
-from quiver.init.layout import skill_folder_names
+from quiver.init.layout import classify_skill_root, skill_folder_names
+from quiver.json_output import emit, take_json_flag
 from quiver.find.tree import (
     agents_tree,
     flat_skills,
+    node_scope,
     plugin_tree,
     scan_agents,
     scan_skill_roots,
@@ -24,10 +27,12 @@ from quiver.find.tree import filter_scope
 from quiver.find.roots import (
     HARNESS_DEFAULT,
     HARNESS_STATES,
+    _capability_aliases,
     dir_label,
     harness_filter,
     harness_footer_text,
     normalise_harness,
+    resolve_harness,
 )
 
 # Colour by what you would do about it, not by filesystem type.
@@ -480,15 +485,88 @@ def _summarise_skill_roots(root: Path, home: Path, scope: str, shared: Path,
                     ("Harness roots", root_groups, "none")])
 
 
+def _skills_json(home: Path, registry: dict, nodes, scope: str) -> dict:
+    """The ``swe find skills --json`` document.
+
+    ``skills`` is the shared library (``~/.quiver/skills``). ``roots`` is
+    where harnesses read skills from, one entry per skills directory with
+    its link state: quiver links a whole directory, not single skills, so
+    there is no per-skill, per-harness state to report. ``harness`` is the
+    registry name, or null for a root that sits under no harness directory
+    (a project's own ``.claude/skills``). ``count`` is how many skills the
+    root exposes, following symlinks, so a linked root counts the shared tree.
+    """
+    shared = paths.skills_dir_for(home)
+    aliases = _capability_aliases(registry)
+    shown, _vendored = filter_scope(nodes, scope, home)
+    roots = []
+    for node in shown:
+        label = dir_label(node.path, home)
+        # The scan keeps the state but drops the reason; the app wants it.
+        _state, detail = classify_skill_root(node.path, home)
+        roots.append({
+            "harness": resolve_harness(label, registry, aliases) or label,
+            "path": str(node.path),
+            "scope": node_scope(node, home),
+            "kind": node.kind,
+            "state": node.state,
+            "count": len(skill_folder_names(node.path)),
+            "detail": detail,
+        })
+    return {
+        "shared_dir": str(shared),
+        "skills": [
+            {"name": folder.name, "path": str(folder), "scope": "global"}
+            for folder in _shared_skill_folders(shared)
+        ],
+        "roots": roots,
+    }
+
+
+def _shared_skill_folders(shared: Path) -> list[Path]:
+    """Every folder holding a SKILL.md under the shared tree, at any depth.
+
+    Follows symlinks, as `skill_folder_names` does for a root's count, so a
+    library nested in team folders or linked in from a vendor repo is listed
+    at the path the skill really sits at. Directories already walked (by
+    device and inode) are skipped, so a symlink loop ends.
+    """
+    import os
+
+    if not shared.is_dir():
+        return []
+    seen: set[tuple[int, int]] = set()
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(shared, followlinks=True):
+        try:
+            st = os.stat(dirpath)
+        except OSError:
+            dirnames[:] = []
+            continue
+        if (st.st_dev, st.st_ino) in seen:
+            dirnames[:] = []
+            continue
+        seen.add((st.st_dev, st.st_ino))
+        # No dot filter: skill_folder_names counts a dot-named skill in a
+        # root's total, and the two lists must agree.
+        dirnames[:] = sorted(dirnames)
+        if "SKILL.md" in filenames:
+            found.append(Path(dirpath))
+    return sorted(found, key=lambda path: (path.name, str(path)))
+
+
 def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
                     harness: str = HARNESS_DEFAULT, full: bool = False,
-                    hint: bool = True) -> int:
+                    hint: bool = True, json_view: bool = False) -> int:
     home = Path.home()
     root = _scan_root(root_flag)
     harness = normalise_harness(harness)
-    visible, hidden = harness_filter(load_registry_if_present(), harness)
+    registry = load_registry_if_present()
+    visible, hidden = harness_filter(registry, harness)
     scanned = [n for n in scan_skill_roots(root, home)
               if visible(dir_label(n.path, home))]
+    if json_view:
+        return emit(_skills_json(home, registry, scanned, scope))
     hint_text = _full_hint("skills", root_flag, scope, harness) if hint else None
     if not root_flag:
         if not full:
@@ -967,14 +1045,21 @@ def cmd_find(args) -> int:
         print_find_help()
         return 0
 
+    args, json_view = take_json_flag(args)
+
+    def fail(message: str) -> int:
+        # --json promises stdout holds one document or nothing, so a
+        # failure speaks on stderr and leaves stdout empty.
+        print(message, file=sys.stderr if json_view else sys.stdout)
+        return 1
+
     root_flag = any(a in ("--root", "-r") for a in args)
     args = [a for a in args if a not in ("--root", "-r")]
 
     try:
         args = expand_value_flags(args, {"--scope", "--harness"})
     except ValueError as exc:
-        print(c("red", str(exc)))
-        return 1
+        return fail(c("red", str(exc)))
 
     scope = "global"
     harness = HARNESS_DEFAULT
@@ -989,8 +1074,7 @@ def cmd_find(args) -> int:
         else:
             i += 1
     if scope not in ("all", "global", "local"):
-        print(f"Unknown scope: {scope or '(empty)'}. Use all, global, or local.")
-        return 1
+        return fail(f"Unknown scope: {scope or '(empty)'}. Use all, global, or local.")
 
     # --harness picks up the same idea swe list's --scope already uses for
     # archived rows: hidden by default, one flag away from showing them.
@@ -998,8 +1082,7 @@ def cmd_find(args) -> int:
     # error at the CLI, not a silent fallback, so a typo is caught here
     # rather than quietly running as --harness=active.
     if harness not in HARNESS_STATES:
-        print(f"Unknown harness state: {harness or '(empty)'}. Use active or all.")
-        return 1
+        return fail(f"Unknown harness state: {harness or '(empty)'}. Use active or all.")
 
     # -i turns the printed listing into a browser over the same data. It
     # matters most for plugins: the listing says "11 skills" and gives you
@@ -1015,8 +1098,15 @@ def cmd_find(args) -> int:
     topic = args[0] if args else None
     rest = args[1:]
     if rest:
-        print(f"Unexpected args: {' '.join(rest)}")
-        return 1
+        return fail(f"Unexpected args: {' '.join(rest)}")
+    if json_view:
+        if interactive:
+            return fail("--json cannot be combined with --interactive")
+        if topic not in ("skills", "skill"):
+            return fail("--json is only available for skills: "
+                        "swe find skills --json")
+        return cmd_find_skills(args[1:], root_flag, scope, harness,
+                               json_view=True)
     if interactive:
         return _browse(topic, scope, harness)
 
@@ -1100,6 +1190,11 @@ def print_find_help() -> None:
 
   {c('dim', 'swe mcp list gives the tool-by-server matrix once you know what')}
   {c('dim', 'you are looking for; swe find mcps answers what the hub holds.')}
+
+  {c('bold', 'Machine-readable')}  {c('cyan', 'swe find skills --json')}
+    One JSON document on stdout, nothing else: the shared skills and each
+    skills root with its link state. Honours --root, --scope and --harness.
+    Skills only for now; read-only.
 
   {c('bold', 'Browse instead of print')}  {c('cyan', '--interactive')} / {c('cyan', '-i')}
     Works on {c('cyan', 'amd')}, {c('cyan', 'skills')} and {c('cyan', 'plugins')}. Three panes: where you came

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from collections import Counter
 from pathlib import Path
 
 from quiver.console import c
+from quiver.json_output import emit, take_json_flag
 from quiver.multiselect import Choice, _supported, multiselect
 from quiver.paths import backup_tree
 from quiver.prompt import read_line
@@ -248,11 +250,34 @@ def _pick_new_harnesses(
     return managed, declined
 
 
+def _link_json(instructions: list[LinkStatus], skills: list[LinkStatus]) -> list[dict]:
+    """One row per harness, joining its instruction file and skills root.
+
+    Keyed by the registry name, so a row joins ``swe list --json`` on
+    ``name``. A harness with no instruction file (or no skills root) carries
+    ``null`` for that half rather than an invented state. When two roots
+    share a name (``~/.agents`` and ``~/.config/agents``) the first in plan
+    order is the one reported.
+    """
+    rows: dict[str, dict] = {}
+    for key, statuses in (("instructions", instructions), ("skills", skills)):
+        for status in statuses:
+            row = rows.setdefault(
+                registry_name(status.label),
+                {"name": registry_name(status.label),
+                 "instructions": None, "skills": None},
+            )
+            if row[key] is None:
+                row[key] = {"path": str(status.path), "state": status.state}
+    return [rows[name] for name in sorted(rows)]
+
+
 def cmd_init(args) -> int:
     args = list(args or [])
     if args and args[0] in ("-h", "--help", "help"):
         print_init_help()
         return 0
+    args, json_view = take_json_flag(args)
 
     check_only = "--check" in args or "-n" in args
     force = "--force" in args
@@ -263,8 +288,17 @@ def cmd_init(args) -> int:
     known = ("--check", "-n", "--force", "--migrate", "--full", "--yes")
     unknown = [a for a in args if a not in known]
     if unknown:
+        if json_view:
+            print(f"Unknown option: {unknown[0]}", file=sys.stderr)
+            return 1
         print(f"Unknown option: {unknown[0]}")
         print_init_help()
+        return 1
+    if json_view and not check_only:
+        # A run that links things also prompts and prints progress. --json
+        # promises one document and no writes, which only the preview keeps.
+        print("--json only works with --check: swe init --check --json",
+              file=sys.stderr)
         return 1
 
     home = Path.home()
@@ -275,6 +309,9 @@ def cmd_init(args) -> int:
     try:
         patterns = load_linkignore(home)
     except LinkIgnoreError as exc:
+        if json_view:
+            print(str(exc), file=sys.stderr)
+            return 1
         print(c("red", f"  {exc}"))
         print(c("dim", "  Fix or remove ~/.quiver/.linkignore, then run swe init again."))
         return 1
@@ -357,6 +394,15 @@ def cmd_init(args) -> int:
         skill_rows = [(s, _apply(s, skills_dir(home), home, force)) for s in skills]
         hook_rows = [(s, _apply(s, s.source, home, force)) for s in hooks]
 
+    if json_view:
+        # Link state is data here, not a verdict: exit 0 even when a path
+        # would be blocked, so the caller can tell "ran" from "failed".
+        return emit({
+            "agents_file": str(agents_file(home)),
+            "agents_file_exists": agents_file(home).exists(),
+            "harnesses": _link_json(instructions, skills),
+        })
+
     header = "Quiver layout" + (c("dim", "  (check only, nothing written)") if check_only else "")
     print(f"\n{c('bold', header)}")
     print(f"  {c('dim', 'root')}  {quiver_dir(home)}")
@@ -408,6 +454,7 @@ def print_init_help() -> None:
   {c('cyan', 'swe init')}            Create the layout and symlink all harnesses
   {c('cyan', 'swe init --full')}     List every path, not just the counts
   {c('cyan', 'swe init --check')}    Show what would change, write nothing
+  {c('cyan', 'swe init --check --json')}  The same preview as one JSON document, nothing else
   {c('cyan', 'swe init --force')}    Replace real files too (backed up first)
   {c('cyan', 'swe init --migrate')}  Move a pre-0.2.7 ~/.config/swe into ~/.quiver
   {c('cyan', 'swe init --yes')}      Register every new skills folder without asking
