@@ -327,8 +327,14 @@ public final class ProfileStore: @unchecked Sendable {
             if isDirectory.boolValue { return }
             throw CocoaError(.fileWriteFileExists)
         }
-        try FileManager.default.createDirectory(
-            at: url, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        do {
+            try FileManager.default.createDirectory(
+                at: url, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        } catch CocoaError.fileWriteFileExists {
+            // Another running copy made it between the check and the create.
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else { throw CocoaError(.fileWriteFileExists) }
+        }
     }
 
     // MARK: - Naming

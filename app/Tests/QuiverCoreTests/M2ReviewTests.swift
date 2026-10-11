@@ -153,7 +153,7 @@ import Testing
             for copy in 0..<2 {
                 group.addTask {
                     let store = ProfileStore(root: root, userHome: home)
-                    for n in 0..<15 { _ = try? store.add(vendor: .codex, name: "c\(copy)-\(n)") }
+                    for n in 0..<15 { do { _ = try store.add(vendor: .codex, name: "c\(copy)-\(n)") } catch { Issue.record("add failed: \(error)") } }
                 }
             }
         }
