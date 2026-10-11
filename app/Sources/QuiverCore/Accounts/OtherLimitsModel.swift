@@ -36,7 +36,11 @@ public final class OtherLimitsModel {
         func plain(_ text: String) -> String {
             text.lowercased().replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ")
         }
-        if given.isEmpty || plain(given).hasPrefix(plain(brand)) { return given.isEmpty ? brand : given }
+        if given.isEmpty { return brand }
+        // The name says the brand when it is the brand or starts with it as
+        // a whole word: "Qwen Code", "Devin Work", not "Devinshire".
+        let name = plain(given), word = plain(brand)
+        if name == word || name.hasPrefix(word + " ") { return given }
         return "\(brand): \(given)"
     }
 

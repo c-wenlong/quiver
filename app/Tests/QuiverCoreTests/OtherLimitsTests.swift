@@ -94,6 +94,9 @@ import Testing
         // A name that just repeats the brand isn't said twice.
         #expect(OtherLimitsModel.Row(name: "cursor", limit: limit, displayName: "Cursor").accountTitle == "Cursor")
         #expect(OtherLimitsModel.Row(name: "qwen-code", limit: limit, displayName: "Qwen Code").accountTitle == "Qwen Code")
+        #expect(OtherLimitsModel.Row(name: "devin", limit: limit, displayName: "Devin Work").accountTitle == "Devin Work")
+        // Sharing only the brand's first letters isn't saying the brand.
+        #expect(OtherLimitsModel.Row(name: "devin", limit: limit, displayName: "Devinshire").accountTitle == "Devin: Devinshire")
     }
 
     @Test func aCardSaysWhyItHasNoLimit() {
