@@ -237,9 +237,14 @@ directories behind them.
 
 ## Find: the harness activity filter
 
-`swe find plugins` also reports plugin drift. Claude Code and Codex register
-a `~/.quiver/plugins` marketplace in place but run an installed cached copy,
-so an edit under `~/.quiver` reaches neither until it reinstalls.
+`swe find plugins` also reports plugin drift. Claude Code and Codex both
+register a `~/.quiver/plugins` marketplace in place. Codex runs an installed
+cached copy, so an edit under `~/.quiver` reaches it only after a reinstall.
+Claude Code reads a directory-marketplace plugin from its folder, so its
+cache is never compared. `swe skills --json` follows the same rule: such a
+Claude plugin's skills are listed from the source path its marketplace
+manifest gives and its cached versions are skipped, while a plugin Claude
+fetched (github, git, a URL) is listed from the cache it runs.
 `find/plugin_drift.py` compares each locally sourced plugin with both
 harnesses' registration, install record or cache, and enable state, and
 returns findings of five kinds (`unregistered`, `not-installed`,
@@ -380,7 +385,7 @@ and the app refuses a schema it does not know rather than misreading it.
 | `swe harness star <name> --json` | `name` and the `state` the toggle left it in |
 | `swe harness archive <name> [why] --json` | `name`, `state`, and the `archived` record (null after a restore) |
 | `swe session [filters] --json` | `sessions`: id, harness, agent, cwd, title, title_source, `last_active_at` (epoch seconds), status, `resume` (`argv` and `cwd`, or null); `failures` names any parser that crashed, so a broken reader is not mistaken for no history |
-| `swe skills --json` | `shared_dir`; `harnesses`: each harness skills root (name, label, path, init's link `state` and `detail`, `archived`); `skills`: every SKILL.md with name, description, path, root, `source` (shared, plugin, harness, builtin, catalog, project) and the `harnesses` that load it |
+| `swe skills --json` | `shared_dir`; `harnesses`: each harness skills root (name, label, path, init's link `state` and `detail`, `archived`); `skills`: every SKILL.md with name, description, path (for a Claude plugin from a directory marketplace, its source folder, not the cache), root, `source` (shared, plugin, harness, builtin, catalog, project) and the `harnesses` that load it |
 | `swe skills hub --json` | `hub` and `plugins`: each plugin in `~/.quiver/plugins` with marketplace, description, version, components, `skills`, and `install` per harness (`state`: installed, unregistered, not-installed, linked-manifest, stale, disabled-here, disabled; `fix`; `id` for `swe find plugins --fix`, null when the fix is an edit by hand) |
 | `swe skills link\|unlink\|move ... --json` | what was done: `action`, `harness`, and the paths |
 | `swe find skills -r --json` | `shared_dir`, `skills` (the shared library), `roots` (per-harness skills root with its link state and skill count) |

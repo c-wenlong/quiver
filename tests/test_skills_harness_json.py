@@ -387,6 +387,134 @@ class SkillsHubJsonTest(unittest.TestCase):
         self.assertEqual(self.data()["plugins"], [])
 
 
+class SkillsListLivePluginTest(unittest.TestCase):
+    """Claude reads a directory-marketplace plugin from its source folder.
+
+    `claude plugin details` lists the source's skills, and `claude plugin
+    update` finds nothing to update, so the copy under
+    ~/.claude/plugins/cache is a snapshot it never loads. `swe skills
+    --json` has to list the source too, or a skill added to a hub plugin
+    goes missing and a removed one lingers.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        build_machine(self.home)
+        # The plugin lives at ./src/probe-dir, not ./toolkit: the path comes
+        # from the marketplace manifest, never from the plugin's name.
+        self.market = self.home / ".quiver" / "plugins" / "kit"
+        self.source = self.market / "src" / "probe-dir"
+        (self.market / ".claude-plugin").mkdir(parents=True)
+        self.write_manifest("./src/probe-dir")
+        write_skill(self.source / "skills", "hammer")
+        write_skill(self.source / "skills", "saw")   # added after the install
+        # The install snapshot: an old version and the current one, which
+        # still holds a skill since deleted from the source.
+        self.cache = self.home / ".claude" / "plugins" / "cache" / "kit" / "toolkit"
+        write_skill(self.cache / "0.9.0" / "skills", "hammer")
+        write_skill(self.cache / "1.0.0" / "skills", "hammer")
+        write_skill(self.cache / "1.0.0" / "skills", "chisel")
+        self.write_install("toolkit@kit", self.cache / "1.0.0")
+        self.register({"kit": {"source": {"source": "directory",
+                                          "path": str(self.market)}}})
+
+    def write_manifest(self, source):
+        (self.market / ".claude-plugin" / "marketplace.json").write_text(json.dumps({
+            "name": "kit", "plugins": [{"name": "toolkit", "source": source}]}))
+
+    def write_install(self, ref, path):
+        (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps({
+            "version": 2,
+            "plugins": {ref: [{"scope": "user", "installPath": str(path)}]}}))
+
+    def register(self, known, settings=None):
+        (self.home / ".claude" / "plugins" / "known_marketplaces.json").write_text(
+            json.dumps(known))
+        (self.home / ".claude" / "settings.json").write_text(json.dumps(settings or {}))
+
+    def plugin_skills(self):
+        result = run_swe(self.home, "skills", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skills = [s for s in decode(result)["data"]["skills"] if s["source"] == "plugin"]
+        return {s["name"]: s for s in skills}, [s["name"] for s in skills]
+
+    def assert_from_source(self, skills, names=("hammer", "saw")):
+        self.assertEqual(sorted(skills), sorted(names))
+        for name in names:
+            self.assertEqual(skills[name]["path"],
+                             str((self.source / "skills" / name).resolve()))
+            self.assertEqual(skills[name]["root"], "claude-plugin")
+
+    def test_skills_come_from_the_source_folder(self):
+        skills, names = self.plugin_skills()
+        self.assert_from_source(skills)
+        # Each once: neither cached version of hammer is listed beside it.
+        self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(skills["hammer"]["harnesses"], ["claude"])
+        self.assertEqual(skills["saw"]["harnesses"], ["claude"])
+        # chisel is only in the cache; claude no longer loads it.
+        self.assertNotIn("chisel", skills)
+
+    def test_a_disabled_live_plugin_loads_nowhere(self):
+        (self.home / ".claude" / "settings.json").write_text(
+            json.dumps({"enabledPlugins": {"toolkit@kit": False}}))
+        skills, _ = self.plugin_skills()
+        self.assert_from_source(skills)
+        self.assertEqual(skills["hammer"]["harnesses"], [])
+
+    def test_a_marketplace_declared_only_in_settings_counts(self):
+        self.register({}, {"extraKnownMarketplaces": {
+            "kit": {"source": {"source": "directory", "path": str(self.market)}}}})
+        skills, _ = self.plugin_skills()
+        self.assert_from_source(skills)
+
+    def test_a_github_marketplace_keeps_the_cached_copy(self):
+        # Claude runs its own copy of a plugin it fetched.
+        self.register({"kit": {"source": {"source": "github", "repo": "o/kit"},
+                               "installLocation": str(self.market)}})
+        skills, _ = self.plugin_skills()
+        self.assertEqual(sorted(skills), ["chisel", "hammer"])
+        self.assertIn("/1.0.0/", skills["hammer"]["path"])
+        self.assertEqual(skills["hammer"]["harnesses"], ["claude"])
+
+    def test_a_plugin_fetched_from_git_keeps_the_cached_copy(self):
+        # A directory marketplace can still name a plugin that lives elsewhere.
+        self.write_manifest({"source": "git-subdir", "url": "https://example.com/x.git"})
+        skills, _ = self.plugin_skills()
+        self.assertEqual(sorted(skills), ["chisel", "hammer"])
+        self.assertIn("/1.0.0/", skills["hammer"]["path"])
+
+    def test_a_missing_source_folder_keeps_the_cached_copy(self):
+        self.write_manifest("./gone")
+        skills, _ = self.plugin_skills()
+        self.assertEqual(sorted(skills), ["chisel", "hammer"])
+
+    def test_a_source_also_registered_as_a_catalog_is_listed_once(self):
+        config = self.home / ".quiver" / "config"
+        (config / "skill_catalogs.json").write_text(json.dumps(
+            {"catalogs": [{"label": "kit", "path": str(self.source / "skills")}]}))
+        result = run_swe(self.home, "skills", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = [s for s in decode(result)["data"]["skills"] if s["name"] == "saw"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source"], "plugin")
+        self.assertEqual(rows[0]["harnesses"], ["claude"])
+
+    def test_an_uninstalled_plugin_is_not_listed_from_source(self):
+        # Uninstalled, claude loads neither copy; the leftover cache is
+        # reported the way it always was, as loading nowhere.
+        (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+            json.dumps({"version": 2, "plugins": {}}))
+        skills, _ = self.plugin_skills()
+        self.assertNotIn("saw", skills)
+        self.assertEqual(skills["hammer"]["harnesses"], [])
+
+    def test_the_listing_writes_nothing(self):
+        before = snapshot(self.home)
+        self.plugin_skills()
+        self.assertEqual(snapshot(self.home), before)
+
+
 class HarnessJsonTest(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
