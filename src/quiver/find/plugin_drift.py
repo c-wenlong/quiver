@@ -27,7 +27,7 @@ difference no reinstall could clear.
 Every finding carries a copy-pasteable ``fix``, and ``argv`` when that fix is
 commands rather than an edit. Nothing here writes or prints except
 ``apply_fix``, which runs one finding's commands when asked to by id: a
-harness CLI, or for ``linked-manifest`` ``cp``, ``rm`` and ``mv`` in the source.
+harness CLI, or for ``linked-manifest`` ``rm``, ``cp`` and ``mv`` in the source.
 A record this module cannot parse yields no findings for that harness rather
 than a guess: reporting every plugin as unregistered because
 ``config.toml`` has a typo would be worse than reporting nothing.
@@ -470,9 +470,11 @@ def _linked_manifest(harness: str, manifest: str, sp: SourcePlugin) -> _LinkedMa
     The fix swaps the link for a real copy of its target, by resolved path.
     It copies first, into a folder beside the link, and only then removes
     the link and moves the copy into its place: a copy that fails leaves the
-    link, so the finding and its retry are still there. Copying the
-    target's contents (``target/.``) lets a retry fill in a partial copy
-    rather than nest a second one inside it.
+    link, so the finding and its retry are still there. The staging path is
+    cleared before the copy (``rm -rf`` removes a link there, never what it
+    points at), so ``cp`` always writes to a fresh path: a leftover from a
+    failed run, or a link the plugin itself ships under that name, could
+    otherwise point the copy outside the plugin.
 
     It is a command only when that target is a folder inside the plugin's
     own marketplace and does not contain the link: a link out of the
@@ -496,7 +498,8 @@ def _linked_manifest(harness: str, manifest: str, sp: SourcePlugin) -> _LinkedMa
             and os.path.commonpath([resolved, real_link]) != resolved):
         staged = real_link + ".quiver-tmp"
         return _LinkedManifest(detail, _commands(
-            ("cp", "-R", os.path.join(resolved, "."), staged),
+            ("rm", "-rf", staged),
+            ("cp", "-R", resolved, staged),
             ("rm", real_link),
             ("mv", staged, real_link)))
     return _LinkedManifest(detail, Fix(

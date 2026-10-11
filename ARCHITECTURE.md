@@ -254,8 +254,8 @@ lives in `~/.claude/settings.json` (often Nix-managed) and
 `swe find plugins --fix=<id>` (the app's one-click fix) is the only path
 that acts, and it does so through the harness's own CLI (or, for
 `linked-manifest`, a `cp -R` of the link's target inside the marketplace
-beside the link, then `rm` and `mv` to swap it in; that is the user's own
-source tree): it recomputes
+to a freshly cleared folder beside the link, then `rm` and `mv` to swap it
+in; that is the user's own source tree): it recomputes
 drift, finds the finding by id (`<harness>:<kind>:<ref>`, with the source
 directory in place of the ref for `unregistered`, since two directories can
 declare one marketplace name), refuses an id that matches more than one, and
