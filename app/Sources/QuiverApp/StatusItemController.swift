@@ -152,6 +152,7 @@ struct MenuBarContent: View {
 
 /// Spend by harness for today, yesterday or the last 30 days.
 private struct SpendDonut: View {
+    @Environment(AppModel.self) private var app
     var slices: [SpendSlice]
     @State private var period: SpendSlice.Period = .today
 
@@ -163,8 +164,13 @@ private struct SpendDonut: View {
         guard let slice else { return [] }
         let known = Theme.harnessOrder.compactMap { id in slice.byHarness[id].map { (id, $0) } }
         let rest = slice.byHarness.filter { !Theme.harnessOrder.contains($0.key) }.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-        return (known + rest).filter { $0.1.totalTokens > 0 }
+        let shown = (known + rest).filter { $0.1.totalTokens > 0 && !app.providers.isHidden($0.0) }
+        // In the order chosen in Settings.
+        return app.providers.ordered(shown.map(\.0)).compactMap { id in shown.first { $0.0 == id } }
     }
+
+    /// Spend of the providers shown, so the ring and its total agree.
+    var shownCost: Double { parts.reduce(0) { $0 + $1.totals.costUSD } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -172,7 +178,7 @@ private struct SpendDonut: View {
                  selection: $period)
             HStack(spacing: 16) {
                 ZStack {
-                    if (slice?.costUSD ?? 0) > 0 {
+                    if (shownCost) > 0 {
                         Chart(parts, id: \.harness) { part in
                             SectorMark(angle: .value("Spend", part.totals.costUSD),
                                        innerRadius: .ratio(0.68), angularInset: 1.5)
@@ -183,7 +189,7 @@ private struct SpendDonut: View {
                         Circle().stroke(Color.primary.opacity(0.1), lineWidth: 14).padding(7)
                     }
                     VStack(spacing: 0) {
-                        Text(UsageFormat.dollars(slice?.costUSD ?? 0))
+                        Text(UsageFormat.dollars(shownCost))
                             .font(.system(size: 17, weight: .semibold)).monospacedDigit()
                             .foregroundStyle(Theme.accent)
                         Text("spent").font(.caption2).foregroundStyle(.secondary)
