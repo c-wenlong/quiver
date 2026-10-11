@@ -102,10 +102,18 @@ public final class PluginsModel {
 
     public var fixAllCount: Int { fixAllIDs.count }
 
-    /// - Parameter snapshots: where the last report is kept between launches.
+    /// Held while a fix runs, shared with the Explore tab's actions.
+    public let work: PluginWork
+
+    /// - Parameters:
+    ///   - snapshots: where the last report is kept between launches.
+    ///   - work: shared with `PluginCatalogModel`, so a fix and an Explore
+    ///     action never run at once.
     public init(snapshots: (any SnapshotStoring<Snapshot<PluginDriftReport>>)? = nil, maxAge: TimeInterval = 60,
-                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
+                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init,
+                work: PluginWork = PluginWork()) {
         loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
+        self.work = work
     }
 
     /// Shows the last saved report until swe answers.
@@ -128,11 +136,14 @@ public final class PluginsModel {
     /// - Parameter source: the swe `swe` is, as set in Settings. The reload
     ///   is dropped if another swe was picked meanwhile; nil reloads anyway.
     public func fix(_ finding: PluginDrift, swe: SweClient, for source: String? = nil) async {
-        guard fixing == nil, finding.runnable else { return }
+        guard fixing == nil, finding.runnable, work.begin() else { return }
         fixing = finding.id
         fixError = nil
         lastFixed = nil
-        defer { fixing = nil }
+        defer {
+            fixing = nil
+            work.end()
+        }
         do {
             try await swe.fixPluginDrift(id: finding.id)
             lastFixed = finding.fix
@@ -163,13 +174,14 @@ public final class PluginsModel {
     /// - Parameter source: as for `fix`.
     public func fixAll(confirmed: [String], swe: SweClient, for source: String? = nil) async {
         let confirmed = Set(confirmed)
-        guard fixing == nil, !confirmed.isEmpty else { return }
+        guard fixing == nil, !confirmed.isEmpty, work.begin() else { return }
         fixError = nil
         lastFixed = nil
         fixAllProgress = FixAllProgress(done: 0, total: confirmed.count)
         defer {
             fixing = nil
             fixAllProgress = nil
+            work.end()
         }
         var tried: Set<String> = []
         var ran = 0

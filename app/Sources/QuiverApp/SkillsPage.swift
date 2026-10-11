@@ -2,14 +2,12 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// Skills, after TokenTracker's: installed skills with the harnesses that
-/// load them, and a browse view of the quiver hub. Links and unlinks go
-/// through `swe skills`, never written from here.
+/// Skills, after TokenTracker's: the skills that stand alone, with the
+/// harnesses that load them. Skills shipped inside a plugin are listed with
+/// it under Plugins > Explore. Links and unlinks go through `swe skills`,
+/// never written from here.
 struct SkillsPage: View {
-    enum Tab: Hashable { case installed, hub }
-
     @Environment(AppModel.self) private var app
-    @State private var tab: Tab = .installed
 
     /// App-wide, so a list outlives a trip to another page and the last
     /// one shows at once.
@@ -17,32 +15,33 @@ struct SkillsPage: View {
 
     var body: some View {
         Page(title: "Skills",
-             subtitle: "Every skill on this Mac, which harnesses load it, and what the quiver hub offers.") {
+             subtitle: "Every skill on this Mac outside a plugin, and which harnesses load it.") {
+            // The harness links fold into one line in the header, so the
+            // first skill sits right under the filter bar.
+            if case .loaded(let inventory) = model.inventory {
+                HarnessLinksSummary(model: model, sharedDir: inventory.sharedDir)
+            }
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
+                    async let catalog: Void = app.pluginCatalog.load(swe: app.swe, for: app.swePath)
                     await model.load(for: app.swePath)
-                    if tab == .hub { await model.loadHub(for: app.swePath) }
+                    await catalog
                 }
             }
             .iconButton()
             .help("Refresh")
         } content: {
-            Tabs(options: [(Tab.installed, "Installed"), (Tab.hub, "Quiver hub")], selection: $tab, style: .underline)
-                // The harness links fold into one line on the tab row, so the
-                // first skill sits right under the filter bar.
-                .overlay(alignment: .trailing) {
-                    if tab == .installed, case .loaded(let inventory) = model.inventory {
-                        HarnessLinksSummary(model: model, sharedDir: inventory.sharedDir)
-                    }
-                }
-            switch tab {
-            case .installed: InstalledSkills(model: model)
-            case .hub: HubBrowser(model: model)
+            InstalledSkills(model: model) {
+                app.pluginsTab = .explore
+                app.selection = .plugins
             }
         }
-        .task(id: app.swePath) { await model.loadIfStale(for: app.swePath) }
-        .task(id: [tab == .hub ? "hub" : "", app.swePath]) {
-            if tab == .hub { await model.loadHubIfStale(for: app.swePath) }
+        // Both at once: which skills stay here depends on the catalog. The
+        // app hands the model each new catalog (AppModel.start).
+        .task(id: app.swePath) {
+            async let catalog: Void = app.pluginCatalog.loadIfStale(swe: app.swe, for: app.swePath)
+            await model.loadIfStale(for: app.swePath)
+            await catalog
         }
     }
 }
@@ -51,6 +50,7 @@ struct SkillsPage: View {
 
 private struct InstalledSkills: View {
     @Bindable var model: SkillsModel
+    var openPlugins: () -> Void
 
     var body: some View {
         switch model.inventory {
@@ -59,20 +59,31 @@ private struct InstalledSkills: View {
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let inventory):
-            if let error = model.actionError { ErrorCard(message: error) }
-            filters(total: inventory.skills.count)
-            let skills = model.visibleSkills
-            if skills.isEmpty {
-                EmptyCard(text: inventory.skills.isEmpty ? "No skills on this Mac yet." : "No skills match.",
-                          icon: "sparkles")
+            if model.placement == nil {
+                LoadingCard(text: "Finding the skills that ship inside plugins…")
             } else {
-                // Straight on the panel, like TokenTracker's lists: hairlines
-                // between rows, no card around them.
-                LazyVStack(spacing: 0) {
-                    ForEach(skills) { skill in
-                        SkillRow(skill: skill, model: model)
-                        if skill.id != skills.last?.id { Rectangle().fill(Theme.border).frame(height: 1) }
-                    }
+                list(empty: inventory.skills.isEmpty)
+            }
+        }
+    }
+
+    @ViewBuilder private func list(empty: Bool) -> some View {
+        if let error = model.actionError { ErrorCard(message: error) }
+        filters(total: model.listedSkills.count)
+        if model.pluginSkillCount > 0 { PluginSkillsNote(count: model.pluginSkillCount, open: openPlugins) }
+        let skills = model.visibleSkills
+        if skills.isEmpty {
+            EmptyCard(text: empty ? "No skills on this Mac yet."
+                          : model.listedSkills.isEmpty ? "Every skill on this Mac ships inside a plugin."
+                          : "No skills match.",
+                      icon: "sparkles")
+        } else {
+            // Straight on the panel, like TokenTracker's lists: hairlines
+            // between rows, no card around them.
+            LazyVStack(spacing: 0) {
+                ForEach(skills) { skill in
+                    SkillRow(skill: skill, model: model)
+                    if skill.id != skills.last?.id { Rectangle().fill(Theme.border).frame(height: 1) }
                 }
             }
         }
@@ -81,8 +92,10 @@ private struct InstalledSkills: View {
     /// The page's one filter bar: selects, then search taking the slack,
     /// then the count.
     private func filters(total: Int) -> some View {
-        let harnesses = Array(Set(model.allSkills.flatMap(\.harnesses))).sorted()
-        let sources = Skill.Source.allCases.filter { source in model.allSkills.contains { $0.source == source } }
+        let harnesses = Array(Set(model.listedSkills.flatMap(\.harnesses))).sorted()
+        // Plugin skills are under Plugins, so Plugin is offered only for one
+        // no catalog plugin claims, which stays here rather than vanish.
+        let sources = Skill.Source.allCases.filter { source in model.listedSkills.contains { $0.source == source } }
         return HStack(spacing: 8) {
             // Closed, the menus say "All" so "Harness: All harnesses" never
             // truncates in a 168pt select.
@@ -105,7 +118,35 @@ private struct InstalledSkills: View {
     }
 }
 
-/// "13 of 14 linked" on the tab row. A click opens the harness skills
+/// One line under the filter bar: how many skills ship inside plugins, and
+/// a way to them on the Plugins page's Explore tab.
+private struct PluginSkillsNote: View {
+    var count: Int
+    var open: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 6) {
+                Image(systemName: "puzzlepiece.extension").font(.system(size: 12))
+                Text(count == 1 ? "1 skill ships inside a plugin;" : "\(count) skills ship inside plugins;")
+                    .monospacedDigit()
+                Text(count == 1 ? "see it under Plugins" : "see them under Plugins")
+                    .foregroundStyle(hovering ? Theme.textPrimary : Theme.textLabel)
+                    .underline(hovering)
+                Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
+            }
+            .font(Theme.caption)
+            .foregroundStyle(Theme.textSecondary)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 4)
+        .onHover { hovering = $0 }
+        .help("Open Plugins > Explore, where each plugin lists the skills it ships")
+    }
+}
+
+/// "13 of 14 linked" in the page header. A click opens the harness skills
 /// folders, and a folder opens what can be done with it, in the same popover.
 private struct HarnessLinksSummary: View {
     var model: SkillsModel
@@ -402,142 +443,5 @@ extension SkillRoot.Link {
         case .notLinked: "Not linked"
         case .blocked: "Blocked"
         }
-    }
-}
-
-// MARK: - Hub
-
-private struct HubBrowser: View {
-    @Bindable var model: SkillsModel
-
-    var body: some View {
-        // Outside the switch: when the reload after a failed fix also fails,
-        // the reason the fix failed must stay on screen.
-        if let error = model.hubError { ErrorCard(message: error) }
-        switch model.hub {
-        case .idle, .loading:
-            LoadingCard(text: "Reading the hub…")
-        case .failed(let message):
-            ErrorCard(message: message)
-        case .loaded(let hub):
-            let plugins = model.hubPlugins
-            let markets = Set(hub.plugins.map(\.marketplace)).count
-            HStack(spacing: 8) {
-                SearchField(prompt: "Search plugins and skills", text: $model.query)
-                    .frame(maxWidth: .infinity)
-                Text("\(plugins.count) of \(hub.plugins.count) plugins")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize()
-                    .help("From \(markets) marketplaces in \(displayPath(hub.hub))/plugins")
-            }
-            if plugins.isEmpty {
-                EmptyCard(text: hub.plugins.isEmpty ? "No plugins in the hub yet." : "No plugins match.",
-                          icon: "shippingbox")
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Theme.gutter, alignment: .top)],
-                          spacing: Theme.gutter) {
-                    ForEach(plugins) { plugin in
-                        PluginCard(plugin: plugin, model: model)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct PluginCard: View {
-    var plugin: HubPlugin
-    var model: SkillsModel
-    @State private var copied = false
-    @State private var confirming = false
-
-    var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(plugin.name).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                Text([plugin.marketplace, plugin.version.map { "v\($0)" }].compactMap { $0 }.joined(separator: " · "))
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            }
-            if !plugin.description.isEmpty {
-                Text(plugin.description)
-                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !plugin.skills.isEmpty {
-                FlowLayout(spacing: 4, lineSpacing: 4) {
-                    ForEach(plugin.skills.prefix(8)) { skill in
-                        Badge(skill.name).help(skill.description)
-                    }
-                    if plugin.skills.count > 8 { Badge("+\(plugin.skills.count - 8) more") }
-                }
-            }
-            Text(contents).font(Theme.caption).foregroundStyle(Theme.textMuted)
-            Divider().overlay(Theme.border)
-            HStack(spacing: 14) {
-                ForEach(plugin.harnesses, id: \.self) { harness in
-                    if let install = plugin.install[harness] {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(install.state == .installed ? Theme.accentFill : Theme.warning)
-                                .frame(width: 7, height: 7)
-                            HarnessMarkView(harness: harness, size: 14)
-                                .font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textPrimary)
-                            Text(install.state.title.lowercased()).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        }
-                        .help(install.fix ?? "\(HarnessMark(harness).name) has the current version")
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            if !plugin.fixes.isEmpty {
-                HStack(spacing: 8) {
-                    if !plugin.runnableFixes.isEmpty {
-                        let running = model.fixingPlugin == plugin.id
-                        Button { confirming = true } label: {
-                            if running {
-                                HStack(spacing: 6) { ProgressView().controlSize(.mini); Text("Fixing") }
-                            } else {
-                                Label("Fix", systemImage: "wrench.and.screwdriver")
-                            }
-                        }
-                        .primaryButton()
-                        .disabled(model.fixingPlugin != nil)
-                        .help(runnableText)
-                        .confirmationDialog("Fix \(plugin.name)?", isPresented: $confirming) {
-                            Button("Run") { Task { await model.fixHub(plugin) } }
-                            Button("Cancel", role: .cancel) {}
-                        } message: {
-                            Text("swe checks the gap is still there, then runs:\n\n\(runnableText)")
-                        }
-                    }
-                    if !plugin.manualFixes.isEmpty {
-                        // An edit by hand (codex has no enable command): nothing to run.
-                        Button(copied ? "Copied" : "Copy command", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                            copyToPasteboard(plugin.manualFixes.joined(separator: "\n"))
-                            copied = true
-                        }
-                        .secondaryButton()
-                        .help(plugin.manualFixes.joined(separator: "\n"))
-                    }
-                }
-            }
-        }
-    }
-
-    private var runnableText: String {
-        plugin.runnableFixes.compactMap(\.fix).joined(separator: "\n")
-    }
-
-    private var contents: String {
-        let order = ["skills", "agents", "commands", "hooks"]
-        let parts = order.compactMap { kind -> String? in
-            guard let n = plugin.components[kind], n > 0 else { return nil }
-            let noun = n == 1 ? String(kind.dropLast()) : kind
-            return "\(n) \(noun)"
-        }
-        return parts.isEmpty ? "No components" : parts.joined(separator: " · ")
     }
 }

@@ -192,6 +192,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The app's Skills page lists standalone skills; plugin skills move to
+  Plugins > Explore.** Explore lists every plugin from `swe plugins
+  catalog --json`, grouped Quiver hub first, then the other marketplaces,
+  then those no harness registers any more, with a Source and a Harness
+  select and a search that also matches the skills a plugin ships. Each
+  row shows its state per harness, with install, uninstall, enable and
+  disable for Claude Code and Codex behind a confirmation that shows the
+  exact command or `config.toml` edit; Cursor is read-only. The old Quiver
+  hub tab on Skills is gone, and the drift list becomes the Plugins page's
+  Health tab. One function decides where each skill is shown, so a skill
+  is listed once: on Skills, or in the one plugin whose folder holds it.
 - **`swe skills link|unlink|move --json` print the shared envelope.** They
   printed a bare object; they now print `{"schema": 1, "data": …}` like
   every other `--json` command, and a refusal goes to stderr so stdout
