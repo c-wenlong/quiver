@@ -181,17 +181,19 @@ struct MenuBarContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            // Refresh, open and quit as icons beside the title, so the panel
+            // has no button row at the bottom.
+            HStack(spacing: 12) {
                 Text("Quiver").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 Spacer()
-                Button("Refresh", systemImage: "arrow.clockwise") {
+                PanelIconButton(title: "Refresh", symbol: "arrow.clockwise") {
                     Task { await app.accounts.load(force: true) }
                     Task { await app.others.load() }
                     Task { await app.overview?.load(scan: true) }
                 }
-                .labelStyle(.iconOnly)
-                .plainButton(cornerRadius: 4)
                 .disabled(app.accounts.isLoading)
+                PanelIconButton(title: "Open Quiver", symbol: "macwindow", action: openMain)
+                PanelIconButton(title: "Quit Quiver", symbol: "power") { NSApp.terminate(nil) }
             }
             if app.popup.showIncidents { ServiceStatusMenuLine(openMain: openMain) }
             // Everything else stays put; the limits scroll once there are
@@ -205,12 +207,6 @@ struct MenuBarContent: View {
                 Divider()
                 SpendDonut(slices: spend)
             }
-            Divider()
-            HStack {
-                Button("Open Quiver", action: openMain).primaryButton()
-                Spacer()
-                Button("Quit") { NSApp.terminate(nil) }.secondaryButton()
-            }
         }
         .padding(16)
         .frame(width: 340)
@@ -223,9 +219,30 @@ struct MenuBarContent: View {
         .clipShape(.rect(cornerRadius: Theme.cardRadius))
     }
 
-    /// The screen's height less the header, status line, spend donut and buttons.
+    /// The screen's height less the header, status line and spend donut.
     static var limitsMaxHeight: CGFloat {
-        max(220, (NSScreen.main?.visibleFrame.height ?? 800) - 480)
+        max(220, (NSScreen.main?.visibleFrame.height ?? 800) - 430)
+    }
+}
+
+/// A 14pt header icon that brightens under the pointer, named by its tooltip
+/// and VoiceOver label.
+private struct PanelIconButton: View {
+    var title: String
+    var symbol: String
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(title, systemImage: symbol, action: action)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 14))
+            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            .frame(width: 22, height: 22)
+            .contentShape(.rect)
+            .plainButton(cornerRadius: 4)
+            .onHover { hovering = $0 }
+            .help(title)
     }
 }
 
