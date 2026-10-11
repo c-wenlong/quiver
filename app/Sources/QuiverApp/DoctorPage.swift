@@ -61,7 +61,7 @@ private struct FindingRow: View {
                             NSPasteboard.general.setString(fix, forType: .string)
                         }
                         .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
+                        .buttonStyle(RingedPlainStyle(cornerRadius: 4))
                     }
                 }
             }

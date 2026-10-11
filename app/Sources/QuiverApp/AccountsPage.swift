@@ -115,8 +115,11 @@ private struct AccountCard: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 24, height: 20)
+                        .contentShape(.rect)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(RingedPlainStyle(cornerRadius: 6))
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More")
@@ -279,10 +282,10 @@ private struct AddAccountSheet: View {
 }
 
 extension Color {
-    /// `#rrggbb` or `#rgb`; anything else falls back to the accent.
+    /// `#rrggbb` or `#rgb`; anything else falls back to grey.
     init(hex: String) {
         guard let rgb = HexColor.rgb(hex) else {
-            self = Theme.accent
+            self = .gray
             return
         }
         self.init(red: Double(rgb.red) / 255, green: Double(rgb.green) / 255, blue: Double(rgb.blue) / 255)

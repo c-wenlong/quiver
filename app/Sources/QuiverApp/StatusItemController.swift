@@ -176,7 +176,7 @@ struct MenuBarContent: View {
                     Task { await app.overview?.load(scan: true) }
                 }
                 .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
+                .buttonStyle(RingedPlainStyle(cornerRadius: 4))
                 .disabled(app.accounts.isLoading)
             }
             ServiceStatusMenuLine(openMain: openMain)

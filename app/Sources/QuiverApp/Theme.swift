@@ -31,7 +31,6 @@ enum Theme {
 
     /// Money and "on": cost figures, usage fill, heatmap, switches.
     static let accent = Color(light: "#059669", dark: "#059669")
-    static let accentHover = Color(light: "#047857", dark: "#10b981")
     static let accentFill = Color(light: "#10b981", dark: "#10b981")
 
     static let primaryBackground = Color(light: "#171717", dark: "#fafafa")
@@ -82,6 +81,8 @@ enum Theme {
     static let heatmapCell: CGFloat = 12
 
     static let focusRing: CGFloat = 2
+    /// The keyboard focus ring: neutral, since green is kept for money and "on".
+    static let focus = textPrimary
 
     // MARK: Data colours
 
@@ -368,9 +369,11 @@ struct Badge: View {
 // MARK: - Focus
 
 extension View {
-    /// A 2pt accent ring while the enclosing control has keyboard focus.
-    /// Use inside a button style or label, where `isFocused` reflects the
-    /// button; TokenTracker draws none, Quiver always does.
+    /// A 2pt neutral ring while the view itself has keyboard focus.
+    ///
+    /// Buttons get macOS's own focus ring (keyboard navigation on): a
+    /// button style never sees its button's focus, so this draws nothing
+    /// there. It is for focusable views that draw their own frame.
     func focusRing(cornerRadius: CGFloat) -> some View {
         modifier(FocusRing(cornerRadius: cornerRadius))
     }
@@ -383,7 +386,7 @@ private struct FocusRing: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay(
             RoundedRectangle(cornerRadius: cornerRadius + 3)
-                .strokeBorder(Theme.accentFill, lineWidth: Theme.focusRing)
+                .strokeBorder(Theme.focus, lineWidth: Theme.focusRing)
                 .padding(-3)
                 .opacity(focused ? 1 : 0)
                 .allowsHitTesting(false))

@@ -97,8 +97,10 @@ private struct ServiceCard: View {
                         Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
                             openURL(status.service.pageURL)
                         }
-                        .buttonStyle(.link)
+                        .buttonStyle(RingedPlainStyle(cornerRadius: 4))
                         .font(Theme.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .underline()
                     }
                 }
                 .padding(.top, 2)
