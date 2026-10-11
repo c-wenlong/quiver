@@ -43,4 +43,27 @@ public struct RateLimit: Decodable, Sendable, Equatable {
     public let remainingUnits: Double?
     public let totalUnits: Double?
     public let fetchedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case status, usedPercent, remainingPercent, limitReached, resetAt, window
+        case windowSeconds, planType, remainingUnits, totalUnits, fetchedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try c.decode(Status.self, forKey: .status)
+        usedPercent = try c.decode(Int.self, forKey: .usedPercent)
+        remainingPercent = try c.decode(Int.self, forKey: .remainingPercent)
+        limitReached = try c.decode(Bool.self, forKey: .limitReached)
+        resetAt = try c.decodeIfPresent(Date.self, forKey: .resetAt)
+        window = try c.decodeIfPresent(String.self, forKey: .window)
+        windowSeconds = try c.decodeIfPresent(Int.self, forKey: .windowSeconds)
+        // swe writes "—" when a provider names no plan; that is no plan.
+        let plan = try c.decodeIfPresent(String.self, forKey: .planType)?
+            .trimmingCharacters(in: .whitespaces)
+        planType = (plan == nil || plan == "" || plan == "\u{2014}" || plan == "-") ? nil : plan
+        remainingUnits = try c.decodeIfPresent(Double.self, forKey: .remainingUnits)
+        totalUnits = try c.decodeIfPresent(Double.self, forKey: .totalUnits)
+        fetchedAt = try c.decodeIfPresent(Date.self, forKey: .fetchedAt)
+    }
 }

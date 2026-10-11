@@ -108,13 +108,27 @@ final class MenuBarPanel: NSPanel {
 }
 
 struct MenuBarContent: View {
+    @Environment(AppModel.self) private var app
     var openMain: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Quiver").font(.headline)
-            Text("Limits and cost arrive in M2 and M3.")
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Quiver").font(.headline)
+                Spacer()
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task { await app.accounts.load(force: true) }
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .disabled(app.accounts.isLoading)
+            }
+            ForEach(app.accounts.cards) { card in
+                PanelAccountRow(card: card)
+            }
+            if app.accounts.cards.isEmpty {
+                Text("No accounts yet.").foregroundStyle(.secondary)
+            }
             Divider()
             HStack {
                 Button("Open Quiver", action: openMain)
@@ -125,5 +139,27 @@ struct MenuBarContent: View {
         .padding(16)
         .frame(width: 340)
         .glassEffect(in: .rect(cornerRadius: 18))
+        .task { await app.accounts.keepFresh() }
+    }
+}
+
+/// One account in the panel: its name and its most-used window.
+private struct PanelAccountRow: View {
+    var card: AccountsModel.Card
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle().fill(Color(hex: card.profile.color)).frame(width: 7, height: 7)
+                Text("\(card.profile.vendor.title): \(card.profile.name)").font(.subheadline.weight(.medium))
+                if let plan = card.usage?.plan { Badge(planTitle(plan)) }
+            }
+            if let window = card.usage?.windows.max(by: { $0.usedPercent < $1.usedPercent }) {
+                UsageBar(window: window)
+                    .opacity(card.usage?.isStale == true ? 0.55 : 1)
+            } else {
+                StatusLine(usage: card.usage)
+            }
+        }
     }
 }
