@@ -45,3 +45,18 @@ struct HarnessIcon: View {
         return (image, icon.isColor)
     }
 }
+
+/// The harness's chart colour, beside its logo wherever a chart shows it:
+/// a brand logo (Devin in white, OpenCode in purple) isn't the colour of
+/// its segment, so this is what ties a legend entry to the chart.
+struct ChartSwatch: View {
+    var harness: String
+    var size: CGFloat = 8
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size / 4)
+            .fill(Theme.harness(harness))
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
