@@ -6,7 +6,7 @@ import Testing
         #expect(SidebarGroup.allCases.map(\.title) == ["Usage", "Manage", "System"])
         #expect(SidebarGroup.usage.sections == [.overview, .sessions])
         #expect(SidebarGroup.manage.sections == [.accounts, .apiKeys, .harnesses, .skills, .agentsMd, .mcpServers, .plugins])
-        #expect(SidebarGroup.system.sections == [.serviceStatus, .doctor, .settings])
+        #expect(SidebarGroup.system.sections == [.menuBar, .serviceStatus, .doctor, .settings])
     }
 
     @Test func everySectionHasATitleAndSymbol() {
@@ -18,6 +18,7 @@ import Testing
         #expect(AppSection.mcpServers.title == "MCP servers")
         #expect(AppSection.apiKeys.title == "API keys")
         #expect(AppSection.serviceStatus.title == "Service status")
+        #expect(AppSection.menuBar.title == "Menu bar and widgets")
     }
 
     @Test func arrowKeysWalkTheSidebarInOrderAcrossGroups() {
