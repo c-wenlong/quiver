@@ -8,10 +8,17 @@ struct PluginsPage: View {
     @Environment(AppModel.self) private var app
     @State private var model = PluginsModel()
     @State private var confirming: PluginDrift?
+    @State private var confirmingAll = false
 
     var body: some View {
         Page(title: "Plugins",
              subtitle: "Where the copies Claude Code and Codex run no longer match ~/.quiver/plugins.") {
+            if model.fixAllCount > 0 || model.fixAllProgress != nil {
+                Button(fixAllTitle) { confirmingAll = true }
+                    .primaryButton()
+                    .disabled(model.fixing != nil)
+                    .help("Run every fix swe can run, one at a time")
+            }
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe) } }
                 .iconButton()
                 .disabled(model.fixing != nil)
@@ -56,6 +63,23 @@ struct PluginsPage: View {
         } message: { finding in
             Text("swe will check the finding still applies, then run:\n\(finding.fix)")
         }
+        .confirmationDialog(model.fixAllCount == 1 ? "Run 1 fix?" : "Run \(model.fixAllCount) fixes?",
+                            isPresented: $confirmingAll) {
+            Button("Run all") { Task { await model.fixAll(swe: app.swe) } }
+        } message: {
+            Text("One at a time, stopping at the first that fails. swe checks each still applies before it runs:\n\n"
+                 + runnableFixes.joined(separator: "\n"))
+        }
+    }
+
+    private var fixAllTitle: String {
+        guard let progress = model.fixAllProgress else { return "Fix all" }
+        return "Fixing \(min(progress.done + 1, progress.total)) of \(progress.total)…"
+    }
+
+    private var runnableFixes: [String] {
+        guard case .loaded(let report) = model.state else { return [] }
+        return report.drift.filter(\.runnable).map(\.fix)
     }
 }
 
