@@ -12,7 +12,7 @@ struct SessionsPage: View {
             SessionsContent(model: model)
         } else {
             Page(title: "Sessions", subtitle: "Local sessions, usage and estimated cost.") {
-                Card { Label(app.overviewError ?? "The usage ledger is unavailable.", systemImage: "exclamationmark.triangle") }
+                ErrorCard(message: app.overviewError ?? "The usage ledger is unavailable.")
             }
         }
     }
@@ -33,7 +33,7 @@ private struct SessionsContent: View {
                     await app.overview?.load(scan: true)
                 }
             }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .disabled(model.isLoading)
                 .help("List sessions again")
         } content: {
@@ -109,11 +109,6 @@ private struct SessionsContent: View {
     }
 }
 
-private func copy(_ text: String) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
-}
-
 // MARK: - Filters and summary
 
 private struct FilterBar: View {
@@ -126,80 +121,29 @@ private struct FilterBar: View {
                 search.frame(minWidth: 180)
                 selects
             }
+            // Narrow windows: the selects wrap rather than overflow.
             VStack(alignment: .leading, spacing: 10) {
                 search
-                HStack(spacing: 10) { selects }
+                FlowLayout(spacing: 10, lineSpacing: 10) { selects }
             }
         }
     }
 
     private var search: some View {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Theme.textSecondary)
-                TextField("Search sessions", text: $model.filter.search)
-                    .textFieldStyle(.plain)
-                    .font(Theme.bodySmall)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 36)
+        SearchField(prompt: "Search sessions", text: $model.filter.search)
             .frame(maxWidth: .infinity)
-            .background(Theme.field, in: .rect(cornerRadius: Theme.controlRadius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     @ViewBuilder private var selects: some View {
-            Select(title: model.filter.harness.map(UsageFormat.harness) ?? "All tools", symbol: nil,
-                   options: [(nil, "All tools")] + model.harnesses.map { (Optional($0), UsageFormat.harness($0)) },
-                   selection: $model.filter.harness)
-            Select(title: model.filter.window.title, symbol: "calendar",
-                   options: SessionsModel.Window.allCases.map { ($0, $0.title) },
+        SelectMenu(options: [(nil, "All tools")] + model.harnesses.map { (Optional($0), UsageFormat.harness($0)) },
+                   selection: $model.filter.harness,
+                   title: model.filter.harness.map(UsageFormat.harness) ?? "All tools")
+        SelectMenu(symbol: "calendar", options: SessionsModel.Window.allCases.map { ($0, $0.title) },
                    selection: $model.filter.window)
-            Select(title: model.filter.project ?? "All projects", symbol: "folder",
-                   options: [(nil, "All projects")] + model.projects.map { (Optional($0), $0) },
-                   selection: $model.filter.project)
-            Select(title: model.filter.model ?? "All models", symbol: nil,
-                   options: [(nil, "All models")] + model.models.map { (Optional($0), $0) },
-                   selection: $model.filter.model)
-    }
-}
-
-/// A TokenTracker select: a 36pt bordered field with a chevron, opening a menu.
-private struct Select<Value: Hashable>: View {
-    var title: String
-    var symbol: String?
-    var options: [(value: Value, title: String)]
-    @Binding var selection: Value
-
-    var body: some View {
-        Menu {
-            ForEach(options, id: \.value) { option in
-                Button {
-                    selection = option.value
-                } label: {
-                    if option.value == selection { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                if let symbol { Image(systemName: symbol).foregroundStyle(Theme.textSecondary) }
-                Text(title).lineLimit(1).truncationMode(.tail)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .font(Theme.bodySmall)
-            .foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 12)
-            .frame(minWidth: 112, idealWidth: 136, maxWidth: 170)
-            .frame(height: 36)
-            .background(Theme.field, in: .rect(cornerRadius: Theme.controlRadius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
-            .contentShape(.rect(cornerRadius: Theme.controlRadius))
-        }
-        .menuStyle(.button)
-        .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
-        .menuIndicator(.hidden)
-        .fixedSize(horizontal: false, vertical: true)
+        SelectMenu(symbol: "folder", options: [(nil, "All projects")] + model.projects.map { (Optional($0), $0) },
+                   selection: $model.filter.project, title: model.filter.project ?? "All projects")
+        SelectMenu(options: [(nil, "All models")] + model.models.map { (Optional($0), $0) },
+                   selection: $model.filter.model, title: model.filter.model ?? "All models")
     }
 }
 
@@ -270,10 +214,11 @@ private struct SessionRow: View {
             Button("Resume", systemImage: "play", action: resume)
                 .buttonStyle(IconButtonStyle())
                 .disabled(s.resume == nil)
-                // Faint until the row is hovered or the button has focus,
-                // so it and its focus ring are always reachable and visible.
-                .opacity(hovering || resumeFocused ? 1 : 0.25)
+                // Shown on row hover, or while it has keyboard focus so its
+                // ring is visible; otherwise hidden but still reachable.
+                .opacity(hovering || resumeFocused ? 1 : 0)
                 .focused($resumeFocused)
+                .focusRing(resumeFocused, cornerRadius: Theme.iconButtonRadius)
                 .help(s.resume == nil ? "This harness has no resume command" : "Resume in your terminal")
         }
         .padding(.vertical, 12)
@@ -286,7 +231,7 @@ private struct SessionRow: View {
             Button("Details…", action: open)
             Button("Resume in Terminal", action: resume).disabled(s.resume == nil)
             Divider()
-            Button("Copy Session ID") { copy(s.id) }
+            Button("Copy session ID") { copyToPasteboard(s.id) }
             if let cwd = s.cwd {
                 Button("Show Folder in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: cwd)])
@@ -400,12 +345,12 @@ private struct SessionDetail: View {
                 }
             }
             HStack {
-                Button("Copy session id") { copy(s.id) }.buttonStyle(SecondaryButtonStyle())
+                Button("Copy session ID") { copyToPasteboard(s.id) }.secondaryButton()
                 Spacer()
-                Button("Close", action: close).keyboardShortcut(.cancelAction).buttonStyle(SecondaryButtonStyle())
+                Button("Close", action: close).keyboardShortcut(.cancelAction).secondaryButton()
                 Button("Resume in Terminal") { resume(); close() }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(PrimaryButtonStyle())
+                    .primaryButton()
                     .disabled(s.resume == nil)
             }
         }

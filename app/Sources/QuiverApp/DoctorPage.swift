@@ -9,14 +9,14 @@ struct DoctorPage: View {
     var body: some View {
         Page(title: "Doctor", subtitle: "Checks on PATH, Node and drift between quiver and your harnesses.") {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model?.load() } }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .help("Run the checks again")
         } content: {
             switch model?.state ?? .idle {
             case .idle, .loading:
                 ProgressView().frame(maxWidth: .infinity)
             case .failed(let message):
-                Card { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
+                ErrorCard(message: message)
             case .loaded(let report) where report.findings.isEmpty:
                 Card { Label("Everything checks out.", systemImage: "checkmark.seal").foregroundStyle(Theme.textPrimary) }
             case .loaded(let report):
@@ -61,7 +61,7 @@ private struct FindingRow: View {
                             NSPasteboard.general.setString(fix, forType: .string)
                         }
                         .labelStyle(.iconOnly)
-                        .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+                        .plainButton(cornerRadius: 4)
                     }
                 }
             }

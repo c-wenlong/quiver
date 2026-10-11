@@ -20,20 +20,20 @@ struct McpServersPage: View {
             Button(model.checkingHealth ? "Checking…" : "Check health", systemImage: "waveform.path.ecg") {
                 Task { await model.load(swe: app.swe, health: true) }
             }
-            .buttonStyle(SecondaryButtonStyle())
+            .secondaryButton()
             .disabled(model.checkingHealth)
             .help("Run each server's command check and reach each URL")
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe, health: model.hasHealth) }
             }
-            .buttonStyle(IconButtonStyle())
+            .iconButton()
             .help("Read the configs again")
         } content: {
             switch model.state {
             case .idle, .loading:
                 ProgressView().frame(maxWidth: .infinity)
             case .failed(let message):
-                Card { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
+                ErrorCard(message: message)
             case .loaded(let inventory) where inventory.servers.isEmpty:
                 Card { Label("No MCP servers in any harness config.", systemImage: "powerplug").foregroundStyle(Theme.textSecondary) }
             case .loaded(let inventory):
@@ -41,7 +41,7 @@ struct McpServersPage: View {
                 HStack(alignment: .center, spacing: 12) {
                     Tabs(options: McpFilter.allCases.map {
                         ($0, "\($0.title) \(inventory.servers($0, across: compared).count)")
-                    }, selection: $filter)
+                    }, selection: $filter, style: .period)
                     Spacer(minLength: 8)
                 }
                 HarnessChips(harnesses: inventory.activeHarnesses, hidden: $hidden)
@@ -101,7 +101,7 @@ private struct HarnessChips: View {
                     .overlay(Capsule().strokeBorder(on ? Theme.borderStrong : Theme.border, lineWidth: 1))
                     .contentShape(.capsule)
                 }
-                .buttonStyle(RingedPlainStyle(cornerRadius: 13))
+                .plainButton(cornerRadius: 13)
                 .accessibilityAddTraits(on ? .isSelected : [])
                 .help(on ? "Leave \(harness) out of the comparison" : "Compare \(harness) too")
             }
@@ -173,7 +173,7 @@ private struct ServerRow: View {
             .background(hovering ? Theme.rowHover : .clear)
             .contentShape(.rect)
         }
-        .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+        .plainButton(cornerRadius: 4)
         .onHover { hovering = $0 }
         .accessibilityLabel("\(server.name), in \(server.harnesses.joined(separator: ", "))")
     }
@@ -340,10 +340,10 @@ private struct ServerSheet: View {
             if running { ProgressView().controlSize(.small) }
             Spacer()
             Button(done == nil ? "Cancel" : "Close", role: .cancel) { dismiss() }
-                .buttonStyle(SecondaryButtonStyle())
+                .secondaryButton()
             if done == nil && server.canSyncAlone {
                 Button("Preview") { Task { await run(dryRun: true) } }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .secondaryButton()
                     .disabled(chosen.isEmpty || running)
                 Button("Sync") {
                     if targets.needsOverwrite(approvedReplace) {
@@ -352,7 +352,7 @@ private struct ServerSheet: View {
                         Task { await run(dryRun: false) }
                     }
                 }
-                .buttonStyle(PrimaryButtonStyle())
+                .primaryButton()
                 .keyboardShortcut(.defaultAction)
                 .disabled(chosen.isEmpty || running)
             }

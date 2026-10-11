@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// TokenTracker's filter field: a search glyph, 14pt text on the field
-/// fill, a hairline that strengthens on focus, and the focus ring.
+/// TokenTracker's search input: 36pt, radius 8, a search glyph, 14/20
+/// text on the field fill, a hairline that strengthens on focus, and the
+/// focus ring. Give it the room: it takes the slack in a filter bar.
 struct SearchField: View {
     var prompt: String
     @Binding var text: String
@@ -11,7 +12,7 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
+                .font(.system(size: 14))
                 .foregroundStyle(Theme.textMuted)
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
@@ -22,32 +23,38 @@ struct SearchField: View {
                     .labelStyle(.iconOnly)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textMuted)
-                    .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+                    .plainButton(cornerRadius: 4)
                     .help("Clear")
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: Theme.controlHeight + 4)
-        .background(Theme.field, in: .rect(cornerRadius: Theme.controlRadius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-            .strokeBorder(focused ? Theme.textSecondary.opacity(0.6) : Theme.border, lineWidth: 1))
-        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius + 3)
-            .strokeBorder(Theme.focus, lineWidth: Theme.focusRing)
-            .padding(-3)
-            .opacity(focused ? 1 : 0)
-            .allowsHitTesting(false))
+        .frame(height: Theme.fieldHeight)
+        .background(Theme.field, in: .rect(cornerRadius: Theme.fieldRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius)
+            .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
+        .focusRing(focused, cornerRadius: Theme.fieldRadius)
+        .layoutPriority(1)
     }
 }
 
-/// TokenTracker's select: "Label: value" on a hairline, 6pt radius, with a
-/// chevron. A menu underneath, so it reads as a native popup.
+/// TokenTracker's select: 36pt, radius 6, 14/20 at 400 on the field fill,
+/// a chevron, and a border that strengthens under the pointer. An optional
+/// "Label:" prefix and symbol. A menu underneath, so it reads as a popup.
 struct SelectMenu<Value: Hashable>: View {
-    var label: String
+    var label: String? = nil
+    var symbol: String? = nil
     var options: [(value: Value, title: String)]
     @Binding var selection: Value
+    /// 168pt as measured; nil sizes to the text.
+    var width: CGFloat? = 168
+    /// What the closed menu shows. Defaults to the selected option's title;
+    /// pass it when the selection can drop out of `options` (a filter whose
+    /// value vanished on refresh) so the menu still says what it's set to.
+    var title: String? = nil
+    @State private var hovering = false
 
     private var current: String {
-        options.first { $0.value == selection }?.title ?? ""
+        title ?? options.first { $0.value == selection }?.title ?? ""
     }
 
     var body: some View {
@@ -65,21 +72,29 @@ struct SelectMenu<Value: Hashable>: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text("\(label):").foregroundStyle(Theme.textSecondary)
-                Text(current).foregroundStyle(Theme.textPrimary)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                if let symbol { Image(systemName: symbol).foregroundStyle(Theme.textSecondary) }
+                if let label {
+                    // The prefix keeps its width; the value truncates instead.
+                    Text("\(label):").foregroundStyle(Theme.textSecondary).lineLimit(1).fixedSize()
+                }
+                Text(current).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
             }
-            .font(Theme.control)
+            .font(Theme.bodySmall)
             .padding(.horizontal, 12)
-            .frame(height: Theme.controlHeight + 4)
-            .background(Theme.field, in: .rect(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-            .contentShape(.rect(cornerRadius: 6))
+            .frame(width: width, height: Theme.fieldHeight)
+            .fixedSize(horizontal: width == nil, vertical: false)
+            .background(Theme.field, in: .rect(cornerRadius: Theme.selectRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.selectRadius)
+                .strokeBorder(hovering ? Theme.borderHover : Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.selectRadius))
         }
         .menuStyle(.button)
-        .buttonStyle(RingedPlainStyle(cornerRadius: 6))
         .menuIndicator(.hidden)
+        .plainButton(cornerRadius: Theme.selectRadius)
+        .onHover { hovering = $0 }
         .fixedSize()
     }
 }
