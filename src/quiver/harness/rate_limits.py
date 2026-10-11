@@ -100,6 +100,8 @@ class RateLimitInfo:
     windows: list = field(default_factory=list)
     # Prepaid usage left beyond the plan (Devin's overage balance), in USD.
     extra_usage_usd: float | None = None
+    # Usage billed beyond the plan, as ``_cursor_on_demand()`` describes it.
+    on_demand: dict | None = None
     fetched_at: float = 0.0    # when the reading was actually taken;
                                # 0 means "just now", the common case.
                                # Lets a fetcher hand back a saved reading
@@ -141,6 +143,7 @@ class RateLimitInfo:
                 for w in self.windows
             ] if status == "ok" else [],
             "extra_usage_usd": self.extra_usage_usd if status == "ok" else None,
+            "on_demand": self.on_demand if status == "ok" else None,
             "fetched_at": self.fetched_at or None,
         }
 
@@ -1777,6 +1780,11 @@ def _register_freebuff() -> None:
 # ---------------------------------------------------------------------------
 
 _CURSOR_USAGE_URL = "https://cursor.com/api/dashboard/get-current-period-usage"
+_CURSOR_HARD_LIMIT_URL = "https://cursor.com/api/dashboard/get-hard-limit"
+_CURSOR_PLAN_INFO_URL = "https://cursor.com/api/dashboard/get-plan-info"
+# How long the plan and hard-limit calls may take, counted from the start of
+# the fetch; well inside the aggregator's 2s piped deadline.
+_CURSOR_EXTRAS_BUDGET = 1.2
 
 # Where the Cursor editor keeps its session tokens, per platform. The
 # ``ItemTable`` row ``cursorAuth/accessToken`` is the same session JWT the
@@ -1945,6 +1953,65 @@ def _parse_cursor_usage(data: dict) -> RateLimitInfo | None:
     )
 
 
+# `cursor-agent` treats a hard limit at int32 max as "no monthly limit".
+_CURSOR_UNLIMITED = 2147483647
+
+
+def _cursor_on_demand(spend: dict | None, hard: dict | None) -> dict:
+    """On-demand usage the way `cursor-agent usage` words it.
+
+    ``spend`` is the usage reply's ``spendLimitUsage`` (cents; a zero field
+    is left out of the reply), ``hard`` the ``get-hard-limit`` reply
+    (dollars) or None when that call failed. Returns ``state``: "fixed" (a
+    cap, ``limit_usd``), "unlimited", "disabled" or "unavailable"; ``scope``:
+    "team-member" for a team seat with no personal cap ("No personal
+    limit"), else "personal"; and ``used_usd``. Ported from the CLI's
+    usage-data module so Quiver says what it says.
+    """
+    spend = spend if isinstance(spend, dict) else {}
+
+    def number(value) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        return result if math.isfinite(result) else None
+
+    used = round((number(spend.get("individualUsed")) or 0.0) / 100, 2)
+
+    def state(name: str, scope: str = "personal", limit: float | None = None) -> dict:
+        return {"state": name, "scope": scope, "used_usd": used, "limit_usd": limit}
+
+    personal = None
+    individual = number(spend.get("individualLimit"))
+    if individual is not None:
+        personal = state("fixed", limit=round(individual / 100, 2)) if individual > 0 else state("disabled")
+    hard_limit = number(hard.get("hardLimit")) if isinstance(hard, dict) else None
+    no_usage = isinstance(hard, dict) and hard.get("noUsageBasedAllowed") is True
+
+    if spend.get("limitType") == "team":
+        if personal is not None:
+            return personal
+        if isinstance(hard, dict):
+            if no_usage or (hard_limit or 0) <= 0:
+                return state("disabled")
+            return state("unlimited", "team-member")
+        if (number(spend.get("pooledLimit")) or 0) > 0:
+            return state("unlimited", "team-member")
+        return state("unavailable")
+    if not isinstance(hard, dict):
+        return personal or state("unavailable")
+    if no_usage:
+        return state("disabled")
+    if (hard_limit or 0) >= _CURSOR_UNLIMITED:
+        return state("unlimited")
+    if (hard_limit or 0) > 0:
+        return state("fixed", limit=hard_limit)
+    return state("disabled")
+
+
 def _warn_cursor_401() -> None:
     import sys
     print(
@@ -1983,23 +2050,63 @@ def _fetch_cursor() -> RateLimitInfo | None:
     cookie = _cursor_session_cookie(token, claims)
     if cookie is None:
         return None
-    request = urllib.request.Request(
-        _CURSOR_USAGE_URL,
-        data=b"{}",
-        method="POST",
-        headers={
-            "Cookie": cookie,
-            # The dashboard API refuses any POST without a first-party
-            # Origin ("Invalid origin for state-changing request", 403),
-            # even though this call only reads.
-            "Origin": "https://cursor.com",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": f"quiver/{__version__}",
-        },
-    )
-    data = _fetch_json(request, on_401=_warn_cursor_401)
-    return _parse_cursor_usage(data) if isinstance(data, dict) else None
+
+    def post(url: str) -> urllib.request.Request:
+        return urllib.request.Request(
+            url,
+            data=b"{}",
+            method="POST",
+            headers={
+                "Cookie": cookie,
+                # The dashboard API refuses any POST without a first-party
+                # Origin ("Invalid origin for state-changing request", 403),
+                # even though these calls only read.
+                "Origin": "https://cursor.com",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": f"quiver/{__version__}",
+            },
+        )
+
+    # The plan's name and the on-demand limit, as `cursor-agent usage` reads
+    # them. Both are extras: a failure leaves the usage reading as it is.
+    def optional(url: str) -> dict | None:
+        try:
+            reply = _fetch_json(post(url))
+        except Exception:
+            return None
+        return reply if isinstance(reply, dict) else None
+
+    # The extras run alongside the usage call, as the CLI's do, on daemon
+    # threads with their own small budget: a slow one is given up on rather
+    # than waited for, so it can't push the usage reading past the
+    # aggregator's deadline, and it never holds up the process at exit.
+    extras: dict[str, dict | None] = {}
+
+    def fetch_extra(url: str) -> None:
+        extras[url] = optional(url)
+
+    started = time.monotonic()
+    workers = [
+        threading.Thread(target=fetch_extra, args=(url,), daemon=True)
+        for url in (_CURSOR_HARD_LIMIT_URL, _CURSOR_PLAN_INFO_URL)
+    ]
+    for worker in workers:
+        worker.start()
+    data = _fetch_json(post(_CURSOR_USAGE_URL), on_401=_warn_cursor_401)
+    for worker in workers:
+        worker.join(max(0.0, started + _CURSOR_EXTRAS_BUDGET - time.monotonic()))
+    hard = extras.get(_CURSOR_HARD_LIMIT_URL)
+    plan_info = extras.get(_CURSOR_PLAN_INFO_URL)
+    info = _parse_cursor_usage(data) if isinstance(data, dict) else None
+    if info is None:
+        return None
+    plan = plan_info.get("planInfo") if plan_info else None
+    plan_name = plan.get("planName") if isinstance(plan, dict) else None
+    if isinstance(plan_name, str) and plan_name.strip():
+        info.plan_type = plan_name.strip().lower()
+    info.on_demand = _cursor_on_demand(data.get("spendLimitUsage"), hard)
+    return info
 
 
 def _register_cursor() -> None:

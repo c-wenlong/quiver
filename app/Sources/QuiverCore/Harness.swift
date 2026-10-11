@@ -64,6 +64,57 @@ public struct RateLimit: Decodable, Sendable, Equatable {
     public let windows: [Window]?
     /// Prepaid usage left beyond the plan, in USD (Devin's extra usage balance).
     public let extraUsageUSD: Double?
+    /// Usage billed beyond the plan (Cursor's on-demand), nil when not reported.
+    public let onDemand: OnDemand?
+
+    /// On-demand usage as swe reports it, worded the way `cursor-agent
+    /// usage` words it: a value and a one-line detail.
+    public struct OnDemand: Decodable, Sendable, Equatable {
+        /// "fixed", "unlimited", "disabled" or "unavailable".
+        public let state: String
+        /// "team-member" or "personal".
+        public let scope: String
+        public let usedUSD: Double
+        public let limitUSD: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case state, scope
+            case usedUSD = "usedUsd"
+            case limitUSD = "limitUsd"
+        }
+
+        public init(state: String, scope: String, usedUSD: Double, limitUSD: Double?) {
+            self.state = state
+            self.scope = scope
+            self.usedUSD = usedUSD
+            self.limitUSD = limitUSD
+        }
+
+        public var value: String {
+            switch state {
+            case "fixed": "\(Self.dollars(usedUSD)) / \(Self.dollars(limitUSD ?? 0))"
+            case "unlimited": Self.dollars(usedUSD)
+            case "disabled": usedUSD > 0 ? Self.dollars(usedUSD) : "Disabled"
+            default: usedUSD > 0 ? Self.dollars(usedUSD) : "Unavailable"
+            }
+        }
+
+        public var detail: String {
+            switch state {
+            case "fixed": "\(Self.dollars(max((limitUSD ?? 0) - usedUSD, 0))) remaining"
+            case "unlimited": scope == "team-member" ? "No personal limit" : "No monthly limit"
+            case "disabled": "On-demand usage is off"
+            default: "On-demand limit unavailable"
+            }
+        }
+
+        /// Whole dollars without cents, anything else to the cent, as the CLI prints.
+        static func dollars(_ amount: Double) -> String {
+            let whole = amount == amount.rounded()
+            return amount.formatted(FloatingPointFormatStyle<Double>.Currency(code: "USD", locale: Locale(identifier: "en_US"))
+                .precision(.fractionLength(whole ? 0 : 2)))
+        }
+    }
 
     /// One quota window.
     public struct Window: Decodable, Sendable, Equatable {
@@ -91,6 +142,7 @@ public struct RateLimit: Decodable, Sendable, Equatable {
         case status, usedPercent, remainingPercent, limitReached, resetAt, window
         case windowSeconds, planType, remainingUnits, totalUnits, fetchedAt, windows
         case extraUsageUSD = "extraUsageUsd"
+        case onDemand
     }
 
     /// For tests and previews; the app only ever decodes these from swe.
@@ -109,6 +161,7 @@ public struct RateLimit: Decodable, Sendable, Equatable {
         self.fetchedAt = fetchedAt
         windows = nil
         extraUsageUSD = nil
+        onDemand = nil
     }
 
     public init(from decoder: Decoder) throws {
@@ -130,5 +183,6 @@ public struct RateLimit: Decodable, Sendable, Equatable {
         // Newer fields: a malformed list must not cost the whole reading.
         windows = (try? c.decodeIfPresent([Window].self, forKey: .windows)) ?? nil
         extraUsageUSD = (try? c.decodeIfPresent(Double.self, forKey: .extraUsageUSD)) ?? nil
+        onDemand = (try? c.decodeIfPresent(OnDemand.self, forKey: .onDemand)) ?? nil
     }
 }

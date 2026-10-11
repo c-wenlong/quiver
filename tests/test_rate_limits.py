@@ -3566,7 +3566,8 @@ class CursorFetcherTest(unittest.TestCase):
 
         self.assertEqual(info.used_percent, 100)
         self.assertEqual(info.window, "api")
-        request = fetch.call_args[0][0]
+        request = next(call[0][0] for call in fetch.call_args_list
+                       if call[0][0].full_url == _CURSOR_USAGE_URL)
         self.assertEqual(request.full_url, _CURSOR_USAGE_URL)
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.data, b"{}")
@@ -3574,6 +3575,100 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertIn("WorkosCursorSessionToken=", request.get_header("Cookie"))
         self.assertIn(token, request.get_header("Cookie"))
         self.assertIsNone(request.get_header("Authorization"))
+
+    def test_on_demand_follows_the_cli(self):
+        """`cursor-agent usage`'s On-Demand row, case by case."""
+        from quiver.harness.rate_limits import _cursor_on_demand as od
+
+        team = {"limitType": "team", "pooledLimit": "500000"}
+        # A team seat with no personal cap: "No personal limit".
+        self.assertEqual(od(team, {"hardLimit": 3000}),
+                         {"state": "unlimited", "scope": "team-member", "used_usd": 0.0, "limit_usd": None})
+        self.assertEqual(od(team, None)["state"], "unlimited")
+        self.assertEqual(od({"limitType": "team"}, None)["state"], "unavailable")
+        self.assertEqual(od(team, {"hardLimit": 0})["state"], "disabled")
+        self.assertEqual(od(team, {"hardLimit": 3000, "noUsageBasedAllowed": True})["state"], "disabled")
+        # A personal cap on a team seat wins, in cents.
+        self.assertEqual(od({**team, "individualLimit": 2000, "individualUsed": 550}, None),
+                         {"state": "fixed", "scope": "personal", "used_usd": 5.5, "limit_usd": 20.0})
+        self.assertEqual(od({**team, "individualLimit": 0}, None)["state"], "disabled")
+        # Individual plans: the hard limit, in dollars.
+        self.assertEqual(od({}, {"hardLimit": 2147483647})["state"], "unlimited")
+        self.assertEqual(od({}, {"hardLimit": 2147483647})["scope"], "personal")
+        self.assertEqual(od({"individualUsed": 1234}, {"hardLimit": 50}),
+                         {"state": "fixed", "scope": "personal", "used_usd": 12.34, "limit_usd": 50.0})
+        self.assertEqual(od({}, {"hardLimit": 0})["state"], "disabled")
+        self.assertEqual(od({}, {"noUsageBasedAllowed": True, "hardLimit": 50})["state"], "disabled")
+        self.assertEqual(od({}, None)["state"], "unavailable")
+        self.assertEqual(od(None, None)["state"], "unavailable")
+
+    def test_fetch_reads_the_plan_and_on_demand_like_the_cli(self):
+        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+
+        usage = copy.deepcopy(self._SAMPLE_RESPONSE)
+        usage["spendLimitUsage"] = {"totalSpend": 14032, "pooledLimit": "500000", "limitType": "team"}
+        base = _CURSOR_USAGE_URL.rsplit("/", 1)[0]
+        replies = {
+            _CURSOR_USAGE_URL: usage,
+            f"{base}/get-hard-limit": {"hardLimit": 3000},
+            f"{base}/get-plan-info": {"planInfo": {"planName": "Team"}},
+        }
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            side_effect=lambda request, **_: replies[request.full_url],
+        ) as fetch:
+            info = _fetch_cursor()
+
+        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual(info.plan_type, "team")
+        self.assertEqual(info.to_json()["on_demand"],
+                         {"state": "unlimited", "scope": "team-member", "used_usd": 0.0, "limit_usd": None})
+
+    def test_on_demand_and_plan_calls_are_optional(self):
+        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+
+        usage = copy.deepcopy(self._SAMPLE_RESPONSE)
+        usage["spendLimitUsage"] = {"limitType": "team", "pooledLimit": "500000"}
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            side_effect=lambda request, **_: usage if request.full_url == _CURSOR_USAGE_URL else None,
+        ):
+            info = _fetch_cursor()
+
+        self.assertEqual(info.used_percent, 100)
+        self.assertEqual(info.plan_type, "team")
+        self.assertEqual(info.on_demand["state"], "unlimited")
+
+    def test_slow_extras_do_not_hold_up_the_usage_reading(self):
+        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+
+        usage = copy.deepcopy(self._SAMPLE_RESPONSE)
+        usage["spendLimitUsage"] = {"limitType": "team", "pooledLimit": "500000"}
+
+        def reply(request, **_):
+            if request.full_url == _CURSOR_USAGE_URL:
+                return usage
+            time.sleep(2)
+            return {"hardLimit": 0}
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply), patch(
+            "quiver.harness.rate_limits._CURSOR_EXTRAS_BUDGET", 0.1,
+        ):
+            started = time.monotonic()
+            info = _fetch_cursor()
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(info.used_percent, 100)
+        # The hard limit never came, so the CLI's no-hard-limit team rule applies.
+        self.assertEqual(info.on_demand["state"], "unlimited")
+        self.assertEqual(info.plan_type, "team")
 
     def test_fetch_failure_reports_no_reading(self):
         from quiver.harness.rate_limits import _fetch_cursor
