@@ -290,16 +290,30 @@ private struct IconButtonBody: View {
 struct Tabs<Value: Hashable>: View {
     var options: [(value: Value, title: String)]
     @Binding var selection: Value
+    @FocusState private var focused: Int?
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(options, id: \.value) { option in
+            ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
                 TabButton(title: option.title, isSelected: option.value == selection) { selection = option.value }
+                    .focused($focused, equals: index)
             }
         }
         .padding(2)
         .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.controlRadius + 2))
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius + 2).strokeBorder(Theme.border, lineWidth: 1))
+        // Like a segmented control: the arrow keys move the selection.
+        .onKeyPress(.leftArrow) { step(-1) }
+        .onKeyPress(.rightArrow) { step(1) }
+    }
+
+    private func step(_ offset: Int) -> KeyPress.Result {
+        guard let index = options.firstIndex(where: { $0.value == selection }) else { return .ignored }
+        let next = index + offset
+        guard options.indices.contains(next) else { return .handled }
+        selection = options[next].value
+        if focused != nil { focused = next }
+        return .handled
     }
 }
 
