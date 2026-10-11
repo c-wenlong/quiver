@@ -133,6 +133,31 @@ public enum LoginShell {
     /// A slow or hanging shell startup file must not freeze the app: after
     /// `timeout` the shell is stopped and `base` comes back unchanged.
     public static func resolve(shell: String, base: [String: String], timeout: Duration) async -> [String: String] {
+        var env = base
+        if let output = await envOutput(shell: shell, base: base, timeout: timeout),
+           let path = path(fromEnvOutput: output) {
+            env["PATH"] = path
+        }
+        return env
+    }
+
+    /// Everything a new login shell exports, or nil when it couldn't be read
+    /// in time. Holds secrets: keep it in memory, never log or cache it.
+    public static func environment(shell: String, base: [String: String], timeout: Duration) async -> [String: String]? {
+        await envOutput(shell: shell, base: base, timeout: timeout).map(parse(envOutput:))
+    }
+
+    /// `NAME=value` lines from `env`; a value may itself contain `=`.
+    public static func parse(envOutput output: String) -> [String: String] {
+        var env: [String: String] = [:]
+        for line in output.split(separator: "\n") {
+            guard let equals = line.firstIndex(of: "="), equals != line.startIndex else { continue }
+            env[String(line[..<equals])] = String(line[line.index(after: equals)...])
+        }
+        return env
+    }
+
+    private static func envOutput(shell: String, base: [String: String], timeout: Duration) async -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-ilc", "/usr/bin/env"]
@@ -160,11 +185,7 @@ public enum LoginShell {
                 once.resume(nil)
             }
         }
-        var env = base
-        if let output, let path = path(fromEnvOutput: output) {
-            env["PATH"] = path
-        }
-        return env
+        return output
     }
 }
 
