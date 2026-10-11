@@ -384,6 +384,14 @@ private struct HarnessAccountCard: View {
                                                  usedPercent: Double(min(max(window.usedPercent, 0), 100)),
                                                  resetsAt: window.resetAt))
                 }
+                if let onDemand = limit.onDemand {
+                    HStack {
+                        Text("On-demand").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                        Text("\(onDemand.value) · \(onDemand.detail)").font(Theme.caption.monospacedDigit())
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
                 if let balance = limit.extraUsageUSD {
                     HStack {
                         Text("Extra usage balance").font(Theme.caption).foregroundStyle(Theme.textSecondary)

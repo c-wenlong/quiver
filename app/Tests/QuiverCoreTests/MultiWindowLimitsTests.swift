@@ -81,6 +81,26 @@ private let older = #"""
         #expect(MenuBarDisplay(defaults: store).watchedLimit == "cursor|auto")
     }
 
+    @Test func onDemandDecodesAndReadsLikeTheCli() throws {
+        let team = older.replacingOccurrences(of: #""fetched_at""#, with:
+            #""on_demand":{"state":"unlimited","scope":"team-member","used_usd":0.0,"limit_usd":null},"fetched_at""#)
+        let onDemand = try #require(try decode(team).onDemand)
+        #expect(onDemand.value == "$0")
+        #expect(onDemand.detail == "No personal limit")
+        let cases: [(RateLimit.OnDemand, String, String)] = [
+            (.init(state: "fixed", scope: "personal", usedUSD: 5.5, limitUSD: 20), "$5.50 / $20", "$14.50 remaining"),
+            (.init(state: "unlimited", scope: "personal", usedUSD: 12, limitUSD: nil), "$12", "No monthly limit"),
+            (.init(state: "disabled", scope: "personal", usedUSD: 0, limitUSD: nil), "Disabled", "On-demand usage is off"),
+            (.init(state: "disabled", scope: "personal", usedUSD: 3.25, limitUSD: nil), "$3.25", "On-demand usage is off"),
+            (.init(state: "unavailable", scope: "personal", usedUSD: 0, limitUSD: nil), "Unavailable", "On-demand limit unavailable"),
+        ]
+        for (onDemand, value, detail) in cases {
+            #expect(onDemand.value == value)
+            #expect(onDemand.detail == detail)
+        }
+        #expect(try decode(older).onDemand == nil)
+    }
+
     @Test func aBalanceShowsToTheCent() {
         #expect(UsageFormat.balance(9868.98) == "$9,868.98")
         #expect(UsageFormat.balance(0) == "$0.00")
