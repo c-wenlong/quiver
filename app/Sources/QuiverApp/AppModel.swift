@@ -26,6 +26,7 @@ final class AppModel {
         didSet {
             UserDefaults.standard.set(swePath, forKey: SweLocation.defaultsKey)
             swe = Self.client(for: swePath)
+            skills.use(swe, for: swePath)
             others = OtherLimitsModel(swe: swe)
             Task { await others.load() }
         }
@@ -65,7 +66,8 @@ final class AppModel {
     let providers: ProviderVisibilityModel
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
-    /// The MCP servers and Plugins pages' last lists, kept while the app runs.
+    /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
+    let skills: SkillsModel
     let mcp: McpModel
     let plugins: PluginsModel
     private let launcher = ProcessLauncher()
@@ -117,6 +119,10 @@ final class AppModel {
             sessions = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
+        skills = SkillsModel(swe: client,
+                             snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")),
+                             hubSnapshots: SnapshotFile(url: quiver.appending(path: "cache/skills-hub.json")))
+        skills.use(client, for: saved)
         mcp = McpModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/mcp-servers.json")))
         plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")))
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
@@ -154,6 +160,7 @@ final class AppModel {
             // so the page is usually ready before it is opened.
             // The other swe pages only read what they showed last; swe runs
             // when one is opened.
+            Task { [skills] in await skills.restore() },
             Task { [mcp] in await mcp.restore() },
             Task { [plugins] in await plugins.restore() },
             Task { [weak self] in

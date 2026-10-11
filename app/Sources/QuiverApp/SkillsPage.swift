@@ -9,16 +9,19 @@ struct SkillsPage: View {
     enum Tab: Hashable { case installed, hub }
 
     @Environment(AppModel.self) private var app
-    @State private var model: SkillsModel?
     @State private var tab: Tab = .installed
+
+    /// App-wide, so a list outlives a trip to another page and the last
+    /// one shows at once.
+    private var model: SkillsModel { app.skills }
 
     var body: some View {
         Page(title: "Skills",
              subtitle: "Every skill on this Mac, which harnesses load it, and what the quiver hub offers.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
-                    await model?.load()
-                    if tab == .hub { await model?.loadHub() }
+                    await model.load(for: app.swePath)
+                    if tab == .hub { await model.loadHub(for: app.swePath) }
                 }
             }
             .iconButton()
@@ -28,24 +31,18 @@ struct SkillsPage: View {
                 // The harness links fold into one line on the tab row, so the
                 // first skill sits right under the filter bar.
                 .overlay(alignment: .trailing) {
-                    if tab == .installed, let model, case .loaded(let inventory) = model.inventory {
+                    if tab == .installed, case .loaded(let inventory) = model.inventory {
                         HarnessLinksSummary(model: model, sharedDir: inventory.sharedDir)
                     }
                 }
-            if let model {
-                switch tab {
-                case .installed: InstalledSkills(model: model)
-                case .hub: HubBrowser(model: model)
-                }
+            switch tab {
+            case .installed: InstalledSkills(model: model)
+            case .hub: HubBrowser(model: model)
             }
         }
-        .task(id: app.swePath) {
-            let skills = SkillsModel(swe: app.swe)
-            model = skills
-            await skills.load()
-        }
-        .task(id: tab) {
-            if tab == .hub, let model, model.hub == .idle { await model.loadHub() }
+        .task(id: app.swePath) { await model.loadIfStale(for: app.swePath) }
+        .task(id: [tab == .hub ? "hub" : "", app.swePath]) {
+            if tab == .hub { await model.loadHubIfStale(for: app.swePath) }
         }
     }
 }

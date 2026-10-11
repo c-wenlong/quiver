@@ -353,26 +353,26 @@ let hubJSON = #"""
         #expect(state?.title == "Linked manifest")
     }
 
-    @Test func leavingTheHubMidLoadLetsTheNextVisitRetry() async {
+    @Test func leavingTheHubMidLoadKeepsItLoadingForTheNextVisit() async {
         let runner = StuckRunner()
-        let model = SkillsModel(swe: SweClient(runner: runner))
-        let load = Task { await model.loadHub() }
+        let model = SkillsModel(swe: SweClient(runner: runner), timeout: .milliseconds(200))
+        let load = Task { await model.loadHubIfStale(for: "/bin/swe") }
         while runner.started == 0 { await Task.yield() }
         load.cancel()
-        await load.value
-        #expect(model.hub == .idle)
+        #expect(model.hub == .loading)
+        // The next visit joins the load rather than starting another.
+        await model.loadHubIfStale(for: "/bin/swe")
+        #expect(runner.started == 1)
     }
 
-    @Test func aChildStoppedByCancellingIsNotAFailure() async {
+    @Test func aHungSweGivesUpAndSaysSo() async {
         // ProcessRunner answers a cancel by terminating swe and returning its
-        // exit status, not by throwing.
+        // exit status, not by throwing; the timeout still reads as one.
         let runner = TerminatedRunner()
-        let model = SkillsModel(swe: SweClient(runner: runner))
-        let load = Task { await model.loadHub() }
-        while runner.started == 0 { await Task.yield() }
-        load.cancel()
-        await load.value
-        #expect(model.hub == .idle)
+        let model = SkillsModel(swe: SweClient(runner: runner), timeout: .milliseconds(50))
+        await model.loadHub()
+        guard case .failed(let message) = model.hub else { Issue.record("\(model.hub)"); return }
+        #expect(message.contains("didn't answer"))
     }
 
     @Test func linksRunOneAtATime() async throws {
