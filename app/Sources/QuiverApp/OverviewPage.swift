@@ -20,6 +20,12 @@ struct OverviewPage: View {
 
 private struct OverviewContent: View {
     @Bindable var model: OverviewModel
+    /// The content width, to pick between two columns and one.
+    @State private var width: CGFloat = 0
+
+    /// A 300pt side column plus a main column of at least about 524pt, so
+    /// the default window (about 868pt of content) gets two columns.
+    static let twoColumnWidth: CGFloat = 840
 
     var body: some View {
         Page(title: "Overview", subtitle: "Tokens and spend across every harness on this Mac.", maxWidth: 1280) {
@@ -39,17 +45,21 @@ private struct OverviewContent: View {
             }
             if let summary = model.summary {
                 let current = summary.period == model.period
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: Theme.gutter) {
-                        side(summary).frame(width: 360)
-                        main(summary)
-                    }
-                    .frame(minWidth: 940)
-                    VStack(spacing: Theme.gutter) {
-                        main(summary)
-                        side(summary)
+                Group {
+                    if width >= Self.twoColumnWidth {
+                        HStack(alignment: .top, spacing: Theme.gutter) {
+                            side(summary).frame(width: 300)
+                            main(summary)
+                        }
+                    } else {
+                        VStack(spacing: Theme.gutter) {
+                            main(summary)
+                            side(summary)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 // Still the previous period's figures while the new ones load.
                 .opacity(current ? 1 : 0.45)
                 .animation(.easeOut(duration: 0.15), value: current)
@@ -96,14 +106,14 @@ private struct TotalCard: View {
         Card {
             Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period, style: .period)
             VStack(spacing: 6) {
-                Text("Total tokens").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                Text("Total tokens").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Text(UsageFormat.tokens(summary.totals.totalTokens))
                     .font(Theme.display).tracking(-1.8).monospacedDigit()
                     .foregroundStyle(Theme.textPrimary)
                     .contentTransition(.numericText())
                 HStack(spacing: 6) {
                     Text(UsageFormat.dollars(summary.totals.costUSD))
-                        .font(.system(size: 28, weight: .semibold)).monospacedDigit()
+                        .font(Theme.figure).monospacedDigit()
                         .foregroundStyle(Theme.accent)
                     if summary.totals.unpricedTokens > 0 {
                         Image(systemName: "info.circle")
@@ -122,9 +132,7 @@ private struct TotalCard: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             } else {
                 ShareBar(shares: shares)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                    ForEach(shares) { HarnessTile(share: $0) }
-                }
+                HarnessTiles(shares: shares)
             }
         }
     }
@@ -157,6 +165,41 @@ private struct ShareBar: View {
     }
 }
 
+/// Up to four equal columns, one per harness, every tile the same height.
+/// Four that would each get under 140pt (the two-column layout at the
+/// default window) go two by two, so no name or figure truncates.
+private struct HarnessTiles: View {
+    var shares: [HarnessShare]
+    @State private var width: CGFloat = 0
+
+    static let minTileWidth: CGFloat = 140
+
+    var columns: Int {
+        var count = min(shares.count, 4)
+        while count > 1, width > 0, (width - CGFloat(count - 1) * 12) / CGFloat(count) < Self.minTileWidth {
+            count = count == 4 ? 2 : count - 1
+        }
+        return max(count, 1)
+    }
+
+    var body: some View {
+        let columns = columns
+        let rows = stride(from: 0, to: shares.count, by: columns).map { Array(shares[$0..<min($0 + columns, shares.count)]) }
+        Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+            ForEach(rows, id: \.first?.id) { row in
+                GridRow {
+                    ForEach(row) { HarnessTile(share: $0) }
+                    // Keeps a short last row on the same column widths.
+                    ForEach(row.count..<columns, id: \.self) { _ in Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
+                }
+            }
+        }
+        // Rows as tall as their tallest tile, and no taller.
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+}
+
 /// A harness's share: the legend for the bar, with its numbers.
 private struct HarnessTile: View {
     var share: HarnessShare
@@ -165,13 +208,14 @@ private struct HarnessTile: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 HarnessIcon(harness: share.harness, size: 16)
-                Text(UsageFormat.harness(share.harness)).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 4)
-                ChartSwatch(harness: share.harness)
+                Text(UsageFormat.harness(share.harness)).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.tail)
             }
+            .help(UsageFormat.harness(share.harness))
             Text(share.share > 0 && share.share < 0.001 ? "<0.1%"
                  : share.share.formatted(.percent.precision(.fractionLength(share.share < 0.1 ? 1 : 0))))
                 .font(Theme.figure).monospacedDigit().foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
             HStack(spacing: 4) {
                 Text(share.modelCount == 1 ? "1 model" : "\(share.modelCount) models")
                 Text("·")
@@ -182,11 +226,11 @@ private struct HarnessTile: View {
                 }
             }
             .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
+            .lineLimit(1)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card, in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.borderStrong.opacity(0.7), lineWidth: 1))
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.borderStrong, lineWidth: 1))
     }
 }
 
@@ -213,10 +257,11 @@ private struct BreakdownCard: View {
         } else {
             VStack(spacing: 0) {
                 DailyRow(cells: ["Date", "Total", "Input", "Output", "Cached", "Spend"])
-                    .font(Theme.tableHeader).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.tableHeader).foregroundStyle(Theme.tableHeaderText)
+                    .padding(.horizontal, 8)
                     .padding(.bottom, 8)
                 ForEach(summary.days) { row in
-                    Divider().overlay(Theme.border)
+                    Rectangle().fill(Theme.rowDivider).frame(height: 1)
                     DailyRow(cells: [
                         row.day.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day()),
                         UsageFormat.tokens(row.totals.totalTokens),
@@ -226,7 +271,9 @@ private struct BreakdownCard: View {
                         UsageFormat.dollars(row.totals.costUSD),
                     ], moneyLast: true)
                     .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).monospacedDigit()
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 9)
+                    .modifier(RowHover())
                 }
             }
         }
@@ -254,18 +301,30 @@ private struct BreakdownCard: View {
     }
 }
 
+/// `rowHover` under the pointer.
+private struct RowHover: ViewModifier {
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(hovering ? Theme.rowHover : .clear)
+            .onHover { hovering = $0 }
+    }
+}
+
 /// The date takes the slack; the figures sit in equal right-aligned columns.
 private struct DailyRow: View {
     var cells: [String]
     var moneyLast = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(cells[0]).frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 10) {
+            Text(cells[0]).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             ForEach(1..<cells.count, id: \.self) { index in
                 Text(cells[index])
                     .foregroundStyle(moneyLast && index == cells.count - 1 ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.foreground))
-                    .frame(width: 76, alignment: .trailing)
+                    .lineLimit(1)
+                    .frame(width: 68, alignment: .trailing)
             }
         }
     }
@@ -326,10 +385,14 @@ private struct Chip: View {
 
 private struct ActivityCard: View {
     var days: [DayRow]
+    @State private var width: CGFloat = 0
+
+    /// As many 12pt weeks (3pt apart, after the 24pt day labels) as fit.
+    var weekCount: Int { min(26, max(8, Int((width - 24) / (Theme.heatmapCell + 3)))) }
 
     var body: some View {
         let map = Heatmap(days: days, weeks: 26, now: Date(), calendar: .current)
-        let weeks = map.columns.suffix(18)
+        let weeks = map.columns.suffix(weekCount)
         Card(title: "Activity", subtitle: "Tokens a day, last \(weeks.count) weeks") {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 3) {
@@ -341,6 +404,9 @@ private struct ActivityCard: View {
                             .frame(width: Theme.heatmapCell, alignment: .leading)
                     }
                 }
+                // Measures the card's inner width without taking any height.
+                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 ForEach(0..<7, id: \.self) { weekday in
                     HStack(spacing: 3) {
                         Text(weekday % 2 == 1 ? Self.weekdayName(weekday) : "")
