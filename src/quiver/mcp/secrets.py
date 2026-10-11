@@ -170,6 +170,7 @@ _SECRET_FLAG_RE = re.compile(
 )
 _HEADER_FLAGS = frozenset({"--header", "--headers", "-H"})
 _OPAQUE_SEGMENT_RE = re.compile(r"[A-Za-z0-9_\-=.%~+]{24,}")
+_ENV_ASSIGN_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
 
 
 def _hide(value: str) -> str:
@@ -236,8 +237,9 @@ def scrub_args(args, secrets: dict[str, str] | None = None) -> list[str]:
     """Command-line arguments safe to print.
 
     Hides the value of a credential-named flag (``--token X``,
-    ``--api-key=X``), the value of a header flag (``--header "Name: X"``),
-    and the credential parts of any URL argument. Everything else stays.
+    ``--api-key=X``) or env assignment (``API_KEY=X``), the value of a
+    header flag (``--header "Name: X"``), and the credential parts of any
+    URL argument. Everything else stays.
     """
     out: list[str] = []
     pending = None  # "secret" or "header": the next bare arg is its value
@@ -261,6 +263,10 @@ def scrub_args(args, secrets: dict[str, str] | None = None) -> list[str]:
                     pending = "secret"
         elif "://" in arg:
             arg = scrub_url(arg, secrets)
+        elif (assign := _ENV_ASSIGN_RE.fullmatch(arg)) and _SECRET_FLAG_RE.search(
+                assign.group(1)):
+            # `env API_KEY=... npx server`, a common wrapper in configs.
+            arg = f"{assign.group(1)}={_hide(assign.group(2))}"
         out.append(arg)
     return out
 

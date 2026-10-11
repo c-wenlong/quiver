@@ -57,6 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json` for `swe list`, `swe session`, `swe find skills` and `swe init
+  --check`.** The macOS app under `app/` reads these. `list` gives each
+  harness's state, aliases and 100-day session count, and with `--usage`
+  its rate limit, where `status` replaces the `no-sub` / `auth-required` /
+  `timeout` sentinels and `fetched_at` is when the reading was really
+  taken, never the time it was served from cache. `session` gives each
+  session's harness, cwd, title, `last_active_at`, status and the `argv`
+  that resumes it. `find skills` gives the shared skills and each harness
+  root's link state; `init --check` gives each harness's instruction file
+  and skills root with its link state. Under `--json`, errors go to stderr
+  and stdout stays empty.
 - **`--json` for `swe mcp list`, `swe mcp status` and `swe doctor`.** Each
   prints one `{"schema": 1, "data": ...}` document for the macOS app.
   `mcp list` and `mcp status` give one entry per server name (transport,

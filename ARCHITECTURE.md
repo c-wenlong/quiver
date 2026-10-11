@@ -347,6 +347,34 @@ name mismatch, a `supported` capability missing its `root`, a table entry
 for a harness the registry has never heard of) — something an operator can
 actually go fix.
 
+## Machine-readable output
+
+The macOS app under `app/` reads `swe` through `--json`, never by parsing
+tables. Every `--json` command prints exactly one document on stdout,
+`{"schema": 1, "data": ...}` (`quiver/json_output.py`), and nothing else:
+refusals and errors go to stderr with stdout left empty. `schema` changes
+only for a breaking change to an existing shape; adding a field is not one,
+and the app refuses a schema it does not know rather than misreading it.
+
+| Command | `data` |
+|---|---|
+| `swe list [--usage] --json` | `harnesses`: name, command, version, aliases, tags, `state` (active, starred, archived), `sessions_100d`, `rate_limit` (null unless `--usage` and starred) |
+| `swe session [filters] --json` | `sessions`: id, harness, agent, cwd, title, title_source, `last_active_at` (epoch seconds), status, `resume` (`argv` and `cwd`, or null) |
+| `swe find skills -r --json` | `shared_dir`, `skills` (the shared library), `roots` (per-harness skills root with its link state and skill count) |
+| `swe init --check --json` | `agents_file`, `agents_file_exists`, `harnesses` with `instructions` and `skills`, each a path and link state or null |
+| `swe mcp list --json` | `servers`: name, transport, command, args, url, `env_keys`, `header_keys`, harnesses, conflict |
+| `swe mcp status --json` | the `mcp list` fields plus `health` and `detail` |
+| `swe doctor --json` | `ok` and `findings` (check, severity, message, fix); exit status unchanged |
+
+A rate limit's `fetched_at` is when the reading was taken. A value served
+from the cache keeps its original time, so the app can show its age
+instead of presenting an old reading as current.
+
+No `--json` output carries a secret value. MCP env and header values are
+reduced to their names, `${NAME}` references are never resolved, and
+credential-shaped parts of URLs and arguments are masked
+(`quiver/mcp/secrets.py`, `scrub_url` and `scrub_args`).
+
 ## Command tree
 
 Two layers, on purpose. The top level is shortcuts for the harness verbs

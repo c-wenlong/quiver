@@ -507,6 +507,16 @@ class ScrubTest(unittest.TestCase):
             scrub_args(["mcp-remote", "https://r.example.com/mcp?k=v"], {}),
             ["mcp-remote", "https://r.example.com/mcp?k=***"])
 
+    def test_args_hide_an_inline_env_assignment(self):
+        # `env API_KEY=... npx server` is a common wrapper in configs.
+        from quiver.mcp.secrets import scrub_args
+
+        self.assertEqual(
+            scrub_args(["env", "OPENAI_API_KEY=sk-live-123", "LOG_LEVEL=debug",
+                        "GH_TOKEN=${GH}", "npx", "server"], {}),
+            ["env", "OPENAI_API_KEY=***", "LOG_LEVEL=debug",
+             "GH_TOKEN=${GH}", "npx", "server"])
+
 
 class DoctorJsonTest(unittest.TestCase):
     """The real CLI, with drift findings and off-PATH installs that do not
