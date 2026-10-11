@@ -74,6 +74,15 @@ public enum UsageFormat {
         return "in \(minutes / (24 * 60))d"
     }
 
+    /// "5m ago", "1h ago", "3d ago": how old something is, whole units only.
+    public static func ago(_ date: Date, now: Date) -> String {
+        let minutes = Int(now.timeIntervalSince(date) / 60)
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes)m ago" }
+        if minutes < 24 * 60 { return "\(minutes / 60)h ago" }
+        return "\(minutes / (24 * 60))d ago"
+    }
+
     private static func compact(_ value: Double) -> String {
         let rounded = (value * 10).rounded() / 10
         return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)

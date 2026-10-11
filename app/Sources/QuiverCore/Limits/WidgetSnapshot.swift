@@ -75,6 +75,16 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
             limits: Array(LimitReading.byPressure(limits, now: now).prefix(limitCount)))
     }
 
+    /// Today's figure, or nothing when the snapshot was written on another day.
+    public func today(at now: Date, calendar: Calendar) -> Figure {
+        calendar.isDate(generatedAt, inSameDayAs: now) ? today : Figure(tokens: 0, costUSD: 0)
+    }
+
+    /// How old the snapshot is: the app writes it only while it runs.
+    public func age(at now: Date) -> TimeInterval {
+        now.timeIntervalSince(generatedAt)
+    }
+
     /// Tokens per day for the last `days` days, oldest first, quiet days as 0.
     public func sparkline(days count: Int, now: Date, calendar: Calendar) -> [Int] {
         let today = calendar.startOfDay(for: now)

@@ -38,6 +38,15 @@ import Testing
         #expect(snapshot.generatedAt == now)
     }
 
+    @Test func aSnapshotFromYesterdayShowsNothingForToday() {
+        // The app may not have run since midnight; its "today" is not today.
+        let snapshot = make(activity: [DayRow(day: day(0), totals: totals(tokens: 4, cost: 1))])
+        #expect(snapshot.today(at: now, calendar: calendar) == .init(tokens: 4, costUSD: 1))
+        let tomorrow = now + 86_400
+        #expect(snapshot.today(at: tomorrow, calendar: calendar) == .init(tokens: 0, costUSD: 0))
+        #expect(snapshot.age(at: tomorrow) == 86_400)
+    }
+
     @Test func daysCoverTheHeatmapAndSkipEmptyOnes() {
         let activity = [
             DayRow(day: day(-400), totals: totals(tokens: 9, cost: 0)),

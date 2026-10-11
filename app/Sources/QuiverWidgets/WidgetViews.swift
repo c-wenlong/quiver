@@ -169,9 +169,13 @@ struct SummaryView: View {
         let points = snapshot.sparkline(days: 14, now: now, calendar: .current)
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 24) {
-                FigureBlock(title: "Today", figure: snapshot.today)
+                FigureBlock(title: "Today", figure: snapshot.today(at: now, calendar: .current))
                 FigureBlock(title: "7 days", figure: snapshot.week)
                 Spacer(minLength: 0)
+                if snapshot.age(at: now) > 3_600 {
+                    Text("Updated \(UsageFormat.ago(snapshot.generatedAt, now: now))")
+                        .font(.system(size: 10)).foregroundStyle(Palette.textSecondary)
+                }
             }
             Chart(Array(points.enumerated()), id: \.offset) { point in
                 AreaMark(x: .value("Day", point.offset), y: .value("Tokens", point.element))

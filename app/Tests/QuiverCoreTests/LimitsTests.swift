@@ -205,4 +205,11 @@ func reading(
         #expect(UsageFormat.resetIn(now + 20, now: now) == "in 1m")
         #expect(UsageFormat.resetIn(now - 5, now: now) == "now")
     }
+
+    @Test func agesReadTheSameWay() {
+        #expect(UsageFormat.ago(now - 90 * 60, now: now) == "1h ago")
+        #expect(UsageFormat.ago(now - 5 * 60, now: now) == "5m ago")
+        #expect(UsageFormat.ago(now - 3 * 86_400, now: now) == "3d ago")
+        #expect(UsageFormat.ago(now + 10, now: now) == "just now")
+    }
 }
