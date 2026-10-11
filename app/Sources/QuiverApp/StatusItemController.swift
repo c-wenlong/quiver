@@ -176,7 +176,7 @@ struct MenuBarContent: View {
                     Task { await app.overview?.load(scan: true) }
                 }
                 .labelStyle(.iconOnly)
-                .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+                .plainButton(cornerRadius: 4)
                 .disabled(app.accounts.isLoading)
             }
             ServiceStatusMenuLine(openMain: openMain)
@@ -193,9 +193,9 @@ struct MenuBarContent: View {
             }
             Divider()
             HStack {
-                Button("Open Quiver", action: openMain).buttonStyle(PrimaryButtonStyle())
+                Button("Open Quiver", action: openMain).primaryButton()
                 Spacer()
-                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(SecondaryButtonStyle())
+                Button("Quit") { NSApp.terminate(nil) }.secondaryButton()
             }
         }
         .padding(16)
@@ -270,7 +270,7 @@ private struct SpendDonut: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Tabs(options: [(SpendSlice.Period.today, "Today"), (.yesterday, "Yesterday"), (.thirtyDays, "30 days")],
-                 selection: $period)
+                 selection: $period, style: .period)
             HStack(spacing: 16) {
                 ZStack {
                     if (totalCost) > 0 {

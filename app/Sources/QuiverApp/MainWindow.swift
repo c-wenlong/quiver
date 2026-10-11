@@ -40,12 +40,13 @@ private struct Sidebar: View {
                 ForEach(SidebarGroup.allCases) { group in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(group.title)
-                            .font(Theme.caption)
+                            .font(.system(size: 11))
                             .foregroundStyle(Theme.textMuted)
                             .padding(.horizontal, 10)
                             .padding(.bottom, 4)
                         ForEach(group.sections) { section in
-                            NavItem(section: section, isSelected: model.selection == section) {
+                            NavItem(section: section, isSelected: model.selection == section,
+                                    isFocused: focused == section) {
                                 model.selection = section
                             }
                             .focused($focused, equals: section)
@@ -76,6 +77,7 @@ private struct Sidebar: View {
 private struct NavItem: View {
     var section: AppSection
     var isSelected: Bool
+    var isFocused: Bool
     var action: () -> Void
     @State private var hovering = false
 
@@ -90,13 +92,14 @@ private struct NavItem: View {
                 Spacer(minLength: 0)
             }
             .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textNav)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .frame(height: Theme.navRowHeight)
             .background(isSelected ? Theme.navActive : hovering ? Theme.hover : .clear,
                         in: .rect(cornerRadius: Theme.controlRadius))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
         }
         .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
+        .focusRing(isFocused, cornerRadius: Theme.controlRadius)
         .onHover { hovering = $0 }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

@@ -14,11 +14,10 @@ struct SettingsPage: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 HStack {
                     TextField("/opt/homebrew/bin/swe", text: $draft)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
+                        .quiverField(monospaced: true)
                         .onSubmit(apply)
-                    Button("Choose…", action: choose).buttonStyle(SecondaryButtonStyle())
-                    Button("Use", action: apply).keyboardShortcut(.defaultAction).buttonStyle(PrimaryButtonStyle())
+                    Button("Choose…", action: choose).secondaryButton()
+                    Button("Use", action: apply).keyboardShortcut(.defaultAction).primaryButton()
                 }
                 Text("Running: \(SweLocation.executable(override: app.swePath))")
                     .font(Theme.caption)
@@ -29,11 +28,10 @@ struct SettingsPage: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 HStack {
                     TextField("~/.api_keys", text: $keysDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
+                        .quiverField(monospaced: true)
                         .onSubmit { app.apiKeysPath = keysDraft.trimmingCharacters(in: .whitespaces) }
                     Button("Use") { app.apiKeysPath = keysDraft.trimmingCharacters(in: .whitespaces) }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .secondaryButton()
                 }
             }
             Card(title: "Terminal") {
@@ -97,15 +95,16 @@ struct SettingRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        Toggle(isOn: $isOn) {
+        HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 Text(detail).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(GreenSwitchStyle())
         }
-        .toggleStyle(.switch)
-        .tint(Theme.accentFill)
     }
 }
 
@@ -130,7 +129,7 @@ private struct LoginItemRow: View {
                     .font(Theme.caption).foregroundStyle(Theme.warning)
                 Spacer()
                 Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .secondaryButton()
             }
         }
         if let failure {

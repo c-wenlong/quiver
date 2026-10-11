@@ -25,17 +25,30 @@ enum Theme {
     static let textSecondary = Color(light: "#737373", dark: "#a3a3a3")
     static let textNav = Color(light: "#525252", dark: "#a3a3a3")
     static let textMuted = Color(light: "#737373", dark: "#737373")
+    static let textStrong = Color(light: "#0a0a0a", dark: "#ffffff")
+    static let textLabel = Color(light: "#171717", dark: "#e5e5e5")
+    /// Unselected tab and table-header text: #737373 / #d4d4d4 as measured.
+    static let textTab = Color(light: "#737373", dark: "#d4d4d4")
+    static let tableHeaderText = Color(light: "#525252", dark: "#d4d4d4")
 
     static let border = Color(light: "#e5e5e5", dark: "#262626")
     static let borderStrong = Color(light: "#d4d4d4", dark: "#404040")
+    static let borderHover = Color(light: "#d4d4d4", dark: "#404040")
+    /// Table rows: #f5f5f5 in light, the default hairline in dark.
+    static let rowDivider = Color(light: "#f5f5f5", dark: "#262626")
 
     /// Money and "on": cost figures, usage fill, heatmap, switches.
     static let accent = Color(light: "#059669", dark: "#059669")
     static let accentFill = Color(light: "#10b981", dark: "#10b981")
+    static let accentHover = Color(light: "#047857", dark: "#10b981")
 
     static let primaryBackground = Color(light: "#171717", dark: "#fafafa")
     static let primaryForeground = Color(light: "#ffffff", dark: "#171717")
     static let secondaryBackground = Color(light: "#fafafa", dark: "#171717")
+    static let code = Color(light: "#f5f5f5", dark: "#17171799")
+    static let dialog = Color(light: "#ffffff", dark: "#0a0a0a")
+    /// A period or table tab under the pointer.
+    static let tabHover = Color(light: "#fafafa", dark: "#26262680")
 
     static let usageTrack = Color(light: "#f5f5f5", dark: "#40404080")
     static let success = Color(light: "#10b981", dark: "#34d399")
@@ -76,7 +89,14 @@ enum Theme {
     static let sidebarWidth: CGFloat = 220
     static let navRowHeight: CGFloat = 32
     static let controlHeight: CGFloat = 28
-    static let iconButton: CGFloat = 32
+    /// `control.md`: secondary buttons.
+    static let controlMedium: CGFloat = 32
+    /// `control.field`: search fields, selects, text fields.
+    static let fieldHeight: CGFloat = 36
+    static let fieldRadius: CGFloat = 8
+    static let selectRadius: CGFloat = 6
+    static let iconButton: CGFloat = 36
+    static let iconButtonRadius: CGFloat = 12
     static let usageTrackHeight: CGFloat = 6
     static let heatmapCell: CGFloat = 12
 
@@ -215,191 +235,3 @@ struct PageHeader<Actions: View>: View {
     }
 }
 
-// MARK: - Controls
-
-/// Black in light, near-white in dark; never green.
-struct PrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        StyledButton(configuration: configuration, background: Theme.primaryBackground,
-                     foreground: Theme.primaryForeground, border: .clear)
-    }
-}
-
-/// The quiet default: field fill and a strong hairline.
-struct SecondaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        StyledButton(configuration: configuration, background: Theme.secondaryBackground,
-                     foreground: Theme.textPrimary, border: Theme.borderStrong)
-    }
-}
-
-private struct StyledButton: View {
-    let configuration: ButtonStyleConfiguration
-    var background: Color
-    var foreground: Color
-    var border: Color
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
-    var body: some View {
-        configuration.label
-            .font(Theme.control)
-            .labelStyle(.titleAndIcon)
-            .padding(.horizontal, 12)
-            .frame(height: Theme.controlHeight + 4)
-            .foregroundStyle(foreground)
-            .background(background.opacity(configuration.isPressed ? 0.85 : 1),
-                        in: .rect(cornerRadius: Theme.controlRadius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-                .strokeBorder(hovering ? Theme.textSecondary.opacity(0.6) : border, lineWidth: 1))
-            .opacity(isEnabled ? 1 : 0.45)
-            .contentShape(.rect(cornerRadius: Theme.controlRadius))
-            .onHover { hovering = $0 }
-            .focusRing(cornerRadius: Theme.controlRadius)
-    }
-}
-
-/// A 32pt square icon button with a hairline, for page actions.
-struct IconButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        IconButtonBody(configuration: configuration)
-    }
-}
-
-private struct IconButtonBody: View {
-    let configuration: ButtonStyleConfiguration
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
-    var body: some View {
-        configuration.label
-            .labelStyle(.iconOnly)
-            .font(.system(size: 14))
-            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
-            .frame(width: Theme.iconButton, height: Theme.iconButton)
-            .background(hovering ? Theme.hover : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
-            .contentShape(.rect(cornerRadius: Theme.controlRadius))
-            .onHover { hovering = $0 }
-            .focusRing(cornerRadius: Theme.controlRadius)
-    }
-}
-
-/// TokenTracker's period tabs: plain 12/500 labels, the current one on a
-/// filled pill.
-struct Tabs<Value: Hashable>: View {
-    var options: [(value: Value, title: String)]
-    @Binding var selection: Value
-    @FocusState private var focused: Int?
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
-                TabButton(title: option.title, isSelected: option.value == selection) { selection = option.value }
-                    .focused($focused, equals: index)
-            }
-        }
-        .padding(2)
-        .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.controlRadius + 2))
-        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius + 2).strokeBorder(Theme.border, lineWidth: 1))
-        // Like a segmented control: the arrow keys move the selection.
-        .onKeyPress(.leftArrow) { step(-1) }
-        .onKeyPress(.rightArrow) { step(1) }
-    }
-
-    private func step(_ offset: Int) -> KeyPress.Result {
-        guard let index = options.firstIndex(where: { $0.value == selection }) else { return .ignored }
-        let next = index + offset
-        guard options.indices.contains(next) else { return .handled }
-        selection = options[next].value
-        if focused != nil { focused = next }
-        return .handled
-    }
-}
-
-private struct TabButton: View {
-    var title: String
-    var isSelected: Bool
-    var action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(Theme.control)
-                .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, 12)
-                .frame(height: Theme.controlHeight)
-                .background(isSelected ? Theme.segmentSelected : .clear, in: .rect(cornerRadius: Theme.controlRadius))
-                .contentShape(.rect(cornerRadius: Theme.controlRadius))
-        }
-        .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
-        .onHover { hovering = $0 }
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-/// Plain, with the focus ring.
-struct RingedPlainStyle: ButtonStyle {
-    var cornerRadius: CGFloat
-    func makeBody(configuration: Configuration) -> some View {
-        RingedPlainBody(configuration: configuration, cornerRadius: cornerRadius)
-    }
-}
-
-/// Dimmed while disabled, so an unavailable action never looks ready.
-private struct RingedPlainBody: View {
-    let configuration: ButtonStyleConfiguration
-    var cornerRadius: CGFloat
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        configuration.label
-            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
-            .focusRing(cornerRadius: cornerRadius)
-    }
-}
-
-/// A small sentence-case tag.
-struct Badge: View {
-    var text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Theme.subtle, in: .rect(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-    }
-}
-
-// MARK: - Focus
-
-extension View {
-    /// A 2pt neutral ring while the view itself has keyboard focus.
-    ///
-    /// Buttons get macOS's own focus ring (keyboard navigation on): a
-    /// button style never sees its button's focus, so this draws nothing
-    /// there. It is for focusable views that draw their own frame.
-    func focusRing(cornerRadius: CGFloat) -> some View {
-        modifier(FocusRing(cornerRadius: cornerRadius))
-    }
-}
-
-private struct FocusRing: ViewModifier {
-    var cornerRadius: CGFloat
-    @Environment(\.isFocused) private var focused
-
-    func body(content: Content) -> some View {
-        content.overlay(
-            RoundedRectangle(cornerRadius: cornerRadius + 3)
-                .strokeBorder(Theme.focus, lineWidth: Theme.focusRing)
-                .padding(-3)
-                .opacity(focused ? 1 : 0)
-                .allowsHitTesting(false))
-    }
-}

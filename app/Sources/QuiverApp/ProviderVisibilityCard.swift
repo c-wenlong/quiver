@@ -22,7 +22,9 @@ struct ProviderVisibilityCard: View {
                 Spacer()
                 HStack(spacing: 0) {
                     Button("Enable all") { model.enableAll() }
+                        .focusRing(cornerRadius: Theme.controlRadius)
                     Button("Disable all") { model.disableAll() }
+                        .focusRing(cornerRadius: Theme.controlRadius)
                 }
                 .buttonStyle(QuietTextButtonStyle())
                 .padding(.horizontal, 4)
@@ -36,7 +38,7 @@ struct ProviderVisibilityCard: View {
                         .lineLimit(2)
                     Spacer()
                     Button("Try again") { Task { await model.load() } }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .secondaryButton()
                         .disabled(model.isLoading)
                 }
             }
@@ -157,44 +159,5 @@ private struct QuietTextButton: View {
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(.rect)
             .onHover { hovering = $0 }
-            .focusRing(cornerRadius: Theme.controlRadius)
-    }
-}
-
-/// TokenTracker's switch: green when on, grey when off, the same whether or
-/// not the window is focused (the system switch greys out in a window in
-/// the background).
-struct GreenSwitchStyle: ToggleStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        GreenSwitch(configuration: configuration)
-    }
-}
-
-private struct GreenSwitch: View {
-    let configuration: ToggleStyleConfiguration
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        Button {
-            configuration.isOn.toggle()
-        } label: {
-            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
-                Capsule().fill(configuration.isOn ? Theme.accentFill : Theme.usageTrack)
-                    .overlay(Capsule().strokeBorder(Theme.border, lineWidth: configuration.isOn ? 0 : 1))
-                // A fixed knob, so the alignment moves it end to end.
-                Circle().fill(.white).frame(width: 18, height: 18).padding(3)
-                    .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
-            }
-            .frame(width: 40, height: 24)
-            .animation(.easeOut(duration: 0.15), value: configuration.isOn)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(RingedPlainStyle(cornerRadius: 12))
-        .opacity(isEnabled ? 1 : 0.5)
-        .accessibilityElement()
-        .accessibilityLabel { _ in configuration.label }
-        .accessibilityAddTraits(.isToggle)
-        .accessibilityValue(configuration.isOn ? "On" : "Off")
-        .accessibilityAction { configuration.isOn.toggle() }
     }
 }

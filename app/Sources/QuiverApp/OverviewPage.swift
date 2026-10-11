@@ -12,7 +12,7 @@ struct OverviewPage: View {
             OverviewContent(model: model)
         } else {
             Page(title: "Overview", subtitle: "Tokens and spend across every harness on this Mac.") {
-                Card { Label(app.overviewError ?? "The usage ledger is unavailable.", systemImage: "exclamationmark.triangle") }
+                ErrorCard(message: app.overviewError ?? "The usage ledger is unavailable.")
             }
         }
     }
@@ -29,7 +29,7 @@ private struct OverviewContent: View {
                     .frame(height: Theme.iconButton)
             }
             Button("Rescan", systemImage: "arrow.clockwise") { Task { await model.load(scan: true) } }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .disabled(model.isLoading)
                 .help("Read new usage from the harness logs")
         } content: {
@@ -54,7 +54,7 @@ private struct OverviewContent: View {
                 .opacity(current ? 1 : 0.45)
                 .animation(.easeOut(duration: 0.15), value: current)
             } else {
-                Card { ProgressView("Reading your usage logs…").frame(maxWidth: .infinity) }
+                LoadingCard(text: "Reading your usage logs…")
             }
         }
         .task(id: model.period) {
@@ -94,7 +94,7 @@ private struct TotalCard: View {
 
     var body: some View {
         Card {
-            Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period)
+            Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period, style: .period)
             VStack(spacing: 6) {
                 Text("Total tokens").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 Text(UsageFormat.tokens(summary.totals.totalTokens))
@@ -199,7 +199,7 @@ private struct BreakdownCard: View {
 
     var body: some View {
         Card {
-            Tabs(options: [(Tab.daily, "Daily breakdown"), (Tab.accounts, "By account")], selection: $tab)
+            Tabs(options: [(Tab.daily, "Daily breakdown"), (Tab.accounts, "By account")], selection: $tab, style: .table)
             switch tab {
             case .daily: daily
             case .accounts: accounts
