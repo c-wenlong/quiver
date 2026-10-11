@@ -76,6 +76,10 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     ],
     "skills": [
         ("--desc", "Show skill descriptions"), ("-d", "Short for --desc"),
+        ("--json", "Every skill and which harnesses see it, as JSON"),
+    ],
+    "skills hub": [
+        ("--json", "Print the hub's plugins as JSON"),
     ],
     "skills link": [
         ("--force", "Back up and replace a non-empty skills dir"),
@@ -181,7 +185,11 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "doctor": [
         ("--json", "Machine-readable output"),
     ],
+    "harness star": [
+        ("--json", "Print the new state as JSON"),
+    ],
     "harness archive": [
+        ("--json", "Print the result as JSON"),
         ("--usage=none", "Mark the harness as unused"),
         ("--usage=trial", "Mark the harness as tried once"),
         ("--usage=used", "Mark the harness as in use"),
@@ -240,10 +248,12 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "harness": {
         "list": "list", "ls": "list",
         "discover": "discover", "archive": "harness archive",
+        "star": "harness star",
     },
     "hs": {
         "list": "list", "ls": "list",
         "discover": "discover", "archive": "harness archive",
+        "star": "harness star",
     },
     "mcp": {
         "discover": "mcp discover", "sync": "mcp sync", "doctor": "mcp doctor",
@@ -252,10 +262,12 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
         "move": "skills move", "discover": "skills discover",
+        "hub": "skills hub",
     },
     "sk": {
         "link": "skills link", "unlink": "skills unlink",
         "move": "skills move", "discover": "skills discover",
+        "hub": "skills hub",
     },
     "find": {
         "amd": "find", "agents": "find", "agents.md": "find",
@@ -372,6 +384,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("unlink", "Remove a skills-root symlink"),
         ("move", "Move a skill between scope roots"),
         ("discover", "Find skills not yet cataloged"),
+        ("hub", "Plugins the quiver hub offers"),
         ("catalog", "Manage extra skills directories"),
         ("help", "Detailed help for one topic"),
     ],
@@ -384,6 +397,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("unlink", "Remove a skills-root symlink"),
         ("move", "Move a skill between scope roots"),
         ("discover", "Find skills not yet cataloged"),
+        ("hub", "Plugins the quiver hub offers"),
         ("catalog", "Manage extra skills directories"),
         ("help", "Detailed help for one topic"),
     ],

@@ -1,8 +1,10 @@
 """Skills CLI commands."""
 
+import sys
 from pathlib import Path
 
 from quiver.console import c, cpad, elide, terminal_width, truncate
+from quiver.json_output import emit, take_json_flag
 from quiver.skills.catalog_commands import cmd_skills_catalog, cmd_skills_discover
 from quiver.skills.discovery import discover_skills, skill_roots
 from quiver.skills.help_text import cmd_skills_help, print_skills_overview
@@ -54,6 +56,12 @@ def cmd_skills(args):
         return cmd_skills_unlink(args[1:])
     if args[0] == "move":
         return cmd_skills_move(args[1:])
+    if args[0] == "hub":
+        return cmd_skills_hub(args[1:])
+
+    args, json_view = take_json_flag(list(args))
+    if json_view:
+        return _skills_json(args)
 
     # Browsing is a tree; searching is a table. A bare `list` is browsing,
     # and a flat run of several hundred rows was the wrong shape for it, so
@@ -141,4 +149,80 @@ def cmd_skills(args):
     print(c("dim", f"  {len(skills)} skills across {n_scopes} roots"
                    f"  ·  swe find skills -r  │  swe skills help"))
     print()
+    return 0
+
+
+def _skills_json(args) -> int:
+    """`swe skills [list] [filter] --json`: every skill and who sees it.
+
+    A refusal leaves stdout empty: the app decodes it whole.
+    """
+    from quiver.skills.inventory import installed_skills
+
+    filt = None
+    for arg in args:
+        if arg in ("list", "ls"):
+            continue
+        if arg.startswith("-"):
+            print(f"Unknown flag for swe skills --json: {arg}", file=sys.stderr)
+            return 1
+        if filt is not None:
+            print(f"Unexpected args: {arg}", file=sys.stderr)
+            return 1
+        filt = arg.lower()
+    data = installed_skills()
+    if filt:
+        data["skills"] = [
+            s for s in data["skills"]
+            if filt in s["name"].lower() or filt in s["root"].lower()
+            or any(filt in h for h in s["harnesses"])
+        ]
+    return emit(data)
+
+
+# Install states, worst first, with how each reads in the listing.
+_HUB_STATES = {
+    "unregistered": ("red", "marketplace not added"),
+    "not-installed": ("yellow", "not installed"),
+    "stale": ("yellow", "stale"),
+    "disabled-here": ("yellow", "disabled"),
+    "installed": ("green", "installed"),
+}
+
+
+def cmd_skills_hub(args) -> int:
+    """What the quiver hub (~/.quiver/plugins) offers, and where it landed."""
+    from quiver.skills.help_text import print_skills_hub_help
+    from quiver.skills.inventory import hub_plugins
+
+    args, json_view = take_json_flag(list(args or []))
+    if args and args[0] in ("-h", "--help", "help"):
+        print_skills_hub_help()
+        return 0
+    if args:
+        print(c("red", f"  Unexpected args: {' '.join(args)}"),
+              file=sys.stderr if json_view else sys.stdout)
+        return 1
+    data = hub_plugins()
+    if json_view:
+        return emit(data)
+
+    plugins = data["plugins"]
+    if not plugins:
+        print(c("dim", "\n  No plugins in ~/.quiver/plugins yet.\n"))
+        return 0
+    print(f"\n{c('bold', 'Quiver hub')}  {c('dim', data['hub'])}\n")
+    width = max(len(f"{p['name']}@{p['marketplace']}") for p in plugins) + 2
+    for plugin in plugins:
+        ref = f"{plugin['name']}@{plugin['marketplace']}"
+        n = len(plugin["skills"])
+        skills = f"{n} skill" + ("" if n == 1 else "s")
+        states = "  ".join(
+            f"{harness} {c(_HUB_STATES[gap['state']][0], _HUB_STATES[gap['state']][1])}"
+            for harness, gap in plugin["install"].items()
+        )
+        print(f"  {c('bold', ref.ljust(width))}{c('dim', skills.ljust(10))}{states}")
+        if plugin["description"]:
+            print(f"  {' ' * width}{c('dim', truncate(plugin['description'], 90))}")
+    print(f"\n  {c('dim', 'swe skills hub --json lists each fix  ·  swe find plugins --full')}\n")
     return 0
