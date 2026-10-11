@@ -129,8 +129,9 @@ public final class ProviderVisibilityModel {
     private var disabled: Set<String> = []
     /// Bumped by each check; only the newest one writes its result.
     private var request = 0
-    /// What the checks run against (the swe path), and what the last one
-    /// that worked ran against.
+    /// What the checks run against (the swe path), and the key whose
+    /// successful check is what the rows show now. Nil once a later check
+    /// fails, since the rows then mix that error with older results.
     private var key: String?
     private var checkedKey: String?
 
@@ -143,13 +144,17 @@ public final class ProviderVisibilityModel {
     }
 
     /// Checks once per `key` (the swe path in use), so a view that is
-    /// rebuilt or visited again doesn't run swe again. A check that failed
-    /// or was cancelled hasn't counted, so the next call runs it again;
-    /// a check still running is replaced rather than waited on, because
-    /// the view that started it may be gone and its task cancelled.
+    /// rebuilt or visited again doesn't run swe again. It skips only when
+    /// the rows already show a finished, successful check of this key.
+    /// A check that failed or was cancelled hasn't counted, so the next
+    /// call runs it again. A check still running is replaced rather than
+    /// waited on: it may be for another swe, and the view that started it
+    /// may be gone with its task cancelled.
     public func loadIfNeeded(for key: String) async {
-        guard key != checkedKey else { return }
+        // Always the current key, so "Try again" and any check started
+        // from here are saved under the swe they actually ran against.
         self.key = key
+        guard key != checkedKey || isLoading else { return }
         await load()
     }
 
@@ -174,6 +179,7 @@ public final class ProviderVisibilityModel {
         case .failure(let error):
             // A check that couldn't run says nothing about what is installed.
             checkError = error.localizedDescription
+            checkedKey = nil
         }
         rebuild()
     }

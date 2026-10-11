@@ -48,6 +48,22 @@ actor FailsFirst {
     }
 }
 
+/// A swe whose answer depends on the path in use; nil fails.
+actor FakeSwe {
+    struct Failed: Error, LocalizedError { var errorDescription: String? { "swe failed" } }
+    var results: [String: Set<String>?]
+    var path = ""
+    var calls = 0
+    init(results: [String: Set<String>?]) { self.results = results }
+    func use(_ path: String) { self.path = path }
+    func set(_ path: String, _ found: Set<String>?) { results[path] = found }
+    func detect() throws -> Set<String> {
+        calls += 1
+        guard let found = results[path] ?? nil else { throw Failed() }
+        return found
+    }
+}
+
 /// An in-memory stand-in for UserDefaults.
 final class MemoryStore: KeyValueStoring, @unchecked Sendable {
     var values: [String: [String]] = [:]
@@ -241,6 +257,41 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         await retried.loadIfNeeded(for: "swe")   // the rebuilt one checks again
         #expect(await calls.count == 2)
         #expect(retried.hasChecked)
+    }
+
+    @Test func switchingBackAfterAFailureChecksAgainUnderTheRightPath() async {
+        // A works, B fails, back to A, Try again, then B again (now working).
+        let swe = FakeSwe(results: ["A": ["claude"], "B": nil])
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
+        await swe.use("A"); await model.loadIfNeeded(for: "A")
+        #expect(model.isVisible("claude"))
+        await swe.use("B"); await model.loadIfNeeded(for: "B")
+        #expect(model.checkError != nil)
+        await swe.use("A"); await model.loadIfNeeded(for: "A")
+        #expect(model.checkError == nil)   // B's error isn't left on A
+        await model.load()                 // Try again, on A
+        await swe.set("B", ["codex"])
+        let before = await swe.calls
+        await swe.use("B"); await model.loadIfNeeded(for: "B")
+        #expect(await swe.calls == before + 1)   // B wasn't taken as checked
+        #expect(model.isVisible("codex"))
+        #expect(!model.isVisible("claude"))
+    }
+
+    @Test func goingBackWhileAnotherPathIsCheckingChecksAgain() async {
+        let gate = Gate()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await gate.next() })
+        // A check of B that parks, then a return to A before it finishes.
+        let pending = Task { await model.loadIfNeeded(for: "B") }
+        while !(await gate.parked) { await Task.yield() }
+        await model.loadIfNeeded(for: "A")
+        #expect(await gate.calls == 2)
+        #expect(model.isVisible("claude"))
+        await gate.release()
+        await pending.value
+        #expect(model.checkError == nil)   // B's late result is dropped
+        await model.loadIfNeeded(for: "A")
+        #expect(await gate.calls == 2)
     }
 
     @Test func aRowCanBeDraggedToTheEnd() async {
