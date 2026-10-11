@@ -46,6 +46,35 @@ import Testing
         #expect(model.cliInstalled["gemini"] == nil)
     }
 
+    @Test func everyHarnessInUseGetsACardStarredFirstWithOrWithoutALimit() async {
+        // swe's order puts an active harness before a starred one, and lists
+        // an archived one: cards must reorder the first and drop the second.
+        let json = #"""
+        {"schema": 1, "data": {"harnesses": [
+          {"name": "pi", "command": "pi", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 9, "rate_limit": null},
+          {"name": "claude", "command": "claude", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 9, "rate_limit": null},
+          {"name": "droid", "command": "droid", "description": "", "version": null, "aliases": [], "tags": [], "state": "archived", "sessions_100d": 1, "rate_limit": null},
+          {"name": "devin", "display_name": "Devin Teams", "command": "devin", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 3,
+           "rate_limit": {"status": "ok", "used_percent": 10, "remaining_percent": 90, "limit_reached": false, "reset_at": null, "window": "7d", "window_seconds": null, "plan_type": "teams", "remaining_units": null, "total_units": null, "fetched_at": 1791700000}},
+          {"name": "kilo", "command": "kilo", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 2, "rate_limit": null}
+        ]}}
+        """#
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
+        await model.load()
+        // Starred first, then swe's order; no Claude or Codex (accounts of
+        // their own), no archived harness.
+        #expect(model.cards.map(\.name) == ["devin", "pi", "kilo"])
+        #expect(model.cards.map { $0.limit != nil } == [true, false, false])
+        #expect(model.cards.map(\.title) == ["Devin Teams", "Pi", "Kilo"])
+        #expect(model.cards.map(\.isStarred) == [true, false, false])
+    }
+
+    @Test func aCardSaysWhyItHasNoLimit() {
+        #expect(HarnessAccess.hasLimits("devin"))
+        #expect(HarnessAccess.hasLimits("copilot"))
+        #expect(!HarnessAccess.hasLimits("opencode"))
+    }
+
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner))
