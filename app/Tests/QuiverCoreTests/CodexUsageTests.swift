@@ -92,6 +92,15 @@ import Testing
         #expect(usage.windows == [UsageWindow(label: "30d", usedPercent: 32, resetsAt: usageEpoch.addingTimeInterval(43_200))])
     }
 
+    @Test func aReachedCapWithNoFiguresIsAFullWindow() throws {
+        // What an education seat at its cap sends: reached, but no individual_limit.
+        let body = #"{"plan_type": "education", "rate_limit": {"primary_window": {"used_percent": 0, "limit_window_seconds": 18000}}, "spend_control": {"reached": true, "individual_limit": null}}"#
+        let parsed = try #require(CodexUsageAPI.parse(Data(body.utf8), credential: UsageCredential(
+            token: "t", accountID: nil, expiresAt: nil, plan: nil, email: nil), now: usageEpoch))
+        #expect(parsed.plan == "Education")
+        #expect(parsed.windows.last == UsageWindow(label: "30d", usedPercent: 100, resetsAt: nil))
+    }
+
     @Test func noSpendControlAddsNoWindow() throws {
         let body = #"{"rate_limit": {"primary_window": {"used_percent": 5, "limit_window_seconds": 18000}}, "spend_control": {"reached": false, "individual_limit": null}}"#
         let parsed = try #require(CodexUsageAPI.parse(Data(body.utf8), credential: UsageCredential(
