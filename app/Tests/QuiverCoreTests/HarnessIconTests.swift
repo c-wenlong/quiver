@@ -1,0 +1,89 @@
+import AppKit
+import Foundation
+import Testing
+@testable import QuiverCore
+
+@Suite struct HarnessIconTests {
+    /// The harnesses TokenTracker ships a logo for; the rest come from
+    /// LobeHub and the products' own sites through import-harness-icons.py.
+    let fromTokenTracker = ["claude", "codex", "gemini", "copilot", "cursor", "grok", "kiro", "devin",
+                            "opencode", "kilo", "pi"]
+    /// Shown in their brand colours, as TokenTracker does.
+    let inColour = ["claude", "codex", "gemini", "opencode"]
+
+    func icons() throws -> [(id: String, icon: HarnessIcons.Icon)] {
+        try HarnessIcons.available.map { ($0, try #require(HarnessIcons.icon(for: $0), "\($0)")) }
+    }
+
+    @Test func everyIconDrawsAMarkWithoutAPlate() throws {
+        for (id, icon) in try icons() {
+            let image = try #require(NSImage(contentsOf: icon.url), "\(id) does not load")
+            let bitmap = try #require(render(image))
+            // CoreSVG can load a file and draw nothing (it gives up on compact
+            // path data), so the mark has to cover a fair share of its box.
+            #expect(coverage(bitmap) > 0.08, "\(id) draws almost nothing")
+            // A leftover background plate paints all four corners; a mark
+            // may reach one or two (goose's wings do).
+            let corners = [(2, 2), (61, 2), (2, 61), (61, 61)]
+                .filter { (bitmap.colorAt(x: $0.0, y: $0.1)?.alphaComponent ?? 0) > 0.5 }
+            #expect(corners.count < 4, "\(id) sits on a background plate")
+        }
+        #expect(Set(fromTokenTracker).isSubset(of: Set(HarnessIcons.available)))
+    }
+
+    @Test func brandColoursAreKeptWhereTokenTrackerShowsThem() throws {
+        for id in inColour {
+            #expect(HarnessIcons.icon(for: id)?.isColor == true, "\(id)")
+        }
+        #expect(HarnessIcons.icon(for: "cursor")?.isColor == false)
+    }
+
+    @Test func monoIconsAreSingleColourAndAllAreInert() throws {
+        for (id, icon) in try icons() {
+            let text = try String(contentsOf: icon.url, encoding: .utf8)
+            if !icon.isColor {
+                let paints = Set(text.matches(of: /(?:fill|stroke)="([^"]+)"/).map { String($0.1) })
+                #expect(paints.isSubset(of: ["#000", "none"]), "\(id) paints \(paints)")
+            }
+            #expect(text.range(of: #"<script|\son[a-z]+=|href="[^#]|<foreignObject|<image"#, options: .regularExpression) == nil,
+                    "\(id)")
+        }
+    }
+
+    @Test func aliasesAndUnknownHarnesses() {
+        #expect(HarnessIcons.icon(for: "claude-code") == HarnessIcons.icon(for: "claude"))
+        #expect(HarnessIcons.icon(for: "Claude") == HarnessIcons.icon(for: "claude"))
+        #expect(HarnessIcons.icon(for: "no-such-harness") == nil)
+    }
+
+    @Test func provenanceIsRecordedForEveryIcon() throws {
+        let url = try #require(CoreResources.url("harness-icons", "tsv"))
+        let rows = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").dropFirst()
+            .map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
+        #expect(Set(rows.map { $0[0] }) == Set(HarnessIcons.available))
+        for row in rows {
+            #expect((row[1] == "color") == (HarnessIcons.icon(for: row[0])?.isColor ?? false), "\(row[0])")
+        }
+    }
+
+    func render(_ image: NSImage) -> NSBitmapImageRep? {
+        let side = 64
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
+    }
+
+    /// Share of the render that is painted.
+    func coverage(_ rep: NSBitmapImageRep) -> Double {
+        var painted = 0
+        for x in 0..<rep.pixelsWide {
+            for y in 0..<rep.pixelsHigh where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5 { painted += 1 }
+        }
+        return Double(painted) / Double(rep.pixelsWide * rep.pixelsHigh)
+    }
+}

@@ -287,7 +287,8 @@ private struct SpendDonut: View {
                     }
                     ForEach(parts, id: \.harness) { part in
                         HStack(spacing: 6) {
-                            RoundedRectangle(cornerRadius: 2).fill(Theme.harness(part.harness)).frame(width: 8, height: 8)
+                            ChartSwatch(harness: part.harness, size: 6)
+                            HarnessIcon(harness: part.harness, size: 12)
                             Text(UsageFormat.harness(part.harness)).font(.caption)
                             Spacer()
                             if part.totals.unpricedTokens > 0 {
