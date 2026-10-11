@@ -28,7 +28,7 @@ private struct SessionsContent: View {
         Page(title: "Sessions", subtitle: "Local sessions, usage and estimated cost.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
-                    await model.load()
+                    await model.load(for: app.swePath)
                     // A scan reloads the figures through completedScans below.
                     await app.overview?.load(scan: true)
                 }
@@ -54,7 +54,8 @@ private struct SessionsContent: View {
             }
             list
         }
-        .task(id: app.swePath) { await model.load() }
+        // Opening the page again within a minute shows the same list.
+        .task(id: app.swePath) { await model.loadIfStale(for: app.swePath) }
         // New usage from a scan, without listing the sessions again.
         .task(id: app.overview?.completedScans) { await model.refreshUsage() }
         .sheet(item: $detail) { row in

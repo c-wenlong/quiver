@@ -102,7 +102,8 @@ final class AppModel {
                                      refreshPricing: { await pricing.refreshIfStale() })
             overviewError = nil
             sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
-                                     defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path])
+                                     defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
+                                     snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")))
         } catch {
             overview = nil
             sessions = nil
@@ -139,6 +140,13 @@ final class AppModel {
         if let overview { refreshing = Task { await overview.keepFresh() } }
         watchers = [
             Task { await accounts.keepFresh() },
+            // The last session list shows at once; swe lists again behind it,
+            // so the page is usually ready before it is opened.
+            Task { [weak self] in
+                guard let sessions = self?.sessions else { return }
+                await sessions.restore()
+                await sessions.loadIfStale(for: self?.swePath ?? "")
+            },
             Task { [weak self] in
                 while !Task.isCancelled {
                     await self?.others.load()
