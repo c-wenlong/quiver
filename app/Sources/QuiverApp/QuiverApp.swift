@@ -21,6 +21,11 @@ struct QuiverApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: StatusItemController?
 
+    /// Before launch finishes, so a hidden Dock icon never flashes in.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if !AppModel.shared.dockIconShown { NSApp.setActivationPolicy(.accessory) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         FocusVisibility.start()

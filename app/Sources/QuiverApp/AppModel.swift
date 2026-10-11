@@ -38,7 +38,10 @@ final class AppModel {
 
     /// What the menu bar item shows, and whether it's there at all.
     var menuBar = MenuBarDisplay(defaults: .standard) {
-        didSet { menuBar.save(to: .standard) }
+        didSet {
+            menuBar.save(to: .standard)
+            if menuBar.isVisible != oldValue.isVisible { applyDockPresence() }
+        }
     }
 
     /// What the menu bar popup lists.
@@ -67,6 +70,30 @@ final class AppModel {
             return
         }
         NSApp.applicationIconImage = NSImage(contentsOf: url)
+    }
+
+    /// On by default. Off makes Quiver a menu bar app: no Dock icon and no
+    /// place in the app switcher, unless the menu bar item is hidden too.
+    var showsInDock: Bool {
+        didSet {
+            UserDefaults.standard.set(showsInDock, forKey: DockPresence.defaultsKey)
+            applyDockPresence()
+        }
+    }
+
+    /// Whether the Dock icon actually shows, after the menu bar item rule.
+    var dockIconShown: Bool {
+        DockPresence.showsIcon(requested: showsInDock, menuBarVisible: menuBar.isVisible)
+    }
+
+    func applyDockPresence() {
+        let policy: NSApplication.ActivationPolicy = dockIconShown ? .regular : .accessory
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+        // A new Dock icon starts from the bundle's; the switch also sends
+        // the open window behind other apps, so bring it back.
+        if policy == .regular { applyAppIcon() }
+        NSApp.activate()
     }
 
     let accounts: AccountsModel
@@ -116,6 +143,8 @@ final class AppModel {
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
         appIcon = AppIconStyle(saved: UserDefaults.standard.string(forKey: "appIcon"))
+        showsInDock = UserDefaults.standard.object(forKey: DockPresence.defaultsKey) == nil
+            || UserDefaults.standard.bool(forKey: DockPresence.defaultsKey)
 
         let keysPath = UserDefaults.standard.string(forKey: "apiKeysPath") ?? ""
         apiKeysPath = keysPath
