@@ -229,6 +229,9 @@ func reading(
         let back = LimitAlert(kind: .reset, reading: after)
         #expect(back.title == "Claude: Work: 7d limit has reset")
         #expect(back.body(now: now) == "Now at 3%.")
+        var grok = reading("cursor", "grok_bot", used: 95)
+        grok.title = "Cursor: Cortex"
+        #expect(LimitAlert(kind: .crossed, reading: grok).title == "Cursor: Cortex is at 95% of its Grok Bot limit")
     }
 }
 

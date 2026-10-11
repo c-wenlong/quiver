@@ -68,13 +68,14 @@ public enum UsageFormat {
     }
 
     /// A limit window's name as the harness's own CLI prints it: Cursor's
-    /// "included", "auto" and "api" read "Included", "Auto" and "API";
-    /// "5h" or "7d Fable" stay as they are.
+    /// "included", "auto", "api" and "grok_bot" read "Included", "Auto",
+    /// "API" and "Grok Bot"; "5h" or "7d Fable" stay as they are.
     public static func window(_ label: String) -> String {
         switch label {
         case "included": "Included"
         case "auto": "Auto"
         case "api": "API"
+        case "grok_bot": "Grok Bot"
         default: label
         }
     }

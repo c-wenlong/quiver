@@ -107,7 +107,7 @@ private let older = #"""
     }
 
     @Test func cursorBucketsReadLikeTheCli() {
-        #expect(["included", "auto", "api", "5h", "7d Fable"].map(UsageFormat.window)
-                == ["Included", "Auto", "API", "5h", "7d Fable"])
+        #expect(["included", "auto", "api", "grok_bot", "5h", "7d Fable"].map(UsageFormat.window)
+                == ["Included", "Auto", "API", "Grok Bot", "5h", "7d Fable"])
     }
 }
