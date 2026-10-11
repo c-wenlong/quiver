@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe skills --json` listed a hub plugin's skills from Claude's stale
+  cache.** Claude Code runs a plugin from a directory marketplace (every
+  one in `~/.quiver/plugins`) straight from the marketplace's folder, so a
+  skill added to the source loads at once while the copy under
+  `~/.claude/plugins/cache` keeps the skills it had at install time. The
+  listing read that copy, so a new skill was missing from it and from the
+  app's Skills page, and a deleted one lingered. Such a plugin's skills are
+  now read from `<marketplace folder>/<source path in marketplace.json>/skills`,
+  and its cached versions are skipped, so no skill appears twice. Plugins
+  Claude fetched (github, git, a URL) still run from the cache and are
+  listed from there.
 - **A broken config file no longer corrupts `--json` output.** When a
   `--json` command hit an unreadable config (a malformed `harness.json`, say),
   the error went to stdout, where the app expects only JSON. It now goes to
