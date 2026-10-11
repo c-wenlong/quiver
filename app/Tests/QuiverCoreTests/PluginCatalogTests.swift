@@ -451,6 +451,34 @@ func decodedInventory() throws -> [Skill] {
         #expect(index.sources[0].marketplaces[0].plugins[0].harnesses == ["claude", "codex"])
     }
 
+    @Test func aCopyInstalledWhereTheMarketplaceIsNoLongerRegisteredKeepsItsControls() {
+        let catalog = PluginCatalog(harnesses: ["claude", "codex"], actions: ["claude", "codex"], marketplaces: [
+            // Claude Code still registers it; Codex dropped it, keeping the install.
+            PluginMarketplace(name: "split", harnesses: ["claude": .init(sourceType: "github")], plugins: [
+                CatalogPlugin(name: "p", marketplace: "split", harnesses: [
+                    "claude": PluginHarnessState(available: true, installed: false),
+                    "codex": PluginHarnessState(available: false, installed: true, enabled: true)]),
+                // Only the Codex copy is left of this one.
+                CatalogPlugin(name: "q", marketplace: "split", harnesses: [
+                    "claude": PluginHarnessState(available: false, installed: false),
+                    "codex": PluginHarnessState(available: false, installed: true, enabled: false)]),
+            ]),
+        ])
+        let index = PluginExploreIndex(catalog: catalog, skills: [])
+        #expect(tree(index.sources) == [
+            "claude": ["claude/split": ["p@split"]],
+            "unregistered": ["unregistered/split": ["p@split", "q@split"]],
+        ])
+        let orphan = index.sources[1].marketplaces[0]
+        #expect(orphan.plugins.map(\.harnesses) == [["codex"], ["codex"]])
+        #expect(orphan.installed == 2)
+        // The Codex copy can still be turned off or removed from here.
+        #expect(catalog.actions(for: orphan.plugins[0].row.plugin, in: "codex").map(\.verb) == [.disable, .uninstall])
+        #expect(index.sources(harness: "codex").flatMap(\.marketplaces).flatMap(\.plugins).map(\.id)
+                == ["unregistered/p@split", "unregistered/q@split"])
+        #expect(PluginExploreIndex.distinctPlugins(in: index.sources) == index.total)
+    }
+
     @Test func filtersByHarnessAndText() async throws {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))

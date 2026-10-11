@@ -21,8 +21,8 @@ public struct ExploreSource: Sendable, Equatable, Identifiable {
         case local
         /// Marketplaces this harness registers, the hub's aside.
         case harness(String)
-        /// Marketplaces no harness registers, kept for what was installed
-        /// from them.
+        /// What was installed from a marketplace the installing harness no
+        /// longer registers, or that no harness registers at all.
         case unregistered
 
         /// Stable across launches: what the open state is kept under.
@@ -267,12 +267,24 @@ public struct PluginExploreIndex: Sendable, Equatable {
             } else {
                 let registered = order.filter { market.harnesses[$0] != nil }
                 // Under each harness, the plugins that harness lists or has.
-                // One no harness lists goes under the first, so none is lost.
+                // A copy installed in a harness that no longer registers the
+                // marketplace goes under Not registered with that harness's
+                // chip, so it can still be disabled or uninstalled. One no
+                // harness lists or has goes under the first, so none is lost.
                 var placed: [String: [CatalogPlugin]] = [:]
+                var orphans: [ExplorePlugin] = []
                 for plugin in market.plugins {
                     var homes = registered.filter { (plugin.harnesses[$0]?.status ?? .absent) != .absent }
-                    if homes.isEmpty, let first = registered.first { homes = [first] }
+                    let left = order.filter { market.harnesses[$0] == nil && (plugin.harnesses[$0]?.status.isInstalled ?? false) }
+                    if !left.isEmpty, let row = rows[plugin.ref] {
+                        orphans.append(ExplorePlugin(source: "unregistered", row: row, harnesses: left))
+                    }
+                    if homes.isEmpty, left.isEmpty, let first = registered.first { homes = [first] }
                     for harness in homes { placed[harness, default: []].append(plugin) }
+                }
+                if !orphans.isEmpty {
+                    unregistered.append(ExploreMarketplace(id: "unregistered/" + market.name, name: market.name,
+                                                           tag: nil, plugins: orphans))
                 }
                 for harness in registered {
                     let plugins = (placed[harness] ?? []).compactMap { plugin in
@@ -300,7 +312,7 @@ public struct PluginExploreIndex: Sendable, Equatable {
         }
         if !unregistered.isEmpty {
             sources.append(ExploreSource(kind: .unregistered, title: "Not registered",
-                                         note: "Installed from a marketplace no harness lists any more",
+                                         note: "Installed from a marketplace its harness no longer lists",
                                          marketplaces: unregistered))
         }
         return sources
