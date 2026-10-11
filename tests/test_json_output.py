@@ -143,6 +143,184 @@ class ListJsonTest(unittest.TestCase):
         self.assertEqual(rows["claude"]["sessions_100d"], 1)
 
 
+class ListNotesJsonTest(unittest.TestCase):
+    """The app's edit sheet prefills from `swe list --json`, notes included."""
+
+    def test_notes_is_null_when_unset_and_the_text_when_set(self):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, dict(
+            REGISTRY, codex=dict(REGISTRY["codex"], notes="  daily driver ")))
+        rows = {row["name"]: row for row in
+                decode(run_swe(home, "list", "--json"))["data"]["harnesses"]}
+        self.assertIn("notes", rows["claude"])
+        self.assertIsNone(rows["claude"]["notes"])
+        self.assertEqual(rows["codex"]["notes"], "  daily driver ")
+
+    def test_an_empty_notes_string_reads_as_null(self):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, {"claude": dict(REGISTRY["claude"], notes="")})
+        row = decode(run_swe(home, "list", "--json"))["data"]["harnesses"][0]
+        self.assertIsNone(row["notes"])
+
+
+class EditJsonTest(unittest.TestCase):
+    """`swe edit <name> --field=value --json`: the app's edit sheet."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        write_registry(self.home, {
+            "claude": {
+                "command": "claude", "description": "Anthropic CLI",
+                "aliases": ["cc"], "tags": ["vendor", "coding"],
+                "version": "1.2.3", "notes": "daily driver",
+                "state": "starred", "pin": 1,
+            },
+            "codex": {
+                "command": "codex", "description": "OpenAI CLI",
+                "aliases": ["cx"], "tags": ["vendor"],
+            },
+        })
+
+    def edit(self, *args):
+        return run_swe(self.home, "edit", *args, "--json")
+
+    def listed(self, name):
+        rows = decode(run_swe(self.home, "list", "--scope=all", "--json")
+                      )["data"]["harnesses"]
+        return next(row for row in rows if row["name"] == name)
+
+    def saved(self, name):
+        path = self.home / ".quiver" / "config" / "harness.json"
+        return json.loads(path.read_text())[name]
+
+    def assertRefused(self, result, needle=None):
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertNotEqual(result.stderr.strip(), "")
+        if needle:
+            self.assertIn(needle, result.stderr)
+
+    def test_multi_field_edit_reports_name_changes_and_harness(self):
+        result = self.edit("claude", "--description=Claude Code",
+                           "--tags=a,b", "--version=2.0", "--notes=hello")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        doc = decode(result)
+        self.assertEqual(doc["schema"], 1)
+        data = doc["data"]
+        self.assertEqual(set(data), {"name", "changes", "harness"})
+        self.assertEqual(data["name"], "claude")
+        self.assertEqual(data["changes"],
+                         ["description", "tags", "version", "notes"])
+        harness = data["harness"]
+        self.assertEqual(harness["description"], "Claude Code")
+        self.assertEqual(harness["tags"], ["a", "b"])
+        self.assertEqual(harness["version"], "2.0")
+        self.assertEqual(harness["notes"], "hello")
+        # Untouched fields survive, state included.
+        self.assertEqual(harness["aliases"], ["cc"])
+        self.assertEqual(harness["command"], "claude")
+        self.assertEqual(harness["state"], "starred")
+
+    def test_harness_is_exactly_the_list_row(self):
+        data = decode(self.edit("claude", "--description=Changed"))["data"]
+        self.assertEqual(data["harness"], self.listed("claude"))
+
+    def test_the_edit_is_persisted(self):
+        self.edit("claude", "--aliases=cc,claude-code", "--command=claude2")
+        saved = self.saved("claude")
+        self.assertEqual(saved["aliases"], ["cc", "claude-code"])
+        self.assertEqual(saved["command"], "claude2")
+        self.assertEqual(saved["state"], "starred")
+
+    def test_set_form_works(self):
+        data = decode(self.edit("claude", "--set=tags=x,y,notes=hi"))["data"]
+        self.assertEqual(data["changes"], ["tags", "notes"])
+        self.assertEqual(data["harness"]["tags"], ["x", "y"])
+        self.assertEqual(data["harness"]["notes"], "hi")
+
+    def test_json_flag_may_come_first(self):
+        result = run_swe(self.home, "edit", "--json", "claude",
+                         "--description=Early")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(decode(result)["data"]["harness"]["description"],
+                         "Early")
+
+    def test_empty_version_clears_to_null(self):
+        data = decode(self.edit("claude", "--version="))["data"]
+        self.assertEqual(data["changes"], ["version"])
+        self.assertIsNone(data["harness"]["version"])
+        self.assertNotIn("version", self.saved("claude"))
+
+    def test_empty_notes_clears_to_null(self):
+        data = decode(self.edit("claude", "--notes="))["data"]
+        self.assertEqual(data["changes"], ["notes"])
+        self.assertIsNone(data["harness"]["notes"])
+        self.assertIsNone(self.listed("claude")["notes"])
+
+    def test_empty_description_clears_to_empty_string(self):
+        data = decode(self.edit("claude", "--description="))["data"]
+        self.assertEqual(data["changes"], ["description"])
+        self.assertEqual(data["harness"]["description"], "")
+
+    def test_empty_aliases_and_tags_clear_to_empty_lists(self):
+        data = decode(self.edit("claude", "--aliases=", "--tags="))["data"]
+        self.assertEqual(data["changes"], ["aliases", "tags"])
+        self.assertEqual(data["harness"]["aliases"], [])
+        self.assertEqual(data["harness"]["tags"], [])
+        self.assertEqual(self.listed("claude")["aliases"], [])
+
+    def test_editing_by_alias_returns_the_canonical_name(self):
+        data = decode(self.edit("cc", "--description=Via alias"))["data"]
+        self.assertEqual(data["name"], "claude")
+        self.assertEqual(data["harness"]["name"], "claude")
+        self.assertEqual(self.saved("claude")["description"], "Via alias")
+
+    def test_a_no_op_edit_succeeds_with_no_changes(self):
+        data = decode(self.edit("claude", "--description=Anthropic CLI",
+                                "--tags=vendor,coding"))["data"]
+        self.assertEqual(data["changes"], [])
+        self.assertEqual(data["harness"]["name"], "claude")
+
+    def test_unknown_harness_is_refused(self):
+        result = self.edit("nope", "--description=x")
+        self.assertRefused(result, "nope")
+
+    def test_alias_collision_is_refused_and_nothing_is_written(self):
+        before = self.saved("claude")
+        result = self.edit("claude", "--aliases=cx", "--description=changed")
+        self.assertRefused(result, "cx")
+        self.assertEqual(self.saved("claude"), before)
+
+    def test_empty_command_is_refused(self):
+        result = self.edit("claude", "--command=")
+        self.assertRefused(result, "command")
+        self.assertEqual(self.saved("claude")["command"], "claude")
+
+    def test_unknown_flag_is_refused(self):
+        self.assertRefused(self.edit("claude", "--bogus=1"), "--bogus")
+
+    def test_a_valueless_field_flag_is_refused(self):
+        self.assertRefused(self.edit("claude", "--description"), "--description")
+
+    def test_no_field_flags_is_refused_and_never_prompts(self):
+        before = self.saved("claude")
+        result = self.edit("claude")
+        self.assertRefused(result, "--json")
+        self.assertEqual(self.saved("claude"), before)
+
+    def test_no_arguments_is_refused(self):
+        self.assertRefused(run_swe(self.home, "edit", "--json"))
+
+    def test_extra_positional_is_refused(self):
+        self.assertRefused(self.edit("claude", "codex", "--notes=x"))
+
+    def test_without_json_the_output_is_unchanged(self):
+        result = run_swe(self.home, "edit", "claude", "--description=Plain")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Updated 'claude'", result.stdout)
+        self.assertNotIn('"schema"', result.stdout)
+
+
 def write_rate_cache(home: Path, readings: dict, taken_at: float) -> None:
     """A fresh rate-limit cache, so `--usage` never reaches the network."""
     cache = home / ".quiver" / "cache"

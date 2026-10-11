@@ -103,10 +103,17 @@ HELP = {
   {c('cyan', 'swe edit <name> --version=<ver>')}      Set version string
   {c('cyan', 'swe edit <name> --notes="..."')}        Set notes
   {c('cyan', 'swe edit <name> --set=field=value')}    Compact multi-set form
+  {c('cyan', 'swe edit <name> --notes= --json')}      Apply the flags, print the result as JSON
 
   Editable fields: command, description, aliases, tags, version, notes.
   With no field flags, opens an interactive prompt loop (save / quit).
+  An empty value clears a field: --version= and --notes= become unset,
+  --description= becomes "", --aliases= and --tags= become [].
   Alias collisions with other tools are rejected.
+  With --json it never prompts: no field flag is an error, and every
+  refusal (unknown harness, alias collision, empty command, unknown flag)
+  prints a message on stderr, nothing on stdout, and exits 1. Success prints
+  {{"name", "changes", "harness"}}, where harness is the swe list --json row.
 
 {c('bold', 'Examples')}
   swe edit mastracode

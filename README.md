@@ -213,7 +213,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe list edit [--reset]` / `swe list legend` | | Choose which columns show; explain the link glyphs |
 | `swe info <name\|alias>` | | Show command, version, path, tags, aliases |
 | `swe add <name> <cmd> …` | | Register or update a tool |
-| `swe edit <name> [--field val …]` | | Edit registry fields (flags or interactive) |
+| `swe edit <name> [--field=val …] [--json]` | | Edit registry fields (flags or interactive); `--json` applies the flags and prints the updated harness, never prompts |
 | `swe remove <name\|alias>` | `rm` | Remove from registry (does not uninstall) |
 | `swe harness <subcommand> …` | `hs` | Every harness verb: `list`, `edit`, `star`, `archive`, `discover` |
 | `swe harness star <name\|alias>` | `hs star` | Toggle a harness favourite (pins it to top of `swe list`) |

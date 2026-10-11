@@ -564,6 +564,7 @@ def _harness_json(name, info, starred, archived, counts, rate) -> dict:
         "command": info.get("command") or name,
         "description": info.get("description") or "",
         "version": info.get("version") or None,
+        "notes": info.get("notes") or None,
         "aliases": [a for a in info.get("aliases", []) if a != name],
         "tags": list(info.get("tags", [])),
         "state": state,
@@ -2052,37 +2053,58 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
             print(c("green", f"  set {choice} = {normalized if normalized not in (None, '') else '—'}"))
 
 
+def _edit_harness_json(name: str, info: dict) -> dict:
+    """The ``swe list --json`` row for one harness, as ``swe edit --json`` echoes it."""
+    from quiver.harness.archive import load_archive
+
+    return _harness_json(
+        name, info, set(load_stars()), load_archive(), _session_counts(100), None
+    )
+
+
 def cmd_edit(args):
     """Edit harness registry fields (flags or interactive)."""
+    args, json_view = take_json_flag(list(args or []))
+    # Under --json a refusal must leave stdout empty: the app decodes it whole.
+    err = sys.stderr if json_view else sys.stdout
+
     if not args:
-        print(c("red", "Usage: swe edit <name|alias> [--field=value ...]"))
-        print(c("dim", "  Interactive: swe edit mastracode"))
-        print(c("dim", "  Flags:       swe edit mastracode --description='...' --aliases=mc"))
+        print(c("red", "Usage: swe edit <name|alias> [--field=value ...]"), file=err)
+        if not json_view:
+            print(c("dim", "  Interactive: swe edit mastracode"))
+            print(c("dim", "  Flags:       swe edit mastracode --description='...' --aliases=mc"))
         return 1
 
     try:
         updates, rest = _parse_edit_flags(args)
     except ValueError as exc:
-        print(c("red", f"  {exc}"))
+        print(c("red", f"  {exc}"), file=err)
         return 1
 
     if not rest:
-        print(c("red", "Usage: swe edit <name|alias> [--field=value ...]"))
+        print(c("red", "Usage: swe edit <name|alias> [--field=value ...]"), file=err)
         return 1
 
     key = rest[0]
     if rest[1:]:
-        print(c("red", f"Unexpected arguments: {' '.join(rest[1:])}"))
+        print(c("red", f"Unexpected arguments: {' '.join(rest[1:])}"), file=err)
+        return 1
+
+    if json_view and not updates:
+        # The interactive editor reads the terminal; the app has none.
+        print(c("red", "  swe edit --json needs at least one field flag "
+                       f"({', '.join('--' + f for f in EDITABLE_FIELDS)})"), file=err)
         return 1
 
     tools = load_registry()
     name = resolve(tools, key)
     if not name:
-        print(c("red", f"  Tool '{key}' not found. Try 'swe list'."))
+        print(c("red", f"  Tool '{key}' not found. Try 'swe list'."), file=err)
         return 1
 
     info = tools[name]
-    _show_edit_fields(name, info)
+    if not json_view:
+        _show_edit_fields(name, info)
 
     if not updates:
         interactive = _edit_interactive(name, info, tools)
@@ -2097,15 +2119,23 @@ def cmd_edit(args):
     try:
         new_info, changes = _apply_edits(tools, name, updates)
     except ValueError as exc:
-        print(c("red", f"  {exc}"))
+        print(c("red", f"  {exc}"), file=err)
         return 1
 
     if not changes:
+        if json_view:
+            return emit({"name": name, "changes": [],
+                         "harness": _edit_harness_json(name, info)})
         print(c("dim", "  No changes."))
         return 0
 
     tools[name] = new_info
     save_registry(tools)
+    if json_view:
+        # Each change line reads "field: old -> new".
+        return emit({"name": name,
+                     "changes": [line.split(":", 1)[0] for line in changes],
+                     "harness": _edit_harness_json(name, new_info)})
     print(f"  {c('green', '✓')} Updated '{name}'")
     for line in changes:
         print(c("dim", f"    · {line}"))

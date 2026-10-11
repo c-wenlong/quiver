@@ -218,6 +218,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--tags=", "Replace tags"),
         ("--version=", "Recorded version"),
         ("--notes=", "Free-form notes"),
+        ("--json", "Apply the flags and print the result as JSON (never prompts)"),
     ],
     "install": [
         ("--package=", "Package spec for the installer"),

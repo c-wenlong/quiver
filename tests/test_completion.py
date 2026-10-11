@@ -171,6 +171,13 @@ class CompletionEngineTest(unittest.TestCase):
         for flag in ("--all", "--only=", "--except=", "--prune", "--dry-run"):
             self.assertIn(flag, flags)
 
+    def test_edit_offers_json_beside_the_field_flags(self):
+        from quiver.completion import get_completions
+
+        flags = [c for c, _ in get_completions(["edit", "claude", "--"])]
+        for flag in ("--description=", "--notes=", "--json"):
+            self.assertIn(flag, flags)
+
     def test_find_and_skills_subcommands(self):
         from quiver.completion import get_completions
 
