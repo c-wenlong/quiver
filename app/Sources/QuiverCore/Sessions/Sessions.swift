@@ -2,8 +2,8 @@ import Foundation
 import Observation
 
 /// One session as `swe session --json` lists it.
-public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
-    public struct Resume: Decodable, Sendable, Equatable {
+public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
+    public struct Resume: Codable, Sendable, Equatable {
         public var argv: [String]
         public var cwd: String?
         public init(argv: [String], cwd: String?) {
@@ -56,6 +56,20 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
         // not sink the whole list, so it gets a stable id of its own.
         id = try c.decodeIfPresent(String.self, forKey: .id)
             ?? "\(harness)|\(cwd ?? "")|\(Int(lastActiveAt.timeIntervalSince1970))"
+    }
+
+    /// The same shape it decodes from, so a saved list reads back as is.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(harness, forKey: .harness)
+        try c.encode(agent, forKey: .agent)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(titleSource, forKey: .titleSource)
+        try c.encode(lastActiveAt.timeIntervalSince1970, forKey: .lastActiveAt)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encodeIfPresent(resume, forKey: .resume)
     }
 
     public var project: String? { Self.project(of: cwd) }
@@ -213,6 +227,16 @@ public final class SessionsModel {
     private let now: () -> Date
     private let calendar: Calendar
     private var listed: [SessionInfo] = []
+    private let snapshots: SessionSnapshotStoring?
+    private let maxAge: TimeInterval
+    private let listTimeout: Duration
+    /// When the list on show was listed and by which swe; nil until one is.
+    private var listedAt: Date?
+    private var listedFrom: String?
+    /// The listing in flight and the swe it asks. It runs in a task of its
+    /// own, so a page that closes doesn't cancel it, and a page that
+    /// reopens waits for it instead of starting another.
+    private var inflight: (source: String, task: Task<Void, Never>)?
     /// Only the newest list load writes the list.
     private var generation = 0
     /// Only the newest usage read (from a load or a refresh) writes usage.
@@ -223,24 +247,71 @@ public final class SessionsModel {
     ///     ledger's sessions from any other home (Quiver's extra accounts)
     ///     are added from the ledger, since swe never lists them.
     ///   - limit: the most sessions to ask swe for.
+    ///   - snapshots: where the last list is kept between launches.
+    ///   - maxAge: how long a list counts as fresh, so opening the page again
+    ///     soon after doesn't ask swe again.
+    ///   - listTimeout: how long swe may take before the listing is stopped
+    ///     and counts as failed, so a hung swe can't block the next try.
     public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
-                limit: Int = 100_000, now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
+                limit: Int = 100_000, snapshots: SessionSnapshotStoring? = nil, maxAge: TimeInterval = 60,
+                listTimeout: Duration = .seconds(60),
+                now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.source = source
         self.ledger = ledger
         self.defaultHomes = defaultHomes
         self.limit = limit
+        self.snapshots = snapshots
+        self.maxAge = maxAge
+        self.listTimeout = listTimeout
         self.now = now
         self.calendar = calendar
     }
 
-    public func load() async {
+    /// Shows the last saved list until swe answers. Does nothing once a list
+    /// has loaded, so a slow read never replaces a newer one.
+    public func restore() async {
+        guard listedAt == nil, let snapshot = await snapshots?.load(), listedAt == nil else { return }
+        let usage = Self.keyed(snapshot.usage)
+        listed = snapshot.sessions
+        latestUsage = usage
+        rows = join(listed, usage)
+        failures = snapshot.failures
+        isCapped = snapshot.isCapped
+        listedAt = snapshot.savedAt
+        listedFrom = snapshot.source
+    }
+
+    /// Lists again unless this swe's list is under `maxAge` old. Joins a
+    /// listing already in flight from the same swe rather than starting
+    /// another. Refresh calls `load` instead, which always lists.
+    public func loadIfStale(for sweSource: String) async {
+        if let inflight, inflight.source == sweSource { return await inflight.task.value }
+        if error == nil, listedFrom == sweSource, let listedAt, now().timeIntervalSince(listedAt) < maxAge { return }
+        await load(for: sweSource)
+    }
+
+    /// Lists the sessions from swe and joins their usage.
+    /// - Parameter sweSource: the swe asked, as set in Settings; nil keeps the last one.
+    public func load(for sweSource: String? = nil) async {
         generation += 1
         let mine = generation
+        let key = sweSource ?? listedFrom ?? ""
         isLoading = true
-        defer { if mine == generation { isLoading = false } }
+        let task = Task { await self.list(from: key, generation: mine) }
+        inflight = (key, task)
+        await task.value
+    }
+
+    private func list(from key: String, generation mine: Int) async {
+        defer {
+            if mine == generation {
+                isLoading = false
+                inflight = nil
+            }
+        }
         let list: SessionList
         do {
-            list = try await source.sessions(days: Self.days, limit: limit)
+            list = try await Self.listing(from: source, limit: limit, within: listTimeout)
         } catch is CancellationError {
             return
         } catch {
@@ -259,6 +330,10 @@ public final class SessionsModel {
         rows = join(listed, joinedUsage)
         failures = list.failures
         error = nil
+        listedAt = now()
+        listedFrom = key
+        isLoading = false
+        await save()
     }
 
     /// Re-reads tokens and spend from the ledger after a scan, keeping the list.
@@ -269,6 +344,38 @@ public final class SessionsModel {
         guard mine == usageGeneration else { return }
         latestUsage = usage
         rows = join(listed, usage)
+        await save()
+    }
+
+    struct ListingTimedOut: LocalizedError {
+        var timeout: Duration
+        var errorDescription: String? {
+            "swe didn't list the sessions within \(timeout.components.seconds) seconds. Refresh to try again."
+        }
+    }
+
+    /// swe's list, or `ListingTimedOut` once `timeout` passes. Losing the race
+    /// cancels the listing, which stops the swe process.
+    nonisolated static func listing(from source: SessionListing, limit: Int,
+                                    within timeout: Duration) async throws -> SessionList {
+        try await withThrowingTaskGroup(of: SessionList.self) { group in
+            group.addTask { try await source.sessions(days: days, limit: limit) }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw ListingTimedOut(timeout: timeout)
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw CancellationError() }
+            return first
+        }
+    }
+
+    /// Writes what is on show for the next launch, once something was listed.
+    private func save() async {
+        guard let snapshots, let listedAt, let listedFrom else { return }
+        await snapshots.save(SessionSnapshot(
+            source: listedFrom, savedAt: listedAt, sessions: listed, failures: failures, isCapped: isCapped,
+            usage: Array((latestUsage ?? [:]).values)))
     }
 
     private var latestUsage: [UsageKey: SessionUsage]?
@@ -283,7 +390,11 @@ public final class SessionsModel {
     /// Every session's usage over its whole history: a session resumed
     /// today may have started months ago.
     private func usageBySession() async -> [UsageKey: SessionUsage] {
-        let usage = await ledger.bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0), end: now()))
+        Self.keyed(await ledger.bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0), end: now())))
+    }
+
+    /// One entry per harness, account and session, merging repeats.
+    static func keyed(_ usage: [SessionUsage]) -> [UsageKey: SessionUsage] {
         var byKey: [UsageKey: SessionUsage] = [:]
         for row in usage {
             let key = UsageKey(harness: row.harness, account: row.accountHome, session: row.sessionId)

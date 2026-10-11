@@ -36,7 +36,7 @@ public struct LedgerRoots: Sendable, Equatable {
 }
 
 /// Token and dollar totals for a set of events.
-public struct UsageTotals: Sendable, Equatable {
+public struct UsageTotals: Sendable, Equatable, Codable {
     public var inputTokens = 0
     public var outputTokens = 0
     public var cacheReadTokens = 0
@@ -80,7 +80,7 @@ public struct DailyUsage: Sendable, Equatable {
 }
 
 /// Usage of one session inside a date range.
-public struct SessionUsage: Sendable, Equatable {
+public struct SessionUsage: Sendable, Equatable, Codable {
     public var sessionId: String
     public var harness: String
     public var accountHome: String
