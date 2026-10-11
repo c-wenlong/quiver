@@ -26,8 +26,7 @@ struct ServiceStatusPage: View {
             ForEach(model.groups, id: \.group) { entry in
                 VStack(alignment: .leading, spacing: 12) {
                     Text(entry.group.title).font(Theme.cardTitle).foregroundStyle(Theme.textSecondary)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: Theme.gutter, alignment: .top)],
-                              alignment: .leading, spacing: Theme.gutter) {
+                    EqualRowGrid(minimumColumnWidth: 360, spacing: Theme.gutter) {
                         ForEach(entry.statuses) { status in
                             ServiceCard(status: status, isLoading: model.isLoading)
                         }
@@ -42,8 +41,54 @@ struct ServiceStatusPage: View {
     }
 }
 
+/// Columns of at least `minimumColumnWidth`, as many as fit, with every
+/// card in a row as tall as the tallest, so a row's bottoms line up.
+private struct EqualRowGrid: Layout {
+    var minimumColumnWidth: CGFloat
+    var spacing: CGFloat
+
+    private func columns(for width: CGFloat) -> Int {
+        max(1, Int((width + spacing) / (minimumColumnWidth + spacing)))
+    }
+
+    private func rowHeights(_ subviews: Subviews, columnWidth: CGFloat, columns: Int) -> [CGFloat] {
+        stride(from: 0, to: subviews.count, by: columns).map { start in
+            subviews[start..<min(start + columns, subviews.count)]
+                .map { $0.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil)).height }
+                .max() ?? 0
+        }
+    }
+
+    private func columnWidth(_ width: CGFloat, _ columns: Int) -> CGFloat {
+        (width - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? minimumColumnWidth
+        let count = columns(for: width)
+        let heights = rowHeights(subviews, columnWidth: columnWidth(width, count), columns: count)
+        return CGSize(width: width, height: heights.reduce(0, +) + spacing * CGFloat(max(heights.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let count = columns(for: bounds.width)
+        let cell = columnWidth(bounds.width, count)
+        var y = bounds.minY
+        for (row, height) in rowHeights(subviews, columnWidth: cell, columns: count).enumerated() {
+            for column in 0..<count {
+                let index = row * count + column
+                guard index < subviews.count else { break }
+                subviews[index].place(at: CGPoint(x: bounds.minX + CGFloat(column) * (cell + spacing), y: y),
+                                      proposal: ProposedViewSize(width: cell, height: height))
+            }
+            y += height + spacing
+        }
+    }
+}
+
 /// TokenTracker's `status-row`: 20pt padding, 16pt radius, a hairline that
-/// strengthens on hover, the name at 16/500 and the state under it.
+/// strengthens on hover, the 16pt logo and the name at 16/500, and the
+/// state under it as an 8pt dot and a label.
 private struct ServiceCard: View {
     var status: ServiceStatus
     var isLoading: Bool
@@ -51,12 +96,17 @@ private struct ServiceCard: View {
     @Environment(\.openURL) private var openURL
 
     private static let nameFont = Font.system(size: 16, weight: .medium)
+    /// `status-row` hover: #fafafa in light, #262626 at 60% in dark.
+    private static let hoverFill = Color(light: "#fafafa", dark: "#26262699")
+    /// Status pages whose logo is filed under the harness's own id.
+    private static let logoIDs = ["openai": "codex", "github": "copilot"]
     private static let componentLimit = 5
     private static let incidentLimit = 3
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
+                HarnessIcon(harness: Self.logoIDs[status.service.id] ?? status.service.id, size: 16)
                 Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 8)
                 Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
@@ -106,11 +156,11 @@ private struct ServiceCard: View {
                 .padding(.top, 2)
             }
 
-            CheckedLine(status: status)
+            ProblemLine(status: status)
         }
         .padding(Theme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(hovering ? Theme.rowHover : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(hovering ? Self.hoverFill : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
             .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .onHover { hovering = $0 }
@@ -118,35 +168,35 @@ private struct ServiceCard: View {
     }
 }
 
-/// The overall state: always an icon and a label with the colour.
+/// The overall state as TokenTracker shows it: an 8pt dot in the state's
+/// colour and the label beside it. The label stays neutral, since amber
+/// and green text at this size fall well short of 4.5:1 on white.
 struct HealthLabel: View {
     var health: ServiceHealth?
     var isLoading = false
-    var font: Font = .system(size: 16, weight: .medium)
+    var font: Font = Theme.bodySmall
 
     var body: some View {
-        Label {
-            Text(title)
-        } icon: {
-            Image(systemName: symbol)
+        HStack(spacing: 8) {
+            HealthDot(health: health)
+            Text(title).font(font).foregroundStyle(health == nil ? Theme.textMuted : Theme.textPrimary)
         }
-        .font(font)
-        .foregroundStyle(color)
+        .accessibilityElement(children: .combine)
     }
 
     private var title: String {
         if let health { return health.title }
         return isLoading ? "Checking…" : "Unknown"
     }
+}
 
-    private var symbol: String {
-        switch health {
-        case .operational: "checkmark.circle.fill"
-        case .maintenance: "wrench.and.screwdriver.fill"
-        case .minor: "exclamationmark.triangle.fill"
-        case .major, .critical: "xmark.octagon.fill"
-        case nil: "questionmark.circle"
-        }
+/// The state's colour on its own, for the card label and the menu bar line.
+struct HealthDot: View {
+    var health: ServiceHealth?
+    var size: CGFloat = 8
+
+    var body: some View {
+        Circle().fill(color).frame(width: size, height: size).accessibilityHidden(true)
     }
 
     private var color: Color {
@@ -155,7 +205,7 @@ struct HealthLabel: View {
         case .maintenance: Theme.textSecondary
         case .minor: Theme.warning
         case .major, .critical: Theme.danger
-        case nil: Theme.textMuted
+        case nil: Theme.borderStrong
         }
     }
 }
@@ -164,21 +214,13 @@ private struct ComponentRow: View {
     var component: AffectedComponent
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: symbol).foregroundStyle(color).font(.system(size: 11))
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 6, height: 6).accessibilityHidden(true)
             Text(component.name).foregroundStyle(Theme.textPrimary).lineLimit(1)
             Spacer(minLength: 8)
-            Text(component.state.title).foregroundStyle(color)
+            Text(component.state.title).foregroundStyle(Theme.textSecondary)
         }
         .font(Theme.caption)
-    }
-
-    private var symbol: String {
-        switch component.state {
-        case .maintenance: "wrench.and.screwdriver.fill"
-        case .degraded: "exclamationmark.triangle.fill"
-        case .partialOutage, .majorOutage: "xmark.octagon.fill"
-        }
     }
 
     private var color: Color {
@@ -239,7 +281,9 @@ private struct IncidentView: View {
     }
 }
 
-private struct CheckedLine: View {
+/// Why the reading is missing or old. The time of a good reading is in
+/// the page header, once.
+private struct ProblemLine: View {
     var status: ServiceStatus
 
     var body: some View {
@@ -255,10 +299,6 @@ private struct CheckedLine: View {
             }
             .font(Theme.caption)
             .foregroundStyle(Theme.textSecondary)
-        } else if let checked = status.checkedAt {
-            Text("Checked \(checked, format: .relative(presentation: .named))")
-                .font(Theme.caption)
-                .foregroundStyle(Theme.textMuted)
         }
     }
 }
@@ -277,8 +317,7 @@ struct ServiceStatusMenuLine: View {
                 openMain()
             } label: {
                 HStack(spacing: 6) {
-                    HealthLabel(health: app.serviceStatus.worst, font: Theme.caption.weight(.medium))
-                        .labelStyle(.iconOnly)
+                    HealthDot(health: app.serviceStatus.worst)
                     Text(line).font(Theme.caption).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Theme.textMuted)
