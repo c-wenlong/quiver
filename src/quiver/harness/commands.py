@@ -565,11 +565,13 @@ def _harness_json(name, info, starred, archived, counts, rate) -> dict:
 
 
 def cmd_list(args):
-    args = list(args or [])
+    args, json_view = take_json_flag(list(args or []))
+    # Under --json a refusal must leave stdout empty: the app decodes it whole.
+    err = sys.stderr if json_view else sys.stdout
     try:
         args = expand_value_flags(args, {"--scope"})
     except ValueError as exc:
-        print(c("red", str(exc)))
+        print(c("red", str(exc)), file=err)
         return 1
     if args and args[0] == "edit":
         return cmd_list_edit(args[1:])
@@ -580,7 +582,6 @@ def cmd_list(args):
     refresh_flags = {"--refresh", "-r", "-n"}
     refresh = any(arg in refresh_flags for arg in args)
     args = [arg for arg in args if arg not in refresh_flags]
-    args, json_view = take_json_flag(args)
 
     # Usage is opt-in. Rate limits are the only part of `swe list` that
     # touches the network, and on a cold cache they cost ~850ms against
@@ -618,15 +619,16 @@ def cmd_list(args):
         else:
             i += 1
     if scope not in LIST_SCOPES:
-        print(f"Unknown scope: {scope or '(empty)'}. Use {', '.join(LIST_SCOPES)}.")
+        print(f"Unknown scope: {scope or '(empty)'}. Use {', '.join(LIST_SCOPES)}.",
+              file=err)
         return 1
 
     bad = next((a for a in args if a.startswith("-")), None)
     if bad:
-        print(c("red", f"Unknown flag: {bad}"))
+        print(c("red", f"Unknown flag: {bad}"), file=err)
         return 1
     if len(args) > 1:
-        print(c("red", f"Unexpected args: {' '.join(args[1:])}"))
+        print(c("red", f"Unexpected args: {' '.join(args[1:])}"), file=err)
         return 1
 
     tools = load_registry()
@@ -675,10 +677,14 @@ def cmd_list(args):
             if usage_view
             else {}
         )
+        # The field is named for a fixed window, whatever window the table
+        # is set to show.
+        counts_100d = _session_counts(100)
         return emit({"harnesses": [
-            _harness_json(name, info, starred_set, archived, counts,
+            _harness_json(name, info, starred_set, archived, counts_100d,
                           rate_limits.get(name))
             for name, info in tools.items()
+            if not tag_filter or tag_filter in info.get("tags", [])
         ]})
 
     # Fetch rate limits (cached 5min by default, refresh flags bypass;

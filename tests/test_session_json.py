@@ -202,7 +202,8 @@ class EmptyJsonTest(SessionJsonTestBase):
         result = run_swe(self.home, "session", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
-            decode(result), {"schema": 1, "data": {"sessions": []}})
+            decode(result),
+            {"schema": 1, "data": {"sessions": [], "failures": []}})
 
 
 class RefusalJsonTest(SessionJsonTestBase):
@@ -227,3 +228,22 @@ class RefusalJsonTest(SessionJsonTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParserFailureJsonTest(SessionJsonTestBase):
+    def test_a_crashed_parser_is_named_not_mistaken_for_no_history(self):
+        add_claude_session(self.home)
+        broken = self.home / ".local" / "share" / "kilo" / "kilo.db"
+        broken.parent.mkdir(parents=True)
+        broken.write_text("not a database")
+        result = run_swe(self.home, "session", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = decode(result)["data"]
+        self.assertEqual(len(data["sessions"]), 1)
+        self.assertEqual([f["harness"] for f in data["failures"]], ["kilo"])
+        self.assertIn("not a database", data["failures"][0]["error"])
+
+    def test_no_failures_is_an_empty_list(self):
+        add_claude_session(self.home)
+        data = decode(run_swe(self.home, "session", "--json"))["data"]
+        self.assertEqual(data["failures"], [])

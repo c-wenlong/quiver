@@ -220,6 +220,11 @@ class McpListConflictTest(unittest.TestCase):
         self.assertNotIn("one-value", result.stdout)
         self.assertNotIn("two-value", result.stdout)
 
+    def test_sse_against_http_at_one_url_is_a_conflict(self):
+        write_claude(self.home, {"t": {"type": "sse", "url": "https://h.example/mcp"}})
+        write_cursor(self.home, {"t": {"type": "http", "url": "https://h.example/mcp"}})
+        self.assertTrue(self.rows()["t"]["conflict"])
+
     def test_formatting_differences_between_harnesses_are_not_conflicts(self):
         # Cursor spells the transport out and a copilot-style config adds an
         # empty args list. Neither changes what the server is.
@@ -506,6 +511,15 @@ class ScrubTest(unittest.TestCase):
         self.assertEqual(
             scrub_args(["mcp-remote", "https://r.example.com/mcp?k=v"], {}),
             ["mcp-remote", "https://r.example.com/mcp?k=***"])
+
+    def test_args_scrub_a_url_given_as_a_flag_value(self):
+        from quiver.mcp.secrets import scrub_args
+
+        self.assertEqual(
+            scrub_args(["--url=https://h.example/mcp?token=literal-secret",
+                        "--endpoint", "https://h.example/v1?key=abc"], {}),
+            ["--url=https://h.example/mcp?token=***",
+             "--endpoint", "https://h.example/v1?key=***"])
 
     def test_args_hide_an_inline_env_assignment(self):
         # `env API_KEY=... npx server` is a common wrapper in configs.

@@ -267,6 +267,13 @@ class FindSkillsJsonTest(unittest.TestCase):
         self.assertNotIn(codex, self.roots())
         self.assertIn(codex, self.roots("--harness=all"))
 
+    def test_nested_shared_skills_are_listed_at_their_real_path(self):
+        write_skill(self.shared / "team", "review")
+        skills = {s["name"]: s["path"] for s in self.find_skills()["skills"]}
+        self.assertEqual(skills["review"], str(self.shared / "team" / "review"))
+        # A grouping folder holds skills; it is not one itself.
+        self.assertNotIn("team", skills)
+
     def test_no_shared_tree_is_an_empty_list_not_an_error(self):
         empty = Path(tempfile.mkdtemp())
         result = run_swe(empty, "find", "skills", "--json", "-r")

@@ -724,7 +724,7 @@ def _transport(raw, canonical: dict) -> str:
     return kind
 
 
-def _identity(canonical: dict) -> tuple:
+def _identity(raw, canonical: dict) -> tuple:
     """What makes two definitions of one server the same server.
 
     Compared on canonical fields with absent and empty treated alike, so a
@@ -733,6 +733,9 @@ def _identity(canonical: dict) -> tuple:
     printed: it holds the env and header values.
     """
     return (
+        # SSE and streamable HTTP at one URL are different servers to a
+        # client, and only the raw entry still says which one it is.
+        _transport(raw, canonical),
         canonical.get("command") or "",
         tuple(canonical.get("args") or ()),
         tuple(sorted((canonical.get("env") or {}).items())),
@@ -761,7 +764,7 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
                 name, {"raw": raw, "canonical": canonical, "tools": [],
                        "identities": []})
             entry["tools"].append(tool)
-            entry["identities"].append(_identity(canonical))
+            entry["identities"].append(_identity(raw, canonical))
     inventory = []
     for name in sorted(seen):
         entry = seen[name]

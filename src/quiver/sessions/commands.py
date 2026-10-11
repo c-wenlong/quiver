@@ -709,9 +709,18 @@ def cmd_session(args):
 
     if json_view:
         statuses = session_statuses(sessions)
-        return emit({"sessions": [
-            _session_json(s, status) for s, status in zip(sessions, statuses)
-        ]})
+        return emit({
+            "sessions": [
+                _session_json(s, status)
+                for s, status in zip(sessions, statuses)
+            ],
+            # A parser that crashed returns nothing, which reads exactly like
+            # a harness with no history unless it is named.
+            "failures": [
+                {"harness": tool, "error": message}
+                for tool, message in sorted(failures.snapshot().items())
+            ],
+        })
 
     if not sessions:
         print(c("dim", "  No sessions found."))

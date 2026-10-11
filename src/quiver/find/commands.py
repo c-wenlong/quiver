@@ -516,11 +516,41 @@ def _skills_json(home: Path, registry: dict, nodes, scope: str) -> dict:
     return {
         "shared_dir": str(shared),
         "skills": [
-            {"name": name, "path": str(shared / name), "scope": "global"}
-            for name in flat_skills(home)
+            {"name": folder.name, "path": str(folder), "scope": "global"}
+            for folder in _shared_skill_folders(shared)
         ],
         "roots": roots,
     }
+
+
+def _shared_skill_folders(shared: Path) -> list[Path]:
+    """Every folder holding a SKILL.md under the shared tree, at any depth.
+
+    Follows symlinks, as `skill_folder_names` does for a root's count, so a
+    library nested in team folders or linked in from a vendor repo is listed
+    at the path the skill really sits at. Directories already walked (by
+    device and inode) are skipped, so a symlink loop ends.
+    """
+    import os
+
+    if not shared.is_dir():
+        return []
+    seen: set[tuple[int, int]] = set()
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(shared, followlinks=True):
+        try:
+            st = os.stat(dirpath)
+        except OSError:
+            dirnames[:] = []
+            continue
+        if (st.st_dev, st.st_ino) in seen:
+            dirnames[:] = []
+            continue
+        seen.add((st.st_dev, st.st_ino))
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        if "SKILL.md" in filenames:
+            found.append(Path(dirpath))
+    return sorted(found, key=lambda path: (path.name, str(path)))
 
 
 def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",

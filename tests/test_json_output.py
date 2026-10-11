@@ -22,12 +22,20 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 
 
 def run_swe(home: Path, *args: str) -> subprocess.CompletedProcess:
+    # A clean environment, so the developer's CLAUDE_CONFIG_DIR, CODEX_HOME
+    # and friends cannot point the child at real configs. Coverage's own
+    # variables pass through: .coveragerc patches subprocesses, and without
+    # them the child's lines would go unmeasured.
     env = {
+        key: value for key, value in os.environ.items()
+        if key.startswith("COVERAGE_")
+    }
+    env.update({
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "PYTHONPATH": str(SRC),
         "NO_COLOR": "1",
-    }
+    })
     return subprocess.run(
         [sys.executable, "-m", "quiver.cli", *args],
         capture_output=True, text=True, env=env, timeout=60,
@@ -84,6 +92,43 @@ class ListJsonTest(unittest.TestCase):
         doc = decode(run_swe(self.home, "list", "--json"))
         for row in doc["data"]["harnesses"]:
             self.assertIsNone(row["rate_limit"])
+
+    def test_a_tag_filter_narrows_the_rows(self):
+        registry = dict(REGISTRY, gemini={"command": "gemini", "tags": []})
+        write_registry(self.home, registry)
+        doc = decode(run_swe(self.home, "list", "vendor", "--json"))
+        self.assertEqual(
+            sorted(row["name"] for row in doc["data"]["harnesses"]),
+            ["claude", "codex"])
+
+    def test_refusals_leave_stdout_empty(self):
+        for args in (["--json", "--bogus"], ["--json", "--scope=bogus"],
+                     ["--json", "--scope"], ["a", "b", "--json"]):
+            with self.subTest(args=args):
+                result = run_swe(self.home, "list", *args)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertNotEqual(result.stderr.strip(), "")
+
+    def test_session_count_is_100_days_whatever_the_table_window(self):
+        import time
+
+        # The table can be set to a 7-day window; the JSON field promises 100.
+        (self.home / ".quiver" / "config" / "config.json").write_text(
+            json.dumps({"list": {"session_window": 7}}))
+        session = (self.home / ".claude" / "projects" / "-work" /
+                   "0b7c2a52-9f1e-4f43-8f43-3a8e6b1c2d01.jsonl")
+        session.parent.mkdir(parents=True)
+        session.write_text(json.dumps({
+            "type": "user", "cwd": "/work",
+            "sessionId": "0b7c2a52-9f1e-4f43-8f43-3a8e6b1c2d01",
+            "message": {"role": "user", "content": "hi"},
+        }) + "\n")
+        thirty_days_ago = time.time() - 30 * 86400
+        os.utime(session, (thirty_days_ago, thirty_days_ago))
+        rows = {row["name"]: row for row in
+                decode(run_swe(self.home, "list", "--json"))["data"]["harnesses"]}
+        self.assertEqual(rows["claude"]["sessions_100d"], 1)
 
 
 def write_rate_cache(home: Path, readings: dict, taken_at: float) -> None:

@@ -261,6 +261,10 @@ def scrub_args(args, secrets: dict[str, str] | None = None) -> list[str]:
                     arg = f"{flag}={_hide(value)}"
                 else:
                     pending = "secret"
+            elif eq and "://" in value:
+                # `--url=https://host/mcp?token=...`: an ordinary flag can
+                # still carry a credential-bearing URL.
+                arg = f"{flag}={scrub_url(value, secrets)}"
         elif "://" in arg:
             arg = scrub_url(arg, secrets)
         elif (assign := _ENV_ASSIGN_RE.fullmatch(arg)) and _SECRET_FLAG_RE.search(
