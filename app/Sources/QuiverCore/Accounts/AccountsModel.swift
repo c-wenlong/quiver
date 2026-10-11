@@ -1,0 +1,144 @@
+import Foundation
+import Observation
+
+/// Anything that can report an account's usage. `UsageService` in the app.
+public protocol UsageFetching: Sendable {
+    func usage(for key: AccountKey, force: Bool) async -> AccountUsage
+}
+
+extension UsageService: UsageFetching {}
+
+/// Starts a planned launch. Real launches spawn a process; tests record.
+public protocol Launching: Sendable {
+    func launch(_ command: LaunchCommand) throws
+}
+
+/// Spawns the command and lets it run on its own.
+public struct ProcessLauncher: Launching {
+    public init() {}
+
+    public func launch(_ command: LaunchCommand) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command.executable)
+        process.arguments = command.arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+    }
+}
+
+extension Profile {
+    var usageProvider: UsageProvider {
+        switch vendor {
+        case .claude: .claude
+        case .codex: .codex
+        }
+    }
+}
+
+/// The Accounts page: every profile with its latest usage, plus the actions
+/// that open an account in its app or a terminal.
+@MainActor
+@Observable
+public final class AccountsModel {
+    public struct Card: Identifiable, Equatable, Sendable {
+        public var id: String { profile.id }
+        public var profile: Profile
+        public var usage: AccountUsage?
+    }
+
+    public private(set) var cards: [Card] = []
+    public private(set) var isLoading = false
+    public private(set) var error: String?
+
+    private let store: ProfileStore
+    private let usage: UsageFetching
+    private let launcher: Launching
+    private let terminal: () -> TerminalApp
+    private var generation = 0
+
+    public init(store: ProfileStore, usage: UsageFetching, launcher: Launching,
+                terminal: @escaping () -> TerminalApp) {
+        self.store = store
+        self.usage = usage
+        self.launcher = launcher
+        self.terminal = terminal
+    }
+
+    /// Reload profiles, then every account's usage at once. `force` skips the
+    /// five-minute cache but never a provider's cooldown.
+    public func load(force: Bool) async {
+        generation += 1
+        let mine = generation
+        let profiles: [Profile]
+        do {
+            profiles = try store.load()
+            error = nil
+        } catch {
+            self.error = "Couldn't read your accounts: \(error.localizedDescription)"
+            return
+        }
+        let previous = Dictionary(uniqueKeysWithValues: cards.map { ($0.id, $0.usage) })
+        cards = profiles.map { Card(profile: $0, usage: previous[$0.id] ?? nil) }
+        isLoading = true
+        defer { if mine == generation { isLoading = false } }
+
+        let keys = profiles.map { profile in
+            (profile.id, AccountKey(provider: profile.usageProvider,
+                                    configHome: store.paths(for: profile).home.path,
+                                    isDefault: profile.isDefault))
+        }
+        let usage = self.usage
+        let results = await withTaskGroup(of: (String, AccountUsage).self) { group in
+            for (id, key) in keys {
+                group.addTask { (id, await usage.usage(for: key, force: force)) }
+            }
+            var out: [String: AccountUsage] = [:]
+            for await (id, reading) in group { out[id] = reading }
+            return out
+        }
+        guard mine == generation else { return }
+        cards = cards.map { Card(profile: $0.profile, usage: results[$0.id] ?? $0.usage) }
+    }
+
+    @discardableResult
+    public func add(vendor: Vendor, name: String, color: String?) async throws -> Profile {
+        let profile = try store.add(vendor: vendor, name: name, color: color)
+        await load(force: false)
+        return profile
+    }
+
+    public func remove(_ profile: Profile) async throws {
+        try store.remove(id: profile.id)
+        await load(force: false)
+    }
+
+    public func rename(_ profile: Profile, to name: String) async throws {
+        try store.rename(id: profile.id, to: name)
+        await load(force: false)
+    }
+
+    /// The desktop app, signed in as this account.
+    public func openApp(_ profile: Profile) throws {
+        try launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile)))
+    }
+
+    /// The CLI in a terminal, as this account.
+    public func openTerminal(_ profile: Profile) throws {
+        let paths = store.paths(for: profile)
+        let line = LaunchPlanner.shellLine(for: profile, paths: paths,
+                                           command: profile.vendor.rawValue)
+        try launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+    }
+
+    /// The CLI's sign-in flow in a terminal, for this account's folder.
+    public func signIn(_ profile: Profile) throws {
+        let line = LaunchPlanner.cliLoginCommand(for: profile, paths: store.paths(for: profile))
+        try launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+    }
+
+    public func folder(of profile: Profile) -> URL {
+        store.paths(for: profile).home
+    }
+}

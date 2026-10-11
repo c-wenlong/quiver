@@ -48,14 +48,15 @@ remembering CLI commands.
 - [x] CI job on a macOS 26 runner: build and `swift test`
 
 ### M2. Accounts
-- [ ] Profile store and directory layout under `~/.quiver/accounts`
-- [ ] Open a desktop app or terminal per profile (Claude, Codex)
-- [ ] Native limit fetchers: Claude, Codex, Devin, Cursor, Copilot
-- [ ] Carry over the safeguards in `rate_limits.py`: honor provider cooldowns
+- [x] Profile store and directory layout under `~/.quiver/accounts`
+- [x] Open a desktop app or terminal per profile (Claude, Codex)
+- [x] Limit fetchers: Claude and Codex natively, per account; Devin, Cursor and Copilot through `swe list --usage --json`, which already polls them with its safeguards
+- [x] Carry over the safeguards in `rate_limits.py`: honor provider cooldowns
   and `Retry-After`, keep the original `fetched_at` when reusing a reading,
   and expire stale readings instead of showing them as current
-- [ ] Account cards with bars, plan badge, reset time and "fetched N min ago"
-- [ ] Menu bar panel shows the same bars
+- [x] Account cards with bars, plan badge, reset time and "fetched N min ago"
+- [x] Menu bar panel shows the same bars
+- [ ] Ask `swe` only for the harnesses Quiver has no account for, so Claude and Codex are not polled twice
 
 ### M3. Overview
 - [ ] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
