@@ -154,14 +154,13 @@ private struct MenuBarPreview: View {
 private struct PopupSection: View {
     @Environment(AppModel.self) private var app
 
-    /// Every harness with limits, accounts first, plus any account whose
-    /// limits haven't come in yet, so it can be hidden before they do.
+    /// Accounts' harnesses in account order, then other harnesses in swe's
+    /// order, so the rows stay put as usage changes. An account whose limits
+    /// haven't come in yet is listed too, so it can be hidden before they do.
     private var harnesses: [MenuBarPopup.Harness] {
-        var list = MenuBarPopup.harnesses(in: app.limits.readings)
-        for vendor in app.accounts.cards.map(\.profile.vendor.rawValue) where !list.contains(where: { $0.harness == vendor }) {
-            list.append(.init(harness: vendor, windows: []))
-        }
-        return list
+        let order = app.accounts.cards.map(\.profile.vendor.rawValue)
+            + app.others.rows.filter { $0.limit.status == .ok }.map(\.name)
+        return MenuBarPopup.harnesses(in: app.limits.readings, order: order)
     }
 
     var body: some View {

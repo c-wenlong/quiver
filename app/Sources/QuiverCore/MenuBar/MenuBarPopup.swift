@@ -62,13 +62,18 @@ public struct MenuBarPopup: Equatable, Sendable {
         }
     }
 
-    /// Every harness in the readings, in the order they come (accounts
-    /// first), each with its distinct named windows in first-seen order.
-    public static func harnesses(in readings: [LimitReading]) -> [Harness] {
+    /// Every harness in `order` (accounts, then other harnesses, so the list
+    /// doesn't reshuffle as usage changes), then any other harness in the
+    /// readings, each with its distinct named windows in first-seen order.
+    /// A harness in `order` with no readings yet is listed with no windows.
+    public static func harnesses(in readings: [LimitReading], order given: [String] = []) -> [Harness] {
         var order: [String] = []
+        var seen: Set<String> = []
+        for harness in given where seen.insert(harness).inserted { order.append(harness) }
         var windows: [String: [String]] = [:]
         for reading in readings {
-            if windows[reading.harness] == nil { order.append(reading.harness); windows[reading.harness] = [] }
+            if seen.insert(reading.harness).inserted { order.append(reading.harness) }
+            if windows[reading.harness] == nil { windows[reading.harness] = [] }
             if !reading.window.isEmpty, !(windows[reading.harness]?.contains(reading.window) ?? false) {
                 windows[reading.harness]?.append(reading.window)
             }

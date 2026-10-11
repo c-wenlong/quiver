@@ -258,11 +258,14 @@ private struct PanelLimits: View {
             ForEach(cards) { card in
                 PanelAccountRow(card: card)
             }
-            if app.accounts.cards.isEmpty {
-                Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            } else if cards.isEmpty && others.isEmpty {
+            // Limits exist but every one is hidden: say where to bring them
+            // back, ahead of "no accounts", which would read as nothing to show.
+            let available = !app.accounts.cards.isEmpty || app.others.rows.contains { $0.limit.status == .ok }
+            if available && cards.isEmpty && others.isEmpty {
                 Text("Every limit is hidden in Menu bar and widgets.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else if app.accounts.cards.isEmpty {
+                Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             if !others.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {

@@ -66,4 +66,15 @@ private func reading(_ harness: String, _ source: String, _ window: String) -> L
         // A harness that reports one unnamed window has nothing to pick.
         #expect(groups.first { $0.harness == "devin" }?.windows == [])
     }
+
+    @Test func aGivenOrderWinsOverTheReadingsOrderAndKeepsHarnessesWithNoReadings() {
+        // Readings come most used first, so a busy harness can lead them.
+        let readings = [reading("cursor", "cursor", "auto"), reading("codex", "nus", "7d"),
+                        reading("claude", "personal", "5h"), reading("droid", "droid", "")]
+        let groups = MenuBarPopup.harnesses(in: readings, order: ["claude", "codex", "devin", "cursor"])
+        #expect(groups.map(\.harness) == ["claude", "codex", "devin", "cursor", "droid"])
+        #expect(groups.first { $0.harness == "devin" }?.windows == [])
+        #expect(groups.first?.windows == ["5h"])
+        #expect(groups.first { $0.harness == "devin" }?.windows == [])
+    }
 }
