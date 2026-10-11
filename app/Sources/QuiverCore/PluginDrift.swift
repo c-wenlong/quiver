@@ -144,12 +144,14 @@ public final class PluginsModel {
 
     /// After a fix: the reload is dropped if another swe was picked
     /// meanwhile; with no source it reloads anyway.
-    private func reload(swe: SweClient, for source: String?) async {
+    /// - Returns: whether the report on show is this swe's fresh one.
+    @discardableResult
+    private func reload(swe: SweClient, for source: String?) async -> Bool {
         if let source {
-            await loader.reload(from: source) { try await swe.pluginDrift() }
-        } else {
-            await load(swe: swe)
+            return await loader.reload(from: source) { try await swe.pluginDrift() }
         }
+        await load(swe: swe)
+        return true
     }
 
     /// Runs the confirmed fixes, one at a time, reloading between them.
@@ -188,7 +190,13 @@ public final class PluginsModel {
                 await reload(swe: swe, for: source)
                 return
             }
-            await reload(swe: swe, for: source)
+            // The next pick must come from this swe's fresh report. If
+            // another swe was picked in Settings, the report on show no
+            // longer says what this swe still has to fix.
+            guard await reload(swe: swe, for: source) else {
+                fixError = "Stopped: another swe was picked in Settings."
+                break
+            }
         }
         if ran > 0 { lastFixed = ran == 1 ? "1 fix" : "\(ran) fixes" }
     }

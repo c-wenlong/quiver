@@ -675,6 +675,23 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(model.fixAllCount == 1)
     }
 
+    @Test func fixAllStopsWhenAnotherSweIsPickedMidBatch() async throws {
+        let model = PluginsModel()
+        // The other swe sees the same machine, so it still lists b.
+        let other = SweClient(runner: DriftRunner(["codex:stale:b@mk": true]))
+        let runner = DriftRunner(["claude:stale:a@mk": true, "codex:stale:b@mk": true])
+        // Settings switches to another swe while the first fix runs.
+        runner.onFix = { _ in await model.loadIfStale(swe: other, for: "/other/swe") }
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe, for: "/this/swe")
+        await model.fixAll(confirmed: model.fixAllIDs, swe: swe, for: "/this/swe")
+        #expect(runner.fixed == ["claude:stale:a@mk"])
+        #expect(model.fixAllProgress == nil)
+        #expect(model.fixing == nil)
+        // The batch stops rather than fix b through a swe no longer chosen.
+        #expect(model.fixError == "Stopped: another swe was picked in Settings.")
+    }
+
     @Test func fixAllStopsAtTheFirstFailureAndSaysWhy() async throws {
         let runner = DriftRunner(["claude:stale:a@mk": true, "codex:stale:b@mk": true],
                                  failing: ["claude:stale:a@mk": "claude plugin update a@mk failed: offline"])
@@ -709,6 +726,8 @@ final class DriftRunner: CommandRunning, @unchecked Sendable {
     private let failing: [String: String]
     private(set) var fixed: [String] = []
     private(set) var attempted: [String] = []
+    /// Runs after a fix succeeds, outside the lock.
+    var onFix: (@Sendable (String) async -> Void)?
 
     init(_ findings: KeyValuePairs<String, Bool>, clears: [String: [String]] = [:],
          reveals: [String: [String]] = [:], failing: [String: String] = [:]) {
@@ -719,6 +738,14 @@ final class DriftRunner: CommandRunning, @unchecked Sendable {
     }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
+        let result = answer(arguments)
+        if let fix = arguments.first(where: { $0.hasPrefix("--fix=") }), result.status == 0 {
+            await onFix?(String(fix.dropFirst("--fix=".count)))
+        }
+        return result
+    }
+
+    private func answer(_ arguments: [String]) -> CommandResult {
         lock.withLock {
             if let fix = arguments.first(where: { $0.hasPrefix("--fix=") }) {
                 let id = String(fix.dropFirst("--fix=".count))
