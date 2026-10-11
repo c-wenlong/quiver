@@ -54,6 +54,7 @@ struct SettingsPage: View {
                         .font(Theme.caption).foregroundStyle(Theme.warning)
                 }
             }
+            ProviderVisibilityCard(model: app.providers)
         }
         .onAppear {
             draft = app.swePath
