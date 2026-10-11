@@ -14,11 +14,25 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
     public let state: State
     public let sessions100d: Int?
     public let rateLimit: RateLimit?
+    /// Whether its command is on PATH. Nil from a swe that predates the field.
+    public let installed: Bool?
+    /// Why and when it was archived; nil unless archived.
+    public let archived: Archive?
 
     enum CodingKeys: String, CodingKey {
         case name, command, description, version, aliases, tags, state
-        case sessions100d = "sessions100d"
-        case rateLimit
+        // convertFromSnakeCase capitalises "100d" to "100D", so the
+        // wire key `sessions_100d` arrives as `sessions100D`.
+        case sessions100d = "sessions100D"
+        case rateLimit, installed, archived
+    }
+
+    public struct Archive: Decodable, Sendable, Equatable {
+        public let reason: String
+        /// ISO 8601, as swe wrote it.
+        public let archivedAt: String
+        /// unknown, none, trial, used or heavy.
+        public let usage: String
     }
 }
 
@@ -47,6 +61,22 @@ public struct RateLimit: Decodable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case status, usedPercent, remainingPercent, limitReached, resetAt, window
         case windowSeconds, planType, remainingUnits, totalUnits, fetchedAt
+    }
+
+    /// For tests and previews; the app only ever decodes these from swe.
+    init(status: Status, usedPercent: Int, window: String? = nil, resetAt: Date? = nil,
+         planType: String? = nil, fetchedAt: Date? = nil) {
+        self.status = status
+        self.usedPercent = usedPercent
+        remainingPercent = 100 - usedPercent
+        limitReached = usedPercent >= 100
+        self.resetAt = resetAt
+        self.window = window
+        windowSeconds = nil
+        self.planType = planType
+        remainingUnits = nil
+        totalUnits = nil
+        self.fetchedAt = fetchedAt
     }
 
     public init(from decoder: Decoder) throws {
