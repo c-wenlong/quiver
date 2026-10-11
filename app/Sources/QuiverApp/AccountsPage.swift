@@ -61,9 +61,6 @@ struct AccountsPage: View {
                 }
             }
         }
-        // Reloads while the page is open, so a reading never sits on screen
-        // past the age the usage service would still show it.
-        .task { await model.keepFresh() }
         .task { await app.others.load() }
     }
 

@@ -139,21 +139,23 @@ private struct LimitLine: View {
     var compact: Bool
 
     var body: some View {
-        let current = reading.isCurrent(now: now)
+        // Stale readings keep their last figure, dimmed; only a window whose
+        // reset time has passed says "reset".
+        let reset = reading.hasReset(now: now)
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 Circle().fill(Palette.harness(reading.harness)).frame(width: 6, height: 6)
                 Text(reading.window.isEmpty ? reading.title : "\(reading.title) · \(reading.window)")
                     .font(.system(size: 11, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 4)
-                if !compact, let reset = reading.resetsAt {
-                    Text(UsageFormat.resetIn(reset, now: now))
+                if !compact, !reset, let resetsAt = reading.resetsAt {
+                    Text(UsageFormat.resetIn(resetsAt, now: now))
                         .font(.system(size: 10)).foregroundStyle(Palette.textSecondary)
                 }
-                Text(current ? "\(reading.percent)%" : "reset")
+                Text(reset ? "reset" : "\(reading.percent)%")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
             }
-            ThinBar(fraction: current ? reading.usedPercent / 100 : 0, color: Palette.usage(reading.percent))
+            ThinBar(fraction: reset ? 0 : reading.usedPercent / 100, color: Palette.usage(reading.percent))
         }
         .opacity(reading.isStale ? 0.5 : 1)
     }

@@ -36,15 +36,25 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
     /// The percentage as shown everywhere: a whole number.
     public var percent: Int { Int(usedPercent.rounded()) }
 
+    /// True when the window's reset time has passed since the reading.
+    public func hasReset(now: Date) -> Bool {
+        resetsAt.map { $0 <= now } ?? false
+    }
+
     /// True when the reading can still be believed: not stale, and its window
     /// has not reset since it was taken.
     public func isCurrent(now: Date) -> Bool {
-        !isStale && !(resetsAt.map { $0 <= now } ?? false)
+        !isStale && !hasReset(now: now)
     }
+
+    /// How old a reading from swe may be before it counts as stale. swe
+    /// refreshes every five minutes and the app asks as often, so anything
+    /// older is swe's outage fallback (up to a day old), not a fresh fetch.
+    public static let sweStaleAfter: TimeInterval = 20 * 60
 
     /// Every account's windows, then every other harness swe reported a
     /// usable limit for.
-    public static func all(cards: [AccountsModel.Card], others: [OtherLimitsModel.Row]) -> [LimitReading] {
+    public static func all(cards: [AccountsModel.Card], others: [OtherLimitsModel.Row], now: Date) -> [LimitReading] {
         let accounts = cards.flatMap { card -> [LimitReading] in
             guard let usage = card.usage else { return [] }
             let profile = card.profile
@@ -59,7 +69,8 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
             guard row.limit.status == .ok else { return nil }
             return LimitReading(source: row.name, harness: row.name, title: row.name.capitalized,
                                 window: row.limit.window ?? "", usedPercent: Double(row.limit.usedPercent),
-                                resetsAt: row.limit.resetAt, fetchedAt: row.limit.fetchedAt, isStale: false)
+                                resetsAt: row.limit.resetAt, fetchedAt: row.limit.fetchedAt,
+                                isStale: row.limit.fetchedAt.map { now.timeIntervalSince($0) > sweStaleAfter } ?? true)
         }
         return accounts + harnesses
     }

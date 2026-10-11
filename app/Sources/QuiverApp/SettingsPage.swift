@@ -103,6 +103,10 @@ private struct LoginItemRow: View {
                    detail: "Start Quiver in the menu bar when you log in.",
                    isOn: Binding(get: { status == .enabled || status == .requiresApproval },
                                  set: { on in update(on) }))
+            // The user may approve or remove the item in System Settings.
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                status = SMAppService.mainApp.status
+            }
         if status == .requiresApproval {
             HStack {
                 Text("macOS needs you to allow Quiver in Login Items.")

@@ -34,7 +34,7 @@ func reading(
             OtherLimitsModel.Row(name: "cursor", limit: RateLimit(status: .authRequired, usedPercent: 0)),
         ]
 
-        let readings = LimitReading.all(cards: cards, others: others)
+        let readings = LimitReading.all(cards: cards, others: others, now: now)
 
         #expect(readings.map(\.id) == ["claude-work|5h", "claude-work|7d", "devin|7d"])
         #expect(readings[1].title == "Claude: Work")
@@ -49,8 +49,30 @@ func reading(
         let usage = AccountUsage(status: .expired, windows: [UsageWindow(label: "5h", usedPercent: 99, resetsAt: nil)],
                                  fetchedAt: now - 7_200, isStale: true)
         let readings = LimitReading.all(cards: [card("claude-default", vendor: .claude, name: "Default", usage: usage)],
-                                        others: [])
+                                        others: [], now: now)
         #expect(readings.map(\.isStale) == [true])
+    }
+
+    @Test func anOldReadingFromSweIsStale() {
+        // swe falls back to its last reading for up to a day when a provider
+        // fails, still with status ok; only its age gives it away.
+        let others = [
+            OtherLimitsModel.Row(name: "devin", limit: RateLimit(status: .ok, usedPercent: 95, window: "7d",
+                                                                 resetAt: now + 86_400, fetchedAt: now - 3 * 3_600)),
+            OtherLimitsModel.Row(name: "cursor", limit: RateLimit(status: .ok, usedPercent: 10, window: "auto",
+                                                                  resetAt: now + 86_400, fetchedAt: now - 300)),
+            OtherLimitsModel.Row(name: "copilot", limit: RateLimit(status: .ok, usedPercent: 10, window: "30d")),
+        ]
+        let readings = LimitReading.all(cards: [], others: others, now: now)
+        #expect(readings.map(\.isStale) == [true, false, true])
+        #expect(LimitReading.tightest(readings, now: now)?.source == "cursor")
+    }
+
+    @Test func aStaleWindowIsNotAResetOne() {
+        // The widget says "reset" only for a window whose reset time passed.
+        #expect(reading("a", used: 80, resetsAt: now + 600, stale: true).hasReset(now: now) == false)
+        #expect(reading("a", used: 80, resetsAt: now - 1).hasReset(now: now))
+        #expect(reading("a", used: 80).hasReset(now: now) == false)
     }
 
     @Test func theTightestIsTheMostUsedFreshWindowThatHasNotReset() {

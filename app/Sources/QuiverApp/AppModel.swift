@@ -123,7 +123,7 @@ final class AppModel {
     }
 
     private func refreshLimits() {
-        limits.update(LimitReading.all(cards: accounts.cards, others: others.rows))
+        limits.update(LimitReading.all(cards: accounts.cards, others: others.rows, now: .now))
     }
 
     private static func client(for path: String) -> SweClient {

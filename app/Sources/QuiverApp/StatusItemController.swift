@@ -179,22 +179,13 @@ struct MenuBarContent: View {
                 .buttonStyle(.borderless)
                 .disabled(app.accounts.isLoading)
             }
-            ForEach(app.accounts.cards) { card in
-                PanelAccountRow(card: card)
+            // Everything else stays put; the limits scroll once there are
+            // more than the screen can hold.
+            ViewThatFits(in: .vertical) {
+                PanelLimits()
+                ScrollView { PanelLimits() }.scrollIndicators(.automatic)
             }
-            if app.accounts.cards.isEmpty {
-                Text("No accounts yet.").foregroundStyle(.secondary)
-            }
-            let others = app.others.rows.filter { $0.limit.status == .ok }
-            if !others.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Other harnesses").font(Theme.rowTitle)
-                    ForEach(others) { row in
-                        PanelLimitRow(label: row.name.capitalized, window: row.limit.window,
-                                      percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
-                    }
-                }
-            }
+            .frame(maxHeight: Self.limitsMaxHeight)
             if let spend = app.overview?.spend {
                 Divider()
                 SpendDonut(slices: spend)
@@ -209,6 +200,38 @@ struct MenuBarContent: View {
         .padding(16)
         .frame(width: 340)
         .glassEffect(in: .rect(cornerRadius: 18))
+    }
+
+    /// The screen's height less the header, spend donut and buttons.
+    static var limitsMaxHeight: CGFloat {
+        max(220, (NSScreen.main?.visibleFrame.height ?? 800) - 440)
+    }
+}
+
+/// Every account's windows, then the harnesses swe reports.
+private struct PanelLimits: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+                ForEach(app.accounts.cards) { card in
+                    PanelAccountRow(card: card)
+                }
+                if app.accounts.cards.isEmpty {
+                    Text("No accounts yet.").foregroundStyle(.secondary)
+                }
+                let others = app.others.rows.filter { $0.limit.status == .ok }
+                if !others.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Other harnesses").font(Theme.rowTitle)
+                        ForEach(others) { row in
+                            PanelLimitRow(label: row.name.capitalized, window: row.limit.window,
+                                          percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
+                        }
+                    }
+                }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
