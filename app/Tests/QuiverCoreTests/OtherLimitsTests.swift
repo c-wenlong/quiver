@@ -69,7 +69,7 @@ import Testing
         #expect(model.cards.map(\.isStarred) == [true, false, false])
     }
 
-    @Test func onlyStarredHarnessesShowALimit() async {
+    @Test func onlyStarredHarnessesShowALimitAnywhere() async {
         // swe can still hand back a cached reading for a harness since unstarred.
         let json = #"""
         {"schema": 1, "data": {"harnesses": [
@@ -83,6 +83,8 @@ import Testing
         await model.load()
         #expect(model.cards.map(\.name) == ["devin", "cursor"])
         #expect(model.cards.map { $0.limit != nil } == [true, false])
+        // The menu bar, notifications and widgets read rows: starred only too.
+        #expect(model.rows.map(\.name) == ["devin"])
     }
 
     @Test func aCardSaysWhyItHasNoLimit() {
