@@ -88,7 +88,9 @@ extension SweClient {
         let plain = plain(text)
         return !plain.hasPrefix("{") && plain.contains("--json")
             && (plain.contains("Unexpected args") || plain.contains("Unknown flag")
-                || plain.contains("Unknown option"))
+                || plain.contains("Unknown option")
+                // `swe find` from before plugins had --json
+                || plain.contains("--json is only available for skills"))
     }
 
     /// Text with terminal colour codes removed and edges trimmed.

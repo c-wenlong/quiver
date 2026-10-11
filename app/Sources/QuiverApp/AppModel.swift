@@ -30,6 +30,8 @@ final class AppModel {
     }
 
     let accounts: AccountsModel
+    /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
+    let agentsMd = AgentsModel()
     /// Nil when the ledger database could not be opened; `overviewError` says why.
     let overview: OverviewModel?
     let overviewError: String?

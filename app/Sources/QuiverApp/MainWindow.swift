@@ -98,6 +98,12 @@ struct PageView: View {
             OverviewPage()
         case .accounts:
             AccountsPage()
+        case .agentsMd:
+            AgentsMdPage()
+        case .mcpServers:
+            McpServersPage()
+        case .plugins:
+            PluginsPage()
         case .doctor:
             DoctorPage()
         case .settings:
@@ -117,7 +123,7 @@ struct Placeholder: View {
         case .overview: "M3"
         case .sessions: "M4"
         case .accounts: "M2"
-        case .skills, .agentsMd, .mcpServers: "M5"
+        case .skills, .agentsMd, .mcpServers, .plugins: "M5"
         case .doctor, .settings: "M1"
         }
     }
