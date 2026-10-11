@@ -109,9 +109,11 @@ private struct AccountCard: View {
                     Button("Show folder in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([model.folder(of: profile)])
                     }
+                    Divider()
+                    // Any account can be renamed; a default only can't be removed,
+                    // since it is the vendor's own ~/.claude or ~/.codex.
+                    Button("Rename…") { newName = profile.name; renaming = true }
                     if !profile.isDefault {
-                        Divider()
-                        Button("Rename…") { newName = profile.name; renaming = true }
                         Button("Remove…", role: .destructive) { confirmingRemove = true }
                     }
                 } label: {
