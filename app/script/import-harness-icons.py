@@ -151,7 +151,12 @@ def drop_box_subpath(d, box):
             dropped_start = start
             continue
         if dropped_start and sub[0] == "m":
-            sub = ["M", fmt(dropped_start[0] + float(sub[1])), fmt(dropped_start[1] + float(sub[2]))] + sub[3:]
+            rest = sub[3:]
+            # Pairs straight after a relative move are relative lines; an
+            # absolute M would make them absolute, so name them `l`.
+            if rest and not rest[0].isalpha():
+                rest = ["l"] + rest
+            sub = ["M", fmt(dropped_start[0] + float(sub[1])), fmt(dropped_start[1] + float(sub[2]))] + rest
         dropped_start = None
         kept.append(" ".join(sub))
     return " ".join(kept) if kept else d
