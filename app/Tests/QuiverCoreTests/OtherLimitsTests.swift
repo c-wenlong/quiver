@@ -46,6 +46,22 @@ import Testing
         #expect(model.cliInstalled["gemini"] == nil)
     }
 
+    @Test func everyHarnessInUseGetsACardStarredFirstWithOrWithoutALimit() async {
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))))
+        await model.load()
+        // Claude and Codex have account cards of their own.
+        #expect(model.cards.map(\.name) == ["devin", "cursor", "gemini"])
+        #expect(model.cards.map { $0.limit != nil } == [true, true, false])
+        #expect(model.cards.map(\.title) == ["Devin", "Cursor", "Gemini"])
+        #expect(model.cards.map(\.isStarred) == [true, true, false])
+    }
+
+    @Test func aCardSaysWhyItHasNoLimit() {
+        #expect(HarnessAccess.hasLimits("devin"))
+        #expect(HarnessAccess.hasLimits("copilot"))
+        #expect(!HarnessAccess.hasLimits("opencode"))
+    }
+
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner))

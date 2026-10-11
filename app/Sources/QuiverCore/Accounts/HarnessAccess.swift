@@ -18,6 +18,12 @@ public enum HarnessAccess {
         }
     }
 
+    /// Harnesses swe can read usage limits for (src/quiver/harness/rate_limits.py).
+    /// It polls only the starred ones.
+    public static func hasLimits(_ harness: String) -> Bool {
+        ["claude", "codex", "copilot", "cursor", "devin", "droid", "freebuff"].contains(harness)
+    }
+
     /// The whole sign-in invocation, or nil when the CLI has none of its own.
     /// Claude and Codex sign in per account, through `LaunchPlanner`.
     public static func loginCommand(for harness: String) -> String? {

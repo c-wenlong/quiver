@@ -24,10 +24,10 @@ struct AccountsPage: View {
                 ErrorCard(message: error)
             }
             // One grid for every account: Quiver's own profiles first, vendors
-            // in a fixed order, then the starred harnesses swe reads limits for.
+            // in a fixed order, then every other harness in use, starred first.
             // Each card carries its logo, so there are no per-vendor headings.
             let cards = Vendor.allCases.flatMap { vendor in model.cards.filter { $0.profile.vendor == vendor } }
-            let harnesses = app.others.rows
+            let harnesses = app.others.cards
             if !cards.isEmpty || !harnesses.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter, alignment: .top)], spacing: Theme.gutter) {
                     ForEach(cards) { card in
@@ -41,7 +41,7 @@ struct AccountsPage: View {
             if let note = app.others.note {
                 Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             } else if !harnesses.isEmpty {
-                Text("Limits for other harnesses come from swe, which polls the ones you starred.")
+                Text("Limits for other harnesses come from swe, which polls the ones you starred. Archived harnesses are left out.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
@@ -337,7 +337,7 @@ private struct LaunchButtons: View {
 /// whichever of its app and CLI are installed.
 private struct HarnessAccountCard: View {
     @Environment(AppModel.self) private var app
-    var row: OtherLimitsModel.Row
+    var row: OtherLimitsModel.Card
     var perform: (@escaping () async throws -> Void) -> Void
     @State private var renaming = false
     @State private var newName = ""
@@ -355,7 +355,7 @@ private struct HarnessAccountCard: View {
                     .help(ownName)
                 Text(name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .accessibilityLabel(name == ownName ? name : "\(name), \(ownName)")
-                if let plan = limit.planType { Badge(planTitle(plan)) }
+                if let plan = limit?.planType { Badge(planTitle(plan)) }
                 Spacer()
                 Menu {
                     if HarnessAccess.loginCommand(for: row.name) != nil {
@@ -380,7 +380,7 @@ private struct HarnessAccountCard: View {
                 .fixedSize()
                 .help("More")
             }
-            if limit.status == .ok {
+            if let limit, limit.status == .ok {
                 // The same bars as an account card, one per window the
                 // harness reports: window, reset, percent.
                 ForEach(limit.allWindows, id: \.window) { window in
@@ -407,18 +407,22 @@ private struct HarnessAccountCard: View {
             }
             HStack {
                 Group {
-                    switch limit.status {
-                    case .ok:
-                        if let fetched = limit.fetchedAt {
-                            Text("Fetched \(fetched, format: .relative(presentation: .named))")
-                        } else {
-                            Text("No reading yet")
+                    if let limit {
+                        switch limit.status {
+                        case .ok:
+                            if let fetched = limit.fetchedAt {
+                                Text("Fetched \(fetched, format: .relative(presentation: .named))")
+                            } else {
+                                Text("No reading yet")
+                            }
+                        case .authRequired:
+                            Text(HarnessAccess.loginCommand(for: row.name) != nil
+                                 ? "Signed out. Use Sign in from the menu." : "Sign in again in \(ownName).")
+                        case .noSubscription: Text("No subscription")
+                        case .timeout: Text("Didn't answer in time")
                         }
-                    case .authRequired:
-                        Text(HarnessAccess.loginCommand(for: row.name) != nil
-                             ? "Signed out. Use Sign in from the menu." : "Sign in again in \(ownName).")
-                    case .noSubscription: Text("No subscription")
-                    case .timeout: Text("Didn't answer in time")
+                    } else {
+                        Text(noLimitReason)
                     }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -437,6 +441,13 @@ private struct HarnessAccountCard: View {
         } message: {
             Text("Sets its name in harness.json, so the Harnesses page shows it too. Leave it empty to go back to \(ownName).")
         }
+    }
+
+    /// Why a card has no usage bars: swe reads limits only for some
+    /// harnesses, and polls only the starred ones.
+    private var noLimitReason: String {
+        if !HarnessAccess.hasLimits(row.name) { return "No usage limits to read" }
+        return row.isStarred ? "No reading yet" : "Star it on Harnesses to see its limits"
     }
 
     /// The harness's display name lives in harness.json, so a rename goes

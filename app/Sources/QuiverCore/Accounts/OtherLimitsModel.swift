@@ -29,7 +29,25 @@ public final class OtherLimitsModel {
     /// Covered by Accounts, one card per signed-in account.
     static let ownAccounts = ["claude", "codex"]
 
+    /// One per harness in use that has no Quiver account, starred first,
+    /// with its limit when swe read one. The Accounts page's harness cards.
+    public struct Card: Identifiable, Equatable, Sendable {
+        public var id: String { name }
+        public var name: String
+        public var displayName: String?
+        public var command: String
+        public var cliInstalled: Bool?
+        public var isStarred: Bool
+        public var limit: RateLimit?
+
+        public var title: String {
+            let set = displayName?.trimmingCharacters(in: .whitespaces) ?? ""
+            return set.isEmpty ? UsageFormat.harness(name) : set
+        }
+    }
+
     public private(set) var rows: [Row] = []
+    public private(set) var cards: [Card] = []
     /// Whether each registered harness's command is on PATH, by name,
     /// Claude and Codex included, for the account cards' Terminal button.
     public private(set) var cliInstalled: [String: Bool] = [:]
@@ -56,6 +74,11 @@ public final class OtherLimitsModel {
                 return Row(name: harness.name, limit: limit, displayName: harness.displayName, command: harness.command,
                            cliInstalled: harness.installed)
             }
+            let others = harnesses.filter { !Self.ownAccounts.contains($0.name) && $0.state != .archived }
+            cards = (others.filter { $0.state == .starred } + others.filter { $0.state != .starred }).map { harness in
+                Card(name: harness.name, displayName: harness.displayName, command: harness.command,
+                     cliInstalled: harness.installed, isStarred: harness.state == .starred, limit: harness.rateLimit)
+            }
             cliInstalled = harnesses.reduce(into: [:]) { map, harness in
                 if let installed = harness.installed { map[harness.name] = installed }
             }
@@ -64,6 +87,7 @@ public final class OtherLimitsModel {
             return
         } catch {
             rows = []
+            cards = []
             note = error.localizedDescription
         }
     }
