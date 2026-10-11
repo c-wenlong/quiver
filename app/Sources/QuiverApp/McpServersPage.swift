@@ -58,7 +58,7 @@ struct McpServersPage: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     if !inventory.idleHarnesses.isEmpty {
-                        Text("No servers in \(inventory.idleHarnesses.joined(separator: ", ")), so they have no column. A sync can still copy servers there.")
+                        Text("No servers in \(harnessNames(inventory.idleHarnesses)), so they have no column. A sync can still copy servers there.")
                     }
                     Text("Letters mark different definitions of one server. Env and header values never leave swe; only their names show here.")
                 }
@@ -93,7 +93,7 @@ private struct HarnessChips: View {
                 } label: {
                     HStack(spacing: 4) {
                         if on { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
-                        Text(harness)
+                        HarnessMarkView(harness: harness, size: 14)
                     }
                     .font(Theme.control)
                     .foregroundStyle(on ? Theme.textPrimary : Theme.textMuted)
@@ -105,7 +105,7 @@ private struct HarnessChips: View {
                 }
                 .plainButton(cornerRadius: Theme.controlHeight / 2)
                 .accessibilityAddTraits(on ? .isSelected : [])
-                .help(on ? "Leave \(harness) out of the comparison" : "Compare \(harness) too")
+                .help(on ? "Leave \(HarnessMark(harness).name) out of the comparison" : "Compare \(HarnessMark(harness).name) too")
             }
         }
     }
@@ -121,12 +121,14 @@ private struct ServerGrid: View {
     static let nameMinWidth: CGFloat = 180
     static let cellWidth: CGFloat = 88
 
-    /// At least 88pt, wider when the harness name needs it, so a heading
-    /// like "claude-desktop" shows whole.
+    /// At least 88pt, wider when a heading needs it (a logo and a word,
+    /// or the name of a harness with no logo), so it shows whole.
     static func columnWidth(_ harness: String) -> CGFloat {
+        let mark = HarnessMark(harness)
         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        let text = (harness as NSString).size(withAttributes: [.font: font, .kern: 0.12]).width
-        return max(cellWidth, ceil(text) + 16)
+        let text = mark.word.map { ($0 as NSString).size(withAttributes: [.font: font, .kern: 0.12]).width } ?? 0
+        let logo: CGFloat = mark.icon == nil ? 0 : 16 + (mark.word == nil ? 0 : 4)
+        return max(cellWidth, ceil(logo + text) + 16)
     }
 
     /// The card's inner width: the grid fills it, and scrolls only past it.
@@ -138,9 +140,8 @@ private struct ServerGrid: View {
                 HStack(spacing: 0) {
                     Text("Server").frame(minWidth: Self.nameMinWidth, maxWidth: .infinity, alignment: .leading)
                     ForEach(harnesses, id: \.self) { harness in
-                        Text(harness).lineLimit(1).truncationMode(.tail)
+                        HarnessMarkView(harness: harness)
                             .frame(width: Self.columnWidth(harness))
-                            .help(harness)
                     }
                 }
                 .font(Theme.tableHeader)
@@ -195,7 +196,7 @@ private struct ServerRow: View {
         }
         .plainButton(cornerRadius: 4)
         .onHover { hovering = $0 }
-        .accessibilityLabel("\(server.name), in \(server.harnesses.joined(separator: ", "))")
+        .accessibilityLabel("\(server.name), in \(harnessNames(server.harnesses))")
     }
 }
 
@@ -220,7 +221,7 @@ private struct Cell: View {
                     .foregroundStyle(Theme.textPrimary)
             }
         } else {
-            Text("—").foregroundStyle(Theme.borderStrong).help("Not in \(harness)")
+            Text("—").foregroundStyle(Theme.borderStrong).help("Not in \(HarnessMark(harness).name)")
         }
     }
 }
@@ -296,11 +297,11 @@ private struct ServerSheet: View {
             Divider().overlay(Theme.border)
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(server.groups.enumerated()), id: \.offset) { index, group in
-                    Facts(label: server.groups.count > 1 ? "Definition \(variantLetter(index))" : "In",
-                          value: group.joined(separator: ", "))
+                    HarnessFacts(label: server.groups.count > 1 ? "Definition \(variantLetter(index))" : "In",
+                                 harnesses: group)
                 }
                 let missing = server.missing(from: active)
-                if !missing.isEmpty { Facts(label: "Missing from", value: missing.joined(separator: ", ")) }
+                if !missing.isEmpty { HarnessFacts(label: "Missing from", harnesses: missing) }
             }
             Divider().overlay(Theme.border)
             syncForm
@@ -311,7 +312,7 @@ private struct ServerSheet: View {
         .confirmationDialog("Replace their definitions?", isPresented: $confirmingOverwrite) {
             Button("Replace", role: .destructive) { Task { await run(dryRun: false) } }
         } message: {
-            Text("\(approvedReplace.intersection(targets.differing).sorted().joined(separator: ", ")) will get \(source)'s definition of \(server.name) instead of their own.")
+            Text("\(harnessNames(approvedReplace.intersection(targets.differing).sorted())) will get \(HarnessMark(source).name)'s definition of \(server.name) instead of their own.")
         }
     }
 
@@ -328,7 +329,7 @@ private struct ServerSheet: View {
                     Text("Copy from").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .frame(width: 96, alignment: .leading)
                     SelectMenu(options: server.groups.enumerated().map { index, group in
-                                   (group.first ?? "", "Definition \(variantLetter(index)) (\(group.joined(separator: ", ")))")
+                                   (group.first ?? "", "Definition \(variantLetter(index)) (\(harnessNames(group)))")
                                },
                                selection: Binding(
                                    get: { server.group(of: source).flatMap { server.groups[$0].first } ?? source },
@@ -336,7 +337,7 @@ private struct ServerSheet: View {
                                width: 366)
                 }
             } else {
-                Facts(label: "Copy from", value: source)
+                HarnessFacts(label: "Copy from", harnesses: [source])
             }
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(targets.missing, id: \.self) { harness in
@@ -437,14 +438,32 @@ private struct TargetToggle: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            HarnessIcon(harness: harness, size: 16)
-            Text(harness).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            let mark = HarnessMark(harness)
+            HarnessIcon(harness: mark.icon ?? harness, size: 16)
+            Text(mark.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
             if replaces {
                 Text("replaces its own definition").font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
             Spacer(minLength: 8)
-            Toggle(replaces ? "\(harness), replaces its own definition" : harness, isOn: $isOn)
+            Toggle(replaces ? "\(mark.name), replaces its own definition" : mark.name, isOn: $isOn)
                 .toggleStyle(GreenSwitchStyle())
+        }
+    }
+}
+
+/// A sheet fact whose value is a set of harnesses, shown as their logos.
+private struct HarnessFacts: View {
+    var label: String
+    var harnesses: [String]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary).frame(width: 96, alignment: .leading)
+            FlowLayout(spacing: 10, lineSpacing: 6) {
+                ForEach(harnesses, id: \.self) { HarnessMarkView(harness: $0) }
+            }
+            .font(Theme.bodySmall)
+            .foregroundStyle(Theme.textPrimary)
         }
     }
 }
