@@ -29,7 +29,7 @@ a newer one in Settings.
 | `Sources/QuiverCore/Resources` | Trimmed LiteLLM price snapshot and Quiver's pricing supplement |
 | `Sources/QuiverApp` | The SwiftUI shell: window, sidebar, pages, menu bar panel |
 | `Tests/QuiverCoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
-| `script/build-app.sh` | Bundles and ad-hoc signs `build/Quiver.app` |
+| `script/build-app.sh` | Bundles and signs `build/Quiver.app` (Apple Development identity if you have one, else ad-hoc) |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
 | `THIRD_PARTY_NOTICES.md` | Licences for the LiteLLM snapshot and ported OpenUsage rules |
 
@@ -58,6 +58,8 @@ the catalog does not know is counted in `unpricedTokens`, never as $0.
 
 ## Known rough edges
 
-- The bundle is ad-hoc signed, so every rebuild looks like a new app to
-  macOS. Permissions you granted (for example reading a `swe` installed
-  under `~/Desktop`) are asked for again after each build.
+- Privacy grants (Desktop folder access, Accessibility) stick across
+  rebuilds only when the app is signed with a stable identity.
+  `build-app.sh` uses your first "Apple Development" certificate, or
+  `QUIVER_SIGN_IDENTITY`. Without one it falls back to ad-hoc signing, and
+  every rebuild looks like a new app that asks again.
