@@ -121,9 +121,10 @@ private struct FilterBar: View {
                 search.frame(minWidth: 180)
                 selects
             }
+            // Narrow windows: the selects wrap rather than overflow.
             VStack(alignment: .leading, spacing: 10) {
                 search
-                HStack(spacing: 10) { selects }
+                FlowLayout(spacing: 10, lineSpacing: 10) { selects }
             }
         }
     }
@@ -135,13 +136,14 @@ private struct FilterBar: View {
 
     @ViewBuilder private var selects: some View {
         SelectMenu(options: [(nil, "All tools")] + model.harnesses.map { (Optional($0), UsageFormat.harness($0)) },
-                   selection: $model.filter.harness)
+                   selection: $model.filter.harness,
+                   title: model.filter.harness.map(UsageFormat.harness) ?? "All tools")
         SelectMenu(symbol: "calendar", options: SessionsModel.Window.allCases.map { ($0, $0.title) },
                    selection: $model.filter.window)
         SelectMenu(symbol: "folder", options: [(nil, "All projects")] + model.projects.map { (Optional($0), $0) },
-                   selection: $model.filter.project)
+                   selection: $model.filter.project, title: model.filter.project ?? "All projects")
         SelectMenu(options: [(nil, "All models")] + model.models.map { (Optional($0), $0) },
-                   selection: $model.filter.model)
+                   selection: $model.filter.model, title: model.filter.model ?? "All models")
     }
 }
 

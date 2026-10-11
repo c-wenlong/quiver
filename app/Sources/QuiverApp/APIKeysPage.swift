@@ -155,12 +155,13 @@ private struct KeyRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             StatusLabel(status: row.status).frame(width: 120, alignment: .leading)
             HStack(spacing: 4) {
+                // One ring per button, so focus shows which one it's on.
                 Button(isRevealed ? "Hide" : "Reveal", systemImage: isRevealed ? "eye.slash" : "eye", action: toggleReveal)
                     .help(isRevealed ? "Hide the value" : "Show the value")
-                Button("Copy", systemImage: "doc.on.doc", action: copy).help("Copy the value")
-                Button("Edit", systemImage: "pencil", action: edit).help("Edit or remove")
+                    .iconButton()
+                Button("Copy", systemImage: "doc.on.doc", action: copy).help("Copy the value").iconButton()
+                Button("Edit", systemImage: "pencil", action: edit).help("Edit or remove").iconButton()
             }
-            .iconButton()
             .controlSize(.small)
             .frame(width: 104, alignment: .trailing)
         }

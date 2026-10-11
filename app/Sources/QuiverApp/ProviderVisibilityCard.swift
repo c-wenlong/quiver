@@ -22,10 +22,11 @@ struct ProviderVisibilityCard: View {
                 Spacer()
                 HStack(spacing: 0) {
                     Button("Enable all") { model.enableAll() }
+                        .focusRing(cornerRadius: Theme.controlRadius)
                     Button("Disable all") { model.disableAll() }
+                        .focusRing(cornerRadius: Theme.controlRadius)
                 }
                 .buttonStyle(QuietTextButtonStyle())
-                .focusRing(cornerRadius: Theme.controlRadius)
                 .padding(.horizontal, 4)
                 .frame(height: 36)
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border, lineWidth: 1))

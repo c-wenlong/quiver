@@ -47,10 +47,14 @@ struct SelectMenu<Value: Hashable>: View {
     @Binding var selection: Value
     /// 168pt as measured; nil sizes to the text.
     var width: CGFloat? = 168
+    /// What the closed menu shows. Defaults to the selected option's title;
+    /// pass it when the selection can drop out of `options` (a filter whose
+    /// value vanished on refresh) so the menu still says what it's set to.
+    var title: String? = nil
     @State private var hovering = false
 
     private var current: String {
-        options.first { $0.value == selection }?.title ?? ""
+        title ?? options.first { $0.value == selection }?.title ?? ""
     }
 
     var body: some View {
@@ -69,7 +73,10 @@ struct SelectMenu<Value: Hashable>: View {
         } label: {
             HStack(spacing: 6) {
                 if let symbol { Image(systemName: symbol).foregroundStyle(Theme.textSecondary) }
-                if let label { Text("\(label):").foregroundStyle(Theme.textSecondary) }
+                if let label {
+                    // The prefix keeps its width; the value truncates instead.
+                    Text("\(label):").foregroundStyle(Theme.textSecondary).lineLimit(1).fixedSize()
+                }
                 Text(current).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.down").font(.system(size: 12))
