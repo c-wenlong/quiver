@@ -141,6 +141,22 @@ final class TempFolder {
         #expect(try folder.read("AGENTS.md") == "first\n")
     }
 
+    @Test func aCircularLinkIsNeverReplacedByASave() throws {
+        let folder = try TempFolder()
+        try folder.link("A.md", to: "B.md")
+        try folder.link("B.md", to: "A.md")
+        let doc = InstructionDocument(url: folder.url.appending(path: "A.md"))
+        doc.load()
+        guard case .failed(let message) = doc.state else {
+            Issue.record("expected failed, got \(doc.state)")
+            return
+        }
+        #expect(message.contains("link"))
+        doc.text = "x"
+        guard case .failed = doc.save(overwrite: true) else { Issue.record("save went through"); return }
+        #expect(folder.isLink("A.md") && folder.isLink("B.md"))
+    }
+
     @Test func revertDropsEdits() throws {
         let folder = try TempFolder()
         let doc = InstructionDocument(url: try folder.write("AGENTS.md", "keep\n"))

@@ -71,6 +71,8 @@ public final class AgentsModel {
             linkError = error.localizedDescription
         }
         await load(swe: swe)
+        // swe init seeds a missing AGENTS.md; show it unless there are edits.
+        checkDisk()
     }
 
     public var projectHasUnsavedChanges: Bool {

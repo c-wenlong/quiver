@@ -395,6 +395,14 @@ private struct ServerSheet: View {
                 done = report
                 await reload()
             }
+        } catch let partial as McpPartialSync {
+            self.error = partial.message
+            if dryRun {
+                preview = partial.report
+            } else {
+                done = partial.report
+                await reload()
+            }
         } catch {
             self.error = error.localizedDescription
         }

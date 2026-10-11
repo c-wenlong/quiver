@@ -128,6 +128,12 @@ public final class InstructionDocument: Identifiable {
 
     /// The file's bytes, nil when there is no file there.
     nonisolated static func read(_ url: URL) -> Result<Data?, Error> {
+        if isLink(url) {
+            // resolveLinks stopped on a link: a cycle or a very long chain.
+            // Reading it as missing would let a save replace the link.
+            return .failure(CocoaError(.fileReadUnknown, userInfo: [
+                NSLocalizedDescriptionKey: "its symlink chain is circular or too long"]))
+        }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
             return .success(nil)
@@ -136,6 +142,10 @@ public final class InstructionDocument: Identifiable {
             return .failure(CocoaError(.fileReadUnknown, userInfo: [NSLocalizedDescriptionKey: "it is a folder"]))
         }
         return Result { try Data(contentsOf: url) }
+    }
+
+    nonisolated static func isLink(_ url: URL) -> Bool {
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
     }
 
     /// Follows symlinks at the last path component, including dangling ones,

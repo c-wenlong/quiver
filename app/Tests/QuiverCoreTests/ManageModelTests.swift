@@ -96,6 +96,22 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(runner.calls.last == ["init", "--check", "--json"])
     }
 
+    @Test func aFileThatInitCreatesShowsUpInTheEditor() async throws {
+        let folder = try TempFolder()
+        let agents = folder.url.appending(path: "AGENTS.md")
+        let runner = RoutingRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
+        let model = AgentsModel()
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe)
+        #expect(model.global?.existsOnDisk == false)
+        // swe init seeds the file
+        _ = try folder.write("AGENTS.md", "# Seeded\n")
+        runner.set(["init"], CommandResult(status: 0, stdout: Data(), stderr: ""))
+        await model.link(swe: swe)
+        #expect(model.global?.text == "# Seeded\n")
+        #expect(model.global?.existsOnDisk == true)
+    }
+
     @Test func reloadingKeepsTheOpenDocumentAndItsEdits() async throws {
         let folder = try TempFolder()
         let agents = try folder.write("AGENTS.md", "x")
@@ -330,6 +346,30 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         ])
         #expect(result.targets.map(\.name) == ["cursor", "codex"])
         #expect(result.sentence == "Added to cursor. Updated codex.")
+    }
+
+    @Test func aFailedReplaceStillReportsWhatWasAdded() async throws {
+        let runner = RoutingRunner([
+            (["mcp", "sync", "claude", "cursor"], json(#"""
+            {"source": "claude", "dry_run": false, "selected": ["docs"], "targets": [
+              {"name": "cursor", "added": ["docs"], "updated": [], "skipped": [], "pruned": []}]}
+            """#)),
+            (["mcp", "sync", "claude", "codex"], CommandResult(status: 1, stdout: Data(), stderr: "codex config is corrupt\n")),
+        ])
+        let server = McpServer(name: "docs", harnesses: ["claude", "codex"], conflict: true)
+        do {
+            _ = try await McpModel().sync(server, from: "claude", adding: ["cursor"], replacing: ["codex"],
+                                          dryRun: false, swe: SweClient(runner: runner))
+            Issue.record("expected a partial failure")
+        } catch let partial as McpPartialSync {
+            #expect(partial.report.targets.map(\.name) == ["cursor"])
+            #expect(partial.message == "codex config is corrupt")
+        }
+    }
+
+    @Test func anEmptyNameCanNotBeSyncedAlone() {
+        // `--only=` with nothing after it would select every server.
+        #expect(!McpServer(name: "", harnesses: []).canSyncAlone)
     }
 
     @Test func aSyncWithNothingToReplaceNeverForces() async throws {

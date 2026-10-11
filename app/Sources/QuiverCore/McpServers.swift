@@ -140,8 +140,9 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
     }
 
     /// `--only` takes fnmatch globs, comma separated. A comma cannot be
-    /// escaped there, so such a name cannot be synced on its own.
-    public var canSyncAlone: Bool { !name.contains(",") }
+    /// escaped there, so such a name cannot be synced on its own; nor can an
+    /// empty one, since `--only=` with no pattern selects every server.
+    public var canSyncAlone: Bool { !name.isEmpty && !name.contains(",") }
 
     /// The name as an fnmatch pattern matching only itself.
     public var onlyPattern: String {
@@ -269,17 +270,22 @@ public final class McpModel {
     public func sync(_ server: McpServer, from source: String, adding: [String], replacing: [String],
                      dryRun: Bool, swe: SweClient) async throws -> McpSyncReport {
         var parts: [McpSyncReport] = []
-        if !adding.isEmpty {
-            parts.append(try await swe.mcpSync(server: server, from: source, to: adding,
-                                               overwrite: false, dryRun: dryRun))
+        func merged() -> McpSyncReport {
+            McpSyncReport(source: source, dryRun: dryRun, selected: parts.first?.selected ?? [],
+                          targets: parts.flatMap(\.targets))
         }
-        if !replacing.isEmpty {
-            parts.append(try await swe.mcpSync(server: server, from: source, to: replacing,
-                                               overwrite: true, dryRun: dryRun))
+        let runs = [(adding, false), (replacing, true)].filter { !$0.0.isEmpty }
+        for (targets, overwrite) in runs {
+            do {
+                parts.append(try await swe.mcpSync(server: server, from: source, to: targets,
+                                                   overwrite: overwrite, dryRun: dryRun))
+            } catch {
+                // What already happened has to stay visible.
+                if parts.isEmpty { throw error }
+                throw McpPartialSync(report: merged(), message: error.localizedDescription)
+            }
         }
-        return McpSyncReport(source: source, dryRun: dryRun,
-                             selected: parts.first?.selected ?? [],
-                             targets: parts.flatMap(\.targets))
+        return merged()
     }
 
     /// What a sync of `server` from `source` can reach: harnesses without
@@ -298,6 +304,13 @@ public final class McpModel {
         }
         return SyncTargets(missing: missing, differing: differing)
     }
+}
+
+/// A sync whose first call went through and a later one failed.
+public struct McpPartialSync: Error, LocalizedError, Sendable {
+    public let report: McpSyncReport
+    public let message: String
+    public var errorDescription: String? { message }
 }
 
 public struct SyncTargets: Equatable, Sendable {
