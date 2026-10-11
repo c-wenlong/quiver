@@ -69,6 +69,22 @@ import Testing
         #expect(model.cards.map(\.isStarred) == [true, false, false])
     }
 
+    @Test func onlyStarredHarnessesShowALimit() async {
+        // swe can still hand back a cached reading for a harness since unstarred.
+        let json = #"""
+        {"schema": 1, "data": {"harnesses": [
+          {"name": "cursor", "command": "cursor-agent", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 1,
+           "rate_limit": {"status": "ok", "used_percent": 40, "remaining_percent": 60, "limit_reached": false, "reset_at": null, "window": "auto", "window_seconds": null, "plan_type": "pro", "remaining_units": null, "total_units": null, "fetched_at": 1791700000}},
+          {"name": "devin", "command": "devin", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 3,
+           "rate_limit": {"status": "ok", "used_percent": 10, "remaining_percent": 90, "limit_reached": false, "reset_at": null, "window": "7d", "window_seconds": null, "plan_type": "teams", "remaining_units": null, "total_units": null, "fetched_at": 1791700000}}
+        ]}}
+        """#
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
+        await model.load()
+        #expect(model.cards.map(\.name) == ["devin", "cursor"])
+        #expect(model.cards.map { $0.limit != nil } == [true, false])
+    }
+
     @Test func aCardSaysWhyItHasNoLimit() {
         #expect(HarnessAccess.hasLimits("devin"))
         #expect(HarnessAccess.hasLimits("copilot"))
