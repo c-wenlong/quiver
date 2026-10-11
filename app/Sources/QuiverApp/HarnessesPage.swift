@@ -136,16 +136,15 @@ private struct HarnessRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     HarnessIcon(harness: harness.name, size: 16)
                         .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
-                    Text(harness.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    Text(harness.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     if let version = harness.version {
                         Text(version).font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
                             .lineLimit(1).truncationMode(.middle)
                     }
-                    if harness.command != harness.name {
-                        Text(harness.command)
-                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1).truncationMode(.middle)
-                    }
+                    // The name is for people; the command is what runs.
+                    Text(harness.command)
+                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
                     ForEach(harness.aliases, id: \.self) { Badge($0) }
                 }
                 if !harness.description.isEmpty {
@@ -182,7 +181,7 @@ private struct HarnessRow: View {
         .onTapGesture { editing = true }
         .onHover { hovering = $0 }
         .accessibilityAction(named: "Edit") { editing = true }
-        .help("Click to edit \(harness.name)")
+        .help("Click to edit \(harness.title)")
         .sheet(isPresented: $editing) { HarnessEditor(harness: harness, model: model) }
         .opacity(busy ? 0.6 : 1)
         .disabled(busy)
@@ -214,7 +213,7 @@ private struct HarnessRow: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
                         if HarnessIcon.exists(for: harness.name) { HarnessIcon(harness: harness.name, size: 16) }
-                        Text("Archive \(harness.name)").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                        Text("Archive \(harness.title)").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     }
                     Text("It drops out of swe list. Nothing is uninstalled, and the reason is kept so you remember why.")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -308,13 +307,18 @@ private struct HarnessEditor: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 10) {
                     HarnessIcon(harness: harness.name, size: 20)
-                    Text("Edit \(harness.name)").font(Theme.sectionTitle).tracking(-0.5)
+                    Text("Edit \(harness.title)").font(Theme.sectionTitle).tracking(-0.5)
                         .foregroundStyle(Theme.textPrimary)
                 }
                 Text(facts).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            field("Command", hint: draft.commandProblem ?? "What swe runs to start it.", problem: draft.commandProblem != nil) {
-                TextField(harness.name, text: $draft.command).quiverField(monospaced: true)
+            HStack(alignment: .top, spacing: 12) {
+                field("Name", hint: "Shown across Quiver. Empty uses \(UsageFormat.harness(harness.name)).") {
+                    TextField(UsageFormat.harness(harness.name), text: $draft.displayName).quiverField()
+                }
+                field("Command", hint: draft.commandProblem ?? "What swe runs to start it.", problem: draft.commandProblem != nil) {
+                    TextField(harness.name, text: $draft.command).quiverField(monospaced: true)
+                }
             }
             field("Description") {
                 TextField("What it's good for", text: $draft.description, axis: .vertical)

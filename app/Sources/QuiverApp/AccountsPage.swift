@@ -345,7 +345,7 @@ private struct HarnessAccountCard: View {
     var body: some View {
         let limit = row.limit
         let ownName = UsageFormat.harness(row.name)
-        let name = app.harnessNames.name(for: row.name) ?? ownName
+        let name = row.title
         let model = app.accounts
         Card {
             HStack(spacing: 8) {
@@ -362,7 +362,7 @@ private struct HarnessAccountCard: View {
                     }
                     Button("Rename…") { newName = name; renaming = true }
                     if name != ownName {
-                        Button("Use the name \(ownName)") { app.harnessNames.set(nil, for: row.name) }
+                        Button("Use the name \(ownName)") { rename(to: "") }
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -428,10 +428,21 @@ private struct HarnessAccountCard: View {
         }
         .alert("Rename \(ownName)", isPresented: $renaming) {
             TextField("Name", text: $newName)
-            Button("Rename") { app.harnessNames.set(newName, for: row.name) }
+            Button("Rename") { rename(to: newName) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Only the name on this card changes. Leave it empty to go back to \(ownName).")
+            Text("Sets its name in harness.json, so the Harnesses page shows it too. Leave it empty to go back to \(ownName).")
+        }
+    }
+
+    /// The harness's display name lives in harness.json, so a rename goes
+    /// through `swe edit` and the cards reload from swe.
+    private func rename(to name: String) {
+        let swe = app.swe
+        let others = app.others
+        perform {
+            try await swe.editHarness(row.name, flags: ["--display-name=\(name.trimmingCharacters(in: .whitespaces))"])
+            await others.load()
         }
     }
 }

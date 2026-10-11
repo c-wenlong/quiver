@@ -54,6 +54,7 @@ extension SweClient {
 /// The edit sheet's draft of a harness's registry fields. Lists are kept as
 /// the comma-separated text the user types.
 public struct HarnessEdit: Equatable, Sendable {
+    public var displayName: String
     public var command: String
     public var description: String
     public var version: String
@@ -62,6 +63,7 @@ public struct HarnessEdit: Equatable, Sendable {
     public var notes: String
 
     public init(_ harness: Harness) {
+        displayName = harness.displayName ?? ""
         command = harness.command
         description = harness.description
         version = harness.version ?? ""
@@ -78,6 +80,7 @@ public struct HarnessEdit: Equatable, Sendable {
     /// fixed order. An empty value clears the field, as `swe edit` does.
     public func flags(from original: HarnessEdit) -> [String] {
         let fields: [(String, KeyPath<HarnessEdit, String>, Bool)] = [
+            ("display-name", \.displayName, false),
             ("command", \.command, false), ("description", \.description, false),
             ("version", \.version, false), ("aliases", \.aliases, true),
             ("tags", \.tags, true), ("notes", \.notes, false),
