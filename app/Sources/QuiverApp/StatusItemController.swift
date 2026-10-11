@@ -115,7 +115,7 @@ struct MenuBarContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Quiver").font(.headline)
+                Text("Quiver").font(Theme.rowTitle)
                 Spacer()
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await app.accounts.load(force: true) }
@@ -137,9 +137,9 @@ struct MenuBarContent: View {
             }
             Divider()
             HStack {
-                Button("Open Quiver", action: openMain)
+                Button("Open Quiver", action: openMain).buttonStyle(PrimaryButtonStyle())
                 Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
+                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(SecondaryButtonStyle())
             }
         }
         .padding(16)
@@ -167,13 +167,8 @@ private struct SpendDonut: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Spend", selection: $period) {
-                Text("Today").tag(SpendSlice.Period.today)
-                Text("Yesterday").tag(SpendSlice.Period.yesterday)
-                Text("30 days").tag(SpendSlice.Period.thirtyDays)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            Tabs(options: [(SpendSlice.Period.today, "Today"), (.yesterday, "Yesterday"), (.thirtyDays, "30 days")],
+                 selection: $period)
             HStack(spacing: 16) {
                 ZStack {
                     if (slice?.costUSD ?? 0) > 0 {
@@ -188,7 +183,8 @@ private struct SpendDonut: View {
                     }
                     VStack(spacing: 0) {
                         Text(UsageFormat.dollars(slice?.costUSD ?? 0))
-                            .font(.system(.headline, design: .rounded)).monospacedDigit()
+                            .font(.system(size: 17, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(Theme.accent)
                         Text("spent").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
@@ -228,7 +224,7 @@ private struct PanelAccountRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Circle().fill(Color(hex: card.profile.color)).frame(width: 7, height: 7)
-                Text("\(card.profile.vendor.title): \(card.profile.name)").font(.subheadline.weight(.medium))
+                Text("\(card.profile.vendor.title): \(card.profile.name)").font(Theme.rowTitle)
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
             }
             if let window = card.usage?.windows.max(by: { $0.usedPercent < $1.usedPercent }) {

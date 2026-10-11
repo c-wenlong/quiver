@@ -48,6 +48,17 @@ public struct HarnessShare: Sendable, Equatable, Identifiable {
     public var totals: UsageTotals
     /// Of the period's tokens, 0...1.
     public var share: Double
+    /// Distinct models this harness used in the period.
+    public var modelCount = 0
+}
+
+/// One model's slice of the period, for the top models list.
+public struct ModelShare: Sendable, Equatable, Identifiable {
+    public var id: String { model }
+    public var model: String
+    public var totals: UsageTotals
+    /// Of the period's tokens, 0...1.
+    public var share: Double
 }
 
 public struct DayRow: Sendable, Equatable, Identifiable {
@@ -70,6 +81,10 @@ public struct OverviewSummary: Sendable, Equatable {
     public var harnesses: [HarnessShare]
     public var days: [DayRow]
     public var accounts: [AccountRow]
+    /// Largest first.
+    public var models: [ModelShare] = []
+    /// Days in the period with any usage.
+    public var activeDays: Int { days.filter { $0.totals.totalTokens > 0 }.count }
 }
 
 /// Spend for the menu bar's donut.
@@ -182,17 +197,28 @@ public final class OverviewModel {
         var total = UsageTotals()
         for value in harnesses.values { total.add(value) }
         let grand = Double(max(total.totalTokens, 1))
+        var byModel: [String: UsageTotals] = [:]
+        var modelsByHarness: [String: Set<String>] = [:]
+        for row in daily {
+            byModel[row.model, default: UsageTotals()].add(row.totals)
+            modelsByHarness[row.harness, default: []].insert(row.model)
+        }
+        let modelGrand = Double(max(byModel.values.reduce(0) { $0 + $1.totalTokens }, 1))
         return OverviewSummary(
             period: period,
             range: range,
             totals: total,
             harnesses: harnesses
-                .map { HarnessShare(harness: $0.key, totals: $0.value, share: Double($0.value.totalTokens) / grand) }
+                .map { HarnessShare(harness: $0.key, totals: $0.value, share: Double($0.value.totalTokens) / grand,
+                                    modelCount: modelsByHarness[$0.key]?.count ?? 0) }
                 .sorted { ($0.totals.totalTokens, $1.harness) > ($1.totals.totalTokens, $0.harness) },
             days: Self.combineDays(daily).sorted { $0.day > $1.day },
             accounts: accounts
                 .map { AccountRow(home: $0.key, label: accountLabel($0.key), totals: $0.value) }
-                .sorted { $0.totals.costUSD > $1.totals.costUSD })
+                .sorted { $0.totals.costUSD > $1.totals.costUSD },
+            models: byModel
+                .map { ModelShare(model: $0.key, totals: $0.value, share: Double($0.value.totalTokens) / modelGrand) }
+                .sorted { ($0.totals.totalTokens, $1.model) > ($1.totals.totalTokens, $0.model) })
     }
 
     /// Reload on a timer until cancelled, scanning for new usage each time.
