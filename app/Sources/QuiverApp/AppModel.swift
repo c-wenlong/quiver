@@ -35,6 +35,7 @@ final class AppModel {
     /// Nil when the ledger database could not be opened; `overviewError` says why.
     let overview: OverviewModel?
     let overviewError: String?
+    let serviceStatus: ServiceStatusModel
 
     init() {
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
@@ -71,6 +72,8 @@ final class AppModel {
             overview = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
+        serviceStatus = ServiceStatusModel(service: ServiceStatusService(
+            transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
         terminalChoice = { [unowned self] in self.terminal }
     }
 
@@ -79,9 +82,15 @@ final class AppModel {
     /// Keep the ledger scanned while the app runs. One loop serves both the
     /// window and the menu bar.
     func start() {
+        if statusPolling == nil {
+            statusPolling = Task { [serviceStatus] in await serviceStatus.keepFresh() }
+        }
         guard refreshing == nil, let overview else { return }
         refreshing = Task { await overview.keepFresh() }
     }
+
+    /// Keeps the Service status page and the menu bar line current.
+    private var statusPolling: Task<Void, Never>?
 
     private static func client(for path: String) -> SweClient {
         SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))

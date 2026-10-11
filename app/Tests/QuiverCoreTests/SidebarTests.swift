@@ -6,7 +6,7 @@ import Testing
         #expect(SidebarGroup.allCases.map(\.title) == ["Usage", "Manage", "System"])
         #expect(SidebarGroup.usage.sections == [.overview, .sessions])
         #expect(SidebarGroup.manage.sections == [.accounts, .skills, .agentsMd, .mcpServers, .plugins])
-        #expect(SidebarGroup.system.sections == [.doctor, .settings])
+        #expect(SidebarGroup.system.sections == [.serviceStatus, .doctor, .settings])
     }
 
     @Test func everySectionHasATitleAndSymbol() {
@@ -16,5 +16,6 @@ import Testing
         }
         #expect(AppSection.agentsMd.title == "AGENTS.md")
         #expect(AppSection.mcpServers.title == "MCP servers")
+        #expect(AppSection.serviceStatus.title == "Service status")
     }
 }

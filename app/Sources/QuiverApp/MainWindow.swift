@@ -104,6 +104,8 @@ struct PageView: View {
             McpServersPage()
         case .plugins:
             PluginsPage()
+        case .serviceStatus:
+            ServiceStatusPage()
         case .doctor:
             DoctorPage()
         case .settings:
@@ -125,6 +127,7 @@ struct Placeholder: View {
         case .accounts: "M2"
         case .skills, .agentsMd, .mcpServers, .plugins: "M5"
         case .doctor, .settings: "M1"
+        case .serviceStatus: "M7"
         }
     }
 

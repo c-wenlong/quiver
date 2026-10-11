@@ -2,7 +2,7 @@
 public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case overview, sessions
     case accounts, skills, agentsMd, mcpServers, plugins
-    case doctor, settings
+    case serviceStatus, doctor, settings
 
     public var id: String { rawValue }
 
@@ -15,6 +15,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .agentsMd: "AGENTS.md"
         case .mcpServers: "MCP servers"
         case .plugins: "Plugins"
+        case .serviceStatus: "Service status"
         case .doctor: "Doctor"
         case .settings: "Settings"
         }
@@ -30,6 +31,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .agentsMd: "doc.text"
         case .mcpServers: "powerplug"
         case .plugins: "puzzlepiece.extension"
+        case .serviceStatus: "waveform.path.ecg"
         case .doctor: "stethoscope"
         case .settings: "gearshape"
         }
@@ -53,7 +55,7 @@ public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
         switch self {
         case .usage: [.overview, .sessions]
         case .manage: [.accounts, .skills, .agentsMd, .mcpServers, .plugins]
-        case .system: [.doctor, .settings]
+        case .system: [.serviceStatus, .doctor, .settings]
         }
     }
 }
