@@ -151,9 +151,13 @@ struct FlowLayout: Layout {
 }
 
 /// `~/…` for a path under the home folder.
-func abbreviated(_ path: String) -> String {
+func displayPath(_ path: String) -> String {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+}
+
+func displayPath(_ url: URL) -> String {
+    displayPath(url.path)
 }
 
 func copyToPasteboard(_ text: String) {
