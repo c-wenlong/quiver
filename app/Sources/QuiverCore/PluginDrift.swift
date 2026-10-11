@@ -48,6 +48,7 @@ public struct PluginDrift: Decodable, Sendable, Equatable, Identifiable {
         switch kind {
         case "unregistered": "Marketplace not added"
         case "not-installed": "Not installed"
+        case "linked-manifest": "Linked manifest"
         case "stale": "Out of date"
         case "disabled-here": "Disabled here"
         default: kind.prefix(1).uppercased() + kind.dropFirst()

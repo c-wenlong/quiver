@@ -168,6 +168,8 @@ public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
             case installed
             case unregistered
             case notInstalled = "not-installed"
+            /// The source's `.codex-plugin` is a symlink, which Codex skips.
+            case linkedManifest = "linked-manifest"
             case stale
             case disabledHere = "disabled-here"
             /// Disabled in every harness that has it.
@@ -180,6 +182,7 @@ public struct HubPlugin: Decodable, Sendable, Equatable, Identifiable {
                 case .installed: "Installed"
                 case .unregistered: "Marketplace not added"
                 case .notInstalled: "Not installed"
+                case .linkedManifest: "Linked manifest"
                 case .stale: "Out of date"
                 case .disabledHere, .disabled: "Disabled"
                 case .unknown: "Unknown"

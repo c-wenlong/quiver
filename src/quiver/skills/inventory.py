@@ -235,10 +235,11 @@ def hub_plugins(home: Path | None = None) -> dict:
 
     ``install`` is keyed by each harness that runs plugins and exists on this
     machine. Its ``state`` is ``installed``, the first gap ``swe find
-    plugins`` reports (``unregistered``, ``not-installed``, ``stale``,
-    ``disabled-here``), or ``disabled`` when it is disabled in every harness,
-    with the command that closes it as ``fix`` and, when swe can run that
-    command itself, the ``id`` that ``swe find plugins --fix`` takes.
+    plugins`` reports (``unregistered``, ``not-installed``,
+    ``linked-manifest``, ``stale``, ``disabled-here``), or ``disabled`` when
+    it is disabled in every harness, with the command that closes it as
+    ``fix`` and, when swe can run that command itself, the ``id`` that
+    ``swe find plugins --fix`` takes.
     """
     home = home or Path.home()
     sources = quiver_plugins(home)
