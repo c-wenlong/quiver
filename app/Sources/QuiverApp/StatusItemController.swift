@@ -215,22 +215,27 @@ private struct PanelLimits: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-                ForEach(app.accounts.cards) { card in
-                    PanelAccountRow(card: card)
-                }
-                if app.accounts.cards.isEmpty {
-                    Text("No accounts yet.").foregroundStyle(.secondary)
-                }
-                let others = app.others.rows.filter { $0.limit.status == .ok }
-                if !others.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Other harnesses").font(Theme.rowTitle)
-                        ForEach(others) { row in
-                            PanelLimitRow(label: row.name.capitalized, window: row.limit.window,
-                                          percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
-                        }
+            ForEach(app.accounts.cards) { card in
+                PanelAccountRow(card: card)
+            }
+            if app.accounts.cards.isEmpty {
+                Text("No accounts yet.").foregroundStyle(.secondary)
+            }
+            let others = app.others.rows.filter { $0.limit.status == .ok }
+            if !others.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Other harnesses").font(Theme.rowTitle)
+                    ForEach(others) { row in
+                        // swe hands back its last reading, status ok, for up to
+                        // a day when a provider fails; dim one that old.
+                        let old = row.limit.fetchedAt.map { Date.now.timeIntervalSince($0) > LimitReading.sweStaleAfter } ?? true
+                        PanelLimitRow(label: row.name.capitalized, window: row.limit.window,
+                                      percent: Double(row.limit.usedPercent), resetsAt: row.limit.resetAt)
+                            .opacity(old ? 0.55 : 1)
+                            .help(row.limit.fetchedAt.map { "Fetched \(UsageFormat.ago($0, now: .now))" } ?? "Fetch time unknown")
                     }
                 }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

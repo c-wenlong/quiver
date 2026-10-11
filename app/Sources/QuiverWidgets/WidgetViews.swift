@@ -224,12 +224,13 @@ struct HeatmapView: View {
     var now: Date
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GeometryReader { geo in
-                let gap: CGFloat = 2
-                let cell = min((geo.size.height - 6 * gap) / 7, 10)
-                let weeks = min(WidgetSnapshot.heatmapWeeks, Int((geo.size.width + gap) / (cell + gap)))
-                let map = snapshot.heatmap(weeks: max(weeks, 1), now: now, calendar: .current)
+        GeometryReader { geo in
+            let gap: CGFloat = 2
+            let caption: CGFloat = 22
+            let cell = min((geo.size.height - caption - 6 * gap) / 7, 10)
+            let weeks = min(WidgetSnapshot.heatmapWeeks, Int((geo.size.width + gap) / (cell + gap)))
+            let map = snapshot.heatmap(weeks: max(weeks, 1), now: now, calendar: .current)
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top, spacing: gap) {
                     ForEach(Array(map.columns.enumerated()), id: \.offset) { _, column in
                         VStack(spacing: gap) {
@@ -243,11 +244,13 @@ struct HeatmapView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .widgetAccentable()
-            }
-            HStack(spacing: 4) {
-                Text(UsageFormat.tokens(snapshot.activityTokens)).font(.system(size: 11, weight: .semibold))
-                Text("tokens · \(snapshot.activeDays) active days")
-                    .font(.system(size: 11)).foregroundStyle(Palette.textSecondary)
+                Spacer(minLength: 0)
+                // Totals of the weeks drawn, which a narrow widget cuts short.
+                HStack(spacing: 4) {
+                    Text(UsageFormat.tokens(map.totalTokens)).font(.system(size: 11, weight: .semibold))
+                    Text("tokens · \(map.activeDays) active days")
+                        .font(.system(size: 11)).foregroundStyle(Palette.textSecondary)
+                }
             }
         }
     }
