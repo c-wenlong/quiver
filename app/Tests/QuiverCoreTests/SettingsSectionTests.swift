@@ -5,10 +5,10 @@ import Testing
 @Suite struct SettingsSectionTests {
     @Test func subNavIsGroupedAsApproved() {
         #expect(SettingsGroup.allCases.map(\.title) == ["App", "Usage", "Advanced"])
-        #expect(SettingsGroup.app.sections == [.general, .notifications])
+        #expect(SettingsGroup.app.sections == [.general, .preferences, .notifications])
         #expect(SettingsGroup.usage.sections == [.providers])
         #expect(SettingsGroup.advanced.sections == [.paths])
-        #expect(SettingsGroup.order == [.general, .notifications, .providers, .paths])
+        #expect(SettingsGroup.order == [.general, .preferences, .notifications, .providers, .paths])
     }
 
     @Test func everySectionHasATitleSymbolAndADescription() {
@@ -21,7 +21,8 @@ import Testing
     }
 
     @Test func arrowKeysWalkTheSubNavAndStopAtTheEnds() {
-        #expect(SettingsSection.general.step(1) == .notifications)
+        #expect(SettingsSection.general.step(1) == .preferences)
+        #expect(SettingsSection.preferences.step(1) == .notifications)
         #expect(SettingsSection.notifications.step(1) == .providers)
         #expect(SettingsSection.providers.step(-1) == .notifications)
         #expect(SettingsSection.general.step(-1) == .general)
@@ -32,5 +33,12 @@ import Testing
         #expect(SettingsSection(saved: "paths") == .paths)
         #expect(SettingsSection(saved: "appearance") == .general)
         #expect(SettingsSection(saved: nil) == .general)
+    }
+
+    @Test func appearanceDefaultsToSystem() {
+        #expect(AppearanceMode(saved: nil) == .system)
+        #expect(AppearanceMode(saved: "dark") == .dark)
+        #expect(AppearanceMode(saved: "sepia") == .system)
+        #expect(AppearanceMode.allCases.map(\.title) == ["System", "Light", "Dark"])
     }
 }

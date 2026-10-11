@@ -1,13 +1,14 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, notifications, providers, paths
+    case general, preferences, notifications, providers, paths
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
         case .general: "General"
+        case .preferences: "Preferences"
         case .notifications: "Notifications"
         case .providers: "Providers"
         case .paths: "Paths"
@@ -17,7 +18,8 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
     /// One line under the section title.
     public var detail: String {
         switch self {
-        case .general: "When Quiver starts, which terminal it opens, and its Dock icon."
+        case .general: "When Quiver starts, which terminal it opens, and whether it's in the Dock."
+        case .preferences: "How Quiver looks: light or dark, and its app icon."
         case .notifications: "Alerts when a usage limit runs low."
         case .providers: "Which harnesses show up across the app, and in what order."
         case .paths: "Where Quiver finds swe and your API keys file."
@@ -28,6 +30,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
     public var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .preferences: "paintbrush"
         case .notifications: "bell"
         case .providers: "square.stack.3d.up"
         case .paths: "folder"
@@ -62,7 +65,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
 
     public var sections: [SettingsSection] {
         switch self {
-        case .app: [.general, .notifications]
+        case .app: [.general, .preferences, .notifications]
         case .usage: [.providers]
         case .advanced: [.paths]
         }
