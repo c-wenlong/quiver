@@ -322,6 +322,7 @@ public final class SkillsModel {
     public func loadIfStale(for source: String) async {
         let swe = swe
         await skills.loadIfStale(from: source) { try await swe.skills() }
+        dropMissingFilters()
     }
 
     public func loadHubIfStale(for source: String) async {
@@ -333,6 +334,14 @@ public final class SkillsModel {
     public func load(for source: String? = nil) async {
         let swe = swe
         await skills.load(from: source) { try await swe.skills() }
+        dropMissingFilters()
+    }
+
+    /// Clears a harness or source filter the list on show no longer has,
+    /// which the menus can't offer and which would hide every row.
+    private func dropMissingFilters() {
+        if let harness, !allSkills.contains(where: { $0.harnesses.contains(harness) }) { self.harness = nil }
+        if let source, !allSkills.contains(where: { $0.source == source }) { self.source = nil }
     }
 
     public func loadHub(for source: String? = nil) async {
@@ -371,15 +380,18 @@ public final class SkillsModel {
     }
 
     /// Lists again after a change made through `swe`, unless another swe
-    /// has been picked since: its list is the one to keep.
+    /// has been picked since, page open or not: its list is the one to keep.
     private func reload(through swe: SweClient, _ source: String?, hub: Bool = false) async {
         guard let source else {
             await load()
             if hub { await loadHub() }
             return
         }
+        guard source == sweSource else { return }
         await skills.reload(from: source) { try await swe.skills() }
-        if hub { await hubLoader.reload(from: source) { try await swe.skillsHub() } }
+        dropMissingFilters()
+        guard hub, source == sweSource else { return }
+        await hubLoader.reload(from: source) { try await swe.skillsHub() }
     }
 
     /// Runs every fix swe can run for `plugin`, one at a time, then reloads

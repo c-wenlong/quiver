@@ -287,6 +287,71 @@ import Testing
         guard case .loaded(let shown) = model.inventory else { Issue.record("\(model.inventory)"); return }
         #expect(shown.sharedDir == "/n")
     }
+
+    @Test func anActionFinishingAfterASwitchIsDroppedEvenWithThePageClosed() async throws {
+        let old = HeldLinkRunner(ScriptedRunner([
+            (["skills", "link"], ok(#"{"action": "link"}"#)),
+            (["skills", "--json"], ok(inventoryJSON)),
+        ]))
+        let model = SkillsModel(swe: SweClient(runner: old), snapshots: MemorySnapshotStore(),
+                                hubSnapshots: MemorySnapshotStore())
+        model.use(SweClient(runner: old), for: "/old/swe")
+        await model.loadIfStale(for: "/old/swe")
+        let hermes = try #require(model.roots.first { $0.name == "hermes" })
+        let link = Task { await model.link(hermes) }
+        while !old.held { await Task.yield() }
+        // Settings moves on while Skills is closed: nothing lists the new swe yet.
+        model.use(SweClient(runner: ScriptedRunner([])), for: "/new/swe")
+        old.release()
+        await link.value
+        #expect(old.inner.calls.filter { $0 == ["skills", "--json"] }.count == 1)
+    }
+
+    @Test func aFilterTheNewListLacksIsCleared() async throws {
+        let codexOnly = #"""
+        {"shared_dir": "/n", "harnesses": [], "skills": [
+          {"name": "x", "path": "/n/x", "root": "codex", "source": "harness", "harnesses": ["codex"]}]}
+        """#
+        let model = SkillsModel(swe: SweClient(runner: ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])))
+        model.use(model.swe, for: "/a/swe")
+        await model.loadIfStale(for: "/a/swe")
+        model.harness = "codex"
+        model.source = .harness
+        // Another list that still has both keeps them.
+        model.use(SweClient(runner: ScriptedRunner([(["skills", "--json"], ok(codexOnly))])), for: "/b/swe")
+        await model.loadIfStale(for: "/b/swe")
+        #expect(model.harness == "codex")
+        #expect(model.source == .harness)
+        model.harness = "claude"
+        model.source = .shared
+        await model.load(for: "/b/swe")
+        #expect(model.harness == nil)
+        #expect(model.source == nil)
+        #expect(model.visibleSkills.map(\.name) == ["x"])
+    }
+
+    @Test func skillsAndHubRoundTripThroughTheirFiles() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "quiver-skills-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let skills = SnapshotFile<Snapshot<SkillInventory>>(url: folder.appending(path: "cache/skills.json"))
+        let hub = SnapshotFile<Snapshot<HubCatalog>>(url: folder.appending(path: "cache/skills-hub.json"))
+        let runner = ScriptedRunner([(["skills", "hub", "--json"], ok(hubJSON)), (["skills", "--json"], ok(inventoryJSON))])
+        let first = SkillsModel(swe: SweClient(runner: runner), snapshots: skills, hubSnapshots: hub)
+        await first.load(for: "/bin/swe")
+        await first.loadHub(for: "/bin/swe")
+
+        let next = SkillsModel(swe: SweClient(runner: ScriptedRunner([])), snapshots: skills, hubSnapshots: hub)
+        await next.restore()
+        #expect(next.inventory == first.inventory)
+        #expect(next.hub == first.hub)
+        #expect(next.roots.map(\.link) == [.linked, .blocked, .notLinked, .notLinked])
+        #expect(next.roots.last?.linkNeedsForce == true)
+        #expect(next.allSkills.last?.source == .harness)
+        let toolkit = try #require(next.hubPlugins.first)
+        #expect(toolkit.runnableFixes.map(\.id) == ["codex:not-installed:toolkit@kit"])
+        #expect(toolkit.install["claude"]?.state == .installed)
+        #expect(next.hubPlugins.last?.manualFixes == ["set enabled = true in ~/.codex/config.toml"])
+    }
 }
 
 /// Holds a link until released; everything else answers at once.
