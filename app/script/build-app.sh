@@ -60,8 +60,15 @@ PLIST
 
 identity="${QUIVER_SIGN_IDENTITY:-}"
 if [ -z "$identity" ]; then
-  identity="$(security find-identity -v -p codesigning 2>/dev/null \
-    | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) "Apple Development: .*/\1/p' | head -n 1)"
+  # Optional: a failed lookup falls back to ad-hoc rather than stopping the
+  # build. A failure signing with an identity that was found, or one asked
+  # for in QUIVER_SIGN_IDENTITY, still stops it.
+  if identities="$(security find-identity -v -p codesigning 2>&1)"; then
+    identity="$(printf '%s\n' "$identities" \
+      | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) "Apple Development: .*/\1/p' | head -n 1)"
+  else
+    echo "build-app: couldn't list signing identities: $identities" >&2
+  fi
 fi
 if [ -z "$identity" ] || [ "$identity" = "-" ]; then
   echo "build-app: ad-hoc signing; privacy grants won't survive a rebuild" >&2
