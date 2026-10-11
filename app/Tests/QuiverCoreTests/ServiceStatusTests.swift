@@ -275,6 +275,22 @@ private func openGeminiIncident() throws -> Data {
         #expect(after.problem == nil)
     }
 
+    /// Retry-After counts from when the answer arrived, not when the
+    /// request went out.
+    @Test func retryAfterCountsFromTheAnswer() async throws {
+        let clock = TestClock()
+        let transport = ClockAdvancingTransport(clock: clock, seconds: 20)
+        transport.inner.reply(429, headers: ["Retry-After": "120"])
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let status = ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
+                                          now: { clock.now })
+        let cursor = [try service("cursor")]
+        _ = await status.statuses(for: cursor, force: false)
+        clock.advance(110)  // 130 s after the request, 110 s after the answer
+        _ = await status.statuses(for: cursor, force: true)
+        #expect(transport.inner.requests.count == 1)
+    }
+
     @Test func unreadableBodyIsAProblemNotAnOutage() async throws {
         let transport = FakeTransport()
         transport.reply(200, body: Data("<html>".utf8))
@@ -388,6 +404,23 @@ private final class DelayedTransport: HTTPTransport {
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         try await Task.sleep(for: .milliseconds(200))
+        return try await inner.send(request)
+    }
+}
+
+/// The fake network, taking `seconds` of the test clock to answer.
+private final class ClockAdvancingTransport: HTTPTransport {
+    let inner = FakeTransport()
+    let clock: TestClock
+    let seconds: TimeInterval
+
+    init(clock: TestClock, seconds: TimeInterval) {
+        self.clock = clock
+        self.seconds = seconds
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        clock.advance(seconds)
         return try await inner.send(request)
     }
 }

@@ -64,6 +64,7 @@ public actor ServiceStatusService {
         let start = now()
         let floor = force ? manualFloor : interval
         let transport = self.transport
+        let clock = self.now
         var tasks: [String: Task<Entry, Never>] = [:]
         for service in services {
             if let running = inFlight[service.id] {
@@ -77,7 +78,7 @@ public actor ServiceStatusService {
             attempt.attemptedAt = start
             // Recorded before the request goes out, so the next call sees it.
             memory[service.id] = attempt
-            let task = Task { await Self.check(service, attempt, transport: transport, now: start) }
+            let task = Task { await Self.check(service, attempt, transport: transport, clock: clock) }
             inFlight[service.id] = task
             tasks[service.id] = task
         }
@@ -117,7 +118,9 @@ public actor ServiceStatusService {
     }
 
     /// One request, folded into the page's entry.
-    private static func check(_ service: StatusService, _ entry: Entry, transport: HTTPTransport, now: Date) async -> Entry {
+    private static func check(
+        _ service: StatusService, _ entry: Entry, transport: HTTPTransport, clock: @Sendable () -> Date
+    ) async -> Entry {
         var entry = entry
         var request = URLRequest(url: service.feedURL)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -136,6 +139,9 @@ public actor ServiceStatusService {
             entry.problem = "Couldn't reach \(service.host)"
             return entry
         }
+        // Read after the answer: a Retry-After counts from when it arrived,
+        // and a slow response must not shorten the wait.
+        let now = clock()
 
         switch response.statusCode {
         case 200..<300:
@@ -189,8 +195,10 @@ public actor ServiceStatusService {
         let manager = FileManager.default
         try? manager.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true,
                                      attributes: [.posixPermissions: 0o700])
-        let lock = try? FileLock(at: cacheURL.appendingPathExtension("lock"))
-        defer { lock?.release() }
+        // Without the lock another copy could overwrite a newer entry; this
+        // process still has the result in memory.
+        guard let lock = try? FileLock(at: cacheURL.appendingPathExtension("lock")) else { return }
+        defer { lock.release() }
         var entries = load()
         for (id, entry) in updated { entries[id] = Self.newer(entry, entries[id]) }
         let encoder = JSONEncoder()
