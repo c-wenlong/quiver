@@ -96,6 +96,24 @@ class HarnessAddInteractiveTest(unittest.TestCase):
         self.assertIn("mytool", saved)
         self.assertEqual(saved["mytool"]["command"], "mytool-bin")
 
+    def test_cmd_add_interactive_re_add_keeps_the_display_name(self):
+        tools = {"mytool": {"command": "old-bin", "display_name": "My Tool"}}
+        inputs = iter(["", "mytool-bin", "", "", "", ""])
+        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=False
+        ), patch(
+            "quiver.harness.commands.live_version", return_value=None
+        ), patch(
+            "quiver.harness.commands.read_line", side_effect=_rl_side_effect(inputs)
+        ):
+            rc = cmd_add(["mytool", "-i"])
+        self.assertEqual(rc, 0)
+        entry = save.call_args[0][0]["mytool"]
+        self.assertEqual(entry["command"], "mytool-bin")
+        self.assertEqual(entry["display_name"], "My Tool")
+
     def test_cmd_add_interactive_edit_loop_then_save(self):
         tools = {}
         # first pass: confirm "e" → re-walk (Enter keeps defaults) → confirm "y"

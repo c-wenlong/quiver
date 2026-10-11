@@ -1043,6 +1043,21 @@ class CmdInfoMigrationTest(unittest.TestCase):
         plain = strip_ansi(output)
         self.assertNotIn("Notes:", plain)
 
+    def test_display_name_row_only_present_when_set(self):
+        self.assertNotIn("Display name:", strip_ansi(_run_cmd_info()))
+        named = copy.deepcopy(_INFO_REGISTRY)
+        named["claude"]["display_name"] = "Claude Code"
+        patches = [
+            patch("quiver.harness.commands.load_registry", return_value=named),
+            patch("quiver.harness.commands.is_installed", return_value=True),
+            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        plain = strip_ansi(_run_cmd_info())
+        self.assertRegex(plain, r"Display name:\s+Claude Code")
+
     def test_empty_tags_and_aliases_show_em_dash(self):
         empty_registry = copy.deepcopy(_INFO_REGISTRY)
         empty_registry["claude"]["tags"] = []

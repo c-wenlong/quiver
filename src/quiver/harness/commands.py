@@ -552,6 +552,22 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str]) -> dict:
     return holder["result"]
 
 
+def _display_name(info: dict) -> str | None:
+    """The harness's human name ("Qwen Code"), or None when unset or blank."""
+    value = info.get("display_name")
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _kept_display_name(previous: dict | None) -> dict:
+    """``{"display_name": ...}`` from an entry being replaced, or ``{}``.
+
+    ``swe add`` and ``swe install`` rewrite a whole entry; the human name is
+    something the user typed, so a re-add must not erase it.
+    """
+    name = _display_name(previous or {})
+    return {"display_name": name} if name else {}
+
+
 def _harness_json(name, info, starred, archived, counts, rate) -> dict:
     """One ``swe list --json`` row."""
     if name in archived:
@@ -562,6 +578,7 @@ def _harness_json(name, info, starred, archived, counts, rate) -> dict:
         state = "active"
     return {
         "name": name,
+        "display_name": _display_name(info),
         "command": info.get("command") or name,
         "description": info.get("description") or "",
         "version": info.get("version") or None,
@@ -1056,6 +1073,9 @@ def cmd_info(args):
         ),
         ("Path:", path),
     ]
+    if _display_name(info):
+        # Only when set, so a harness without one prints exactly as before.
+        rows.insert(0, ("Display name:", _display_name(info)))
     for label, val in rows:
         # trust_cell_width means the table will not truncate this column,
         # so a long description has to be trimmed before it goes in. Only
@@ -1214,6 +1234,7 @@ def _add_interactive(args: list[str]) -> int:
                 "tags": tags_list,
                 "aliases": aliases_list,
                 "added": datetime.now().isoformat(),
+                **_kept_display_name(tools.get(draft["name"])),
             }
             save_registry(tools)
             saved_status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
@@ -1285,6 +1306,7 @@ def cmd_add(args):
         "tags": tags,
         "aliases": aliases,
         "added": datetime.now().isoformat(),
+        **_kept_display_name(tools.get(name)),
     }
     save_registry(tools)
     status = c("green", "installed") if is_installed(command) else c("yellow", "not yet in PATH")
@@ -1801,9 +1823,9 @@ def cmd_install(args):
         "aliases": aliases,
     }
     if reg_name in tools:
-        # Preserve notes / added if present
+        # Preserve display name / notes / added if present
         prev = tools[reg_name]
-        for keep in ("notes", "added"):
+        for keep in ("display_name", "notes", "added"):
             if keep in prev and keep not in entry:
                 entry[keep] = prev[keep]
         entry["description"] = desc or prev.get("description", "")
@@ -1823,7 +1845,20 @@ def cmd_install(args):
     return 0 if installed_path else 1
 
 
-EDITABLE_FIELDS = ("command", "description", "aliases", "tags", "version", "notes")
+EDITABLE_FIELDS = (
+    "command", "display_name", "description", "aliases", "tags", "version", "notes",
+)
+
+
+def _flag_name(field: str) -> str:
+    """How a field is spelled on the command line: ``display_name`` is ``--display-name``."""
+    return field.replace("_", "-")
+
+
+def _field_from_flag(name: str) -> str:
+    """The field a flag word (hyphen or underscore, no dashes) names, or ""."""
+    field = name.replace("-", "_")
+    return field if field in EDITABLE_FIELDS else ""
 
 
 def _split_csv(value: str) -> list[str]:
@@ -1850,6 +1885,7 @@ def _show_edit_fields(name: str, info: dict) -> None:
     print(f"\n  {c('bold', name)}")
     rows = [
         ("command", info.get("command", "")),
+        ("display name", _display_name(info) or "—"),
         ("description", info.get("description") or "—"),
         ("aliases", _format_list([a for a in info.get("aliases", []) if a != name])),
         ("tags", _format_list(info.get("tags", []))),
@@ -1866,15 +1902,16 @@ def _parse_set_string(raw: str) -> dict:
 
     Example: ``tags=agentic,coding,notes=hi`` → tags='agentic,coding', notes='hi'
     """
-    pattern = re.compile(
-        r"(?:^|,)\s*(" + "|".join(EDITABLE_FIELDS) + r")="
-    )
+    # A field is written as stored (display_name) or as its flag (display-name).
+    words = "|".join(sorted(
+        {w for f in EDITABLE_FIELDS for w in (f, _flag_name(f))}, key=len, reverse=True))
+    pattern = re.compile(r"(?:^|,)\s*(" + words + r")=")
     matches = list(pattern.finditer(raw))
     if not matches:
         raise ValueError(f"Invalid --set value '{raw}' (expected field=value)")
     updates: dict = {}
     for idx, match in enumerate(matches):
-        field = match.group(1)
+        field = _field_from_flag(match.group(1))
         start = match.end()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(raw)
         updates[field] = raw[start:end].strip().rstrip(",")
@@ -1884,7 +1921,9 @@ def _parse_set_string(raw: str) -> dict:
 def _parse_edit_flags(args: list[str]) -> tuple[dict, list[str]]:
     """Return (updates, remaining_positional_args)."""
     args = expand_value_flags(
-        args, {f"--{field}" for field in EDITABLE_FIELDS} | {"--set"}
+        args,
+        {f"--{word}" for f in EDITABLE_FIELDS for word in (f, _flag_name(f))}
+        | {"--set"},
     )
     updates: dict = {}
     rest: list[str] = []
@@ -1895,8 +1934,8 @@ def _parse_edit_flags(args: list[str]) -> tuple[dict, list[str]]:
             updates.update(_parse_set_string(args[i + 1]))
             i += 2
             continue
-        if arg.startswith("--") and arg[2:] in EDITABLE_FIELDS:
-            updates[arg[2:]] = args[i + 1]
+        if arg.startswith("--") and _field_from_flag(arg[2:]):
+            updates[_field_from_flag(arg[2:])] = args[i + 1]
             i += 2
             continue
         if arg.startswith("--"):
@@ -1914,7 +1953,7 @@ def _normalize_field_value(field: str, value):
     if field == "version":
         text = "" if value is None else str(value).strip()
         return text or None
-    if field == "notes":
+    if field in ("notes", "display_name"):
         text = "" if value is None else str(value).strip()
         return text or None
     return "" if value is None else str(value).strip()
@@ -1990,7 +2029,7 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
     """Interactive field editor. Returns updates dict, or None if cancelled."""
     draft = dict(info)
     updates: dict = {}
-    print(c("dim", "  Edit fields: command, description, aliases, tags, version, notes"))
+    print(c("dim", "  Edit fields: command, display name, description, aliases, tags, version, notes"))
     print(c("dim", "  Commands:  save  |  quit  |  show  |  <field>"))
     print(c("dim", "  Blank value keeps current. For lists, use commas (e.g. mc,ms).\n"))
 
@@ -2022,9 +2061,12 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
                     print(c("dim", "  Enter a different alias, then save again."))
                     continue
             return updates
+        # "display name", "display-name" and "display_name" all pick the field.
+        choice = _field_from_flag(choice.replace(" ", "_")) or choice
         if choice not in EDITABLE_FIELDS:
             print(c("red", f"  Unknown field/command: {choice}"))
-            print(c("dim", f"  Fields: {', '.join(EDITABLE_FIELDS)}"))
+            names = ", ".join(_flag_name(f).replace("-", " ") for f in EDITABLE_FIELDS)
+            print(c("dim", f"  Fields: {names}"))
             continue
 
         current = draft.get(choice)
@@ -2036,9 +2078,10 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
         else:
             current_disp = "" if current is None else str(current)
 
-        print(c("dim", f"  current {choice}: {current_disp or '—'}"))
+        label = _flag_name(choice).replace("-", " ")
+        print(c("dim", f"  current {label}: {current_disp or '—'}"))
         try:
-            new_raw = read_line(c("cyan", f"  new {choice}> "))
+            new_raw = read_line(c("cyan", f"  new {label}> "))
         except (EOFError, KeyboardInterrupt):
             print()
             print(c("dim", "  Cancelled."))
@@ -2055,9 +2098,9 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
         normalized = _normalize_field_value(choice, new_raw)
         draft[choice] = normalized if normalized is not None else ""
         if choice in ("aliases", "tags"):
-            print(c("green", f"  set {choice} = {_format_list(normalized)}"))
+            print(c("green", f"  set {label} = {_format_list(normalized)}"))
         else:
-            print(c("green", f"  set {choice} = {normalized if normalized not in (None, '') else '—'}"))
+            print(c("green", f"  set {label} = {normalized if normalized not in (None, '') else '—'}"))
 
 
 def _edit_harness_json(name: str, info: dict) -> dict:
@@ -2110,7 +2153,7 @@ def _edit(args, json_view):
     if json_view and not updates:
         # The interactive editor reads the terminal; the app has none.
         print(c("red", "  swe edit --json needs at least one field flag "
-                       f"({', '.join('--' + f for f in EDITABLE_FIELDS)})"), file=err)
+                       f"({', '.join('--' + _flag_name(f) for f in EDITABLE_FIELDS)})"), file=err)
         return 1
 
     tools = load_registry()

@@ -152,6 +152,7 @@ plus:
 
 | field | meaning |
 |---|---|
+| `display_name` | optional human name ("Qwen Code"); absent or empty means unset. Set with `swe edit --display-name=`; shown by `swe info` and the app, never used to find the harness |
 | `state` | `"active"` \| `"starred"` \| `"archived"`; absent means active |
 | `pin` | starred only — 1 is top, higher sorts lower |
 | `archived` | archived only — `{reason, archived_at, usage}` |
