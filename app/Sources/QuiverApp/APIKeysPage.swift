@@ -21,7 +21,7 @@ struct APIKeysPage: View {
         } content: {
             if let error = model.error ?? actionError {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.warning)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
             }
             if !model.problems.isEmpty {
                 Card(title: "Lines that set nothing") {
@@ -172,7 +172,7 @@ private struct StatusLabel: View {
     var body: some View {
         switch status {
         case .loaded: label("Loaded", "checkmark.circle", Theme.success, help: "A new terminal gets this value.")
-        case .overridden: label("Overridden", "exclamationmark.triangle", Theme.warning,
+        case .overridden: label("Overridden", "exclamationmark.triangle", Theme.warningText,
                                 help: "A new terminal gets a different value: something later in your shell setup sets it again.")
         case .notLoaded: label("Not loaded", "minus.circle", Theme.textSecondary,
                                help: "A new terminal doesn't have this variable. Is the file sourced from your shell setup?")
@@ -251,7 +251,7 @@ private struct KeyEditor: View {
                     .quiverField(monospaced: true)
                     .disabled(!draft.isNew)
                 if draft.isNew, !draft.name.isEmpty, let problem = nameProblem {
-                    Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
+                    Text(problem).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
             }
             field("Value") {
@@ -270,7 +270,7 @@ private struct KeyEditor: View {
                 }
             }
             if let error {
-                Text(error).font(Theme.caption).foregroundStyle(Theme.danger)
+                Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
             HStack {
                 if !draft.isNew {
@@ -278,7 +278,7 @@ private struct KeyEditor: View {
                         Text("Remove \(draft.name)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         Button("Remove") { run { try await remove(draft.name) } }
                             .secondaryButton()
-                            .foregroundStyle(Theme.danger)
+                            .foregroundStyle(Theme.dangerText)
                         Button("Keep") { confirmingRemove = false }.secondaryButton()
                     } else {
                         Button("Remove…") { confirmingRemove = true }.secondaryButton()

@@ -210,7 +210,7 @@ private struct Cell: View {
             if differs {
                 Text(variantLetter(group))
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(group == 0 ? Theme.textPrimary : Theme.warning)
+                    .foregroundStyle(group == 0 ? Theme.textPrimary : Theme.warningText)
                     .frame(width: 20, height: 20)
                     .background(Theme.subtle, in: .rect(cornerRadius: 5))
                     .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border, lineWidth: 1))
@@ -353,7 +353,7 @@ private struct ServerSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         if let error {
-            Text(error).font(Theme.caption).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true)
+            Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).fixedSize(horizontal: false, vertical: true)
         }
         HStack {
             if running { ProgressView().controlSize(.small) }

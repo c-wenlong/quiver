@@ -117,7 +117,7 @@ private struct LinksStrip: View {
                 // swe init can fail with pages of output; bounded, so the
                 // editor below keeps its room on this non-scrolling page.
                 ScrollView {
-                    Text(error).font(Theme.caption).foregroundStyle(Theme.danger)
+                    Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -278,7 +278,7 @@ struct InstructionEditor: View {
             case .loading:
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message):
-                Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger)
+                Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.dangerText)
             case .ready:
                 if document.changedOnDisk {
                     ChangedOnDiskBanner(
@@ -287,7 +287,7 @@ struct InstructionEditor: View {
                 }
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle")
-                        .font(Theme.caption).foregroundStyle(Theme.danger)
+                        .font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
                 // Fills the card, and the card fills what the page has left.
                 TextEditor(text: $document.text)
@@ -325,7 +325,7 @@ private struct ChangedOnDiskBanner: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.warning)
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.warningText)
             Text("This file changed on disk since you opened it. Reload to see that version, or overwrite it with yours.")
                 .font(Theme.caption).foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
