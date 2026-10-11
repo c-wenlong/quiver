@@ -6,6 +6,11 @@ dispatcher's ConfigurationError message belongs on stderr there. Without
 """
 
 import io
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
@@ -43,6 +48,36 @@ class DispatcherConfigErrorTest(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("harness.json is not valid JSON", out)
         self.assertEqual(err, "")
+
+
+PROJECT_SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
+
+
+class CorruptRegistryThroughRealCommandsTest(unittest.TestCase):
+    """End to end: a malformed harness.json, the real ``swe`` entry point."""
+
+    def _swe(self, *args):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = pathlib.Path(tmp) / ".quiver" / "config"
+            config.mkdir(parents=True)
+            (config / "harness.json").write_text("{corrupt")
+            env = os.environ.copy()
+            env["HOME"] = tmp
+            env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(PROJECT_SRC), env.get("PYTHONPATH")]))
+            return subprocess.run([sys.executable, "-m", "quiver.cli", *args],
+                                  env=env, capture_output=True, text=True)
+
+    def test_list_json_keeps_stdout_empty(self):
+        r = self._swe("list", "--json")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Cannot parse JSON", r.stderr)
+
+    def test_mcp_discover_json_keeps_stdout_empty(self):
+        r = self._swe("mcp", "discover", "--json")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Cannot parse JSON", r.stderr)
 
 
 if __name__ == "__main__":
