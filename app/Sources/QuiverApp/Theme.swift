@@ -344,8 +344,19 @@ private struct TabButton: View {
 struct RingedPlainStyle: ButtonStyle {
     var cornerRadius: CGFloat
     func makeBody(configuration: Configuration) -> some View {
+        RingedPlainBody(configuration: configuration, cornerRadius: cornerRadius)
+    }
+}
+
+/// Dimmed while disabled, so an unavailable action never looks ready.
+private struct RingedPlainBody: View {
+    let configuration: ButtonStyleConfiguration
+    var cornerRadius: CGFloat
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
         configuration.label
-            .opacity(configuration.isPressed ? 0.75 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
             .focusRing(cornerRadius: cornerRadius)
     }
 }
