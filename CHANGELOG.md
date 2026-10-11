@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (null when unset), `swe edit --json` reports `"display_name"` in
   `changes`, and `swe info` shows it when set. Nothing else changes: the
   `swe list` table keeps its columns, and a harness without a display name
-  prints exactly as before.
+  prints exactly as before. Re-adding or reinstalling a harness
+  (`swe add`, `swe add -i`, `swe install`) keeps the name you gave it.
 
 ### Fixed
 
