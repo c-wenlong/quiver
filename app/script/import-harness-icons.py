@@ -3,17 +3,25 @@
 
     app/script/import-harness-icons.py SOURCES.tsv
 
-SOURCES.tsv has columns: id, file, source_url, licence, notes (a header row
-first). `file` is a path to an SVG. Each logo is written to
-`app/Sources/QuiverCore/Resources/harness-<id>.svg` as a single-colour
-mark: every painted fill and stroke becomes black, and titles, comments,
-styles and fixed sizes are dropped, so the app can draw it as a template
-image tinted to the harness colour. A logo with a full-bleed background
-square keeps only the glyph, cut out of that square.
+SOURCES.tsv has columns: id, kind, file, source_url, licence, notes (a
+header row first). `file` is a path to an SVG; `kind` is `color` or `mono`.
 
-Refuses any SVG with scripts, event handlers, external references or
-foreignObject. The provenance table is written beside the icons as
-harness-icons.tsv and summarised in app/THIRD_PARTY_NOTICES.md by hand.
+- `color` logos keep their own colours, as TokenTracker shows them, and are
+  written to `harness-<id>-color.svg`.
+- `mono` logos become single-colour marks, written to `harness-<id>.svg`:
+  every paint turns black, and a full-bleed background plate is dropped so
+  the glyph stands alone. The app draws them as template images in the
+  text colour.
+
+Either way titles, comments, root styles and fixed sizes are dropped and
+path data is spelled out in full, because CoreSVG silently draws nothing
+for some compact forms. An SVG with scripts, event handlers, external
+references, embedded images or foreignObject is refused.
+
+Every row is checked before anything is written, so a bad source leaves
+the resources as they were. The output is exactly the rows given: icons
+not listed are removed, and the provenance table is rewritten beside them
+as harness-icons.tsv (summarised in app/THIRD_PARTY_NOTICES.md by hand).
 """
 
 import csv
@@ -25,7 +33,8 @@ from pathlib import Path
 SVG = "http://www.w3.org/2000/svg"
 ET.register_namespace("", SVG)
 OUT = Path(__file__).resolve().parent.parent / "Sources" / "QuiverCore" / "Resources"
-UNSAFE = re.compile(r"<script|\son[a-z]+\s*=|xlink:href|\shref\s*=|<foreignObject|<image", re.I)
+# Internal references (href="#gradient") are fine; anything else is not.
+UNSAFE = re.compile(r"<script|\son[a-z]+\s*=|href\s*=\s*[\"'](?!#)|<foreignObject|<image|url\((?!\s*#)", re.I)
 PAINTS = ("fill", "stroke")
 
 
@@ -97,7 +106,48 @@ def is_background(element, box):
     return False
 
 
-def normalise(text):
+def drop_box_subpath(d, box):
+    """Path data without a subpath that just traces the whole viewBox, when
+    other subpaths remain: the plate a light glyph was cut out of."""
+    tokens = d.split()
+    starts = [i for i, t in enumerate(tokens) if t in ("M", "m")]
+    if len(starts) < 2:
+        return d
+    w, h = float(box[2]), float(box[3])
+    corners = {(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)}
+    kept = []
+    for n, i in enumerate(starts):
+        sub = tokens[i:starts[n + 1] if n + 1 < len(starts) else len(tokens)]
+        points, x, y, k, absolute = set(), 0.0, 0.0, 0, True
+        try:
+            while k < len(sub):
+                command = sub[k]
+                if command in "MLHVZ" or command in "mlhvz":
+                    absolute = command.isupper()
+                    k += 1
+                if command.upper() in "ML":
+                    nx, ny = float(sub[k]), float(sub[k + 1])
+                    x, y = (nx, ny) if absolute else (x + nx, y + ny)
+                    k += 2
+                elif command.upper() == "H":
+                    x = float(sub[k]) if absolute else x + float(sub[k])
+                    k += 1
+                elif command.upper() == "V":
+                    y = float(sub[k]) if absolute else y + float(sub[k])
+                    k += 1
+                elif command.upper() == "Z":
+                    continue
+                else:
+                    raise ValueError
+                points.add((x, y))
+        except (ValueError, IndexError):
+            points = set()
+        if points != corners:
+            kept.append(" ".join(sub))
+    return " ".join(kept) if kept else d
+
+
+def normalise(text, mono):
     if UNSAFE.search(text):
         raise ValueError("unsafe content")
     root = ET.fromstring(text)
@@ -112,29 +162,33 @@ def normalise(text):
            for part in root.get("viewBox").replace(",", " ").split()]
     for attribute in ("width", "height", "style", "class"):
         root.attrib.pop(attribute, None)
-    # A <style> block is dropped below; if it was what painted the shapes
-    # over a root fill of none, paint them black instead.
-    styled = any(tag(e) == "style" and "fill" in (e.text or "") for e in root.iter())
-    if root.get("fill") not in (None, "none") or (styled and root.get("fill") == "none"):
-        root.set("fill", "#000")
+    if mono:
+        # A <style> block is dropped below; if it was what painted the
+        # shapes over a root fill of none, paint them black instead.
+        styled = any(tag(e) == "style" and "fill" in (e.text or "") for e in root.iter())
+        if root.get("fill") not in (None, "none") or (styled and root.get("fill") == "none"):
+            root.set("fill", "#000")
 
     def walk(parent):
         for child in list(parent):
             name = tag(child)
-            if name in ("title", "desc", "metadata", "style"):
+            if name in ("title", "desc", "metadata") or (mono and name == "style"):
                 parent.remove(child)
                 continue
-            if parent is root and is_background(child, box):
+            if mono and parent is root and is_background(child, box):
                 parent.remove(child)
                 continue
-            for paint in PAINTS:
-                value = child.get(paint)
-                if value and value != "none" and not value.startswith("url("):
-                    child.set(paint, "#000")
-            child.attrib.pop("style", None)
+            if mono:
+                # Gradients included: a mono mark has one paint.
+                for paint in PAINTS:
+                    value = child.get(paint)
+                    if value and value != "none":
+                        child.set(paint, "#000")
+                child.attrib.pop("style", None)
             child.attrib.pop("class", None)
             if name == "path" and child.get("d"):
-                child.set("d", spell_out(child.get("d")))
+                d = spell_out(child.get("d"))
+                child.set("d", drop_box_subpath(d, box) if mono else d)
             walk(child)
 
     walk(root)
@@ -145,23 +199,37 @@ def normalise(text):
 def main(sources):
     rows = list(csv.DictReader(open(sources), delimiter="\t"))
     base = Path(sources).parent
-    kept = []
+    outputs, problems = {}, []
     for row in rows:
+        kind = row.get("kind", "mono")
+        if kind not in ("mono", "color"):
+            problems.append(f"{row['id']}: kind must be mono or color, not {kind!r}")
+            continue
         path = Path(row["file"])
         path = path if path.is_absolute() else base / path
         try:
-            svg = normalise(path.read_text())
+            svg = normalise(path.read_text(), mono=kind == "mono")
         except (ValueError, ET.ParseError, OSError) as error:
-            print(f"skip {row['id']}: {error}", file=sys.stderr)
+            problems.append(f"{row['id']}: {error}")
             continue
-        (OUT / f"harness-{row['id']}.svg").write_text(svg + "\n")
-        kept.append(row)
-        print(f"wrote harness-{row['id']}.svg")
+        name = f"harness-{row['id']}{'-color' if kind == 'color' else ''}.svg"
+        if any(n.startswith(f"harness-{row['id']}.") or n.startswith(f"harness-{row['id']}-color.") for n in outputs):
+            problems.append(f"{row['id']}: listed twice")
+        outputs[name] = svg
+    if problems:
+        # Nothing is written, so icons and their provenance stay in step.
+        sys.exit("refusing to import:\n  " + "\n  ".join(problems))
+    for stale in OUT.glob("harness-*.svg"):
+        if stale.name not in outputs:
+            stale.unlink()
+    for name, svg in outputs.items():
+        (OUT / name).write_text(svg + "\n")
+        print(f"wrote {name}")
     with open(OUT / "harness-icons.tsv", "w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
-        writer.writerow(["id", "source_url", "licence", "notes"])
-        for row in sorted(kept, key=lambda r: r["id"]):
-            writer.writerow([row["id"], row["source_url"], row["licence"], row.get("notes", "")])
+        writer.writerow(["id", "kind", "source_url", "licence", "notes"])
+        for row in sorted(rows, key=lambda r: r["id"]):
+            writer.writerow([row["id"], row.get("kind", "mono"), row["source_url"], row["licence"], row.get("notes", "")])
 
 
 if __name__ == "__main__":

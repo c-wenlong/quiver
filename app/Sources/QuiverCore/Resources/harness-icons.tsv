@@ -1,22 +1,22 @@
-id	source_url	licence	notes
-augment	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
-blackbox	https://docs.blackbox.ai/favicon.svg	trademark, no licence stated	cube mark in white on black rounded square; same mark inline on blackbox.ai/brand
-claude	TokenTracker dashboard/public/brand-logos/claude-code.svg (LobeHub icons)	MIT (TokenTracker, LobeHub)	Anthropic Claude mark
-cline	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cline.svg	MIT (LobeHub icons); cline/cline Apache-2.0	filled robot mark; outline variant exists at cline/cline assets/branding/logos/cline-icon-dark.svg
-codex	TokenTracker ProviderIcon.jsx CodexIcon (LobeHub icons)	MIT (TokenTracker, LobeHub)	OpenAI Codex mono mark
-continue	https://raw.githubusercontent.com/continuedev/continue/main/docs/logo/light.svg	Apache-2.0 repo; logo trademark	hexagon mark, black fill; docs/logo/dark.svg is the white variant
-copilot	TokenTracker dashboard/public/brand-logos/copilot.svg	MIT (TokenTracker)	GitHub Copilot mark
-cursor	TokenTracker dashboard/public/brand-logos/cursor.svg	MIT (TokenTracker)	Cursor mark
-devin	TokenTracker dashboard/public/brand-logos/devin.svg	MIT (TokenTracker)	Devin mark, traced by TokenTracker from app.devin.ai
-droid	https://factory.ai/ (redirects to factory.com; inline svg id=mobile-nav-logo)	trademark, no licence stated	Factory asterisk mark, currentColor; extracted verbatim from page HTML; favicon.svg there is same mark on black square
-forge	https://forgecode.dev/shared/brand/favicon-light.svg	trademark, no licence stated	{F} mark, fill #1c1d1f; favicon-dark.svg (white) and favicon.svg (media-query) also on site
-freebuff	https://freebuff.com/logo.svg	trademark, no licence stated	white F on black rounded square, from Freebuff official site
-gemini	TokenTracker ProviderIcon.jsx GeminiIcon (LobeHub icons)	MIT (TokenTracker, LobeHub)	Google Gemini mono mark
-goose	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/goose.svg	MIT (LobeHub icons); Block/goose Apache-2.0 repo	goose silhouette matches block/goose docs logo; mono
-grok	TokenTracker dashboard/public/brand-logos/grok.svg	MIT (TokenTracker)	xAI Grok mark
-kilo	TokenTracker dashboard/public/brand-logos/kilo.svg	MIT (TokenTracker)	Kilo Code mark, glyph only
-kiro	TokenTracker dashboard/public/brand-logos/kiro.svg	MIT (TokenTracker)	Kiro mark
-mistral-vibe	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mistral.svg	MIT (LobeHub icons); Mistral AI trademark	Mistral AI mark (no separate Vibe logo), mono
-opencode	TokenTracker dashboard/public/brand-logos/opencode.svg	MIT (TokenTracker)	OpenCode mark
-pi	TokenTracker dashboard/public/brand-logos/pi.svg	MIT (TokenTracker)	Pi mark from pi.dev
-qwen-code	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/qwen.svg	MIT (LobeHub icons); Qwen mark is Alibaba trademark	mono, currentColor
+id	kind	source_url	licence	notes
+augment	mono	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
+blackbox	mono	https://docs.blackbox.ai/favicon.svg	trademark, no licence stated	cube mark in white on black rounded square; same mark inline on blackbox.ai/brand
+claude	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/claude-color.svg	MIT (LobeHub icons)	Anthropic Claude mark in its brand orange, as TokenTracker shows it
+cline	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cline.svg	MIT (LobeHub icons); cline/cline Apache-2.0	filled robot mark; outline variant exists at cline/cline assets/branding/logos/cline-icon-dark.svg
+codex	color	TokenTracker dashboard/public/brand-logos/codex.svg	MIT (TokenTracker)	OpenAI Codex colour mark
+continue	mono	https://raw.githubusercontent.com/continuedev/continue/main/docs/logo/light.svg	Apache-2.0 repo; logo trademark	hexagon mark, black fill; docs/logo/dark.svg is the white variant
+copilot	mono	TokenTracker dashboard/public/brand-logos/copilot.svg	MIT (TokenTracker)	GitHub Copilot mark
+cursor	mono	TokenTracker dashboard/public/brand-logos/cursor.svg	MIT (TokenTracker)	Cursor mark
+devin	mono	TokenTracker dashboard/public/brand-logos/devin.svg	MIT (TokenTracker)	Devin mark, traced by TokenTracker from app.devin.ai
+droid	mono	https://factory.ai/ (redirects to factory.com; inline svg id=mobile-nav-logo)	trademark, no licence stated	Factory asterisk mark, currentColor; extracted verbatim from page HTML; favicon.svg there is same mark on black square
+forge	mono	https://forgecode.dev/shared/brand/favicon-light.svg	trademark, no licence stated	{F} mark, fill #1c1d1f; favicon-dark.svg (white) and favicon.svg (media-query) also on site
+freebuff	mono	https://freebuff.com/logo.svg	trademark, no licence stated	white F on black rounded square, from Freebuff official site
+gemini	color	TokenTracker dashboard/public/brand-logos/gemini.svg	MIT (TokenTracker)	Google Gemini colour mark
+goose	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/goose.svg	MIT (LobeHub icons); Block/goose Apache-2.0 repo	goose silhouette matches block/goose docs logo; mono
+grok	mono	TokenTracker dashboard/public/brand-logos/grok.svg	MIT (TokenTracker)	xAI Grok mark
+kilo	mono	TokenTracker dashboard/public/brand-logos/kilo.svg	MIT (TokenTracker)	Kilo Code mark, glyph only
+kiro	mono	TokenTracker dashboard/public/brand-logos/kiro.svg	MIT (TokenTracker)	Kiro mark
+mistral-vibe	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mistral-color.svg	MIT (LobeHub icons); Mistral AI trademark	Mistral colour mark
+opencode	color	TokenTracker dashboard/public/brand-logos/opencode.svg	MIT (TokenTracker)	OpenCode mark in its purple
+pi	mono	TokenTracker dashboard/public/brand-logos/pi.svg	MIT (TokenTracker)	Pi mark from pi.dev
+qwen-code	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/qwen-color.svg	MIT (LobeHub icons); Qwen mark is Alibaba trademark	Qwen colour mark
