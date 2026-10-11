@@ -494,6 +494,15 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(stdio(#"npx "--token SECRET7"#, []).summary.contains("SECRET") == false)
     }
 
+    @Test func aURLWithASpaceIsNeverSplitOpen() {
+        #expect(stdio(#"npx mcp-remote "https://host.example/mcp?token=two SECRET1""#, []).summary
+                == #"npx mcp-remote "https://host.example/mcp?token=… …""#)
+        #expect(stdio("npx", ["mcp-remote", "https://host.example/a b --token SECRET2"]).summary
+                == "npx mcp-remote https://host.example/a …")
+        #expect(stdio("bash -c 'mcp-remote \"https://host.example/?k=a SECRET3\"'", []).summary
+                == #"bash -c 'mcp-remote "https://host.example/?k=… …"'"#)
+    }
+
     @Test func aFlagAndItsValueInOneArgAreSplit() {
         #expect(stdio("npx", ["--token SECRET1", "--api-key=SECRET2 two", "--header Authorization: Bearer SECRET3"]).summary
                 == "npx --token … --api-key=… --header Authorization:…")

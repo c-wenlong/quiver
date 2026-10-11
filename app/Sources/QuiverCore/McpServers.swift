@@ -249,6 +249,8 @@ enum McpRedaction {
             } else if let match = arg.firstMatch(of: /^[A-Za-z_][A-Za-z0-9_]*=/) {
                 // An environment assignment, as `env NAME=value cmd` takes.
                 out.append(match.output + "…")
+            } else if let redacted = urlWord(arg) {
+                out.append(redacted)
             } else if let quote = arg.first, quote == "\"" || quote == "'", arg.count >= 2, arg.last == quote {
                 // A quoted word may be a whole command, as `bash -c '…'` takes.
                 out.append(String(quote) + line(String(arg.dropFirst().dropLast())) + String(quote))
@@ -261,6 +263,21 @@ enum McpRedaction {
             }
         }
         return out
+    }
+
+    /// A word that is a URL, quoted or not, redacted before anything splits
+    /// it. A URL holds no spaces, so everything after one is hidden: it may
+    /// be the rest of a query value.
+    private static func urlWord(_ arg: String) -> String? {
+        var quote = ""
+        var inner = Substring(arg)
+        if let first = arg.first, first == "\"" || first == "'", arg.count >= 2, arg.last == first {
+            quote = String(first)
+            inner = inner.dropFirst().dropLast()
+        }
+        guard inner.contains(/^[A-Za-z][A-Za-z0-9+.\-]*:\/\//) else { return nil }
+        guard let space = inner.firstIndex(where: \.isWhitespace) else { return quote + url(String(inner)) + quote }
+        return quote + url(String(inner[..<space])) + " …" + quote
     }
 
     /// A command line inside one word, redacted word by word. A word the
