@@ -514,6 +514,35 @@ class RateLimitRegistryTest(unittest.TestCase):
         self.assertEqual(result["devin"].used_percent, 5)
         self.assertGreater(result["devin"].fetched_at, 0)
 
+    def test_a_kept_older_reading_is_still_refetched_next_time(self):
+        """Saving the fallback must not make it look upgraded."""
+        saved = _FETCHERS.copy()
+        devin = MagicMock(return_value=None)
+        _FETCHERS.clear()
+        register("devin", devin)
+        register("cursor", MagicMock())
+        old = {"tool_name": "devin", "used_percent": 5, "limit_reached": False, "reset_at": 0,
+               "plan_type": "teams", "window_seconds": 86400, "window": "1d"}
+        new_cursor = {"tool_name": "cursor", "used_percent": 2, "limit_reached": False, "reset_at": 0,
+                      "plan_type": "team", "window_seconds": 0, "window": "auto", "windows": []}
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+
+                _save_cached({"devin": old, "cursor": new_cursor})
+                get_all_rate_limits(use_cache=True, tool_names={"devin", "cursor"})
+                saved_devin = json.loads((Path(tmp) / "rate_limits_cache.json").read_text())["limits"]["devin"]
+                get_all_rate_limits(use_cache=True, tool_names={"devin", "cursor"})
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        self.assertNotIn("windows", saved_devin)
+        self.assertEqual(devin.call_count, 2)
+
     def test_register_and_fetch(self):
         """A custom fetcher can be registered and queried."""
         saved = _FETCHERS.copy()

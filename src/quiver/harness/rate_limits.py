@@ -2402,7 +2402,9 @@ def get_all_rate_limits(
     raw_cache: dict[str, dict] = {}
     cache_updated_at: dict[str, float] = {}
     # Older-format readings set aside for a refetch (see the upgrade check).
-    upgrade_fallback: dict[str, RateLimitInfo] = {}
+    # Each is the reading and its saved entry, which is written back as it
+    # was (no ``windows`` key) so the next call still tries the upgrade.
+    upgrade_fallback: dict[str, tuple[RateLimitInfo, dict]] = {}
 
     if use_cache:
         loaded = _load_cached()
@@ -2429,7 +2431,7 @@ def get_all_rate_limits(
                     try:
                         old = RateLimitInfo(**raw)
                         old.fetched_at = old.fetched_at or fresh_at[name]
-                        upgrade_fallback[name] = old
+                        upgrade_fallback[name] = (old, raw)
                     except (TypeError, ValueError):
                         pass
                     continue
@@ -2496,9 +2498,9 @@ def get_all_rate_limits(
         if not info and tool_name in upgrade_fallback and tool_name not in result:
             # The refetch of an older-format reading failed: keep that
             # reading, dated, rather than drop the provider.
-            old = upgrade_fallback[tool_name]
+            old, old_raw = upgrade_fallback[tool_name]
             result[tool_name] = old
-            raw_cache[tool_name] = asdict(old)
+            raw_cache[tool_name] = old_raw
             cache_updated_at[tool_name] = old.fetched_at
             continue
         if info:
