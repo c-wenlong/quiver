@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "app" / "script" / "import-harness-icons.py"
+# The Nix package build copies only the Python sources, not app/.
+NEEDS_APP = unittest.skipUnless(SCRIPT.exists(), "app/ is not in this source tree")
 
 
 def load():
@@ -15,6 +17,7 @@ def load():
     return module
 
 
+@NEEDS_APP
 class DropBoxSubpathTest(unittest.TestCase):
     def setUp(self):
         self.mod = load()
@@ -35,6 +38,7 @@ class DropBoxSubpathTest(unittest.TestCase):
         self.assertIn('fill="url(#g)"', self.mod.normalise(svg, mono=False))
 
 
+@NEEDS_APP
 class RefusalTest(unittest.TestCase):
     def setUp(self):
         self.mod = load()
