@@ -73,7 +73,7 @@ struct McpServersPage: View {
             if case .loaded(let inventory) = model.state {
                 ServerSheet(initial: server, harnesses: inventory.harnesses,
                             active: inventory.activeHarnesses.filter { !hidden.contains($0) }, model: model) {
-                    await model.load(swe: app.swe, health: model.hasHealth)
+                    await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
                 }
             }
         }
