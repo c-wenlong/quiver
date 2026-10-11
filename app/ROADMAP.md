@@ -81,9 +81,9 @@ Modelled on TokenTracker's Sessions page.
 
 ### M5. Manage
 - [ ] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills`
-- [ ] AGENTS.md and CLAUDE.md, global and per project: edit in place, link status per harness
-- [ ] MCP servers: list by harness, diff, sync
-- [ ] Plugins: drift findings with one-click fixes
+- [x] AGENTS.md and CLAUDE.md, global and per project: edit in place, link status per harness
+- [x] MCP servers: list by harness, diff, sync (`swe mcp sync --json`)
+- [x] Plugins: drift findings with one-click fixes (`swe find plugins --fix=<id>`)
 - [ ] Harnesses: discover installed ones, star and archive them
 - [ ] Launch a session in the right folder with one click
 

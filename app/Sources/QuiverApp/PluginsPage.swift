@@ -11,7 +11,7 @@ struct PluginsPage: View {
 
     var body: some View {
         Page(title: "Plugins",
-             subtitle: "Claude Code and Codex run a cached copy of each plugin. This shows where that copy no longer matches ~/.quiver/plugins.") {
+             subtitle: "Where the copies Claude Code and Codex run no longer match ~/.quiver/plugins.") {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe) } }
                 .buttonStyle(IconButtonStyle())
                 .disabled(model.fixing != nil)

@@ -30,11 +30,30 @@ public struct McpInventory: Decodable, Sendable, Equatable {
         }
     }
 
-    public func servers(_ filter: McpFilter) -> [McpServer] {
+    /// Harnesses that configure at least one server. One with none is not
+    /// using MCP, so it gets no column and does not make every server look
+    /// out of sync; it can still be a sync target.
+    public var activeHarnesses: [String] {
+        harnesses.filter { harness in servers.contains { $0.harnesses.contains(harness) } }
+    }
+
+    public var idleHarnesses: [String] {
+        harnesses.filter { !activeHarnesses.contains($0) }
+    }
+
+    /// The servers `filter` keeps, judged across `compared` (default: the
+    /// active harnesses). A conflict counts only between compared harnesses.
+    public func servers(_ filter: McpFilter, across compared: [String]? = nil) -> [McpServer] {
+        let compared = compared ?? activeHarnesses
         switch filter {
-        case .all: servers
-        case .drift: servers.filter { $0.drifts(across: harnesses) }
-        case .conflicts: servers.filter(\.conflict)
+        case .all:
+            return servers
+        case .drift:
+            return servers.filter { server in
+                !server.missing(from: compared).isEmpty || server.conflicts(among: compared)
+            }
+        case .conflicts:
+            return servers.filter { $0.conflicts(among: compared) }
         }
     }
 }
@@ -107,6 +126,11 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
     /// Missing from some harness, or defined differently in two.
     public func drifts(across all: [String]) -> Bool {
         conflict || !missing(from: all).isEmpty
+    }
+
+    /// Two of `harnesses` hold different definitions.
+    public func conflicts(among harnesses: [String]) -> Bool {
+        Set(harnesses.compactMap { group(of: $0) }).count > 1
     }
 
     /// The command line or URL, for a one-line summary.

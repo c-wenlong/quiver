@@ -194,6 +194,28 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(!model.hasHealth)
     }
 
+    @Test func aHarnessWithNoServersGetsNoColumnAndCausesNoDrift() throws {
+        let inventory = McpInventory(harnesses: ["claude", "kilo", "codex"], servers: [
+            McpServer(name: "gh", harnesses: ["claude", "codex"]),
+            McpServer(name: "solo", harnesses: ["codex"]),
+        ])
+        #expect(inventory.activeHarnesses == ["claude", "codex"])
+        #expect(inventory.idleHarnesses == ["kilo"])
+        #expect(inventory.servers(.drift).map(\.name) == ["solo"])
+    }
+
+    @Test func driftAndConflictsAreJudgedAcrossTheComparedHarnesses() {
+        let inventory = McpInventory(harnesses: ["claude", "desktop", "codex"], servers: [
+            McpServer(name: "gh", harnesses: ["claude", "codex"]),
+            McpServer(name: "docs", harnesses: ["claude", "desktop", "codex"], conflict: true,
+                      variants: [["claude", "codex"], ["desktop"]]),
+        ])
+        #expect(inventory.servers(.drift).map(\.name) == ["gh", "docs"])
+        #expect(inventory.servers(.drift, across: ["claude", "codex"]).isEmpty)
+        #expect(inventory.servers(.conflicts, across: ["claude", "codex"]).isEmpty)
+        #expect(inventory.servers(.conflicts, across: ["claude", "desktop"]).map(\.name) == ["docs"])
+    }
+
     @Test func healthComesFromStatus() async throws {
         let status = json(#"""
         {"harnesses": ["claude"], "servers": [

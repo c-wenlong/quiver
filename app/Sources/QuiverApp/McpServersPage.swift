@@ -9,6 +9,10 @@ struct McpServersPage: View {
     @State private var model = McpModel()
     @State private var filter: McpFilter = .all
     @State private var selected: McpServer?
+    /// Harnesses left out of the comparison, remembered on this Mac.
+    @State private var hidden = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenKey) ?? [])
+
+    static let hiddenKey = "mcpHiddenHarnesses"
 
     var body: some View {
         Page(title: "MCP servers",
@@ -33,27 +37,73 @@ struct McpServersPage: View {
             case .loaded(let inventory) where inventory.servers.isEmpty:
                 Card { Label("No MCP servers in any harness config.", systemImage: "powerplug").foregroundStyle(Theme.textSecondary) }
             case .loaded(let inventory):
-                Tabs(options: McpFilter.allCases.map { ($0, "\($0.title) \(inventory.servers($0).count)") },
-                     selection: $filter)
-                let rows = inventory.servers(filter)
+                let compared = inventory.activeHarnesses.filter { !hidden.contains($0) }
+                HStack(alignment: .center, spacing: 12) {
+                    Tabs(options: McpFilter.allCases.map {
+                        ($0, "\($0.title) \(inventory.servers($0, across: compared).count)")
+                    }, selection: $filter)
+                    Spacer(minLength: 8)
+                }
+                HarnessChips(harnesses: inventory.activeHarnesses, hidden: $hidden)
+                    .onChange(of: hidden) { UserDefaults.standard.set(hidden.sorted(), forKey: Self.hiddenKey) }
+                let rows = inventory.servers(filter, across: compared)
                 if rows.isEmpty {
-                    Card { Text("Every server is in every harness, defined the same way.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }
+                    Card { Text("Every server is in every compared harness, defined the same way.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }
                 } else {
                     Card {
-                        ServerGrid(harnesses: inventory.harnesses, servers: rows,
+                        ServerGrid(harnesses: compared, servers: rows,
                                    showHealth: model.hasHealth) { selected = $0 }
                     }
                 }
-                Text("Letters mark different definitions of one server. Env and header values never leave swe; only their names show here.")
-                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                VStack(alignment: .leading, spacing: 4) {
+                    if !inventory.idleHarnesses.isEmpty {
+                        Text("No servers in \(inventory.idleHarnesses.joined(separator: ", ")), so they have no column. A sync can still copy servers there.")
+                    }
+                    Text("Letters mark different definitions of one server. Env and header values never leave swe; only their names show here.")
+                }
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
         .task(id: app.swePath) { await model.load(swe: app.swe) }
         .sheet(item: $selected) { server in
             if case .loaded(let inventory) = model.state {
-                ServerSheet(server: server, harnesses: inventory.harnesses, model: model) {
+                ServerSheet(server: server, harnesses: inventory.harnesses,
+                            active: inventory.activeHarnesses.filter { !hidden.contains($0) }, model: model) {
                     await model.load(swe: app.swe, health: model.hasHealth)
                 }
+            }
+        }
+    }
+}
+
+/// Which harnesses the grid compares: on chips are columns, off ones are left out.
+private struct HarnessChips: View {
+    var harnesses: [String]
+    @Binding var hidden: Set<String>
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Compare").font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.trailing, 4)
+            ForEach(harnesses, id: \.self) { harness in
+                let on = !hidden.contains(harness)
+                Button {
+                    if on { hidden.insert(harness) } else { hidden.remove(harness) }
+                } label: {
+                    HStack(spacing: 4) {
+                        if on { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+                        Text(harness)
+                    }
+                    .font(Theme.control)
+                    .foregroundStyle(on ? Theme.textPrimary : Theme.textMuted)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(on ? Theme.selected : .clear, in: .capsule)
+                    .overlay(Capsule().strokeBorder(on ? Theme.borderStrong : Theme.border, lineWidth: 1))
+                    .contentShape(.capsule)
+                }
+                .buttonStyle(RingedPlainStyle(cornerRadius: 13))
+                .accessibilityAddTraits(on ? .isSelected : [])
+                .help(on ? "Leave \(harness) out of the comparison" : "Compare \(harness) too")
             }
         }
     }
@@ -65,8 +115,8 @@ private struct ServerGrid: View {
     var showHealth: Bool
     var open: (McpServer) -> Void
 
-    static let nameWidth: CGFloat = 240
-    static let cellWidth: CGFloat = 78
+    static let nameWidth: CGFloat = 200
+    static let cellWidth: CGFloat = 72
 
     var body: some View {
         ScrollView(.horizontal) {
@@ -167,7 +217,10 @@ func healthColor(_ health: String) -> Color {
 /// One server: what it is, who has which definition, and a sync.
 private struct ServerSheet: View {
     var server: McpServer
+    /// Every harness swe reads, the sync targets.
     var harnesses: [String]
+    /// The harnesses the grid compares; missing ones are picked by default.
+    var active: [String]
     var model: McpModel
     var reload: () async -> Void
 
@@ -208,7 +261,7 @@ private struct ServerSheet: View {
                     Facts(label: server.groups.count > 1 ? "Definition \(variantLetter(index))" : "In",
                           value: group.joined(separator: ", "))
                 }
-                let missing = server.missing(from: harnesses)
+                let missing = server.missing(from: active)
                 if !missing.isEmpty { Facts(label: "Missing from", value: missing.joined(separator: ", ")) }
             }
             Divider().overlay(Theme.border)
@@ -294,7 +347,8 @@ private struct ServerSheet: View {
     }
 
     private func resetChoice() {
-        chosen = Set(targets.missing)
+        // Harnesses that use MCP and lack the server; empty ones stay opt-in.
+        chosen = Set(targets.missing).intersection(active)
         preview = nil
     }
 
