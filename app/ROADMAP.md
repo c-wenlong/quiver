@@ -26,7 +26,7 @@ remembering CLI commands.
 |---|---|---|
 | OpenUsage | MIT | Menu bar `NSStatusItem` + key-capable `NSPanel`, provider fetchers, pricing snapshot, JSONL scanner. Not its name or icon (TRADEMARK.md). |
 | AIUsage | Apache 2.0 | Per-file cursor ledger for fast incremental scans |
-| TokenTracker | MIT | Design tokens and page layouts. Not its provider logos. |
+| TokenTracker | MIT | Design tokens, page layouts, and the harness logos it ships (most from LobeHub icons, MIT). The logos stay their owners' trademarks, used only to name each harness. |
 | Switchboard | MIT | Profile directories, `open -n --env … --args --user-data-dir=…` launch, terminal launchers |
 
 ## Milestones
