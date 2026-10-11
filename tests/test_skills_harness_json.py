@@ -49,6 +49,15 @@ class SkillsListJsonTest(unittest.TestCase):
         self.assertEqual(rows["codex"]["state"], "keep")
         self.assertIn("exist nowhere else", rows["codex"]["detail"])
 
+    def test_an_archived_harness_is_marked_so(self):
+        registry = json.loads(json.dumps(REGISTRY))
+        registry["codex"].update(state="archived", archived={"reason": "x"})
+        write_registry(self.home, registry)
+        rows = {row["name"]: row for row in self.data()["harnesses"]}
+        self.assertTrue(rows["codex"]["archived"])
+        self.assertEqual(rows["codex"]["state"], "ignored")
+        self.assertFalse(rows["claude"]["archived"])
+
     def test_shared_skills_list_the_harnesses_that_see_them(self):
         skills = {s["name"]: s for s in self.data()["skills"]}
         alpha = skills["alpha"]
@@ -71,6 +80,18 @@ class SkillsListJsonTest(unittest.TestCase):
         skills = {s["name"]: s for s in self.data()["skills"]}
         self.assertEqual(skills["from-plugin"]["source"], "plugin")
         self.assertEqual(skills["from-plugin"]["harnesses"], ["claude"])
+
+    def test_only_the_installed_version_of_a_cached_plugin_is_listed(self):
+        # Claude keeps an old version's folder after an update; it no longer loads.
+        cache = self.home / ".claude" / "plugins" / "cache" / "mk" / "tool"
+        write_skill(cache / "1.0" / "skills", "from-plugin")
+        write_skill(cache / "2.0" / "skills", "from-plugin")
+        (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps({
+            "version": 2,
+            "plugins": {"tool@mk": [{"scope": "user", "installPath": str(cache / "2.0")}]}}))
+        paths = [s["path"] for s in self.data()["skills"] if s["name"] == "from-plugin"]
+        self.assertEqual(len(paths), 1)
+        self.assertIn("/2.0/", paths[0])
 
     def test_the_listing_writes_nothing(self):
         before = snapshot(self.home)

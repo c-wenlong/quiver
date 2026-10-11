@@ -38,18 +38,35 @@ public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
     /// ignored, skipped.
     public let state: String
     public let detail: String
+    /// Archived in harness.json. `swe init` leaves such a folder alone, so
+    /// once unlinked it reads `ignored`; a click here can still link it.
+    public let archived: Bool
 
-    public init(name: String, path: String, state: String, detail: String = "") {
+    public init(name: String, path: String, state: String, detail: String = "", archived: Bool = false) {
         self.name = name
         self.path = path
         self.state = state
         self.detail = detail
+        self.archived = archived
+    }
+
+    enum CodingKeys: String, CodingKey { case name, path, state, detail, archived }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        path = try c.decode(String.self, forKey: .path)
+        state = try c.decode(String.self, forKey: .state)
+        detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
     }
 
     public var link: Link {
         switch state {
         case "linked": .linked
         case "create", "relink", "absorb": .notLinked
+        // Ignored only because it is archived: unlinked here, so linkable here.
+        case "ignored" where archived && !detail.contains("linkignore"): .notLinked
         default: .blocked
         }
     }
@@ -61,7 +78,9 @@ public struct SkillRoot: Decodable, Sendable, Equatable, Identifiable {
     /// One sentence on why the folder is in its state.
     public var explanation: String {
         switch state {
+        case "linked" where archived: "Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it, but you can link it here."
         case "linked": "Reads the shared skills in ~/.quiver/skills."
+        case "ignored" where link == .notLinked: "Archived in swe, so swe init leaves it alone. You can still link it here."
         case "create": "No skills folder yet. Linking creates it."
         case "relink": detail.isEmpty ? "Points somewhere else." : "Points somewhere else: \(detail.replacingOccurrences(of: "points at ", with: ""))."
         case "absorb": detail == "empty"
@@ -303,9 +322,11 @@ public final class SkillsModel {
         return inventory.skills
     }
 
-    /// The skills matching the harness, source and search text.
+    /// The skills matching the harness, source and search text: your own
+    /// library first, then what harnesses, catalogs and plugins bring.
     public var visibleSkills: [Skill] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let rank: [Skill.Source: Int] = [.shared: 0, .harness: 1, .catalog: 2, .project: 3, .plugin: 4, .builtin: 5]
         return allSkills.filter { skill in
             (harness == nil || skill.harnesses.contains(harness!))
                 && (source == nil || skill.source == source)
@@ -314,6 +335,12 @@ public final class SkillsModel {
                     || skill.description.lowercased().contains(needle)
                     || skill.root.lowercased().contains(needle))
         }
+        .enumerated()
+        .sorted { a, b in
+            let (ra, rb) = (rank[a.element.source] ?? 9, rank[b.element.source] ?? 9)
+            return ra != rb ? ra < rb : a.offset < b.offset
+        }
+        .map(\.element)
     }
 
     /// For one skill, each harness folder and whether it loads the skill.

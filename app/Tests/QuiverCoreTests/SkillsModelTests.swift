@@ -85,6 +85,16 @@ let hubJSON = #"""
         }
     }
 
+    @Test func anArchivedHarnessCanBeLinkedBackButALinkignoredOneCannot() {
+        let archived = SkillRoot(name: "hermes", path: "/h/.hermes/skills", state: "ignored",
+                                 detail: "archived in harness.json", archived: true)
+        #expect(archived.link == .notLinked)
+        let ignored = SkillRoot(name: "pinokio", path: "/h/.pinokio/skills", state: "ignored",
+                                detail: "listed in ~/.quiver/.linkignore", archived: true)
+        #expect(ignored.link == .blocked)
+        #expect(SkillRoot(name: "x", path: "/x", state: "ignored", detail: "archived in harness.json").link == .blocked)
+    }
+
     @Test func onlyAFolderOfCopiesNeedsForce() {
         #expect(SkillRoot(name: "a", path: "/a", state: "absorb", detail: "2 skills, all already shared").linkNeedsForce)
         #expect(!SkillRoot(name: "a", path: "/a", state: "absorb", detail: "empty").linkNeedsForce)
@@ -154,6 +164,12 @@ let hubJSON = #"""
         await model.link(try #require(model.roots.first { $0.name == "hermes" }))
         #expect(model.actionError == "/h/.hermes/skills is a non-empty directory.")
         #expect(model.busy.isEmpty)
+    }
+
+    @Test func theSharedLibraryListsFirst() async {
+        let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
+        await model.load()
+        #expect(model.visibleSkills.map(\.name) == ["alpha", "only-codex", "future", "hammer"])
     }
 
     @Test func filtersByHarnessSourceAndText() async {
