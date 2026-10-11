@@ -569,7 +569,7 @@ def cmd_list(args):
     # Under --json a refusal must leave stdout empty: the app decodes it whole.
     err = sys.stderr if json_view else sys.stdout
     try:
-        args = expand_value_flags(args, {"--scope"})
+        args = expand_value_flags(args, {"--scope", "--exclude"})
     except ValueError as exc:
         print(c("red", str(exc)), file=err)
         return 1
@@ -616,10 +616,17 @@ def cmd_list(args):
     # --scope mirrors swe find: active (default) hides what you shelved,
     # archived shows only that, all shows everything with a marker.
     scope = "active"
+    # --exclude=a,b keeps those rows but never polls their usage. The macOS
+    # app fetches Claude and Codex per account itself, so asking swe for them
+    # too would double the load on endpoints that rate-limit.
+    excluded: set[str] = set()
     i = 0
     while i < len(args):
         if args[i] == "--scope":
             scope = args[i + 1]
+            del args[i : i + 2]
+        elif args[i] == "--exclude":
+            excluded |= {name.strip() for name in args[i + 1].split(",") if name.strip()}
             del args[i : i + 2]
         else:
             i += 1
@@ -677,7 +684,8 @@ def cmd_list(args):
         rate_limits = (
             _fetch_rate_limits(
                 refresh=refresh,
-                tool_names={name for name in starred_set if name in tools},
+                tool_names={name for name in starred_set
+                            if name in tools and name not in excluded},
             )
             if usage_view
             else {}
@@ -708,7 +716,8 @@ def cmd_list(args):
     rate_limits = (
         _fetch_rate_limits(
             refresh=refresh,
-            tool_names={name for name in starred_set if name in tools},
+            tool_names={name for name in starred_set
+                            if name in tools and name not in excluded},
         )
         if "rate" in wanted
         else {}

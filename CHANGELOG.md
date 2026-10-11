@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe list --usage --exclude=a,b`.** Lists those harnesses but skips
+  polling their usage. The macOS app fetches Claude and Codex per account
+  itself and passes them here, so their rate-limited endpoints are not hit
+  twice. Under `--json`, a provider that names no plan now gives
+  `plan_type: null` instead of the table's `—` placeholder.
 - **`--json` for `swe list`, `swe session`, `swe find skills` and `swe init
   --check`.** The macOS app under `app/` reads these. `list` gives each
   harness's state, aliases and 100-day session count, and with `--usage`
