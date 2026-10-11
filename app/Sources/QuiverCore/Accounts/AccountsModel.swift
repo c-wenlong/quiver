@@ -91,6 +91,10 @@ public final class AccountsModel {
     }
 
     public private(set) var cards: [Card] = []
+    /// Whether each vendor's CLI is on the PATH Terminal's shell sees, checked on
+    /// every load. swe's registry says the same for harnesses it knows, but
+    /// a fresh registry may not list Claude or Codex at all.
+    public private(set) var cliOnPath: [Vendor: Bool] = [:]
     public private(set) var isLoading = false
     public private(set) var error: String?
 
@@ -98,14 +102,17 @@ public final class AccountsModel {
     private let usage: UsageFetching
     private let launcher: Launching
     private let terminal: () -> TerminalApp
+    private let loginPath: @Sendable () async -> String
     private var generation = 0
 
     public init(store: ProfileStore, usage: UsageFetching, launcher: Launching,
-                terminal: @escaping () -> TerminalApp) {
+                terminal: @escaping () -> TerminalApp,
+                loginPath: @escaping @Sendable () async -> String = { await CLIPath.terminalShellPath() }) {
         self.store = store
         self.usage = usage
         self.launcher = launcher
         self.terminal = terminal
+        self.loginPath = loginPath
     }
 
     /// Reload profiles, then every account's usage at once. `force` skips the
@@ -123,6 +130,12 @@ public final class AccountsModel {
             isLoading = false
             return
         }
+        // One shell start for every vendor's check.
+        let path = await loginPath()
+        var found: [Vendor: Bool] = [:]
+        for vendor in Vendor.allCases { found[vendor] = CLIPath.contains(LaunchPlanner.cliName(for: vendor), path: path) }
+        guard mine == generation else { return }
+        cliOnPath = found
         let previous = Dictionary(uniqueKeysWithValues: cards.map { ($0.id, $0.usage) })
         cards = profiles.map { Card(profile: $0, usage: previous[$0.id] ?? nil) }
         isLoading = true
@@ -181,6 +194,31 @@ public final class AccountsModel {
     /// The desktop app, signed in as this account.
     public func openApp(_ profile: Profile) async throws {
         try await launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile)))
+    }
+
+    /// The desktop app found at `path`, for an account whose app isn't in
+    /// the usual place.
+    public func openApp(_ profile: Profile, at path: String) async throws {
+        try await launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile), appPath: path))
+    }
+
+    /// A harness's desktop app, as the user would open it.
+    public func openApp(at path: String) async throws {
+        try await launcher.launch(LaunchCommand(executable: "/usr/bin/open", arguments: ["-a", path]))
+    }
+
+    /// A harness's CLI in a terminal. The command comes from harness.json,
+    /// so it is quoted as one word rather than run as shell text.
+    public func openTerminal(command: String) async throws {
+        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: LaunchPlanner.shellQuote(command)))
+    }
+
+    /// A harness's own sign-in in a terminal, where its CLI has one.
+    public func signIn(harness: String) async throws {
+        guard let login = HarnessAccess.loginCommand(for: harness) else {
+            throw LaunchError.failed("\(harness) signs in from inside its own app or CLI.")
+        }
+        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: login))
     }
 
     /// The CLI in a terminal, as this account.

@@ -47,11 +47,34 @@ final class AppModel {
         didSet { UserDefaults.standard.set(terminal.rawValue, forKey: "terminalApp") }
     }
 
+    /// The Dock icon, light unless changed in Settings.
+    var appIcon: AppIconStyle {
+        didSet {
+            UserDefaults.standard.set(appIcon.rawValue, forKey: "appIcon")
+            applyAppIcon()
+        }
+    }
+
+    /// Shows the chosen icon in the Dock and the app switcher. The light one
+    /// is the bundle's own, so it needs nothing set.
+    func applyAppIcon() {
+        guard appIcon != .light,
+              let url = Bundle.main.url(forResource: appIcon.resourceName, withExtension: "icns") else {
+            NSApp.applicationIconImage = nil
+            return
+        }
+        NSApp.applicationIconImage = NSImage(contentsOf: url)
+    }
+
     let accounts: AccountsModel
     /// Limits of the harnesses with no Quiver account, from swe.
     private(set) var others: OtherLimitsModel
     /// Every limit together: the status item, notifications and widgets.
     let limits: LimitsMonitor
+    /// Names given to harness cards on the Accounts page.
+    let harnessNames = HarnessDisplayNames()
+    /// Where each harness's desktop app is installed, if anywhere.
+    let apps = AppLocator()
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
     let agentsMd = AgentsModel()
     private(set) var apiKeys: APIKeysModel
@@ -91,6 +114,7 @@ final class AppModel {
         others = OtherLimitsModel(swe: client)
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
+        appIcon = AppIconStyle(saved: UserDefaults.standard.string(forKey: "appIcon"))
 
         let keysPath = UserDefaults.standard.string(forKey: "apiKeysPath") ?? ""
         apiKeysPath = keysPath
