@@ -105,9 +105,15 @@ public final class ProfileStore: @unchecked Sendable {
             let profiles = try decoder.decode(StoreFile.self, from: data).profiles
 
             var seen = Set<String>()
+            let reserved = Set(Self.defaultProfiles.map(\.id))
             for profile in profiles {
                 guard Self.isSafeId(profile.id) else { throw malformed("unusable profile id \"\(profile.id)\"") }
                 guard seen.insert(profile.id).inserted else { throw malformed("duplicate profile id \(profile.id)") }
+                // A non-default entry under a default's id would collide with
+                // the default synthesised next to it.
+                guard profile.isDefault || !reserved.contains(profile.id) else {
+                    throw malformed("profile id \(profile.id) is reserved for a default")
+                }
             }
             return profiles
         } catch let error as ProfileStoreError {
@@ -135,8 +141,9 @@ public final class ProfileStore: @unchecked Sendable {
         // account's login.
         let slug = Self.slug(clean)
         let vendorDirectory = root.appendingPathComponent(vendor.rawValue, isDirectory: true)
+        let retired = Set(retiredIds())
         let taken = { (id: String) -> Bool in
-            profiles.contains { $0.id == id }
+            profiles.contains { $0.id == id } || retired.contains(id)
                 || FileManager.default.fileExists(atPath: vendorDirectory.appendingPathComponent(id).path)
         }
         var id = "\(vendor.rawValue)-\(slug)"
@@ -192,7 +199,7 @@ public final class ProfileStore: @unchecked Sendable {
         // The entry goes first. If deleting the directory then fails, the
         // leftover is never adopted by a new profile (see `add`).
         profiles.remove(at: index)
-        try save(profiles)
+        try save(profiles, retired: retiredIds() + [profile.id])
         let directory = root.appendingPathComponent(profile.vendor.rawValue, isDirectory: true)
             .appendingPathComponent(profile.id, isDirectory: true)
         try FileManager.default.removeItem(at: directory)
@@ -225,6 +232,10 @@ public final class ProfileStore: @unchecked Sendable {
     private struct StoreFile: Codable {
         var schema: Int
         var profiles: [Profile]
+        /// Ids of removed profiles. Claude Code names its keychain item after
+        /// the config home, so a reused id would hand the removed account's
+        /// login to a new one; a retired id is never handed out again.
+        var retired: [String]? = nil
     }
 
     private static func describe(_ error: any Error) -> String {
@@ -234,12 +245,23 @@ public final class ProfileStore: @unchecked Sendable {
         }
     }
 
-    private func save(_ profiles: [Profile]) throws {
+    /// Ids removed so far, read from the file. Empty when there is none yet.
+    private func retiredIds() -> [String] {
+        guard let data = try? Data(contentsOf: file) else { return [] }
+        return (try? JSONDecoder().decode(Retired.self, from: data))?.retired ?? []
+    }
+
+    private struct Retired: Decodable { var retired: [String]? }
+
+    /// `retired` nil keeps whatever the file already lists.
+    private func save(_ profiles: [Profile], retired: [String]? = nil) throws {
         try createRoot()
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(StoreFile(schema: Self.schema, profiles: profiles))
+        let keep = retired ?? retiredIds()
+        let data = try encoder.encode(StoreFile(schema: Self.schema, profiles: profiles,
+                                                retired: keep.isEmpty ? nil : keep))
 
         // Write a private temp file next to the real one, then rename it over
         // the real one, so a crash can never leave a half-written store.

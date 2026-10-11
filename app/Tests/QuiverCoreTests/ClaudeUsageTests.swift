@@ -132,6 +132,20 @@ import Testing
         #expect(h.transport.requests.isEmpty)
     }
 
+    @Test func aNewerLoginInTheFileBeatsAnExpiredKeychainToken() async throws {
+        let h = UsageHarness()
+        h.secrets.set(service: "Claude Code-credentials", account: user,
+                      claudeCredentialsJSON(accessToken: "old-SECRET", expiresAt: usageEpoch.addingTimeInterval(-60)))
+        h.files.set("\(claudeHome)/.credentials.json",
+                    claudeCredentialsJSON(accessToken: "new-SECRET", expiresAt: usageEpoch.addingTimeInterval(3600)))
+        h.transport.reply(200, body: try fixture("claude-usage"))
+
+        let usage = await h.makeService().usage(for: claudeKey, force: false)
+
+        #expect(usage.status == .ok)
+        #expect(h.transport.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer new-SECRET")
+    }
+
     @Test func anExpiredTokenIsExpiredWithoutARequest() async {
         let h = UsageHarness()
         h.secrets.set(service: "Claude Code-credentials", account: user,

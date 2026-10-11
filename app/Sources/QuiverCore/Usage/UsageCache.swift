@@ -40,6 +40,13 @@ struct UsageCacheStore {
 
     /// Replaces one account's entry, leaving the others as they are on disk.
     func save(_ entry: StoredAccount?, for key: AccountKey) {
+        // Read, change and write under one lock shared by every process: an
+        // atomic rename alone lets a second running copy write back the file
+        // it read before this one saved, erasing this account's cooldown.
+        withFileLock { write(entry, for: key) }
+    }
+
+    private func write(_ entry: StoredAccount?, for key: AccountKey) {
         var accounts = loadAll()
         accounts[Self.id(key)] = entry
         let encoder = JSONEncoder()
@@ -53,6 +60,22 @@ struct UsageCacheStore {
             attributes: [.posixPermissions: 0o700])
         guard (try? data.write(to: url, options: .atomic)) != nil else { return }
         try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Runs `body` holding an exclusive `flock` on a lock file beside the
+    /// cache. If the lock cannot be taken the write still happens, unlocked,
+    /// rather than dropping a cooldown.
+    private func withFileLock(_ body: () -> Void) {
+        let lockURL = url.appendingPathExtension("lock")
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        let fd = open(lockURL.path, O_RDWR | O_CREAT, 0o600)
+        guard fd >= 0 else { return body() }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX) == 0 else { return body() }
+        defer { flock(fd, LOCK_UN) }
+        body()
     }
 
     /// Everything on disk, or nothing when the file is missing or unreadable.

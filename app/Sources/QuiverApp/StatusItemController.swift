@@ -139,7 +139,7 @@ struct MenuBarContent: View {
         .padding(16)
         .frame(width: 340)
         .glassEffect(in: .rect(cornerRadius: 18))
-        .task { await app.accounts.load(force: false) }
+        .task { await app.accounts.keepFresh() }
     }
 }
 

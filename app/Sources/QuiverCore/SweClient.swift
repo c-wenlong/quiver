@@ -54,10 +54,13 @@ public struct SweClient: Sendable {
         if Self.rejectsJSONFlag(stdoutText) || Self.rejectsJSONFlag(result.stderr) {
             throw SweError.jsonUnsupported
         }
-        if result.status != 0 && (!allowFailure || result.stdout.isEmpty) {
+        let isJSON = Self.plain(stdoutText).hasPrefix("{")
+        if result.status != 0 && (!allowFailure || !isJSON) {
+            // Refusals go to stderr, but an older swe printed them to stdout.
+            let stderr = Self.plain(result.stderr)
             throw SweError.commandFailed(
                 status: result.status,
-                message: Self.plain(result.stderr))
+                message: stderr.isEmpty && !isJSON ? Self.plain(stdoutText) : stderr)
         }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase

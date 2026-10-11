@@ -218,8 +218,8 @@ private func makeStore(_ home: URL) -> ProfileStore {
         let vendorDir = root(of: home).appendingPathComponent("claude")
         #expect(!FileManager.default.fileExists(atPath: vendorDir.appendingPathComponent("claude-work").path))
         #expect(FileManager.default.fileExists(atPath: store.paths(for: side).home.path))
-        // The id is free again.
-        #expect(try store.add(vendor: .claude, name: "Work").id == "claude-work")
+        // The id is retired, never free again: its keychain item may still hold the old login.
+        #expect(try store.add(vendor: .claude, name: "Work").id == "claude-work-2")
     }
 
     @Test func defaultsAndUnknownIdsCannotBeRemoved() throws {

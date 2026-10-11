@@ -34,12 +34,15 @@ enum ClaudeUsageAPI {
     static func credential(key: AccountKey, secrets: SecretReading, files: FileReading) async -> CredentialLookup {
         let service = ClaudeKeychain.service(configHome: key.configHome, isDefault: key.isDefault)
         let fromKeychain = await secrets.genericPassword(service: service, account: ClaudeKeychain.currentAccount)
-        if let fromKeychain, let found = parse(credentials: fromKeychain) {
-            return .found(found)
-        }
         let fromFile = files.read(key.configHome + "/.credentials.json")
-        if let fromFile, let found = parse(credentials: String(decoding: fromFile, as: UTF8.self)) {
-            return .found(found)
+        // Both can exist, and either can be the stale one: the later expiry
+        // is the newer login, as quiver's own Claude fetcher decides.
+        let candidates = [
+            fromKeychain.flatMap { parse(credentials: $0) },
+            fromFile.flatMap { parse(credentials: String(decoding: $0, as: UTF8.self)) },
+        ].compactMap { $0 }
+        if let newest = candidates.max(by: { ($0.expiresAt ?? .distantPast) < ($1.expiresAt ?? .distantPast) }) {
+            return .found(newest)
         }
         if fromKeychain != nil || fromFile != nil {
             return .unusable("Claude Code's credentials could not be read")

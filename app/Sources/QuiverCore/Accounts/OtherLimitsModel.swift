@@ -28,7 +28,15 @@ public final class OtherLimitsModel {
 
     public func load() async {
         do {
-            rows = try await swe.harnesses(withUsage: true, excludingUsage: Self.ownAccounts).compactMap { harness in
+            let harnesses: [Harness]
+            do {
+                harnesses = try await swe.harnesses(withUsage: true, excludingUsage: Self.ownAccounts)
+            } catch SweError.commandFailed(_, let message) where message.contains("--exclude") {
+                // An swe from before --exclude: ask again and accept that it
+                // polls Claude and Codex too.
+                harnesses = try await swe.harnesses(withUsage: true)
+            }
+            rows = harnesses.compactMap { harness in
                 guard !Self.ownAccounts.contains(harness.name), let limit = harness.rateLimit else { return nil }
                 return Row(name: harness.name, limit: limit)
             }

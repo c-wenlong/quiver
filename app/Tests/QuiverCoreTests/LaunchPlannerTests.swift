@@ -92,8 +92,8 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
     }
 
     @Test func aDefaultProfileIsJustTheCommand() {
-        #expect(LaunchPlanner.shellLine(for: claudeDefault, paths: claudeDefaultPaths, command: "claude") == "claude")
-        #expect(LaunchPlanner.shellLine(for: codexDefault, paths: codexDefaultPaths, command: "codex") == "codex")
+        #expect(LaunchPlanner.shellLine(for: claudeDefault, paths: claudeDefaultPaths, command: "claude") == "unset CLAUDE_CONFIG_DIR; claude")
+        #expect(LaunchPlanner.shellLine(for: codexDefault, paths: codexDefaultPaths, command: "codex") == "unset CODEX_HOME; codex")
     }
 
     @Test func theCommandIsAppendedAsGiven() {
@@ -117,8 +117,8 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
             == "export CLAUDE_CONFIG_DIR='/Users/me/.quiver/accounts/claude/claude-work/home'; claude auth login")
         #expect(LaunchPlanner.cliLoginCommand(for: codexSide, paths: codexSidePaths)
             == "export CODEX_HOME='/Users/me/.quiver/accounts/codex/codex-side/home'; codex login")
-        #expect(LaunchPlanner.cliLoginCommand(for: claudeDefault, paths: claudeDefaultPaths) == "claude auth login")
-        #expect(LaunchPlanner.cliLoginCommand(for: codexDefault, paths: codexDefaultPaths) == "codex login")
+        #expect(LaunchPlanner.cliLoginCommand(for: claudeDefault, paths: claudeDefaultPaths) == "unset CLAUDE_CONFIG_DIR; claude auth login")
+        #expect(LaunchPlanner.cliLoginCommand(for: codexDefault, paths: codexDefaultPaths) == "unset CODEX_HOME; codex login")
     }
 
     @Test func eachVendorNamesItsCLI() {
@@ -164,13 +164,13 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
     @Test func ghosttyPassesTheLineToZshAsOneArgument() {
         #expect(LaunchPlanner.terminal(.ghostty, running: line) == LaunchCommand(
             executable: "/usr/bin/open",
-            arguments: ["-na", "Ghostty", "--args", "-e", "/bin/zsh", "-lc", line]))
+            arguments: ["-na", "Ghostty", "--args", "-e", "/bin/zsh", "-ilc", line]))
     }
 
     @Test func weztermPassesTheLineToZshAsOneArgument() {
         #expect(LaunchPlanner.terminal(.wezterm, running: line) == LaunchCommand(
             executable: "/usr/bin/open",
-            arguments: ["-na", "WezTerm", "--args", "start", "--", "/bin/zsh", "-lc", line]))
+            arguments: ["-na", "WezTerm", "--args", "start", "--", "/bin/zsh", "-ilc", line]))
     }
 
     @Test func terminalAppsRoundTripThroughCodable() throws {

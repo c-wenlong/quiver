@@ -71,7 +71,9 @@ public enum LaunchPlanner {
     /// `command` is the whole invocation (`claude`, `codex login`) and is used
     /// as given, so it must come from the app, never from user text.
     public static func shellLine(for profile: Profile, paths: ProfilePaths, command: String) -> String {
-        guard !profile.isDefault else { return command }
+        // The default account clears an override the user's shell may export,
+        // or the command would run as whichever account that points at.
+        guard !profile.isDefault else { return "unset \(homeVariable(for: profile.vendor)); \(command)" }
         return "export \(homeVariable(for: profile.vendor))=\(shellQuote(paths.home.path)); \(command)"
     }
 
@@ -103,11 +105,11 @@ public enum LaunchPlanner {
         case .ghostty:
             return LaunchCommand(
                 executable: "/usr/bin/open",
-                arguments: ["-na", "Ghostty", "--args", "-e", "/bin/zsh", "-lc", shellLine])
+                arguments: ["-na", "Ghostty", "--args", "-e", "/bin/zsh", "-ilc", shellLine])
         case .wezterm:
             return LaunchCommand(
                 executable: "/usr/bin/open",
-                arguments: ["-na", "WezTerm", "--args", "start", "--", "/bin/zsh", "-lc", shellLine])
+                arguments: ["-na", "WezTerm", "--args", "start", "--", "/bin/zsh", "-ilc", shellLine])
         }
     }
 

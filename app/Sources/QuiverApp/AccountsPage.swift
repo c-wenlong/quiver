@@ -21,7 +21,7 @@ struct AccountsPage: View {
                     Text(vendor.title).font(.title3.weight(.semibold)).padding(.top, 4)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 14)], spacing: 14) {
                         ForEach(cards) { card in
-                            AccountCard(card: card, perform: perform)
+                            AccountCard(card: card, perform: perform, reloadAll: reloadAll)
                         }
                     }
                 }
@@ -44,7 +44,7 @@ struct AccountsPage: View {
         .toolbar {
             Button("Add account", systemImage: "plus") { adding = true }
             Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.load(force: true) }
+                Task { await reloadAll(force: true) }
             }
             .disabled(model.isLoading)
         }
@@ -53,14 +53,16 @@ struct AccountsPage: View {
                 Task {
                     do {
                         let profile = try await model.add(vendor: vendor, name: name, color: color)
-                        perform { try model.signIn(profile) }
+                        perform { try await model.signIn(profile) }
                     } catch {
                         actionError = error.localizedDescription
                     }
                 }
             }
         }
-        .task { await model.load(force: false) }
+        // Reloads while the page is open, so a reading never sits on screen
+        // past the age the usage service would still show it.
+        .task { await model.keepFresh() }
         .task(id: app.swePath) {
             let model = OtherLimitsModel(swe: app.swe)
             others = model
@@ -68,12 +70,20 @@ struct AccountsPage: View {
         }
     }
 
-    private func perform(_ action: () throws -> Void) {
-        do {
-            try action()
-            actionError = nil
-        } catch {
-            actionError = error.localizedDescription
+    private func reloadAll(force: Bool) async {
+        await app.accounts.load(force: force)
+        await others?.load()
+    }
+
+    /// Runs an account action and shows its failure on the page.
+    private func perform(_ action: @escaping () async throws -> Void) {
+        Task {
+            do {
+                try await action()
+                actionError = nil
+            } catch {
+                actionError = error.localizedDescription
+            }
         }
     }
 }
@@ -90,7 +100,8 @@ extension Vendor {
 private struct AccountCard: View {
     @Environment(AppModel.self) private var app
     var card: AccountsModel.Card
-    var perform: (() throws -> Void) -> Void
+    var perform: (@escaping () async throws -> Void) -> Void
+    var reloadAll: (Bool) async -> Void
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmingRemove = false
@@ -107,7 +118,7 @@ private struct AccountCard: View {
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
                 Spacer()
                 Menu {
-                    Button("Sign in…") { perform { try model.signIn(profile) } }
+                    Button("Sign in…") { perform { try await model.signIn(profile) } }
                     Button("Show folder in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([model.folder(of: profile)])
                     }
@@ -129,22 +140,25 @@ private struct AccountCard: View {
             HStack {
                 StatusLine(usage: card.usage)
                 Spacer()
-                Button("Open app") { perform { try model.openApp(profile) } }
-                Button("Terminal") { perform { try model.openTerminal(profile) } }
+                Button("Open app") { perform { try await model.openApp(profile) } }
+                Button("Terminal") { perform { try await model.openTerminal(profile) } }
             }
             .controlSize(.small)
         }
         .alert("Rename account", isPresented: $renaming) {
             TextField("Name", text: $newName)
-            Button("Rename") { Task { try? await model.rename(profile, to: newName) } }
+            Button("Rename") { perform { try await model.rename(profile, to: newName) } }
             Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog("Remove \(profile.name)?", isPresented: $confirmingRemove) {
             Button("Remove account and its folder", role: .destructive) {
-                Task { try? await model.remove(profile) }
+                perform {
+                    defer { Task { await reloadAll(false) } }
+                    try await model.remove(profile)
+                }
             }
         } message: {
-            Text("Deletes this account's sign-in, settings and history kept by Quiver. The vendor account itself is untouched.")
+            Text("Deletes the settings and history Quiver kept for this account. The vendor account itself is untouched.")
         }
     }
 }
@@ -261,16 +275,13 @@ private struct AddAccountSheet: View {
 }
 
 extension Color {
-    /// `#rrggbb`; anything else falls back to the accent.
+    /// `#rrggbb` or `#rgb`; anything else falls back to the accent.
     init(hex: String) {
-        let digits = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
-        guard digits.count == 6, let value = UInt32(digits, radix: 16) else {
+        guard let rgb = HexColor.rgb(hex) else {
             self = Theme.accent
             return
         }
-        self.init(red: Double((value >> 16) & 0xff) / 255,
-                  green: Double((value >> 8) & 0xff) / 255,
-                  blue: Double(value & 0xff) / 255)
+        self.init(red: Double(rgb.red) / 255, green: Double(rgb.green) / 255, blue: Double(rgb.blue) / 255)
     }
 }
 

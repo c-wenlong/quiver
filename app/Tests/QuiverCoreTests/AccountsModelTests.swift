@@ -19,7 +19,7 @@ final class FakeUsage: UsageFetching, @unchecked Sendable {
 
 final class FakeLauncher: Launching, @unchecked Sendable {
     private(set) var launched: [LaunchCommand] = []
-    func launch(_ command: LaunchCommand) throws { launched.append(command) }
+    func launch(_ command: LaunchCommand) async throws { launched.append(command) }
 }
 
 @MainActor
@@ -73,7 +73,7 @@ final class FakeLauncher: Launching, @unchecked Sendable {
         let work = try store.add(vendor: .claude, name: "Work")
         let model = model()
         await model.load(force: false)
-        try model.openApp(work)
+        try await model.openApp(work)
 
         let paths = store.paths(for: work)
         #expect(launcher.launched == [LaunchPlanner.desktopApp(for: work, paths: paths)])
@@ -84,7 +84,7 @@ final class FakeLauncher: Launching, @unchecked Sendable {
         let work = try store.add(vendor: .codex, name: "Work")
         let model = model(terminal: .iterm)
         await model.load(force: false)
-        try model.signIn(work)
+        try await model.signIn(work)
 
         let paths = store.paths(for: work)
         let line = LaunchPlanner.cliLoginCommand(for: work, paths: paths)

@@ -10,21 +10,63 @@ extension UsageService: UsageFetching {}
 
 /// Starts a planned launch. Real launches spawn a process; tests record.
 public protocol Launching: Sendable {
-    func launch(_ command: LaunchCommand) throws
+    func launch(_ command: LaunchCommand) async throws
 }
 
-/// Spawns the command and lets it run on its own.
-public struct ProcessLauncher: Launching {
-    public init() {}
+public enum LaunchError: Error, LocalizedError, Equatable {
+    case failed(String)
 
-    public func launch(_ command: LaunchCommand) throws {
+    public var errorDescription: String? {
+        switch self {
+        case .failed(let message): message
+        }
+    }
+}
+
+/// Runs the command and waits for it to report back. Every planned launch is
+/// a short-lived `open` or `osascript` that hands off to the real app and
+/// exits, so its status says whether the app or terminal was found. One
+/// still running after `patience` is left to finish on its own.
+public struct ProcessLauncher: Launching {
+    var patience: Duration
+
+    public init(patience: Duration = .seconds(15)) {
+        self.patience = patience
+    }
+
+    public func launch(_ command: LaunchCommand) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: command.executable)
         process.arguments = command.arguments
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
+        let err = Pipe()
+        process.standardError = err
+        let exited = AsyncStream<Int32> { continuation in
+            process.terminationHandler = { finished in
+                continuation.yield(finished.terminationStatus)
+                continuation.finish()
+            }
+        }
+        do {
+            try process.run()
+        } catch {
+            throw LaunchError.failed("Couldn't run \(command.executable): \(error.localizedDescription)")
+        }
+        let status: Int32? = await withTaskGroup(of: Int32?.self) { group in
+            group.addTask { await exited.first { _ in true } }
+            group.addTask { [patience] in
+                try? await Task.sleep(for: patience)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        guard let status, status != 0 else { return }
+        let message = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        throw LaunchError.failed(message.isEmpty ? "\(command.executable) exited with status \(status)" : message)
     }
 }
 
@@ -77,6 +119,8 @@ public final class AccountsModel {
             error = nil
         } catch {
             self.error = "Couldn't read your accounts: \(error.localizedDescription)"
+            // This is the newest load; an older one can no longer clear it.
+            isLoading = false
             return
         }
         let previous = Dictionary(uniqueKeysWithValues: cards.map { ($0.id, $0.usage) })
@@ -102,6 +146,21 @@ public final class AccountsModel {
         cards = cards.map { Card(profile: $0.profile, usage: results[$0.id] ?? $0.usage) }
     }
 
+    /// Reload on a timer until the calling task is cancelled, so a page left
+    /// open never shows a reading the usage service would no longer stand
+    /// behind (it ages out readings past 24 h). Not forced: the five-minute
+    /// cache and any cooldown still apply.
+    public func keepFresh(every interval: Duration = .seconds(300)) async {
+        while !Task.isCancelled {
+            await load(force: false)
+            do {
+                try await Task.sleep(for: interval)
+            } catch {
+                return
+            }
+        }
+    }
+
     @discardableResult
     public func add(vendor: Vendor, name: String, color: String?) async throws -> Profile {
         let profile = try store.add(vendor: vendor, name: name, color: color)
@@ -120,22 +179,22 @@ public final class AccountsModel {
     }
 
     /// The desktop app, signed in as this account.
-    public func openApp(_ profile: Profile) throws {
-        try launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile)))
+    public func openApp(_ profile: Profile) async throws {
+        try await launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile)))
     }
 
     /// The CLI in a terminal, as this account.
-    public func openTerminal(_ profile: Profile) throws {
+    public func openTerminal(_ profile: Profile) async throws {
         let paths = store.paths(for: profile)
         let line = LaunchPlanner.shellLine(for: profile, paths: paths,
                                            command: profile.vendor.rawValue)
-        try launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
     }
 
     /// The CLI's sign-in flow in a terminal, for this account's folder.
-    public func signIn(_ profile: Profile) throws {
+    public func signIn(_ profile: Profile) async throws {
         let line = LaunchPlanner.cliLoginCommand(for: profile, paths: store.paths(for: profile))
-        try launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
     }
 
     public func folder(of profile: Profile) -> URL {
