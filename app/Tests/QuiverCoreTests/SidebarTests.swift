@@ -18,4 +18,13 @@ import Testing
         #expect(AppSection.mcpServers.title == "MCP servers")
         #expect(AppSection.serviceStatus.title == "Service status")
     }
+
+    @Test func arrowKeysWalkTheSidebarInOrderAcrossGroups() {
+        #expect(SidebarGroup.order.first == .overview)
+        #expect(AppSection.sessions.step(1) == .accounts)
+        #expect(AppSection.accounts.step(-1) == .sessions)
+        // The ends stay put.
+        #expect(AppSection.overview.step(-1) == .overview)
+        #expect(SidebarGroup.order.last?.step(1) == SidebarGroup.order.last)
+    }
 }
