@@ -37,12 +37,13 @@ remembering CLI commands.
 - [x] One shared envelope: `{"schema": 1, "data": …}`, documented in ARCHITECTURE.md
 
 ### M1. App shell
-- [ ] `app/` SwiftPM package, macOS 26, app target plus a testable core library
-- [ ] Main window: `NavigationSplitView` sidebar, glass background, empty pages
-- [ ] Menu bar item with a panel (OpenUsage pattern)
-- [ ] `SweClient`: runs `swe` with the login-shell PATH, decodes the M0 envelope
-- [ ] Doctor page as the first real consumer of `swe --json`
-- [ ] CI job on a macOS 26 runner: build and `swift test`
+- [x] `app/` SwiftPM package, macOS 26, app target plus a testable core library
+- [x] Main window: `NavigationSplitView` sidebar, glass background, empty pages
+- [x] Menu bar item with a panel (OpenUsage pattern)
+- [x] `SweClient`: runs `swe` with the login-shell PATH, decodes the M0 envelope
+- [x] Doctor page as the first real consumer of `swe --json`
+- [x] Settings: choose which `swe` to run, and a clear message when it predates `--json`
+- [x] CI job on a macOS 26 runner: build and `swift test`
 
 ### M2. Accounts
 - [ ] Profile store and directory layout (see open questions)

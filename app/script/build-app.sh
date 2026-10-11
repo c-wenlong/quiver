@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Build Quiver.app from the SwiftPM package.
+#
+#   app/script/build-app.sh [debug|release]   # default: release
+#
+# Writes app/build/Quiver.app, ad-hoc signed. Open it with
+# `open app/build/Quiver.app`.
+set -euo pipefail
+
+config="${1:-release}"
+here="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$here"
+
+swift build -c "$config" --product Quiver
+bin="$(swift build -c "$config" --show-bin-path)/Quiver"
+
+bundle="$here/build/Quiver.app"
+rm -rf "$bundle"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+cp "$bin" "$bundle/Contents/MacOS/Quiver"
+
+version="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
+cat > "$bundle/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Quiver</string>
+  <key>CFBundleDisplayName</key><string>Quiver</string>
+  <key>CFBundleIdentifier</key><string>com.cwenlong.quiver</string>
+  <key>CFBundleExecutable</key><string>Quiver</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${version}</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict>
+</plist>
+PLIST
+
+codesign --force --sign - "$bundle" >/dev/null
+echo "$bundle"
