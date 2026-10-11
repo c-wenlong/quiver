@@ -59,10 +59,38 @@ public struct RateLimit: Decodable, Sendable, Equatable {
     public let remainingUnits: Double?
     public let totalUnits: Double?
     public let fetchedAt: Date?
+    /// Every window the provider reported (Devin's 1d and 7d, Cursor's
+    /// included, auto and api); nil from an older swe, or a tool with one.
+    public let windows: [Window]?
+    /// Prepaid usage left beyond the plan, in USD (Devin's extra usage balance).
+    public let extraUsageUSD: Double?
+
+    /// One quota window.
+    public struct Window: Decodable, Sendable, Equatable {
+        public let window: String
+        public let usedPercent: Int
+        public let resetAt: Date?
+        public let windowSeconds: Int?
+
+        public init(window: String, usedPercent: Int, resetAt: Date?, windowSeconds: Int? = nil) {
+            self.window = window
+            self.usedPercent = usedPercent
+            self.resetAt = resetAt
+            self.windowSeconds = windowSeconds
+        }
+    }
+
+    /// The windows to list: all of them when swe sent the list, else the one
+    /// top-level reading.
+    public var allWindows: [Window] {
+        if let windows, !windows.isEmpty { return windows }
+        return [Window(window: window ?? "", usedPercent: usedPercent, resetAt: resetAt, windowSeconds: windowSeconds)]
+    }
 
     enum CodingKeys: String, CodingKey {
         case status, usedPercent, remainingPercent, limitReached, resetAt, window
-        case windowSeconds, planType, remainingUnits, totalUnits, fetchedAt
+        case windowSeconds, planType, remainingUnits, totalUnits, fetchedAt, windows
+        case extraUsageUSD = "extraUsageUsd"
     }
 
     /// For tests and previews; the app only ever decodes these from swe.
@@ -79,6 +107,8 @@ public struct RateLimit: Decodable, Sendable, Equatable {
         remainingUnits = nil
         totalUnits = nil
         self.fetchedAt = fetchedAt
+        windows = nil
+        extraUsageUSD = nil
     }
 
     public init(from decoder: Decoder) throws {
@@ -97,5 +127,8 @@ public struct RateLimit: Decodable, Sendable, Equatable {
         remainingUnits = try c.decodeIfPresent(Double.self, forKey: .remainingUnits)
         totalUnits = try c.decodeIfPresent(Double.self, forKey: .totalUnits)
         fetchedAt = try c.decodeIfPresent(Date.self, forKey: .fetchedAt)
+        // Newer fields: a malformed list must not cost the whole reading.
+        windows = (try? c.decodeIfPresent([Window].self, forKey: .windows)) ?? nil
+        extraUsageUSD = (try? c.decodeIfPresent(Double.self, forKey: .extraUsageUSD)) ?? nil
     }
 }

@@ -86,7 +86,7 @@ private struct MenuBarSection: View {
 
     private var limitOptions: [(value: String?, title: String)] {
         [(nil, "Tightest of all")] + app.limits.readings.map { reading in
-            (Optional(reading.id), reading.window.isEmpty ? reading.title : "\(reading.title) \(reading.window)")
+            (Optional(reading.id), reading.window.isEmpty ? reading.title : "\(reading.title) \(UsageFormat.window(reading.window))")
         }
     }
 
@@ -220,7 +220,7 @@ private struct PopupHarnessRow: View {
             if !harness.windows.isEmpty {
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(harness.windows, id: \.self) { window in
-                        WindowChip(title: window,
+                        WindowChip(title: UsageFormat.window(window),
                                    isOn: Binding(get: { app.popup.shows(window: window, of: harness.harness) },
                                                  set: { app.popup.setShown($0, window: window, of: harness.harness) }))
                     }
