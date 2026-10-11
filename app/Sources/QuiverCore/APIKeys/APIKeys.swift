@@ -3,6 +3,8 @@ import Observation
 
 public enum APIKeysError: Error, Equatable, LocalizedError {
     case invalidName(String)
+    case invalidProvider
+    case duplicate(String)
     case multilineValue
     case notFound(String)
     case changedOnDisk
@@ -13,6 +15,8 @@ public enum APIKeysError: Error, Equatable, LocalizedError {
         switch self {
         case .invalidName(let name):
             "\(name) isn't a valid variable name. Use letters, digits and underscores, not starting with a digit."
+        case .invalidProvider: "A provider name has to fit on one line."
+        case .duplicate(let name): "\(name) is exported more than once in the file. Remove the extra line in an editor, then edit it here."
         case .multilineValue: "A key can't span more than one line."
         case .notFound(let name): "\(name) isn't in the file any more."
         case .changedOnDisk: "The file changed since Quiver opened it. Reload to see the new version, then make the change again."
@@ -72,18 +76,42 @@ public struct APIKeysFile: Equatable, Sendable {
         return entries
     }
 
+    /// One per variable: the value a shell ends up with, which for a name
+    /// exported twice is the later line.
+    public var keys: [Entry] {
+        var last: [String: Entry] = [:]
+        for entry in entries { last[entry.name] = entry }
+        var seen = Set<String>()
+        return entries.compactMap { entry in
+            guard seen.insert(entry.name).inserted else { return nil }
+            return last[entry.name]
+        }
+    }
+
+    /// Lines that set nothing, set a key Quiver can't edit safely, or are
+    /// overridden later in the file. Values are always hidden.
     public var problems: [Problem] {
-        lines.enumerated().compactMap { index, line in
+        let all = entries
+        var lastLine: [String: Int] = [:]
+        for entry in all { lastLine[entry.name] = entry.line }
+        var problems: [Problem] = lines.enumerated().compactMap { index, line in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.range(of: #"^EXPORT\s+[A-Za-z_]"#, options: .regularExpression) != nil {
-                return Problem(line: index + 1, text: line,
+                return Problem(line: index + 1, text: Self.redacted(line),
                                reason: "zsh only accepts lowercase export, so this line sets nothing")
             }
             if trimmed.hasPrefix("export "), Self.export(line) == nil {
-                return Problem(line: index + 1, text: Self.redacted(line), reason: "Quiver couldn't read this line")
+                return Problem(line: index + 1, text: Self.redacted(line),
+                               reason: "Quiver can't edit this line safely, so it leaves it alone")
             }
             return nil
         }
+        for entry in all where lastLine[entry.name] != entry.line {
+            problems.append(Problem(
+                line: entry.line + 1, text: Self.redacted(lines[entry.line]),
+                reason: "\(entry.name) is exported again on line \((lastLine[entry.name] ?? 0) + 1), which wins; remove one of them"))
+        }
+        return problems.sorted { $0.line < $1.line }
     }
 
     // MARK: Editing
@@ -93,8 +121,10 @@ public struct APIKeysFile: Equatable, Sendable {
     public mutating func set(name: String, value: String, provider: String) throws {
         guard Self.isValidName(name) else { throw APIKeysError.invalidName(name) }
         guard !value.contains(where: \.isNewline) else { throw APIKeysError.multilineValue }
+        guard !provider.contains(where: \.isNewline) else { throw APIKeysError.invalidProvider }
         let line = Self.render(name: name, value: value)
         let all = entries
+        guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
         if let existing = all.first(where: { $0.name == name }) {
             lines[existing.line] = line
             return
@@ -113,7 +143,9 @@ public struct APIKeysFile: Equatable, Sendable {
 
     /// Removes a key, and its provider's heading once nothing is left under it.
     public mutating func remove(name: String) throws {
-        guard let entry = entries.first(where: { $0.name == name }) else { throw APIKeysError.notFound(name) }
+        let matches = entries.filter { $0.name == name }
+        guard matches.count <= 1 else { throw APIKeysError.duplicate(name) }
+        guard let entry = matches.first else { throw APIKeysError.notFound(name) }
         let siblings = entries.filter { $0.provider == entry.provider && $0.name != name }
         lines.remove(at: entry.line)
         guard siblings.isEmpty, !entry.provider.isEmpty,
@@ -150,11 +182,17 @@ public struct APIKeysFile: Equatable, Sendable {
         return (name, value)
     }
 
+    /// The value, or nil when the line carries anything after it other than
+    /// a comment (`; export B=…`, `"a""b"`): saving such a line would drop it.
     static func unquote(_ raw: String) -> String? {
+        var value = ""
+        var rest: Substring
         if raw.hasPrefix("\"") {
-            var value = ""
             var escaped = false
-            for character in raw.dropFirst() {
+            var closed: String.Index?
+            var index = raw.index(after: raw.startIndex)
+            while index < raw.endIndex {
+                let character = raw[index]
                 if escaped {
                     // In double quotes only these four take a backslash.
                     if !"\"\\$`".contains(character) { value.append("\\") }
@@ -163,22 +201,29 @@ public struct APIKeysFile: Equatable, Sendable {
                 } else if character == "\\" {
                     escaped = true
                 } else if character == "\"" {
-                    return value
+                    closed = index
+                    break
                 } else {
                     value.append(character)
                 }
+                index = raw.index(after: index)
             }
-            return nil
-        }
-        if raw.hasPrefix("'") {
+            guard let closed else { return nil }
+            rest = raw[raw.index(after: closed)...]
+        } else if raw.hasPrefix("'") {
             let body = raw.dropFirst()
             guard let end = body.firstIndex(of: "'") else { return nil }
-            return String(body[..<end])
+            value = String(body[..<end])
+            rest = body[body.index(after: end)...]
+        } else {
+            let end = raw.firstIndex(where: \.isWhitespace) ?? raw.endIndex
+            value = String(raw[..<end])
+            guard !value.contains(where: { "$`\"'\\;&|<>()".contains($0) }) else { return nil }
+            rest = raw[end...]
         }
-        // Bare: up to an unescaped space or comment, no expansion characters.
-        let bare = raw.split(separator: " ", maxSplits: 1).first.map(String.init) ?? ""
-        guard !bare.contains(where: { "$`\"'\\".contains($0) }) else { return nil }
-        return bare
+        let trailing = rest.trimmingCharacters(in: .whitespaces)
+        guard trailing.isEmpty || (trailing.hasPrefix("#") && rest.first?.isWhitespace == true) else { return nil }
+        return value
     }
 
     static func render(name: String, value: String) -> String {
@@ -220,6 +265,9 @@ public struct APIKeysStore: Sendable {
 
     public let url: URL
     public let backupDirectory: URL
+    /// Runs after the new files are prepared, just before the final check
+    /// and swap; tests use it to edit the file at the worst moment.
+    var beforeReplace: (@Sendable () -> Void)?
 
     public init(url: URL, backupDirectory: URL) {
         self.url = url
@@ -238,26 +286,43 @@ public struct APIKeysStore: Sendable {
         } catch {
             throw APIKeysError.unreadable(error.localizedDescription)
         }
-        return (APIKeysFile(text: String(decoding: data, as: UTF8.self)), Stamp(content: data))
+        // Lossy decoding would rewrite bytes on lines no one edited.
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw APIKeysError.unreadable("the file isn't valid UTF-8, so Quiver won't rewrite it")
+        }
+        return (APIKeysFile(text: text), Stamp(content: data))
     }
 
     /// Writes `file` atomically with mode 600, after copying the previous
-    /// version to the backup, unless the file changed since `stamp`.
+    /// version to the backup, unless the file changed since `stamp`. Both
+    /// files are prepared first and the file is checked again just before
+    /// they're swapped in, so an edit made meanwhile isn't overwritten.
     public func save(_ file: APIKeysFile, over stamp: Stamp) throws {
         let target = target
-        let current = try? Data(contentsOf: target)
-        guard current == stamp.content else { throw APIKeysError.changedOnDisk }
+        guard (try? Data(contentsOf: target)) == stamp.content else { throw APIKeysError.changedOnDisk }
         let manager = FileManager.default
+        var prepared: [URL] = []
+        defer { for url in prepared { try? manager.removeItem(at: url) } }
         do {
-            if let current {
+            let backup = backupDirectory.appendingPathComponent("api_keys.bak")
+            var backupTemp: URL?
+            if let previous = stamp.content {
                 try manager.createDirectory(at: backupDirectory, withIntermediateDirectories: true,
                                             attributes: [.posixPermissions: 0o700])
                 // It may already exist with looser permissions; it holds secrets.
                 try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: backupDirectory.path)
-                try writePrivately(current, to: backupDirectory.appendingPathComponent("api_keys.bak"))
+                backupTemp = try preparePrivately(previous, beside: backup)
+                prepared.append(backupTemp!)
             }
             try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try writePrivately(Data(file.text.utf8), to: target)
+            let targetTemp = try preparePrivately(Data(file.text.utf8), beside: target)
+            prepared.append(targetTemp)
+
+            beforeReplace?()
+            guard (try? Data(contentsOf: target)) == stamp.content else { throw APIKeysError.changedOnDisk }
+            if let backupTemp { try swap(backupTemp, into: backup) }
+            try swap(targetTemp, into: target)
+            prepared.removeAll()
         } catch let error as APIKeysError {
             throw error
         } catch {
@@ -265,25 +330,24 @@ public struct APIKeysStore: Sendable {
         }
     }
 
-    /// Temp file created 600 beside the target, then renamed over it, so the
-    /// secret is never readable by others even for a moment.
-    private func writePrivately(_ data: Data, to destination: URL) throws {
+    /// A temp file created 600 beside `destination`, so the secret is never
+    /// readable by others even for a moment.
+    private func preparePrivately(_ data: Data, beside destination: URL) throws -> URL {
         let temp = destination.deletingLastPathComponent()
             .appendingPathComponent(".\(destination.lastPathComponent).quiver-\(UUID().uuidString)")
         guard FileManager.default.createFile(atPath: temp.path, contents: nil,
                                              attributes: [.posixPermissions: 0o600]) else {
             throw APIKeysError.unwritable("couldn't create a temporary file in \(temp.deletingLastPathComponent().path)")
         }
-        do {
-            let handle = try FileHandle(forWritingTo: temp)
-            try handle.write(contentsOf: data)
-            try handle.close()
-            guard rename(temp.path, destination.path) == 0 else {
-                throw APIKeysError.unwritable(String(cString: strerror(errno)))
-            }
-        } catch {
-            try? FileManager.default.removeItem(at: temp)
-            throw error
+        let handle = try FileHandle(forWritingTo: temp)
+        defer { try? handle.close() }
+        try handle.write(contentsOf: data)
+        return temp
+    }
+
+    private func swap(_ temp: URL, into destination: URL) throws {
+        guard rename(temp.path, destination.path) == 0 else {
+            throw APIKeysError.unwritable(String(cString: strerror(errno)))
         }
     }
 }
@@ -407,7 +471,7 @@ public final class APIKeysModel {
 
     private func rebuild() {
         problems = file.problems
-        rows = file.entries.map { entry in
+        rows = file.keys.map { entry in
             let status: Status
             if !shellRead {
                 status = .checking

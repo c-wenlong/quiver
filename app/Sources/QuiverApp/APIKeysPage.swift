@@ -29,7 +29,8 @@ struct APIKeysPage: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Line \(problem.line): \(problem.reason)")
                                 .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                            Text(problem.text.hasPrefix("EXPORT") ? redactedLine(problem.text) : problem.text)
+                            // Already redacted by APIKeysFile: the value never reaches the page.
+                            Text(problem.text)
                                 .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                         }
                     }
@@ -119,11 +120,6 @@ struct APIKeysPage: View {
         board.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")], owner: nil)
         board.setString(value, forType: .string)
         board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
-    }
-
-    private func redactedLine(_ line: String) -> String {
-        guard let equals = line.firstIndex(of: "=") else { return line }
-        return String(line[...equals]) + "…"
     }
 }
 
@@ -241,8 +237,10 @@ private struct KeyEditor: View {
             Text(draft.isNew ? "Add a key" : "Edit \(draft.name)").font(Theme.sectionTitle).tracking(-0.5)
             field("Provider") {
                 HStack(spacing: 8) {
+                    // A key stays in its group; moving it isn't supported yet.
                     TextField("ANTHROPIC", text: $draft.provider).textFieldStyle(.roundedBorder)
-                    if !providers.isEmpty {
+                        .disabled(!draft.isNew)
+                    if draft.isNew && !providers.isEmpty {
                         Menu("Existing") {
                             ForEach(providers, id: \.self) { provider in
                                 Button(provider) { draft.provider = provider }
