@@ -231,8 +231,9 @@ class LinkedManifestCliTest(_FakeHome, unittest.TestCase):
                          ("codex:linked-manifest:tool@mk", "linked-manifest", True, []))
 
     def test_fix_replaces_the_link_in_the_source(self):
+        # The inherited PATH: rm and cp are not under /usr/bin in Nix's sandbox.
         result = run_swe(self.home, "find", "plugins", "--fix=codex:linked-manifest:tool@mk",
-                         "--json", path="/usr/bin:/bin")
+                         "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(decode(result)["data"]["fixed"]["kind"], "linked-manifest")
         manifest = self.plugin / ".codex-plugin"

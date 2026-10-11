@@ -10,6 +10,7 @@ breaks one thing and asserts that exactly that thing is reported.
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import time
 import unittest
@@ -360,16 +361,48 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
     def test_fix_replaces_the_link_with_a_copy_of_its_target(self):
         [finding] = self.drift()
         real = Path(os.path.realpath(self.plugin))
-        link, target = str(real / ".codex-plugin"), str(real / ".claude-plugin")
-        self.assertEqual(finding.argv, (("rm", link), ("cp", "-R", target, link)))
-        self.assertEqual(finding.fix, f"rm {link} && cp -R {target} {link}")
+        link = str(real / ".codex-plugin")
+        # pathlib drops a trailing "."; cp needs it to copy the contents
+        target = os.path.join(real, ".claude-plugin", ".")
+        staged = link + ".quiver-tmp"
+        # copy first, so a copy that fails leaves the link and its finding
+        self.assertEqual(finding.argv, (("cp", "-R", target, staged),
+                                        ("rm", link),
+                                        ("mv", staged, link)))
+        self.assertEqual(finding.fix,
+                         f"cp -R {target} {staged} && rm {link} && mv {staged} {link}")
+
+    def test_a_failed_copy_keeps_the_link_and_the_finding(self):
+        from quiver.find.plugin_drift import FixError, apply_fix
+
+        def fail_on_cp(argv, **kwargs):
+            if argv[0] == "cp":
+                return subprocess.CompletedProcess(argv, 1, "", "cp: Permission denied\n")
+            return subprocess.run(argv, **kwargs)
+
+        with self.assertRaisesRegex(FixError, "Permission denied"):
+            apply_fix(self.home, "codex:linked-manifest:tool@mk", run=fail_on_cp)
+        self.assertTrue((self.plugin / ".codex-plugin").is_symlink())
+        self.assertEqual(self.kinds(), [("codex", "linked-manifest")])
+
+    def test_a_retry_completes_a_partial_copy(self):
+        from quiver.find.plugin_drift import apply_fix
+
+        partial = self.plugin / ".codex-plugin.quiver-tmp"
+        _write(partial / "plugin.json", "{")
+        apply_fix(self.home, "codex:linked-manifest:tool@mk")
+        self.assertFalse(partial.exists())
+        self.assertEqual(sorted(p.name for p in (self.plugin / ".codex-plugin").iterdir()),
+                         ["plugin.json"])
+        self.assertEqual((self.plugin / ".codex-plugin" / "plugin.json").read_bytes(),
+                         (self.plugin / ".claude-plugin" / "plugin.json").read_bytes())
 
     def test_target_outside_the_plugin_is_resolved(self):
         shared = self.market / "shared-manifest"
         shutil.copytree(self.plugin / ".claude-plugin", shared)
         self.link_manifest("../shared-manifest")
         [finding] = self.drift()
-        self.assertEqual(finding.argv[1][2], os.path.realpath(shared))
+        self.assertEqual(finding.argv[0][2], os.path.join(os.path.realpath(shared), "."))
         self.assertIn("a symlink to ../shared-manifest;", finding.detail)
 
     def test_no_command_for_a_target_outside_the_marketplace_or_around_the_link(self):
@@ -393,7 +426,7 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         [finding] = self.drift()
         self.assertEqual([shlex.split(part) for part in finding.fix.split(" && ")],
                          [list(argv) for argv in finding.argv])
-        self.assertTrue(finding.argv[0][1].endswith("/it's my tool/.codex-plugin"))
+        self.assertTrue(finding.argv[1][1].endswith("/it's my tool/.codex-plugin"))
 
     def test_dangling_link_has_no_command(self):
         self.link_manifest("nowhere")

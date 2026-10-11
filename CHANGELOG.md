@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symlinked `.codex-plugin` is reported as a new kind, `linked-manifest`:
   Codex skips it and installs a manifest it generates itself, with no
   version (the copy shows up as `local`). Its fix replaces the link with a
-  real copy of its target (`rm` then `cp -R`), and the next run offers the
+  real copy of its target (copied beside the link first, then swapped in,
+  so a failed copy leaves the link and its finding), and the next run offers the
   reinstall. The app shows it as "Linked manifest".
 
 - **`swe skills unlink ~/.x/skills` unlinked the wrong thing.** A path to a
