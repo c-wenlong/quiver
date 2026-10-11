@@ -87,6 +87,15 @@ import Testing
         #expect(model.rows.map(\.name) == ["devin"])
     }
 
+    @Test func aNamedHarnessReadsLikeAnAccount() {
+        let limit = RateLimit(status: .ok, usedPercent: 1)
+        #expect(OtherLimitsModel.Row(name: "cursor", limit: limit, displayName: "Cortex").accountTitle == "Cursor: Cortex")
+        #expect(OtherLimitsModel.Row(name: "cursor", limit: limit).accountTitle == "Cursor")
+        // A name that just repeats the brand isn't said twice.
+        #expect(OtherLimitsModel.Row(name: "cursor", limit: limit, displayName: "Cursor").accountTitle == "Cursor")
+        #expect(OtherLimitsModel.Row(name: "qwen-code", limit: limit, displayName: "Qwen Code").accountTitle == "Qwen Code")
+    }
+
     @Test func aCardSaysWhyItHasNoLimit() {
         #expect(HarnessAccess.hasLimits("devin"))
         #expect(HarnessAccess.hasLimits("copilot"))

@@ -24,6 +24,20 @@ public final class OtherLimitsModel {
             let set = displayName?.trimmingCharacters(in: .whitespaces) ?? ""
             return set.isEmpty ? UsageFormat.harness(name) : set
         }
+
+        /// Titled like an account ("Claude: Work"): the brand, then the name
+        /// given to it, unless that name already says the brand.
+        public var accountTitle: String { OtherLimitsModel.accountTitle(name: name, displayName: displayName) }
+    }
+
+    nonisolated static func accountTitle(name: String, displayName: String?) -> String {
+        let brand = UsageFormat.harness(name)
+        let given = displayName?.trimmingCharacters(in: .whitespaces) ?? ""
+        func plain(_ text: String) -> String {
+            text.lowercased().replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ")
+        }
+        if given.isEmpty || plain(given).hasPrefix(plain(brand)) { return given.isEmpty ? brand : given }
+        return "\(brand): \(given)"
     }
 
     /// Covered by Accounts, one card per signed-in account.

@@ -268,12 +268,9 @@ private struct PanelLimits: View {
             } else if app.accounts.cards.isEmpty {
                 Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            if !others.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Other harnesses").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    ForEach(others) { row in PanelOtherRow(row: row) }
-                }
-            }
+            // Harnesses are accounts too, so they share the list and the
+            // layout rather than sitting under a heading of their own.
+            ForEach(others) { row in PanelOtherRow(row: row) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -403,7 +400,7 @@ private struct PanelOtherRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 HarnessIcon(harness: row.name, size: 14)
-                Text(UsageFormat.harness(row.name)).font(Theme.rowTitle)
+                Text(row.accountTitle).font(Theme.rowTitle)
                 if let plan = row.limit.planType { Badge(planTitle(plan)) }
             }
             ForEach(row.limit.allWindows.filter { app.popup.shows(window: $0.window, of: row.name) },
@@ -422,6 +419,11 @@ private struct PanelOtherRow: View {
                 Text("Extra usage balance \(UsageFormat.balance(balance))")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .opacity(old ? 0.55 : 1)
+            }
+            // Like an account's stale reading: say how old it is.
+            if old, let fetched = row.limit.fetchedAt {
+                Text("Fetched \(UsageFormat.ago(fetched, now: .now)), couldn't refresh")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
         .help(row.limit.fetchedAt.map { "Fetched \(UsageFormat.ago($0, now: .now))" } ?? "Fetch time unknown")
