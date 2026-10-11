@@ -130,8 +130,12 @@ final class AppModel {
         try? FileManager.default.removeItem(at: quiver.appending(path: "cache/skills-hub.json"))
         skills.use(client, for: saved)
         mcp = McpModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/mcp-servers.json")))
-        plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")))
-        pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")))
+        // One plugin change at a time, whichever Plugins tab starts it.
+        let pluginWork = PluginWork()
+        plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")),
+                               work: pluginWork)
+        pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
+                                           work: pluginWork)
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
         providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {

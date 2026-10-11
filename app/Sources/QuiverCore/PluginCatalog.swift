@@ -568,28 +568,56 @@ public struct SkillPlacement: Sendable, Equatable {
         guard let catalog else {
             standalone = skills
             byPlugin = [:]
+            shownElsewhere = []
             return
         }
         let owners = FolderOwners(catalog, resolve: resolve)
         var standalone: [Skill] = []
         var byPlugin: [String: [Skill]] = [:]
+        // Where each skill on the Mac is shown, by its folder as given and
+        // resolved: the plugin it moved to, or "" for the Skills page.
+        var shownAt: [String: String] = [:]
         for skill in skills {
-            if skill.source == .plugin, let ref = owners.owner(of: skill.path) {
-                byPlugin[ref, default: []].append(skill)
+            let owner = skill.source == .plugin ? owners.owner(of: skill.path) : nil
+            if let owner {
+                byPlugin[owner, default: []].append(skill)
             } else {
                 standalone.append(skill)
+            }
+            for key in [FolderOwners.trimmed(skill.path), FolderOwners.trimmed(resolve(skill.path))] {
+                shownAt[key] = owner ?? ""
+            }
+        }
+        // A catalog entry for a skill on the Mac that is shown somewhere else
+        // (on Skills, when two plugins share its folder, or in another
+        // plugin) is left out of this plugin's row. An entry for a skill
+        // not on the Mac stays: it previews what an install would bring.
+        var shownElsewhere: Set<String> = []
+        for plugin in catalog.plugins {
+            for skill in plugin.skills {
+                let raw = FolderOwners.trimmed(skill.path)
+                guard let at = shownAt[raw] ?? shownAt[FolderOwners.trimmed(resolve(skill.path))],
+                      at != plugin.ref else { continue }
+                shownElsewhere.insert(Self.key(plugin.ref, raw))
             }
         }
         self.standalone = standalone
         self.byPlugin = byPlugin
+        self.shownElsewhere = shownElsewhere
     }
+
+    /// Catalog entries left out of their plugin's row, as `key(ref, path)`.
+    private let shownElsewhere: Set<String>
+
+    private static func key(_ ref: String, _ path: String) -> String { ref + "\u{0}" + path }
 
     /// How many skills moved to the Plugins page.
     public var inPlugins: Int { byPlugin.values.reduce(0) { $0 + $1.count } }
 
-    /// The skills `plugin` ships, for its row: the catalog's list, plus
-    /// every installed copy `swe skills` found inside it, one entry per name
-    /// (a skill and its nested copy share a name). Sorted by name.
+    /// The skills `plugin` ships, for its row: the catalog's list, less any
+    /// skill shown elsewhere, plus every installed copy `swe skills` found
+    /// inside it, one entry per name (a skill and its nested copy share a
+    /// name). Sorted by name.
     public func skills(of plugin: CatalogPlugin) -> [PluginSkill] {
         var order: [String] = []
         var entries: [String: (description: String, paths: [String])] = [:]
@@ -603,7 +631,9 @@ public struct SkillPlacement: Sendable, Equatable {
                 entries[name] = (description, [path])
             }
         }
-        for skill in plugin.skills { add(skill.name, skill.description, skill.path) }
+        for skill in plugin.skills where !shownElsewhere.contains(Self.key(plugin.ref, FolderOwners.trimmed(skill.path))) {
+            add(skill.name, skill.description, skill.path)
+        }
         for skill in byPlugin[plugin.ref] ?? [] { add(skill.name, skill.description, skill.path) }
         return order
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
@@ -797,6 +827,27 @@ public enum CatalogLookup: Sendable, Equatable {
     }
 }
 
+/// One plugin change at a time across the Plugins page. A Health fix and an
+/// Explore action both run harness CLIs on the same plugins, and a fix that
+/// removes and adds a plugin again could undo an uninstall made meanwhile.
+@MainActor
+@Observable
+public final class PluginWork {
+    /// A fix or an action is running, reload included.
+    public private(set) var isBusy = false
+
+    public init() {}
+
+    /// Takes the turn; false when something else has it.
+    func begin() -> Bool {
+        guard !isBusy else { return false }
+        isBusy = true
+        return true
+    }
+
+    func end() { isBusy = false }
+}
+
 /// The Plugins page's Explore tab: the catalog, kept app-wide so the last
 /// one shows at once, and the actions run on it.
 @MainActor
@@ -828,14 +879,21 @@ public final class PluginCatalogModel {
     public var harness: String?
     public var query = ""
 
+    /// Held while an action runs, shared with the Health tab's fixes.
+    public let work: PluginWork
     private let loader: SnapshotLoader<PluginCatalog>
     /// The catalog `revision` last counted.
     private var counted: (catalog: PluginCatalog?, lookup: CatalogLookupKind) = (nil, .pending)
 
-    /// - Parameter snapshots: where the last catalog is kept between launches.
+    /// - Parameters:
+    ///   - snapshots: where the last catalog is kept between launches.
+    ///   - work: shared with `PluginsModel`, so an action and a fix never
+    ///     run at once.
     public init(snapshots: (any SnapshotStoring<Snapshot<PluginCatalog>>)? = nil, maxAge: TimeInterval = 60,
-                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init) {
+                timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init,
+                work: PluginWork = PluginWork()) {
         loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
+        self.work = work
     }
 
     /// What the Skills page places skills with.
@@ -874,12 +932,16 @@ public final class PluginCatalogModel {
     public func run(_ action: PluginAction, swe: SweClient, for source: String? = nil) async {
         guard running == nil, let catalog = index?.catalog,
               let plugin = catalog.plugins.first(where: { $0.ref == action.ref }),
-              catalog.actions(for: plugin, in: action.harness).contains(action)
+              catalog.actions(for: plugin, in: action.harness).contains(action),
+              work.begin()
         else { return }
         running = action
         actionError = nil
         lastResult = nil
-        defer { running = nil }
+        defer {
+            running = nil
+            work.end()
+        }
         do {
             lastResult = try await swe.run(action).summary
         } catch is CancellationError {

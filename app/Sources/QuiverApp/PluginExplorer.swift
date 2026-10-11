@@ -52,7 +52,7 @@ struct PluginExplorer: View {
                     GroupHeader(group: group)
                         .padding(.top, group.kind == groups.first?.kind ? 0 : 28)
                     ForEach(group.rows) { row in
-                        PluginRow(row: row, catalog: catalog, running: model.running,
+                        PluginRow(row: row, catalog: catalog, running: model.running, busy: model.work.isBusy,
                                   openHealth: openHealth, confirm: confirm)
                         if row.id != group.rows.last?.id { Rectangle().fill(Theme.border).frame(height: 1) }
                     }
@@ -137,6 +137,8 @@ private struct PluginRow: View {
     var row: ExploreRow
     var catalog: PluginCatalog
     var running: PluginAction?
+    /// An action or a Health fix is running: one change at a time.
+    var busy: Bool
     var openHealth: () -> Void
     var confirm: (PluginAction) -> Void
 
@@ -179,7 +181,7 @@ private struct PluginRow: View {
                         HarnessChip(harness: harness, state: state,
                                     actions: catalog.actions(for: plugin, in: harness),
                                     running: running?.ref == plugin.ref && running?.harness == harness,
-                                    busy: running != nil, confirm: confirm)
+                                    busy: busy, confirm: confirm)
                     }
                 }
             }

@@ -33,7 +33,8 @@ struct PluginsPage: View {
                 if model.fixAllCount > 0 || model.fixAllProgress != nil {
                     Button(fixAllTitle) { confirmingAll = model.fixAllIDs }
                         .primaryButton()
-                        .disabled(model.fixing != nil)
+                        // Also while an Explore action runs: one change at a time.
+                        .disabled(model.work.isBusy)
                         .help("Run every fix swe can run, one at a time")
                 }
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe, for: app.swePath) } }
@@ -114,7 +115,7 @@ struct PluginsPage: View {
                     HarnessTitle(harness: harness, findings: rows.count)
                     ForEach(rows) { finding in
                         DriftRow(finding: finding, running: model.fixing == finding.id,
-                                 busy: model.fixing != nil) { confirming = finding }
+                                 busy: model.work.isBusy) { confirming = finding }
                         if finding != rows.last { Divider().overlay(Theme.border) }
                     }
                 }
@@ -165,8 +166,9 @@ struct PluginsPage: View {
         await skills
     }
 
+    /// Always a new read, even with one in flight: that one may have begun
+    /// before the change, and the newer read is the one that shows.
     private func refreshSkills() async {
-        guard case .loaded = app.skills.inventory else { return }
         await app.skills.load(for: app.swePath)
     }
 

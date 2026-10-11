@@ -503,6 +503,87 @@ func decodedInventory() throws -> [Skill] {
         #expect(placement.standalone == [skill])
     }
 
+    /// The catalog lists a skill under each plugin that ships it. A skill on
+    /// the Mac shown on Skills, or in another plugin's row, is left out of
+    /// the rest; one not on the Mac stays as a preview.
+    @Test func aCatalogEntryForASkillShownElsewhereIsLeftOut() {
+        let state = PluginHarnessState(available: true, installed: true, enabled: true, path: "/p/shared")
+        let shared = [CatalogSkill(name: "s", path: "/p/shared/skills/s"),
+                      CatalogSkill(name: "preview", path: "/p/shared/skills/preview")]
+        let a = CatalogPlugin(name: "a", marketplace: "m", skills: shared, harnesses: ["claude": state])
+        let b = CatalogPlugin(name: "b", marketplace: "m", skills: shared, harnesses: ["claude": state])
+        // c lists a skill that d's installed copy holds.
+        let c = CatalogPlugin(name: "c", marketplace: "m", skills: [CatalogSkill(name: "t", path: "/p/d/skills/t")],
+                              harnesses: ["claude": PluginHarnessState(available: true, installed: false)])
+        let d = CatalogPlugin(name: "d", marketplace: "m", skills: [CatalogSkill(name: "t", path: "/p/d/skills/t")],
+                              harnesses: ["claude": PluginHarnessState(available: true, installed: true, path: "/p/d")])
+        let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
+            PluginMarketplace(name: "m", harnesses: ["claude": .init()], plugins: [a, b, c, d]),
+        ])
+        let skills = [
+            Skill(name: "s", path: "/p/shared/skills/s", root: "claude-plugin", source: .plugin, harnesses: ["claude"]),
+            Skill(name: "t", path: "/p/d/skills/t", root: "claude-plugin", source: .plugin, harnesses: ["claude"]),
+        ]
+        // Across both pages, as each lists them.
+        let index = PluginExploreIndex(catalog: catalog, skills: skills)
+        let onSkills = index.placement.standalone.map(\.path)
+        let inRows = index.rows.flatMap { $0.skills.flatMap(\.paths) }
+        for skill in skills {
+            #expect((onSkills + inRows).filter { $0 == skill.path }.count == 1, "\(skill.path)")
+        }
+        #expect(onSkills == ["/p/shared/skills/s"])
+        #expect(index.rows.first { $0.id == "a@m" }?.skills.map(\.name) == ["preview"])
+        #expect(index.rows.first { $0.id == "b@m" }?.skills.map(\.name) == ["preview"])
+        #expect(index.rows.first { $0.id == "c@m" }?.skills.isEmpty == true)
+        #expect(index.rows.first { $0.id == "d@m" }?.skills.map(\.name) == ["t"])
+    }
+
+    // MARK: One change at a time
+
+    @Test func aFixWaitsWhileAnActionRuns() async throws {
+        let work = PluginWork()
+        let fixes = PluginsModel(work: work)
+        let drift = RoutingRunner([(["find", "plugins", "--json"], json(#"""
+            {"sources": 1, "drift": [
+              {"id": "codex:stale:canva@openai-curated", "harness": "codex", "marketplace": "openai-curated",
+               "plugin": "canva", "ref": "canva@openai-curated", "kind": "stale", "detail": "d",
+               "fix": "codex plugin remove canva@openai-curated && codex plugin add canva@openai-curated",
+               "runnable": true, "paths": []}]}
+            """#))])
+        let fixSwe = SweClient(runner: drift)
+        await fixes.load(swe: fixSwe)
+        guard case .loaded(let report) = fixes.state else { Issue.record("\(fixes.state)"); return }
+        let finding = try #require(report.drift.first)
+
+        let model = PluginCatalogModel(work: work)
+        let runner = HookRunner(catalogRunner([(["plugins", "uninstall"], json(#"""
+            {"action": "uninstall", "harness": "codex", "ref": "canva@openai-curated", "changed": true,
+             "state": {"installed": false, "enabled": null, "version": null}}
+            """#))]))
+        // While the uninstall runs, the Health tab tries its fix and Fix all.
+        runner.onCall = { args in
+            guard args.starts(with: ["plugins", "uninstall"]) else { return }
+            await fixes.fix(finding, swe: fixSwe)
+            await fixes.fixAll(confirmed: [finding.id], swe: fixSwe)
+        }
+        let swe = SweClient(runner: runner)
+        await model.load(swe: swe)
+        await model.run(PluginAction(verb: .uninstall, ref: "canva@openai-curated", harness: "codex"), swe: swe)
+        #expect(model.lastResult == "Uninstalled canva@openai-curated from Codex")
+        #expect(!drift.calls.contains { $0.contains { $0.hasPrefix("--fix=") } })
+        #expect(!work.isBusy)
+
+        // And the other way round: an action waits for a fix.
+        let held = HookRunner(drift)
+        held.onCall = { args in
+            guard args.contains(where: { $0.hasPrefix("--fix=") }) else { return }
+            await model.run(PluginAction(verb: .disable, ref: "toolkit@kit", harness: "claude"), swe: swe)
+        }
+        await fixes.fix(finding, swe: SweClient(runner: held))
+        #expect(!runner.calls.contains { $0.starts(with: ["plugins", "disable"]) })
+        #expect(!work.isBusy)
+    }
+
     /// The user's requirement: moving plugin skills to the Plugins page
     /// loses none. Through both pages' own models, every skill on the Mac
     /// is listed exactly once: on the Skills page, or in one plugin's row.
