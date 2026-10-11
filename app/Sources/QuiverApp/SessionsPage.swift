@@ -26,7 +26,13 @@ private struct SessionsContent: View {
 
     var body: some View {
         Page(title: "Sessions", subtitle: "Local sessions, usage and estimated cost.") {
-            Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load() } }
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                Task {
+                    await model.load()
+                    // A scan reloads the figures through completedScans below.
+                    await app.overview?.load(scan: true)
+                }
+            }
                 .buttonStyle(IconButtonStyle())
                 .disabled(model.isLoading)
                 .help("List sessions again")
@@ -41,9 +47,16 @@ private struct SessionsContent: View {
                 Label("Couldn't read: \(model.failures.joined(separator: "; "))", systemImage: "exclamationmark.circle")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
+            if model.isCapped {
+                Label("Showing the most recent \(model.rows.count) sessions; older ones are left out.",
+                      systemImage: "info.circle")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
             list
         }
         .task(id: app.swePath) { await model.load() }
+        // New usage from a scan, without listing the sessions again.
+        .task(id: app.overview?.completedScans) { await model.refreshUsage() }
         .sheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
@@ -107,19 +120,34 @@ private struct FilterBar: View {
     @Bindable var model: SessionsModel
 
     var body: some View {
-        HStack(spacing: 10) {
+        // One row when it fits, else the search on its own line.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                search.frame(minWidth: 180)
+                selects
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                search
+                HStack(spacing: 10) { selects }
+            }
+        }
+    }
+
+    private var search: some View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.textSecondary)
-                TextField("Search title, project, model or id", text: $model.filter.search)
+                TextField("Search sessions", text: $model.filter.search)
                     .textFieldStyle(.plain)
                     .font(Theme.bodySmall)
             }
             .padding(.horizontal, 12)
             .frame(height: 36)
-            .frame(minWidth: 180, maxWidth: .infinity)
+            .frame(maxWidth: .infinity)
             .background(Theme.field, in: .rect(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
 
+    @ViewBuilder private var selects: some View {
             Select(title: model.filter.harness.map(UsageFormat.harness) ?? "All tools", symbol: nil,
                    options: [(nil, "All tools")] + model.harnesses.map { (Optional($0), UsageFormat.harness($0)) },
                    selection: $model.filter.harness)
@@ -132,7 +160,6 @@ private struct FilterBar: View {
             Select(title: model.filter.model ?? "All models", symbol: nil,
                    options: [(nil, "All models")] + model.models.map { (Optional($0), $0) },
                    selection: $model.filter.model)
-        }
     }
 }
 
@@ -163,7 +190,8 @@ private struct Select<Value: Hashable>: View {
             .font(Theme.bodySmall)
             .foregroundStyle(Theme.textPrimary)
             .padding(.horizontal, 12)
-            .frame(width: 150, height: 36)
+            .frame(minWidth: 112, idealWidth: 136, maxWidth: 170)
+            .frame(height: 36)
             .background(Theme.field, in: .rect(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
@@ -171,7 +199,7 @@ private struct Select<Value: Hashable>: View {
         .menuStyle(.button)
         .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
         .menuIndicator(.hidden)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

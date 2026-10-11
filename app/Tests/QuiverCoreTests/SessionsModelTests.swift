@@ -7,7 +7,7 @@ import Testing
         let runner = FakeRunner(.init(status: 0, stdout: try fixture("session-list"), stderr: ""))
         let list = try await SweClient(runner: runner).sessions(days: 90, limit: 2000)
         #expect(runner.calls == [["session", "2000", "--days=90", "--json"]])
-        #expect(list.sessions.map(\.id) == ["aaa-111", "bbb-222", "ccc-333"])
+        #expect(list.sessions.map(\.id) == ["aaa-111", "bbb-222", "ccc-333", "crush|/Users/k/code/notes|1791400000"])
         let first = try #require(list.sessions.first)
         #expect(first.status == "active")
         #expect(first.lastActiveAt == Date(timeIntervalSince1970: 1_791_694_778.5))
@@ -30,7 +30,8 @@ import Testing
 
     @Test func theDefaultAccountClearsAnyOverride() {
         let line = SessionResume.shellLine(resume, harness: "claude", accountHome: "/Users/k/.claude", isDefaultHome: true)
-        #expect(line == "cd '/Users/k/my code' && unset CLAUDE_CONFIG_DIR; 'claude' '--resume' 'aaa 111'")
+        // Every step depends on the one before: a missing folder stops it all.
+        #expect(line == "cd '/Users/k/my code' && unset CLAUDE_CONFIG_DIR && 'claude' '--resume' 'aaa 111'")
     }
 
     @Test func anotherAccountResumesInItsOwnHome() {
@@ -61,8 +62,37 @@ struct FakeSessionSource: SessionListing {
 
 actor FakeSessionLedger: SessionUsageQuerying {
     var rows: [SessionUsage] = []
+    private(set) var ranges: [DateInterval] = []
     func set(_ rows: [SessionUsage]) { self.rows = rows }
-    func bySession(in range: DateInterval) async -> [SessionUsage] { rows }
+    func bySession(in range: DateInterval) async -> [SessionUsage] {
+        ranges.append(range)
+        return rows
+    }
+}
+
+/// Holds the listing until released, to test what happens meanwhile.
+actor GatedSessionSource: SessionListing {
+    let list: SessionList
+    private var gate: CheckedContinuation<Void, Never>?
+    private(set) var waiting = false
+    init(_ list: SessionList) { self.list = list }
+    func sessions(days: Int, limit: Int) async throws -> SessionList {
+        waiting = true
+        await withCheckedContinuation { gate = $0 }
+        return list
+    }
+    func release() { gate?.resume(); gate = nil }
+}
+
+/// Counts how often the session list was fetched.
+final class CountingSessionSource: SessionListing, @unchecked Sendable {
+    var list: SessionList
+    private(set) var calls = 0
+    init(_ list: SessionList) { self.list = list }
+    func sessions(days: Int, limit: Int) async throws -> SessionList {
+        calls += 1
+        return list
+    }
 }
 
 @MainActor
@@ -83,11 +113,18 @@ actor FakeSessionLedger: SessionUsageQuerying {
                             firstTimestamp: now, lastTimestamp: now)
     }
 
-    func model(_ sessions: [SessionInfo], _ usage: [SessionUsage]) async -> SessionsModel {
-        let ledger = FakeSessionLedger()
+    var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Singapore")!
+        return c
+    }
+
+    func model(_ sessions: [SessionInfo], _ usage: [SessionUsage], ledger: FakeSessionLedger = FakeSessionLedger(),
+               limit: Int = 100_000) async -> SessionsModel {
         await ledger.set(usage)
         return SessionsModel(source: FakeSessionSource(list: SessionList(sessions: sessions, failures: [])),
-                             ledger: ledger, now: { [now] in now })
+                             ledger: ledger, defaultHomes: ["/Users/k/.claude", "/Users/k/.codex"],
+                             limit: limit, now: { [now] in now }, calendar: calendar)
     }
 
     @Test func sessionsCarryTheirTokensAndCost() async throws {
@@ -161,6 +198,76 @@ actor FakeSessionLedger: SessionUsageQuerying {
         usage.firstTimestamp = now
         usage.lastTimestamp = now.addingTimeInterval(2 * 3600 + 5 * 60)
         #expect(SessionsModel.Row(session: session("a", "claude", cwd: nil, at: 0), usage: usage).duration == 7500)
+    }
+
+    @Test func todayStartsAtLocalMidnight() async {
+        // now is 12:26 SGT; 23:00 the evening before is within 24 hours but not today.
+        let model = await model([
+            session("a", "claude", cwd: "/c/q", at: 1_791_699_000),
+            session("y", "claude", cwd: "/c/q", at: 1_791_644_400),
+        ], [])
+        await model.load()
+        model.filter.window = .today
+        #expect(model.visible.map(\.id) == ["a"])
+    }
+
+    @Test func usageCoversTheWholeHistoryOfEachSession() async throws {
+        let ledger = FakeSessionLedger()
+        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)], [], ledger: ledger)
+        await model.load()
+        let range = try #require(await ledger.ranges.first)
+        #expect(range.start <= Date(timeIntervalSince1970: 0))
+    }
+
+    @Test func sessionsFromExtraAccountsComeFromTheLedger() async throws {
+        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.quiver/accounts/claude/w/home")
+        work.cwd = "/c/quiver"
+        work.lastTimestamp = now.addingTimeInterval(-3600)
+        var old = usage("w0", "codex", models: ["gpt"], cost: 1, home: "/Users/k/.quiver/accounts/codex/x/home")
+        old.lastTimestamp = now.addingTimeInterval(-200 * 86_400)
+        // A default-home session swe didn't list stays out: swe is the source there.
+        let stray = usage("d1", "claude", models: [], cost: 1)
+        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)], [work, old, stray])
+        await model.load()
+        #expect(model.rows.map(\.id) == ["a", "w1"])
+        let row = try #require(model.rows.last)
+        #expect(row.session.harness == "claude")
+        #expect(row.session.cwd == "/c/quiver")
+        #expect(row.session.project == "quiver")
+        #expect(row.session.resume == SessionInfo.Resume(argv: ["claude", "--resume", "w1"], cwd: "/c/quiver"))
+        #expect(row.session.lastActiveAt == work.lastTimestamp)
+        #expect(row.usage?.accountHome == "/Users/k/.quiver/accounts/claude/w/home")
+    }
+
+    @Test func usageRefreshesWithoutListingAgain() async throws {
+        let ledger = FakeSessionLedger()
+        let source = CountingSessionSource(SessionList(sessions: [session("a", "claude", cwd: nil, at: 1_791_699_000)], failures: []))
+        let model = SessionsModel(source: source, ledger: ledger, now: { [now] in now }, calendar: calendar)
+        await model.load()
+        #expect(model.rows.first?.usage == nil)
+        await ledger.set([usage("a", "claude", models: ["opus"], cost: 2)])
+        await model.refreshUsage()
+        #expect(model.rows.first?.usage?.totals.costUSD == 2)
+        #expect(source.calls == 1)
+    }
+
+    @Test func aUsageRefreshDuringTheFirstLoadDoesNotStrandIt() async throws {
+        let source = GatedSessionSource(SessionList(sessions: [session("a", "claude", cwd: nil, at: 1_791_699_000)], failures: []))
+        let model = SessionsModel(source: source, ledger: FakeSessionLedger(), now: { [now] in now }, calendar: calendar)
+        let load = Task { await model.load() }
+        while !(await source.waiting) { await Task.yield() }
+        await model.refreshUsage()
+        await source.release()
+        await load.value
+        #expect(model.rows.map(\.id) == ["a"])
+        #expect(!model.isLoading)
+    }
+
+    @Test func aFullListSaysItIsCapped() async {
+        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000),
+                                 session("b", "claude", cwd: nil, at: 1_791_698_000)], [], limit: 2)
+        await model.load()
+        #expect(model.isCapped)
     }
 
     @Test func aFailedListingIsShown() async {

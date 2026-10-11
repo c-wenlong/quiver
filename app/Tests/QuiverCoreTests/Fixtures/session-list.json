@@ -8,7 +8,9 @@
      "title": "Fix the build", "title_source": "first_prompt", "last_active_at": 1791600000,
      "status": null, "resume": {"argv": ["codex", "resume", "bbb-222"], "cwd": "/Users/k/code/site"}},
     {"id": "ccc-333", "harness": "cursor", "agent": "Cursor", "cwd": null, "title": null,
-     "title_source": null, "last_active_at": 1791500000, "status": "done", "resume": null}
+     "title_source": null, "last_active_at": 1791500000, "status": "done", "resume": null},
+    {"id": null, "harness": "crush", "agent": "Crush", "cwd": "/Users/k/code/notes", "title": "notes",
+     "title_source": null, "last_active_at": 1791400000, "status": null, "resume": null}
   ],
   "failures": [{"harness": "droid", "error": "unreadable"}]
 }}

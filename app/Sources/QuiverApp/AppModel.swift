@@ -74,7 +74,8 @@ final class AppModel {
                                      accountLabel: { directory().label(for: $0) },
                                      refreshPricing: { await pricing.refreshIfStale() })
             overviewError = nil
-            sessions = SessionsModel(source: CurrentSwe(), ledger: ledger)
+            sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
+                                     defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path])
         } catch {
             overview = nil
             sessions = nil

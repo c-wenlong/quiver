@@ -44,7 +44,6 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
         harness = try c.decode(String.self, forKey: .harness)
         agent = try c.decodeIfPresent(String.self, forKey: .agent) ?? harness
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
@@ -53,6 +52,10 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
         lastActiveAt = Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .lastActiveAt))
         status = try c.decodeIfPresent(String.self, forKey: .status)
         resume = try c.decodeIfPresent(Resume.self, forKey: .resume)
+        // A harness can list a session it has no id for; one such row must
+        // not sink the whole list, so it gets a stable id of its own.
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+            ?? "\(harness)|\(cwd ?? "")|\(Int(lastActiveAt.timeIntervalSince1970))"
     }
 
     public var project: String? { Self.project(of: cwd) }
@@ -117,7 +120,7 @@ public enum SessionResume {
         let variable = ["claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"][harness]
         if let variable {
             if isDefaultHome || accountHome == nil {
-                parts.append("unset \(variable); ")
+                parts.append("unset \(variable) && ")
             } else if let accountHome {
                 parts.append("\(variable)=\(LaunchPlanner.shellQuote(accountHome)) ")
             }
@@ -190,23 +193,40 @@ public final class SessionsModel {
     }
 
     public static let days = 90
-    public static let limit = 2000
 
     public var filter = Filter()
     public private(set) var rows: [Row] = []
     public private(set) var failures: [String] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
+    /// The listing hit `limit`, so older sessions are missing from the page.
+    public private(set) var isCapped = false
 
     private let source: SessionListing
     private let ledger: SessionUsageQuerying
+    private let defaultHomes: Set<String>
+    private let limit: Int
     private let now: () -> Date
+    private let calendar: Calendar
+    private var listed: [SessionInfo] = []
+    /// Only the newest list load writes the list.
     private var generation = 0
+    /// Only the newest usage read (from a load or a refresh) writes usage.
+    private var usageGeneration = 0
 
-    public init(source: SessionListing, ledger: SessionUsageQuerying, now: @escaping () -> Date = Date.init) {
+    /// - Parameters:
+    ///   - defaultHomes: the Claude and Codex homes `swe session` reads. The
+    ///     ledger's sessions from any other home (Quiver's extra accounts)
+    ///     are added from the ledger, since swe never lists them.
+    ///   - limit: the most sessions to ask swe for.
+    public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
+                limit: Int = 100_000, now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.source = source
         self.ledger = ledger
+        self.defaultHomes = defaultHomes
+        self.limit = limit
         self.now = now
+        self.calendar = calendar
     }
 
     public func load() async {
@@ -216,15 +236,43 @@ public final class SessionsModel {
         defer { if mine == generation { isLoading = false } }
         let list: SessionList
         do {
-            list = try await source.sessions(days: Self.days, limit: Self.limit)
+            list = try await source.sessions(days: Self.days, limit: limit)
         } catch is CancellationError {
             return
         } catch {
             if mine == generation { self.error = error.localizedDescription }
             return
         }
-        let now = now()
-        let usage = await ledger.bySession(in: DateInterval(start: now.addingTimeInterval(-Double(Self.days + 1) * 86_400), end: now))
+        usageGeneration += 1
+        let myUsage = usageGeneration
+        let usage = await usageBySession()
+        guard mine == generation else { return }
+        // A refresh that finished meanwhile read the ledger later; keep its numbers.
+        let joinedUsage = myUsage == usageGeneration ? usage : (latestUsage ?? usage)
+        listed = list.sessions
+        isCapped = list.sessions.count >= limit
+        latestUsage = joinedUsage
+        rows = join(listed, joinedUsage)
+        failures = list.failures
+        error = nil
+    }
+
+    /// Re-reads tokens and spend from the ledger after a scan, keeping the list.
+    public func refreshUsage() async {
+        usageGeneration += 1
+        let mine = usageGeneration
+        let usage = await usageBySession()
+        guard mine == usageGeneration else { return }
+        latestUsage = usage
+        rows = join(listed, usage)
+    }
+
+    private var latestUsage: [String: SessionUsage]?
+
+    /// Every session's usage over its whole history: a session resumed
+    /// today may have started months ago.
+    private func usageBySession() async -> [String: SessionUsage] {
+        let usage = await ledger.bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0), end: now()))
         var byId: [String: SessionUsage] = [:]
         for row in usage {
             if var existing = byId[row.sessionId] {
@@ -232,17 +280,38 @@ public final class SessionsModel {
                 existing.models = Array(Set(existing.models + row.models)).sorted()
                 existing.firstTimestamp = min(existing.firstTimestamp, row.firstTimestamp)
                 existing.lastTimestamp = max(existing.lastTimestamp, row.lastTimestamp)
+                existing.cwd = existing.cwd ?? row.cwd
                 byId[row.sessionId] = existing
             } else {
                 byId[row.sessionId] = row
             }
         }
-        guard mine == generation else { return }
-        rows = list.sessions
-            .sorted { $0.lastActiveAt > $1.lastActiveAt }
-            .map { Row(session: $0, usage: byId[$0.id]) }
-        failures = list.failures
-        error = nil
+        return byId
+    }
+
+    private func join(_ sessions: [SessionInfo], _ usage: [String: SessionUsage]) -> [Row] {
+        var rows = sessions.map { Row(session: $0, usage: usage[$0.id]) }
+        let listedIds = Set(sessions.map(\.id))
+        let since = now().addingTimeInterval(-Double(Self.days) * 86_400)
+        for (id, use) in usage where !listedIds.contains(id) && !defaultHomes.contains(use.accountHome)
+            && use.lastTimestamp >= since {
+            guard let resume = Self.resumeArgv(harness: use.harness, id: id) else { continue }
+            let session = SessionInfo(
+                id: id, harness: use.harness, agent: UsageFormat.harness(use.harness), cwd: use.cwd,
+                title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil,
+                resume: .init(argv: resume, cwd: use.cwd))
+            rows.append(Row(session: session, usage: use))
+        }
+        return rows.sorted { ($0.session.lastActiveAt, $1.id) > ($1.session.lastActiveAt, $0.id) }
+    }
+
+    /// How each CLI resumes a session by id.
+    static func resumeArgv(harness: String, id: String) -> [String]? {
+        switch harness {
+        case "claude": ["claude", "--resume", id]
+        case "codex": ["codex", "resume", id]
+        default: nil
+        }
     }
 
     public var summary: Summary {
@@ -273,7 +342,10 @@ public final class SessionsModel {
     public var models: [String] { Array(Set(rows.flatMap { $0.usage?.models ?? [] })).sorted() }
 
     public var visible: [Row] {
-        let since = now().addingTimeInterval(-filter.window.seconds)
+        let now = now()
+        let since = filter.window == .today
+            ? calendar.startOfDay(for: now)
+            : now.addingTimeInterval(-filter.window.seconds)
         let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
         return rows.filter { row in
             let s = row.session
