@@ -133,10 +133,13 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
         Set(harnesses.compactMap { group(of: $0) }).count > 1
     }
 
-    /// The command line or URL, for a one-line summary.
+    /// The command line or URL, for a one-line summary, with anything that
+    /// may be a secret hidden. swe swaps known keys for `${NAME}`, but a
+    /// token it doesn't know would otherwise show as typed.
     public var summary: String {
-        if let url { return url }
-        return ([command ?? ""] + args).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        if let url { return McpRedaction.url(url) }
+        let words = McpRedaction.words(command: command ?? "", args: args)
+        return McpRedaction.args(words).joined(separator: " ").trimmingCharacters(in: .whitespaces)
     }
 
     /// `--only` takes fnmatch globs, comma separated. A comma cannot be
@@ -154,6 +157,193 @@ public struct McpServer: Decodable, Sendable, Equatable, Identifiable {
             default: out.append(character)
             }
         }
+        return out
+    }
+}
+
+/// Hides the parts of an MCP command line or URL that may hold a secret.
+enum McpRedaction {
+    /// Flags whose value is a secret, compared without dashes, underscores
+    /// or case, so `--api-key`, `--api_key` and `--apiKey` all match, as do
+    /// longer names ending in one (`--access-token`, `--client-secret`).
+    static let secretFlagEndings = ["token", "key", "secret", "password", "passwd", "credential", "credentials",
+                                    "auth", "authorization", "header"]
+
+    static func isSecretFlag(_ flag: Substring) -> Bool {
+        let flag = bare(flag)
+        guard flag.hasPrefix("-") else { return false }
+        if flag == "-H" { return true }
+        let name = flag.filter { $0 != "-" && $0 != "_" }.lowercased()
+        return !name.isEmpty && secretFlagEndings.contains { name.hasSuffix($0) }
+    }
+
+    /// The flag as the shell reads it: `--"token"` and `--\token` are `--token`.
+    static func bare(_ flag: Substring) -> String {
+        flag.filter { $0 != "\"" && $0 != "'" && $0 != "\\" }
+    }
+
+    /// The command line as words, so every flag and its value can be judged.
+    /// A whole command line typed into `command` is split the way a shell
+    /// would, keeping a quoted value with spaces as one word. An argument
+    /// holding a flag and its value (`--token abc`) becomes two.
+    static func words(command: String, args: [String]) -> [String] {
+        var words = shellWords(command)
+        for arg in args {
+            let space = arg.firstIndex(where: \.isWhitespace)
+            if arg.hasPrefix("-"), let space, !arg[..<space].contains("=") {
+                words.append(String(arg[..<space]))
+                words.append(arg[space...].trimmingCharacters(in: .whitespaces))
+            } else {
+                words.append(arg)
+            }
+        }
+        return words
+    }
+
+    /// Words split at unquoted whitespace, quotes kept so the text reads as
+    /// typed. With an unclosed quote every space splits, so no word hides a
+    /// later flag.
+    static func shellWords(_ line: String) -> [String] {
+        var words: [String] = []
+        var word = ""
+        var quote: Character?
+        var escaped = false
+        for character in line {
+            if escaped {
+                word.append(character)
+                escaped = false
+            } else if character == "\\", quote != "'" {
+                word.append(character)
+                escaped = true
+            } else if let open = quote {
+                word.append(character)
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                word.append(character)
+                quote = character
+            } else if character.isWhitespace {
+                if !word.isEmpty { words.append(word) }
+                word = ""
+            } else {
+                word.append(character)
+            }
+        }
+        if quote != nil { return looseWords(line) }
+        if !word.isEmpty { words.append(word) }
+        return words
+    }
+
+    /// Split at every space and quote mark, for text the shell split can't
+    /// handle, so a flag glued to a quote (`"--token`) is still seen.
+    static func looseWords(_ line: String) -> [String] {
+        line.split { $0.isWhitespace || $0 == "\"" || $0 == "'" }.map(String.init)
+    }
+
+    static func args(_ args: [String]) -> [String] {
+        var out: [String] = []
+        var hideNext: Substring?
+        for arg in args {
+            if let flag = hideNext {
+                out.append(secretValue(arg[...], after: flag))
+                hideNext = nil
+            } else if let equals = arg.firstIndex(of: "="), isSecretFlag(arg[..<equals]) {
+                let flag = arg[..<equals]
+                out.append(flag + "=" + secretValue(arg[arg.index(after: equals)...], after: flag))
+            } else if isSecretFlag(arg[...]) {
+                out.append(arg)
+                hideNext = arg[...]
+            } else if let match = arg.firstMatch(of: /^[A-Za-z_][A-Za-z0-9_]*=/) {
+                // An environment assignment, as `env NAME=value cmd` takes.
+                out.append(match.output + "…")
+            } else if let redacted = urlWord(arg) {
+                out.append(redacted)
+            } else if let quote = arg.first, quote == "\"" || quote == "'", arg.count >= 2, arg.last == quote {
+                // A quoted word may be a whole command, as `bash -c '…'` takes.
+                out.append(String(quote) + line(String(arg.dropFirst().dropLast())) + String(quote))
+            } else if arg.contains(where: \.isWhitespace) {
+                out.append(line(arg))
+            } else if arg.contains("://") {
+                out.append(url(arg))
+            } else {
+                out.append(SecretText.maskingKeys(arg[...]))
+            }
+        }
+        return out
+    }
+
+    /// A word that is a URL, quoted or not, redacted before anything splits
+    /// it. A URL holds no spaces, so everything after one is hidden: it may
+    /// be the rest of a query value.
+    private static func urlWord(_ arg: String) -> String? {
+        var quote = ""
+        var inner = Substring(arg)
+        if let first = arg.first, first == "\"" || first == "'", arg.count >= 2, arg.last == first {
+            quote = String(first)
+            inner = inner.dropFirst().dropLast()
+        }
+        guard inner.contains(/^[A-Za-z][A-Za-z0-9+.\-]*:\/\//) else { return nil }
+        guard let space = inner.firstIndex(where: \.isWhitespace) else { return quote + url(String(inner)) + quote }
+        return quote + url(String(inner[..<space])) + " …" + quote
+    }
+
+    /// A command line inside one word, redacted word by word. A word the
+    /// shell split can't break up (`x"a b"`) is split at every space and
+    /// quote mark, so each pass works on shorter text and no flag hides.
+    private static func line(_ text: String) -> String {
+        var words = shellWords(text)
+        if words == [text] { words = looseWords(text) }
+        return args(words).joined(separator: " ")
+    }
+
+    /// A header keeps its name (`Authorization:…`); any other value is hidden.
+    private static func secretValue(_ value: Substring, after flag: Substring) -> String {
+        let flag = bare(flag)
+        let header = flag == "-H" || flag.lowercased().hasSuffix("header")
+        if header, let colon = value.firstIndex(of: ":") { return value[...colon] + "…" }
+        return "…"
+    }
+
+    /// The URL with its userinfo, query values and fragment hidden, and any
+    /// key-like path segment too, since some services put the key in the path.
+    static func url(_ url: String) -> String {
+        var rest = Substring(url)
+        var out = ""
+        if let scheme = rest.range(of: "://") {
+            out += rest[..<scheme.upperBound]
+            rest = rest[scheme.upperBound...]
+        }
+        let authorityEnd = rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex
+        var authority = rest[..<authorityEnd]
+        if let at = authority.lastIndex(of: "@") {
+            out += "…@"
+            authority = authority[authority.index(after: at)...]
+        }
+        out += authority
+        rest = rest[authorityEnd...]
+        var fragment: Substring?
+        if let hash = rest.firstIndex(of: "#") {
+            fragment = rest[rest.index(after: hash)...]
+            rest = rest[..<hash]
+        }
+        var query: Substring?
+        if let mark = rest.firstIndex(of: "?") {
+            query = rest[rest.index(after: mark)...]
+            rest = rest[..<mark]
+        }
+        // A segment is judged decoded, so `sk%2Dproj%2D…` reads as `sk-proj-…`.
+        out += rest.split(separator: "/", omittingEmptySubsequences: false).map { segment in
+            let decoded = segment.removingPercentEncoding ?? String(segment)
+            if decoded != segment, SecretText.maskingKeys(decoded[...]) != decoded { return "…" }
+            return SecretText.maskingKeys(segment)
+        }.joined(separator: "/")
+        if let query {
+            out += "?" + query.split(separator: "&", omittingEmptySubsequences: false).map { pair in
+                if pair.isEmpty { return "" }
+                guard let equals = pair.firstIndex(of: "=") else { return "…" }
+                return pair[...equals] + "…"
+            }.joined(separator: "&")
+        }
+        if let fragment, !fragment.isEmpty { out += "#…" }
         return out
     }
 }

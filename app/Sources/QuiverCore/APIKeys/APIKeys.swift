@@ -15,7 +15,8 @@ public enum APIKeysError: Error, Equatable, LocalizedError {
         switch self {
         case .invalidName(let name):
             "\(name) isn't a valid variable name. Use letters, digits and underscores, not starting with a digit."
-        case .invalidProvider: "A provider name has to fit on one line."
+        case .invalidProvider:
+            "A provider name has to be a short label: up to 60 letters, digits, spaces and ( ) . , & / -."
         case .duplicate(let name): "\(name) is exported more than once in the file. Remove the extra line in an editor, then edit it here."
         case .multilineValue: "A key can't span more than one line."
         case .notFound(let name): "\(name) isn't in the file any more."
@@ -100,7 +101,7 @@ public struct APIKeysFile: Equatable, Sendable {
                 return Problem(line: index + 1, text: Self.redacted(line),
                                reason: "zsh only accepts lowercase export, so this line sets nothing")
             }
-            if Self.commentedAssignment(line) != nil {
+            if Self.commentedAssignment(line) != nil || (Self.heading(line) == nil && Self.commentedKey(line)) {
                 return Problem(line: index + 1, text: Self.redacted(line),
                                reason: "a commented-out key still holds a value; delete the line")
             }
@@ -138,6 +139,9 @@ public struct APIKeysFile: Equatable, Sendable {
             lines.insert(line, at: last.line + 1)
             return
         }
+        // A heading the file wouldn't read back would file the key under
+        // whichever provider came before it.
+        guard Self.isLabel(provider) else { throw APIKeysError.invalidProvider }
         if !lines.isEmpty, lines.last?.isEmpty == false { lines.append("") }
         lines.append("# \(provider)")
         lines.append(line)
@@ -169,15 +173,39 @@ public struct APIKeysFile: Equatable, Sendable {
     }
 
     /// A comment line's text, used as the provider for the keys below it.
-    /// A comment holding `NAME=` anywhere (`# export NAME=value`,
-    /// `# EXPORT NAME=value`, `# old: NAME=value`) is not a heading: its text
-    /// may carry a value, so it neither names nor resets the provider.
+    /// The provider shows in the table, VoiceOver labels and menus, so only
+    /// a comment that reads as a label counts. Anything else (a commented-out
+    /// key in any shape, a URL, a divider) neither names nor resets it.
     static func heading(_ line: String) -> String? {
+        guard let text = commentText(line), isLabel(text) else { return nil }
+        return text
+    }
+
+    /// Short words of letters and digits with light punctuation: "Anthropic",
+    /// "Kimi (Moonshot AI)", "ZAI (01.ai)". A key is one long word, and a
+    /// commented-out line has `=`, `:`, quotes or an `export NAME`.
+    static func isLabel(_ text: String) -> Bool {
+        guard !text.isEmpty, text.count <= 60, text.contains(where: \.isLetter),
+              text.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " || "().,&/-".contains($0) }),
+              !text.split(separator: " ").contains(where: { $0.count >= 16 }),
+              !text.contains(/\b(?i:export)\s+[A-Za-z_]/)
+        else { return false }
+        return true
+    }
+
+    /// A comment's text without its `#` marks, or nil for a line that isn't one.
+    private static func commentText(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("#") else { return nil }
-        let text = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
-        guard !text.contains(/\b[A-Za-z_][A-Za-z0-9_]*\s*=/) else { return nil }
-        return text.isEmpty ? nil : text
+        return trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A comment holding a key in a shape other than `NAME=value`:
+    /// `# export NAME value`, `# NAME: value`, a bare key, or a key in prose.
+    static func commentedKey(_ line: String) -> Bool {
+        guard let text = commentText(line) else { return false }
+        if text.contains(/^(?i:export)\s+[A-Z_][A-Z0-9_]*(?![a-z0-9_])\s*\S/) { return true }
+        return text.matches(of: /[A-Za-z0-9_\-]{16,}/).contains { SecretText.looksLikeKey($0.output) }
     }
 
     /// The variable name of a commented-out assignment, or nil.
@@ -252,10 +280,48 @@ public struct APIKeysFile: Equatable, Sendable {
         return "export \(name)=\"\(escaped)\""
     }
 
-    /// The line with its value hidden, for messages.
+    /// The line with its value hidden, for messages: only the comment mark,
+    /// the `export` keyword and the variable name survive, never what follows
+    /// the name, and not the name either when it looks like a key itself.
     static func redacted(_ line: String) -> String {
-        guard let equals = line.firstIndex(of: "=") else { return line }
-        return String(line[...equals]) + "…"
+        let shape = /^(\s*(?:#+\s*)?(?:(?i:export)\s+)?)([A-Za-z_][A-Za-z0-9_]*)?(\s*=)?/
+        guard let match = line.firstMatch(of: shape) else { return "…" }
+        let prefix = String(match.output.1)
+        guard let name = match.output.2, !SecretText.looksLikeKey(name) else { return prefix + "…" }
+        return prefix + name + (match.output.3 ?? "") + "…"
+    }
+}
+
+/// Telling a secret apart from a name or a label.
+enum SecretText {
+    /// Vendor prefixes that mark a key whatever follows them.
+    static let keyPrefixes = ["sk-", "sk_", "pk_", "rk_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_",
+                              "glpat-", "xoxa-", "xoxb-", "xoxp-", "xoxs-", "xapp-", "AIza", "AKIA", "ASIA",
+                              "hf_", "gsk_", "xai-", "pplx-", "r8_", "npm_"]
+
+    /// A run of 16 or more characters like `sk-ant-api03-…`, `AKIA…` or
+    /// `ghp_…`: a vendor prefix, mixed case, or digits among letters. An
+    /// upper-case name with underscores such as `CLOUDFLARE_R2_ACCESS_KEY_ID`
+    /// is a variable name, and an all-lower-case word is a package or path.
+    static func looksLikeKey(_ text: Substring) -> Bool {
+        guard text.count >= 16, text.contains(where: \.isLetter) else { return false }
+        if keyPrefixes.contains(where: { text.hasPrefix($0) }) { return true }
+        let lower = text.contains(where: \.isLowercase)
+        let upper = text.contains(where: \.isUppercase)
+        let digit = text.contains(where: \.isNumber)
+        return (lower && upper) || (lower && digit) || (digit && !text.contains("_"))
+    }
+
+    /// `text` with every key-like run replaced by `…`.
+    static func maskingKeys(_ text: Substring) -> String {
+        var out = ""
+        var rest = text
+        while let match = rest.firstMatch(of: /[A-Za-z0-9_\-]{16,}/) {
+            out += rest[..<match.range.lowerBound]
+            out += looksLikeKey(match.output) ? "…" : String(match.output)
+            rest = rest[match.range.upperBound...]
+        }
+        return out + rest
     }
 }
 
