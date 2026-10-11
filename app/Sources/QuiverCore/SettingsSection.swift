@@ -17,7 +17,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
     /// One line under the section title.
     public var detail: String {
         switch self {
-        case .general: "When Quiver starts and which terminal it opens."
+        case .general: "When Quiver starts, which terminal it opens, and its Dock icon."
         case .notifications: "Alerts when a usage limit runs low."
         case .providers: "Which harnesses show up across the app, and in what order."
         case .paths: "Where Quiver finds swe and your API keys file."
