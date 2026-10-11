@@ -110,17 +110,19 @@ public final class ProviderVisibilityModel {
     /// False until the first check finishes; until then nothing is known
     /// to be missing.
     public private(set) var hasChecked = false
+    /// Why the last check failed. What was known before it still stands.
+    public private(set) var checkError: String?
 
     static let orderKey = "providerOrder"
     static let disabledKey = "providerDisabled"
 
     private let store: KeyValueStoring
-    private let detect: @Sendable () async -> Set<String>
+    private let detect: @Sendable () async throws -> Set<String>
     private var installed: Set<String> = []
     private var order: [String] = []
     private var disabled: Set<String> = []
 
-    public init(store: KeyValueStoring, detect: @escaping @Sendable () async -> Set<String>) {
+    public init(store: KeyValueStoring, detect: @escaping @Sendable () async throws -> Set<String>) {
         self.store = store
         self.detect = detect
         order = Self.completeOrder(store.strings(forKey: Self.orderKey) ?? [])
@@ -130,9 +132,17 @@ public final class ProviderVisibilityModel {
 
     public func load() async {
         isLoading = true
-        installed = await detect()
-        isLoading = false
-        hasChecked = true
+        defer { isLoading = false }
+        do {
+            installed = try await detect()
+            hasChecked = true
+            checkError = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            // A check that couldn't run says nothing about what is installed.
+            checkError = error.localizedDescription
+        }
         rebuild()
     }
 
@@ -175,6 +185,14 @@ public final class ProviderVisibilityModel {
         guard id != target, let from = order.firstIndex(of: id) else { return }
         order.remove(at: from)
         order.insert(id, at: order.firstIndex(of: target) ?? order.endIndex)
+        save()
+    }
+
+    /// Moves `id` to the bottom of the list.
+    public func moveToEnd(_ id: String) {
+        guard let from = order.firstIndex(of: id) else { return }
+        order.remove(at: from)
+        order.append(id)
         save()
     }
 
