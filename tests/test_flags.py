@@ -294,6 +294,28 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertEqual(saved["description"], "a desc")
         self.assertIn("Added 'demo'", out)
 
+    def test_re_adding_a_harness_keeps_its_display_name(self):
+        existing = {"demo": {"command": "old", "display_name": "Demo Code"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _, out = _run(cmd_add, ["demo", "demo-cmd"])
+        saved = save.call_args[0][0]["demo"]
+        self.assertEqual(saved["command"], "demo-cmd")
+        self.assertEqual(saved["display_name"], "Demo Code")
+        self.assertIn("Updated 'demo'", out)
+
+    def test_adding_a_new_harness_sets_no_display_name(self):
+        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd"])
+        self.assertNotIn("display_name", save.call_args[0][0]["demo"])
+
     def test_add_description_flag_sets_description(self):
         with patch("quiver.harness.commands.load_registry", return_value={}), patch(
             "quiver.harness.commands.save_registry"

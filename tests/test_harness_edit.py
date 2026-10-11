@@ -1,12 +1,15 @@
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from quiver.harness.commands import (
     _apply_edits,
     _parse_edit_flags,
+    _show_edit_fields,
     cmd_edit,
 )
 
@@ -26,6 +29,30 @@ class HarnessEditTest(unittest.TestCase):
         self.assertEqual(rest, ["droid"])
         self.assertEqual(updates["tags"], "agentic,coding,autonomous")
         self.assertEqual(updates["notes"], "hi")
+
+    def test_parse_edit_flags_accepts_display_name_spellings(self):
+        for flag in ("--display-name=Qwen Code", "--display_name=Qwen Code"):
+            updates, rest = _parse_edit_flags(["qwen", flag])
+            self.assertEqual(rest, ["qwen"])
+            self.assertEqual(updates, {"display_name": "Qwen Code"})
+        updates, _ = _parse_edit_flags(["qwen", "--set=display_name=Qwen Code,tags=a,b"])
+        self.assertEqual(updates, {"display_name": "Qwen Code", "tags": "a,b"})
+        updates, _ = _parse_edit_flags(["qwen", "--set=display-name=Qwen Code"])
+        self.assertEqual(updates, {"display_name": "Qwen Code"})
+        with self.assertRaises(ValueError):
+            _parse_edit_flags(["qwen", "--display-name"])
+
+    def test_apply_edits_sets_and_clears_display_name(self):
+        tools = {"qwen": {"command": "qwen", "aliases": [], "tags": []}}
+        new_info, changes = _apply_edits(tools, "qwen", {"display_name": "  Qwen Code "})
+        self.assertEqual(new_info["display_name"], "Qwen Code")
+        self.assertEqual(changes, ["display_name: — → Qwen Code"])
+        tools["qwen"] = new_info
+        cleared, changes = _apply_edits(tools, "qwen", {"display_name": ""})
+        self.assertNotIn("display_name", cleared)
+        self.assertEqual(changes, ["display_name: Qwen Code → —"])
+        _, changes = _apply_edits({"qwen": cleared}, "qwen", {"display_name": " "})
+        self.assertEqual(changes, [])
 
     def test_apply_edits_updates_description_and_aliases(self):
         tools = {
@@ -163,6 +190,30 @@ class HarnessEditTest(unittest.TestCase):
             save.assert_called_once()
             saved_tools = save.call_args[0][0]
             self.assertEqual(saved_tools["tau"]["description"], "Tau — coding agent")
+
+    def test_cmd_edit_interactive_sets_display_name_under_any_spelling(self):
+        for typed in ("display name", "display-name", "display_name", "Display Name"):
+            tools = {"tau": {"command": "tau", "aliases": [], "tags": []}}
+            inputs = iter([typed, "Tau Code", "save"])
+            with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
+                "quiver.harness.commands.save_registry"
+            ) as save, patch(
+                "quiver.harness.commands.resolve", return_value="tau"
+            ), patch("quiver.harness.commands.read_line",
+                     side_effect=lambda *_a, **_k: next(inputs)):
+                rc = cmd_edit(["tau"])
+            self.assertEqual(rc, 0, typed)
+            self.assertEqual(save.call_args[0][0]["tau"]["display_name"], "Tau Code", typed)
+
+    def test_edit_field_listing_shows_the_display_name(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _show_edit_fields("tau", {"command": "tau", "display_name": "Tau Code"})
+        self.assertRegex(buf.getvalue(), r"display name:\s+Tau Code")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _show_edit_fields("tau", {"command": "tau"})
+        self.assertRegex(buf.getvalue(), r"display name:\s+—")
 
 
 if __name__ == "__main__":

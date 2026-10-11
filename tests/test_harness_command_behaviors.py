@@ -71,6 +71,23 @@ class HarnessProcessCommandTest(unittest.TestCase):
         self.assertEqual(saved["command"], "demo-bin")
         self.assertEqual(saved["version"], "1.2.3")
 
+    def test_reinstall_keeps_the_display_name(self):
+        existing = {"demo": {"command": "demo", "display_name": "Demo Code"}}
+        with patch(
+            "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
+        ), patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0),
+        ), patch(
+            "quiver.harness.commands.shutil.which", return_value="/usr/local/bin/demo"
+        ), patch(
+            "quiver.harness.tools.live_version", return_value="1.2.3"
+        ), patch("quiver.harness.commands.save_registry") as save:
+            result = cmd_install(["demo", "--package=@scope/demo"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(save.call_args.args[0]["demo"]["display_name"], "Demo Code")
+
     def test_install_dry_run_has_no_process_or_registry_write(self):
         with patch(
             "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"

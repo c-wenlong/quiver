@@ -170,7 +170,8 @@ swe use codex --help         # extra args are passed straight through
 
 swe harness star gemini      # pin a harness and enable its usage polling (toggle)
 swe harness archive aider "not a fit" # shelve a harness you ruled out
-swe edit claude --description "..." # edit registry fields (or interactive mode)
+swe edit claude --description="..." # edit registry fields (or interactive mode)
+swe edit qwen --display-name="Qwen Code" # human name for the app; `--display-name=` clears it
 
 swe session                  # last 10 sessions across ALL agents
 swe session use 3            # cd into session #3 and resume it
@@ -213,9 +214,9 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe setup [section] [--quick]` | | Sectioned wizard for harnesses, providers, MCP, skills, reports, and verification |
 | `swe list [tag] [--usage\|--links] [--scope=…] [-r\|-n]` | `ls` | List tools; `--usage` is the only part that touches the network |
 | `swe list edit [--reset]` / `swe list legend` | | Choose which columns show; explain the link glyphs |
-| `swe info <name\|alias>` | | Show command, version, path, tags, aliases |
+| `swe info <name\|alias>` | | Show display name, command, version, path, tags, aliases |
 | `swe add <name> <cmd> …` | | Register or update a tool |
-| `swe edit <name> [--field=val …] [--json]` | | Edit registry fields (flags or interactive); `--json` applies the flags and prints the updated harness, never prompts |
+| `swe edit <name> [--field=val …] [--json]` | | Edit registry fields: command, display name, description, aliases, tags, version, notes (flags or interactive); `--json` applies the flags and prints the updated harness, never prompts |
 | `swe remove <name\|alias>` | `rm` | Remove from registry (does not uninstall) |
 | `swe harness <subcommand> …` | `hs` | Every harness verb: `list`, `edit`, `star`, `archive`, `discover` |
 | `swe harness star <name\|alias>` | `hs star` | Toggle a harness favourite (pins it to top of `swe list`) |

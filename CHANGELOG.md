@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Harnesses get a display name, editable with `swe edit --display-name`.**
+  A harness is keyed by its registry name and launched by its command
+  (`cursor` runs `cursor-agent`), which is no way to label it in the app.
+  `harness.json` entries now take an optional `display_name` ("Cursor",
+  "Qwen Code"); absent or empty means unset. `swe edit <name|alias>
+  --display-name="Qwen Code"` sets it (whitespace is trimmed) and
+  `--display-name=` clears it; `--display_name=` and
+  `--set=display_name=...` work too, and the interactive editor lists it as
+  "display name". `swe list --json` rows carry `display_name` next to `name`
+  (null when unset), `swe edit --json` reports `"display_name"` in
+  `changes`, and `swe info` shows it when set. Nothing else changes: the
+  `swe list` table keeps its columns, and a harness without a display name
+  prints exactly as before. Re-adding or reinstalling a harness
+  (`swe add`, `swe add -i`, `swe install`) keeps the name you gave it.
+
 ### Fixed
 
 - **`swe skills --json` listed a hub plugin's skills from Claude's stale

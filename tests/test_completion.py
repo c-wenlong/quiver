@@ -175,7 +175,7 @@ class CompletionEngineTest(unittest.TestCase):
         from quiver.completion import get_completions
 
         flags = [c for c, _ in get_completions(["edit", "claude", "--"])]
-        for flag in ("--description=", "--notes=", "--json"):
+        for flag in ("--description=", "--notes=", "--display-name=", "--json"):
             self.assertIn(flag, flags)
 
     def test_find_and_skills_subcommands(self):

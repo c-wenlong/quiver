@@ -163,6 +163,37 @@ class ListNotesJsonTest(unittest.TestCase):
         self.assertIsNone(row["notes"])
 
 
+class ListDisplayNameJsonTest(unittest.TestCase):
+    """`swe list --json` rows carry `display_name`, next to `name`."""
+
+    def rows(self, registry):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, registry)
+        return {row["name"]: row for row in
+                decode(run_swe(home, "list", "--scope=all", "--json")
+                       )["data"]["harnesses"]}
+
+    def test_display_name_is_null_when_unset_and_the_text_when_set(self):
+        rows = self.rows(dict(
+            REGISTRY, codex=dict(REGISTRY["codex"], display_name="Codex CLI")))
+        self.assertIn("display_name", rows["claude"])
+        self.assertIsNone(rows["claude"]["display_name"])
+        self.assertEqual(rows["codex"]["display_name"], "Codex CLI")
+
+    def test_an_empty_or_blank_display_name_reads_as_null(self):
+        rows = self.rows({
+            "claude": dict(REGISTRY["claude"], display_name=""),
+            "codex": dict(REGISTRY["codex"], display_name="   "),
+        })
+        self.assertIsNone(rows["claude"]["display_name"])
+        self.assertIsNone(rows["codex"]["display_name"])
+
+    def test_display_name_sits_next_to_name(self):
+        row = self.rows(dict(REGISTRY))["claude"]
+        keys = list(row)
+        self.assertEqual(keys[keys.index("name") + 1], "display_name")
+
+
 class EditJsonTest(unittest.TestCase):
     """`swe edit <name> --field=value --json`: the app's edit sheet."""
 
@@ -256,6 +287,81 @@ class EditJsonTest(unittest.TestCase):
         self.assertEqual(data["changes"], ["notes"])
         self.assertIsNone(data["harness"]["notes"])
         self.assertIsNone(self.listed("claude")["notes"])
+
+    def test_display_name_is_set_and_reported(self):
+        result = self.edit("claude", "--display-name=Claude Code")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = decode(result)["data"]
+        self.assertEqual(data["changes"], ["display_name"])
+        self.assertEqual(data["harness"]["display_name"], "Claude Code")
+        self.assertEqual(self.saved("claude")["display_name"], "Claude Code")
+        self.assertEqual(self.listed("claude")["display_name"], "Claude Code")
+
+    def test_display_name_is_null_in_the_list_until_it_is_set(self):
+        self.assertIsNone(self.listed("claude")["display_name"])
+        self.assertNotIn("display_name", self.saved("claude"))
+
+    def test_display_name_edit_reply_row_is_exactly_the_list_row(self):
+        data = decode(self.edit("claude", "--display-name=Claude Code"))["data"]
+        self.assertEqual(data["harness"], self.listed("claude"))
+
+    def test_empty_display_name_clears_it(self):
+        self.edit("claude", "--display-name=Claude Code")
+        data = decode(self.edit("claude", "--display-name="))["data"]
+        self.assertEqual(data["changes"], ["display_name"])
+        self.assertIsNone(data["harness"]["display_name"])
+        self.assertNotIn("display_name", self.saved("claude"))
+        self.assertIsNone(self.listed("claude")["display_name"])
+
+    def test_clearing_an_unset_display_name_is_a_no_op(self):
+        data = decode(self.edit("claude", "--display-name="))["data"]
+        self.assertEqual(data["changes"], [])
+
+    def test_display_name_is_trimmed(self):
+        data = decode(self.edit("claude", "--display-name=  Qwen Code  "))["data"]
+        self.assertEqual(data["harness"]["display_name"], "Qwen Code")
+        self.assertEqual(self.saved("claude")["display_name"], "Qwen Code")
+
+    def test_a_blank_display_name_clears_it(self):
+        self.edit("claude", "--display-name=Claude Code")
+        data = decode(self.edit("claude", "--display-name=   "))["data"]
+        self.assertEqual(data["changes"], ["display_name"])
+        self.assertNotIn("display_name", self.saved("claude"))
+
+    def test_display_name_edit_by_alias_returns_the_canonical_name(self):
+        data = decode(self.edit("cc", "--display-name=Claude Code"))["data"]
+        self.assertEqual(data["name"], "claude")
+        self.assertEqual(data["harness"]["display_name"], "Claude Code")
+        self.assertEqual(self.saved("claude")["display_name"], "Claude Code")
+        self.assertNotIn("display_name", self.saved("codex"))
+
+    def test_underscore_spelling_works_too(self):
+        data = decode(self.edit("claude", "--display_name=Claude Code"))["data"]
+        self.assertEqual(data["changes"], ["display_name"])
+        self.assertEqual(data["harness"]["display_name"], "Claude Code")
+
+    def test_set_form_works_with_either_spelling(self):
+        data = decode(self.edit("claude", "--set=display_name=Qwen Code,notes=hi")
+                      )["data"]
+        self.assertEqual(data["changes"], ["display_name", "notes"])
+        self.assertEqual(data["harness"]["display_name"], "Qwen Code")
+        self.assertEqual(data["harness"]["notes"], "hi")
+        data = decode(self.edit("claude", "--set=display-name=Cursor"))["data"]
+        self.assertEqual(data["harness"]["display_name"], "Cursor")
+
+    def test_display_name_keeps_commas_and_unicode(self):
+        data = decode(self.edit("claude", "--display-name=Claude, the Code"))["data"]
+        self.assertEqual(data["harness"]["display_name"], "Claude, the Code")
+
+    def test_a_valueless_display_name_flag_is_refused(self):
+        self.assertRefused(self.edit("claude", "--display-name"), "--display-name")
+
+    def test_display_name_edit_leaves_other_fields_alone(self):
+        before = self.saved("claude")
+        self.edit("claude", "--display-name=Claude Code")
+        after = self.saved("claude")
+        after.pop("display_name")
+        self.assertEqual(after, before)
 
     def test_empty_description_clears_to_empty_string(self):
         data = decode(self.edit("claude", "--description="))["data"]
