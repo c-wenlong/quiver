@@ -179,6 +179,7 @@ struct MenuBarContent: View {
                 .buttonStyle(.borderless)
                 .disabled(app.accounts.isLoading)
             }
+            ServiceStatusMenuLine(openMain: openMain)
             // Everything else stays put; the limits scroll once there are
             // more than the screen can hold.
             ViewThatFits(in: .vertical) {
@@ -202,9 +203,9 @@ struct MenuBarContent: View {
         .glassEffect(in: .rect(cornerRadius: 18))
     }
 
-    /// The screen's height less the header, spend donut and buttons.
+    /// The screen's height less the header, status line, spend donut and buttons.
     static var limitsMaxHeight: CGFloat {
-        max(220, (NSScreen.main?.visibleFrame.height ?? 800) - 440)
+        max(220, (NSScreen.main?.visibleFrame.height ?? 800) - 480)
     }
 }
 

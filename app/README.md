@@ -29,6 +29,7 @@ a newer one in Settings.
 |---|---|
 | `Sources/QuiverCore` | Everything testable: the `swe` client, models, view models |
 | `Sources/QuiverCore/Ledger` | Usage ledger: harness log scanners, the deduplicated event store, pricing |
+| `Sources/QuiverCore/Status` | Service status: the status-page catalog, Statuspage and Google Cloud parsers, the polling cache |
 | `Sources/QuiverCore/Resources` | Trimmed LiteLLM price snapshot and Quiver's pricing supplement |
 | `Sources/QuiverCore/Limits` | Limit readings from every source, the 90% and reset alerts, the widget snapshot |
 | `Sources/QuiverApp` | The SwiftUI shell: window, sidebar, pages, menu bar panel |
