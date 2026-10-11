@@ -96,6 +96,8 @@ struct PageView: View {
         switch section {
         case .overview:
             OverviewPage()
+        case .sessions:
+            SessionsPage()
         case .accounts:
             AccountsPage()
         case .serviceStatus:
