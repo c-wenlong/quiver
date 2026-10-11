@@ -166,7 +166,7 @@ private struct HarnessLinksPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Harness links").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                    Text("Each harness reads one skills folder. A linked folder points at \(abbreviated(sharedDir)), so every shared skill reaches it.")
+                    Text("Each harness reads one skills folder. A linked folder points at \(displayPath(sharedDir)), so every shared skill reaches it.")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -211,7 +211,7 @@ private struct RootDetail: View {
                 Text(root.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 Badge(root.link.title)
             }
-            Text(abbreviated(root.path))
+            Text(displayPath(root.path))
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(Theme.textSecondary)
                 .textSelection(.enabled)
@@ -319,7 +319,7 @@ private struct SkillRow: View {
                                 .lineLimit(expanded ? nil : 1)
                                 .multilineTextAlignment(.leading)
                         }
-                        Text(abbreviated(skill.path))
+                        Text(displayPath(skill.path))
                             .font(Theme.caption).foregroundStyle(Theme.textMuted)
                             .lineLimit(1).truncationMode(.middle)
                     }
@@ -433,7 +433,7 @@ private struct HubBrowser: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
-                    .help("From \(markets) marketplaces in \(abbreviated(hub.hub))/plugins")
+                    .help("From \(markets) marketplaces in \(displayPath(hub.hub))/plugins")
             }
             if plugins.isEmpty {
                 EmptyCard(text: hub.plugins.isEmpty ? "No plugins in the hub yet." : "No plugins match.",

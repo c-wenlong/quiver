@@ -245,7 +245,7 @@ private struct PathRow: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
-                Text("In use: \(abbreviated(running)). \(hint)")
+                Text("In use: \(displayPath(running)). \(hint)")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .lineLimit(1).truncationMode(.middle)
                     .help(running)

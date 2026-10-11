@@ -338,10 +338,3 @@ private struct ChangedOnDiskBanner: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.warning.opacity(0.4), lineWidth: 1))
     }
 }
-
-/// A path with the home folder written as `~`.
-func displayPath(_ url: URL) -> String {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let path = url.path
-    return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
-}
