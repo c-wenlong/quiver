@@ -118,7 +118,7 @@ final class AppModel {
             let harnesses = try await swe.harnesses(withUsage: false)
             let shellPath = await LoginShell.cachedEnvironment()["PATH"] ?? ""
             return Set(ProviderDetection.installed(
-                sweHarnesses: Set(harnesses.map(\.name)),
+                sweHarnesses: ProviderDetection.installedHarnesses(harnesses),
                 commandExists: { ProviderDetection.commandExists($0, path: shellPath) },
                 pathExists: { FileManager.default.fileExists(atPath: $0) }))
         })
