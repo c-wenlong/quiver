@@ -220,9 +220,6 @@ class ListUsageJsonTest(unittest.TestCase):
         self.assertIsNone(rows["claude"]["rate_limit"]["plan_type"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ExcludeSkipsTheFetcherTest(unittest.TestCase):
     """--exclude must keep a provider from being asked at all, refresh or not.
@@ -273,3 +270,7 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
     def test_table_refresh_never_asks_an_excluded_provider(self):
         asked = self.run_list("--usage", "-r", "--exclude=claude")
         self.assertEqual(asked, [{"codex", "devin"}])
+
+
+if __name__ == "__main__":
+    unittest.main()
