@@ -293,7 +293,9 @@ private struct SpendDonut: View {
                 .frame(width: 104, height: 104)
                 VStack(alignment: .leading, spacing: 5) {
                     if parts.isEmpty {
-                        Text("No usage yet.").font(.caption).foregroundStyle(.secondary)
+                        Text((slice?.byHarness.values.contains { $0.totalTokens > 0 } ?? false)
+                             ? "Every provider with usage is hidden in Settings." : "No usage yet.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(parts, id: \.harness) { part in
                         HStack(spacing: 6) {

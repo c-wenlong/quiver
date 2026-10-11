@@ -181,7 +181,9 @@ private struct GreenSwitch: View {
             ZStack(alignment: configuration.isOn ? .trailing : .leading) {
                 Capsule().fill(configuration.isOn ? Theme.accentFill : Theme.usageTrack)
                     .overlay(Capsule().strokeBorder(Theme.border, lineWidth: configuration.isOn ? 0 : 1))
-                Circle().fill(.white).padding(3).shadow(color: .black.opacity(0.15), radius: 1, y: 1)
+                // A fixed knob, so the alignment moves it end to end.
+                Circle().fill(.white).frame(width: 18, height: 18).padding(3)
+                    .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
             }
             .frame(width: 40, height: 24)
             .animation(.easeOut(duration: 0.15), value: configuration.isOn)

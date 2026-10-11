@@ -70,6 +70,13 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         #expect(found == ["claude", "codex", "devin", "zcode", "qoder", "qoder-cn", "ark-coding-plan", "ark-agent-plan"])
     }
 
+    @Test func aListedButUninstalledHarnessDoesNotCount() async throws {
+        let runner = FakeRunner(.init(status: 0, stdout: Data(#"{"schema": 1, "data": \#(harnessesJSON)}"#.utf8), stderr: ""))
+        let harnesses = try await SweClient(runner: runner).harnesses(withUsage: false)
+        // opencode is listed with installed: false; a missing flag (older swe) counts as installed.
+        #expect(ProviderDetection.installedHarnesses(harnesses) == ["codex", "claude", "goose"])
+    }
+
     @Test func nothingFoundWhenNothingIsThere() {
         let found = ProviderDetection.installed(sweHarnesses: [], commandExists: { _ in false },
                                                 pathExists: { _ in false }, home: home)

@@ -76,6 +76,12 @@ public enum ProviderDetection {
         }.map(\.id)
     }
 
+    /// Names of the harnesses `swe list` says are installed. Older swe lists
+    /// only installed ones and has no flag, so a missing flag counts as yes.
+    public static func installedHarnesses(_ harnesses: [Harness]) -> Set<String> {
+        Set(harnesses.filter { $0.installed ?? true }.map(\.name))
+    }
+
     /// Whether `command` is an executable in one of `path`'s directories.
     public static func commandExists(_ command: String, path: String) -> Bool {
         path.split(separator: ":").contains { directory in
