@@ -38,8 +38,12 @@ public struct SweClient: Sendable {
         self.runner = runner
     }
 
-    public func harnesses(withUsage usage: Bool) async throws -> [Harness] {
-        let args = usage ? ["list", "--usage", "--json"] : ["list", "--json"]
+    /// `excludingUsage` lists those harnesses without polling their usage.
+    public func harnesses(withUsage usage: Bool, excludingUsage excluded: [String] = []) async throws -> [Harness] {
+        var args = usage ? ["list", "--usage", "--json"] : ["list", "--json"]
+        if usage && !excluded.isEmpty {
+            args.append("--exclude=" + excluded.joined(separator: ","))
+        }
         let data: HarnessList = try await call(args)
         return data.harnesses
     }

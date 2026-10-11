@@ -27,7 +27,8 @@ import Testing
         // swe's "—" placeholder means no plan, not a plan called "—".
         #expect(model.rows[0].limit.planType == "teams")
         #expect(model.rows[1].limit.planType == nil)
-        #expect(runner.calls == [["list", "--usage", "--json"]])
+        // Claude and Codex are fetched per account by the app; swe must not poll them too.
+        #expect(runner.calls == [["list", "--usage", "--json", "--exclude=claude,codex"]])
     }
 
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {

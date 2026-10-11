@@ -15,7 +15,7 @@ public final class OtherLimitsModel {
     }
 
     /// Covered by Accounts, one card per signed-in account.
-    static let ownAccounts: Set<String> = ["claude", "codex"]
+    static let ownAccounts = ["claude", "codex"]
 
     public private(set) var rows: [Row] = []
     /// Why there is nothing to show, when that is not simply "nothing starred".
@@ -28,7 +28,7 @@ public final class OtherLimitsModel {
 
     public func load() async {
         do {
-            rows = try await swe.harnesses(withUsage: true).compactMap { harness in
+            rows = try await swe.harnesses(withUsage: true, excludingUsage: Self.ownAccounts).compactMap { harness in
                 guard !Self.ownAccounts.contains(harness.name), let limit = harness.rateLimit else { return nil }
                 return Row(name: harness.name, limit: limit)
             }

@@ -56,7 +56,7 @@ remembering CLI commands.
   and expire stale readings instead of showing them as current
 - [x] Account cards with bars, plan badge, reset time and "fetched N min ago"
 - [x] Menu bar panel shows the same bars
-- [ ] Ask `swe` only for the harnesses Quiver has no account for, so Claude and Codex are not polled twice
+- [x] Ask `swe` only for the harnesses Quiver has no account for (`--exclude`, #131), so Claude and Codex are not polled twice
 
 ### M3. Overview
 - [ ] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
