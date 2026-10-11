@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import QuiverCore
@@ -25,6 +26,8 @@ final class AppModel {
         didSet {
             UserDefaults.standard.set(swePath, forKey: SweLocation.defaultsKey)
             swe = Self.client(for: swePath)
+            others = OtherLimitsModel(swe: swe)
+            Task { await others.load() }
         }
     }
 
@@ -34,6 +37,10 @@ final class AppModel {
     }
 
     let accounts: AccountsModel
+    /// Limits of the harnesses with no Quiver account, from swe.
+    private(set) var others: OtherLimitsModel
+    /// Every limit together: the status item, notifications and widgets.
+    let limits: LimitsMonitor
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
     let agentsMd = AgentsModel()
     /// Nil when the ledger database could not be opened; `overviewError` says why.
@@ -48,13 +55,16 @@ final class AppModel {
     init() {
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
         swePath = saved
-        swe = Self.client(for: saved)
+        let client = Self.client(for: saved)
+        swe = client
+        others = OtherLimitsModel(swe: client)
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
 
         // Everything Quiver keeps lives under ~/.quiver (see AGENTS.md).
         let home = FileManager.default.homeDirectoryForCurrentUser
         let quiver = home.appending(path: ".quiver")
+        limits = LimitsMonitor(quiver: quiver)
         let usage = UsageService(
             transport: URLSessionTransport(),
             secrets: KeychainCLI(),
@@ -90,14 +100,57 @@ final class AppModel {
 
     private var refreshing: Task<Void, Never>?
 
-    /// Keep the ledger scanned while the app runs. One loop serves both the
-    /// window and the menu bar.
+    private var watchers: [Task<Void, Never>] = []
+
+    /// Keep the ledger scanned and every limit fetched while the app runs.
+    /// One set of loops serves the window, the menu bar and the widgets.
     func start() {
         if statusPolling == nil {
             statusPolling = Task { [serviceStatus] in await serviceStatus.keepFresh() }
         }
-        guard refreshing == nil, let overview else { return }
-        refreshing = Task { await overview.keepFresh() }
+        guard watchers.isEmpty else { return }
+        if let overview { refreshing = Task { await overview.keepFresh() } }
+        watchers = [
+            Task { await accounts.keepFresh() },
+            Task { [weak self] in
+                while !Task.isCancelled {
+                    await self?.others.load()
+                    try? await Task.sleep(for: .seconds(300))
+                }
+            },
+            // Limits change on a fetch; whether a window has reset changes
+            // with the clock, so look again every minute as well.
+            Task { [weak self] in
+                let changes = Observations { [weak self] in
+                    self.map { ($0.accounts.cards, $0.others.rows) }
+                }
+                for await _ in changes { self?.refreshLimits() }
+            },
+            Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    self?.refreshLimits()
+                }
+            },
+            Task { [weak self] in
+                let changes = Observations { [weak self] in
+                    self.map { ($0.overview?.activity, $0.overview?.recentModels, $0.limits.readings) }
+                }
+                for await _ in changes { self?.limits.writeWidgets(overview: self?.overview) }
+            },
+            // Notifications may be switched on or off in System Settings
+            // while Quiver is in the background.
+            Task { [weak self] in
+                await self?.limits.checkNotificationPermission()
+                for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+                    await self?.limits.checkNotificationPermission()
+                }
+            },
+        ]
+    }
+
+    private func refreshLimits() {
+        limits.update(LimitReading.all(cards: accounts.cards, others: others.rows, now: .now))
     }
 
     /// Keeps the Service status page and the menu bar line current.
