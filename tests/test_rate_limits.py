@@ -3746,6 +3746,33 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.on_demand["state"], "unlimited")
         self.assertEqual(info.plan_type, "team")
 
+    def test_slow_extras_end_before_the_callers_deadline(self):
+        from quiver.harness import rate_limits
+        from quiver.harness.rate_limits import _CURSOR_USAGE_URL
+
+        usage = copy.deepcopy(self._SAMPLE_RESPONSE)
+
+        def reply(request, **_):
+            if request.full_url == _CURSOR_USAGE_URL:
+                return usage
+            time.sleep(2)
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", Path(tmp) / "rate_limits_cache.json",
+        ), patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply), patch.dict(
+            "quiver.harness.rate_limits._FETCHERS", {"cursor": rate_limits._fetch_cursor}, clear=True,
+        ):
+            # The 3s extras budget is longer than this caller waits.
+            started = time.monotonic()
+            result = rate_limits.get_all_rate_limits(use_cache=False, tool_names={"cursor"}, deadline=0.6)
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(result["cursor"].used_percent, 100)
+
     def test_fetch_failure_reports_no_reading(self):
         from quiver.harness.rate_limits import _fetch_cursor
 

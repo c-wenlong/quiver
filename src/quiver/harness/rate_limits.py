@@ -1792,6 +1792,14 @@ _WEEK_SECONDS = 7 * 24 * 60 * 60
 # A slower extra is dropped rather than waited for.
 _CURSOR_EXTRAS_BUDGET = 3.0
 
+# The aggregator's cutoff (``time.monotonic()``) for the fetch running on
+# this thread, so a fetcher's optional calls can end before its caller stops
+# waiting. Unset outside ``get_all_rate_limits``.
+_fetch_cutoff = threading.local()
+# How long before that cutoff the optional calls are given up on, so the
+# reading is back in time.
+_EXTRAS_CUTOFF_MARGIN = 0.15
+
 # Where the Cursor editor keeps its session tokens, per platform. The
 # ``ItemTable`` row ``cursorAuth/accessToken`` is the same session JWT the
 # ``cursor-agent`` CLI stores in the macOS keychain, so either source works.
@@ -2146,8 +2154,12 @@ def _fetch_cursor() -> RateLimitInfo | None:
     for worker in workers:
         worker.start()
     data = _fetch_json(post(_CURSOR_USAGE_URL), on_401=_warn_cursor_401)
+    extras_end = started + _CURSOR_EXTRAS_BUDGET
+    cutoff = getattr(_fetch_cutoff, "at", None)
+    if cutoff is not None:
+        extras_end = min(extras_end, cutoff - _EXTRAS_CUTOFF_MARGIN)
     for worker in workers:
-        worker.join(max(0.0, started + _CURSOR_EXTRAS_BUDGET - time.monotonic()))
+        worker.join(max(0.0, extras_end - time.monotonic()))
     hard = extras.get(_CURSOR_HARD_LIMIT_URL)
     plan_info = extras.get(_CURSOR_PLAN_INFO_URL)
     info = _parse_cursor_usage(data) if isinstance(data, dict) else None
@@ -2635,7 +2647,11 @@ def get_all_rate_limits(
     fetched: dict[str, RateLimitInfo | None] = {}
     fetched_lock = threading.Lock()
 
+    limit = _RATE_LIMIT_FETCH_DEADLINE if deadline is None else deadline
+    cutoff = time.monotonic() + limit
+
     def fetch_one(tool_name: str, fetcher: Callable) -> None:
+        _fetch_cutoff.at = cutoff
         try:
             info = fetcher()
         except Exception:
@@ -2647,8 +2663,6 @@ def get_all_rate_limits(
         threading.Thread(target=fetch_one, args=item, daemon=True)
         for item in fetchers
     ]
-    limit = _RATE_LIMIT_FETCH_DEADLINE if deadline is None else deadline
-    cutoff = time.monotonic() + limit
     for worker in workers:
         worker.start()
     for worker in workers:
