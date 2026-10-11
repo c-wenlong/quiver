@@ -11,6 +11,11 @@ final class AppModel {
     private(set) var swe: SweClient
     var selection: AppSection? = .overview
 
+    /// Opens (or reopens) the main window. Captured from the window's scene,
+    /// because the menu bar panel lives outside SwiftUI's scene graph and
+    /// its own `openWindow` cannot reach the `Window` scene.
+    @ObservationIgnored var openMainWindow: (() -> Void)?
+
     /// The swe chosen in Settings; empty means whatever PATH finds.
     var swePath: String {
         didSet {

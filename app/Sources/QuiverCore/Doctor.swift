@@ -43,17 +43,26 @@ public enum Loadable<Value: Equatable & Sendable>: Equatable, Sendable {
 public final class DoctorModel {
     public private(set) var state: Loadable<DoctorReport> = .idle
     private let swe: SweClient
+    /// Bumped by each load; a reply from an older load is dropped, so a slow
+    /// earlier refresh cannot overwrite a newer one.
+    private var generation = 0
 
     public init(swe: SweClient) {
         self.swe = swe
     }
 
     public func load() async {
+        generation += 1
+        let mine = generation
         state = .loading
+        let next: Loadable<DoctorReport>
         do {
-            state = .loaded(try await swe.doctor())
+            next = .loaded(try await swe.doctor())
+        } catch is CancellationError {
+            return
         } catch {
-            state = .failed(error.localizedDescription)
+            next = .failed(error.localizedDescription)
         }
+        if mine == generation { state = next }
     }
 }

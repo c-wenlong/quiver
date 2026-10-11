@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MainWindow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         @Bindable var model = model
@@ -20,6 +21,9 @@ struct MainWindow: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } detail: {
             PageView(section: model.selection ?? .overview)
+        }
+        .onAppear {
+            model.openMainWindow = { [openWindow] in openWindow(id: "main") }
         }
     }
 }

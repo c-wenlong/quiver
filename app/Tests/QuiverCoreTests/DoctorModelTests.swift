@@ -49,3 +49,38 @@ import Testing
         #expect(runner.calls == [["doctor", "--json"]])
     }
 }
+
+/// Replies to each call in turn, after that call's delay.
+final class SequencedRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var replies: [(Duration, CommandResult)]
+
+    init(_ replies: [(Duration, CommandResult)]) { self.replies = replies }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let (delay, reply) = lock.withLock { replies.removeFirst() }
+        try await Task.sleep(for: delay)
+        return reply
+    }
+}
+
+@MainActor
+@Suite struct DoctorModelOverlapTests {
+    func report(_ check: String) -> CommandResult {
+        .init(status: 1, stdout: Data(#"{"schema":1,"data":{"ok":false,"findings":[{"check":"\#(check)","severity":"warning","message":"m","fix":null}]}}"#.utf8), stderr: "")
+    }
+
+    @Test func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
+        let runner = SequencedRunner([(.milliseconds(400), report("old")), (.milliseconds(10), report("new"))])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        async let first: Void = model.load()
+        try? await Task.sleep(for: .milliseconds(50))
+        async let second: Void = model.load()
+        _ = await (first, second)
+        guard case .loaded(let report) = model.state else {
+            Issue.record("expected loaded, got \(model.state)")
+            return
+        }
+        #expect(report.findings.map(\.check) == ["new"])
+    }
+}

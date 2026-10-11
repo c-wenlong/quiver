@@ -27,4 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         true
     }
+
+    /// The menu bar item outlives the window. A single-`Window` SwiftUI app
+    /// otherwise quits when that window closes, taking the menu bar with it.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 }
