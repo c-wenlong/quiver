@@ -354,6 +354,9 @@ private struct HubBrowser: View {
     @Bindable var model: SkillsModel
 
     var body: some View {
+        // Outside the switch: when the reload after a failed fix also fails,
+        // the reason the fix failed must stay on screen.
+        if let error = model.hubError { ErrorCard(message: error) }
         switch model.hub {
         case .idle, .loading:
             ProgressView().frame(maxWidth: .infinity)
@@ -378,7 +381,7 @@ private struct HubBrowser: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Theme.gutter, alignment: .top)],
                           spacing: Theme.gutter) {
                     ForEach(plugins) { plugin in
-                        PluginCard(plugin: plugin)
+                        PluginCard(plugin: plugin, model: model)
                     }
                 }
             }
@@ -388,7 +391,9 @@ private struct HubBrowser: View {
 
 private struct PluginCard: View {
     var plugin: HubPlugin
+    var model: SkillsModel
     @State private var copied = false
+    @State private var confirming = false
 
     var body: some View {
         Card {
@@ -429,14 +434,42 @@ private struct PluginCard: View {
                 Spacer(minLength: 0)
             }
             if !plugin.fixes.isEmpty {
-                Button(copied ? "Copied" : "Copy fix command", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                    copyToPasteboard(plugin.fixes.joined(separator: "\n"))
-                    copied = true
+                HStack(spacing: 8) {
+                    if !plugin.runnableFixes.isEmpty {
+                        let running = model.fixingPlugin == plugin.id
+                        Button { confirming = true } label: {
+                            if running {
+                                HStack(spacing: 6) { ProgressView().controlSize(.mini); Text("Fixing") }
+                            } else {
+                                Label("Fix", systemImage: "wrench.and.screwdriver")
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(model.fixingPlugin != nil)
+                        .help(runnableText)
+                        .confirmationDialog("Fix \(plugin.name)?", isPresented: $confirming) {
+                            Button("Run") { Task { await model.fixHub(plugin) } }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("swe checks the gap is still there, then runs:\n\n\(runnableText)")
+                        }
+                    }
+                    if !plugin.manualFixes.isEmpty {
+                        // An edit by hand (codex has no enable command): nothing to run.
+                        Button(copied ? "Copied" : "Copy command", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                            copyToPasteboard(plugin.manualFixes.joined(separator: "\n"))
+                            copied = true
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .help(plugin.manualFixes.joined(separator: "\n"))
+                    }
                 }
-                .buttonStyle(SecondaryButtonStyle())
-                .help(plugin.fixes.joined(separator: "\n"))
             }
         }
+    }
+
+    private var runnableText: String {
+        plugin.runnableFixes.compactMap(\.fix).joined(separator: "\n")
     }
 
     private var contents: String {
