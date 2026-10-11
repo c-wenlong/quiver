@@ -70,7 +70,10 @@ public final class OtherLimitsModel {
                 harnesses = try await swe.harnesses(withUsage: true)
             }
             rows = harnesses.compactMap { harness in
-                guard !Self.ownAccounts.contains(harness.name), let limit = harness.rateLimit else { return nil }
+                // Starred only: swe polls just those, but can still return a
+                // cached reading for one since unstarred.
+                guard !Self.ownAccounts.contains(harness.name), harness.state == .starred,
+                      let limit = harness.rateLimit else { return nil }
                 return Row(name: harness.name, limit: limit, displayName: harness.displayName, command: harness.command,
                            cliInstalled: harness.installed)
             }
