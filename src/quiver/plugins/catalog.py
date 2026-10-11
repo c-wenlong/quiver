@@ -85,6 +85,7 @@ class View:
     enabled: dict             # "plugin@marketplace" -> bool
     cache: Path | None        # <cache>/<marketplace>/<plugin>/<version>
     installs_known: bool = True
+    scopes: dict = field(default_factory=dict)   # claude: ref -> every scope with a record
 
 
 def _err(errors: list, harness: str, detail: str, marketplace: str | None = None) -> None:
@@ -262,25 +263,29 @@ def read_claude(home: Path, errors: list) -> View | None:
         markets[name] = _read_manifest(
             Market(name, stype, _public(location), root), candidates, "claude", errors)
 
-    installs = {}
+    installs, scopes = {}, {}
     for ref, rows in records.items():
         if isinstance(rows, dict):
             rows = [rows]
         if not isinstance(ref, str) or not isinstance(rows, list):
             continue
         # The same rule plugin_drift uses: a record counts when it names its
-        # copy. One record per scope; the user scope loads everywhere, so it
-        # wins over a project install.
+        # copy. There is one record per scope, and only the user scope loads
+        # in every project; a project or local install is reported in
+        # `scopes` but is not "installed" here, because `claude plugin
+        # install` (user scope by default) would still have work to do.
         rows = [r for r in rows if isinstance(r, dict)
                 and isinstance(r.get("installPath"), str) and r["installPath"]]
-        if not rows:
-            continue
-        row = next((r for r in rows if r.get("scope") == "user"), rows[0])
-        installs[ref] = Install(
-            str(row["version"]) if row.get("version") else None,
-            _expand_root(row["installPath"], home),
-            row.get("scope") if isinstance(row.get("scope"), str) else None)
-    return View("claude", markets, installs, enabled, base / "plugins" / "cache")
+        scope_of = [r.get("scope") if isinstance(r.get("scope"), str) else "user" for r in rows]
+        if rows:
+            scopes[ref] = sorted(set(scope_of))
+        row = next((r for r, scope in zip(rows, scope_of) if scope == "user"), None)
+        if row is not None:
+            installs[ref] = Install(str(row["version"]) if row.get("version") else None,
+                                    _expand_root(row["installPath"], home), "user")
+    view = View("claude", markets, installs, enabled, base / "plugins" / "cache")
+    view.scopes = scopes
+    return view
 
 
 def read_codex(home: Path, errors: list) -> View | None:
@@ -400,6 +405,7 @@ class _Record:
     harnesses: dict = field(default_factory=dict)   # harness -> Market
     listings: list = field(default_factory=list)    # (origin, Market) with entries
     hub: Path | None = None
+    hub_origins: set = field(default_factory=set)   # listings read from the hub folder
     plugins: dict = field(default_factory=dict)     # name -> _Plugin
 
     def plugin(self, name: str) -> _Plugin:
@@ -470,7 +476,7 @@ def _harness_state(view: View, record: _Record, plugin: _Plugin, ref: str) -> di
     if not view.installs_known:
         copy = newest(copy_paths)
         return {"available": available, "installed": None, "enabled": None,
-                "version": copy.name if copy else None, "scope": None,
+                "version": copy.name if copy else None, "scopes": [],
                 "path": str(copy) if copy else None,
                 "copies": [str(p) for p in copy_paths]}
     inst = view.installs.get(ref)
@@ -492,7 +498,7 @@ def _harness_state(view: View, record: _Record, plugin: _Plugin, ref: str) -> di
         "installed": inst is not None,
         "enabled": view.enabled.get(ref) if inst is not None else None,
         "version": inst.version if inst is not None else None,
-        "scope": inst.scope if inst is not None else None,
+        "scopes": view.scopes.get(ref, []),
         "path": str(path) if path is not None else None,
         "copies": [str(p) for p in copy_paths],
     }
@@ -556,6 +562,7 @@ def build_catalog(home: Path | None = None) -> dict:
                 rec.listings.append((harness, market))
             if market.source_type == "directory" and is_hub(market.root):
                 rec.hub = market.root
+                rec.hub_origins.add(harness)
 
     # A hub marketplace no harness has registered still belongs on the page:
     # it is what `swe skills hub` shows, with "marketplace not added".
@@ -572,6 +579,7 @@ def build_catalog(home: Path | None = None) -> dict:
             rec.hub = market.root
         if not rec.listings:
             rec.listings.append(("hub", market))
+            rec.hub_origins.add("hub")
 
     for rec in records.values():
         for origin, market in rec.listings:
@@ -588,7 +596,7 @@ def build_catalog(home: Path | None = None) -> dict:
     # Installed but not listed (an unreadable manifest, or a marketplace no
     # longer registered): still shown, so nothing installed goes missing.
     for view in views.values():
-        for ref in view.installs:
+        for ref in [*view.installs, *view.scopes]:
             name, _, market = ref.rpartition("@")
             if name and market:
                 record(market).plugin(name)
@@ -651,9 +659,12 @@ def _render_plugin(rec: _Record, plugin: _Plugin, views: dict, hub_drift: dict,
     mcp = mcp_server_count(primary) or mcp_server_count(source)
     if mcp:
         components = {**components, "mcp_servers": mcp}
-    drift = None
-    if rec.hub is not None and source is not None:
-        drift = hub_drift.get(_real(source))
+    # The hub cards key their drift by the plugin's folder in ~/.quiver,
+    # which is not `source` when another harness registered a clone of the
+    # same marketplace under the same name.
+    hub_source = next((plugin.local[o] for o in (*HARNESSES, "hub")
+                       if o in rec.hub_origins and o in plugin.local), None)
+    drift = hub_drift.get(_real(hub_source)) if hub_source is not None else None
     return {
         "name": plugin.name,
         "ref": ref,

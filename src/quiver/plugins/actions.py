@@ -19,6 +19,7 @@ changed, or nothing is written and the error says what to edit by hand.
 from __future__ import annotations
 
 import copy
+import fcntl
 import json
 import os
 import re
@@ -27,9 +28,11 @@ import stat
 import subprocess
 import tempfile
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 
 from quiver.find.plugin_drift import _harness_env
+from quiver.paths import cache_dir_for
 from quiver.plugins.catalog import ACTIONABLE, READERS
 
 ACTIONS = ("install", "uninstall", "enable", "disable")
@@ -223,13 +226,42 @@ def _edit_enabled(text: str, ref: str, value: bool) -> str | None:
     return "".join(lines)
 
 
+@contextmanager
+def _config_lock(home: Path):
+    """Serialise config.toml edits across swe processes.
+
+    ``os.replace`` stops a reader seeing half a file, not two writers each
+    replacing the file with their own edit of the same original: the second
+    would silently undo the first. The lock lives in ~/.quiver/cache, not
+    beside config.toml, so nothing of swe's is left in ~/.codex.
+    """
+    lock = cache_dir_for(home) / "codex-config.lock"
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock, "a")
+    except OSError as exc:
+        raise ActionError(f"couldn't open {lock}: {exc.strerror or exc}") from None
+    with handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def set_codex_enabled(home: Path, ref: str, value: bool) -> Path:
     """Set ``[plugins."<ref>"] enabled`` in config.toml; return the file.
 
-    The file is written through a temporary sibling and ``os.replace``, so a
-    reader sees the old file or the new one, never half of each. A symlinked
-    config.toml (dotfiles) is edited at its target, and keeps its mode.
+    The file is read, checked and written under ``_config_lock``, through a
+    temporary sibling and ``os.replace``, so a reader sees the old file or
+    the new one, never half of each. A symlinked config.toml (dotfiles) is
+    edited at its target, and keeps its mode.
     """
+    with _config_lock(home):
+        return _set_codex_enabled(home, ref, value)
+
+
+def _set_codex_enabled(home: Path, ref: str, value: bool) -> Path:
     target = Path(os.path.realpath(home / ".codex" / "config.toml"))
     by_hand = manual_edit(ref, value)
     try:
@@ -241,6 +273,8 @@ def set_codex_enabled(home: Path, ref: str, value: bool) -> Path:
     plugins = before.get("plugins")
     if not isinstance(plugins, dict) or not isinstance(plugins.get(ref), dict):
         raise ActionError(f"{ref} has no [plugins] table in {target}; is it installed?")
+    if plugins[ref].get("enabled") is value:
+        return target   # another swe got here first while this one waited
 
     edited = _edit_enabled(text, ref, value)
     expected = copy.deepcopy(before)

@@ -156,8 +156,8 @@ class PluginsTest(_CatalogHome, unittest.TestCase):
         self.assertEqual(lsp["homepage"], "https://example.com/lsp")
         claude = lsp["harnesses"]["claude"]
         self.assertEqual((claude["available"], claude["installed"], claude["enabled"],
-                          claude["version"], claude["scope"]),
-                         (True, True, False, "1.0.0", "user"))
+                          claude["version"], claude["scopes"]),
+                         (True, True, False, "1.0.0", ["user"]))
         codex = lsp["harnesses"]["codex"]
         self.assertEqual((codex["available"], codex["installed"], codex["enabled"]),
                          (True, False, None))
@@ -217,6 +217,29 @@ class PluginsTest(_CatalogHome, unittest.TestCase):
         self.assertEqual(tool["drift"]["codex"]["state"], "stale")
         self.assertEqual(tool["drift"]["codex"]["id"], "codex:stale:tool@mk")
         self.assertIsNone(self.plug("lsp@official")["drift"])
+
+    def test_a_project_only_claude_install_is_not_installed(self):
+        self.installed["plugins"]["lsp@official"] = [
+            {"scope": "project", "projectPath": "/work/app",
+             "installPath": str(self.home / ".claude" / "plugins" / "cache" / "official"
+                                / "lsp" / "1.0.0"), "version": "1.0.0"}]
+        self._write_claude()
+        claude = self.plug("lsp@official")["harnesses"]["claude"]
+        self.assertFalse(claude["installed"])
+        self.assertEqual(claude["scopes"], ["project"])
+        self.assertIsNone(claude["path"])
+
+    def test_hub_drift_found_when_another_harness_registered_a_clone(self):
+        clone = self.home / ".claude" / "plugins" / "marketplaces" / "mk"
+        _write(clone / ".claude-plugin" / "marketplace.json", json.dumps(self.manifest))
+        (clone / "tool").mkdir()
+        self.known["mk"] = {"source": {"source": "github", "repo": "me/mk"},
+                            "installLocation": str(clone)}
+        self._write_claude()
+        tool = self.plug("tool@mk")
+        self.assertEqual(tool["source_path"], str(clone / "tool"))
+        self.assertIsNotNone(tool["drift"])
+        self.assertIn("codex", tool["drift"])
 
     def test_codex_install_record_is_the_config_table(self):
         tool = self.plug("tool@mk")
@@ -328,6 +351,18 @@ class CatalogCliTest(_CatalogHome, unittest.TestCase):
         result = run_swe(self.home, "plugins", "catalog", "official")
         self.assertIn("lsp", result.stdout)
         self.assertIn("Language server", result.stdout)
+
+    def test_hostile_marketplace_names_cannot_drive_the_terminal(self):
+        evil = "mk\x1b]52;c;aGk=\x07"
+        self.manifest["name"] = evil
+        self._write_manifest()
+        self.known.pop("mk")
+        self._write_claude()
+        self._write_codex(register=False)
+        result = run_swe(self.home, "plugins", "catalog", evil)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("\x1b]52", result.stdout)
+        self.assertNotIn("\x07", result.stdout)
 
     def test_help(self):
         for args in (("plugins", "--help"), ("plugins", "help"), ("help", "plugins")):

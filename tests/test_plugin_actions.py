@@ -146,6 +146,13 @@ class ClaudeTest(_ActionHome, unittest.TestCase):
         self.assertNotIn("CLAUDE_CONFIG_DIR", env)
         self.assertNotIn("CODEX_HOME", env)
 
+    def test_a_project_only_install_still_installs_for_the_user(self):
+        self.installed["plugins"]["tool@mk"][0]["scope"] = "project"
+        self._write_claude()
+        run = FakeCli()
+        self.act("install", run=run)
+        self.assertEqual(run.calls, [["claude", "plugin", "install", "tool@mk"]])
+
     def test_bad_refs_and_harnesses_run_nothing(self):
         run = FakeCli()
         for ref in ("-rf@mk", "tool", "tool@", "@mk", "a b@mk", "tool@mk;ls"):
@@ -257,6 +264,29 @@ class CodexTomlEditTest(_ActionHome, unittest.TestCase):
         with self.assertRaisesRegex(ActionError, "couldn't write"):
             set_codex_enabled(self.home, "tool@mk", False)
         self.assertEqual([p.name for p in parent.iterdir() if p.name.startswith(".config")], [])
+
+    def test_edits_wait_for_another_swe_holding_the_lock(self):
+        import fcntl
+        import threading
+        import time
+
+        from quiver.paths import cache_dir_for
+
+        self.write('[plugins."tool@mk"]\nenabled = true\n')
+        lock = cache_dir_for(self.home) / "codex-config.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            worker = threading.Thread(target=set_codex_enabled,
+                                      args=(self.home, "tool@mk", False))
+            worker.start()
+            time.sleep(0.3)
+            self.assertTrue(worker.is_alive())
+            self.assertIn("enabled = true", self.config().read_text())
+            fcntl.flock(held.fileno(), fcntl.LOCK_UN)
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertIn("enabled = false", self.config().read_text())
 
     def test_edit_text_returns_none_without_the_table(self):
         self.assertIsNone(_edit_enabled('[plugins."x@y"]\nenabled = true\n', "tool@mk", True))

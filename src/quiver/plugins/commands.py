@@ -135,7 +135,7 @@ def _render_marketplaces(data: dict) -> None:
         sources = sorted({h["source_type"] for h in market["harnesses"].values()})
         table.add_row({
             "name": sanitize(market["name"]) + (" (hub)" if market["hub"] else ""),
-            "source": ", ".join(sources) or "-",
+            "source": sanitize(", ".join(sources)) or "-",
             "in": ", ".join(market["harnesses"]) or "nowhere",
             "plugins": len(market["plugins"]),
             "installed": _installed_counts(market, harnesses),
@@ -174,14 +174,14 @@ def _render_plugins(data: dict, market: dict) -> None:
         for harness in harnesses:
             row[harness] = _state_cell(plugin["harnesses"][harness])
         table.add_row(row)
-    where = ", ".join(f"{h} {m['source_type']} {sanitize(m['location'])}"
-                      for h, m in market["harnesses"].items()) or "registered nowhere"
+    where = sanitize(", ".join(f"{h} {m['source_type']} {m['location']}"
+                               for h, m in market["harnesses"].items()) or "registered nowhere")
     print(f"\n{c('bold', sanitize(market['name']))}  {c('dim', where)}\n")
     for line in table.render():
         print(f"  {line}")
     _render_errors([e for e in data["errors"] if e["marketplace"] == market["name"]])
     print(f"\n  {c('dim', 'on/off: installed and enabled or disabled · available: listed, not installed')}")
-    print(f"  {c('dim', 'swe plugins install <plugin>@' + market['name'] + ' --harness=claude')}\n")
+    print(f"  {c('dim', 'swe plugins install <plugin>@' + sanitize(market['name']) + ' --harness=claude')}\n")
 
 
 def _render_errors(errors: list) -> None:
