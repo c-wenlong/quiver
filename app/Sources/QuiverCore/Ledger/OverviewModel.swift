@@ -59,12 +59,23 @@ public struct ModelShare: Sendable, Equatable, Identifiable {
     public var totals: UsageTotals
     /// Of the period's tokens, 0...1.
     public var share: Double
+
+    public init(model: String, totals: UsageTotals, share: Double) {
+        self.model = model
+        self.totals = totals
+        self.share = share
+    }
 }
 
 public struct DayRow: Sendable, Equatable, Identifiable {
     public var id: Date { day }
     public var day: Date
     public var totals: UsageTotals
+
+    public init(day: Date, totals: UsageTotals) {
+        self.day = day
+        self.totals = totals
+    }
 }
 
 public struct AccountRow: Sendable, Equatable, Identifiable {
@@ -105,6 +116,9 @@ public final class OverviewModel {
     public private(set) var spend: [SpendSlice]?
     /// Days of the last half year with their token totals, for the heatmap.
     public private(set) var activity: [DayRow] = []
+    /// The last 30 days' models, largest first, whatever the period picker
+    /// says. For the widgets.
+    public private(set) var recentModels: [ModelShare] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
     /// Successful scans so far; other views reload their ledger figures when it changes.
@@ -171,12 +185,17 @@ public final class OverviewModel {
                 in: OverviewPeriod.thirtyDays.range(now: now, calendar: calendar))),
         ]
         let halfYear = DateInterval(start: calendar.date(byAdding: .day, value: -182, to: todayStart) ?? todayStart, end: now)
-        let activity = Self.combineDays(await ledger.daily(in: halfYear, calendar: calendar))
+        let halfYearRows = await ledger.daily(in: halfYear, calendar: calendar)
+        let activity = Self.combineDays(halfYearRows)
+        let thirtyDays = OverviewPeriod.thirtyDays.range(now: now, calendar: calendar)
+        // The same rolling range as the Overview's "30 days", to the minute.
+        let recentModels = Self.models(await ledger.daily(in: thirtyDays, calendar: calendar))
 
         if mySummary == summaryGeneration { self.summary = summary }
         guard mine == loadGeneration else { return }
         self.spend = spend
         self.activity = activity
+        self.recentModels = recentModels
         updatedAt = now
     }
 
@@ -200,13 +219,8 @@ public final class OverviewModel {
         var total = UsageTotals()
         for value in harnesses.values { total.add(value) }
         let grand = Double(max(total.totalTokens, 1))
-        var byModel: [String: UsageTotals] = [:]
         var modelsByHarness: [String: Set<String>] = [:]
-        for row in daily {
-            byModel[row.model, default: UsageTotals()].add(row.totals)
-            modelsByHarness[row.harness, default: []].insert(row.model)
-        }
-        let modelGrand = Double(max(byModel.values.reduce(0) { $0 + $1.totalTokens }, 1))
+        for row in daily { modelsByHarness[row.harness, default: []].insert(row.model) }
         return OverviewSummary(
             period: period,
             range: range,
@@ -219,9 +233,17 @@ public final class OverviewModel {
             accounts: accounts
                 .map { AccountRow(home: $0.key, label: accountLabel($0.key), totals: $0.value) }
                 .sorted { $0.totals.costUSD > $1.totals.costUSD },
-            models: byModel
-                .map { ModelShare(model: $0.key, totals: $0.value, share: Double($0.value.totalTokens) / modelGrand) }
-                .sorted { ($0.totals.totalTokens, $1.model) > ($1.totals.totalTokens, $0.model) })
+            models: Self.models(daily))
+    }
+
+    /// Each model's share of the rows' tokens, largest first.
+    static func models(_ rows: [DailyUsage]) -> [ModelShare] {
+        var byModel: [String: UsageTotals] = [:]
+        for row in rows { byModel[row.model, default: UsageTotals()].add(row.totals) }
+        let grand = Double(max(byModel.values.reduce(0) { $0 + $1.totalTokens }, 1))
+        return byModel
+            .map { ModelShare(model: $0.key, totals: $0.value, share: Double($0.value.totalTokens) / grand) }
+            .sorted { ($0.totals.totalTokens, $1.model) > ($1.totals.totalTokens, $0.model) }
     }
 
     /// Reload on a timer until cancelled, scanning for new usage each time.

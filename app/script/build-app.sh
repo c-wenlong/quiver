@@ -3,7 +3,9 @@
 #
 #   app/script/build-app.sh [debug|release]   # default: release
 #
-# Writes app/build/Quiver.app. Open it with `open app/build/Quiver.app`.
+# Writes app/build/Quiver.app with the widget extension embedded at
+# Contents/PlugIns/QuiverWidgets.appex. Open it with
+# `open app/build/Quiver.app`.
 #
 # Signing: macOS remembers privacy grants (Desktop and Documents access,
 # Accessibility) against the app's signing identity. An ad-hoc signature
@@ -19,6 +21,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
 swift build -c "$config" --product Quiver
+swift build -c "$config" --product QuiverWidgets
 bindir="$(swift build -c "$config" --show-bin-path)"
 bin="$bindir/Quiver"
 
@@ -58,6 +61,32 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# The widget extension: SwiftPM's executable in an .appex. Its @main
+# WidgetBundle is the whole entry point, so no Xcode project is needed.
+appex="$bundle/Contents/PlugIns/QuiverWidgets.appex"
+mkdir -p "$appex/Contents/MacOS"
+cp "$bindir/QuiverWidgets" "$appex/Contents/MacOS/QuiverWidgets"
+cat > "$appex/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>QuiverWidgets</string>
+  <key>CFBundleDisplayName</key><string>Quiver</string>
+  <key>CFBundleIdentifier</key><string>com.cwenlong.quiver.widgets</string>
+  <key>CFBundleExecutable</key><string>QuiverWidgets</string>
+  <key>CFBundlePackageType</key><string>XPC!</string>
+  <key>CFBundleShortVersionString</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${version}</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
+  <key>NSExtension</key>
+  <dict>
+    <key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+
 identity="${QUIVER_SIGN_IDENTITY:-}"
 if [ -z "$identity" ]; then
   # Optional: a failed lookup falls back to ad-hoc rather than stopping the
@@ -72,8 +101,9 @@ if [ -z "$identity" ]; then
 fi
 if [ -z "$identity" ] || [ "$identity" = "-" ]; then
   echo "build-app: ad-hoc signing; privacy grants won't survive a rebuild" >&2
-  codesign --force --sign - "$bundle" >/dev/null
-else
-  codesign --force --sign "$identity" "$bundle" >/dev/null
+  identity="-"
 fi
+# Inside out: the extension with its sandbox, then the app around it.
+codesign --force --sign "$identity" --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
+codesign --force --sign "$identity" "$bundle" >/dev/null
 echo "$bundle"

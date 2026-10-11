@@ -1,6 +1,7 @@
 import AppKit
 import QuiverCore
 import SwiftUI
+import UserNotifications
 
 struct QuiverApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
@@ -17,12 +18,19 @@ struct QuiverApp: App {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         statusItem = StatusItemController(model: AppModel.shared)
         AppModel.shared.start()
+    }
+
+    /// Show limit notifications even while Quiver's window is in front.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
+        async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 
     /// Both quit paths (the app menu and the panel's Quit) come through

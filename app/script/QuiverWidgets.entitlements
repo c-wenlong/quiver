@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macOS loads only sandboxed app extensions. -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <!-- Read the snapshot the app writes, and nothing else under ~/.quiver. -->
+  <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+  <array>
+    <string>/.quiver/cache/widgets/</string>
+  </array>
+</dict>
+</plist>
