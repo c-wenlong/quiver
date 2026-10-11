@@ -78,6 +78,14 @@ func fixture(_ name: String) throws -> Data {
         }
     }
 
+    @Test func aFailureWithOnlyStdoutStillSaysWhy() async throws {
+        // Older swe printed refusals to stdout.
+        let client = SweClient(runner: FakeRunner(.init(status: 1, stdout: Data("\u{1B}[31mUnknown flag: --bogus\u{1B}[0m\n".utf8), stderr: "")))
+        await #expect(throws: SweError.commandFailed(status: 1, message: "Unknown flag: --bogus")) {
+            _ = try await client.harnesses(withUsage: false)
+        }
+    }
+
     @Test func errorMessagesCarryNoTerminalColourCodes() async throws {
         let client = SweClient(runner: FakeRunner(.init(status: 1, stdout: Data(), stderr: "\u{1B}[31mboom\u{1B}[0m")))
         await #expect(throws: SweError.commandFailed(status: 1, message: "boom")) {

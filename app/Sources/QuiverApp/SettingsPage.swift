@@ -22,6 +22,15 @@ struct SettingsPage: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Card(title: "Terminal") {
+                @Bindable var app = app
+                Picker("Open accounts in", selection: $app.terminal) {
+                    ForEach(TerminalApp.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Text("Used by Terminal and Sign in on the Accounts page.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .onAppear { draft = app.swePath }
     }
@@ -38,6 +47,17 @@ struct SettingsPage: View {
         if panel.runModal() == .OK, let url = panel.url {
             draft = url.path
             apply()
+        }
+    }
+}
+
+extension TerminalApp {
+    var title: String {
+        switch self {
+        case .terminal: "Terminal"
+        case .iterm: "iTerm"
+        case .ghostty: "Ghostty"
+        case .wezterm: "WezTerm"
         }
     }
 }
