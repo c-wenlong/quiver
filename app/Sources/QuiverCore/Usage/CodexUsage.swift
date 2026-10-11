@@ -83,11 +83,14 @@ enum CodexUsageAPI {
     /// A workspace's monthly credit cap (Edu, Business and Enterprise seats),
     /// which the Codex CLI shows as "Monthly limit". Labelled "30d" like the
     /// other harnesses' monthly windows. Used credits can pass the cap, so the
-    /// percent is clamped.
+    /// percent is clamped. Some workspaces send only `reached` with no
+    /// figures; a reached cap still reads as a full window.
     private static func spendLimit(_ value: Any?, now: Date) -> [UsageWindow] {
-        guard let control = value as? [String: Any],
-              let limit = control["individual_limit"] as? [String: Any],
-              let used = UsageJSON.number(limit["used_percent"]) else { return [] }
+        guard let control = value as? [String: Any] else { return [] }
+        guard let limit = control["individual_limit"] as? [String: Any],
+              let used = UsageJSON.number(limit["used_percent"]) else {
+            return control["reached"] as? Bool == true ? [UsageWindow(label: "30d", usedPercent: 100, resetsAt: nil)] : []
+        }
         let resetsAt = UsageJSON.date(limit["reset_at"])
             ?? UsageJSON.number(limit["reset_after_seconds"]).map { now.addingTimeInterval($0) }
         return [UsageWindow(label: "30d", usedPercent: min(100, max(0, used)), resetsAt: resetsAt)]
