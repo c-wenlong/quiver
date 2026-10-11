@@ -222,3 +222,54 @@ class ListUsageJsonTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExcludeSkipsTheFetcherTest(unittest.TestCase):
+    """--exclude must keep a provider from being asked at all, refresh or not.
+
+    In-process, with the network boundary (`get_all_rate_limits`) recording
+    which providers it was asked for. Both the table and the JSON path build
+    that set, so both are checked.
+    """
+
+    def run_list(self, *args):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        from quiver.harness import commands
+
+        asked = []
+
+        def fake_get_all(use_cache=True, tool_names=None, deadline=None):
+            asked.append(set(tool_names))
+            return {}
+
+        registry = {name: {"command": name, "tags": []} for name in ("claude", "codex", "devin")}
+        patches = [
+            mock.patch.object(commands, "load_registry", return_value=registry),
+            mock.patch.object(commands, "load_stars", return_value=["claude", "codex", "devin"]),
+            mock.patch.object(commands, "_session_counts", return_value={}),
+            mock.patch.object(commands, "_broken_tools", return_value=set()),
+            mock.patch.object(commands, "is_installed", return_value=False),
+            mock.patch("quiver.harness.archive.load_archive", dict),
+            mock.patch("quiver.harness.rate_limits.get_all_rate_limits", side_effect=fake_get_all),
+            # -r would otherwise clear the developer's real session caches.
+            mock.patch("quiver.sessions.aggregator.invalidate_cache"),
+            mock.patch("quiver.sessions.usage.invalidate_counts_cache"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        with redirect_stdout(io.StringIO()):
+            # The table path ends without an explicit status; JSON returns 0.
+            self.assertIn(commands.cmd_list(list(args)), (0, None))
+        return asked
+
+    def test_json_refresh_never_asks_an_excluded_provider(self):
+        asked = self.run_list("--usage", "--json", "-r", "--exclude=claude,codex")
+        self.assertEqual(asked, [{"devin"}])
+
+    def test_table_refresh_never_asks_an_excluded_provider(self):
+        asked = self.run_list("--usage", "-r", "--exclude=claude")
+        self.assertEqual(asked, [{"codex", "devin"}])
