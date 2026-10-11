@@ -36,6 +36,14 @@ public enum HarnessIcons {
         if let url = CoreResources.url("harness-\(id)", "svg") { return Icon(url: url, isColor: false) }
         return nil
     }
+
+    /// The logo for any harness id, as `HarnessMark` picks it: Claude's for
+    /// "claude-desktop", the base harness's for a second account
+    /// ("codex-acc2"), nil when there is none. For views that show the logo
+    /// beside a title that already names the harness, such as the widgets.
+    public static func logo(for harness: String) -> Icon? {
+        HarnessMark(harness).icon.flatMap { icon(for: $0) }
+    }
 }
 
 /// How a harness id shows where space is short: its logo, plus a word only
