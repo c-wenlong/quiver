@@ -26,7 +26,7 @@ remembering CLI commands.
 |---|---|---|
 | OpenUsage | MIT | Menu bar `NSStatusItem` + key-capable `NSPanel`, provider fetchers, pricing snapshot, JSONL scanner. Not its name or icon (TRADEMARK.md). |
 | AIUsage | Apache 2.0 | Per-file cursor ledger for fast incremental scans |
-| TokenTracker | MIT | Design tokens and page layouts. Not its provider logos. |
+| TokenTracker | MIT | Design tokens, page layouts, and the harness logos it ships (most from LobeHub icons, MIT). The logos stay their owners' trademarks, used only to name each harness. |
 | Switchboard | MIT | Profile directories, `open -n --env … --args --user-data-dir=…` launch, terminal launchers |
 
 ## Milestones
@@ -86,6 +86,7 @@ Modelled on TokenTracker's Sessions page.
 - [x] Plugins: drift findings with one-click fixes (`swe find plugins --fix=<id>`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
 - [x] Harnesses: discover installed ones, star and archive them ([#144](https://github.com/c-wenlong/quiver/pull/144))
 - [ ] Launch a session in the right folder with one click
+- [x] API keys: the provider keys in `~/.api_keys`, masked until revealed, edited in place
 
 ### M6. Menu bar, widgets and shipping
 - [x] Limits in the menu bar: the status item shows the tightest limit; the panel lists every account's windows and the other harnesses

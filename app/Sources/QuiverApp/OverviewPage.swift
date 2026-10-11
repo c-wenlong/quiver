@@ -154,8 +154,10 @@ private struct HarnessTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                RoundedRectangle(cornerRadius: 3).fill(Theme.harness(share.harness)).frame(width: 10, height: 10)
+                HarnessIcon(harness: share.harness, size: 16)
                 Text(UsageFormat.harness(share.harness)).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 4)
+                ChartSwatch(harness: share.harness)
             }
             Text(share.share > 0 && share.share < 0.001 ? "<0.1%"
                  : share.share.formatted(.percent.precision(.fractionLength(share.share < 0.1 ? 1 : 0))))

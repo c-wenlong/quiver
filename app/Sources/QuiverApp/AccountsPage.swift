@@ -26,7 +26,10 @@ struct AccountsPage: View {
             ForEach(Vendor.allCases, id: \.self) { vendor in
                 let cards = model.cards.filter { $0.profile.vendor == vendor }
                 if !cards.isEmpty {
-                    SectionTitle(vendor.title)
+                    HStack(spacing: 10) {
+                        HarnessIcon(harness: vendor.rawValue, size: 20).padding(.top, 8)
+                        SectionTitle(vendor.title)
+                    }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter)], spacing: Theme.gutter) {
                         ForEach(cards) { card in
                             AccountCard(card: card, perform: perform, reloadAll: reloadAll)
@@ -309,6 +312,7 @@ private struct OtherLimitRow: View {
         let limit = row.limit
         VStack(alignment: .leading, spacing: 4) {
             HStack {
+                HarnessIcon(harness: row.name, size: 16)
                 Text(row.name.capitalized).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 if let plan = limit.planType { Badge(planTitle(plan)) }
                 Spacer()

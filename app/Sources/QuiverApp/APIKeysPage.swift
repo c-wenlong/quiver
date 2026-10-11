@@ -1,0 +1,330 @@
+import AppKit
+import QuiverCore
+import SwiftUI
+
+/// The keys in `~/.api_keys`, grouped by provider, masked until revealed.
+struct APIKeysPage: View {
+    @Environment(AppModel.self) private var app
+    @State private var editing: KeyDraft?
+    @State private var revealed: Set<String> = []
+    @State private var actionError: String?
+
+    var body: some View {
+        @Bindable var model = app.apiKeys
+        Page(title: "API keys", subtitle: "From \(displayPath(model.path)). New terminals pick up changes.") {
+            Button("Reload", systemImage: "arrow.clockwise") { Task { await model.load() } }
+                .buttonStyle(IconButtonStyle())
+                .disabled(model.isLoading)
+                .help("Read the file and the shell again")
+            Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
+                .buttonStyle(PrimaryButtonStyle())
+        } content: {
+            if let error = model.error ?? actionError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.warning)
+            }
+            if !model.problems.isEmpty {
+                Card(title: "Lines that set nothing") {
+                    ForEach(model.problems, id: \.line) { problem in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Line \(problem.line): \(problem.reason)")
+                                .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                            // Already redacted by APIKeysFile: the value never reaches the page.
+                            Text(problem.text)
+                                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    Text("Fix these in an editor; Quiver leaves lines it can't read untouched.")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                }
+            }
+            SearchField(prompt: "Search providers or variables", text: $model.search)
+            if model.rows.isEmpty && !model.isLoading {
+                Card {
+                    ContentUnavailableView {
+                        Label("No keys yet", systemImage: "key")
+                    } description: {
+                        Text("Add a key and Quiver writes it to \(displayPath(model.path)) as an export line.")
+                    } actions: {
+                        Button("Add key") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
+                            .buttonStyle(PrimaryButtonStyle())
+                    }
+                }
+            } else {
+                table(model)
+            }
+            footer(model)
+        }
+        .task(id: model.path) { await model.load() }
+        .onDisappear { revealed.removeAll() }
+        .sheet(item: $editing) { draft in
+            KeyEditor(draft: draft, providers: model.providers, save: { provider, name, value in
+                try await model.set(name: name, value: value, provider: provider)
+            }, remove: { name in
+                try await model.remove(name: name)
+                revealed.remove(name)
+            })
+        }
+    }
+
+    private func table(_ model: APIKeysModel) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text("Provider").frame(width: 150, alignment: .leading)
+                Text("Variable and value").frame(maxWidth: .infinity, alignment: .leading)
+                Text("New terminals").frame(width: 120, alignment: .leading)
+                Color.clear.frame(width: 104, height: 1)
+            }
+            .font(Theme.tableHeader).foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            ForEach(Array(model.visible.enumerated()), id: \.element.id) { index, row in
+                let firstOfGroup = index == 0 || model.visible[index - 1].provider != row.provider
+                Divider().overlay(Theme.border).opacity(firstOfGroup ? 1 : 0.5)
+                KeyRow(row: row, showsProvider: firstOfGroup, isRevealed: revealed.contains(row.name),
+                       toggleReveal: {
+                           if revealed.contains(row.name) { revealed.remove(row.name) } else { revealed.insert(row.name) }
+                       },
+                       copy: { copySecret(row.value) },
+                       edit: { editing = KeyDraft(provider: row.provider, name: row.name, value: row.value, isNew: false) })
+            }
+            if model.visible.isEmpty && !model.search.isEmpty {
+                Divider().overlay(Theme.border)
+                Text("Nothing matches \u{201C}\(model.search)\u{201D}.")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 20)
+            }
+        }
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
+    private func footer(_ model: APIKeysModel) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text("\(model.rows.count) \(model.rows.count == 1 ? "key" : "keys") from \(model.providers.count) \(model.providers.count == 1 ? "provider" : "providers")")
+                if let saved = model.savedAt {
+                    Text("· saved \(saved, format: .relative(presentation: .named))")
+                }
+            }
+            if model.savedAt != nil {
+                Text("Terminals already open keep the old values until you run source \(displayPath(model.path)).")
+            }
+        }
+        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+    }
+
+    /// Copies a key marked concealed, so clipboard managers skip it.
+    private func copySecret(_ value: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")], owner: nil)
+        board.setString(value, forType: .string)
+        board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+    }
+}
+
+/// `~/…` for paths in the home folder.
+func displayPath(_ path: String) -> String {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+}
+
+private struct KeyRow: View {
+    var row: APIKeysModel.Row
+    var showsProvider: Bool
+    var isRevealed: Bool
+    var toggleReveal: () -> Void
+    var copy: () -> Void
+    var edit: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(showsProvider ? row.provider : "").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                .lineLimit(1).frame(width: 150, alignment: .leading)
+                .accessibilityLabel(row.provider)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.name).font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(isRevealed ? row.value : (row.value.isEmpty ? "Empty" : row.masked))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(row.value.isEmpty ? Theme.textMuted : Theme.textSecondary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            StatusLabel(status: row.status).frame(width: 120, alignment: .leading)
+            HStack(spacing: 4) {
+                Button(isRevealed ? "Hide" : "Reveal", systemImage: isRevealed ? "eye.slash" : "eye", action: toggleReveal)
+                    .help(isRevealed ? "Hide the value" : "Show the value")
+                Button("Copy", systemImage: "doc.on.doc", action: copy).help("Copy the value")
+                Button("Edit", systemImage: "pencil", action: edit).help("Edit or remove")
+            }
+            .buttonStyle(IconButtonStyle())
+            .controlSize(.small)
+            .frame(width: 104, alignment: .trailing)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(hovering ? Theme.rowHover : .clear)
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct StatusLabel: View {
+    var status: APIKeysModel.Status
+
+    var body: some View {
+        switch status {
+        case .loaded: label("Loaded", "checkmark.circle", Theme.success, help: "A new terminal gets this value.")
+        case .overridden: label("Overridden", "exclamationmark.triangle", Theme.warning,
+                                help: "A new terminal gets a different value: something later in your shell setup sets it again.")
+        case .notLoaded: label("Not loaded", "minus.circle", Theme.textSecondary,
+                               help: "A new terminal doesn't have this variable. Is the file sourced from your shell setup?")
+        case .unknown: label("Unknown", "questionmark.circle", Theme.textMuted, help: "Quiver couldn't read your login shell.")
+        case .checking: label("Checking…", "ellipsis.circle", Theme.textMuted, help: "Starting a login shell to see what a new terminal gets.")
+        }
+    }
+
+    private func label(_ text: String, _ symbol: String, _ color: Color, help: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).foregroundStyle(color)
+            Text(text).foregroundStyle(Theme.textPrimary)
+        }
+        .font(Theme.caption)
+        .help(help)
+    }
+}
+
+struct KeyDraft: Identifiable {
+    var id: String { isNew ? "new" : name }
+    var provider: String
+    var name: String
+    var value: String
+    var isNew: Bool
+}
+
+/// Add, change or remove one key.
+private struct KeyEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State var draft: KeyDraft
+    var providers: [String]
+    var save: (String, String, String) async throws -> Void
+    var remove: (String) async throws -> Void
+    @State private var showValue = false
+    @State private var confirmingRemove = false
+    @State private var error: String?
+    @State private var working = false
+
+    init(draft: KeyDraft, providers: [String], save: @escaping (String, String, String) async throws -> Void,
+         remove: @escaping (String) async throws -> Void) {
+        _draft = State(initialValue: draft)
+        self.providers = providers
+        self.save = save
+        self.remove = remove
+    }
+
+    private var nameProblem: String? {
+        let name = draft.name.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty { return "Enter a variable name, like ANTHROPIC_API_KEY" }
+        if name.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) == nil {
+            return "Use letters, digits and underscores, not starting with a digit"
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(draft.isNew ? "Add a key" : "Edit \(draft.name)").font(Theme.sectionTitle).tracking(-0.5)
+            field("Provider") {
+                HStack(spacing: 8) {
+                    // A key stays in its group; moving it isn't supported yet.
+                    TextField("ANTHROPIC", text: $draft.provider).textFieldStyle(.roundedBorder)
+                        .disabled(!draft.isNew)
+                    if draft.isNew && !providers.isEmpty {
+                        Menu("Existing") {
+                            ForEach(providers, id: \.self) { provider in
+                                Button(provider) { draft.provider = provider }
+                            }
+                        }
+                        .fixedSize()
+                    }
+                }
+            }
+            field("Variable") {
+                TextField("ANTHROPIC_API_KEY", text: $draft.name)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13, design: .monospaced))
+                    .disabled(!draft.isNew)
+                if draft.isNew, !draft.name.isEmpty, let problem = nameProblem {
+                    Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
+                }
+            }
+            field("Value") {
+                HStack(spacing: 8) {
+                    Group {
+                        if showValue {
+                            TextField("sk-…", text: $draft.value)
+                        } else {
+                            SecureField("sk-…", text: $draft.value)
+                        }
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13, design: .monospaced))
+                    Button(showValue ? "Hide" : "Show", systemImage: showValue ? "eye.slash" : "eye") { showValue.toggle() }
+                        .buttonStyle(IconButtonStyle())
+                        .help(showValue ? "Hide the value" : "Show the value")
+                }
+            }
+            if let error {
+                Text(error).font(Theme.caption).foregroundStyle(Theme.danger)
+            }
+            HStack {
+                if !draft.isNew {
+                    if confirmingRemove {
+                        Text("Remove \(draft.name)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        Button("Remove") { run { try await remove(draft.name) } }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .foregroundStyle(Theme.danger)
+                        Button("Keep") { confirmingRemove = false }.buttonStyle(SecondaryButtonStyle())
+                    } else {
+                        Button("Remove…") { confirmingRemove = true }.buttonStyle(SecondaryButtonStyle())
+                    }
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(SecondaryButtonStyle())
+                Button(draft.isNew ? "Add key" : "Save") {
+                    run {
+                        try await save(draft.provider.trimmingCharacters(in: .whitespaces).isEmpty ? "OTHER" : draft.provider,
+                                       draft.name.trimmingCharacters(in: .whitespaces), draft.value)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(working || (draft.isNew && nameProblem != nil))
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .background(Theme.panel)
+    }
+
+    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(Theme.control).foregroundStyle(Theme.textSecondary)
+            content()
+        }
+    }
+
+    private func run(_ action: @escaping () async throws -> Void) {
+        working = true
+        Task {
+            defer { working = false }
+            do {
+                try await action()
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+}

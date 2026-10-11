@@ -119,6 +119,8 @@ struct PageView: View {
             McpServersPage()
         case .plugins:
             PluginsPage()
+        case .apiKeys:
+            APIKeysPage()
         case .serviceStatus:
             ServiceStatusPage()
         case .harnesses:
