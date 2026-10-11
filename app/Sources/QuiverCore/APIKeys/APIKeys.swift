@@ -100,6 +100,10 @@ public struct APIKeysFile: Equatable, Sendable {
                 return Problem(line: index + 1, text: Self.redacted(line),
                                reason: "zsh only accepts lowercase export, so this line sets nothing")
             }
+            if Self.commentedAssignment(line) != nil {
+                return Problem(line: index + 1, text: Self.redacted(line),
+                               reason: "a commented-out key still holds a value; delete the line")
+            }
             if trimmed.hasPrefix("export "), Self.export(line) == nil {
                 return Problem(line: index + 1, text: Self.redacted(line),
                                reason: "Quiver can't edit this line safely, so it leaves it alone")
@@ -165,11 +169,23 @@ public struct APIKeysFile: Equatable, Sendable {
     }
 
     /// A comment line's text, used as the provider for the keys below it.
+    /// A commented-out assignment (`# export NAME=value`, `#NAME=value`) is
+    /// not a heading: its text would carry the value, so it neither names
+    /// nor resets the provider.
     static func heading(_ line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("#"), commentedAssignment(line) == nil else { return nil }
+        let text = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? nil : text
+    }
+
+    /// The variable name of a commented-out assignment, or nil.
+    static func commentedAssignment(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("#") else { return nil }
         let text = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
-        return text.isEmpty ? nil : text
+        guard let match = text.firstMatch(of: /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/) else { return nil }
+        return String(match.1)
     }
 
     /// `export NAME=value`, with the value double-quoted, single-quoted or bare.
