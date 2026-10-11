@@ -114,6 +114,51 @@ class SkillsListJsonTest(unittest.TestCase):
         self.assertEqual(len(paths), 1)
         self.assertIn("/2.0/", paths[0])
 
+    def test_a_filter_narrows_the_skills(self):
+        names = [s["name"] for s in self.data("only")["skills"]]
+        self.assertEqual(names, ["only-codex"])
+        # A harness name matches every skill it loads.
+        names = [s["name"] for s in self.data("list", "claude")["skills"]]
+        self.assertEqual(names, ["alpha", "beta"])
+
+    def test_two_filters_are_refused(self):
+        result = run_swe(self.home, "skills", "a", "b", "--json")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Unexpected args: b", result.stderr)
+
+    def test_builtin_and_catalog_skills_say_where_they_came_from(self):
+        write_skill(self.home / ".cursor" / "skills-cursor", "cursor-own")
+        catalog = self.home / "work" / "kit"
+        write_skill(catalog, "from-catalog")
+        config = self.home / ".quiver" / "config"
+        (config / "skill_catalogs.json").write_text(json.dumps(
+            {"catalogs": [{"label": "kit", "path": str(catalog)}]}))
+        skills = {s["name"]: s for s in self.data()["skills"]}
+        self.assertEqual(skills["cursor-own"]["source"], "builtin")
+        self.assertEqual(skills["cursor-own"]["harnesses"], ["cursor"])
+        self.assertEqual(skills["from-catalog"]["source"], "catalog")
+        self.assertEqual(skills["from-catalog"]["harnesses"], [])
+
+    def test_an_unreadable_linkignore_warns_and_still_lists(self):
+        ignore = self.home / ".quiver" / ".linkignore"
+        ignore.mkdir()  # a directory where a file belongs cannot be read
+        result = run_swe(self.home, "skills", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("warning", result.stderr)
+        rows = {row["name"]: row for row in decode(result)["data"]["harnesses"]}
+        self.assertEqual(rows["claude"]["state"], "linked")
+
+    def test_a_malformed_install_record_is_read_as_no_record(self):
+        version = self.home / ".claude" / "plugins" / "cache" / "mk" / "tool" / "1.0"
+        write_skill(version / "skills", "from-plugin")
+        (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps({
+            "plugins": {"a@mk": [{"installPath": ""}, "junk"],
+                        "b@mk": {"installPath": str(self.home / "elsewhere")},
+                        "c@mk": [{"installPath": str(self.home / ".claude" / "plugins" / "cache" / "mk")}]}}))
+        skills = {s["name"]: s for s in self.data()["skills"]}
+        self.assertEqual(skills["from-plugin"]["harnesses"], [])
+
     def test_the_listing_writes_nothing(self):
         before = snapshot(self.home)
         self.data()
@@ -161,6 +206,20 @@ class SkillsLinkJsonTest(unittest.TestCase):
         self.assertEqual(decode(result)["data"]["harness"], "hermes")
         self.assertFalse(root.is_symlink())
         self.assertTrue((self.shared / "alpha" / "SKILL.md").is_file())
+
+    def test_a_bare_word_never_resolves_to_a_symlink_in_the_cwd(self):
+        import subprocess, sys, os
+        work = self.home / "work"
+        work.mkdir()
+        (work / "codx").symlink_to(self.shared)
+        env = {"HOME": str(self.home), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+               "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "NO_COLOR": "1"}
+        env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
+        result = subprocess.run([sys.executable, "-m", "quiver.cli", "skills", "unlink", "codx", "--json"],
+                                capture_output=True, text=True, env=env, cwd=work, timeout=60)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Unknown skill root", result.stderr)
+        self.assertTrue((work / "codx").is_symlink())
 
     def test_a_refused_link_leaves_stdout_empty(self):
         # codex holds a skill nobody else has: linking without --force refuses.
@@ -261,6 +320,45 @@ class SkillsHubJsonTest(unittest.TestCase):
         self.assertEqual(plugin["install"]["claude"],
                          {"state": "disabled", "fix": "claude plugin enable toolkit@kit", "id": None})
 
+    def test_the_listing_reads_every_state(self):
+        self.install_current()
+        (self.home / ".claude" / "settings.json").write_text(
+            json.dumps({"enabledPlugins": {"toolkit@kit": False}}))
+        result = run_swe(self.home, "skills", "hub")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("toolkit@kit", result.stdout)
+        self.assertIn("2 skills", result.stdout)
+        import re
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+        self.assertIn("claude disabled", plain)
+        self.assertIn("Tools for testing", result.stdout)
+
+    def test_help_and_stray_args(self):
+        result = run_swe(self.home, "skills", "hub", "--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("swe skills hub", result.stdout)
+        result = run_swe(self.home, "skills", "hub", "extra", "--json")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("extra", result.stderr)
+
+    def test_a_plugin_without_a_marketplace_description_uses_its_own(self):
+        manifest = self.market / ".claude-plugin" / "marketplace.json"
+        data = json.loads(manifest.read_text())
+        del data["plugins"][0]["description"]
+        manifest.write_text(json.dumps(data))
+        (self.market / "toolkit" / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "toolkit", "version": "1.2.0", "description": "From the plugin"}))
+        (plugin,) = self.data()["plugins"]
+        self.assertEqual(plugin["description"], "From the plugin")
+
+    def test_an_empty_hub_says_so(self):
+        import shutil
+        shutil.rmtree(self.market)
+        result = run_swe(self.home, "skills", "hub")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("No plugins", result.stdout)
+
     def test_an_empty_hub_is_an_empty_list(self):
         import shutil
         shutil.rmtree(self.market)
@@ -309,6 +407,19 @@ class HarnessJsonTest(unittest.TestCase):
         data = self.run_json("harness", "archive", "codex")
         self.assertEqual(data, {"name": "codex", "state": "active", "archived": None})
         self.assertEqual(self.rows()["codex"]["state"], "active")
+
+    def test_archive_without_a_name_lists_the_archive(self):
+        self.run_json("harness", "archive", "codex", "too slow")
+        data = self.run_json("harness", "archive")
+        self.assertEqual(list(data["archived"]), ["codex"])
+        self.assertEqual(data["archived"]["codex"]["reason"], "too slow")
+
+    def test_star_json_needs_exactly_one_name(self):
+        for args in ([], ["clear"], ["a", "b"]):
+            with self.subTest(args=args):
+                result = run_swe(self.home, "harness", "star", *args, "--json")
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
 
     def test_unknown_harness_is_refused_with_empty_stdout(self):
         for verb in ("star", "archive"):

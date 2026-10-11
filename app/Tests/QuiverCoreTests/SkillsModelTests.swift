@@ -32,6 +32,19 @@ final class StuckRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
+/// Runs until cancelled, then reports the exit of a terminated child.
+final class TerminatedRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var started: Int { lock.withLock { count } }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        lock.withLock { count += 1 }
+        while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+        return CommandResult(status: 15, stdout: Data(), stderr: "")
+    }
+}
+
 /// Takes a moment per call and records the most calls `counts` picks out
 /// that were ever running at once.
 final class CountingRunner: CommandRunning, @unchecked Sendable {
@@ -269,6 +282,18 @@ let hubJSON = #"""
 
     @Test func leavingTheHubMidLoadLetsTheNextVisitRetry() async {
         let runner = StuckRunner()
+        let model = SkillsModel(swe: SweClient(runner: runner))
+        let load = Task { await model.loadHub() }
+        while runner.started == 0 { await Task.yield() }
+        load.cancel()
+        await load.value
+        #expect(model.hub == .idle)
+    }
+
+    @Test func aChildStoppedByCancellingIsNotAFailure() async {
+        // ProcessRunner answers a cancel by terminating swe and returning its
+        // exit status, not by throwing.
+        let runner = TerminatedRunner()
         let model = SkillsModel(swe: SweClient(runner: runner))
         let load = Task { await model.loadHub() }
         while runner.started == 0 { await Task.yield() }

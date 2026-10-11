@@ -931,11 +931,11 @@ def cmd_list(args):
 
 
 def _registry_state(name: str) -> str:
-    """A harness's standing after a change: starred, archived or active."""
-    from quiver.harness.archive import load_archive
+    """A harness's standing after a star toggle or a restore.
 
-    if name in load_archive():
-        return "archived"
+    Neither leaves it archived: starring clears an archive record, and a
+    restore is the removal of one.
+    """
     return "starred" if is_starred(name) else "active"
 
 

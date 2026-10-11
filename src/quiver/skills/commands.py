@@ -186,6 +186,7 @@ _HUB_STATES = {
     "not-installed": ("yellow", "not installed"),
     "stale": ("yellow", "stale"),
     "disabled-here": ("yellow", "disabled"),
+    "disabled": ("yellow", "disabled"),
     "installed": ("green", "installed"),
 }
 
@@ -218,7 +219,7 @@ def cmd_skills_hub(args) -> int:
         n = len(plugin["skills"])
         skills = f"{n} skill" + ("" if n == 1 else "s")
         states = "  ".join(
-            f"{harness} {c(_HUB_STATES[gap['state']][0], _HUB_STATES[gap['state']][1])}"
+            f"{harness} {c(*_HUB_STATES.get(gap['state'], ('yellow', gap['state'])))}"
             for harness, gap in plugin["install"].items()
         )
         print(f"  {c('bold', ref.ljust(width))}{c('dim', skills.ljust(10))}{states}")

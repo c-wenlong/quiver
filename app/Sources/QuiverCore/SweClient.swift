@@ -50,6 +50,9 @@ public struct SweClient: Sendable {
 
     func call<T: Decodable>(_ arguments: [String], allowFailure: Bool = false) async throws -> T {
         let result = try await runner.run(arguments)
+        // Cancelling stops the child, which then exits with a signal status
+        // rather than throwing; that is a cancellation, not a swe failure.
+        try Task.checkCancellation()
         let stdoutText = String(decoding: result.stdout.prefix(500), as: UTF8.self)
         if Self.rejectsJSONFlag(stdoutText) || Self.rejectsJSONFlag(result.stderr) {
             throw SweError.jsonUnsupported

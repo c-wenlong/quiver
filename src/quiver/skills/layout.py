@@ -246,6 +246,25 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
     for label, path in all_skill_root_candidates(home, cwd):
         if label.lower() == ref.lower():
             return label, path
+    # A bare word that matches no known root used to become cwd/<word>, so a
+    # typo silently retargeted the command at whatever sat in the current
+    # directory. With --force that meant backing up and deleting the wrong
+    # thing. Only something that actually looks like a path is treated as one.
+    # Deliberately not "or path.exists()": a bare word that happens to match
+    # a folder (or a symlink) in the current directory is the exact case this
+    # guards. The ref must be written as a path to be treated as one.
+    looks_like_path = (
+        ref.startswith(("/", ".", "~"))
+        or "/" in ref
+        or os.sep in ref
+    )
+    if not looks_like_path:
+        known = sorted({label for label, _ in all_skill_root_candidates(home, cwd)})
+        raise SkillLayoutError(
+            f"Unknown skill root {ref!r}. "
+            f"Pass a known root ({', '.join(known[:8])}...) "
+            f"or an explicit path like ./{ref}."
+        )
     path = Path(ref).expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
@@ -265,25 +284,6 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
                 return label, candidate
         except OSError:
             continue
-    # A bare word that matches no known root used to become cwd/<word>, so a
-    # typo silently retargeted the command at whatever sat in the current
-    # directory. With --force that meant backing up and deleting the wrong
-    # thing. Only something that actually looks like a path is treated as one.
-    # Deliberately not "or path.exists()": a bare word that happens to match
-    # a folder in the current directory is the exact case this guards. The
-    # ref must be written as a path to be treated as one.
-    looks_like_path = (
-        ref.startswith(("/", ".", "~"))
-        or "/" in ref
-        or os.sep in ref
-    )
-    if not looks_like_path:
-        known = sorted({label for label, _ in all_skill_root_candidates(home, cwd)})
-        raise SkillLayoutError(
-            f"Unknown skill root {ref!r}. "
-            f"Pass a known root ({', '.join(known[:8])}...) "
-            f"or an explicit path like ./{ref}."
-        )
     if path.name == "skills":
         # ~/.hermes/skills is hermes's root, not a root called "skills":
         # the label is what the link record and the --json reply carry.
