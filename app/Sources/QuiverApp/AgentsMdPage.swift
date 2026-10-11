@@ -17,10 +17,10 @@ struct AgentsMdPage: View {
                 Task { await model.load(swe: app.swe) }
                 model.checkDisk()
             }
-            .buttonStyle(IconButtonStyle())
+            .iconButton()
             .help("Check links and reread the file")
         } content: {
-            Tabs(options: [(Scope.global, "Global"), (Scope.project, "Project")], selection: $scope)
+            Tabs(options: [(Scope.global, "Global"), (Scope.project, "Project")], selection: $scope, style: .underline)
             switch scope {
             case .global: GlobalInstructions()
             case .project: ProjectInstructions()
@@ -43,7 +43,7 @@ private struct GlobalInstructions: View {
         case .idle, .loading:
             ProgressView().frame(maxWidth: .infinity)
         case .failed(let message):
-            Card { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
+            ErrorCard(message: message)
         case .loaded(let report):
             HStack(alignment: .top, spacing: Theme.gutter) {
                 if let document = model.global {
@@ -90,7 +90,7 @@ private struct LinksCard: View {
                     Button(model.linking ? "Linking…" : "Link with swe init", systemImage: "link") {
                         Task { await model.link(swe: app.swe) }
                     }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .primaryButton()
                     .disabled(model.linking)
                     if model.linking { ProgressView().controlSize(.small) }
                 }
@@ -147,12 +147,12 @@ private struct ProjectInstructions: View {
                     }
                     Spacer(minLength: 8)
                     Button("Choose folder…") { choose() }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .secondaryButton()
                 }
             }
             if model.projectFolder != nil {
                 let files = model.projectFiles
-                Tabs(options: files.map { ($0.name, tabTitle($0)) }, selection: $selectedFile)
+                Tabs(options: files.map { ($0.name, tabTitle($0)) }, selection: $selectedFile, style: .table)
                 if let file = files.first(where: { $0.name == selectedFile }) {
                     let document = model.document(for: file)
                     InstructionEditor(document: document, title: file.name, subtitle: subtitle(file, document)) {
@@ -235,10 +235,10 @@ struct InstructionEditor: View {
                     .accessibilityElement(children: .combine)
                 }
                 Button("Revert") { document.revert(); error = nil }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .secondaryButton()
                     .disabled(!document.isDirty)
                 Button("Save") { save(overwrite: false) }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .primaryButton()
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(!document.isDirty || document.changedOnDisk)
             }
@@ -294,8 +294,8 @@ private struct ChangedOnDiskBanner: View {
                 .font(Theme.caption).foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            Button("Reload", action: reload).buttonStyle(SecondaryButtonStyle())
-            Button("Overwrite", action: overwrite).buttonStyle(SecondaryButtonStyle())
+            Button("Reload", action: reload).secondaryButton()
+            Button("Overwrite", action: overwrite).secondaryButton()
         }
         .padding(12)
         .background(Theme.warning.opacity(0.08), in: .rect(cornerRadius: Theme.controlRadius))

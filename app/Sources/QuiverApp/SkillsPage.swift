@@ -21,10 +21,10 @@ struct SkillsPage: View {
                     if tab == .hub { await model?.loadHub() }
                 }
             }
-            .buttonStyle(IconButtonStyle())
+            .iconButton()
             .help("Refresh")
         } content: {
-            Tabs(options: [(Tab.installed, "Installed"), (Tab.hub, "Quiver hub")], selection: $tab)
+            Tabs(options: [(Tab.installed, "Installed"), (Tab.hub, "Quiver hub")], selection: $tab, style: .underline)
             if let model {
                 switch tab {
                 case .installed: InstalledSkills(model: model)
@@ -136,7 +136,7 @@ private struct RootChip: View {
         Button { open = true } label: {
             LinkChipLabel(name: root.name, link: root.link, busy: model.busy.contains(root.path))
         }
-        .buttonStyle(RingedPlainStyle(cornerRadius: 999))
+        .plainButton(cornerRadius: 999)
         .help("\(root.name): \(root.link.title.lowercased())")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             RootDetail(root: root, model: model) { open = false }
@@ -166,17 +166,17 @@ private struct RootDetail: View {
                 switch root.link {
                 case .linked:
                     Button("Unlink") { act { await model.unlink(root) } }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .secondaryButton()
                 case .notLinked:
                     Button("Link to shared skills") { act { await model.link(root) } }
-                        .buttonStyle(PrimaryButtonStyle())
+                        .primaryButton()
                 case .blocked:
                     EmptyView()
                 }
                 Button("Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root.path)])
                 }
-                .buttonStyle(SecondaryButtonStyle())
+                .secondaryButton()
             }
             .disabled(model.busy.contains(root.path))
         }
@@ -282,7 +282,7 @@ private struct SkillRow: View {
                 }
                 .contentShape(.rect)
             }
-            .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
+            .plainButton(cornerRadius: Theme.controlRadius)
 
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
@@ -299,7 +299,7 @@ private struct SkillRow: View {
                     Button("Show in Finder", systemImage: "folder") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: skill.path)])
                     }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .secondaryButton()
                 }
                 .padding(.leading, 2)
             }
@@ -444,7 +444,7 @@ private struct PluginCard: View {
                                 Label("Fix", systemImage: "wrench.and.screwdriver")
                             }
                         }
-                        .buttonStyle(PrimaryButtonStyle())
+                        .primaryButton()
                         .disabled(model.fixingPlugin != nil)
                         .help(runnableText)
                         .confirmationDialog("Fix \(plugin.name)?", isPresented: $confirming) {
@@ -460,7 +460,7 @@ private struct PluginCard: View {
                             copyToPasteboard(plugin.manualFixes.joined(separator: "\n"))
                             copied = true
                         }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .secondaryButton()
                         .help(plugin.manualFixes.joined(separator: "\n"))
                     }
                 }
@@ -480,18 +480,5 @@ private struct PluginCard: View {
             return "\(n) \(noun)"
         }
         return parts.isEmpty ? "No components" : parts.joined(separator: " · ")
-    }
-}
-
-struct ErrorCard: View {
-    var message: String
-
-    var body: some View {
-        Card {
-            Label(message, systemImage: "exclamationmark.triangle")
-                .font(Theme.bodySmall)
-                .foregroundStyle(Theme.danger)
-                .textSelection(.enabled)
-        }
     }
 }

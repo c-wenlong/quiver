@@ -13,11 +13,11 @@ struct APIKeysPage: View {
         @Bindable var model = app.apiKeys
         Page(title: "API keys", subtitle: "From \(displayPath(model.path)). New terminals pick up changes.") {
             Button("Reload", systemImage: "arrow.clockwise") { Task { await model.load() } }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .disabled(model.isLoading)
                 .help("Read the file and the shell again")
             Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
-                .buttonStyle(PrimaryButtonStyle())
+                .primaryButton()
         } content: {
             if let error = model.error ?? actionError {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -47,7 +47,7 @@ struct APIKeysPage: View {
                         Text("Add a key and Quiver writes it to \(displayPath(model.path)) as an export line.")
                     } actions: {
                         Button("Add key") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
-                            .buttonStyle(PrimaryButtonStyle())
+                            .primaryButton()
                     }
                 }
             } else {
@@ -160,7 +160,7 @@ private struct KeyRow: View {
                 Button("Copy", systemImage: "doc.on.doc", action: copy).help("Copy the value")
                 Button("Edit", systemImage: "pencil", action: edit).help("Edit or remove")
             }
-            .buttonStyle(IconButtonStyle())
+            .iconButton()
             .controlSize(.small)
             .frame(width: 104, alignment: .trailing)
         }
@@ -238,7 +238,7 @@ private struct KeyEditor: View {
             field("Provider") {
                 HStack(spacing: 8) {
                     // A key stays in its group; moving it isn't supported yet.
-                    TextField("ANTHROPIC", text: $draft.provider).textFieldStyle(.roundedBorder)
+                    TextField("ANTHROPIC", text: $draft.provider).quiverField()
                         .disabled(!draft.isNew)
                     if draft.isNew && !providers.isEmpty {
                         Menu("Existing") {
@@ -252,8 +252,7 @@ private struct KeyEditor: View {
             }
             field("Variable") {
                 TextField("ANTHROPIC_API_KEY", text: $draft.name)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, design: .monospaced))
+                    .quiverField(monospaced: true)
                     .disabled(!draft.isNew)
                 if draft.isNew, !draft.name.isEmpty, let problem = nameProblem {
                     Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
@@ -268,10 +267,9 @@ private struct KeyEditor: View {
                             SecureField("sk-…", text: $draft.value)
                         }
                     }
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, design: .monospaced))
+                    .quiverField(monospaced: true)
                     Button(showValue ? "Hide" : "Show", systemImage: showValue ? "eye.slash" : "eye") { showValue.toggle() }
-                        .buttonStyle(IconButtonStyle())
+                        .iconButton()
                         .help(showValue ? "Hide the value" : "Show the value")
                 }
             }
@@ -283,15 +281,15 @@ private struct KeyEditor: View {
                     if confirmingRemove {
                         Text("Remove \(draft.name)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         Button("Remove") { run { try await remove(draft.name) } }
-                            .buttonStyle(SecondaryButtonStyle())
+                            .secondaryButton()
                             .foregroundStyle(Theme.danger)
-                        Button("Keep") { confirmingRemove = false }.buttonStyle(SecondaryButtonStyle())
+                        Button("Keep") { confirmingRemove = false }.secondaryButton()
                     } else {
-                        Button("Remove…") { confirmingRemove = true }.buttonStyle(SecondaryButtonStyle())
+                        Button("Remove…") { confirmingRemove = true }.secondaryButton()
                     }
                 }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(SecondaryButtonStyle())
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
                 Button(draft.isNew ? "Add key" : "Save") {
                     run {
                         try await save(draft.provider.trimmingCharacters(in: .whitespaces).isEmpty ? "OTHER" : draft.provider,
@@ -299,7 +297,7 @@ private struct KeyEditor: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(PrimaryButtonStyle())
+                .primaryButton()
                 .disabled(working || (draft.isNew && nameProblem != nil))
             }
         }

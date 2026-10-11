@@ -19,7 +19,7 @@ struct ServiceStatusPage: View {
                     .foregroundStyle(Theme.textMuted)
             }
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(force: true) } }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .disabled(model.isLoading)
                 .help("Check every status page now")
         } content: {
@@ -61,7 +61,7 @@ private struct ServiceCard: View {
                 Spacer(minLength: 8)
                 Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+                    .plainButton(cornerRadius: 4)
                     .foregroundStyle(Theme.textSecondary)
                     .help(status.service.pageURL.absoluteString)
             }
@@ -97,7 +97,7 @@ private struct ServiceCard: View {
                         Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
                             openURL(status.service.pageURL)
                         }
-                        .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+                        .plainButton(cornerRadius: 4)
                         .font(Theme.caption)
                         .foregroundStyle(Theme.textSecondary)
                         .underline()
@@ -201,7 +201,7 @@ private struct IncidentView: View {
                 if let url = incident.url {
                     Button("Open incident", systemImage: "arrow.up.right") { openURL(url) }
                         .labelStyle(.iconOnly)
-                        .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+                        .plainButton(cornerRadius: 4)
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary)
                         .help(url.absoluteString)
@@ -285,7 +285,7 @@ struct ServiceStatusMenuLine: View {
                 }
                 .contentShape(.rect)
             }
-            .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+            .plainButton(cornerRadius: 4)
             .help("Open Service status")
             .accessibilityLabel("Service status: \(line)")
         }

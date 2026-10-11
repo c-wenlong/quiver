@@ -14,14 +14,14 @@ struct AccountsPage: View {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await reloadAll(force: true) }
             }
-            .buttonStyle(IconButtonStyle())
+            .iconButton()
             .disabled(model.isLoading)
             .help("Refresh")
             Button("Add account", systemImage: "plus") { adding = true }
-                .buttonStyle(PrimaryButtonStyle())
+                .primaryButton()
         } content: {
             if let error = model.error ?? actionError {
-                Card { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
+                ErrorCard(message: error)
             }
             ForEach(Vendor.allCases, id: \.self) { vendor in
                 let cards = model.cards.filter { $0.profile.vendor == vendor }
@@ -122,7 +122,7 @@ private struct AccountCard: View {
                         .contentShape(.rect)
                 }
                 .menuStyle(.button)
-                .buttonStyle(RingedPlainStyle(cornerRadius: 6))
+                .plainButton(cornerRadius: 6)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More")
@@ -135,9 +135,9 @@ private struct AccountCard: View {
                 StatusLine(usage: card.usage)
                 Spacer()
                 Button("Open app") { perform { try await model.openApp(profile) } }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .secondaryButton()
                 Button("Terminal") { perform { try await model.openTerminal(profile) } }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .secondaryButton()
             }
         }
         .alert("Rename account", isPresented: $renaming) {
@@ -263,18 +263,18 @@ private struct AddAccountSheet: View {
             Text("Add an account").font(Theme.sectionTitle).tracking(-0.5)
             Tabs(options: Vendor.allCases.map { ($0, $0.title) }, selection: $vendor)
             TextField("Name, like Work or Personal", text: $name)
-                .textFieldStyle(.roundedBorder)
+                .quiverField()
             Text("Quiver gives the account its own folders, then opens the CLI's sign-in in your terminal. Open the desktop app once afterwards to sign in there too.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .secondaryButton()
                 Button("Add and sign in") {
                     onAdd(vendor, name.trimmingCharacters(in: .whitespaces), nil)
                     dismiss()
                 }
-                .buttonStyle(PrimaryButtonStyle())
+                .primaryButton()
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }

@@ -11,7 +11,7 @@ struct HarnessesPage: View {
         Page(title: "Harnesses",
              subtitle: "The AI coding CLIs swe knows about. Star the ones you use; archive the ones you've ruled out.") {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model?.load() } }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .help("Refresh")
         } content: {
             if let model { HarnessList(model: model) }
@@ -37,7 +37,7 @@ private struct HarnessList: View {
             HStack(spacing: 8) {
                 Tabs(options: [(HarnessesModel.Scope.inUse, "In use \(model.count(.inUse))"),
                                (.archived, "Archived \(model.count(.archived))")],
-                     selection: $model.scope)
+                     selection: $model.scope, style: .underline)
                 SearchField(prompt: "Filter harnesses", text: $model.query)
                     .frame(maxWidth: 320)
                 Spacer(minLength: 0)
@@ -90,7 +90,7 @@ private struct HarnessRow: View {
                 .foregroundStyle(harness.state == .starred ? Theme.textPrimary : Theme.textMuted)
                 .frame(width: 24, height: 24)
                 .contentShape(.rect)
-                .buttonStyle(RingedPlainStyle(cornerRadius: 6))
+                .plainButton(cornerRadius: 6)
                 .help(harness.state == .starred ? "Unstar: stop pinning it to the top" : "Star: pin it to the top and track its limits")
                 .padding(.top, -2)
             }
@@ -146,10 +146,10 @@ private struct HarnessRow: View {
     @ViewBuilder private var actions: some View {
         if harness.state == .archived {
             Button("Restore") { Task { await model.restore(harness) } }
-                .buttonStyle(SecondaryButtonStyle())
+                .secondaryButton()
         } else {
             Button("Archive", systemImage: "archivebox") { archiving = true }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .help("Archive: hide it from swe list and record why")
                 .popover(isPresented: $archiving, arrowEdge: .bottom) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -158,15 +158,15 @@ private struct HarnessRow: View {
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         TextField("Why? Like: too slow, or no MCP support", text: $reason)
-                            .textFieldStyle(.roundedBorder)
+                            .quiverField()
                             .onSubmit(archive)
                         HStack {
                             Spacer()
                             Button("Cancel") { archiving = false }
-                                .buttonStyle(SecondaryButtonStyle())
+                                .secondaryButton()
                                 .keyboardShortcut(.cancelAction)
                             Button("Archive", action: archive)
-                                .buttonStyle(PrimaryButtonStyle())
+                                .primaryButton()
                                 .disabled(reason.trimmingCharacters(in: .whitespaces).isEmpty)
                                 .keyboardShortcut(.defaultAction)
                         }

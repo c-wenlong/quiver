@@ -13,12 +13,12 @@ struct PluginsPage: View {
         Page(title: "Plugins",
              subtitle: "Where the copies Claude Code and Codex run no longer match ~/.quiver/plugins.") {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe) } }
-                .buttonStyle(IconButtonStyle())
+                .iconButton()
                 .disabled(model.fixing != nil)
                 .help("Check again")
         } content: {
             if let error = model.fixError {
-                Card { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
+                ErrorCard(message: error)
             } else if let fixed = model.lastFixed {
                 Card {
                     Label("Ran \(fixed)", systemImage: "checkmark.circle")
@@ -29,7 +29,7 @@ struct PluginsPage: View {
             case .idle, .loading:
                 ProgressView().frame(maxWidth: .infinity)
             case .failed(let message):
-                Card { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
+                ErrorCard(message: message)
             case .loaded(let report) where report.sources == 0:
                 Card { Label("No plugins in ~/.quiver/plugins, so there is nothing to keep in step.", systemImage: "puzzlepiece.extension").foregroundStyle(Theme.textSecondary) }
             case .loaded(let report) where report.drift.isEmpty:
@@ -88,7 +88,7 @@ private struct DriftRow: View {
                         NSPasteboard.general.setString(finding.fix, forType: .string)
                     }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(RingedPlainStyle(cornerRadius: 4))
+                    .plainButton(cornerRadius: 4)
                     .help("Copy")
                 }
                 if !finding.runnable {
@@ -102,7 +102,7 @@ private struct DriftRow: View {
                     ProgressView().controlSize(.small).frame(height: Theme.controlHeight + 4)
                 } else {
                     Button("Fix", action: fix)
-                        .buttonStyle(SecondaryButtonStyle())
+                        .secondaryButton()
                         .disabled(busy)
                 }
             }
