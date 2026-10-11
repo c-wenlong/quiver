@@ -268,12 +268,9 @@ private struct PanelLimits: View {
             } else if app.accounts.cards.isEmpty {
                 Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            if !others.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Other harnesses").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    ForEach(others) { row in PanelOtherRow(row: row) }
-                }
-            }
+            // Harnesses swe reports follow the accounts in one list: each
+            // row already carries its logo and name, so no heading.
+            ForEach(others) { row in PanelOtherRow(row: row) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
