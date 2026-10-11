@@ -1782,9 +1782,15 @@ def _register_freebuff() -> None:
 _CURSOR_USAGE_URL = "https://cursor.com/api/dashboard/get-current-period-usage"
 _CURSOR_HARD_LIMIT_URL = "https://cursor.com/api/dashboard/get-hard-limit"
 _CURSOR_PLAN_INFO_URL = "https://cursor.com/api/dashboard/get-plan-info"
-# How long the plan and hard-limit calls may take, counted from the start of
-# the fetch; well inside the aggregator's 2s piped deadline.
-_CURSOR_EXTRAS_BUDGET = 1.2
+# Grok Bot's own weekly allowance, apart from the billing cycle. A Connect
+# RPC on the editor's API host that takes the session JWT as a bearer token.
+_CURSOR_GROK_BOT_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus"
+_WEEK_SECONDS = 7 * 24 * 60 * 60
+# How long the plan, hard-limit and Grok Bot calls may take, counted from the
+# start of the fetch. Grok Bot's host is a second TLS connection, which on a
+# cold fetch can run past a second; waiting costs nothing when they are fast.
+# A slower extra is dropped rather than waited for.
+_CURSOR_EXTRAS_BUDGET = 3.0
 
 # Where the Cursor editor keeps its session tokens, per platform. The
 # ``ItemTable`` row ``cursorAuth/accessToken`` is the same session JWT the
@@ -1953,6 +1959,34 @@ def _parse_cursor_usage(data: dict) -> RateLimitInfo | None:
     )
 
 
+def _cursor_grok_bot_window(data: dict | None) -> dict | None:
+    """Grok Bot's weekly window, or None when there is no personal one.
+
+    A seat drawing on a pooled enterprise allowance, or one with a zero
+    included limit, has no meter of its own, so it gets no window.
+    """
+    if not isinstance(data, dict):
+        return None
+    if data.get("usesPooledEnterpriseAllowance") is True:
+        return None
+    if data.get("hasNonZeroIncludedLimit") is False or data.get("includedLimitZero") is True:
+        return None
+    percent = data.get("usagePercent")
+    if isinstance(percent, bool) or not isinstance(percent, (int, float)):
+        return None
+    if not math.isfinite(percent) or percent < 0:
+        return None
+
+    def epoch(value) -> float:
+        return _parse_iso8601_to_epoch(value) if isinstance(value, str) and not value.strip().isdigit() \
+            else _cursor_ms_to_epoch(value)
+
+    reset_at = epoch(data.get("nextResetTimestampUtc"))
+    start = epoch(data.get("currentPeriodStart"))
+    seconds = int(reset_at - start) if reset_at and start and reset_at > start else _WEEK_SECONDS
+    return _window("grok_bot", float(percent), reset_at, seconds)
+
+
 # `cursor-agent` treats a hard limit at int32 max as "no monthly limit".
 _CURSOR_UNLIMITED = 2147483647
 
@@ -2077,6 +2111,24 @@ def _fetch_cursor() -> RateLimitInfo | None:
             return None
         return reply if isinstance(reply, dict) else None
 
+    def fetch_grok_bot() -> None:
+        try:
+            reply = _fetch_json(urllib.request.Request(
+                _CURSOR_GROK_BOT_URL,
+                data=b"{}",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Connect-Protocol-Version": "1",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": f"quiver/{__version__}",
+                },
+            ))
+        except Exception:
+            reply = None
+        extras[_CURSOR_GROK_BOT_URL] = reply if isinstance(reply, dict) else None
+
     # The extras run alongside the usage call, as the CLI's do, on daemon
     # threads with their own small budget: a slow one is given up on rather
     # than waited for, so it can't push the usage reading past the
@@ -2090,7 +2142,7 @@ def _fetch_cursor() -> RateLimitInfo | None:
     workers = [
         threading.Thread(target=fetch_extra, args=(url,), daemon=True)
         for url in (_CURSOR_HARD_LIMIT_URL, _CURSOR_PLAN_INFO_URL)
-    ]
+    ] + [threading.Thread(target=fetch_grok_bot, daemon=True)]
     for worker in workers:
         worker.start()
     data = _fetch_json(post(_CURSOR_USAGE_URL), on_401=_warn_cursor_401)
@@ -2106,6 +2158,11 @@ def _fetch_cursor() -> RateLimitInfo | None:
     if isinstance(plan_name, str) and plan_name.strip():
         info.plan_type = plan_name.strip().lower()
     info.on_demand = _cursor_on_demand(data.get("spendLimitUsage"), hard)
+    # Listed with the rest but never the headline: running out of Grok Bot
+    # leaves Cursor's own allowance as it is.
+    grok_bot = _cursor_grok_bot_window(extras.get(_CURSOR_GROK_BOT_URL))
+    if grok_bot is not None:
+        info.windows.append(grok_bot)
     return info
 
 

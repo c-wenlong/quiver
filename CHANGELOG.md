@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cursor's Grok Bot allowance shows with its other limits.** Cursor gives
+  Grok Bot its own weekly allowance, apart from the billing cycle. `swe
+  list --usage --json` now lists it as a `grok_bot` window on Cursor (used
+  percent, reset time, a week long), read with the same Cursor login from
+  `DashboardService/GetSandUsageStatus` on `api2.cursor.sh`. It is never
+  the headline figure, and a seat on a pooled enterprise allowance or with
+  no included Grok Bot limit gets no window. The call is optional like the
+  plan and hard-limit ones: a failure leaves the reading as it was. Those
+  optional calls now get 3 seconds instead of 1.2, since Grok Bot's host
+  needs a connection of its own. The macOS app labels the window "Grok
+  Bot".
+
 - **Harnesses get a display name, editable with `swe edit --display-name`.**
   A harness is keyed by its registry name and launched by its command
   (`cursor` runs `cursor-agent`), which is no way to label it in the app.
