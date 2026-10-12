@@ -46,9 +46,10 @@ import Testing
         #expect(model.cliInstalled["gemini"] == nil)
     }
 
-    @Test func everyHarnessInUseGetsACardStarredFirstWithOrWithoutALimit() async {
-        // swe's order puts an active harness before a starred one, and lists
-        // an archived one: cards must reorder the first and drop the second.
+    @Test func onlyStarredHarnessesGetCards() async {
+        // swe's list holds active and archived harnesses too: cards keep
+        // the starred ones only, Claude and Codex excluded (accounts of
+        // their own).
         let json = #"""
         {"schema": 1, "data": {"harnesses": [
           {"name": "pi", "command": "pi", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 9, "rate_limit": null},
@@ -61,12 +62,15 @@ import Testing
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
         await model.load()
-        // Starred first, then swe's order; no Claude or Codex (accounts of
-        // their own), no archived harness.
-        #expect(model.cards.map(\.name) == ["devin", "pi", "kilo"])
-        #expect(model.cards.map { $0.limit != nil } == [true, false, false])
-        #expect(model.cards.map(\.title) == ["Devin Teams", "Pi", "Kilo"])
-        #expect(model.cards.map(\.isStarred) == [true, false, false])
+        #expect(model.cards.map(\.name) == ["devin"])
+        #expect(model.cards[0].title == "Devin Teams")
+        #expect(model.cards[0].limit != nil)
+        // The starred set remembers Claude and Codex too: their account
+        // cards hide the moment either is unstarred.
+        #expect(model.starred == ["claude", "devin"])
+        #expect(model.isStarred("claude"))
+        #expect(!model.isStarred("pi"))
+        #expect(!model.isStarred("droid"))
     }
 
     @Test func onlyStarredHarnessesShowALimitAnywhere() async {
@@ -81,10 +85,23 @@ import Testing
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
         await model.load()
-        #expect(model.cards.map(\.name) == ["devin", "cursor"])
-        #expect(model.cards.map { $0.limit != nil } == [true, false])
+        #expect(model.cards.map(\.name) == ["devin"])
         // The menu bar, notifications and widgets read rows: starred only too.
         #expect(model.rows.map(\.name) == ["devin"])
+    }
+
+    @Test func aFailedLoadKeepsTheLastStarredSet() async {
+        // Before swe has answered once, nothing is hidden: unknown means show.
+        let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        #expect(model.starred == nil)
+        #expect(model.isStarred("codex"))
+        await model.load()
+        #expect(model.starred == ["claude", "devin", "cursor"])
+        // A hiccup must not unstar anything.
+        runner.reply = .init(status: 1, stdout: Data(), stderr: "boom\n")
+        await model.load()
+        #expect(model.starred == ["claude", "devin", "cursor"])
     }
 
     @Test func aNamedHarnessReadsLikeAnAccount() {
@@ -105,11 +122,80 @@ import Testing
         #expect(!HarnessAccess.hasLimits("opencode"))
     }
 
+    @Test func anOlderLoadCannotBringBackAnUnstarredHarness() async {
+        // A star change on Harnesses reloads limits, overlapping the
+        // five-minute background load: the slower answer must not win.
+        let json = #"""
+        {"schema": 1, "data": {"harnesses": [
+          {"name": "pi", "command": "pi", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1, "rate_limit": null}
+        ]}}
+        """#
+        let runner = GatedRunner(
+            first: .init(status: 0, stdout: Data(json.utf8), stderr: ""),
+            later: .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        var outdated: Task<Void, Never>!
+        await withCheckedContinuation { continuation in
+            runner.onFirstCall = { continuation.resume() }
+            outdated = Task { await model.load() }
+        }
+        await model.load()
+        runner.open()
+        await outdated.value
+        // The newer load is the truth: unstarred pi keeps no star, no card.
+        #expect(model.starred == [])
+        #expect(model.cards.isEmpty)
+    }
+
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner))
         await model.load()
         #expect(model.rows.isEmpty)
         #expect(model.note?.contains("older") == true)
+    }
+}
+
+/// The first `run` parks until `open()`; every call after answers at once.
+private final class GatedRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+    /// Fires once, when the first call arrives.
+    var onFirstCall: (@Sendable () -> Void)?
+    let first: CommandResult
+    let later: CommandResult
+
+    init(first: CommandResult, later: CommandResult) {
+        self.first = first
+        self.later = later
+    }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let number = lock.withLock { () -> Int in
+            calls += 1
+            return calls
+        }
+        guard number == 1 else { return later }
+        lock.withLock { onFirstCall?() }
+        await withCheckedContinuation { continuation in
+            let parked = lock.withLock { () -> Bool in
+                if isOpen { return false }
+                waiting = continuation
+                return true
+            }
+            if !parked { continuation.resume() }
+        }
+        return first
+    }
+
+    func open() {
+        let parked = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            isOpen = true
+            defer { waiting = nil }
+            return waiting
+        }
+        parked?.resume()
     }
 }

@@ -158,7 +158,7 @@ private struct PopupSection: View {
     /// order, so the rows stay put as usage changes. An account whose limits
     /// haven't come in yet is listed too, so it can be hidden before they do.
     private var harnesses: [MenuBarPopup.Harness] {
-        let order = app.accounts.cards.map(\.profile.vendor.rawValue)
+        let order = app.starredAccountCards.map(\.profile.vendor.rawValue)
             + app.others.rows.filter { $0.limit.status == .ok }.map(\.name)
         return MenuBarPopup.harnesses(in: app.limits.readings, order: order)
     }

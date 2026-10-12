@@ -117,6 +117,12 @@ final class AppModel {
     let accounts: AccountsModel
     /// Limits of the harnesses with no Quiver account, from swe.
     private(set) var others: OtherLimitsModel
+    /// Account cards whose harness is starred in swe's registry: an
+    /// unstarred Claude or Codex hides its card, and its limit with it,
+    /// until it is starred again.
+    var starredAccountCards: [AccountsModel.Card] {
+        accounts.cards.filter { others.isStarred($0.profile.vendor.rawValue) }
+    }
     /// Every limit together: the status item, notifications and widgets.
     let limits: LimitsMonitor
     /// Where each harness's desktop app is installed, if anywhere.
@@ -285,7 +291,7 @@ final class AppModel {
             // with the clock, so look again every minute as well.
             Task { [weak self] in
                 let changes = Observations { [weak self] in
-                    self.map { ($0.accounts.cards, $0.others.rows) }
+                    self.map { ($0.starredAccountCards, $0.others.rows) }
                 }
                 for await _ in changes { self?.refreshLimits() }
             },
@@ -315,7 +321,7 @@ final class AppModel {
     }
 
     private func refreshLimits() {
-        limits.update(LimitReading.all(cards: accounts.cards, others: others.rows, now: .now))
+        limits.update(LimitReading.all(cards: starredAccountCards, others: others.rows, now: .now))
     }
 
     /// Keeps the Service status page and the menu bar line current.
