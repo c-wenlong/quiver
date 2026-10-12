@@ -5,19 +5,19 @@ import SwiftUI
 import WidgetKit
 
 /// The app's colour roles, copied from `QuiverApp/Theme.swift` (the
-/// TokenTracker package's tokens.json), which this target can't import.
+/// TokenTracker package's tokens.json), which the extension can't import.
 /// The widget surface is #262626 in dark, as TokenTracker's widgets sample,
 /// one step up from the app's #171717 card so it stands off a dark desktop.
-enum Palette {
-    static let card = Color(light: "#ffffff", dark: "#262626")
-    static let textPrimary = Color(light: "#0a0a0a", dark: "#fafafa")
-    static let textSecondary = Color(light: "#737373", dark: "#a3a3a3")
-    static let track = Color(light: "#f5f5f5", dark: "#40404080")
-    static let accent = Color(light: "#059669", dark: "#059669")
-    static let accentFill = Color(light: "#10b981", dark: "#10b981")
-    static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
-    static let danger = Color(light: "#ef4444", dark: "#f87171")
-    static let heatmap: [Color] = [
+public enum Palette {
+    public static let card = Color(light: "#ffffff", dark: "#262626")
+    public static let textPrimary = Color(light: "#0a0a0a", dark: "#fafafa")
+    public static let textSecondary = Color(light: "#737373", dark: "#a3a3a3")
+    public static let track = Color(light: "#f5f5f5", dark: "#40404080")
+    public static let accent = Color(light: "#059669", dark: "#059669")
+    public static let accentFill = Color(light: "#10b981", dark: "#10b981")
+    public static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
+    public static let danger = Color(light: "#ef4444", dark: "#f87171")
+    public static let heatmap: [Color] = [
         // #404040 at 50%: the empty step must show on the #262626 surface.
         Color(light: "#ebedf0", dark: "#40404080"),
         Color(light: "#a7f3d0", dark: "#065f46"),
@@ -26,13 +26,13 @@ enum Palette {
         Color(light: "#10b981", dark: "#34d399"),
     ]
 
-    static func usage(_ percent: Int) -> Color {
+    public static func usage(_ percent: Int) -> Color {
         percent >= 90 ? danger : percent >= 70 ? warning : accentFill
     }
 }
 
 extension Color {
-    init(light: String, dark: String) {
+    public init(light: String, dark: String) {
         self.init(nsColor: NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             return NSColor(hex: isDark ? dark : light)
@@ -53,13 +53,31 @@ extension NSColor {
     }
 }
 
+/// One timeline entry: the snapshot the widget draws at `date`, or none
+/// until the app has written one.
+public struct SnapshotEntry: TimelineEntry {
+    public var date: Date
+    /// Nil until the app has written one.
+    public var snapshot: WidgetSnapshot?
+
+    public init(date: Date, snapshot: WidgetSnapshot?) {
+        self.date = date
+        self.snapshot = snapshot
+    }
+}
+
 /// The card every widget sits on, and what shows before the app has
 /// written a snapshot.
-struct WidgetFrame<Content: View>: View {
-    var entry: SnapshotEntry
-    @ViewBuilder var content: (WidgetSnapshot) -> Content
+public struct WidgetFrame<Content: View>: View {
+    public var entry: SnapshotEntry
+    @ViewBuilder public var content: (WidgetSnapshot) -> Content
 
-    var body: some View {
+    public init(entry: SnapshotEntry, @ViewBuilder content: @escaping (WidgetSnapshot) -> Content) {
+        self.entry = entry
+        self.content = content
+    }
+
+    public var body: some View {
         Group {
             if let snapshot = entry.snapshot {
                 content(snapshot)
@@ -78,11 +96,16 @@ struct WidgetFrame<Content: View>: View {
 }
 
 /// A thin bar, as in TokenTracker's limits and models widgets.
-struct ThinBar: View {
-    var fraction: Double
-    var color: Color
+public struct ThinBar: View {
+    public var fraction: Double
+    public var color: Color
 
-    var body: some View {
+    public init(fraction: Double, color: Color) {
+        self.fraction = fraction
+        self.color = color
+    }
+
+    public var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule().fill(Palette.track)
@@ -96,29 +119,40 @@ struct ThinBar: View {
 
 // MARK: - Usage limits
 
-struct LimitsView: View {
-    var snapshot: WidgetSnapshot
-    var now: Date
-    @Environment(\.widgetFamily) private var family
+public struct LimitsView: View {
+    public var snapshot: WidgetSnapshot
+    public var now: Date
+    /// The size to draw for. Previews outside WidgetKit set it themselves;
+    /// the real widget leaves it nil and the environment answers.
+    public var family: WidgetFamily?
+    @Environment(\.widgetFamily) private var envFamily
+
+    public init(snapshot: WidgetSnapshot, now: Date, family: WidgetFamily? = nil) {
+        self.snapshot = snapshot
+        self.now = now
+        self.family = family
+    }
+
+    var effectiveFamily: WidgetFamily { family ?? envFamily }
 
     var rows: Int {
-        switch family {
+        switch effectiveFamily {
         case .systemSmall: 3
         case .systemLarge: 6
         default: 4
         }
     }
 
-    var body: some View {
+    public var body: some View {
         let limits = snapshot.limits.prefix(rows)
-        VStack(alignment: .leading, spacing: family == .systemSmall ? 6 : 8) {
+        VStack(alignment: .leading, spacing: effectiveFamily == .systemSmall ? 6 : 8) {
             if limits.isEmpty {
                 Text("No limits yet").font(.system(size: 12, weight: .medium))
                 Text("Add an account in Quiver, or star a harness in swe.")
                     .font(.system(size: 11)).foregroundStyle(Palette.textSecondary)
             }
             ForEach(Array(limits), id: \.id) { reading in
-                LimitLine(reading: reading, now: now, compact: family == .systemSmall,
+                LimitLine(reading: reading, now: now, compact: effectiveFamily == .systemSmall,
                           old: reading.isOld(now: now, fallback: snapshot.generatedAt))
             }
             Spacer(minLength: 0)
@@ -162,16 +196,21 @@ private struct LimitLine: View {
 
 // MARK: - Usage summary
 
-struct SummaryView: View {
-    var snapshot: WidgetSnapshot
-    var now: Date
+public struct SummaryView: View {
+    public var snapshot: WidgetSnapshot
+    public var now: Date
 
-    var body: some View {
+    public init(snapshot: WidgetSnapshot, now: Date) {
+        self.snapshot = snapshot
+        self.now = now
+    }
+
+    public var body: some View {
         let points = snapshot.sparkline(days: 14, now: now, calendar: .current)
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 24) {
                 FigureBlock(title: "Today", figure: snapshot.today(at: now, calendar: .current))
-                FigureBlock(title: "7 days", figure: snapshot.week)
+                FigureBlock(title: "7 days", figure: snapshot.summary.week)
                 Spacer(minLength: 0)
                 if snapshot.age(at: now) > 3_600 {
                     Text("Updated \(UsageFormat.ago(snapshot.generatedAt, now: now))")
@@ -212,11 +251,16 @@ private struct FigureBlock: View {
 
 // MARK: - Activity heatmap
 
-struct HeatmapView: View {
-    var snapshot: WidgetSnapshot
-    var now: Date
+public struct HeatmapView: View {
+    public var snapshot: WidgetSnapshot
+    public var now: Date
 
-    var body: some View {
+    public init(snapshot: WidgetSnapshot, now: Date) {
+        self.snapshot = snapshot
+        self.now = now
+    }
+
+    public var body: some View {
         GeometryReader { geo in
             let gap: CGFloat = 2
             let caption: CGFloat = 22
@@ -251,10 +295,14 @@ struct HeatmapView: View {
 
 // MARK: - Top models
 
-struct ModelsView: View {
-    var snapshot: WidgetSnapshot
+public struct ModelsView: View {
+    public var snapshot: WidgetSnapshot
 
-    var body: some View {
+    public init(snapshot: WidgetSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if snapshot.models.isEmpty {
                 Text("No usage in the last 30 days").font(.system(size: 12, weight: .medium))
@@ -286,22 +334,32 @@ struct ModelsView: View {
 
 extension WidgetSnapshot {
     /// Shown in the widget gallery before the app has written a snapshot.
-    static var preview: WidgetSnapshot {
+    public static var preview: WidgetSnapshot {
         let calendar = Calendar.current
         let now = Date.now
         let today = calendar.startOfDay(for: now)
-        let activity = (0..<120).compactMap { back -> DayRow? in
-            guard back % 3 != 1, let day = calendar.date(byAdding: .day, value: -back, to: today) else { return nil }
+        var activity: [DailyUsage] = []
+        var models: [DailyUsage] = []
+        for back in 0..<120 where back % 3 != 1 {
+            guard let day = calendar.date(byAdding: .day, value: -back, to: today) else { continue }
             var totals = UsageTotals()
             totals.inputTokens = 2_000_000 + (back * 7_919) % 9_000_000
             totals.costUSD = Double(totals.inputTokens) / 1_000_000 * 1.8
-            return DayRow(day: day, totals: totals)
+            let row = DailyUsage(day: day, harness: "claude", model: "claude-opus-5-5", totals: totals)
+            activity.append(row)
+            if back < 30 { models.append(row) }
         }
-        func model(_ name: String, _ tokens: Int, _ share: Double) -> ModelShare {
+        func modelRow(_ name: String, _ tokens: Int, harness: String) -> DailyUsage {
             var totals = UsageTotals()
             totals.inputTokens = tokens
-            return ModelShare(model: name, totals: totals, share: share)
+            return DailyUsage(day: today, harness: harness, model: name, totals: totals)
         }
+        models += [
+            modelRow("claude-opus-5-5", 586_400_000 - 2_000_000, harness: "claude"),
+            modelRow("claude-sonnet-5-5", 218_700_000, harness: "claude"),
+            modelRow("gpt-5.4", 80_600_000, harness: "codex"),
+            modelRow("composer-2", 52_100_000, harness: "cursor"),
+        ]
         let limits = [
             LimitReading(source: "claude-default", harness: "claude", title: "Claude: Default", window: "7d",
                          usedPercent: 61, resetsAt: now + 86_400, fetchedAt: now, isStale: false),
@@ -310,9 +368,7 @@ extension WidgetSnapshot {
             LimitReading(source: "codex-default", harness: "codex", title: "Codex: Default", window: "7d",
                          usedPercent: 32, resetsAt: now + 90_000, fetchedAt: now, isStale: false),
         ]
-        return make(activity: activity,
-                    models: [model("claude-opus-5-5", 586_400_000, 0.59), model("claude-sonnet-5-5", 218_700_000, 0.22),
-                             model("gpt-5.4", 80_600_000, 0.08), model("composer-2", 52_100_000, 0.05)],
-                    limits: limits, now: now, calendar: calendar)
+        return make(activity: activity, models: models, limits: limits,
+                    selection: WidgetSelection(), now: now, calendar: calendar)
     }
 }

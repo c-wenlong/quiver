@@ -1,4 +1,5 @@
 import QuiverCore
+import QuiverWidgetsUI
 import SwiftUI
 import WidgetKit
 
@@ -14,12 +15,6 @@ struct QuiverWidgets: WidgetBundle {
         ActivityHeatmapWidget()
         TopModelsWidget()
     }
-}
-
-struct SnapshotEntry: TimelineEntry {
-    var date: Date
-    /// Nil until the app has written one.
-    var snapshot: WidgetSnapshot?
 }
 
 struct SnapshotProvider: TimelineProvider {
