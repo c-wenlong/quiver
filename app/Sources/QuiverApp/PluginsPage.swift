@@ -40,12 +40,14 @@ struct PluginsPage: View {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe, for: app.swePath) } }
                     .iconButton()
                     .disabled(model.fixing != nil)
-                    .help("Check again")
+                    .keyboardShortcut("r", modifiers: .command)
+                    .help("Check again (⌘R)")
             case .explore:
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await refreshExplore() } }
                     .iconButton()
                     .disabled(catalog.running != nil)
-                    .help("Read the marketplaces again")
+                    .keyboardShortcut("r", modifiers: .command)
+                    .help("Read the marketplaces again (⌘R)")
             }
         } content: {
             Tabs(options: [(PluginsTab.health, "Health"), (PluginsTab.explore, "Explore")],

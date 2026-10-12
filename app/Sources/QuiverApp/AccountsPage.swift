@@ -16,7 +16,8 @@ struct AccountsPage: View {
             }
             .iconButton()
             .disabled(model.isLoading)
-            .help("Refresh")
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Refresh (⌘R)")
             Button("Add account", systemImage: "plus") { adding = true }
                 .primaryButton()
         } content: {

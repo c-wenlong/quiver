@@ -15,7 +15,8 @@ struct APIKeysPage: View {
             Button("Reload", systemImage: "arrow.clockwise") { Task { await model.load() } }
                 .iconButton()
                 .disabled(model.isLoading)
-                .help("Read the file and the shell again")
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Read the file and the shell again (⌘R)")
             Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
                 .primaryButton()
         } content: {

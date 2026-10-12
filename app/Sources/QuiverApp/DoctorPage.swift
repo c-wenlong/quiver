@@ -10,7 +10,8 @@ struct DoctorPage: View {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model?.load() } }
                 .iconButton()
                 .disabled(isLoading)
-                .help("Run the checks again")
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Run the checks again (⌘R)")
         } content: {
             switch model?.state ?? .idle {
             case .idle, .loading:

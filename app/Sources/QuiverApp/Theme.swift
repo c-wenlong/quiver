@@ -228,6 +228,7 @@ struct Page<Content: View, Actions: View>: View {
         VStack(alignment: .leading, spacing: 24) {
             PageHeader(title: title, subtitle: subtitle) { actions }
             content
+                .textSelection(.enabled)
         }
         .frame(maxHeight: scrolls ? nil : .infinity, alignment: .top)
         .padding(.horizontal, 40)
@@ -256,6 +257,7 @@ struct PageHeader<Actions: View>: View {
                 Text(title).font(Theme.pageTitle).tracking(-0.9).foregroundStyle(Theme.textPrimary)
                 Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
             }
+            .textSelection(.enabled)
             Spacer(minLength: 16)
             HStack(spacing: 8) { actions }
         }

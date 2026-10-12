@@ -35,7 +35,8 @@ private struct SessionsContent: View {
             }
                 .iconButton()
                 .disabled(model.isLoading)
-                .help("List sessions again")
+                .keyboardShortcut("r", modifiers: .command)
+                .help("List sessions again (⌘R)")
         } content: {
             FilterBar(model: model)
             SummaryStrip(summary: model.summary)
@@ -231,6 +232,8 @@ private struct SessionRow: View {
         .background(hovering ? Theme.panelHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
         .contentShape(.rect)
         .onHover { hovering = $0 }
+        // A double-click opens the session; a selection would take it.
+        .textSelection(.disabled)
         .onTapGesture(count: 2, perform: open)
         .contextMenu {
             Button("Details…", action: open)

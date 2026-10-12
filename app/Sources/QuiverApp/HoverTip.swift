@@ -17,6 +17,8 @@ struct HoverTip: ViewModifier {
     func body(content: Content) -> some View {
         content
             .contentShape(.rect)
+            // The tap pins the tip; a text selection would take it first.
+            .textSelection(.disabled)
             .onTapGesture {
                 rest?.cancel()
                 if open, !pinned {

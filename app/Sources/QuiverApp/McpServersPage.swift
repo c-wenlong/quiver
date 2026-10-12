@@ -31,7 +31,8 @@ struct McpServersPage: View {
                 Task { await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth) }
             }
             .iconButton()
-            .help("Read the configs again")
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Read the configs again (⌘R)")
         } content: {
             switch model.state {
             case .idle, .loading:

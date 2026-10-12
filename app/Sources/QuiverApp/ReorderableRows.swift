@@ -69,6 +69,8 @@ struct ReorderableRows<Item: Identifiable, Row: View>: View where Item.ID == Str
         .offset(y: yOffset(for: index, isDragged: isDragged))
         .zIndex(isDragged ? 1 : 0)
         .animation(isDragged ? nil : .spring(response: 0.28, dampingFraction: 0.86), value: target)
+        // A drag that starts on a row's text must reorder, not select.
+        .textSelection(.disabled)
         .gesture(
             DragGesture(minimumDistance: 3, coordinateSpace: .local)
                 .updating($down) { _, state, _ in state = true }

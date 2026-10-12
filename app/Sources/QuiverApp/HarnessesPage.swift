@@ -12,7 +12,8 @@ struct HarnessesPage: View {
              subtitle: "The AI coding CLIs swe knows about. Star the ones you use; archive the ones you've ruled out.") {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model?.load() } }
                 .iconButton()
-                .help("Refresh")
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Refresh (⌘R)")
         } content: {
             if let model { HarnessList(model: model) }
         }
@@ -179,6 +180,7 @@ private struct HarnessRow: View {
         .background(hovering ? Theme.rowHover : .clear)
         // A click anywhere but the buttons opens the editor.
         .contentShape(.rect)
+        .textSelection(.disabled)
         .onTapGesture { editing = true }
         .onHover { hovering = $0 }
         .accessibilityAction(named: "Edit") { editing = true }
