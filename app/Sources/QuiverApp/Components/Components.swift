@@ -111,6 +111,60 @@ extension View {
     func plainButton(cornerRadius: CGFloat = 6) -> some View {
         buttonStyle(RingedPlainStyle(cornerRadius: cornerRadius)).focusRing(cornerRadius: cornerRadius)
     }
+
+    /// A sheet's outer shape: `padding` inside a fixed `width` frame.
+    func sheetScaffold(width: CGFloat = Theme.sheetWidth, padding: CGFloat = Theme.sheetPadding) -> some View {
+        self.padding(padding).frame(width: width)
+    }
+}
+
+/// A row's "more" menu: a quiet ellipsis with a hover shape, no indicator.
+struct EllipsisMenu<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        Menu { content } label: {
+            Image(systemName: "ellipsis")
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 24, height: 20)
+                .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .plainButton()
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More")
+    }
+}
+
+/// A labelled form field: a control-strength caption over the content,
+/// with an optional hint that reads as a problem in `dangerText`.
+struct FormField<Content: View>: View {
+    var label: String
+    var hint: String?
+    var problem = false
+    @ViewBuilder var content: Content
+
+    init(_ label: String, hint: String? = nil, problem: Bool = false,
+         @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.hint = hint
+        self.problem = problem
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(Theme.control).foregroundStyle(Theme.textSecondary)
+            content
+            if let hint {
+                Text(hint).font(Theme.caption).foregroundStyle(problem ? Theme.dangerText : Theme.textMuted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 struct PrimaryButtonStyle: ButtonStyle {

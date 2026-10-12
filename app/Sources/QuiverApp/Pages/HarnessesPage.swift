@@ -277,30 +277,30 @@ private struct HarnessEditor: View {
                 Text(facts).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             HStack(alignment: .top, spacing: 12) {
-                field("Name", hint: "Shown across Quiver. Empty uses \(UsageFormat.harness(harness.name)).") {
+                FormField("Name", hint: "Shown across Quiver. Empty uses \(UsageFormat.harness(harness.name)).") {
                     TextField(UsageFormat.harness(harness.name), text: $draft.displayName).quiverField()
                 }
-                field("Command", hint: draft.commandProblem ?? "What swe runs to start it.", problem: draft.commandProblem != nil) {
+                FormField("Command", hint: draft.commandProblem ?? "What swe runs to start it.", problem: draft.commandProblem != nil) {
                     TextField(harness.name, text: $draft.command).quiverField(monospaced: true)
                 }
             }
-            field("Description") {
+            FormField("Description") {
                 TextField("What it's good for", text: $draft.description, axis: .vertical)
                     .lineLimit(1...4)
                     .quiverField(multiline: true)
             }
             HStack(alignment: .top, spacing: 12) {
-                field("Version", hint: "Leave empty to clear it.") {
+                FormField("Version", hint: "Leave empty to clear it.") {
                     TextField("1.0.0", text: $draft.version).quiverField(monospaced: true)
                 }
-                field("Aliases", hint: "Comma-separated short names.") {
+                FormField("Aliases", hint: "Comma-separated short names.") {
                     TextField("cc, claude-code", text: $draft.aliases).quiverField(monospaced: true)
                 }
             }
-            field("Tags", hint: "Comma-separated, like agentic, coding, byok.") {
+            FormField("Tags", hint: "Comma-separated, like agentic, coding, byok.") {
                 TextField("agentic, coding", text: $draft.tags).quiverField()
             }
-            field("Notes") {
+            FormField("Notes") {
                 TextField("Anything worth remembering about it", text: $draft.notes, axis: .vertical)
                     .lineLimit(2...6)
                     .quiverField(multiline: true)
@@ -319,21 +319,8 @@ private struct HarnessEditor: View {
                     .disabled(working || unchanged || draft.commandProblem != nil)
             }
         }
-        .padding(24)
-        .frame(width: 520)
+        .sheetScaffold()
         .background(Theme.panel)
-    }
-
-    private func field<Content: View>(_ label: String, hint: String? = nil, problem: Bool = false,
-                                      @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(Theme.control).foregroundStyle(Theme.textSecondary)
-            content()
-            if let hint {
-                Text(hint).font(Theme.caption).foregroundStyle(problem ? Theme.dangerText : Theme.textMuted)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func save() {

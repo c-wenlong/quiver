@@ -372,7 +372,7 @@ private struct KeyEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(draft.isNew ? "Add a key" : "Edit \(originalName)").font(Theme.sectionTitle).tracking(-0.5)
-            field("Provider") {
+            FormField("Provider") {
                 HStack(spacing: 8) {
                     // Another group's name moves the key to the end of it.
                     TextField("ANTHROPIC", text: $draft.provider).quiverField()
@@ -384,14 +384,14 @@ private struct KeyEditor: View {
                     }
                 }
             }
-            field("Variable") {
+            FormField("Variable") {
                 TextField("ANTHROPIC_API_KEY", text: $draft.name)
                     .quiverField(monospaced: true)
                 if !draft.name.isEmpty, let problem = nameProblem {
                     Text(problem).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
             }
-            field("Value") {
+            FormField("Value") {
                 HStack(spacing: 8) {
                     Group {
                         if showValue {
@@ -436,16 +436,8 @@ private struct KeyEditor: View {
                 .disabled(working || nameProblem != nil)
             }
         }
-        .padding(24)
-        .frame(width: 520)
+        .sheetScaffold()
         .background(Theme.panel)
-    }
-
-    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(Theme.control).foregroundStyle(Theme.textSecondary)
-            content()
-        }
     }
 
     private func run(_ action: @escaping () async throws -> Void) {

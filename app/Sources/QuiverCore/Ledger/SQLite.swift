@@ -134,7 +134,6 @@ enum SQLiteValue {
 
 extension SQLiteValue {
     static func int(_ value: Int) -> SQLiteValue { .int(Int64(value)) }
-    static func optionalText(_ value: String?) -> SQLiteValue { value.map(SQLiteValue.text) ?? .null }
     static func optionalDouble(_ value: Double?) -> SQLiteValue { value.map(SQLiteValue.double) ?? .null }
 }
 

@@ -411,8 +411,7 @@ private struct ServerSheet: View {
             Divider().overlay(Theme.border)
             syncForm
         }
-        .padding(24)
-        .frame(width: 520)
+        .sheetScaffold()
         .onAppear(perform: resetChoice)
         .confirmationDialog("Replace their definitions?", isPresented: $confirmingOverwrite) {
             Button("Replace", role: .destructive) { Task { await run(dryRun: false) } }

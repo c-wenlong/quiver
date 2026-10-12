@@ -114,8 +114,7 @@ private struct AddServiceSheet: View {
                 .disabled(!canAdd)
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .sheetScaffold(width: Theme.formSheetWidth, padding: Theme.formSheetPadding)
     }
 
     private var canAdd: Bool {
@@ -240,19 +239,9 @@ private struct ServiceCard: View {
                         .foregroundStyle(Theme.textSecondary)
                         .help(status.service.pageURL.absoluteString)
                     if let remove {
-                        Menu {
+                        EllipsisMenu {
                             Button("Remove…") { confirmingRemove = true }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .foregroundStyle(Theme.textSecondary)
-                                .frame(width: 24, height: 20)
-                                .contentShape(.rect)
                         }
-                        .menuStyle(.button)
-                        .plainButton()
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .help("More")
                         .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
                             Button("Stop tracking", role: .destructive, action: remove)
                         }

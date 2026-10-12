@@ -125,6 +125,9 @@ enum Theme {
     /// An editor sheet's padding and width.
     static let sheetPadding: CGFloat = 24
     static let sheetWidth: CGFloat = 520
+    /// A small form sheet's padding and width.
+    static let formSheetPadding: CGFloat = 20
+    static let formSheetWidth: CGFloat = 420
     /// The quick fade behind every hover highlight and expand toggle.
     static let fadeDuration: TimeInterval = 0.15
 

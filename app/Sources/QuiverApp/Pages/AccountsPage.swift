@@ -105,7 +105,7 @@ private struct AccountCard: View {
                 if profile.isDefault && profile.name != "Default" { Badge("Default") }
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
                 Spacer()
-                Menu {
+                EllipsisMenu {
                     Button("Sign in…") { perform { try await model.signIn(profile) } }
                     Button("Show folder in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([model.folder(of: profile)])
@@ -117,17 +117,7 @@ private struct AccountCard: View {
                     if !profile.isDefault {
                         Button("Remove…", role: .destructive) { confirmingRemove = true }
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 24, height: 20)
-                        .contentShape(.rect)
                 }
-                .menuStyle(.button)
-                .plainButton()
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("More")
             }
             if let email = card.usage?.email {
                 Text(email).font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -283,8 +273,7 @@ private struct AddAccountSheet: View {
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .sheetScaffold(width: Theme.formSheetWidth, padding: Theme.formSheetPadding)
     }
 }
 
@@ -361,7 +350,7 @@ private struct HarnessAccountCard: View {
                     .accessibilityLabel(name == ownName ? name : "\(name), \(ownName)")
                 if let plan = limit?.planType { Badge(planTitle(plan)) }
                 Spacer()
-                Menu {
+                EllipsisMenu {
                     if HarnessAccess.loginCommand(for: row.name) != nil {
                         Button("Sign in…") { perform { try await model.signIn(harness: row.name) } }
                         Divider()
@@ -372,17 +361,7 @@ private struct HarnessAccountCard: View {
                         Button("Use the name \(ownName)") { rename(to: "") }
                             .disabled(saving)
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 24, height: 20)
-                        .contentShape(.rect)
                 }
-                .menuStyle(.button)
-                .plainButton()
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("More")
             }
             if let limit, limit.status == .ok {
                 // The same bars as an account card, one per window the

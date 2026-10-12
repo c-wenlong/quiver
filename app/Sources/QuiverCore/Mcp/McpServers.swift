@@ -159,10 +159,6 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
         all.filter { !harnesses.contains($0) }
     }
 
-    /// Missing from some harness, or defined differently in two.
-    public func drifts(across all: [String]) -> Bool {
-        conflict || !missing(from: all).isEmpty
-    }
 
     /// Two of `harnesses` hold different definitions.
     public func conflicts(among harnesses: [String]) -> Bool {
