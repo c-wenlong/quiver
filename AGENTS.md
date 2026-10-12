@@ -36,7 +36,7 @@ python3 -m unittest tests.test_table
 python3 -m unittest tests.test_table -k render
 python3 -m unittest tests.test_rate_limits.TestClass.test_method
 
-# Coverage, as CI runs it (floor is 86%, configured in .coveragerc)
+# Coverage, as CI runs it (floor is 84%, configured in .coveragerc)
 test_home="$(mktemp -d)"
 HOME="$test_home" python3 -m coverage run -m unittest discover -s tests -p 'test_*.py'
 python3 -m coverage combine && python3 -m coverage report

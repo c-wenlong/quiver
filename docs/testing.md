@@ -69,7 +69,7 @@ python3 -m coverage report
 
 `.coveragerc` enables branch and subprocess tracking (`parallel` plus
 `patch = subprocess`), which is why the run must `combine` before
-reporting. The regression floor is `fail_under = 86` in `.coveragerc`,
+reporting. The regression floor is `fail_under = 84` in `.coveragerc`,
 enforced by the coverage job; the dated audit in [COVERAGE.md](COVERAGE.md)
 lists the current risk areas.
 
