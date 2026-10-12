@@ -154,6 +154,44 @@ public final class OverviewModel {
     private var summaryGeneration = 0
     private var inFlight = 0 { didSet { isLoading = inFlight > 0 } }
 
+    /// One computed period, tagged so a stale one is never mistaken for fresh.
+    struct CachedSummary {
+        var summary: OverviewSummary
+        var revision: Int
+        /// `startOfDay` of the day it was computed on.
+        var day: Date
+        var computedAt: Date
+    }
+
+    /// Bumped when the ledger's content or pricing changes: a scan that read
+    /// anything, or a new price list. Invalidates every cached summary.
+    private var revision = 0
+    private var summaryCache: [OverviewPeriod: CachedSummary] = [:]
+    /// The background pass that fills every period after a load.
+    var warming: Task<Void, Never>?
+    /// Which periods currently hold a cached summary; tests read this.
+    var cachedPeriods: Set<OverviewPeriod> { Set(summaryCache.keys) }
+
+    /// The cache entry for a period, and whether it is still fresh. Valid
+    /// means same revision and same day. Rolling windows (7, 30, 90 and 365
+    /// days) slide continuously, so they are only fresh for ten minutes;
+    /// calendar-anchored ones stay fresh until a day or revision change.
+    private func cacheEntry(for period: OverviewPeriod, now: Date)
+        -> (entry: CachedSummary, fresh: Bool)? {
+        guard let entry = summaryCache[period],
+              entry.revision == revision,
+              entry.day == calendar.startOfDay(for: now) else { return nil }
+        let rolling: Set<OverviewPeriod> = [.week, .thirtyDays, .ninetyDays, .year]
+        let fresh = !rolling.contains(period) || now.timeIntervalSince(entry.computedAt) < 600
+        return (entry, fresh)
+    }
+
+    private func storeCached(_ summary: OverviewSummary, at now: Date) {
+        summaryCache[summary.period] = CachedSummary(
+            summary: summary, revision: revision,
+            day: calendar.startOfDay(for: now), computedAt: now)
+    }
+
     /// - Parameter refreshPricing: a newer price list when one is due, else nil;
     ///   asked before every scan.
     public init(ledger: LedgerQuerying, roots: @escaping @Sendable () async -> LedgerRoots,
@@ -172,16 +210,23 @@ public final class OverviewModel {
     public func load(scan: Bool) async {
         loadGeneration += 1
         summaryGeneration += 1
+        warming?.cancel()
         let mine = loadGeneration
         let mySummary = summaryGeneration
         inFlight += 1
         defer { inFlight -= 1 }
         if scan {
-            if let catalog = await refreshPricing() { await ledger.setPricing(catalog) }
+            if let catalog = await refreshPricing() {
+                await ledger.setPricing(catalog)
+                revision += 1
+            }
             do {
-                _ = try await ledger.scan(roots: roots())
+                let report = try await ledger.scan(roots: roots())
                 error = nil
                 completedScans += 1
+                if report.filesRead + report.filesRescanned + report.databasesRead > 0 {
+                    revision += 1
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -191,7 +236,14 @@ public final class OverviewModel {
         }
 
         let now = now()
-        let summary = await summarize(period, now: now)
+        // The selected period is reused when nothing changed underneath it.
+        let summary: OverviewSummary
+        if let cached = cacheEntry(for: period, now: now), cached.fresh {
+            summary = cached.entry.summary
+        } else {
+            summary = await summarize(period, now: now)
+            storeCached(summary, at: now)
+        }
         let todayStart = calendar.startOfDay(for: now)
         let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart) ?? todayStart
         let spend = [
@@ -213,17 +265,45 @@ public final class OverviewModel {
         self.activity = activity
         self.recentModels = recentModels
         updatedAt = now
+        warmCache()
+    }
+
+    /// Fills the per-period cache in the background so a range switch later
+    /// is instant: the selected period first (usually already stored), then
+    /// the rest in picker order, skipping entries still valid and fresh.
+    private func warmCache() {
+        warming?.cancel()
+        warming = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let warmNow = self.now()
+            let order = [self.period] + OverviewPeriod.allCases.filter { $0 != self.period }
+            for period in order {
+                guard !Task.isCancelled else { return }
+                if let cached = self.cacheEntry(for: period, now: warmNow), cached.fresh { continue }
+                let summary = await self.summarize(period, now: warmNow)
+                guard !Task.isCancelled else { return }
+                self.storeCached(summary, at: warmNow)
+                await Task.yield()
+            }
+        }
     }
 
     /// Rebuild only the period's figures, after the picker changes. The menu
-    /// bar's spend and the heatmap don't depend on the period.
+    /// bar's spend and the heatmap don't depend on the period. A cached entry
+    /// is shown at once; a stale one is then recomputed behind it.
     public func reloadPeriod() async {
         summaryGeneration += 1
         let mine = summaryGeneration
+        let now = now()
+        if let cached = cacheEntry(for: period, now: now) {
+            self.summary = cached.entry.summary
+            if cached.fresh { return }
+        }
         inFlight += 1
         defer { inFlight -= 1 }
-        let summary = await summarize(period, now: now())
+        let summary = await summarize(period, now: now)
         guard mine == summaryGeneration else { return }
+        storeCached(summary, at: now)
         self.summary = summary
     }
 

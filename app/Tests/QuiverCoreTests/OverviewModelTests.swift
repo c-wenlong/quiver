@@ -17,6 +17,8 @@ actor FakeLedger: LedgerQuerying {
     var accountHarnesses: [String: String] = [:]
     var days: [DailyUsage] = []
     var scanError: Error?
+    var nextReport = ScanReport()
+    func set(report: ScanReport) { nextReport = report }
     private(set) var scans = 0
     private var scanGate: CheckedContinuation<Void, Never>?
     private var holdScans = false
@@ -32,6 +34,21 @@ actor FakeLedger: LedgerQuerying {
 
     func setPricing(_ catalog: PricingCatalog) { pricingUpdates += 1 }
     private(set) var ranges: [DateInterval] = []
+
+    /// byHarness calls from this index on park until released: a way to catch
+    /// the summary cache's warming pass and stale revalidations mid-flight,
+    /// while load's own earlier calls still go through.
+    private var holdHarnessFrom: Int?
+    private var harnessGates: [CheckedContinuation<Void, Never>] = []
+    private(set) var harnessWaiting = false
+
+    func holdHarnessQueries(fromCall index: Int) { holdHarnessFrom = index }
+    func releaseHarnessQueries() {
+        holdHarnessFrom = nil
+        let gates = harnessGates
+        harnessGates = []
+        for gate in gates { gate.resume() }
+    }
 
     func set(harnesses: [String: UsageTotals], accounts: [String: UsageTotals] = [:],
              accountHarnesses: [String: String] = [:], days: [DailyUsage] = []) {
@@ -51,11 +68,16 @@ actor FakeLedger: LedgerQuerying {
             scanWaiting = false
         }
         if let scanError { throw scanError }
-        return ScanReport()
+        return nextReport
     }
 
     func byHarness(in range: DateInterval) async -> [String: UsageTotals] {
         ranges.append(range)
+        if let from = holdHarnessFrom, ranges.count >= from {
+            harnessWaiting = true
+            await withCheckedContinuation { harnessGates.append($0) }
+            harnessWaiting = false
+        }
         return harnesses
     }
 
@@ -274,13 +296,15 @@ struct ScanFailed: Error, LocalizedError {
         await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 2)])
         let model = model(ledger)
         await model.load(scan: false)
+        await model.warming?.value
         let before = await ledger.ranges.count
         let spend = model.spend
-        model.period = .today
+        model.period = .allTime
         await model.reloadPeriod()
-        #expect(await ledger.ranges.count == before + 1)
+        // The warmed cache answers; the ledger is not asked again.
+        #expect(await ledger.ranges.count == before)
         #expect(model.spend == spend)
-        #expect(model.summary?.period == .today)
+        #expect(model.summary?.period == .allTime)
         #expect(await ledger.scans == 0)
     }
 
@@ -332,5 +356,132 @@ struct ScanFailed: Error, LocalizedError {
         let ranges = await ledger.ranges
         #expect(ranges.contains(DateInterval(start: Date(timeIntervalSince1970: 1_791_561_600),
                                              end: Date(timeIntervalSince1970: 1_791_648_000))))
+    }
+}
+
+/// A movable `now`, for the freshness rules that depend on the clock.
+final class OverviewClock {
+    var now = Date(timeIntervalSince1970: 1_791_703_800)   // 2026-10-11 15:30 SGT
+}
+
+@MainActor
+@Suite struct OverviewCacheTests {
+    let clock = OverviewClock()
+    var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Singapore")!
+        return c
+    }
+
+    func model(_ ledger: FakeLedger) -> OverviewModel {
+        OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
+                      now: { [clock] in clock.now }, calendar: calendar)
+    }
+
+    /// Waits for the fake to report a parked query, with a bound so a broken
+    /// wait fails instead of spinning forever.
+    func untilParked(_ ledger: FakeLedger) async {
+        for _ in 0..<4_000 where !(await ledger.harnessWaiting) { await Task.yield() }
+    }
+
+    @Test func warmingFillsEveryPeriodAndSwitchesThenCostNothing() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        await model.warming?.value
+        #expect(model.cachedPeriods == Set(OverviewPeriod.allCases))
+        let before = await ledger.ranges.count
+        for period in OverviewPeriod.allCases {
+            model.period = period
+            await model.reloadPeriod()
+            #expect(model.summary?.period == period)
+        }
+        #expect(await ledger.ranges.count == before)
+    }
+
+    @Test func aScanThatReadFilesInvalidatesEveryEntry() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        await model.warming?.value
+        var report = ScanReport()
+        report.filesRead = 2
+        await ledger.set(report: report)
+        let before = await ledger.ranges.count
+        await model.load(scan: true)
+        await model.warming?.value
+        // Selected summary, three spend slices, six warmed periods: all new.
+        #expect(await ledger.ranges.count == before + 10)
+    }
+
+    @Test func aScanThatReadNothingKeepsEveryEntry() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        await model.warming?.value
+        let before = await ledger.ranges.count
+        await model.load(scan: true)
+        await model.warming?.value
+        // Only the menu bar's three spend slices asked again.
+        #expect(await ledger.ranges.count == before + 3)
+    }
+
+    @Test func aNewDayInvalidatesTheCache() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        await model.warming?.value
+        let before = await ledger.ranges.count
+        clock.now = clock.now.addingTimeInterval(86_400)
+        model.period = .allTime
+        await model.reloadPeriod()
+        #expect(await ledger.ranges.count == before + 1)
+        #expect(model.summary?.period == .allTime)
+    }
+
+    @Test func aStaleRollingEntryShowsAtOnceThenRefreshes() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        await model.warming?.value
+        // Eleven minutes on, the rolling entry is stale and the data moved.
+        clock.now = clock.now.addingTimeInterval(660)
+        await ledger.set(harnesses: ["claude": totals(tokens: 9, cost: 9)])
+        await ledger.holdHarnessQueries(fromCall: 1)
+        model.period = .week
+        let reload = Task { await model.reloadPeriod() }
+        await untilParked(ledger)
+        #expect(await ledger.harnessWaiting)
+        // The cached figure is already up while the recompute is parked.
+        #expect(model.summary?.totals.totalTokens == 1)
+        await ledger.releaseHarnessQueries()
+        await reload.value
+        #expect(model.summary?.totals.totalTokens == 9)
+    }
+
+    @Test func aNewLoadStopsTheWarmingPass() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        // Calls 1-4 are load's own (summary + three spend slices); call 5 on
+        // is the warming pass, which parks inside its first period.
+        await ledger.holdHarnessQueries(fromCall: 5)
+        await model.load(scan: false)
+        await untilParked(ledger)
+        #expect(await ledger.harnessWaiting)
+        let second = Task { await model.load(scan: false) }
+        await ledger.releaseHarnessQueries()
+        await second.value
+        await model.warming?.value
+        #expect(model.cachedPeriods == Set(OverviewPeriod.allCases))
+        // 4 (load 1) + 1 (warm's parked call) + 3 (load 2's spend, its summary
+        // was a fresh cache hit) + 6 (warm 2): the cancelled pass stored
+        // nothing, so its period is computed again.
+        #expect(await ledger.ranges.count == 14)
     }
 }
