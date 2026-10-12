@@ -23,10 +23,11 @@ import Testing
             // path data), so the mark has to cover a fair share of its box.
             #expect(coverage(bitmap) > 0.08, "\(id) draws almost nothing")
             // A leftover background plate paints all four corners; a mark
-            // may reach one or two (goose's wings do).
+            // may reach one or two (goose's wings do). npm is exempt: its
+            // mark is the rounded square itself, with the letters cut out.
             let corners = [(2, 2), (61, 2), (2, 61), (61, 61)]
                 .filter { (bitmap.colorAt(x: $0.0, y: $0.1)?.alphaComponent ?? 0) > 0.5 }
-            #expect(corners.count < 4, "\(id) sits on a background plate")
+            #expect(corners.count < 4 || id == "npm", "\(id) sits on a background plate")
         }
         #expect(Set(fromTokenTracker).isSubset(of: Set(HarnessIcons.available)))
     }
