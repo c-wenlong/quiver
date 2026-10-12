@@ -118,6 +118,9 @@ public final class ComputeModel {
     /// Send SIGTERM (SIGKILL when `force`) to an item, deepest child first,
     /// then take a fresh look.
     public func quit(_ item: CleanupItem, force: Bool = false) async {
+        // A fresh sample first, so the startedAt check in killOrder is
+        // against what is running now, not a tick ago.
+        await refresh()
         let order = ComputeSummary.killOrder(for: item, in: samples,
                                              selfPID: selfPID, ancestors: selfAncestors())
         for pid in order where signaller.signal(pid, force ? SIGKILL : SIGTERM) {
