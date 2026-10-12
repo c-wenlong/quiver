@@ -1,0 +1,123 @@
+import Foundation
+
+/// A plugin or skill folder as the detail view lists it: files grouped
+/// under Skills, Commands, Agents, Hooks, then Other, each section with a
+/// count. Dotfiles and `.git` are never listed; a `skills/<name>` folder is
+/// one entry that opens its SKILL.md.
+public struct PrimitiveTree: Sendable, Equatable {
+    public enum Kind: String, Sendable, CaseIterable {
+        case skills, commands, agents, hooks, other
+
+        public var title: String {
+            switch self {
+            case .skills: "Skills"
+            case .commands: "Commands"
+            case .agents: "Agents"
+            case .hooks: "Hooks"
+            case .other: "Other files"
+            }
+        }
+    }
+
+    /// One row: a file, or a skill folder standing for its contents.
+    public struct Entry: Sendable, Equatable, Identifiable {
+        public var id: String { path }
+        /// The path below the section folder (`tdd`, `review.md`).
+        public var name: String
+        /// The absolute path, symlinks unresolved.
+        public var path: String
+        /// A skill folder, rather than a plain file.
+        public var isFolder: Bool
+        /// The file this entry opens: itself, or a folder's SKILL.md.
+        public var previewPath: String
+    }
+
+    /// One group of entries under a kind, with its count.
+    public struct Section: Sendable, Equatable, Identifiable {
+        public var id: Kind { kind }
+        public var kind: Kind
+        public var entries: [Entry]
+    }
+
+    public var sections: [Section]
+
+    /// Walk `root` two levels down per section folder; everything outside
+    /// the known folders lands in Other with its name relative to root.
+    public init(root: URL) {
+        let fm = FileManager.default
+        var sections: [(Kind, [Entry])] = []
+        for kind in [Kind.skills, .commands, .agents, .hooks] {
+            let folder = root.appending(path: kind.rawValue)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            var entries: [Entry] = []
+            let top = (try? fm.contentsOfDirectory(atPath: folder.path).sorted()) ?? []
+            for name in top where !name.hasPrefix(".") {
+                let item = folder.appending(path: name)
+                var itemIsDir: ObjCBool = false
+                fm.fileExists(atPath: item.path, isDirectory: &itemIsDir)
+                if kind == .skills, itemIsDir.boolValue {
+                    entries.append(Entry(name: name, path: item.path, isFolder: true,
+                                         previewPath: item.appending(path: "SKILL.md").path))
+                } else if itemIsDir.boolValue {
+                    // A nested folder lists its files with relative names.
+                    let inside = (try? fm.contentsOfDirectory(atPath: item.path).sorted()) ?? []
+                    for inner in inside where !inner.hasPrefix(".") {
+                        let file = item.appending(path: inner)
+                        var innerDir: ObjCBool = false
+                        fm.fileExists(atPath: file.path, isDirectory: &innerDir)
+                        guard !innerDir.boolValue else { continue }
+                        entries.append(Entry(name: name + "/" + inner, path: file.path,
+                                             isFolder: false, previewPath: file.path))
+                    }
+                } else {
+                    entries.append(Entry(name: name, path: item.path, isFolder: false,
+                                         previewPath: item.path))
+                }
+            }
+            if !entries.isEmpty { sections.append((kind, entries)) }
+        }
+        sections.append((.other, PrimitiveTree.otherFiles(root: root)))
+        self.sections = sections.filter { !$0.1.isEmpty }
+            .map { Section(kind: $0.0, entries: $0.1) }
+    }
+
+    /// Files outside the section folders, paths relative to root,
+    /// dotfiles and `.git` skipped at every level.
+    private static func otherFiles(root: URL) -> [Entry] {
+        let fm = FileManager.default
+        let known: Set<String> = ["skills", "commands", "agents", "hooks"]
+        var entries: [Entry] = []
+        func walk(_ dir: URL, depth: Int, prefix: String) {
+            guard depth <= 4,
+                  let names = try? fm.contentsOfDirectory(atPath: dir.path).sorted() else { return }
+            for name in names where !name.hasPrefix(".") {
+                let item = dir.appending(path: name)
+                var isDir: ObjCBool = false
+                fm.fileExists(atPath: item.path, isDirectory: &isDir)
+                if isDir.boolValue {
+                    if depth == 0, known.contains(name) { continue }
+                    walk(item, depth: depth + 1, prefix: prefix + name + "/")
+                } else {
+                    entries.append(Entry(name: prefix + name, path: item.path,
+                                         isFolder: false, previewPath: item.path))
+                }
+            }
+        }
+        walk(root, depth: 0, prefix: "")
+        return entries
+    }
+
+    /// Whether `url` can open in the text editor: under a megabyte and
+    /// decodable UTF-8, so binaries show "Can't preview" instead.
+    public static func isTextFile(_ url: URL) -> Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int, size <= 1_000_000,
+              let handle = try? FileHandle(forReadingFrom: url)
+        else { return false }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 8192)) ?? Data()
+        if head.contains(0) { return false }
+        return String(data: head, encoding: .utf8) != nil
+    }
+}

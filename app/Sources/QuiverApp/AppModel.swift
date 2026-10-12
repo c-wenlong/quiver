@@ -175,6 +175,9 @@ final class AppModel {
     let pluginCatalog: PluginCatalogModel
     /// The Plugins page's tab, so another page can open Explore.
     var pluginsTab: PluginsTab = .health
+    /// Quiver's display names for marketplaces and plugins, from
+    /// ~/.quiver/config/plugin-display-names.json.
+    var primitiveNames: PluginDisplayNames
     private let launcher = ProcessLauncher()
     private let userHome = FileManager.default.homeDirectoryForCurrentUser
 
@@ -200,6 +203,7 @@ final class AppModel {
         // Everything Quiver keeps lives under ~/.quiver (see AGENTS.md).
         let home = FileManager.default.homeDirectoryForCurrentUser
         let quiver = home.appending(path: ".quiver")
+        primitiveNames = PluginDisplayNames.load(from: PluginDisplayNames.file(home: home))
         limits = LimitsMonitor(quiver: quiver)
         let usage = UsageService(
             transport: URLSessionTransport(),

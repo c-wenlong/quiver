@@ -5,9 +5,16 @@ import SwiftUI
 /// installed or not, with its state in each harness and the skills it
 /// ships. Actions go through `swe plugins`, each after a confirmation.
 struct PluginExplorer: View {
+    @Environment(AppModel.self) private var app
     @Bindable var model: PluginCatalogModel
     var openHealth: () -> Void
     var confirm: (PluginAction) -> Void
+    /// The plugin open in its detail page, nil while the list shows.
+    @State private var opened: ExplorePlugin?
+    /// A marketplace being renamed (display name only) when editable.
+    @State private var renaming: String?
+    @State private var renameText = ""
+    private var home: URL { FileManager.default.homeDirectoryForCurrentUser }
 
     var body: some View {
         // Outside the switch: when the reload after a failed action also
@@ -26,7 +33,10 @@ struct PluginExplorer: View {
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded:
-            if let index = model.index {
+            if let opened, let index = model.index,
+               let market = index.catalog.marketplaces.first(where: { $0.name == opened.row.plugin.marketplace }) {
+                PluginDetailView(entry: opened, market: market, home: home) { self.opened = nil }
+            } else if let index = model.index {
                 content(index)
             } else {
                 LoadingCard(text: "Reading every marketplace…")
@@ -58,18 +68,39 @@ struct PluginExplorer: View {
                         SourceHeader(source: source, open: open, searching: searching) { model.toggle(source.id) }
                             .padding(.top, source.id == sources.first?.id ? 0 : 16)
                     case .marketplace(let market, let open):
-                        MarketplaceHeader(market: market, open: open, searching: searching) { model.toggle(market.id) }
+                        MarketplaceHeader(market: market,
+                                          name: app.primitiveNames.name(forMarketplace: market.name) ?? market.name,
+                                          canRename: catalog.marketplaces
+                                              .first { $0.name == market.name }
+                                              .map { PrimitiveOwnership.isEditable($0, home: home) } ?? false,
+                                          open: open, searching: searching,
+                                          onRename: { renaming = market.name
+                                              renameText = app.primitiveNames.name(forMarketplace: market.name) ?? market.name },
+                                          toggle: { model.toggle(market.id) })
                             .padding(.leading, Self.marketIndent)
                     case .plugin(let entry, let last):
                         VStack(spacing: 0) {
                             PluginRow(entry: entry, catalog: catalog, running: model.running, busy: model.work.isBusy,
-                                      openHealth: openHealth, confirm: confirm)
+                                      openHealth: openHealth, confirm: confirm, open: { opened = entry })
                             if !last { Rectangle().fill(Theme.border).frame(height: 1) }
                         }
                         .padding(.leading, Self.pluginIndent)
                         .padding(.bottom, last ? 8 : 0)
                     }
                 }
+            }
+            .alert("Rename marketplace", isPresented: .init(
+                get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("Display name", text: $renameText)
+                Button("Rename") {
+                    guard let id = renaming else { return }
+                    app.primitiveNames.set(renameText, forMarketplace: id)
+                    try? app.primitiveNames.save(to: PluginDisplayNames.file(home: home))
+                    renaming = nil
+                }
+                Button("Cancel", role: .cancel) { renaming = nil }
+            } message: {
+                Text("Display name only: \(renaming ?? "") keeps its id.")
             }
         }
     }
@@ -157,18 +188,26 @@ private struct SourceHeader: View {
 /// how many of its plugins the source's harness has installed.
 private struct MarketplaceHeader: View {
     var market: ExploreMarketplace
+    /// The display name: Quiver's overlay name or the marketplace id.
+    var name: String
+    /// A directory-sourced marketplace under ~/.quiver/plugins can rename.
+    var canRename: Bool
     var open: Bool
     var searching: Bool
+    var onRename: () -> Void
     var toggle: () -> Void
 
     var body: some View {
         let count = market.countLine(searching: searching)
         DisclosureHeader(open: open, verticalPadding: 8,
-                         label: [market.name, market.tag, count].compactMap { $0 }.joined(separator: ", "),
+                         label: [name, market.tag, count].compactMap { $0 }.joined(separator: ", "),
                          toggle: toggle) {
-            Text(market.name)
+            Text(name)
                 .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
+            if name != market.name {
+                Text(market.name).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+            }
             if let tag = market.tag { SourceTag(text: tag) }
             Spacer(minLength: 8)
             Text(count)
@@ -176,6 +215,9 @@ private struct MarketplaceHeader: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize()
+        }
+        .contextMenu {
+            if canRename { Button("Rename…", action: onRename) }
         }
     }
 }
@@ -238,6 +280,7 @@ private struct SourceTag: View {
 }
 
 private struct PluginRow: View {
+    @Environment(AppModel.self) private var app
     var entry: ExplorePlugin
     var catalog: PluginCatalog
     var running: PluginAction?
@@ -245,16 +288,23 @@ private struct PluginRow: View {
     var busy: Bool
     var openHealth: () -> Void
     var confirm: (PluginAction) -> Void
+    /// The name block opens the plugin's detail page.
+    var open: () -> Void
 
     private static let shownSkills = 8
 
     var body: some View {
         let row = entry.row
         let plugin = row.plugin
+        let shown = app.primitiveNames.name(forPlugin: plugin.ref) ?? plugin.displayName ?? plugin.name
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(plugin.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Button(action: open) {
+                        Text(shown).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    }
+                    .plainButton()
+                    .help("Open \(shown)")
                     // The marketplace is the header above; the version is all that is left.
                     if let version = plugin.version {
                         Text("v\(version)").font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
@@ -262,6 +312,9 @@ private struct PluginRow: View {
                     if let drift = plugin.worstDrift {
                         DriftBadge(state: drift.state, harnesses: drift.harnesses, action: openHealth)
                     }
+                }
+                if shown != plugin.name {
+                    Text(plugin.ref).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textMuted).lineLimit(1)
                 }
                 if let description = plugin.description, !description.isEmpty {
                     Text(description)
