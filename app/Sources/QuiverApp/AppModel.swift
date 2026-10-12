@@ -16,6 +16,10 @@ final class AppModel {
         didSet { UserDefaults.standard.set(selection?.rawValue, forKey: "lastSection") }
     }
 
+    /// Tapping the sidebar item or tab of the view already shown bumps
+    /// this; a detail page open there goes back through its own ask.
+    var navReselects = 0
+
     /// Opens (or reopens) the main window. Captured from the window's scene,
     /// because the menu bar panel lives outside SwiftUI's scene graph and
     /// its own `openWindow` cannot reach the `Window` scene.

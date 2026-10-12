@@ -51,7 +51,10 @@ struct PluginsPage: View {
             }
         } content: {
             Tabs(options: [(PluginsTab.health, "Health"), (PluginsTab.explore, "Explore")],
-                 selection: $app.pluginsTab, style: .underline)
+                 selection: $app.pluginsTab, style: .underline,
+                 // Reselecting Explore while a plugin detail is open goes
+                 // back to the list, through the detail's unsaved ask.
+                 onSelect: { tab in if tab == .explore { app.navReselects += 1 } })
             switch app.pluginsTab {
             case .health: health
             case .explore:
