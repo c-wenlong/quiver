@@ -161,27 +161,30 @@ public actor Ledger {
             }
         }
         for database in roots.openCodeDatabases where FileManager.default.fileExists(atPath: database.path) {
-            report.databasesRead += scanSource(database, kind: "OpenCode",
-                                               scan: DatabaseSources.scanOpenCode, report: &report)
+            report.databasesRead += try scanSource(database, kind: "OpenCode",
+                                                   scan: DatabaseSources.scanOpenCode, report: &report)
         }
         for database in roots.devinDatabases where FileManager.default.fileExists(atPath: database.path) {
-            report.databasesRead += scanSource(database, kind: "Devin",
-                                               scan: DatabaseSources.scanDevin, report: &report)
+            report.databasesRead += try scanSource(database, kind: "Devin",
+                                                   scan: DatabaseSources.scanDevin, report: &report)
         }
         return report
     }
 
-    /// One database source. Its own errors become a note and a skip: the
-    /// file can be locked or rebuilt by the app that owns it at any moment,
-    /// and one unreadable source is no reason to drop the others.
+    /// One database source. A failure reading the source becomes a note and
+    /// a skip: the file can be locked or rebuilt by the app that owns it at
+    /// any moment, and one unreadable source is no reason to drop the
+    /// others. A failure on Quiver's own cache still throws, so the
+    /// Overview shows the error and the scan does not count as complete.
     private func scanSource(
         _ url: URL, kind: String,
         scan: (URL, LedgerStore) throws -> Bool, report: inout ScanReport
-    ) -> Int {
+    ) throws -> Int {
         do {
             return try scan(url, store) ? 1 : 0
-        } catch {
-            report.notes.append("Skipped \(kind)'s database (\(url.path)): \(error.localizedDescription)")
+        } catch let error as DatabaseSources.SourceRead {
+            report.notes.append(
+                "Skipped \(kind)'s database (\(url.path)): \(error.underlying.localizedDescription)")
             return 0
         }
     }

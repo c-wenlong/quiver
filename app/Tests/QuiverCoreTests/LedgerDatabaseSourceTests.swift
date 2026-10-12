@@ -194,6 +194,26 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(await ledger.events(in: allTime).count == 2)
     }
 
+    /// Only reads of the source are forgiven. A write to Quiver's own cache
+    /// fails the scan, so the Overview can show the error.
+    @Test func aCacheWriteFailureThrowsInsteadOfBecomingANote() async throws {
+        let temp = try TempDir()
+        let db = temp.path("devin/cli/sessions.db")
+        try makeDatabase("devin.sql", at: db)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+
+        // A second connection holding an exclusive lock makes every cache
+        // operation fail, starting at BEGIN IMMEDIATE.
+        let lock = try SQLiteDatabase(url: temp.path("cache/ledger.sqlite"))
+        try lock.execute("BEGIN EXCLUSIVE")
+        do {
+            _ = try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
+            Issue.record("expected the scan to throw")
+        } catch let error as SQLiteDatabase.Failure {
+            #expect(error.message.contains("locked"))
+        }
+    }
+
     /// The failure carries what SQLite actually said, so the Overview banner
     /// can show more than "error 1".
     @Test func aFailureDescribesTheSQLiteCodeAndMessage() throws {
