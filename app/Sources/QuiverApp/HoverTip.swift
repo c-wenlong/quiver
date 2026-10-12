@@ -18,8 +18,15 @@ struct HoverTip: ViewModifier {
         content
             .contentShape(.rect)
             .onTapGesture {
-                open.toggle()
-                pinned = open
+                rest?.cancel()
+                if open, !pinned {
+                    pinned = true
+                } else if pinned {
+                    open = false
+                } else {
+                    open = true
+                    pinned = true
+                }
             }
             .onHover { inside in
                 if inside == hovering { return }

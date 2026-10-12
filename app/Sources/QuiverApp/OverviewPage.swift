@@ -423,8 +423,9 @@ private struct Chip: View {
 private struct ActivityCard: View {
     var days: [DayRow]
     @State private var width: CGFloat = 0
-    /// The cell under the pointer; kept when it sits in a gap between cells.
-    @State private var hovered: Heatmap.Cell?
+    /// The day under the pointer; kept when it sits in a gap between cells.
+    /// The bubble reads the live cell for it, so a rescan updates the figures.
+    @State private var hovered: Date?
     /// The pointer is inside the grid at all: the bubble survives the gaps
     /// but goes when the grid is left.
     @State private var inGrid = false
@@ -466,7 +467,7 @@ private struct ActivityCard: View {
                                     .onGeometryChange(for: CGRect.self) {
                                         $0.frame(in: .named("activityGrid"))
                                     } action: { frames[cell.day] = $0 }
-                                    .onHover { inside in if inside { hovered = cell } }
+                                    .onHover { inside in if inside { hovered = cell.day } }
                             } else {
                                 Color.clear.frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
                             }
@@ -480,8 +481,10 @@ private struct ActivityCard: View {
             // One bubble for the whole grid, drawn above it so no cell clips
             // it and nothing flickers between cells.
             .overlay {
-                if inGrid, let hovered, let frame = frames[hovered.day] {
-                    bubble(for: hovered, over: frame).transition(.opacity)
+                if inGrid, let hovered,
+                   let cell = weeks.joined().compactMap({ $0 }).first(where: { $0.day == hovered }),
+                   let frame = frames[hovered] {
+                    bubble(for: cell, over: frame).transition(.opacity)
                 }
             }
             .animation(.easeIn(duration: 0.1), value: inGrid)
@@ -518,8 +521,12 @@ private struct ActivityCard: View {
 
     private func detail(for cell: Heatmap.Cell) -> String {
         if cell.tokens == 0 { return "No usage" }
-        let cost = cell.costUSD > 0 ? UsageFormat.dollars(cell.costUSD) : "No priced usage"
-        return "\(UsageFormat.tokens(cell.tokens)) tokens · \(cost)"
+        let tokens = "\(UsageFormat.tokens(cell.tokens)) tokens"
+        if cell.costUSD > 0 {
+            return "\(tokens) · \(UsageFormat.dollars(cell.costUSD))"
+                + (cell.unpricedTokens > 0 ? " (some tokens unpriced)" : "")
+        }
+        return cell.unpricedTokens > 0 ? "\(tokens) · No list price" : "\(tokens) · $0.00"
     }
 
     private func bubbleX(over frame: CGRect) -> CGFloat {

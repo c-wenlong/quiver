@@ -36,6 +36,24 @@ import Testing
         #expect(cells.first { $0.day == day(0) }?.level == 0)
     }
 
+    @Test func aZeroCostDayIsNotUnpriced() {
+        // Priced tokens that costed to nothing still differ from unpriced ones.
+        let rows = [DayRow(day: day(-1), totals: totals(tokens: 5, cost: 0))]
+        let cell = Heatmap(days: rows, weeks: 4, now: now, calendar: calendar)
+            .columns.joined().compactMap { $0 }.first { $0.day == day(-1) }
+        #expect(cell?.costUSD == 0)
+        #expect(cell?.unpricedTokens == 0)
+    }
+
+    @Test func unpricedTokensRideAlongWithTheCost() {
+        let rows = [DayRow(day: day(-1), totals: totals(tokens: 5, cost: 1, unpriced: 3)),
+                    DayRow(day: day(-1), totals: totals(tokens: 2, cost: 0, unpriced: 2))]
+        let cell = Heatmap(days: rows, weeks: 4, now: now, calendar: calendar)
+            .columns.joined().compactMap { $0 }.first { $0.day == day(-1) }
+        #expect(cell?.costUSD == 1)
+        #expect(cell?.unpricedTokens == 5)
+    }
+
     @Test func totalsCountOnlyTheDaysTheGridShows() {
         // A narrow widget draws fewer weeks; its caption must not count the rest.
         let rows = [DayRow(day: day(-1), totals: totals(tokens: 5, cost: 0)),

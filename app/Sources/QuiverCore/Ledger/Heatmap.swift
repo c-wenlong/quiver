@@ -7,6 +7,8 @@ public struct Heatmap: Sendable, Equatable {
         public var tokens: Int
         /// The day's priced spend, for the hover stat.
         public var costUSD: Double
+        /// Tokens from models with no list price, so $0 reads differently.
+        public var unpricedTokens: Int
         /// 0 for no usage, else 1...4 by how busy the day was among the busy ones.
         public var level: Int
     }
@@ -25,10 +27,12 @@ public struct Heatmap: Sendable, Equatable {
 
         var tokens: [Date: Int] = [:]
         var costs: [Date: Double] = [:]
+        var unpriced: [Date: Int] = [:]
         for row in days {
             let day = calendar.startOfDay(for: row.day)
             tokens[day, default: 0] += row.totals.totalTokens
             costs[day, default: 0] += row.totals.costUSD
+            unpriced[day, default: 0] += row.totals.unpricedTokens
         }
         // Quartiles of the busy days, so one huge day doesn't wash out the rest.
         let busy = tokens.values.filter { $0 > 0 }.sorted()
@@ -43,7 +47,8 @@ public struct Heatmap: Sendable, Equatable {
                 guard let day = calendar.date(byAdding: .day, value: week * 7 + weekday, to: first),
                       day <= today else { return nil }
                 let value = tokens[day] ?? 0
-                return Cell(day: day, tokens: value, costUSD: costs[day] ?? 0, level: level(value))
+                return Cell(day: day, tokens: value, costUSD: costs[day] ?? 0,
+                            unpricedTokens: unpriced[day] ?? 0, level: level(value))
             }
         }
     }
