@@ -248,17 +248,24 @@ private struct ProjectInstructions: View {
 
 /// A plain-text editor for one instruction file: save, revert, an unsaved
 /// dot, and a stop when the file changed on disk since it was opened.
+/// Raw and Rich edit the same text, so nothing is lost switching.
 struct InstructionEditor: View {
+    private static let modeKey = "agentsMdView"
+
     @Bindable var document: InstructionDocument
     var title: String
     var subtitle: String
     var onSaved: () -> Void = {}
     @State private var error: String?
     @FocusState private var editing: Bool
+    @State private var mode = UserDefaults.standard.string(forKey: Self.modeKey) ?? "raw"
+    @State private var richFocused = false
+    @State private var richFocusToken = 0
 
     var body: some View {
         Card(title: title, subtitle: subtitle) {
             HStack(spacing: 8) {
+                Tabs(options: [("raw", "Raw"), ("rich", "Rich")], selection: $mode, style: .segmented)
                 if document.isDirty {
                     HStack(spacing: 5) {
                         Circle().fill(Theme.warning).frame(width: 7, height: 7)
@@ -291,18 +298,31 @@ struct InstructionEditor: View {
                         .font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
                 // Fills the card, and the card fills what the page has left.
-                TextEditor(text: $document.text)
-                    .font(.system(size: 13, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .focused($editing)
-                    .focusEffectDisabled()
-                    .padding(10)
-                    .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-                        .strokeBorder(editing ? Theme.borderHover : Theme.border, lineWidth: 1))
-                    .focusRing(editing, cornerRadius: Theme.controlRadius, afterPointer: true)
-                    .frame(minHeight: 160, maxHeight: .infinity)
-                    .accessibilityLabel(title)
+                let focused = mode == "raw" ? editing : richFocused
+                Group {
+                    if mode == "raw" {
+                        TextEditor(text: $document.text)
+                            .font(.system(size: 13, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .focused($editing)
+                    } else {
+                        MarkdownTextView(text: $document.text, isFocused: $richFocused,
+                                         focusToken: richFocusToken, accessibilityLabel: title)
+                    }
+                }
+                .focusEffectDisabled()
+                .padding(10)
+                .background(mode == "raw" ? Theme.code : Theme.field,
+                            in: .rect(cornerRadius: Theme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
+                .focusRing(focused, cornerRadius: Theme.controlRadius, afterPointer: true)
+                .frame(minHeight: 160, maxHeight: .infinity)
+                .accessibilityLabel(title)
+                .onChange(of: mode) {
+                    UserDefaults.standard.set(mode, forKey: Self.modeKey)
+                    if mode == "raw" { editing = true } else { richFocusToken += 1 }
+                }
             }
         }
     }
