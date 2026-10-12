@@ -213,10 +213,15 @@ public enum McpServerRepo {
     /// servers sits under each of them with no row of its own. Local is a
     /// flat list sorted by name, mixing servers and unused folders; Remote
     /// keeps the hub's order.
+    ///
+    /// `usageFrom` is the whole inventory: a server the page's filter keeps
+    /// out of `servers` still marks its folder used, so the folder never
+    /// claims "Not in the hub"; it simply has no row of its own.
     public static func grouped(servers: [McpServer],
-                             folders: [McpRepoServer]) -> (local: [Row], remote: [Row]) {
-        let usage = hubUsage(servers: folders, hub: servers)
-        var claimed = Set<String>()
+                             folders: [McpRepoServer],
+                             usageFrom hub: [McpServer]? = nil) -> (local: [Row], remote: [Row]) {
+        let usage = hubUsage(servers: folders, hub: hub ?? servers)
+        let claimed = Set(usage.keys)
         var local: [Row] = []
         var remote: [Row] = []
         for server in servers {
@@ -227,7 +232,6 @@ public enum McpServerRepo {
                 remote.append(.server(server, folders: []))
             } else {
                 local.append(.server(server, folders: backing))
-                claimed.formUnion(backing.map { $0.path.standardizedFileURL.path })
             }
         }
         for folder in folders where !claimed.contains(folder.path.standardizedFileURL.path) {

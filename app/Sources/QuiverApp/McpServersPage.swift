@@ -21,6 +21,19 @@ struct McpServersPage: View {
     /// The folder the folder scan reads, from the Paths setting.
     private var repoRoot: URL { AppModel.mcpServersFolder(path: app.mcpServersPath) }
 
+    /// The Local folder rows on their own, for states with no server grid
+    /// to put them in (the inventory is empty or failed to read). With the
+    /// hub unknown a row cannot claim "Not in the hub", so the caption hides.
+    @ViewBuilder private func folderOnlyRows(hubKnown: Bool) -> some View {
+        let local = McpServerRepo.grouped(servers: [], folders: app.mcpRepo.servers).local
+        if !local.isEmpty {
+            Card {
+                ServerGrid(harnesses: [], local: local, remote: [],
+                           showHealth: false, hubKnown: hubKnown, editor: app.editor) { _ in }
+            }
+        }
+    }
+
     var body: some View {
         Page(title: "MCP servers",
              subtitle: "Every server your harnesses configure, where each is missing, and where two disagree.") {
@@ -43,8 +56,10 @@ struct McpServersPage: View {
                 ProgressView().frame(maxWidth: .infinity)
             case .failed(let message):
                 ErrorCard(message: message)
+                folderOnlyRows(hubKnown: false)
             case .loaded(let inventory) where inventory.servers.isEmpty:
                 Card { Label("No MCP servers in any harness config.", systemImage: "powerplug").foregroundStyle(Theme.textSecondary) }
+                folderOnlyRows(hubKnown: true)
             case .loaded(let inventory):
                 let compared = inventory.activeHarnesses.filter { !hidden.contains($0) }
                 HStack(alignment: .center, spacing: 12) {
@@ -56,7 +71,8 @@ struct McpServersPage: View {
                 HarnessChips(harnesses: inventory.activeHarnesses, hidden: $hidden)
                     .onChange(of: hidden) { UserDefaults.standard.set(hidden.sorted(), forKey: Self.hiddenKey) }
                 let rows = inventory.servers(filter, across: compared)
-                let grouped = McpServerRepo.grouped(servers: rows, folders: app.mcpRepo.servers)
+                let grouped = McpServerRepo.grouped(servers: rows, folders: app.mcpRepo.servers,
+                                                    usageFrom: inventory.servers)
                 if grouped.local.isEmpty && grouped.remote.isEmpty {
                     Card { Text("Every server is in every compared harness, defined the same way.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }
                 } else {
@@ -131,6 +147,9 @@ private struct ServerGrid: View {
     var local: [McpServerRepo.Row]
     var remote: [McpServerRepo.Row]
     var showHealth: Bool
+    /// False when the inventory never loaded: an unused-looking folder
+    /// cannot claim "Not in the hub", so its caption hides.
+    var hubKnown = true
     var editor: CodeEditor?
     var open: (McpServer) -> Void
 
@@ -184,7 +203,8 @@ private struct ServerGrid: View {
                             ServerRow(server: server, folders: folders, harnesses: harnesses,
                                       showHealth: showHealth, editor: editor) { open(server) }
                         case .folder(let folder):
-                            FolderRow(folder: folder, harnesses: harnesses, editor: editor)
+                            FolderRow(folder: folder, harnesses: harnesses,
+                                      hubKnown: hubKnown, editor: editor)
                         }
                         if index < section.rows.count - 1 { Divider().overlay(Theme.border) }
                     }
@@ -571,11 +591,14 @@ private struct McpRepoSection: View {
 private struct FolderRow: View {
     var folder: McpRepoServer
     var harnesses: [String]
+    /// False when the hub never loaded: the caption hides rather than
+    /// claim "Not in the hub" on a guess.
+    var hubKnown = true
     var editor: CodeEditor?
 
     var body: some View {
         HStack(spacing: 0) {
-            RepoFolderRow(folder: folder, usedBy: [], editor: editor)
+            RepoFolderRow(folder: folder, usedBy: hubKnown ? [] : nil, editor: editor)
                 .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
             ForEach(harnesses, id: \.self) { harness in
                 Spacer().frame(width: ServerGrid.columnWidth(harness))

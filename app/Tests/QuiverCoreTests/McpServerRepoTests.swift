@@ -250,6 +250,19 @@ private func git(_ args: String..., in dir: URL) async throws {
         #expect(folders.map(\.name) == ["a-mcp", "b-mcp"])
     }
 
+    @Test func aFilteredOutServerStillClaimsItsFolder() {
+        let folder = repo("local-mcp", at: "/srv/mcp/local-mcp")
+        let hidden = hubServer("hidden", command: "node", args: ["/srv/mcp/local-mcp/index.js"])
+        let shown = hubServer("shown", command: "npx", args: ["-y", "x"])
+        // The page's filter keeps `hidden` off the list, but it still runs
+        // from the folder: claiming it from the full inventory stops the
+        // folder coming back as a "Not in the hub" row.
+        let (local, remote) = McpServerRepo.grouped(servers: [shown], folders: [folder],
+                                                  usageFrom: [shown, hidden])
+        #expect(local.isEmpty)
+        #expect(remote.map(\.name) == ["shown"])
+    }
+
     // MARK: - GitState.parse
 
     @Test func parseReadsTrackingCountsAndChanges() {
