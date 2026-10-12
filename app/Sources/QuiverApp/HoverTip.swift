@@ -7,6 +7,8 @@ import SwiftUI
 /// `.help` would hide the answer behind a delay nobody waits out.
 struct HoverTip: ViewModifier {
     var text: String
+    /// A bold first line above the text, such as a skill's name.
+    var title: String? = nil
 
     @State private var open = false
     /// Opened by a click, so leaving the icon doesn't close it.
@@ -49,15 +51,20 @@ struct HoverTip: ViewModifier {
             // A click outside the popover also dismisses it; the pin goes
             // with it so the next hover-only open closes on leaving.
             .onChange(of: open) { _, open in if !open { pinned = false } }
-            .accessibilityLabel(text)
+            .accessibilityLabel(title.map { "\($0): \(text)" } ?? text)
             .accessibilityAddTraits(.isButton)
             .popover(isPresented: $open, arrowEdge: .bottom) {
-                Text(text)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(maxWidth: 260, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
+                VStack(alignment: .leading, spacing: 4) {
+                    if let title {
+                        Text(title).font(Theme.caption.weight(.semibold)).foregroundStyle(Theme.textPrimary)
+                    }
+                    Text(text)
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .frame(maxWidth: title == nil ? 260 : 320, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(10)
             }
             .onDisappear {
                 rest?.cancel()
@@ -69,7 +76,7 @@ struct HoverTip: ViewModifier {
 extension View {
     /// A resting-hover and click tip, for small info marks and controls
     /// that need an explanation a `.help` tooltip would hide.
-    func hoverTip(_ text: String) -> some View {
-        modifier(HoverTip(text: text))
+    func hoverTip(_ text: String, title: String? = nil) -> some View {
+        modifier(HoverTip(text: text, title: title))
     }
 }

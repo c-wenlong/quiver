@@ -354,16 +354,18 @@ private struct PluginRow: View {
                     Text(description)
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
-                        .help(description)
+                        .hoverTip(description)
                 }
                 if !row.skills.isEmpty {
                     FlowLayout(spacing: 4, lineSpacing: 4) {
                         ForEach(row.skills.prefix(Self.shownSkills)) { skill in
-                            Badge(skill.name).help(skill.description)
+                            Badge(skill.name)
+                                .hoverTip(skill.description.isEmpty ? "No description." : skill.description, title: skill.name)
                         }
                         if row.skills.count > Self.shownSkills {
                             let rest = row.skills.dropFirst(Self.shownSkills)
-                            Badge("+\(rest.count) more").help(rest.map(\.name).joined(separator: ", "))
+                            Badge("+\(rest.count) more")
+                                .hoverTip(rest.map(\.name).joined(separator: ", "), title: "\(rest.count) more skills")
                         }
                     }
                     .padding(.top, 2)
