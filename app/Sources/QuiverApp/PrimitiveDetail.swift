@@ -350,7 +350,13 @@ struct PartsCard: View {
                 if canPreview { drafts.document(for: selected) }
             }
         }
-        .sheet(isPresented: $sheetOpen) {
+        .sheet(isPresented: $sheetOpen, onDismiss: {
+            // Drop the pick so reopening the same file restarts the
+            // size and type check; a draft still in the store reopens
+            // with its edits.
+            selected = nil
+            previewable = nil
+        }) {
             if let selected {
                 PrimitiveFileSheet(path: selected, root: root, editable: editable,
                                    previewable: previewable, document: drafts.documents[selected],
@@ -520,6 +526,9 @@ struct PrimitiveFileSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingClose = false
+    /// A save in the close prompt that failed: the reason shows in the
+    /// sheet, which stays open.
+    @State private var saveError: String?
 
     private var url: URL { URL(fileURLWithPath: path) }
     private var fileEditable: Bool {
@@ -528,6 +537,9 @@ struct PrimitiveFileSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let saveError {
+                ErrorCard(message: saveError)
+            }
             if !fileEditable, previewable == true {
                 PrimitiveLockNote(text: "Only files inside the plugin or skill's own folder can be edited, so this one is read-only.")
             }
@@ -588,10 +600,14 @@ struct PrimitiveFileSheet: View {
         guard let document else { dismiss(); return }
         switch document.save() {
         case .saved:
+            saveError = nil
             onSaved()
             dismiss()
-        case .changedOnDisk, .failed:
-            break
+        case .changedOnDisk:
+            // The editor's own banner explains it.
+            saveError = nil
+        case .failed(let message):
+            saveError = "Couldn't save \(url.lastPathComponent): \(message)"
         }
     }
 }

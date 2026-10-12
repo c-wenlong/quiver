@@ -64,13 +64,27 @@ actor FakeSessionLedger: SessionUsageQuerying {
     var rows: [SessionUsage] = []
     var days: [DailyUsage] = []
     private(set) var ranges: [DateInterval] = []
+    /// The next `daily` call captures its rows, then waits for `releaseDaily`.
+    private var holdDaily = false
+    private var dailyGate: CheckedContinuation<Void, Never>?
+    private(set) var dailyWaiting = false
     func set(_ rows: [SessionUsage]) { self.rows = rows }
     func setDaily(_ rows: [DailyUsage]) { self.days = rows }
+    func holdNextDaily() { holdDaily = true }
+    func releaseDaily() { dailyGate?.resume(); dailyGate = nil }
     func bySession(in range: DateInterval) async -> [SessionUsage] {
         ranges.append(range)
         return rows
     }
-    func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage] { days }
+    func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage] {
+        let result = days
+        if holdDaily {
+            holdDaily = false
+            dailyWaiting = true
+            await withCheckedContinuation { dailyGate = $0 }
+        }
+        return result
+    }
 }
 
 /// Holds the listing until released, to test what happens meanwhile.
@@ -362,6 +376,42 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         await ledger.set([usage("a", "claude", models: ["sonnet", "opus", "haiku"], cost: 1)])
         await model.refreshUsage()
         #expect(model.models.map(\.model) == ["opus", "sonnet", "haiku"])
+    }
+
+    @Test func modelCountsCountWholeDaysAtTheWindowEdge() async {
+        let ledger = FakeSessionLedger()
+        var tokens = UsageTotals()
+        tokens.inputTokens = 300
+        // Midnight on the day the 7-day window opens on; a time-of-day
+        // cutoff would drop this midnight-labelled row.
+        let cutoff = calendar.startOfDay(for: now.addingTimeInterval(-7 * 86_400))
+        await ledger.setDaily([DailyUsage(day: cutoff, harness: "claude", model: "opus", totals: tokens)])
+        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)],
+                                [usage("a", "claude", models: ["opus"], cost: 1)], ledger: ledger)
+        await model.load()
+        model.filter.window = .week
+        #expect(model.models.first?.tokens == 300)
+    }
+
+    @Test func aUsageRefreshMidLoadKeepsItsDailyRows() async {
+        let ledger = FakeSessionLedger()
+        var stale = UsageTotals()
+        stale.inputTokens = 100
+        var fresh = UsageTotals()
+        fresh.inputTokens = 900
+        await ledger.setDaily([DailyUsage(day: now, harness: "claude", model: "opus", totals: stale)])
+        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)],
+                                [usage("a", "claude", models: ["opus"], cost: 1)], ledger: ledger)
+        // Hold the load mid-read so a refresh can commit newer daily rows.
+        await ledger.holdNextDaily()
+        let loading = Task { await model.load() }
+        while !(await ledger.dailyWaiting) { await Task.yield() }
+        await ledger.setDaily([DailyUsage(day: now, harness: "claude", model: "opus", totals: fresh)])
+        await model.refreshUsage()
+        await ledger.releaseDaily()
+        await loading.value
+        // The load's stale read must not overwrite the refresh's rows.
+        #expect(model.models.first?.tokens == 900)
     }
 }
 

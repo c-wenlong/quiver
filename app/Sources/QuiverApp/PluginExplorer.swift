@@ -225,7 +225,8 @@ private struct MarketplaceCard: View {
                 .padding(.horizontal, Theme.cardPadding)
                 .padding(.vertical, 14)
             if open, !market.plugins.isEmpty {
-                VStack(spacing: 0) {
+                // Lazy so a big marketplace does not build every row at once.
+                LazyVStack(spacing: 0) {
                     Rectangle().fill(Theme.border).frame(height: 1)
                         .padding(.horizontal, Theme.cardPadding)
                     ForEach(market.plugins) { entry in

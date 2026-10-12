@@ -378,6 +378,20 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         """)
     }
 
+    @Test func aMoveIntoAnEmptyGroupFillsIt() throws {
+        var file = APIKeysFile(text: """
+        # FIRST
+        export ALPHA_KEY="a1"
+
+        # SECOND
+        """)
+        try file.move(name: "ALPHA_KEY", toProvider: "SECOND")
+        #expect(file.text == """
+        # SECOND
+        export ALPHA_KEY="a1"
+        """)
+    }
+
     @Test func anUngroupedKeyMovedToANewProviderKeepsTheBlocksEnd() throws {
         var file = APIKeysFile(text: """
         # set in ~/.zshenv

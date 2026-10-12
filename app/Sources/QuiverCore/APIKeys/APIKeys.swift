@@ -206,7 +206,10 @@ public struct APIKeysFile: Equatable, Sendable {
         // A group that isn't in the file needs a label it would read
         // back; check before any line moves, so a refused move leaves
         // the file alone.
+        // A provider counts as known when its group or even just its
+        // heading is in the file: an empty group is a real destination.
         let providerKnown = all.contains { $0.provider == provider }
+            || lines.contains { Self.heading($0) == provider }
         if !providerKnown {
             guard Self.isLabel(provider) else { throw APIKeysError.invalidProvider }
         }
@@ -226,10 +229,18 @@ public struct APIKeysFile: Equatable, Sendable {
             // Leave one blank line between groups, not two.
             if heading > 0, heading < lines.count, lines[heading - 1].isEmpty, lines[heading].isEmpty {
                 lines.remove(at: heading)
+            } else if heading == 0, lines.first?.isEmpty == true {
+                // The emptied group was the file's first: no stray leading blank.
+                lines.removeFirst()
             }
         }
         if let last = entries.last(where: { $0.provider == provider }) {
             lines.insert(line, at: last.line + 1)
+            return
+        }
+        // An empty group still counts: the key lands right after its heading.
+        if let heading = lines.lastIndex(where: { Self.heading($0) == provider }) {
+            lines.insert(line, at: heading + 1)
             return
         }
         // The provider isn't in the file, so the new group goes where

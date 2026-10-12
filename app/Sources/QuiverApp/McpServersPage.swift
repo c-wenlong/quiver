@@ -655,7 +655,7 @@ private struct FolderActions: View {
             } else if !folders.isEmpty {
                 Menu {
                     ForEach(folders) { folder in
-                        Button(folder.name) {
+                        Button(Self.menuTitle(folder)) {
                             NSWorkspace.shared.activateFileViewerSelecting([folder.path])
                         }
                     }
@@ -675,7 +675,7 @@ private struct FolderActions: View {
                 } else if !folders.isEmpty {
                     Menu {
                         ForEach(folders) { folder in
-                            Button(folder.name) {
+                            Button(Self.menuTitle(folder)) {
                                 NSWorkspace.shared.open([folder.path], withApplicationAt: editor.appURL,
                                                         configuration: .init())
                             }
@@ -687,6 +687,25 @@ private struct FolderActions: View {
                 }
             }
         }
+    }
+
+    /// "linear-mcp · main ↑1 ↓2 · Local changes" so a folder picker names
+    /// its checkout the way the row's caption does, or just the name
+    /// while git is still answering.
+    private static func menuTitle(_ folder: McpRepoServer) -> String {
+        var parts = [folder.name]
+        if let git = folder.git {
+            if git.isRepo {
+                parts.append(git.branch ?? "detached HEAD")
+                let counts = [git.ahead > 0 ? "↑\(git.ahead)" : nil,
+                              git.behind > 0 ? "↓\(git.behind)" : nil].compactMap { $0 }
+                if !counts.isEmpty { parts.append(counts.joined(separator: " ")) }
+                if git.hasChanges { parts.append("Local changes") }
+            } else {
+                parts.append("Not a git repo")
+            }
+        }
+        return parts.joined(separator: " · ")
     }
 
     /// The icon buttons' chrome, applied by hand since IconButtonStyle is

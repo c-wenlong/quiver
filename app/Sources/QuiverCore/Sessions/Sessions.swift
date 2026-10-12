@@ -328,12 +328,14 @@ public final class SessionsModel {
         let myUsage = usageGeneration
         let (usage, daily) = await readUsage()
         guard mine == generation else { return }
-        // A refresh that finished meanwhile read the ledger later; keep its numbers.
-        let joinedUsage = myUsage == usageGeneration ? usage : (latestUsage ?? usage)
+        // A refresh that finished meanwhile read the ledger later; keep
+        // its numbers, the model filter's daily rows included.
+        let staleRead = myUsage != usageGeneration
+        let joinedUsage = staleRead ? (latestUsage ?? usage) : usage
         listed = list.sessions
         isCapped = list.sessions.count >= limit
         latestUsage = joinedUsage
-        dailyRows = daily
+        if !staleRead { dailyRows = daily }
         rows = join(listed, joinedUsage)
         resolveProjects(for: rows)
         failures = list.failures
@@ -573,7 +575,10 @@ public final class SessionsModel {
     /// One filter entry per model the listed sessions used, heaviest in
     /// the selected period first.
     public var models: [ModelChoice] {
-        let since = windowStart(filter.window)
+        // Daily rows are labelled at midnight, so the cutoff lands on a
+        // day boundary like the window's own day count intends.
+        let since = filter.window == .all ? .distantPast
+            : calendar.startOfDay(for: windowStart(filter.window))
         var tokens: [String: Int] = [:]
         for row in dailyRows where row.day >= since {
             tokens[row.model, default: 0] += row.totals.totalTokens
