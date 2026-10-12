@@ -567,7 +567,7 @@ public final class APIKeysModel {
         self.checker = checker
         self.checkCache = checkCache
         checkSalt = APIKeyCheckStore.salt(from: defaults)
-        checks = checkCache.load()
+        checks = checkCache.load(for: store.url)
     }
 
     public var providers: [String] {
@@ -639,9 +639,11 @@ public final class APIKeysModel {
             for await (name, check) in group {
                 checks[name] = check
                 checking.remove(name)
-                saveChecks()
             }
         }
+        // One save for the whole run, so a run with only "no check"
+        // answers still lands on disk.
+        saveChecks()
     }
 
     /// Re-check one key, the status label's click. Queued at the same
@@ -673,10 +675,12 @@ public final class APIKeysModel {
         return check
     }
 
-    /// Persist what the checks know, dropping names the file no longer has.
+    /// Persist what the checks know under this keys file's own section,
+    /// dropping names the file no longer has.
     private func saveChecks() {
         let names = Set(rows.map(\.name))
-        checkCache.save(checks.filter { names.contains($0.key) })
+        checkCache.save(checks.filter { names.contains($0.key) },
+                        for: store.url, currentNames: names)
     }
 
     private func write(_ edited: APIKeysFile) throws {

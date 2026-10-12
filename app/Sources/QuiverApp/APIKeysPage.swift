@@ -261,16 +261,17 @@ private struct StatusLabel: View {
     }
 
     private var tooltip: String {
-        if let check {
-            return "\(check.result.words) · Checked \(check.checkedAt.formatted(.relative(presentation: .named)))"
-        }
-        return switch status {
+        var text = switch status {
         case .loaded: "A new terminal gets this value."
         case .overridden: "A new terminal gets a different value: something later in your shell setup sets it again."
         case .notLoaded: "A new terminal doesn't have this variable. Is the file sourced from your shell setup?"
         case .unknown: "Quiver couldn't read your login shell."
         case .checking: "Starting a login shell to see what a new terminal gets."
         }
+        if let check {
+            text += "\n\(check.result.words)\nChecked \(check.checkedAt.formatted(.relative(presentation: .named)))"
+        }
+        return text
     }
 }
 

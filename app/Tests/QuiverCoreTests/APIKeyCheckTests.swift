@@ -459,8 +459,12 @@ final class CountingTransport: HTTPTransport {
         let check = APIKeyCheck(result: .rejected(status: 401, message: "bad key"),
                                 checkedAt: Date(timeIntervalSince1970: 1_700_000_000),
                                 value: "sk-fake-OLD", salt: salt)
-        store.save(["OPENAI_API_KEY": check])
-        #expect(store.load()["OPENAI_API_KEY"] == check)
+        let keysURL = dir.appending(path: ".api_keys")
+        store.save(["OPENAI_API_KEY": check], for: keysURL,
+                   currentNames: ["OPENAI_API_KEY"])
+        #expect(store.load(for: keysURL)["OPENAI_API_KEY"] == check)
+        // Another keys file sees nothing: sections are per file.
+        #expect(store.load(for: dir.appending(path: "other/.api_keys")) == [:])
         // The file holds the fingerprint, never the value.
         let text = try String(contentsOf: store.url, encoding: .utf8)
         #expect(!text.contains("sk-fake-OLD"))
@@ -480,18 +484,23 @@ final class CountingTransport: HTTPTransport {
             "E": APIKeyCheck(result: .noCheck("no probe"), checkedAt: .now,
                              value: "e", salt: salt),
         ]
-        store.save(checks)
-        #expect(store.load() == checks)
+        let keysURL = dir.appending(path: ".api_keys")
+        store.save(checks, for: keysURL, currentNames: Set(checks.keys))
+        #expect(store.load(for: keysURL) == checks)
     }
 
     @Test func junkOnDiskReadsAsNoResults() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: "api-key-checks.json")
+        let keysURL = dir.appending(path: ".api_keys")
         try "this is not json".write(to: url, atomically: true, encoding: .utf8)
-        #expect(APIKeyCheckStore(url: url).load() == [:])
+        #expect(APIKeyCheckStore(url: url).load(for: keysURL) == [:])
         try #"{"version": 99, "checks": {}}"#.write(to: url, atomically: true, encoding: .utf8)
-        #expect(APIKeyCheckStore(url: url).load() == [:])
+        #expect(APIKeyCheckStore(url: url).load(for: keysURL) == [:])
+        // A version 1 file is retired, not migrated.
+        try #"{"version": 1, "checks": {"A": {}}}"#.write(to: url, atomically: true, encoding: .utf8)
+        #expect(APIKeyCheckStore(url: url).load(for: keysURL) == [:])
     }
 
     @Test func theSaltIsMadeOnceAndReused() {
@@ -543,9 +552,105 @@ final class CountingTransport: HTTPTransport {
         try await second.remove(name: "XAI_API_KEY")
         secondTransport.reply(200)
         await second.check(name: "OPENAI_API_KEY")
-        let stored = APIKeyCheckStore(url: cacheURL).load()
+        let stored = APIKeyCheckStore(url: cacheURL).load(for: keysURL)
         #expect(stored["XAI_API_KEY"] == nil)
         #expect(stored["OPENAI_API_KEY"]?.result == .works)
+    }
+
+    @MainActor
+    @Test func aRunWithNothingToCheckStillSaves() async throws {
+        // Every key lacks a probe, so no network task ever finishes; the
+        // single save at the end must still land the "no check" answers.
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keysURL = dir.appending(path: ".api_keys")
+        try """
+        export MYSTERY_TOKEN="abc123"
+        """.write(to: keysURL, atomically: true, encoding: .utf8)
+        let cacheURL = dir.appending(path: "api-key-checks.json")
+        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        func make(_ transport: HTTPTransport) -> APIKeysModel {
+            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+                         shell: FakeShell(environment: [:]),
+                         checker: APIKeyChecker(transport: transport),
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+        }
+        let first = make(FakeTransport())
+        await first.load()
+        await first.checkAll()
+        #expect(first.check(for: first.rows[0])?.result
+                == .noCheck("Quiver doesn't know how to check this key."))
+
+        let second = make(FakeTransport())
+        await second.load()
+        guard case .noCheck = second.check(for: second.rows[0])?.result else {
+            Issue.record("the stored no-check result did not come back")
+            return
+        }
+    }
+
+    @MainActor
+    @Test func twoKeysFilesShareTheCache() async throws {
+        // One cache file, two keys files: each model writes only its own
+        // section, so neither loses the other's results.
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keysA = dir.appending(path: "a/.api_keys")
+        let keysB = dir.appending(path: "b/.api_keys")
+        try FileManager.default.createDirectory(at: keysA.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: keysB.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "export OPENAI_API_KEY=\"sk-a\"".write(to: keysA, atomically: true, encoding: .utf8)
+        try "export OPENAI_API_KEY=\"sk-b\"".write(to: keysB, atomically: true, encoding: .utf8)
+        let cacheURL = dir.appending(path: "api-key-checks.json")
+        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        func make(_ keysURL: URL, _ transport: HTTPTransport) -> APIKeysModel {
+            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+                         shell: FakeShell(environment: [:]),
+                         checker: APIKeyChecker(transport: transport),
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+        }
+        let transportA = FakeTransport()
+        transportA.reply(200)
+        let modelA = make(keysA, transportA)
+        await modelA.load()
+        await modelA.checkAll()
+        let transportB = FakeTransport()
+        transportB.reply(401)
+        let modelB = make(keysB, transportB)
+        await modelB.load()
+        await modelB.checkAll()
+
+        let stored = APIKeyCheckStore(url: cacheURL)
+        #expect(stored.load(for: keysA)["OPENAI_API_KEY"]?.result == .works)
+        #expect(stored.load(for: keysB)["OPENAI_API_KEY"]?.result
+                == .rejected(status: 401, message: nil))
+    }
+
+    @Test func aSaveKeepsTheNewerResultPerName() {
+        // A writer holding an older snapshot merges by checkedAt: it can
+        // replace only the names it checked, and only when it is newer.
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
+        let keysURL = dir.appending(path: ".api_keys")
+        let newer = APIKeyCheck(result: .works,
+                                checkedAt: Date(timeIntervalSince1970: 1_700_000_100),
+                                value: "a", salt: salt)
+        let older = APIKeyCheck(result: .rejected(status: 401, message: nil),
+                                checkedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                                value: "a", salt: salt)
+        let other = APIKeyCheck(result: .noCredit,
+                                checkedAt: Date(timeIntervalSince1970: 1_700_000_050),
+                                value: "b", salt: salt)
+        store.save(["A": newer, "B": other], for: keysURL, currentNames: ["A", "B"])
+        store.save(["A": older], for: keysURL, currentNames: ["A", "B"])
+        let loaded = store.load(for: keysURL)
+        #expect(loaded["A"] == newer)
+        #expect(loaded["B"] == other)
+        // Pruning is by the file's names: dropping B removes only B.
+        store.save([:], for: keysURL, currentNames: ["A"])
+        #expect(store.load(for: keysURL) == ["A": newer])
     }
 
     @Test func theLabelStyleFollowsTheResult() {

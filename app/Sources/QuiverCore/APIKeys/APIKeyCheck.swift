@@ -223,13 +223,19 @@ public enum APIKeyCheckStyle: Equatable, Sendable {
     }
 }
 
-/// `~/.quiver/cache/api-key-checks.json`, shaped `{version: 1, checks:
-/// {NAME: {fingerprint, result, checkedAt}}}`. A missing or damaged file
-/// reads as empty; writes create the file private and rename it into
-/// place.
+/// `~/.quiver/cache/api-key-checks.json`, shaped `{version: 2, files:
+/// {"<standardized keys-file path>": {checks: {NAME: {fingerprint,
+/// result, checkedAt}}}}}`: each keys file owns one section, so models
+/// over different files never clobber each other. A missing, damaged or
+/// version 1 file reads as empty. Writes hold the shared file lock for a
+/// read-modify-write of only their own section, then rename into place.
 public struct APIKeyCheckStore: Sendable {
     private struct File: Codable {
         var version: Int
+        var files: [String: Section]
+    }
+
+    private struct Section: Codable {
         var checks: [String: APIKeyCheck]
     }
 
@@ -253,19 +259,48 @@ public struct APIKeyCheckStore: Sendable {
         return salt
     }
 
-    public func load() -> [String: APIKeyCheck] {
-        guard let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(File.self, from: data),
-              file.version == 1
-        else { return [:] }
-        return file.checks
+    /// The section one keys file owns inside the shared cache.
+    private static func sectionKey(for keysFile: URL) -> String {
+        keysFile.standardizedFileURL.path
     }
 
-    public func save(_ checks: [String: APIKeyCheck]) {
-        guard let data = try? JSONEncoder().encode(File(version: 1, checks: checks)) else { return }
+    /// The stored checks for one keys file.
+    public func load(for keysFile: URL) -> [String: APIKeyCheck] {
+        guard let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(File.self, from: data),
+              file.version == 2
+        else { return [:] }
+        return file.files[Self.sectionKey(for: keysFile)]?.checks ?? [:]
+    }
+
+    /// Merge `checks` into the section `keysFile` owns, under the lock so
+    /// a save can never overwrite another model's section or a fresher
+    /// result in its own: a stored check newer than the incoming one
+    /// stays. Stored names missing from `currentNames` are gone from the
+    /// keys file and are dropped; names this save does not carry are
+    /// left as they were.
+    public func save(_ checks: [String: APIKeyCheck], for keysFile: URL,
+                     currentNames: Set<String>) {
         let manager = FileManager.default
         try? manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                      attributes: [.posixPermissions: 0o700])
+        guard let lock = try? FileLock(at: url.appendingPathExtension("lock")) else { return }
+        defer { lock.release() }
+        var file = ((try? Data(contentsOf: url))
+            .flatMap { try? JSONDecoder().decode(File.self, from: $0) })
+            .flatMap { $0.version == 2 ? $0 : nil }
+            ?? File(version: 2, files: [:])
+        let key = Self.sectionKey(for: keysFile)
+        var section = file.files[key]?.checks ?? [:]
+        for name in section.keys where !currentNames.contains(name) {
+            section[name] = nil
+        }
+        for (name, check) in checks
+        where (section[name]?.checkedAt ?? .distantPast) < check.checkedAt {
+            section[name] = check
+        }
+        file.files[key] = Section(checks: section)
+        guard let data = try? JSONEncoder().encode(file) else { return }
         let temporary = url.deletingLastPathComponent()
             .appending(path: ".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         guard manager.createFile(atPath: temporary.path, contents: data,
