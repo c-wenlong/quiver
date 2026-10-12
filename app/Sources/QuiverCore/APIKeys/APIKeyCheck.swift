@@ -218,6 +218,32 @@ extension APIKeyProbe {
     }
 }
 
+/// A counting slot pool: `acquire` parks callers as continuations until
+/// a `release` frees a slot. No blocking calls, so a stalled request
+/// can't wedge the actor.
+actor CheckSlots {
+    private var free: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(capacity: Int) { free = capacity }
+
+    func acquire() async {
+        if free > 0 {
+            free -= 1
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            free += 1
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
 /// Sends each key only to its own provider's hosts, through the shared
 /// transport so tests inject a fake.
 public struct APIKeyChecker: Sendable {

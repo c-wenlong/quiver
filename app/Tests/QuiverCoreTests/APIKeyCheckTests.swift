@@ -255,6 +255,42 @@ import Testing
     }
 }
 
+/// Holds every request parked until released, so in-flight counts and
+/// queueing behind the limiter are observable.
+final class GateTransport: HTTPTransport {
+    private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest],
+                              waiters: [CheckedContinuation<Void, Never>])>((0, 0, [], []))
+
+    var peak: Int { state.withLock { $0.peak } }
+    var inFlight: Int { state.withLock { $0.inFlight } }
+    var requestCount: Int { state.withLock { $0.requests.count } }
+
+    /// Answer `n` parked requests, or all of them.
+    func release(_ n: Int = Int.max) {
+        let released = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            let count = min(n, s.waiters.count)
+            let first = Array(s.waiters.prefix(count))
+            s.waiters.removeFirst(count)
+            return first
+        }
+        for waiter in released { waiter.resume() }
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        state.withLock { s in
+            s.inFlight += 1
+            s.peak = max(s.peak, s.inFlight)
+            s.requests.append(request)
+        }
+        await withCheckedContinuation { waiter in
+            state.withLock { $0.waiters.append(waiter) }
+        }
+        state.withLock { $0.inFlight -= 1 }
+        return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200,
+                                        httpVersion: nil, headerFields: nil)!)
+    }
+}
+
 /// Counts how many requests run at once.
 final class CountingTransport: HTTPTransport {
     private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest])>((0, 0, []))
@@ -354,6 +390,40 @@ final class CountingTransport: HTTPTransport {
         #expect(model.check(for: updated) == nil)
         #expect(model.checks["OPENAI_API_KEY"]?.isCurrent(for: "sk-fake-NEW-KEY") == false)
         #expect(model.checks["OPENAI_API_KEY"]?.isCurrent(for: "sk-fake-OLD-KEY") == true)
+    }
+
+    @Test func aChipClickSharesTheSameLimit() async throws {
+        let transport = GateTransport()
+        let model = try model(text: """
+        export OPENAI_API_KEY="sk-fake-A"
+        export ANTHROPIC_API_KEY="sk-fake-B"
+        export GEMINI_API_KEY="AIza-fake-C"
+        export XAI_API_KEY="sk-fake-D"
+        export GROQ_API_KEY="gsk-fake-E"
+        export MISTRAL_API_KEY="sk-fake-F"
+        """, transport: transport)
+        await model.load()
+        let all = Task { await model.checkAll() }
+        while transport.inFlight < 4 { await Task.yield() }
+        // Two answer; their slots hand over to the pair still queued.
+        transport.release(2)
+        while transport.requestCount < 6 || transport.inFlight < 4 { await Task.yield() }
+        while model.checks.count < 2 { await Task.yield() }
+        // Re-checking finished rows queues at the same limiter: no extra
+        // request runs while four are parked.
+        let finished = model.checks.keys.sorted().prefix(2)
+        let again = finished.map { name in Task { await model.check(name: name) } }
+        while !finished.allSatisfy({ model.checking.contains($0) }) { await Task.yield() }
+        #expect(transport.inFlight == 4)
+        #expect(transport.requestCount == 6)
+        transport.release()
+        while transport.requestCount < 8 { await Task.yield() }
+        transport.release()
+        await all.value
+        for task in again { await task.value }
+        #expect(transport.peak == 4)
+        #expect(model.rows.allSatisfy { model.check(for: $0)?.result == .works })
+        #expect(!model.isChecking)
     }
 
     @Test func checkingOneKeyOnlySendsItsOwnRequest() async throws {
