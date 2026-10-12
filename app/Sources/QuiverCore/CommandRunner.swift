@@ -111,6 +111,12 @@ private final class OutputBox: @unchecked Sendable {
 
 /// The environment of the user's login shell.
 public enum LoginShell {
+    /// Variables a login shell may set that must not reach the swe
+    /// processes the app runs: the app polls limits on its own schedule,
+    /// and an override like `SWE_RATE_LIMITS_TTL=inf` would freeze them,
+    /// so swe children get swe's default.
+    static let ignoredVariables: Set<String> = ["SWE_RATE_LIMITS_TTL"]
+
     /// `PATH=...` out of the output of `env`.
     public static func path(fromEnvOutput output: String) -> String? {
         output.split(separator: "\n")
@@ -138,6 +144,7 @@ public enum LoginShell {
            let path = path(fromEnvOutput: output) {
             env["PATH"] = path
         }
+        for key in ignoredVariables { env.removeValue(forKey: key) }
         return env
     }
 

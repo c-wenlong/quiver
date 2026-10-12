@@ -87,4 +87,26 @@ import Testing
         let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin"], timeout: .seconds(5))
         #expect(env["PATH"] == "/custom/bin:/usr/bin")
     }
+
+    @Test func sweOverridesAreDroppedOnTheFallbackPath() async {
+        // The shell never answered, so base comes back — minus the
+        // variables swe children must not inherit.
+        let env = await LoginShell.resolve(
+            shell: "/nonexistent/shell",
+            base: ["PATH": "/usr/bin:/bin", "SWE_RATE_LIMITS_TTL": "inf", "HOME": "/tmp"],
+            timeout: .seconds(1))
+        #expect(env["SWE_RATE_LIMITS_TTL"] == nil)
+        #expect(env["HOME"] == "/tmp")
+        #expect(env["PATH"] == "/usr/bin:/bin")
+    }
+
+    @Test func sweOverridesAreDroppedWhenTheShellAnswers() async {
+        let env = await LoginShell.resolve(
+            shell: "/bin/zsh",
+            base: ["PATH": "/usr/bin:/bin", "SWE_RATE_LIMITS_TTL": "inf", "HOME": "/tmp"],
+            timeout: .seconds(5))
+        #expect(env["SWE_RATE_LIMITS_TTL"] == nil)
+        #expect(env["HOME"] == "/tmp")
+        #expect(env["PATH"] != nil)
+    }
 }
