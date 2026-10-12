@@ -50,6 +50,15 @@ import Testing
         }
     }
 
+    /// A `-color.svg` draws untinted, so a part painted currentColor would
+    /// come out black on a dark card; marks like that import as mono.
+    @Test func colourIconsPaintNothingInTextColour() throws {
+        for (id, icon) in try icons() where icon.isColor {
+            let text = try String(contentsOf: icon.url, encoding: .utf8)
+            #expect(!text.contains("currentColor"), "\(id)")
+        }
+    }
+
     @Test func aliasesAndUnknownHarnesses() {
         #expect(HarnessIcons.icon(for: "claude-code") == HarnessIcons.icon(for: "claude"))
         #expect(HarnessIcons.icon(for: "Claude") == HarnessIcons.icon(for: "claude"))

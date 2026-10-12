@@ -344,12 +344,29 @@ public enum APIKeyMask {
 /// ignoring case, and gives nil for a provider no harness logo stands for.
 public enum APIKeyProviderLogo {
     static let byWord = ["anthropic": "claude", "claude": "claude",
-                         "openai": "codex",
+                         "openai": "openai",
                          "moonshot": "kimi", "kimi": "kimi",
                          "google": "gemini", "gemini": "gemini",
                          "xai": "grok", "grok": "grok",
                          "mistral": "mistral-vibe",
-                         "qwen": "qwen-code", "alibaba": "qwen-code"]
+                         "qwen": "qwen-code", "alibaba": "qwen-code",
+                         "deepseek": "deepseek",
+                         "zai": "zai", "zhipu": "zai",
+                         "01": "yi", "yi": "yi",
+                         "minimax": "minimax",
+                         "mimo": "xiaomimimo", "xiaomi": "xiaomimimo",
+                         "stepfun": "stepfun",
+                         "groq": "groq",
+                         "upstage": "upstage",
+                         "cerebras": "cerebras",
+                         "opencode": "opencode",
+                         "openrouter": "openrouter",
+                         "together": "together",
+                         "fireworks": "fireworks",
+                         "vercel": "vercel",
+                         "nebius": "nebius",
+                         "featherless": "featherless",
+                         "nvidia": "nvidia"]
 
     public static func logoID(for provider: String) -> String? {
         let lower = provider.lowercased()
