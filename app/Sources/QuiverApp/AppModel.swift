@@ -144,6 +144,8 @@ final class AppModel {
     let serviceStatus: ServiceStatusModel
     /// Which providers show, in what order (Settings).
     let providers: ProviderVisibilityModel
+    /// What the starred harnesses are running right now (the Compute page).
+    let compute: ComputeModel
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
@@ -234,6 +236,22 @@ final class AppModel {
                 commandExists: { ProviderDetection.commandExists($0, path: shellPath) },
                 pathExists: { FileManager.default.fileExists(atPath: $0) }))
         })
+        compute = ComputeModel(sampler: ProcessSampler(), matchers: { [apps] in
+            // The swe chosen in Settings right now, like ProviderVisibility.
+            let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
+            let swe = SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            return try await swe.harnesses(withUsage: false)
+                .filter { $0.state == .starred }
+                .map { harness in
+                    var commands = Set(harness.aliases)
+                    commands.insert((harness.command as NSString).lastPathComponent)
+                    return HarnessMatcher(harness: harness.name,
+                                          appPath: apps.installedApp(for: harness.name),
+                                          commands: commands,
+                                          homeFolder: home + "/." + harness.name)
+                }
+        }, defaults: .standard)
         terminalChoice = { [unowned self] in self.terminal }
     }
 
