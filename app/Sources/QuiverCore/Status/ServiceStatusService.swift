@@ -6,16 +6,25 @@ import Foundation
 /// kept in a cache file under ~/.quiver/cache so a relaunch does not poll
 /// again, and a reading older than an hour is never shown as current.
 public actor ServiceStatusService {
+    /// The answer to "can Quiver read this page": the page URL it finally
+    /// answers at and its current reading, or why not.
+    public enum ProbeResult: Sendable, Equatable {
+        case ok(pageURL: URL, report: StatusReport)
+        case failure(String)
+    }
+
     private let transport: HTTPTransport
     private let cacheURL: URL
     private let now: @Sendable () -> Date
     private let interval: TimeInterval
     private let manualFloor: TimeInterval
     private let staleAfter: TimeInterval
+    private let redirectResolver: @Sendable (URL) async -> URL?
 
     public init(
         transport: HTTPTransport, cacheURL: URL, now: @escaping @Sendable () -> Date = Date.init,
-        interval: TimeInterval = 300, manualFloor: TimeInterval = 60, staleAfter: TimeInterval = 3600
+        interval: TimeInterval = 300, manualFloor: TimeInterval = 60, staleAfter: TimeInterval = 3600,
+        redirectResolver: @escaping @Sendable (URL) async -> URL? = ServiceStatusService.resolveRedirects
     ) {
         self.transport = transport
         self.cacheURL = cacheURL
@@ -23,6 +32,7 @@ public actor ServiceStatusService {
         self.interval = interval
         self.manualFloor = manualFloor
         self.staleAfter = staleAfter
+        self.redirectResolver = redirectResolver
     }
 
     /// What one page last said, and when to ask again.
@@ -92,6 +102,72 @@ public actor ServiceStatusService {
         let merged = current()
         let now = now()
         return services.map { status(for: $0, merged[$0.id], now: now) }
+    }
+
+    /// Whether an address serves a readable status feed, for the "Track a
+    /// status page" sheet's Check button. The address is normalised to
+    /// `scheme://host/` (Statuspage and incident.io serve `summary.json`
+    /// at the root), then redirects are followed once through
+    /// `redirectResolver`, since the polling transport follows none. The
+    /// probe touches neither the cache nor the poll counters.
+    public func probe(_ input: String) async -> ProbeResult {
+        var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.contains("://") { text = "https://" + text }
+        guard let entered = URL(string: text), entered.scheme?.lowercased() == "https",
+              entered.host(percentEncoded: false) != nil
+        else { return .failure("Use the https address of the status page.") }
+
+        var base = Self.base(entered)
+        if let final = await redirectResolver(base),
+           final.scheme?.lowercased() == "https", final.host(percentEncoded: false) != nil {
+            base = Self.base(final)
+        }
+        let host = base.host() ?? base.absoluteString
+
+        var request = URLRequest(url: base.appending(path: "api/v2/summary.json"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Quiver (macOS)", forHTTPHeaderField: "User-Agent")
+        let data: Data
+        let response: HTTPURLResponse
+        do {
+            (data, response) = try await transport.send(request)
+        } catch {
+            return .failure("Couldn't reach \(host).")
+        }
+        guard response.statusCode == 200, let report = StatusParser.statuspage(data, now: now()) else {
+            return .failure("Quiver can read Atlassian Statuspage and incident.io pages, which serve /api/v2/summary.json. \(host) doesn't.")
+        }
+        return .ok(pageURL: base, report: report)
+    }
+
+    /// `scheme://host/` for a URL, the port kept and the path and query
+    /// dropped: Statuspage and incident.io serve `summary.json` at the root.
+    private static func base(_ url: URL) -> URL {
+        var parts = URLComponents()
+        parts.scheme = url.scheme?.lowercased()
+        parts.host = url.host(percentEncoded: false)
+        parts.port = url.port
+        parts.path = "/"
+        return parts.url ?? url
+    }
+
+    /// The real `redirectResolver`: one HEAD request that follows redirects
+    /// and answers with the URL the page finally responds at, nil on failure.
+    public static func resolveRedirects(to url: URL) async -> URL? {
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.httpMethod = "HEAD"
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.finishTasksAndInvalidate() }
+        return (try? await session.data(for: request))?.1.url
+    }
+
+    /// Drop everything kept for an id: this process's memory, a request in
+    /// flight and the cache file. Called when a custom page is removed, so
+    /// a same-named page added later cannot inherit its reading.
+    public func forget(id: String) {
+        memory.removeValue(forKey: id)
+        inFlight.removeValue(forKey: id)?.cancel()
+        write { entries in entries.removeValue(forKey: id) }
     }
 
     /// Of two entries for one page, the one from the later attempt: another
@@ -192,15 +268,23 @@ public actor ServiceStatusService {
     /// nothing for this process: memory still has every entry.
     private func save(_ updated: [String: Entry]) {
         for (id, entry) in updated { memory[id] = Self.newer(entry, memory[id]) }
+        write { entries in
+            for (id, entry) in updated { entries[id] = Self.newer(entry, entries[id]) }
+        }
+    }
+
+    /// Reads the file under the lock, runs `change` and writes it back,
+    /// the same way `save` does: directory created, locked, atomically
+    /// replaced.
+    private func write(_ change: (inout [String: Entry]) -> Void) {
         let manager = FileManager.default
         try? manager.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true,
                                      attributes: [.posixPermissions: 0o700])
-        // Without the lock another copy could overwrite a newer entry; this
-        // process still has the result in memory.
+        // Without the lock another copy could overwrite a newer entry.
         guard let lock = try? FileLock(at: cacheURL.appendingPathExtension("lock")) else { return }
         defer { lock.release() }
         var entries = load()
-        for (id, entry) in updated { entries[id] = Self.newer(entry, entries[id]) }
+        change(&entries)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .deferredToDate
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

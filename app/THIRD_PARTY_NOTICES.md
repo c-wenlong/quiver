@@ -86,8 +86,9 @@ Where each came from is in `Resources/harness-icons.tsv`:
 - Claude's colour mark, Qwen, Mistral, goose, Cline and the API key
   provider marks (OpenAI, DeepSeek, Z.ai, Yi, MiniMax, Xiaomi MiMo,
   StepFun, Groq, Upstage, Cerebras, OpenRouter, Together AI, Fireworks
-  AI, Vercel, Nebius, Featherless AI and NVIDIA) come from LobeHub
-  icons (`@lobehub/icons-static-svg`).
+  AI, Vercel, Nebius, Featherless AI, NVIDIA and Cloudflare) come from
+  LobeHub icons (`@lobehub/icons-static-svg`).
+- npm comes from Simple Icons (simple-icons, CC0-1.0).
 - Continue comes from its repository (continuedev/continue,
   `docs/logo/light.svg`); Droid (Factory), Forge, Augment, Blackbox and
   Freebuff from each product's own site.
