@@ -78,4 +78,61 @@ import Testing
         #expect(ranges("🙂\n# T", kind: .heading(1)) == [NSRange(location: 5, length: 1)])
         #expect(ranges("🙂**b**", kind: .bold) == [NSRange(location: 4, length: 1)])
     }
+
+    @Test func aHeadingStillStylesEmphasisInsideIt() {
+        let spans = spans("# **Title**")
+        #expect(spans.contains(Span(range: NSRange(location: 0, length: 2), kind: .headingMarker)))
+        #expect(spans.contains(Span(range: NSRange(location: 2, length: 9), kind: .heading(1))))
+        #expect(spans.contains(Span(range: NSRange(location: 2, length: 2), kind: .marker)))
+        #expect(spans.contains(Span(range: NSRange(location: 4, length: 5), kind: .bold)))
+        #expect(spans.contains(Span(range: NSRange(location: 9, length: 2), kind: .marker)))
+    }
+
+    @Test func aQuoteStillStylesInlineCodeInsideIt() {
+        let spans = spans("> `x`")
+        #expect(spans.contains(Span(range: NSRange(location: 0, length: 2), kind: .marker)))
+        #expect(spans.contains(Span(range: NSRange(location: 2, length: 3), kind: .quote)))
+        #expect(spans.contains(Span(range: NSRange(location: 2, length: 3), kind: .inlineCode)))
+    }
+
+    @Test func boldWrapsInlineCodeWithoutStylingIt() {
+        let spans = spans("**bold `code` bold**")
+        #expect(ranges("**bold `code` bold**", kind: .inlineCode) == [NSRange(location: 7, length: 6)])
+        #expect(ranges("**bold `code` bold**", kind: .bold) == [NSRange(location: 2, length: 5),
+                                                              NSRange(location: 13, length: 5)])
+        for span in spans where span.kind == .bold {
+            #expect(NSIntersectionRange(span.range, NSRange(location: 7, length: 6)).length == 0)
+        }
+    }
+
+    @Test func aClosingFenceMustMatchTheOpener() {
+        let text = "````\n```\n# x\n````"
+        #expect(ranges(text, kind: .fence) == [NSRange(location: 0, length: 4),
+                                              NSRange(location: 13, length: 4)])
+        #expect(ranges(text, kind: .codeBlock) == [NSRange(location: 5, length: 3),
+                                                  NSRange(location: 9, length: 3)])
+        #expect(ranges(text, kind: .headingMarker).isEmpty)
+        #expect(ranges(text, kind: .heading(1)).isEmpty)
+    }
+
+    @Test func aTildeOrAnnotatedLineDoesNotCloseABacktickFence() {
+        let text = "```\n~~~\n```tail\n```"
+        #expect(ranges(text, kind: .fence) == [NSRange(location: 0, length: 3),
+                                              NSRange(location: 16, length: 3)])
+        #expect(ranges(text, kind: .codeBlock) == [NSRange(location: 4, length: 3),
+                                                  NSRange(location: 8, length: 7)])
+    }
+
+    @Test func inlineCodeIsNotAComment() {
+        let text = "a `<!-- x -->` b"
+        #expect(ranges(text, kind: .comment).isEmpty)
+        #expect(ranges(text, kind: .inlineCode) == [NSRange(location: 2, length: 12)])
+    }
+
+    @Test func aLongDocumentStylesQuickly() {
+        let text = String(repeating: "a **b** and *i* and ~~s~~\n", count: 5_000)
+        let start = Date()
+        _ = spans(text)
+        #expect(Date().timeIntervalSince(start) < 0.5)
+    }
 }

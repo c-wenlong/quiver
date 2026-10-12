@@ -61,11 +61,19 @@ struct MarkdownTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = context.coordinator.textView else { return }
+        let coordinator = context.coordinator
+        // SwiftUI may reuse this NSView for a different document (the
+        // .id only covers file names), so rebind every update: edits and
+        // focus reports must reach the document on screen, not the one
+        // the view was created for.
+        coordinator.text = $text
+        coordinator.isFocused = $isFocused
+        guard let textView = coordinator.textView else { return }
+        if let accessibilityLabel { textView.setAccessibilityLabel(accessibilityLabel) }
         if textView.string != text {
             // Revert, Reload or a file switch: replace and restyle without
             // writing back into the binding, and keep the selection sane.
-            context.coordinator.isProgrammatic = true
+            coordinator.isProgrammatic = true
             let selected = textView.selectedRanges.compactMap(\.rangeValue)
             textView.string = text
             let length = (text as NSString).length
@@ -74,11 +82,11 @@ struct MarkdownTextView: NSViewRepresentable {
                 return NSValue(range: NSRange(location: location,
                                               length: min(range.length, length - location)))
             }
-            context.coordinator.restyle(textView)
-            context.coordinator.isProgrammatic = false
+            coordinator.restyle(textView)
+            coordinator.isProgrammatic = false
         }
-        if context.coordinator.seenFocusToken != focusToken {
-            context.coordinator.seenFocusToken = focusToken
+        if coordinator.seenFocusToken != focusToken {
+            coordinator.seenFocusToken = focusToken
             DispatchQueue.main.async { scrollView.window?.makeFirstResponder(textView) }
         }
     }
