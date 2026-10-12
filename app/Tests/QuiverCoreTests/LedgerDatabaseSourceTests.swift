@@ -230,3 +230,52 @@ func execute(_ sql: String, on url: URL) throws {
         }
     }
 }
+
+@Suite struct LedgerSchemaTests {
+    /// A schema mismatch rebuilds the tables, but the old file is archived
+    /// beside the database first so history whose logs are gone is not lost.
+    @Test func aSchemaMismatchArchivesTheOldDatabaseBeforeRebuilding() throws {
+        let temp = try TempDir()
+        let url = temp.path("cache/ledger.sqlite")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try execute("""
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO meta VALUES ('schema', '0');
+            CREATE TABLE events (key INTEGER PRIMARY KEY, input INTEGER NOT NULL);
+            INSERT INTO events VALUES (1, 42);
+            """, on: url)
+
+        do {
+            // Scoped: the second open below drops the tables, which this
+            // connection's prepared statements would lock.
+            let store = try LedgerStore(url: url)
+            #expect(try store.events(in: allTime).isEmpty)
+        }
+
+        let archive = try SQLiteDatabase(readOnly: temp.path("cache/ledger.schema-0.sqlite"))
+        let schema = try archive.prepare("SELECT value FROM meta WHERE key = 'schema'")
+        #expect(try schema.step() && schema.text(0) == "0")
+        let row = try archive.prepare("SELECT input FROM events WHERE key = 1")
+        #expect(try row.step() && row.int(0) == 42)
+
+        // A second mismatch takes a numbered name rather than overwriting.
+        do {
+            let fixture = try SQLiteDatabase(url: url)
+            try fixture.execute("UPDATE meta SET value = '0' WHERE key = 'schema'")
+        }
+        _ = try LedgerStore(url: url)
+        #expect(FileManager.default.fileExists(
+            atPath: temp.path("cache/ledger.schema-0.1.sqlite").path))
+    }
+
+    /// A brand new database has nothing worth keeping, so no archive file
+    /// appears beside it.
+    @Test func aFreshDatabaseLeavesNoArchive() throws {
+        let temp = try TempDir()
+        _ = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        let siblings = try FileManager.default.contentsOfDirectory(
+            atPath: temp.path("cache").path)
+        #expect(siblings.filter { $0.contains("schema-") }.isEmpty)
+    }
+}

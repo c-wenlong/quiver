@@ -134,10 +134,16 @@ public final class ProviderVisibilityModel {
     /// fails, since the rows then mix that error with older results.
     private var key: String?
     private var checkedKey: String?
+    /// When the last check finished, pass or fail; `recheck` uses it to
+    /// skip checks that would run back to back.
+    private var lastCheckedAt: Date?
+    private let now: () -> Date
 
-    public init(store: KeyValueStoring, detect: @escaping @Sendable () async throws -> Set<String>) {
+    public init(store: KeyValueStoring, detect: @escaping @Sendable () async throws -> Set<String>,
+                now: @escaping () -> Date = Date.init) {
         self.store = store
         self.detect = detect
+        self.now = now
         order = Self.completeOrder(store.strings(forKey: Self.orderKey) ?? [])
         disabled = Set(store.strings(forKey: Self.disabledKey) ?? [])
         rebuild()
@@ -164,13 +170,23 @@ public final class ProviderVisibilityModel {
     /// result is saved under it. Quiet when the rows already show this
     /// key: they keep their result while it runs, and if it fails they
     /// stay as they were with no error, since nobody asked for it. Does
-    /// nothing before the first check, or while one is running.
+    /// nothing before the first check, or while one is running. A quiet
+    /// recheck for the same swe under `recheckInterval` after the last
+    /// finished check is skipped: app activation fires this on every
+    /// focus, and a detection that fresh says nothing new.
     public func recheck(for key: String) async {
         guard self.key != nil, !isLoading else { return }
         let same = key == checkedKey
+        // The last check was against `self.key`; a repeat of it, pass or
+        // fail, is throttled. A different swe still checks right away.
+        if key == self.key, let lastCheckedAt,
+           now().timeIntervalSince(lastCheckedAt) < Self.recheckInterval { return }
         self.key = key
         await load(quiet: same)
     }
+
+    /// How fresh a finished check has to be for `recheck` to skip running swe.
+    static let recheckInterval: TimeInterval = 120
 
     public func load() async {
         await load(quiet: false)
@@ -185,15 +201,18 @@ public final class ProviderVisibilityModel {
         do { result = .success(try await detect()) } catch { result = .failure(error) }
         // A check replaced while it ran (another swe was chosen) is dropped.
         guard mine == request else { return }
+        if case .failure(let error) = result, error is CancellationError { return }
         isLoading = false
+        // Every finished check, good or bad, counts against the recheck
+        // interval: a swe that keeps failing shouldn't be spawned on each
+        // activation either.
+        lastCheckedAt = now()
         switch result {
         case .success(let found):
             installed = found
             hasChecked = true
             checkedKey = key
             checkError = nil
-        case .failure(let error) where error is CancellationError:
-            return
         case .failure where quiet && hasChecked:
             return
         case .failure(let error):

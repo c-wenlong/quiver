@@ -319,6 +319,9 @@ history" — added after Cursor silently showed 0 sessions for months.
 `swe list` runs in ~70ms because usage is opt-in. It was 870ms when usage was
 fetched unconditionally.
 
+The full map of persistent stores, their formats, TTLs and the app's ledger
+schema lives in [docs/data-model.md](docs/data-model.md).
+
 ## MCP
 
 `~/.quiver/mcp.json` is the hub. Credentials are stored as `${NAME}`

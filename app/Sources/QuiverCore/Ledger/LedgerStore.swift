@@ -55,9 +55,14 @@ final class LedgerStore {
         db = try SQLiteDatabase(url: url)
         try db.execute("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = OFF;")
         try db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        let version = try db.prepare("SELECT value FROM meta WHERE key = 'schema'")
-        let stored = try version.step() ? version.text(0) : nil
+        // Scoped: an unfinalized statement that read a row keeps a cursor on
+        // meta open, which locks the INSERT below with SQLITE_LOCKED.
+        let stored: String? = try {
+            let version = try db.prepare("SELECT value FROM meta WHERE key = 'schema'")
+            return try version.step() ? version.text(0) : nil
+        }()
         if stored != String(Self.schemaVersion) {
+            try archiveOldTables(at: url, stored: stored)
             try db.execute("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS dims; DROP TABLE IF EXISTS cursors;")
         }
         try db.execute("""
@@ -100,6 +105,31 @@ final class LedgerStore {
             "SELECT id FROM dims WHERE harness = ? AND account = ? AND session = ? AND cwd = ? AND model = ? AND tier = ?")
         insertDim = try db.prepare(
             "INSERT INTO dims (harness, account, session, cwd, model, tier) VALUES (?, ?, ?, ?, ?, ?)")
+    }
+
+    /// A schema mismatch drops the tables below and the next scan rebuilds
+    /// them, which loses rows whose logs are gone. Copy the database first:
+    /// it stays beside the live one as `ledger.schema-<version>.sqlite` (a
+    /// `.N` suffix when one exists already). Best effort: a failed copy
+    /// never blocks the rebuild.
+    private func archiveOldTables(at url: URL, stored: String?) throws {
+        let hasEvents = try db.prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'"
+        ).step()
+        guard hasEvents else { return }
+        let tag = String((stored ?? "unknown").map {
+            $0.isLetter || $0.isNumber || $0 == "-" || $0 == "." ? $0 : "_"
+        })
+        let directory = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent
+        var candidate = directory.appending(path: "\(stem).schema-\(tag).sqlite")
+        var copy = 1
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory.appending(path: "\(stem).schema-\(tag).\(copy).sqlite")
+            copy += 1
+        }
+        let escaped = candidate.path.replacingOccurrences(of: "'", with: "''")
+        try? db.execute("VACUUM INTO '\(escaped)'")
     }
 
     // MARK: - Events
