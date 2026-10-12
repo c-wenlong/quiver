@@ -639,10 +639,13 @@ public final class APIKeysModel {
             for await (name, check) in group {
                 checks[name] = check
                 checking.remove(name)
+                // The locked merge makes a save per landing result
+                // safe, and a quit mid-run keeps what already finished.
+                saveChecks()
             }
         }
-        // One save for the whole run, so a run with only "no check"
-        // answers still lands on disk.
+        // A last save even when nothing went to the network, so a run
+        // of only "no check" answers still lands on disk.
         saveChecks()
     }
 

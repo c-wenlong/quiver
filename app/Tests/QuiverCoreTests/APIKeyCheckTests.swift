@@ -590,6 +590,49 @@ final class CountingTransport: HTTPTransport {
     }
 
     @MainActor
+    @Test func finishedChecksSaveBeforeTheRunEnds() async throws {
+        // Two of four checks land while the rest stay parked; a model
+        // built over the same cache sees the finished pair already.
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keysURL = dir.appending(path: ".api_keys")
+        try """
+        export OPENAI_API_KEY="sk-1"
+        export ANTHROPIC_API_KEY="sk-2"
+        export GEMINI_API_KEY="sk-3"
+        export XAI_API_KEY="sk-4"
+        """.write(to: keysURL, atomically: true, encoding: .utf8)
+        let cacheURL = dir.appending(path: "api-key-checks.json")
+        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        func make(_ transport: HTTPTransport) -> APIKeysModel {
+            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+                         shell: FakeShell(environment: [:]),
+                         checker: APIKeyChecker(transport: transport),
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+        }
+        let transport = GateTransport()
+        let first = make(transport)
+        await first.load()
+        let run = Task { await first.checkAll() }
+        for _ in 0..<2_000 where transport.requestCount < 4 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(transport.requestCount == 4)
+        transport.release(2)
+        for _ in 0..<2_000 where first.checks.count < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(first.checks.count == 2)
+
+        let second = make(FakeTransport())
+        await second.load()
+        #expect(second.rows.compactMap { second.check(for: $0) }.count == 2)
+        transport.release()
+        await run.value
+        #expect(APIKeyCheckStore(url: cacheURL).load(for: keysURL).count == 4)
+    }
+
+    @MainActor
     @Test func twoKeysFilesShareTheCache() async throws {
         // One cache file, two keys files: each model writes only its own
         // section, so neither loses the other's results.
