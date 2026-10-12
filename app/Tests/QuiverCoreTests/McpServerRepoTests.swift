@@ -2,6 +2,26 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
+/// `git -C <dir> <args>`, waiting off the cooperative pool the timing
+/// tests share (`runOffPool`, like the code under test).
+private func runGit(_ args: [String], in dir: URL) async throws {
+    let status = await runOffPool { () -> Int32 in
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", dir.path] + args
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return -1 }
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
+    try #require(status == 0)
+}
+
+private func git(_ args: String..., in dir: URL) async throws {
+    try await runGit(args, in: dir)
+}
+
 @Suite struct McpServerRepoTests {
     let fm = FileManager.default
 
@@ -19,24 +39,13 @@ import Testing
         return url
     }
 
-    private func git(_ args: String..., in dir: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-C", dir.path] + args
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        try #require(process.terminationStatus == 0)
-    }
-
     // MARK: - scan
 
     @Test func groupFoldersHoldTheServers() throws {
         let root = try tempDir()
         try mkdir("official/linear-mcp", in: root, marker: "package.json")
         try mkdir("custom/fathom-mcp", in: root)
-        let servers = McpServerRepo.scan(root: root, fileManager: fm)
+        let servers = try McpServerRepo.scan(root: root, fileManager: fm)
         #expect(servers.map(\.name) == ["fathom-mcp", "linear-mcp"])
         #expect(servers.map(\.group) == ["custom", "official"])
     }
@@ -48,7 +57,7 @@ import Testing
             try "".write(to: marked.appending(path: marker), atomically: true, encoding: .utf8)
             try mkdir("\(marked.lastPathComponent)/nested", in: root)
         }
-        let servers = McpServerRepo.scan(root: root, fileManager: fm)
+        let servers = try McpServerRepo.scan(root: root, fileManager: fm)
         // Every child had a marker, so there are no group folders: the
         // "nested" folders inside them are never reached.
         #expect(servers.count == McpServerRepo.serverMarkers.count)
@@ -59,7 +68,7 @@ import Testing
         let root = try tempDir()
         try mkdir("mcp-hn", in: root, marker: ".git")
         try mkdir("grouped/one", in: root)
-        let servers = McpServerRepo.scan(root: root, fileManager: fm)
+        let servers = try McpServerRepo.scan(root: root, fileManager: fm)
         #expect(servers.map(\.name) == ["mcp-hn", "one"])
         #expect(servers.map(\.group) == [nil, "grouped"])
     }
@@ -71,7 +80,7 @@ import Testing
         try mkdir("real", in: root, marker: ".git")
         try "x".write(to: root.appending(path: "notes.txt"), atomically: true, encoding: .utf8)
         try "x".write(to: root.appending(path: "group/file.txt"), atomically: true, encoding: .utf8)
-        let servers = McpServerRepo.scan(root: root, fileManager: fm)
+        let servers = try McpServerRepo.scan(root: root, fileManager: fm)
         #expect(servers.map(\.name) == ["real"])
     }
 
@@ -81,14 +90,36 @@ import Testing
         try mkdir("zebra/zed", in: root)
         try mkdir("apple/bee", in: root)
         try mkdir("apple/Ann", in: root)
-        let servers = McpServerRepo.scan(root: root, fileManager: fm)
+        let servers = try McpServerRepo.scan(root: root, fileManager: fm)
         #expect(servers.map(\.name) == ["solo", "Ann", "bee", "zed"])
         #expect(servers.map(\.group) == [nil, "apple", "apple", "zebra"])
     }
 
     @Test func aMissingRootScansAsEmpty() throws {
         let root = fm.temporaryDirectory.appending(path: "no-such-\(UUID().uuidString)")
-        #expect(McpServerRepo.scan(root: root, fileManager: fm) == [])
+        #expect(try McpServerRepo.scan(root: root, fileManager: fm) == [])
+    }
+
+    @Test func aFileAsRootThrows() throws {
+        let root = try tempDir()
+        let file = root.appending(path: "not-a-folder")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        #expect {
+            try McpServerRepo.scan(root: file, fileManager: fm)
+        } throws: { error in
+            error.localizedDescription == "\(file.path) is a file, not a folder."
+        }
+    }
+
+    @Test func anUnreadableRootThrows() throws {
+        let root = try tempDir()
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path) }
+        #expect {
+            try McpServerRepo.scan(root: root, fileManager: fm)
+        } throws: { error in
+            error.localizedDescription.hasPrefix("Couldn't read \(root.path): ")
+        }
     }
 
     // MARK: - hubUsage
@@ -101,7 +132,7 @@ import Testing
         McpServer(name: name, command: command, args: args, harnesses: ["claude"])
     }
 
-    @Test func hubUsageMatchesCommandAndArgsInsideTheFolder() throws {
+    @Test func hubUsageMatchesCommandAndArgsInsideTheFolder() {
         let servers = [repo("linear-mcp", at: "/srv/mcp/linear-mcp"),
                        repo("fathom-mcp", at: "/srv/mcp/fathom-mcp"),
                        repo("direct", at: "/srv/mcp/direct")]
@@ -125,14 +156,28 @@ import Testing
         #expect(usage["/srv/mcp-hnx"] == ["hn"])
     }
 
-    @Test func fileURLArgsAndRelativeArgs() {
-        let servers = [repo("one", at: "/srv/one")]
+    @Test func pathsWithSpacesMatchQuotedEscapedAndBare() {
+        let servers = [repo("my server", at: "/srv/mcp/my server")]
         let hub = [
-            hubServer("file", command: "open", args: ["file:///srv/one"]),
+            hubServer("quoted", command: "node \"/srv/mcp/my server/index.js\""),
+            hubServer("bare", command: "/srv/mcp/my server/bin/run"),
+            hubServer("escaped", command: "node /srv/mcp/my\\ server/serve.js"),
+            hubServer("arg", command: "node", args: ["/srv/mcp/my server/index.js"]),
+        ]
+        let usage = McpServerRepo.hubUsage(servers: servers, hub: hub)
+        #expect(usage["/srv/mcp/my server"] == ["quoted", "bare", "escaped", "arg"])
+    }
+
+    @Test func fileURLsAreDecodedBeforeComparing() {
+        let servers = [repo("my server", at: "/srv/my server"), repo("one", at: "/srv/one")]
+        let hub = [
+            hubServer("encoded", command: "open", args: ["file:///srv/my%20server/index.js"]),
+            hubServer("plain", command: "open", args: ["file:///srv/one"]),
             hubServer("relative", command: "run", args: ["one", "./one", "srv/one"]),
         ]
         let usage = McpServerRepo.hubUsage(servers: servers, hub: hub)
-        #expect(usage["/srv/one"] == ["file"])
+        #expect(usage["/srv/my server"] == ["encoded"])
+        #expect(usage["/srv/one"] == ["plain"])
     }
 
     // MARK: - GitState.parse
@@ -167,8 +212,8 @@ import Testing
 
     @Test func gitStateReadsARealRepo() async throws {
         let dir = try tempDir()
-        try git("init", in: dir)
-        try git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x", in: dir)
+        try await git("init", in: dir)
+        try await git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x", in: dir)
         var state = await McpServerRepo.gitState(of: dir)
         #expect(state.isRepo)
         #expect(state.branch != nil)
@@ -187,8 +232,8 @@ import Testing
 
     @Test func aFolderInsideAnotherRepoIsStillNotARepo() async throws {
         let dir = try tempDir()
-        try git("init", in: dir)
-        try git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x", in: dir)
+        try await git("init", in: dir)
+        try await git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x", in: dir)
         let sub = try mkdir("server", in: dir)
         try "x".write(to: sub.appending(path: "notes.txt"), atomically: true, encoding: .utf8)
         // Without its own .git, git status would report the parent repo.
@@ -198,19 +243,41 @@ import Testing
 
     // MARK: - model
 
-    @Test @MainActor func loadPublishesServersWithHubNamesAndGit() async throws {
+    @Test @MainActor func loadPublishesServersWithGit() async throws {
         let root = try tempDir()
         let checkout = try mkdir("group/linear-mcp", in: root)
-        try git("init", in: checkout)
+        try await git("init", in: checkout)
         let model = McpServerRepoModel(root: root)
-        let hub = [McpServer(name: "linear", command: "node",
-                             args: [checkout.appending(path: "build/index.js").path],
-                             harnesses: ["claude"])]
-        await model.load(hub: hub)
+        await model.load()
         #expect(model.servers.map(\.name) == ["linear-mcp"])
         #expect(model.servers.first?.group == "group")
-        #expect(model.servers.first?.hubServers == ["linear"])
         #expect(model.servers.first?.git?.isRepo == true)
+        #expect(!model.isLoading)
+    }
+
+    @Test @MainActor func everyServerGetsAGitState() async throws {
+        let root = try tempDir()
+        for index in 0..<9 {
+            let checkout = try mkdir("group/server-\(index)", in: root)
+            if index.isMultiple(of: 2) { try await git("init", in: checkout) }
+        }
+        let model = McpServerRepoModel(root: root)
+        await model.load()
+        // Past the four-at-a-time batch, a load used to drop checks, so
+        // some rows never left the spinner.
+        #expect(model.servers.count == 9)
+        #expect(model.servers.allSatisfy { $0.git != nil })
+        #expect(model.servers.filter { $0.git?.isRepo == true }.count == 5)
+    }
+
+    @Test @MainActor func aReadFailureSurfacesAsAnError() async throws {
+        let root = try tempDir()
+        let file = root.appending(path: "not-a-folder")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        let model = McpServerRepoModel(root: file)
+        await model.load()
+        #expect(model.error == "\(file.path) is a file, not a folder.")
+        #expect(model.servers.isEmpty)
         #expect(!model.isLoading)
     }
 

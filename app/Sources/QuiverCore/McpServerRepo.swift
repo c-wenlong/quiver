@@ -10,17 +10,13 @@ public struct McpRepoServer: Equatable, Sendable, Identifiable {
     /// checkout right under the root.
     public let group: String?
     public let path: URL
-    /// The hub servers configured to run from inside this folder.
-    public var hubServers: [String] = []
     /// nil while the state is still being read.
     public var git: GitState?
 
-    public init(name: String, group: String? = nil, path: URL,
-                hubServers: [String] = [], git: GitState? = nil) {
+    public init(name: String, group: String? = nil, path: URL, git: GitState? = nil) {
         self.name = name
         self.group = group
         self.path = path
-        self.hubServers = hubServers
         self.git = git
     }
 }
@@ -83,6 +79,21 @@ public struct GitState: Equatable, Sendable {
     }
 }
 
+/// Why the servers folder could not be scanned.
+public enum McpRepoError: Error, LocalizedError, Equatable {
+    /// The path points at a plain file.
+    case notAFolder(String)
+    /// The folder exists but its listing failed; the reason goes with it.
+    case unreadable(String, String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notAFolder(let path): "\(path) is a file, not a folder."
+        case .unreadable(let path, let reason): "Couldn't read \(path): \(reason)."
+        }
+    }
+}
+
 /// Reads the managed servers folder: which checkouts are there, which hub
 /// servers point at them, and their git state.
 public enum McpServerRepo {
@@ -94,13 +105,23 @@ public enum McpServerRepo {
     /// The servers under `root`: a direct child with no marker is a group
     /// folder whose children are the servers, and any other child is a
     /// server on its own. Hidden folders and plain files never count, and
-    /// the listing stops there. Missing root: an empty list.
-    public static func scan(root: URL, fileManager: FileManager = .default) -> [McpRepoServer] {
-        guard let children = folders(in: root, fileManager: fileManager) else { return [] }
+    /// the listing stops there. A missing root is an empty list; a root
+    /// that is a file or can't be read throws instead of looking empty.
+    public static func scan(root: URL, fileManager: FileManager = .default) throws -> [McpRepoServer] {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: root.path, isDirectory: &isDirectory) else { return [] }
+        guard isDirectory.boolValue else { throw McpRepoError.notAFolder(root.path) }
+        let children: [URL]
+        do {
+            children = try folders(in: root, fileManager: fileManager)
+        } catch {
+            throw McpRepoError.unreadable(root.path, error.localizedDescription)
+        }
         var servers: [McpRepoServer] = []
         for child in children {
             if isGroup(child, fileManager: fileManager) {
-                for member in folders(in: child, fileManager: fileManager) ?? [] {
+                // A group folder that can't be read just shows no servers.
+                for member in (try? folders(in: child, fileManager: fileManager)) ?? [] {
                     servers.append(McpRepoServer(name: member.lastPathComponent,
                                                  group: child.lastPathComponent, path: member))
                 }
@@ -125,12 +146,12 @@ public enum McpServerRepo {
         !serverMarkers.contains { fileManager.fileExists(atPath: url.appending(path: $0).path) }
     }
 
-    /// The non-hidden folders right inside `url`, nil when it can't be read.
-    private static func folders(in url: URL, fileManager: FileManager) -> [URL]? {
-        guard let items = try? fileManager.contentsOfDirectory(
+    /// The non-hidden folders right inside `url`.
+    private static func folders(in url: URL, fileManager: FileManager) throws -> [URL] {
+        try fileManager.contentsOfDirectory(
             at: url, includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]) else { return nil }
-        return items.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            options: [.skipsHiddenFiles])
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
     }
 
     /// Each server folder (standardized path) -> the hub servers that run
@@ -145,9 +166,13 @@ public enum McpServerRepo {
             let base = server.path.standardizedFileURL.path
             for hubServer in hub {
                 var words = hubServer.args
-                // command can be a bare program or a whole line.
                 if let command = hubServer.command {
-                    words += command.split(whereSeparator: \.isWhitespace).map(String.init)
+                    // A bare executable path can hold spaces, so the whole
+                    // string is a candidate; a command line also gets split
+                    // quote-aware, so `node "/srv/my server/index.js"` and
+                    // `node /srv/my\ server/index.js` still match.
+                    words.append(command)
+                    words += McpRedaction.shellWords(command)
                 }
                 if words.contains(where: { inside($0, folder: base) }) {
                     usage[base, default: []].append(hubServer.name)
@@ -157,14 +182,37 @@ public enum McpServerRepo {
         return usage
     }
 
-    /// `word` as a path: `file://` and shell quotes stripped, relative
-    /// words ignored.
+    /// `word` as a path: `file://` decoded, shell quotes and backslash
+    /// escapes undone, relative words ignored.
     private static func inside(_ word: String, folder base: String) -> Bool {
         var word = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-        if word.hasPrefix("file://") { word = String(word.dropFirst(7)) }
+        if word.hasPrefix("file://") {
+            guard let decoded = URL(string: word)?.path(percentEncoded: false) else { return false }
+            word = decoded
+        } else if word.contains("\\") {
+            word = unescape(word)
+        }
         guard word.hasPrefix("/") else { return false }
         let path = URL(fileURLWithPath: word).standardizedFileURL.path
         return path == base || path.hasPrefix(base + "/")
+    }
+
+    /// `a\ b` read as `a b`, the way a shell unquotes a word.
+    private static func unescape(_ word: String) -> String {
+        var out = ""
+        var escaped = false
+        for character in word {
+            if escaped {
+                out.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else {
+                out.append(character)
+            }
+        }
+        if escaped { out.append("\\") }
+        return out
     }
 
     /// The folder's git state, reading stdout to EOF so a long status can't
@@ -225,26 +273,35 @@ public final class McpServerRepoModel {
     }
 
     /// Reads the folder again: names and groups first, then each checkout's
-    /// git state (four at a time), published as each lands. `hub` is the
-    /// list the page already loaded, for the "Used by" line. A ticket keeps
-    /// an older read from overwriting a newer one.
-    public func load(hub: [McpServer] = []) async {
+    /// git state (four at a time), published as each lands. Which hub
+    /// servers run from a folder is computed by the view from the current
+    /// inventory, so it is never stale. A ticket keeps an older read from
+    /// overwriting a newer one.
+    public func load() async {
         ticket += 1
         let mine = ticket
         isLoading = true
         error = nil
         let root = self.root
-        var found = await runOffPool { McpServerRepo.scan(root: root) }
-        guard mine == ticket else { return }
-        let usage = McpServerRepo.hubUsage(servers: found, hub: hub)
-        for index in found.indices {
-            found[index].hubServers = usage[found[index].path.standardizedFileURL.path] ?? []
+        let outcome = await runOffPool { Result { try McpServerRepo.scan(root: root) } }
+        let found: [McpRepoServer]
+        do {
+            found = try outcome.get()
+        } catch {
+            if mine == ticket {
+                self.error = error.localizedDescription
+                isLoading = false
+            }
+            return
         }
+        guard mine == ticket else { return }
         servers = found
         var pending = found.indices.makeIterator()
         await withTaskGroup(of: (Int, GitState).self) { group in
             var inFlight = 0
-            while let index = pending.next(), inFlight < Self.gitBatch {
+            // The count is checked before the index is taken, so a full
+            // batch never swallows a folder.
+            while inFlight < Self.gitBatch, let index = pending.next() {
                 let path = found[index].path
                 group.addTask { (index, await McpServerRepo.gitState(of: path)) }
                 inFlight += 1
@@ -253,7 +310,7 @@ public final class McpServerRepoModel {
                 guard mine == ticket else { group.cancelAll(); return }
                 servers[index].git = git
                 inFlight -= 1
-                while let index = pending.next(), inFlight < Self.gitBatch {
+                while inFlight < Self.gitBatch, let index = pending.next() {
                     let path = found[index].path
                     group.addTask { (index, await McpServerRepo.gitState(of: path)) }
                     inFlight += 1

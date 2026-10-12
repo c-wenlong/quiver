@@ -38,7 +38,7 @@ struct McpServersPage: View {
             .help("Run each server's command check and reach each URL")
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth) }
-                Task { await app.mcpRepo.load(hub: hub) }
+                Task { await app.mcpRepo.load() }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
@@ -78,12 +78,12 @@ struct McpServersPage: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
-            McpRepoSection(model: app.mcpRepo, root: repoRoot, editor: app.editor)
+            McpRepoSection(model: app.mcpRepo, root: repoRoot, hub: hub, editor: app.editor)
         }
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
         .task(id: repoRoot) {
             app.mcpRepo.root = repoRoot
-            await app.mcpRepo.load(hub: hub)
+            await app.mcpRepo.load()
         }
         .sheet(item: $selected) { server in
             if case .loaded(let inventory) = model.state {
@@ -509,7 +509,15 @@ private struct Facts: View {
 private struct McpRepoSection: View {
     var model: McpServerRepoModel
     var root: URL
+    /// The page's current inventory; recomputed every render so "Used by"
+    /// follows a load, a refresh or a sync.
+    var hub: [McpServer]
     var editor: CodeEditor?
+
+    /// Folder path -> the hub servers that run from inside it.
+    private var usage: [String: [String]] {
+        McpServerRepo.hubUsage(servers: model.servers, hub: hub)
+    }
 
     /// Group name then its servers, in the scan's order (ungrouped first).
     private var groups: [(name: String?, servers: [McpRepoServer])] {
@@ -556,7 +564,9 @@ private struct McpRepoSection: View {
                 ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                     Card(title: group.name ?? "Servers") {
                         ForEach(group.servers) { server in
-                            RepoServerRow(server: server, editor: editor)
+                            RepoServerRow(server: server,
+                                          usedBy: usage[server.path.standardizedFileURL.path] ?? [],
+                                          editor: editor)
                             if server.id != group.servers.last?.id { Divider().overlay(Theme.border) }
                         }
                     }
@@ -570,6 +580,8 @@ private struct McpRepoSection: View {
 /// then Show in Finder and Open in editor.
 private struct RepoServerRow: View {
     var server: McpRepoServer
+    /// The hub servers that run from this folder, from the live inventory.
+    var usedBy: [String]
     var editor: CodeEditor?
 
     var body: some View {
@@ -578,10 +590,10 @@ private struct RepoServerRow: View {
                 Text(server.name)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary).lineLimit(1)
-                if server.hubServers.isEmpty {
+                if usedBy.isEmpty {
                     Text("Not in the hub").font(Theme.caption).foregroundStyle(Theme.textMuted)
                 } else {
-                    Text("Used by \(server.hubServers.joined(separator: ", "))")
+                    Text("Used by \(usedBy.joined(separator: ", "))")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 gitLine
