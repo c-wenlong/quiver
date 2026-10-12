@@ -54,7 +54,7 @@ import Testing
 struct FakeSessionSource: SessionListing {
     var list: SessionList
     var error: Error?
-    func sessions(days: Int, limit: Int) async throws -> SessionList {
+    func sessions(days: Int?, limit: Int) async throws -> SessionList {
         if let error { throw error }
         return list
     }
@@ -62,12 +62,15 @@ struct FakeSessionSource: SessionListing {
 
 actor FakeSessionLedger: SessionUsageQuerying {
     var rows: [SessionUsage] = []
+    var days: [DailyUsage] = []
     private(set) var ranges: [DateInterval] = []
     func set(_ rows: [SessionUsage]) { self.rows = rows }
+    func setDaily(_ rows: [DailyUsage]) { self.days = rows }
     func bySession(in range: DateInterval) async -> [SessionUsage] {
         ranges.append(range)
         return rows
     }
+    func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage] { days }
 }
 
 /// Holds the listing until released, to test what happens meanwhile.
@@ -76,7 +79,7 @@ actor GatedSessionSource: SessionListing {
     private var gate: CheckedContinuation<Void, Never>?
     private(set) var waiting = false
     init(_ list: SessionList) { self.list = list }
-    func sessions(days: Int, limit: Int) async throws -> SessionList {
+    func sessions(days: Int?, limit: Int) async throws -> SessionList {
         waiting = true
         await withCheckedContinuation { gate = $0 }
         return list
@@ -89,7 +92,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
     var list: SessionList
     private(set) var calls = 0
     init(_ list: SessionList) { self.list = list }
-    func sessions(days: Int, limit: Int) async throws -> SessionList {
+    func sessions(days: Int?, limit: Int) async throws -> SessionList {
         calls += 1
         return list
     }
@@ -135,8 +138,8 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(model.rows.map(\.id) == ["a", "b"])
         #expect(model.rows[0].usage?.totals.costUSD == 4.5)
         #expect(model.rows[1].usage == nil)
-        #expect(model.models == ["claude-opus-5-5"])
-        #expect(model.projects == ["quiver", "site"])
+        #expect(model.models.map(\.model) == ["claude-opus-5-5"])
+        #expect(model.projects.map(\.name) == ["quiver", "site"])
         #expect(model.harnesses == ["claude", "codex"])
     }
 
@@ -229,8 +232,13 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         let stray = usage("d1", "claude", models: [], cost: 1)
         let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)], [work, old, stray])
         await model.load()
-        #expect(model.rows.map(\.session.id) == ["a", "w1"])
-        let row = try #require(model.rows.last)
+        // The listing is unbounded, so extra-account sessions join at any
+        // age; the window filter still keeps the old one out of view.
+        #expect(model.rows.map(\.session.id) == ["a", "w1", "w0"])
+        #expect(model.visible.map(\.session.id) == ["a", "w1"])
+        model.filter.window = .all
+        #expect(model.visible.map(\.session.id) == ["a", "w1", "w0"])
+        let row = try #require(model.rows.first { $0.session.id == "w1" })
         #expect(row.session.harness == "claude")
         #expect(row.session.cwd == "/c/quiver")
         #expect(row.session.project == "quiver")
@@ -304,5 +312,100 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
             ledger: FakeSessionLedger(), now: { [now] in now })
         await model.load()
         #expect(model.error == "boom")
+    }
+
+    @Test func projectChoicesMergeCaseAndSortByCount() async {
+        let model = await model([
+            session("a", "claude", cwd: "/c/Quiver", at: 1_791_699_000),
+            session("b", "codex", cwd: "/c/quiver", at: 1_791_698_000),
+            session("c", "claude", cwd: "/c/site", at: 1_791_697_000),
+        ], [])
+        await model.load()
+        #expect(model.projects.map(\.name) == ["Quiver", "site"])
+        #expect(model.projects.map(\.count) == [2, 1])
+        model.filter.project = "quiver"
+        #expect(model.visible.map(\.id) == ["a", "b"])
+    }
+
+    @Test func hashLikeProjectsFoldIntoOther() async {
+        let model = await model([
+            session("a", "claude", cwd: "/c/site", at: 1_791_699_000),
+            session("b", "claude", cwd: "/c/3f2a9c1", at: 1_791_698_000),
+            session("c", "claude", cwd: "/c/0199abcd-1111-2222-3333-444455556666", at: 1_791_697_000),
+        ], [])
+        await model.load()
+        // Other carries every generated name and always sorts last.
+        #expect(model.projects.map(\.name) == ["site", "Other"])
+        #expect(model.projects.last?.count == 2)
+        model.filter.project = SessionsModel.otherProjectKey
+        #expect(model.visible.map(\.id) == ["b", "c"])
+    }
+
+    @Test func modelsSortByPeriodTokens() async {
+        let ledger = FakeSessionLedger()
+        var big = UsageTotals()
+        big.inputTokens = 500
+        var small = UsageTotals()
+        small.inputTokens = 100
+        await ledger.setDaily([
+            DailyUsage(day: now, harness: "claude", model: "sonnet", totals: small),
+            DailyUsage(day: now, harness: "claude", model: "opus", totals: big),
+        ])
+        let model = await model(
+            [session("a", "claude", cwd: nil, at: 1_791_699_000)],
+            [usage("a", "claude", models: ["sonnet", "opus"], cost: 1)],
+            ledger: ledger)
+        await model.load()
+        #expect(model.models.map(\.model) == ["opus", "sonnet"])
+        #expect(model.models.first?.tokens == 500)
+        // A model the ledger never saw still lists, just without a count.
+        await ledger.set([usage("a", "claude", models: ["sonnet", "opus", "haiku"], cost: 1)])
+        await model.refreshUsage()
+        #expect(model.models.map(\.model) == ["opus", "sonnet", "haiku"])
+    }
+}
+
+@Suite struct SessionProjectsTests {
+    @Test func aWorktreesGitFileResolvesToTheMainRepository() {
+        let probe: (String) -> SessionProjects.GitDir? = { folder in
+            folder == "/Users/k/code/quiver/.worktrees/m4"
+                ? .worktree("gitdir: /Users/k/code/quiver/.git/worktrees/m4\n") : nil
+        }
+        #expect(SessionProjects.project(of: "/Users/k/code/quiver/.worktrees/m4", gitDir: probe) == "quiver")
+        // A path inside the worktree walks up to the same file.
+        #expect(SessionProjects.project(of: "/Users/k/code/quiver/.worktrees/m4/src/deep", gitDir: probe) == "quiver")
+    }
+
+    @Test func aRelativeGitdirResolvesBesideTheWorktree() {
+        // The submodule's `gitdir: ../.git/modules/sub` resolves to
+        // vendor/.git, so vendor is the repository it belongs to.
+        let probe: (String) -> SessionProjects.GitDir? = { folder in
+            folder == "/Users/k/code/site/vendor/sub" ? .worktree("gitdir: ../.git/modules/sub\n") : nil
+        }
+        #expect(SessionProjects.project(of: "/Users/k/code/site/vendor/sub", gitDir: probe) == "vendor")
+    }
+
+    @Test func aPlainRepositoryTakesItsFolderName() {
+        let probe: (String) -> SessionProjects.GitDir? = { folder in
+            folder == "/Users/k/code/quiver" ? .repository : nil
+        }
+        #expect(SessionProjects.project(of: "/Users/k/code/quiver/app", gitDir: probe) == "quiver")
+    }
+
+    @Test func worktreeShapesResolveForPathsThatAreGone() {
+        let missing: (String) -> SessionProjects.GitDir? = { _ in nil }
+        #expect(SessionProjects.project(of: "/Users/k/code/quiver/.claude/worktrees/m4-sessions", gitDir: missing) == "quiver")
+        #expect(SessionProjects.project(of: "/Users/k/.codex/worktrees/0199abcd/myrepo/src", gitDir: missing) == "myrepo")
+        #expect(SessionProjects.project(of: "/Users/k/code/quiver/worktrees/feat-x", gitDir: missing) == "quiver")
+        #expect(SessionProjects.project(of: "/Users/k/code/site", gitDir: missing) == "site")
+    }
+
+    @Test func hashLikeNamesAreDetected() {
+        #expect(SessionProjects.isHashLike("3f2a9c1"))
+        #expect(SessionProjects.isHashLike("0199ABCD-1111-2222-3333-444455556666"))
+        #expect(SessionProjects.isHashLike("a1b2c3d4e5"))
+        #expect(!SessionProjects.isHashLike("selflearn"))
+        #expect(!SessionProjects.isHashLike("quiver"))
+        #expect(!SessionProjects.isHashLike("api-v2"))
     }
 }

@@ -344,7 +344,7 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         """)
     }
 
-    @Test func aMoveToANewProviderStartsAGroupAtTheEnd() throws {
+    @Test func aMoveToANewProviderStartsAGroupAfterTheOldOne() throws {
         var file = APIKeysFile(text: Self.moveFile)
         try file.move(name: "ALPHA_KEY", toProvider: "MISTRAL")
         #expect(file.text == """
@@ -352,10 +352,70 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         # FIRST
         export BETA_KEY="b2"
 
+        # MISTRAL
+        export ALPHA_KEY="a1"
+
         # SECOND
         export GAMMA_KEY='g3'
+        """)
+    }
+
+    @Test func aMoveToANewProviderRenewsASingleKeyGroupInPlace() throws {
+        var file = APIKeysFile(text: """
+        # FIRST
+        export ALPHA_KEY="a1"
+
+        # SECOND
+        export GAMMA_KEY='g3'
+        """)
+        try file.move(name: "ALPHA_KEY", toProvider: "MISTRAL")
+        #expect(file.text == """
+        # MISTRAL
+        export ALPHA_KEY="a1"
+
+        # SECOND
+        export GAMMA_KEY='g3'
+        """)
+    }
+
+    @Test func anUngroupedKeyMovedToANewProviderKeepsTheBlocksEnd() throws {
+        var file = APIKeysFile(text: """
+        # set in ~/.zshenv
+        export LOOSE_ONE="l1"
+        export LOOSE_TWO="l2"
+
+        # FIRST
+        export ALPHA_KEY="a1"
+        """)
+        try file.move(name: "LOOSE_TWO", toProvider: "MISTRAL")
+        #expect(file.text == """
+        # set in ~/.zshenv
+        export LOOSE_ONE="l1"
 
         # MISTRAL
+        export LOOSE_TWO="l2"
+
+        # FIRST
+        export ALPHA_KEY="a1"
+        """)
+    }
+
+    @Test func theOnlyUngroupedKeyMovedToANewProviderTakesTheBlocksPlace() throws {
+        var file = APIKeysFile(text: """
+        # set in ~/.zshenv
+        export LOOSE_KEY="l1"
+
+        # FIRST
+        export ALPHA_KEY="a1"
+        """)
+        try file.move(name: "LOOSE_KEY", toProvider: "MISTRAL")
+        #expect(file.text == """
+        # set in ~/.zshenv
+
+        # MISTRAL
+        export LOOSE_KEY="l1"
+
+        # FIRST
         export ALPHA_KEY="a1"
         """)
     }

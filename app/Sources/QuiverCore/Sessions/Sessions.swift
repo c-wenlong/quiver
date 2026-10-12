@@ -77,15 +77,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
     /// The folder a session belongs to, with a worktree counted as its repository.
     public static func project(of cwd: String?) -> String? {
         guard let cwd, !cwd.isEmpty else { return nil }
-        var parts = cwd.split(separator: "/").map(String.init)
-        for marker in [".claude", ".worktrees", ".codex"] {
-            if let index = parts.firstIndex(of: marker), index > 0,
-               marker == ".worktrees" || parts.indices.contains(index + 1) && parts[index + 1] == "worktrees" {
-                parts = Array(parts[..<index])
-                break
-            }
-        }
-        return parts.last
+        return SessionProjects.pattern(of: cwd) ?? cwd.split(separator: "/").last.map(String.init)
     }
 }
 
@@ -107,13 +99,19 @@ struct SessionListPayload: Decodable {
 }
 
 public protocol SessionListing: Sendable {
-    func sessions(days: Int, limit: Int) async throws -> SessionList
+    /// `days` nil asks for every session swe can list, `limit` permitting.
+    func sessions(days: Int?, limit: Int) async throws -> SessionList
 }
 
 extension SweClient: SessionListing {
-    /// The latest `limit` sessions from the last `days` calendar days.
-    public func sessions(days: Int, limit: Int) async throws -> SessionList {
-        let payload: SessionListPayload = try await call(["session", String(limit), "--days=\(days)", "--json"])
+    /// The latest `limit` sessions from the last `days` calendar days, or
+    /// all of them when `days` is nil: swe sorts newest first and the cap
+    /// keeps the payload bounded.
+    public func sessions(days: Int?, limit: Int) async throws -> SessionList {
+        var arguments = ["session", String(limit)]
+        if let days { arguments.append("--days=\(days)") }
+        arguments.append("--json")
+        let payload: SessionListPayload = try await call(arguments)
         return SessionList(sessions: payload.sessions,
                            failures: (payload.failures ?? []).map { "\($0.harness): \($0.error)" })
     }
@@ -121,6 +119,8 @@ extension SweClient: SessionListing {
 
 public protocol SessionUsageQuerying: Sendable {
     func bySession(in range: DateInterval) async -> [SessionUsage]
+    /// Per day, harness and model, for the model filter's token counts.
+    func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage]
 }
 
 extension Ledger: SessionUsageQuerying {}
@@ -181,7 +181,7 @@ public final class SessionsModel {
     }
 
     public enum Window: String, CaseIterable, Identifiable, Sendable {
-        case today, week, month, quarter
+        case today, week, month, quarter, year, all
         public var id: String { rawValue }
         public var title: String {
             switch self {
@@ -189,6 +189,8 @@ public final class SessionsModel {
             case .week: "7 days"
             case .month: "30 days"
             case .quarter: "90 days"
+            case .year: "365 days"
+            case .all: "All time"
             }
         }
         var seconds: TimeInterval {
@@ -197,6 +199,9 @@ public final class SessionsModel {
             case .week: 7 * 86_400
             case .month: 30 * 86_400
             case .quarter: 90 * 86_400
+            case .year: 365 * 86_400
+            // `visible` treats `all` as unbounded, so this never reads.
+            case .all: 0
             }
         }
     }
@@ -204,13 +209,13 @@ public final class SessionsModel {
     public struct Filter: Equatable, Sendable {
         public var harness: String?
         public var window: Window = .quarter
+        /// A project choice's `key`, lower-cased; "other" holds every
+        /// generated (hash-like) name.
         public var project: String?
         public var model: String?
         public var search = ""
         public init() {}
     }
-
-    public static let days = 90
 
     public var filter = Filter()
     public private(set) var rows: [Row] = []
@@ -275,6 +280,7 @@ public final class SessionsModel {
         listed = snapshot.sessions
         latestUsage = usage
         rows = join(listed, usage)
+        resolveProjects(for: rows)
         failures = snapshot.failures
         isCapped = snapshot.isCapped
         listedAt = snapshot.savedAt
@@ -320,14 +326,16 @@ public final class SessionsModel {
         }
         usageGeneration += 1
         let myUsage = usageGeneration
-        let usage = await usageBySession()
+        let (usage, daily) = await readUsage()
         guard mine == generation else { return }
         // A refresh that finished meanwhile read the ledger later; keep its numbers.
         let joinedUsage = myUsage == usageGeneration ? usage : (latestUsage ?? usage)
         listed = list.sessions
         isCapped = list.sessions.count >= limit
         latestUsage = joinedUsage
+        dailyRows = daily
         rows = join(listed, joinedUsage)
+        resolveProjects(for: rows)
         failures = list.failures
         error = nil
         listedAt = now()
@@ -340,10 +348,12 @@ public final class SessionsModel {
     public func refreshUsage() async {
         usageGeneration += 1
         let mine = usageGeneration
-        let usage = await usageBySession()
+        let (usage, daily) = await readUsage()
         guard mine == usageGeneration else { return }
         latestUsage = usage
+        dailyRows = daily
         rows = join(listed, usage)
+        resolveProjects(for: rows)
         await save()
     }
 
@@ -355,11 +365,13 @@ public final class SessionsModel {
     }
 
     /// swe's list, or `ListingTimedOut` once `timeout` passes. Losing the race
-    /// cancels the listing, which stops the swe process.
+    /// cancels the listing, which stops the swe process. The listing is
+    /// unbounded: swe returns the newest `limit` sessions over all history,
+    /// so the All time period needs no second fetch.
     nonisolated static func listing(from source: SessionListing, limit: Int,
                                     within timeout: Duration) async throws -> SessionList {
         try await withDeadline(timeout, onTimeout: { ListingTimedOut(timeout: timeout) }) {
-            try await source.sessions(days: days, limit: limit)
+            try await source.sessions(days: nil, limit: limit)
         }
     }
 
@@ -380,10 +392,14 @@ public final class SessionsModel {
         var session: String
     }
 
-    /// Every session's usage over its whole history: a session resumed
-    /// today may have started months ago.
-    private func usageBySession() async -> [UsageKey: SessionUsage] {
-        Self.keyed(await ledger.bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0), end: now())))
+    /// Every session's usage over its whole history, plus the daily rows
+    /// the model filter's token counts come from: a session resumed today
+    /// may have started months ago.
+    private func readUsage() async -> ([UsageKey: SessionUsage], [DailyUsage]) {
+        let range = DateInterval(start: Date(timeIntervalSince1970: 0), end: now())
+        async let usage = ledger.bySession(in: range)
+        async let daily = ledger.daily(in: range, calendar: calendar)
+        return (Self.keyed(await usage), await daily)
     }
 
     /// One entry per harness, account and session, merging repeats.
@@ -421,10 +437,11 @@ public final class SessionsModel {
                 : candidates.max { $0.lastTimestamp < $1.lastTimestamp }
             return Row(session: session, usage: use)
         }
-        // Sessions in extra accounts, which swe never lists.
-        let since = now().addingTimeInterval(-Double(Self.days) * 86_400)
+        // Sessions in extra accounts, which swe never lists. The listing
+        // is unbounded, so these join at any age too and the window
+        // filter bounds what shows.
         for (key, use) in usage where Self.accountHarnesses.contains(key.harness)
-            && !defaultHomes.contains(key.account) && use.lastTimestamp >= since {
+            && !defaultHomes.contains(key.account) {
             let argv = Self.resumeArgv(harness: key.harness, id: key.session)
             let session = SessionInfo(
                 id: key.session, harness: key.harness, agent: UsageFormat.harness(key.harness), cwd: use.cwd,
@@ -475,24 +492,147 @@ public final class SessionsModel {
         return groups
     }
 
+    /// The period's start: today from local midnight, the other windows
+    /// that many days back, and unbounded for All time.
+    private func windowStart(_ window: Window) -> Date {
+        switch window {
+        case .today: calendar.startOfDay(for: now())
+        case .all: .distantPast
+        default: now().addingTimeInterval(-window.seconds)
+        }
+    }
+
+    // MARK: - Filter choices
+
+    /// One project in the filter: its display name and how many listed
+    /// sessions it holds.
+    public struct ProjectChoice: Equatable, Sendable, Identifiable {
+        public var id: String { key }
+        /// Lower-cased project name, or "other" for the generated names.
+        public var key: String
+        public var name: String
+        public var count: Int
+        public init(key: String, name: String, count: Int) {
+            self.key = key
+            self.name = name
+            self.count = count
+        }
+    }
+
+    /// One model in the filter, with its tokens in the selected period.
+    public struct ModelChoice: Equatable, Sendable, Identifiable {
+        public var id: String { model }
+        public var model: String
+        public var tokens: Int
+        public init(model: String, tokens: Int) {
+            self.model = model
+            self.tokens = tokens
+        }
+    }
+
+    /// The key hash-like folder names fold into; "Other" sits last.
+    public static let otherProjectKey = "other"
+    public static let otherProjectName = "Other"
+
+    /// The filter key for a project name: generated names share one.
+    public static func projectKey(_ name: String?) -> String? {
+        guard let name, !name.isEmpty else { return nil }
+        return SessionProjects.isHashLike(name) ? otherProjectKey : name.lowercased()
+    }
+
     public var harnesses: [String] { Array(Set(rows.map(\.session.harness))).sorted() }
-    public var projects: [String] { Array(Set(rows.compactMap(\.session.project))).sorted() }
-    public var models: [String] { Array(Set(rows.flatMap { $0.usage?.models ?? [] })).sorted() }
+
+    /// One filter entry per project: case-folded duplicates merged,
+    /// hash-like names folded into a single "Other" entry at the end,
+    /// each with its session count, most sessions first.
+    public var projects: [ProjectChoice] {
+        var names: [String: String] = [:]
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for row in rows {
+            guard let project = project(for: row.session),
+                  let key = Self.projectKey(project) else { continue }
+            if names[key] == nil {
+                names[key] = key == Self.otherProjectKey ? Self.otherProjectName : project
+                order.append(key)
+            }
+            counts[key, default: 0] += 1
+        }
+        let named = order
+            .filter { $0 != Self.otherProjectKey }
+            .sorted { counts[$0]! != counts[$1]!
+                ? counts[$0]! > counts[$1]!
+                : names[$0]!.localizedCaseInsensitiveCompare(names[$1]!) == .orderedAscending }
+        var choices = named.map { ProjectChoice(key: $0, name: names[$0]!, count: counts[$0]!) }
+        if let count = counts[Self.otherProjectKey] {
+            choices.append(ProjectChoice(key: Self.otherProjectKey, name: Self.otherProjectName, count: count))
+        }
+        return choices
+    }
+
+    /// One filter entry per model the listed sessions used, heaviest in
+    /// the selected period first.
+    public var models: [ModelChoice] {
+        let since = windowStart(filter.window)
+        var tokens: [String: Int] = [:]
+        for row in dailyRows where row.day >= since {
+            tokens[row.model, default: 0] += row.totals.totalTokens
+        }
+        let listed = Set(rows.flatMap { $0.usage?.models ?? [] })
+        return listed
+            .map { ModelChoice(model: $0, tokens: tokens[$0] ?? 0) }
+            .sorted { $0.tokens != $1.tokens ? $0.tokens > $1.tokens : $0.model < $1.model }
+    }
+
+    /// The project `session` belongs to: the main repository once the
+    /// working folders resolve (off the main thread, cached per cwd), so
+    /// every worktree counts under it. Until then, the path-only guess.
+    public func project(for session: SessionInfo) -> String? {
+        guard let cwd = session.cwd, !cwd.isEmpty else { return nil }
+        return resolvedProjects[cwd] ?? SessionInfo.project(of: cwd)
+    }
+
+    /// Per day, harness and model over all history, for `models`' counts.
+    private var dailyRows: [DailyUsage] = []
+    /// cwd -> repository name, once resolved against the filesystem.
+    private var resolvedProjects: [String: String] = [:]
+    /// Only the newest resolution writes `resolvedProjects`.
+    private var projectGeneration = 0
+
+    /// Resolves each row's working folder to its main repository off the
+    /// main thread. A stale result (an older rows list finished later) is
+    /// dropped.
+    private func resolveProjects(for rows: [Row]) {
+        projectGeneration += 1
+        let mine = projectGeneration
+        let cwds = Set(rows.compactMap(\.session.cwd))
+        guard !cwds.isEmpty else { resolvedProjects = [:]; return }
+        Task.detached(priority: .utility) { [weak self] in
+            var resolved: [String: String] = [:]
+            for cwd in cwds {
+                if let project = SessionProjects.project(of: cwd) { resolved[cwd] = project }
+            }
+            await self?.commitProjects(resolved, generation: mine)
+        }
+    }
+
+    /// A resolution commits only while it is still the newest one.
+    private func commitProjects(_ resolved: [String: String], generation: Int) {
+        guard projectGeneration == generation else { return }
+        resolvedProjects = resolved
+    }
 
     public var visible: [Row] {
-        let now = now()
-        let since = filter.window == .today
-            ? calendar.startOfDay(for: now)
-            : now.addingTimeInterval(-filter.window.seconds)
+        let since = windowStart(filter.window)
         let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
         return rows.filter { row in
             let s = row.session
             if let harness = filter.harness, s.harness != harness { return false }
             if s.lastActiveAt < since { return false }
-            if let project = filter.project, s.project != project { return false }
+            if let key = filter.project, Self.projectKey(project(for: s)) != key { return false }
             if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
             if !needle.isEmpty {
-                let haystack = ([s.title, s.cwd, s.project, s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
+                let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
                     .compactMap { $0 }.joined(separator: " ").lowercased()
                 if !haystack.contains(needle) { return false }
             }

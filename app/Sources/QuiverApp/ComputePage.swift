@@ -35,9 +35,8 @@ struct ComputePage: View {
                 HarnessCard(usage: usage, rows: model.processes[usage.harness] ?? [])
             }
             if !model.orphans.isEmpty { OrphansCard(rows: model.orphans) }
-            if !model.notRunning.isEmpty {
-                Text("Not running: \(model.notRunning.map(UsageFormat.harness).joined(separator: ", "))")
-                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            ForEach(model.notRunning, id: \.self) { harness in
+                IdleHarnessCard(harness: harness)
             }
             limitsCard
         }
@@ -435,6 +434,26 @@ private struct HarnessCard: View {
     }
 }
 
+/// A starred harness with nothing running: the same card shape as a
+/// running one, the header's figures replaced by a muted "Not running".
+/// No processes, so no disclosure chevron and no Show more row.
+private struct IdleHarnessCard: View {
+    var harness: String
+
+    var body: some View {
+        Card {
+            HStack(spacing: 10) {
+                HarnessIcon(harness: harness, size: 20)
+                Text(UsageFormat.harness(harness))
+                    .font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 8)
+                Text("Not running")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+        }
+    }
+}
+
 private struct ProcessRowView: View {
     @Environment(AppModel.self) private var app
     var row: ComputeModel.ProcessRow
@@ -727,7 +746,12 @@ private struct CleanupRow: View {
                     .frame(width: 20)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                HStack(spacing: 6) {
+                    if case .process(_, let harness) = item.kind {
+                        HarnessIcon(harness: harness, size: 14)
+                    }
+                    Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                }
                 Text(item.reason).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
             }
