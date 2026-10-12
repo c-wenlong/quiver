@@ -1,4 +1,5 @@
 import QuiverCore
+import QuiverWidgetsUI
 import SwiftUI
 import WidgetKit
 
@@ -251,45 +252,59 @@ private struct PopupSection: View {
     }
 }
 
-/// An account's or harness's switch, then a chip per limit window it reports.
-private struct PopupSourceRow: View {
-    @Environment(AppModel.self) private var app
+/// A source's switch, then a chip per limit window it reports. The popup's
+/// rows get a drag grip; each widget's settings the same row without one.
+private struct SourceSettingsRow: View {
     var row: MenuBarPopup.Row
+    var grip = false
+    var shown: Bool
+    var setShown: (Bool) -> Void
+    var showsWindow: (String) -> Bool
+    var setWindowShown: (String, Bool) -> Void
 
     var body: some View {
-        let shown = app.popup.shows(source: row.source, harness: row.harness)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                GripDots()
+                if grip { GripDots() }
                 HarnessIcon(harness: row.harness, size: 16)
                 Text(row.title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
                 Spacer(minLength: 16)
                 SettingSwitch(title: "Show \(row.title)",
-                              isOn: Binding(get: { shown },
-                                            set: { app.popup.setShown($0, source: row.source,
-                                                                       harness: row.harness,
-                                                                       allWindows: row.windows) }))
+                              isOn: Binding(get: { shown }, set: setShown))
             }
             .padding(.vertical, 12)
             if !row.windows.isEmpty {
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(row.windows, id: \.self) { window in
                         WindowChip(title: UsageFormat.window(window),
-                                   isOn: Binding(get: {
-                                       app.popup.shows(window: window, source: row.source,
-                                                       harness: row.harness, allWindows: row.windows)
-                                   }, set: {
-                                       app.popup.setShown($0, window: window, source: row.source,
-                                                          harness: row.harness, allWindows: row.windows)
-                                   }))
+                                   isOn: Binding(get: { showsWindow(window) },
+                                                 set: { setWindowShown(window, $0) }))
                     }
                 }
-                .padding(.leading, 38)
+                .padding(.leading, grip ? 38 : 26)
                 .padding(.bottom, 12)
                 .disabled(!shown)
             }
         }
-        .accessibilityHint("Drag to reorder")
+        .accessibilityHint(grip ? "Drag to reorder" : "")
+    }
+}
+
+/// An account's or harness's switch, then a chip per limit window it reports.
+private struct PopupSourceRow: View {
+    @Environment(AppModel.self) private var app
+    var row: MenuBarPopup.Row
+
+    var body: some View {
+        SourceSettingsRow(
+            row: row, grip: true,
+            shown: app.popup.shows(source: row.source, harness: row.harness),
+            setShown: { app.popup.setShown($0, source: row.source, harness: row.harness,
+                                           allWindows: row.windows) },
+            showsWindow: { app.popup.shows(window: $0, source: row.source, harness: row.harness,
+                                           allWindows: row.windows) },
+            setWindowShown: { app.popup.setShown($1, window: $0, source: row.source,
+                                                 harness: row.harness, allWindows: row.windows) })
     }
 }
 
@@ -326,9 +341,16 @@ private struct WindowChip: View {
 // MARK: - Widgets
 
 private struct WidgetsSection: View {
+    @Environment(AppModel.self) private var app
     /// Kinds of Quiver's widgets on the desktop or in Notification Center.
     @State private var placed: Set<String> = []
     @State private var refreshed = false
+
+    /// The snapshot a widget on the desktop would draw right now: what the
+    /// app would write to the shared file, settings applied.
+    private var snapshot: WidgetSnapshot {
+        app.limits.widgetSnapshot(overview: app.overview, selection: app.widgetSelection)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -345,9 +367,10 @@ private struct WidgetsSection: View {
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Redraw the widgets with the latest figures (⌘R)")
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: Theme.gutter)], spacing: Theme.gutter) {
+            VStack(spacing: Theme.gutter) {
                 ForEach(WidgetCatalog.all) { widget in
-                    WidgetCard(widget: widget, isPlaced: placed.contains(widget.kind))
+                    WidgetCard(widget: widget, isPlaced: placed.contains(widget.kind),
+                               snapshot: snapshot)
                 }
             }
         }
@@ -367,13 +390,43 @@ private struct WidgetsSection: View {
     }
 }
 
+/// A widget drawn as it would sit on the desktop: the system's size and
+/// corner radius, the widget surface colour.
+private struct WidgetSurface<Content: View>: View {
+    var size: CGSize
+    var snapshot: WidgetSnapshot
+    @ViewBuilder var content: (WidgetSnapshot) -> Content
+
+    var body: some View {
+        content(snapshot)
+            .padding(12)
+            .frame(width: size.width, height: size.height)
+            .background(Palette.card, in: .rect(cornerRadius: 20))
+            .foregroundStyle(Palette.textPrimary)
+            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.border, lineWidth: 1))
+    }
+}
+
 private struct WidgetCard: View {
+    @Environment(AppModel.self) private var app
     var widget: WidgetCatalog
     var isPlaced: Bool
+    var snapshot: WidgetSnapshot
+
+    /// macOS desktop widget sizes: small, medium and the large only the
+    /// limits widget ships.
+    static let small = CGSize(width: 170, height: 170)
+    static let medium = CGSize(width: 364, height: 170)
+    static let large = CGSize(width: 364, height: 382)
+
+    /// The harness widget this card configures, nil for the limits one.
+    private var harnessWidget: WidgetSelection.Widget? {
+        WidgetSelection.Widget(rawValue: widget.kind)
+    }
 
     var body: some View {
         Card {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 8) {
                     Image(systemName: widget.symbol)
                         .font(.system(size: 14))
@@ -385,9 +438,107 @@ private struct WidgetCard: View {
                 }
                 Text(widget.detail).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                previews
+                settings
                 Text(widget.sizes).font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
-            .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
         }
+    }
+
+    /// The real widget view over the current snapshot, at the sizes it ships.
+    @ViewBuilder private var previews: some View {
+        let now = Date.now
+        switch widget.kind {
+        case "limits":
+            FlowLayout(spacing: 16, lineSpacing: 16) {
+                WidgetSurface(size: Self.small, snapshot: snapshot) {
+                    LimitsView(snapshot: $0, now: now, family: .systemSmall)
+                }
+                WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                    LimitsView(snapshot: $0, now: now, family: .systemMedium)
+                }
+                WidgetSurface(size: Self.large, snapshot: snapshot) {
+                    LimitsView(snapshot: $0, now: now, family: .systemLarge)
+                }
+            }
+        case "summary":
+            WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                SummaryView(snapshot: $0, now: now)
+            }
+        case "heatmap":
+            WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                HeatmapView(snapshot: $0, now: now)
+            }
+        case "models":
+            WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                ModelsView(snapshot: $0)
+            }
+        default: EmptyView()
+        }
+    }
+
+    /// The widget's own settings: which sources and windows limits lists,
+    /// or which harnesses the usage widgets count.
+    @ViewBuilder private var settings: some View {
+        if widget.kind == "limits" {
+            let rows = MenuBarPopup.rows(in: app.limits.readings, sources: sources)
+            if !rows.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Shown").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                    ForEach(rows) { row in
+                        SourceSettingsRow(
+                            row: row,
+                            shown: app.widgetSelection.limits.shows(source: row.source),
+                            setShown: { app.widgetSelection.limits.setShown($0, source: row.source) },
+                            showsWindow: { app.widgetSelection.limits.shows(window: $0, source: row.source) },
+                            setWindowShown: { app.widgetSelection.limits.setShown($1, window: $0, source: row.source) })
+                    }
+                }
+            }
+        } else if let harnessWidget {
+            let harnesses = usageHarnesses
+            if !harnesses.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Counted").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                    ForEach(harnesses, id: \.self) { harness in
+                        HarnessPickRow(harness: harness, isOn: Binding(
+                            get: { app.widgetSelection.shows(harness: harness, in: harnessWidget) },
+                            set: { app.widgetSelection.setShown($0, harness: harness, in: harnessWidget) }))
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same sources the popup's settings list: every starred account
+    /// and other harness, so a source can be hidden before limits arrive.
+    private var sources: [(source: String, harness: String, title: String)] {
+        app.starredAccountCards.map {
+            (source: $0.profile.id, harness: $0.profile.vendor.rawValue,
+             title: "\($0.profile.vendor.title): \($0.profile.name)")
+        } + app.others.rows.map { (source: $0.name, harness: $0.name, title: $0.accountTitle) }
+    }
+
+    /// Every harness with usage in the Overview data, in the Settings order.
+    private var usageHarnesses: [String] {
+        var names = Set((app.overview?.activityRows ?? []).map(\.harness))
+        names.formUnion((app.overview?.recentRows ?? []).map(\.harness))
+        return app.providers.ordered(Array(names))
+    }
+}
+
+/// A harness the widget counts, with a switch.
+private struct HarnessPickRow: View {
+    var harness: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HarnessIcon(harness: harness, size: 16)
+            Text(UsageFormat.harness(harness)).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+            Spacer(minLength: 16)
+            SettingSwitch(title: "Count \(UsageFormat.harness(harness))", isOn: $isOn)
+        }
+        .padding(.vertical, 12)
     }
 }

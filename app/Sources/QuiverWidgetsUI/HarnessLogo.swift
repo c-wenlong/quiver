@@ -8,11 +8,16 @@ import WidgetKit
 /// colour. A harness with no bundled logo draws nothing, so the title beside
 /// it carries the name alone. The logos come from QuiverCore's resource
 /// bundle, which build-app.sh copies into the extension's own Resources.
-struct HarnessLogo: View {
-    var harness: String
-    var size: CGFloat = 12
+public struct HarnessLogo: View {
+    public var harness: String
+    public var size: CGFloat = 12
 
-    var body: some View {
+    public init(harness: String, size: CGFloat = 12) {
+        self.harness = harness
+        self.size = size
+    }
+
+    public var body: some View {
         if let logo = HarnessLogoImage.load(harness, size: size) {
             Group {
                 let image = Image(decorative: logo.image, scale: HarnessLogoImage.scale)

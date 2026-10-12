@@ -77,6 +77,13 @@ public struct DailyUsage: Sendable, Equatable {
     public var harness: String
     public var model: String
     public var totals: UsageTotals
+
+    public init(day: Date, harness: String, model: String, totals: UsageTotals) {
+        self.day = day
+        self.harness = harness
+        self.model = model
+        self.totals = totals
+    }
 }
 
 /// Usage of one session inside a date range.

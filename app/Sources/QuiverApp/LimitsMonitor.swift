@@ -50,12 +50,20 @@ final class LimitsMonitor {
         if notifyEnabled { alerts.forEach { post($0, now: now) } }
     }
 
+    /// The snapshot the widgets would show now, under `selection`. The
+    /// Desktop widgets tab previews this, so it matches what a settings
+    /// change writes.
+    func widgetSnapshot(overview: OverviewModel?, selection: WidgetSelection,
+                        now: Date = .now) -> WidgetSnapshot {
+        WidgetSnapshot.make(
+            activity: overview?.activityRows ?? [], models: overview?.recentRows ?? [],
+            limits: readings, selection: selection, now: now, calendar: .current)
+    }
+
     /// Rewrite the widgets' file when what they show has changed, and ask
     /// WidgetKit to redraw.
-    func writeWidgets(overview: OverviewModel?, now: Date = .now) {
-        let snapshot = WidgetSnapshot.make(
-            activity: overview?.activity ?? [], models: overview?.recentModels ?? [],
-            limits: readings, now: now, calendar: .current)
+    func writeWidgets(overview: OverviewModel?, selection: WidgetSelection, now: Date = .now) {
+        let snapshot = widgetSnapshot(overview: overview, selection: selection, now: now)
         var comparable = snapshot
         comparable.generatedAt = lastWidgetSnapshot?.generatedAt ?? now
         guard comparable != lastWidgetSnapshot else { return }
