@@ -18,6 +18,10 @@ struct PluginsPage: View {
     /// What the Fix all confirmation listed; only these run.
     @State private var confirmingAll: [String]?
     @State private var confirmingAction: PluginAction?
+    /// Drift rows a harness card shows before folding.
+    private static let foldLimit = 8
+    /// Harnesses whose drift cards are unfolded.
+    @State private var opened: Set<String> = []
 
     /// App-wide, so a check outlives a trip to another page and the last
     /// report shows at once.
@@ -116,12 +120,26 @@ struct PluginsPage: View {
             let harnesses = report.drift.map(\.harness).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             ForEach(harnesses, id: \.self) { harness in
                 let rows = report.drift.filter { $0.harness == harness }
+                let shown = RowFold.visible(rows, limit: PluginsPage.foldLimit,
+                                            expanded: opened.contains(harness))
                 Card {
                     HarnessTitle(harness: harness, findings: rows.count)
-                    ForEach(rows) { finding in
+                    ForEach(shown) { finding in
                         DriftRow(finding: finding, running: model.fixing == finding.id,
                                  busy: model.work.isBusy) { confirming = finding }
-                        if finding != rows.last { Divider().overlay(Theme.border) }
+                        if finding != shown.last { Divider().overlay(Theme.border) }
+                    }
+                    if RowFold.hiddenCount(total: rows.count, limit: Self.foldLimit) > 0 {
+                        Divider().overlay(Theme.border)
+                        ExpandRow(isExpanded: opened.contains(harness),
+                                  hidden: RowFold.hiddenCount(total: rows.count, limit: Self.foldLimit),
+                                  help: (expand: "Show every finding", collapse: "Show only the first \(Self.foldLimit)"),
+                                  edge: .inset) {
+                            withAnimation(.easeOut(duration: Theme.fadeDuration)) {
+                                if opened.contains(harness) { opened.remove(harness) }
+                                else { opened.insert(harness) }
+                            }
+                        }
                     }
                 }
             }

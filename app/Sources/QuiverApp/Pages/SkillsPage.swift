@@ -55,6 +55,9 @@ private struct InstalledSkills: View {
     var openPlugins: () -> Void
     /// The skill open in its detail page, nil while the list shows.
     @State private var opened: Skill?
+    /// Rows before the list folds behind a Show more row.
+    private static let foldLimit = 15
+    @State private var showsAll = false
 
     var body: some View {
         if let opened {
@@ -92,10 +95,20 @@ private struct InstalledSkills: View {
         } else {
             // Straight on the panel, like TokenTracker's lists: hairlines
             // between rows, no card around them.
+            let shown = RowFold.visible(skills, limit: Self.foldLimit, expanded: showsAll)
             LazyVStack(spacing: 0) {
-                ForEach(skills) { skill in
+                ForEach(shown) { skill in
                     SkillRow(skill: skill, model: model) { opened = skill }
-                    if skill.id != skills.last?.id { Rectangle().fill(Theme.border).frame(height: Theme.hairline) }
+                    if skill.id != shown.last?.id { Rectangle().fill(Theme.border).frame(height: Theme.hairline) }
+                }
+                if RowFold.hiddenCount(total: skills.count, limit: Self.foldLimit) > 0 {
+                    if !shown.isEmpty { Rectangle().fill(Theme.border).frame(height: Theme.hairline) }
+                    ExpandRow(isExpanded: showsAll,
+                              hidden: RowFold.hiddenCount(total: skills.count, limit: Self.foldLimit),
+                              help: (expand: "Show every skill", collapse: "Show only the first \(Self.foldLimit)"),
+                              edge: .inset) {
+                        withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
+                    }
                 }
             }
         }

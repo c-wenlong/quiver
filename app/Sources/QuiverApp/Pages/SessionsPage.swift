@@ -27,6 +27,10 @@ private struct SessionsContent: View {
     @Bindable var model: SessionsModel
     @State private var detail: SessionsModel.Row?
     @State private var actionError: String?
+    /// Rows a day's group shows before folding behind a Show more row.
+    private static let foldLimit = 10
+    /// Days the user has unfolded.
+    @State private var openedDays: Set<Date> = []
 
     var body: some View {
         Page(title: "Sessions", subtitle: "Local sessions, usage and estimated cost.") {
@@ -102,10 +106,24 @@ private struct SessionsContent: View {
                             .padding(.horizontal, 8)
                             .padding(.top, 18).padding(.bottom, 10)
                         Divider().overlay(Theme.border)
-                        ForEach(group.rows) { row in
+                        let shown = RowFold.visible(group.rows, limit: Self.foldLimit,
+                                                    expanded: openedDays.contains(group.day))
+                        ForEach(shown) { row in
                             SessionRow(row: row, project: model.project(for: row.session),
                                        open: { detail = row }, resume: { resume(row) })
                             Divider().overlay(Theme.border)
+                        }
+                        if RowFold.hiddenCount(total: group.rows.count, limit: Self.foldLimit) > 0 {
+                            ExpandRow(isExpanded: openedDays.contains(group.day),
+                                      hidden: RowFold.hiddenCount(total: group.rows.count, limit: Self.foldLimit),
+                                      help: (expand: "Show every session from this day",
+                                             collapse: "Show only the first \(Self.foldLimit)"),
+                                      edge: .inset) {
+                                withAnimation(.easeOut(duration: Theme.fadeDuration)) {
+                                    if openedDays.contains(group.day) { openedDays.remove(group.day) }
+                                    else { openedDays.insert(group.day) }
+                                }
+                            }
                         }
                     }
                 }

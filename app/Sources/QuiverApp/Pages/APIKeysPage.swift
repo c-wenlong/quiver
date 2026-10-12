@@ -200,7 +200,7 @@ private struct KeyRow: View {
                         .help("Rename \(row.provider)")
                 }
             }
-            .frame(width: KeyRow.providerWidth, alignment: .leading)
+            .frame(width: 150, alignment: .leading)
             .contentShape(.rect)
             .onHover { providerHovering = $0 }
             .contextMenu {
@@ -222,7 +222,7 @@ private struct KeyRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             StatusLabel(status: row.status, check: check, isChecking: isChecking,
                         recheck: recheck)
-            .frame(width: KeyRow.statusWidth, alignment: .leading)
+            .frame(width: 120, alignment: .leading)
             HStack(spacing: 4) {
                 // One ring per button, so focus shows which one it's on.
                 Button(isRevealed ? "Hide" : "Reveal", systemImage: isRevealed ? "eye.slash" : "eye", action: toggleReveal)
@@ -436,7 +436,8 @@ private struct KeyEditor: View {
                 .disabled(working || nameProblem != nil)
             }
         }
-        .sheetScaffold()
+        .padding(24)
+        .frame(width: 520)
         .background(Theme.panel)
     }
 

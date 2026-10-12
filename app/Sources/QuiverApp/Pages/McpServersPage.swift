@@ -167,6 +167,10 @@ private struct ServerGrid: View {
     /// The name column takes whatever the cells leave, but never less than this.
     static let nameMinWidth: CGFloat = 180
     static let cellWidth: CGFloat = 88
+    /// Rows a section shows before folding behind a Show more row.
+    private static let foldLimit = 10
+    /// Section titles the user has unfolded.
+    @State private var opened: Set<String> = []
 
     /// At least 88pt, wider when a heading needs it (a logo and a word,
     /// or the name of a harness with no logo), so it shows whole.
@@ -197,10 +201,12 @@ private struct ServerGrid: View {
                 .padding(.bottom, 8)
                 Divider().overlay(Theme.border)
                 ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                    let shown = RowFold.visible(section.rows, limit: Self.foldLimit,
+                                                expanded: opened.contains(section.title))
                     Text("\(section.title) · \(section.rows.count)")
                         .font(Theme.cardTitle).foregroundStyle(Theme.textSecondary)
                         .padding(.top, 14).padding(.bottom, 6)
-                    ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, row in
                         switch row {
                         case .server(let server, let folders):
                             ServerRow(server: server, folders: folders, harnesses: harnesses,
@@ -209,7 +215,20 @@ private struct ServerGrid: View {
                             FolderRow(folder: folder, harnesses: harnesses,
                                       hubKnown: hubKnown, editor: editor)
                         }
-                        if index < section.rows.count - 1 { Divider().overlay(Theme.border) }
+                        if index < shown.count - 1 { Divider().overlay(Theme.border) }
+                    }
+                    if RowFold.hiddenCount(total: section.rows.count, limit: Self.foldLimit) > 0 {
+                        Divider().overlay(Theme.border)
+                        ExpandRow(isExpanded: opened.contains(section.title),
+                                  hidden: RowFold.hiddenCount(total: section.rows.count, limit: Self.foldLimit),
+                                  help: (expand: "Show every \(section.title.lowercased()) row",
+                                         collapse: "Show only the first \(Self.foldLimit)"),
+                                  edge: .inset) {
+                            withAnimation(.easeOut(duration: Theme.fadeDuration)) {
+                                if opened.contains(section.title) { opened.remove(section.title) }
+                                else { opened.insert(section.title) }
+                            }
+                        }
                     }
                 }
             }

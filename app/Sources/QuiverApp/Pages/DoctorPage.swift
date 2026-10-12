@@ -4,6 +4,9 @@ import SwiftUI
 struct DoctorPage: View {
     @Environment(AppModel.self) private var app
     @State private var model: DoctorModel?
+    /// The findings card folds past this many rows.
+    private static let foldLimit = 8
+    @State private var showsAll = false
 
     var body: some View {
         Page(title: "Doctor", subtitle: "Checks on PATH, Node and drift between quiver and your harnesses.") {
@@ -21,10 +24,20 @@ struct DoctorPage: View {
             case .loaded(let report) where report.findings.isEmpty:
                 EmptyCard(text: "Everything checks out.", icon: "checkmark.seal")
             case .loaded(let report):
+                let shown = RowFold.visible(report.findings, limit: Self.foldLimit, expanded: showsAll)
                 Card(title: report.findings.count == 1 ? "1 finding" : "\(report.findings.count) findings") {
-                    ForEach(report.findings) { finding in
+                    ForEach(shown) { finding in
                         FindingRow(finding: finding)
-                        if finding != report.findings.last { Divider().overlay(Theme.border) }
+                        if finding != shown.last { Divider().overlay(Theme.border) }
+                    }
+                    if RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit) > 0 {
+                        Divider().overlay(Theme.border)
+                        ExpandRow(isExpanded: showsAll,
+                                  hidden: RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit),
+                                  help: (expand: "Show every finding", collapse: "Show only the first \(Self.foldLimit)"),
+                                  edge: .inset) {
+                            withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
+                        }
                     }
                 }
             }

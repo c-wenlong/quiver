@@ -45,8 +45,8 @@ struct AccountsPage: View {
                 Text("Only starred harnesses show here. Star one on Harnesses to add it, or unstar it to hide it.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
             } else {
-                Text("Nothing starred. Star a harness on Harnesses to see it here.")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                EmptyCard(text: "Nothing starred. Star a harness on Harnesses to see it here.",
+                          icon: "star")
             }
         }
         .sheet(isPresented: $adding) {
@@ -236,15 +236,6 @@ struct UsageTrack: View {
     }
 }
 
-/// A heading between groups of cards: 20/28 semibold.
-struct SectionTitle: View {
-    var text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text).font(Theme.sectionTitle).tracking(-0.5).foregroundStyle(Theme.textPrimary).padding(.top, 8)
-    }
-}
 
 private struct AddAccountSheet: View {
     var onAdd: (Vendor, String, String?) -> Void
@@ -273,7 +264,8 @@ private struct AddAccountSheet: View {
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .sheetScaffold(width: Theme.formSheetWidth, padding: Theme.formSheetPadding)
+        .padding(20)
+        .frame(width: 420)
     }
 }
 
@@ -363,31 +355,7 @@ private struct HarnessAccountCard: View {
                     }
                 }
             }
-            if let limit, limit.status == .ok {
-                // The same bars as an account card, one per window the
-                // harness reports: window, reset, percent.
-                ForEach(limit.allWindows, id: \.window) { window in
-                    UsageBar(window: UsageWindow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),
-                                                 usedPercent: Double(min(max(window.usedPercent, 0), 100)),
-                                                 resetsAt: window.resetAt))
-                }
-                if let onDemand = limit.onDemand {
-                    HStack {
-                        Text("On-demand").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        Spacer()
-                        Text("\(onDemand.value) · \(onDemand.detail)").font(Theme.caption.monospacedDigit())
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                }
-                if let balance = limit.extraUsageUSD {
-                    HStack {
-                        Text("Extra usage balance").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        Spacer()
-                        Text(UsageFormat.balance(balance)).font(Theme.caption.monospacedDigit())
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                }
-            }
+            if let limit, limit.status == .ok { usageSection(limit) }
             HStack {
                 Group {
                     if let limit {
@@ -423,6 +391,32 @@ private struct HarnessAccountCard: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Sets its name in harness.json, so the Harnesses page shows it too. Leave it empty to go back to \(ownName).")
+        }
+    }
+
+    /// The usage bars as an account card shows them: one per window the
+    /// harness reports, then on-demand spend and an extra-usage balance.
+    @ViewBuilder private func usageSection(_ limit: RateLimit) -> some View {
+        ForEach(limit.allWindows, id: \.window) { window in
+            UsageBar(window: UsageWindow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),
+                                         usedPercent: Double(min(max(window.usedPercent, 0), 100)),
+                                         resetsAt: window.resetAt))
+        }
+        if let onDemand = limit.onDemand {
+            HStack {
+                Text("On-demand").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Text("\(onDemand.value) · \(onDemand.detail)").font(Theme.caption.monospacedDigit())
+                    .foregroundStyle(Theme.textPrimary)
+            }
+        }
+        if let balance = limit.extraUsageUSD {
+            HStack {
+                Text("Extra usage balance").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Text(UsageFormat.balance(balance)).font(Theme.caption.monospacedDigit())
+                    .foregroundStyle(Theme.textPrimary)
+            }
         }
     }
 

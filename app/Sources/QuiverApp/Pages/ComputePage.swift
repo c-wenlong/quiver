@@ -524,14 +524,28 @@ private struct ProcessRowView: View {
 
 private struct OrphansCard: View {
     var rows: [ComputeModel.OrphanRow]
+    /// Rows before the card folds behind a Show more row.
+    private static let foldLimit = 8
+    @State private var showsAll = false
 
     var body: some View {
+        let shown = RowFold.visible(rows, limit: Self.foldLimit, expanded: showsAll)
         Card(title: "Orphaned",
              subtitle: "Processes whose parent has exited, usually dev servers or MCP servers an agent started and left behind.") {
             VStack(spacing: 0) {
-                ForEach(rows) { row in
+                ForEach(shown) { row in
                     OrphanRowView(row: row)
-                    if row.id != rows.last?.id { Divider().overlay(Theme.border) }
+                    if row.id != shown.last?.id { Divider().overlay(Theme.border) }
+                }
+                if RowFold.hiddenCount(total: rows.count, limit: Self.foldLimit) > 0 {
+                    Divider().overlay(Theme.border)
+                    ExpandRow(isExpanded: showsAll,
+                              hidden: RowFold.hiddenCount(total: rows.count, limit: Self.foldLimit),
+                              help: (expand: "Show every orphaned process",
+                                     collapse: "Show only the first \(Self.foldLimit)"),
+                              edge: .inset) {
+                        withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
+                    }
                 }
             }
         }
