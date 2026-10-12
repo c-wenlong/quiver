@@ -16,7 +16,7 @@ struct APIKeysPage: View {
     var body: some View {
         @Bindable var model = app.apiKeys
         Page(title: "API keys", subtitle: "From \(displayPath(model.path)). New terminals pick up changes.") {
-            Button("Reload", systemImage: "arrow.clockwise") { Task { await model.load() } }
+            Button("Reload", systemImage: "arrow.clockwise") { actionError = nil; Task { await model.load() } }
                 .iconButton()
                 .disabled(model.isLoading)
                 .keyboardShortcut("r", modifiers: .command)
@@ -85,6 +85,7 @@ struct APIKeysPage: View {
                 let from = providerBeingRenamed
                 let to = providerDraft
                 Task {
+                    actionError = nil
                     do {
                         try await model.renameProvider(from: from, to: to)
                     } catch {
@@ -111,8 +112,9 @@ struct APIKeysPage: View {
                 Divider().overlay(Theme.border).opacity(firstOfGroup ? 1 : 0.5)
                 KeyRow(row: row, showsProvider: firstOfGroup, isRevealed: revealed.contains(row.name),
                        check: model.check(for: row), isChecking: model.checking.contains(row.name),
-                       // "Other" is the keys before any heading; there is no heading to rename.
-                       renameProvider: !firstOfGroup || row.provider == "Other" ? nil : {
+                       // Keys before any heading have no provider, so there
+                       // is no heading to rename; a real "Other" heading has one.
+                       renameProvider: !firstOfGroup || row.provider.isEmpty ? nil : {
                            providerBeingRenamed = row.provider
                            providerDraft = row.provider
                            renamingProvider = true
@@ -184,7 +186,7 @@ private struct KeyRow: View {
                 if showsProvider, let logo = APIKeyProviderLogo.logoID(for: row.provider) {
                     HarnessIcon(harness: logo, size: 16)
                 }
-                Text(showsProvider ? row.provider : "").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                Text(showsProvider ? row.providerLabel : "").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 if let renameProvider, providerHovering {
                     Button("Rename provider", systemImage: "pencil", action: renameProvider)
@@ -204,7 +206,7 @@ private struct KeyRow: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(row.provider)
+            .accessibilityLabel(row.providerLabel)
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.name).font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary)
@@ -417,7 +419,10 @@ private struct KeyEditor: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
                 Button(draft.isNew ? "Add key" : "Save") {
                     run {
-                        try await save(draft.provider.trimmingCharacters(in: .whitespaces).isEmpty ? "OTHER" : draft.provider,
+                        // An existing key keeps an empty provider (it is
+                        // ungrouped); a new one gets the OTHER group.
+                        let provider = draft.provider.trimmingCharacters(in: .whitespaces)
+                        try await save(draft.isNew && provider.isEmpty ? "OTHER" : provider,
                                        draft.name.trimmingCharacters(in: .whitespaces), draft.value)
                     }
                 }

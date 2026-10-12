@@ -181,7 +181,13 @@ public struct APIKeysFile: Equatable, Sendable {
         guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
         guard let entry = all.first(where: { $0.name == name }) else { throw APIKeysError.notFound(name) }
         guard !all.contains(where: { $0.name == newName }) else { throw APIKeysError.nameTaken(newName) }
-        lines[entry.line] = Self.render(name: newName, value: entry.value)
+        // Only the name changes: the line keeps its quoting, its value
+        // expression and any trailing comment byte-for-byte.
+        let line = lines[entry.line]
+        guard let match = line.firstMatch(of: /^(\s*export\s+)[A-Za-z_][A-Za-z0-9_]*/) else {
+            throw APIKeysError.notFound(name)
+        }
+        lines[entry.line] = String(match.1) + newName + line[match.range.upperBound...]
     }
 
     /// Moves a key to the end of another provider's group, starting a new
@@ -195,6 +201,12 @@ public struct APIKeysFile: Equatable, Sendable {
         guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
         guard let entry = all.first(where: { $0.name == name }) else { throw APIKeysError.notFound(name) }
         guard entry.provider != provider else { return }
+        // A group that isn't in the file needs a label it would read
+        // back; check before any line moves, so a refused move leaves
+        // the file alone.
+        if !all.contains(where: { $0.provider == provider }) {
+            guard Self.isLabel(provider) else { throw APIKeysError.invalidProvider }
+        }
         let line = lines[entry.line]
         lines.remove(at: entry.line)
         if !entry.provider.isEmpty, !entries.contains(where: { $0.provider == entry.provider }),
@@ -209,7 +221,6 @@ public struct APIKeysFile: Equatable, Sendable {
             lines.insert(line, at: last.line + 1)
             return
         }
-        guard Self.isLabel(provider) else { throw APIKeysError.invalidProvider }
         if !lines.isEmpty, lines.last?.isEmpty == false { lines.append("") }
         lines.append("# \(provider)")
         lines.append(line)
@@ -581,7 +592,12 @@ public final class APIKeysModel {
 
     public struct Row: Identifiable, Equatable, Sendable {
         public var id: String { name }
+        /// The heading this key sits under; "" for keys before the first
+        /// heading, which have no provider at all.
         public var provider: String
+        /// What the group column shows; "Other" is only how the ungrouped
+        /// read, never a value to write back.
+        public var providerLabel: String { provider.isEmpty ? "Other" : provider }
         public var name: String
         public var value: String
         public var status: Status
@@ -643,7 +659,7 @@ public final class APIKeysModel {
     public var visible: [Row] {
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return rows }
-        return rows.filter { $0.provider.lowercased().contains(needle) || $0.name.lowercased().contains(needle) }
+        return rows.filter { $0.providerLabel.lowercased().contains(needle) || $0.name.lowercased().contains(needle) }
     }
 
     /// Reads the file, then what a new shell sees.
@@ -687,9 +703,32 @@ public final class APIKeysModel {
         try edited.move(name: newName, toProvider: provider)
         try edited.set(name: newName, value: value, provider: provider)
         try write(edited)
-        if newName != name, let check = checks.removeValue(forKey: name) {
-            checks[newName] = check
+        if newName != name {
+            // The old name may not keep a running check or its result:
+            // nothing publishes under a name the file no longer has.
+            checking.remove(name)
+            let check = checks.removeValue(forKey: name)
+            // The saved check follows the rename only when the new name
+            // asks the same provider; a different probe would inherit a
+            // verdict it never earned.
+            if let check, Self.sameProbe(name, newName) {
+                checks[newName] = check
+            }
             saveChecks()
+        }
+    }
+
+    /// Whether a check made under one name still applies under another:
+    /// the probes are the same, or neither name has one and the reason
+    /// there is none is the same (both special-cased, or both unknown).
+    static func sameProbe(_ name: String, _ newName: String) -> Bool {
+        switch (APIKeyProbe.probe(forName: name), APIKeyProbe.probe(forName: newName)) {
+        case let (old?, new?):
+            return old == new
+        case (nil, nil):
+            return APIKeyProbe.noCheckReason(forName: name) == APIKeyProbe.noCheckReason(forName: newName)
+        default:
+            return false
         }
     }
 
@@ -723,8 +762,11 @@ public final class APIKeysModel {
                 }
             }
             for await (name, check) in group {
-                checks[name] = check
                 checking.remove(name)
+                // A rename during the run left this name behind: its
+                // result must not publish under a name the file lacks.
+                guard rows.contains(where: { $0.name == name }) else { continue }
+                checks[name] = check
                 // The locked merge makes a save per landing result
                 // safe, and a quit mid-run keeps what already finished.
                 saveChecks()
@@ -751,6 +793,8 @@ public final class APIKeysModel {
         await slots.acquire()
         let result = await checker.check(key: row.value, probe: probe)
         await slots.release()
+        // A rename during the check must not publish under the old name.
+        guard rows.contains(where: { $0.name == name }) else { return }
         checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: row.value,
                                    salt: checkSalt)
         saveChecks()
@@ -805,7 +849,7 @@ public final class APIKeysModel {
             } else {
                 status = .unknown
             }
-            return Row(provider: entry.provider.isEmpty ? "Other" : entry.provider, name: entry.name,
+            return Row(provider: entry.provider, name: entry.name,
                        value: entry.value, status: status)
         }
     }

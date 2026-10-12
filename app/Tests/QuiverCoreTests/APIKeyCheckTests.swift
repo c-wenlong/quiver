@@ -535,6 +535,56 @@ final class CountingTransport: HTTPTransport {
         }
         #expect(model.checks["OPENAI_API_KEY"] == nil)
     }
+
+    @Test func aCheckFollowsARenameOnlyToANameWithTheSameProbe() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycarry-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try "export GEMINI_API_KEY=\"g\"\nexport OPENAI_API_KEY=\"o\"\nexport NVIDIA_API_KEY=\"n\"\nexport LOOSE_A=\"a\"\n"
+            .write(to: url, atomically: true, encoding: .utf8)
+        let defaults = UserDefaults(suiteName: "keycarry-\(UUID().uuidString)")!
+        let cache = APIKeyCheckStore(url: dir.appending(path: "checks.json"))
+        let check = APIKeyCheck(result: .works, checkedAt: Date(), value: "v",
+                               salt: APIKeyCheckStore.salt(from: defaults))
+        cache.save(["GEMINI_API_KEY": check, "OPENAI_API_KEY": check,
+                    "NVIDIA_API_KEY": check, "LOOSE_A": check],
+                   for: url, currentNames: ["GEMINI_API_KEY", "OPENAI_API_KEY", "NVIDIA_API_KEY", "LOOSE_A"])
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+                                 shell: FakeShell(environment: [:]),
+                                 checker: APIKeyChecker(transport: FakeTransport()),
+                                 checkCache: cache, defaults: defaults)
+        await model.load()
+        // GEMINI and GOOGLE share one probe, so the verdict follows the name.
+        try await model.update(name: "GEMINI_API_KEY", newName: "GOOGLE_API_KEY", provider: "", value: "g")
+        #expect(model.checks["GOOGLE_API_KEY"] == check)
+        // A different probe cannot inherit a verdict it never earned.
+        try await model.update(name: "OPENAI_API_KEY", newName: "XAI_API_KEY", provider: "", value: "o")
+        #expect(model.checks["XAI_API_KEY"] == nil)
+        // Both lack a probe but for different reasons: one special-cased,
+        // one simply unknown.
+        try await model.update(name: "NVIDIA_API_KEY", newName: "LOOSE_B", provider: "", value: "n")
+        #expect(model.checks["LOOSE_B"] == nil)
+        // Two unknown names share the generic reason, so the check follows.
+        try await model.update(name: "LOOSE_A", newName: "LOOSE_C", provider: "", value: "a")
+        #expect(model.checks["LOOSE_C"] == check)
+    }
+
+    @Test func aCheckInFlightDuringARenamePublishesNothingUnderTheOldName() async throws {
+        let transport = GateTransport()
+        let model = try model(text: "export OPENAI_API_KEY=\"sk-fake-A\"\n", transport: transport)
+        await model.load()
+        let check = Task { await model.check(name: "OPENAI_API_KEY") }
+        #expect(await transport.waitForRequests(1))
+        try await model.update(name: "OPENAI_API_KEY", newName: "SOME_NEW_KEY", provider: "", value: "sk-fake-A")
+        #expect(!model.checking.contains("OPENAI_API_KEY"))
+        transport.release()
+        await check.value
+        // The answer arrived for a name the file no longer has: nothing
+        // publishes under it, and no spinner is left.
+        #expect(model.checks["OPENAI_API_KEY"] == nil)
+        #expect(model.checks["SOME_NEW_KEY"] == nil)
+        #expect(model.checking.isEmpty)
+    }
 }
 
 /// The cache under ~/.quiver/cache and the salt the fingerprints hash against.

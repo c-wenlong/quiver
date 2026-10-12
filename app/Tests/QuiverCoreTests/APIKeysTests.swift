@@ -321,6 +321,15 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(file.text == Self.moveFile)
     }
 
+    @Test func aRenameTouchesOnlyTheName() throws {
+        var file = APIKeysFile(text: "export OLD=\"$TOKEN\" # note\n")
+        try file.rename(name: "OLD", to: "NEW")
+        #expect(file.text == "export NEW=\"$TOKEN\" # note\n")
+        var indented = APIKeysFile(text: "  export   OLD='v'  # kept\n")
+        try indented.rename(name: "OLD", to: "NEW")
+        #expect(indented.text == "  export   NEW='v'  # kept\n")
+    }
+
     @Test func aMoveLandsAtTheEndOfTheTargetGroup() throws {
         var file = APIKeysFile(text: Self.moveFile)
         try file.move(name: "ALPHA_KEY", toProvider: "SECOND")
@@ -349,6 +358,14 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         # MISTRAL
         export ALPHA_KEY="a1"
         """)
+    }
+
+    @Test func aRefusedMoveLeavesTheFileAlone() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        #expect(throws: APIKeysError.invalidProvider) {
+            try file.move(name: "ALPHA_KEY", toProvider: "export A=1")
+        }
+        #expect(file.text == Self.moveFile)
     }
 
     @Test func aMoveOutOfTheLastKeyRemovesItsHeading() throws {
@@ -665,6 +682,24 @@ struct FakeShell: ShellEnvironmentReading {
         let row = model.rows.first { $0.name == "NEW_KEY" }
         #expect(row?.provider == "SECOND")
         #expect(row?.value == "v2")
+    }
+
+    @Test func anUngroupedKeyStaysUngroupedThroughAnUpdate() async throws {
+        let (model, url) = try model(text: """
+            export LOOSE_KEY="v1"
+
+            # FIRST
+            export GROUPED_KEY="g1"
+            """)
+        await model.load()
+        try #require(model.rows.first { $0.name == "LOOSE_KEY" }?.provider == "")
+        try await model.update(name: "LOOSE_KEY", newName: "LOOSE_KEY", provider: "", value: "v2")
+        #expect(try String(contentsOf: url, encoding: .utf8) == """
+            export LOOSE_KEY="v2"
+
+            # FIRST
+            export GROUPED_KEY="g1"
+            """)
     }
 
     @Test func aRenamedKeyKeepsItsCheckResult() async throws {
