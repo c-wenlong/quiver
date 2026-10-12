@@ -404,8 +404,10 @@ private struct WidgetSurface<Content: View>: View {
     @ViewBuilder var content: (WidgetSnapshot) -> Content
 
     var body: some View {
+        // 16pt on each side matches the content margins WidgetKit gives a
+        // macOS desktop widget, so the preview's content area is the real one.
         content(snapshot)
-            .padding(12)
+            .padding(16)
             .frame(width: size.width, height: size.height)
             .background(Palette.card, in: .rect(cornerRadius: 20))
             .foregroundStyle(Palette.textPrimary)
