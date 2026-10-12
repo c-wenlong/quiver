@@ -8,6 +8,10 @@ struct APIKeysPage: View {
     @State private var editing: KeyDraft?
     @State private var revealed: Set<String> = []
     @State private var actionError: String?
+    /// The provider whose heading is being renamed, and its draft name.
+    @State private var renamingProvider = false
+    @State private var providerBeingRenamed = ""
+    @State private var providerDraft = ""
 
     var body: some View {
         @Bindable var model = app.apiKeys
@@ -64,11 +68,31 @@ struct APIKeysPage: View {
         .onDisappear { revealed.removeAll() }
         .sheet(item: $editing) { draft in
             KeyEditor(draft: draft, providers: model.providers, save: { provider, name, value in
-                try await model.set(name: name, value: value, provider: provider)
+                if draft.isNew {
+                    try await model.set(name: name, value: value, provider: provider)
+                } else {
+                    try await model.update(name: draft.name, newName: name, provider: provider, value: value)
+                    revealed.remove(draft.name)
+                }
             }, remove: { name in
                 try await model.remove(name: name)
                 revealed.remove(name)
             })
+        }
+        .alert("Rename provider", isPresented: $renamingProvider) {
+            TextField("Name", text: $providerDraft)
+            Button("Rename") {
+                let from = providerBeingRenamed
+                let to = providerDraft
+                Task {
+                    do {
+                        try await model.renameProvider(from: from, to: to)
+                    } catch {
+                        actionError = error.localizedDescription
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -87,6 +111,12 @@ struct APIKeysPage: View {
                 Divider().overlay(Theme.border).opacity(firstOfGroup ? 1 : 0.5)
                 KeyRow(row: row, showsProvider: firstOfGroup, isRevealed: revealed.contains(row.name),
                        check: model.check(for: row), isChecking: model.checking.contains(row.name),
+                       // "Other" is the keys before any heading; there is no heading to rename.
+                       renameProvider: !firstOfGroup || row.provider == "Other" ? nil : {
+                           providerBeingRenamed = row.provider
+                           providerDraft = row.provider
+                           renamingProvider = true
+                       },
                        recheck: { Task { await model.check(name: row.name) } },
                        toggleReveal: {
                            if revealed.contains(row.name) { revealed.remove(row.name) } else { revealed.insert(row.name) }
@@ -138,11 +168,14 @@ private struct KeyRow: View {
     var isRevealed: Bool
     var check: APIKeyCheck?
     var isChecking: Bool
+    /// Set on a group's first row when its heading can be renamed.
+    var renameProvider: (() -> Void)?
     var recheck: () -> Void
     var toggleReveal: () -> Void
     var copy: () -> Void
     var edit: () -> Void
     @State private var hovering = false
+    @State private var providerHovering = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -153,8 +186,23 @@ private struct KeyRow: View {
                 }
                 Text(showsProvider ? row.provider : "").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
+                if let renameProvider, providerHovering {
+                    Button("Rename provider", systemImage: "pencil", action: renameProvider)
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                        .buttonStyle(.plain)
+                        .help("Rename \(row.provider)")
+                }
             }
             .frame(width: 150, alignment: .leading)
+            .contentShape(.rect)
+            .onHover { providerHovering = $0 }
+            .contextMenu {
+                if let renameProvider {
+                    Button("Rename provider…", action: renameProvider)
+                }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.provider)
             VStack(alignment: .leading, spacing: 3) {
@@ -283,10 +331,13 @@ struct KeyDraft: Identifiable {
     var isNew: Bool
 }
 
-/// Add, change or remove one key.
+/// Add, change or remove one key. On an existing key the provider and the
+/// variable name edit too: a rename, a move and a new value save together.
 private struct KeyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State var draft: KeyDraft
+    /// The name the row had when the sheet opened; the draft's changes.
+    private let originalName: String
     var providers: [String]
     var save: (String, String, String) async throws -> Void
     var remove: (String) async throws -> Void
@@ -298,6 +349,7 @@ private struct KeyEditor: View {
     init(draft: KeyDraft, providers: [String], save: @escaping (String, String, String) async throws -> Void,
          remove: @escaping (String) async throws -> Void) {
         _draft = State(initialValue: draft)
+        originalName = draft.name
         self.providers = providers
         self.save = save
         self.remove = remove
@@ -314,13 +366,12 @@ private struct KeyEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(draft.isNew ? "Add a key" : "Edit \(draft.name)").font(Theme.sectionTitle).tracking(-0.5)
+            Text(draft.isNew ? "Add a key" : "Edit \(originalName)").font(Theme.sectionTitle).tracking(-0.5)
             field("Provider") {
                 HStack(spacing: 8) {
-                    // A key stays in its group; moving it isn't supported yet.
+                    // Another group's name moves the key to the end of it.
                     TextField("ANTHROPIC", text: $draft.provider).quiverField()
-                        .disabled(!draft.isNew)
-                    if draft.isNew && !providers.isEmpty {
+                    if !providers.isEmpty {
                         SelectMenu(options: providers.map { ($0, $0) }, selection: $draft.provider,
                                    width: nil, title: "Existing")
                     }
@@ -329,8 +380,7 @@ private struct KeyEditor: View {
             field("Variable") {
                 TextField("ANTHROPIC_API_KEY", text: $draft.name)
                     .quiverField(monospaced: true)
-                    .disabled(!draft.isNew)
-                if draft.isNew, !draft.name.isEmpty, let problem = nameProblem {
+                if !draft.name.isEmpty, let problem = nameProblem {
                     Text(problem).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
             }
@@ -355,8 +405,8 @@ private struct KeyEditor: View {
             HStack {
                 if !draft.isNew {
                     if confirmingRemove {
-                        Text("Remove \(draft.name)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        Button("Remove", role: .destructive) { run { try await remove(draft.name) } }
+                        Text("Remove \(originalName)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        Button("Remove", role: .destructive) { run { try await remove(originalName) } }
                             .secondaryButton()
                         Button("Keep") { confirmingRemove = false }.secondaryButton()
                     } else {
@@ -373,7 +423,7 @@ private struct KeyEditor: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .primaryButton()
-                .disabled(working || (draft.isNew && nameProblem != nil))
+                .disabled(working || nameProblem != nil)
             }
         }
         .padding(24)

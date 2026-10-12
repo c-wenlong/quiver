@@ -287,6 +287,115 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         try file.remove(name: "OPENAI_ORG")
         #expect(file.text.contains("# OPENAI"))
     }
+
+    /// Two groups for the rename and move tests.
+    static let moveFile = """
+    # Notes above the groups
+    # FIRST
+    export ALPHA_KEY="a1"
+    export BETA_KEY="b2"
+
+    # SECOND
+    export GAMMA_KEY='g3'
+    """
+
+    @Test func renamingAKeyKeepsItsValueAndPlace() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        try file.rename(name: "BETA_KEY", to: "DELTA_KEY")
+        #expect(file.text == Self.moveFile.replacingOccurrences(
+            of: "export BETA_KEY=\"b2\"", with: "export DELTA_KEY=\"b2\""))
+        try file.rename(name: "BETA_KEY", to: "BETA_KEY") // a no-op, not an error
+    }
+
+    @Test func aRenameNeedsAFreeValidName() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        #expect(throws: APIKeysError.nameTaken("ALPHA_KEY")) {
+            try file.rename(name: "BETA_KEY", to: "ALPHA_KEY")
+        }
+        #expect(throws: APIKeysError.invalidName("1BAD")) {
+            try file.rename(name: "BETA_KEY", to: "1BAD")
+        }
+        #expect(throws: APIKeysError.notFound("NO_SUCH_KEY")) {
+            try file.rename(name: "NO_SUCH_KEY", to: "NEW_KEY")
+        }
+        #expect(file.text == Self.moveFile)
+    }
+
+    @Test func aMoveLandsAtTheEndOfTheTargetGroup() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        try file.move(name: "ALPHA_KEY", toProvider: "SECOND")
+        #expect(file.text == """
+        # Notes above the groups
+        # FIRST
+        export BETA_KEY="b2"
+
+        # SECOND
+        export GAMMA_KEY='g3'
+        export ALPHA_KEY="a1"
+        """)
+    }
+
+    @Test func aMoveToANewProviderStartsAGroupAtTheEnd() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        try file.move(name: "ALPHA_KEY", toProvider: "MISTRAL")
+        #expect(file.text == """
+        # Notes above the groups
+        # FIRST
+        export BETA_KEY="b2"
+
+        # SECOND
+        export GAMMA_KEY='g3'
+
+        # MISTRAL
+        export ALPHA_KEY="a1"
+        """)
+    }
+
+    @Test func aMoveOutOfTheLastKeyRemovesItsHeading() throws {
+        var file = APIKeysFile(text: """
+        # Notes above the groups
+        # ONE
+        export ONLY_KEY="o1"
+
+        # TWO
+        export OTHER_KEY="o2"
+        """)
+        try file.move(name: "ONLY_KEY", toProvider: "TWO")
+        #expect(file.text == """
+        # Notes above the groups
+
+        # TWO
+        export OTHER_KEY="o2"
+        export ONLY_KEY="o1"
+        """)
+    }
+
+    @Test func aMoveToItsOwnProviderDoesNothing() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        try file.move(name: "ALPHA_KEY", toProvider: "FIRST")
+        #expect(file.text == Self.moveFile)
+    }
+
+    @Test func renamingAProviderRewritesOnlyItsHeading() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        try file.renameProvider(from: "FIRST", to: "RENAMED")
+        #expect(file.text == Self.moveFile.replacingOccurrences(of: "# FIRST", with: "# RENAMED"))
+        #expect(file.entries.map(\.provider) == ["RENAMED", "RENAMED", "SECOND"])
+    }
+
+    @Test func aProviderRenameNeedsAFreeValidLabel() throws {
+        var file = APIKeysFile(text: Self.moveFile)
+        #expect(throws: APIKeysError.providerTaken("SECOND")) {
+            try file.renameProvider(from: "FIRST", to: "SECOND")
+        }
+        #expect(throws: APIKeysError.invalidProvider) {
+            try file.renameProvider(from: "FIRST", to: "export A=1")
+        }
+        #expect(throws: APIKeysError.notFound("ABSENT")) {
+            try file.renameProvider(from: "ABSENT", to: "NEW")
+        }
+        #expect(file.text == Self.moveFile)
+    }
 }
 
 @Suite struct APIKeyMaskTests {
@@ -532,6 +641,52 @@ struct FakeShell: ShellEnvironmentReading {
         await #expect(throws: APIKeysError.changedOnDisk) {
             try await model.set(name: "OPENAI_ORG", value: "o", provider: "OPENAI")
         }
+    }
+
+    @Test func updateRenamesMovesAndWritesInOneSave() async throws {
+        let (model, url) = try model(text: """
+            # FIRST
+            export OLD_KEY="v1"
+            export STAYS_KEY="s1"
+
+            # SECOND
+            export OTHER_KEY="o1"
+            """)
+        await model.load()
+        try await model.update(name: "OLD_KEY", newName: "NEW_KEY", provider: "SECOND", value: "v2")
+        #expect(try String(contentsOf: url, encoding: .utf8) == """
+            # FIRST
+            export STAYS_KEY="s1"
+
+            # SECOND
+            export OTHER_KEY="o1"
+            export NEW_KEY="v2"
+            """)
+        let row = model.rows.first { $0.name == "NEW_KEY" }
+        #expect(row?.provider == "SECOND")
+        #expect(row?.value == "v2")
+    }
+
+    @Test func aRenamedKeyKeepsItsCheckResult() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keyscheck-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try "# FIRST\nexport OLD_KEY=\"v1\"\n".write(to: url, atomically: true, encoding: .utf8)
+        let defaults = UserDefaults(suiteName: "keyscheck-\(UUID().uuidString)")!
+        let salt = APIKeyCheckStore.salt(from: defaults)
+        let cache = APIKeyCheckStore(url: dir.appending(path: "checks.json"))
+        let check = APIKeyCheck(result: .noCheck("no probe for this key"),
+                                checkedAt: Date(), value: "v1", salt: salt)
+        cache.save(["OLD_KEY": check], for: url, currentNames: ["OLD_KEY"])
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+                                 shell: FakeShell(environment: [:]), checkCache: cache, defaults: defaults)
+        await model.load()
+        #expect(model.checks["OLD_KEY"] == check)
+        try await model.update(name: "OLD_KEY", newName: "NEW_KEY", provider: "FIRST", value: "v1")
+        #expect(model.checks["OLD_KEY"] == nil)
+        #expect(model.checks["NEW_KEY"] == check)
+        #expect(cache.load(for: url)["NEW_KEY"] == check)
+        #expect(cache.load(for: url)["OLD_KEY"] == nil)
     }
 }
 
