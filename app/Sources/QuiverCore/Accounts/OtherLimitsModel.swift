@@ -47,15 +47,15 @@ public final class OtherLimitsModel {
     /// Covered by Accounts, one card per signed-in account.
     static let ownAccounts = ["claude", "codex"]
 
-    /// One per harness in use that has no Quiver account, starred first,
-    /// with its limit when swe read one. The Accounts page's harness cards.
+    /// One per harness starred in swe's registry that has no Quiver
+    /// account, in swe's order, with its limit when swe read one. The
+    /// Accounts page's harness cards.
     public struct Card: Identifiable, Equatable, Sendable {
         public var id: String { name }
         public var name: String
         public var displayName: String?
         public var command: String
         public var cliInstalled: Bool?
-        public var isStarred: Bool
         public var limit: RateLimit?
 
         public var title: String {
@@ -66,18 +66,34 @@ public final class OtherLimitsModel {
 
     public private(set) var rows: [Row] = []
     public private(set) var cards: [Card] = []
+    /// Every harness swe stars, Claude and Codex included, from the last
+    /// successful load; nil until then. A failed load keeps the previous
+    /// set, so a swe hiccup hides nothing.
+    public private(set) var starred: Set<String>?
     /// Whether each registered harness's command is on PATH, by name,
     /// Claude and Codex included, for the account cards' Terminal button.
     public private(set) var cliInstalled: [String: Bool] = [:]
     /// Why there is nothing to show, when that is not simply "nothing starred".
     public private(set) var note: String?
     private let swe: SweClient
+    /// The latest load's ticket: a refresh overtaken while it ran (a star
+    /// change reloading ahead of the five-minute background load) drops
+    /// its answer rather than write back older state.
+    private var request = 0
 
     public init(swe: SweClient) {
         self.swe = swe
     }
 
+    /// Whether swe's registry stars a harness. Before the first successful
+    /// load everything counts as starred, so a slow start hides nothing.
+    public func isStarred(_ harness: String) -> Bool {
+        starred?.contains(harness) ?? true
+    }
+
     public func load() async {
+        request += 1
+        let mine = request
         do {
             let harnesses: [Harness]
             do {
@@ -87,6 +103,8 @@ public final class OtherLimitsModel {
                 // polls Claude and Codex too.
                 harnesses = try await swe.harnesses(withUsage: true)
             }
+            // A newer load already answered; this one's state is older.
+            guard mine == request else { return }
             rows = harnesses.compactMap { harness in
                 // Starred only: swe polls just those, but can still return a
                 // cached reading for one since unstarred.
@@ -95,14 +113,13 @@ public final class OtherLimitsModel {
                 return Row(name: harness.name, limit: limit, displayName: harness.displayName, command: harness.command,
                            cliInstalled: harness.installed)
             }
-            let others = harnesses.filter { !Self.ownAccounts.contains($0.name) && $0.state != .archived }
-            cards = (others.filter { $0.state == .starred } + others.filter { $0.state != .starred }).map { harness in
-                Card(name: harness.name, displayName: harness.displayName, command: harness.command,
-                     cliInstalled: harness.installed, isStarred: harness.state == .starred,
-                     // Only starred harnesses show limits; swe may still hold a
-                     // reading from before one was unstarred.
-                     limit: harness.state == .starred ? harness.rateLimit : nil)
-            }
+            starred = Set(harnesses.lazy.filter { $0.state == .starred }.map(\.name))
+            cards = harnesses
+                .filter { !Self.ownAccounts.contains($0.name) && $0.state == .starred }
+                .map { harness in
+                    Card(name: harness.name, displayName: harness.displayName, command: harness.command,
+                         cliInstalled: harness.installed, limit: harness.rateLimit)
+                }
             cliInstalled = harnesses.reduce(into: [:]) { map, harness in
                 if let installed = harness.installed { map[harness.name] = installed }
             }
@@ -110,6 +127,7 @@ public final class OtherLimitsModel {
         } catch is CancellationError {
             return
         } catch {
+            guard mine == request else { return }
             rows = []
             cards = []
             note = error.localizedDescription

@@ -254,7 +254,7 @@ private struct PanelLimits: View {
     /// Accounts whose harness is shown and that have something left to show:
     /// a shown window, or no windows at all (so its status line explains why).
     private var cards: [AccountsModel.Card] {
-        app.accounts.cards.filter { card in
+        app.starredAccountCards.filter { card in
             let harness = card.profile.vendor.rawValue
             guard app.popup.shows(harness: harness) else { return false }
             guard let windows = card.usage?.windows, !windows.isEmpty else { return true }
@@ -277,13 +277,16 @@ private struct PanelLimits: View {
                 PanelAccountRow(card: card)
             }
             // Limits exist but every one is hidden: say where to bring them
-            // back, ahead of "no accounts", which would read as nothing to show.
-            let available = !app.accounts.cards.isEmpty || app.others.rows.contains { $0.limit.status == .ok }
+            // back, ahead of "nothing starred", which would read as nothing to show.
+            let available = !app.starredAccountCards.isEmpty || app.others.rows.contains { $0.limit.status == .ok }
             if available && cards.isEmpty && others.isEmpty {
                 Text("Every limit is hidden in Menu bar and widgets.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            } else if app.accounts.cards.isEmpty {
-                Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else if cards.isEmpty && others.isEmpty {
+                Text(app.starredAccountCards.isEmpty && app.others.cards.isEmpty
+                     ? "Nothing starred. Star a harness on Harnesses to see its limits here."
+                     : "No limits to show yet.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             // Harnesses swe reports follow the accounts in one list: each
             // row already carries its logo and name, so no heading.

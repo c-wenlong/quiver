@@ -24,9 +24,9 @@ struct AccountsPage: View {
                 ErrorCard(message: error)
             }
             // One grid for every account: Quiver's own profiles first, vendors
-            // in a fixed order, then every other harness in use, starred first.
+            // in a fixed order, then the starred harnesses in swe's order.
             // Each card carries its logo, so there are no per-vendor headings.
-            let cards = Vendor.allCases.flatMap { vendor in model.cards.filter { $0.profile.vendor == vendor } }
+            let cards = Vendor.allCases.flatMap { vendor in app.starredAccountCards.filter { $0.profile.vendor == vendor } }
             let harnesses = app.others.cards
             if !cards.isEmpty || !harnesses.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter, alignment: .top)], spacing: Theme.gutter) {
@@ -40,9 +40,12 @@ struct AccountsPage: View {
             }
             if let note = app.others.note {
                 Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            } else if !harnesses.isEmpty {
-                Text("Limits for other harnesses come from swe, which polls the ones you starred. Archived harnesses are left out.")
+            } else if !cards.isEmpty || !harnesses.isEmpty {
+                Text("Only starred harnesses show here. Star one on Harnesses to add it, or unstar it to hide it.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            } else {
+                Text("Nothing starred. Star a harness on Harnesses to see it here.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
         .sheet(isPresented: $adding) {
@@ -444,10 +447,10 @@ private struct HarnessAccountCard: View {
     }
 
     /// Why a card has no usage bars: swe reads limits only for some
-    /// harnesses, and polls only the starred ones.
+    /// harnesses; a starred one it can read just has no reading yet.
     private var noLimitReason: String {
         if !HarnessAccess.hasLimits(row.name) { return "No usage limits to read" }
-        return row.isStarred ? "No reading yet" : "Star it on Harnesses to see its limits"
+        return "No reading yet"
     }
 
     /// The harness's display name lives in harness.json, so a rename goes
