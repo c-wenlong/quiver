@@ -5,17 +5,25 @@ import Foundation
 /// are into the full list; a `target` is an index into the list with the
 /// dragged row removed (0...count-1, count-1 meaning the end).
 public enum RowReorder {
-    /// Where the dragged row would land among the others: the count of
-    /// other rows whose centre is above the dragged row's centre after
-    /// moving by `translation`.
+    /// Where the dragged row would land among the others, as an index into
+    /// the list with the dragged row removed. Moving down it takes the slot
+    /// once its bottom edge passes a row's centre; moving up, once its top
+    /// edge does — so the last slot is reachable at the movement limit.
     public static func targetIndex(heights: [CGFloat], dragged: Int, translation: CGFloat) -> Int {
         guard heights.indices.contains(dragged) else { return 0 }
-        let moved = centre(dragged, in: heights) + translation
-        var target = 0
-        for index in heights.indices where index != dragged && centre(index, in: heights) < moved {
-            target += 1
+        let t = clamped(translation, heights: heights, dragged: dragged)
+        let top = heights[..<dragged].reduce(0, +)
+        if t > 0 {
+            let bottom = top + heights[dragged] + t
+            let passed = ((dragged + 1)..<heights.count).count { centre($0, in: heights) < bottom }
+            return min(dragged + passed, heights.count - 1)
         }
-        return min(target, heights.count - 1)
+        if t < 0 {
+            let edge = top + t
+            let passed = (0..<dragged).count { centre($0, in: heights) > edge }
+            return dragged - passed
+        }
+        return dragged
     }
 
     /// The translation clamped so the dragged row stays inside the list.

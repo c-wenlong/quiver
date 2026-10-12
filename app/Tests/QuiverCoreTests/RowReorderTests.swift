@@ -8,25 +8,51 @@ import Testing
         #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 0) == 1)
     }
 
-    @Test func draggingDownPastANeighboursCentreLandsAfterIt() {
+    @Test func draggingDownItsBottomEdgePastANeighboursCentreLandsAfterIt() {
         let heights: [CGFloat] = [40, 40, 40]
-        // Row 1's centre is 60, row 2's is 100.
-        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 41) == 2)
-        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 39) == 1)
+        // Row 1's bottom edge starts at 80; row 2's centre is 100.
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 21) == 2)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 20) == 1)
     }
 
-    @Test func targetsFollowCentresWhenHeightsDiffer() {
-        // Centres: 15, 60, 105, 135.
+    @Test func theLastSlotIsReachableAtTheClamp() {
+        let heights: [CGFloat] = [44, 44]
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 0, translation: 44) == 1)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 0, translation: 22) == 0)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 0, translation: 23) == 1)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 0, translation: 500) == 1)
+        let three: [CGFloat] = [44, 44, 44]
+        #expect(RowReorder.targetIndex(heights: three, dragged: 0, translation: 88) == 2)
+    }
+
+    @Test func targetsFollowTheLeadingEdgeWhenHeightsDiffer() {
+        // Centres: 15, 60, 105, 135. Row 1's bottom edge starts at 90.
         let heights: [CGFloat] = [30, 60, 30, 30]
-        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 46) == 2)
-        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 44) == 1)
-        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 120) == 3)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 15) == 1)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 16) == 2)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 1, translation: 46) == 3)
         #expect(RowReorder.targetIndex(heights: heights, dragged: 3, translation: -80) == 1)
+        // [80,44]: the row clamps at 44, but its bottom edge already
+        // clears the neighbour's centre (102) well before that.
+        #expect(RowReorder.targetIndex(heights: [80, 44], dragged: 0, translation: 44) == 1)
+        #expect(RowReorder.targetIndex(heights: [80, 44], dragged: 0, translation: 22) == 0)
+        #expect(RowReorder.targetIndex(heights: [80, 44], dragged: 0, translation: 23) == 1)
+        // [44,80]: the taller neighbour's centre sits at 84.
+        #expect(RowReorder.targetIndex(heights: [44, 80], dragged: 0, translation: 40) == 0)
+        #expect(RowReorder.targetIndex(heights: [44, 80], dragged: 0, translation: 41) == 1)
     }
 
     @Test func draggingUpToTheTopLandsAtZero() {
         let heights: [CGFloat] = [40, 40, 40]
         #expect(RowReorder.targetIndex(heights: heights, dragged: 2, translation: -200) == 0)
+    }
+
+    @Test func draggingUpItsTopEdgePastACentreLandsBeforeIt() {
+        let heights: [CGFloat] = [44, 44, 44]
+        // Row 2's top edge starts at 88; centres sit at 22 and 66.
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 2, translation: -88) == 0)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 2, translation: -23) == 1)
+        #expect(RowReorder.targetIndex(heights: heights, dragged: 2, translation: -22) == 2)
     }
 
     @Test func theDragClampsAtBothEnds() {
