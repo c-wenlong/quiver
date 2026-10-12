@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "data": {
+    "name": "codex",
+    "changes": [
+      "notes"
+    ],
+    "harness": {
+      "name": "codex",
+      "display_name": "Codex",
+      "command": "codex",
+      "description": "OpenAI's CLI",
+      "version": null,
+      "notes": "fixture-edit",
+      "aliases": [
+        "cx"
+      ],
+      "tags": [
+        "agentic"
+      ],
+      "primary_color": "#7A9DFF",
+      "state": "active",
+      "sessions_100d": 0,
+      "rate_limit": null,
+      "installed": true,
+      "archived": null
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "data": {
+    "action": "install",
+    "harness": "claude",
+    "ref": "fixture-plugin@fixture-market",
+    "changed": true,
+    "detail": null,
+    "ran": [
+      [
+        "claude",
+        "plugin",
+        "install",
+        "fixture-plugin@fixture-market"
+      ]
+    ],
+    "edited": null,
+    "output": null,
+    "state": {
+      "installed": true,
+      "enabled": true,
+      "version": "0.1.0"
+    }
+  }
+}

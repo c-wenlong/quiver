@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "data": {
+    "shared_dir": "/tmp/quiver-fixture-home/.quiver/skills",
+    "harnesses": [
+      {
+        "name": "claude",
+        "label": "claude",
+        "path": "/tmp/quiver-fixture-home/.claude/skills",
+        "state": "linked",
+        "detail": "",
+        "archived": false
+      },
+      {
+        "name": "codex",
+        "label": "codex",
+        "path": "/tmp/quiver-fixture-home/.codex/skills",
+        "state": "create",
+        "detail": "",
+        "archived": false
+      }
+    ],
+    "skills": [
+      {
+        "name": "fixture-skill",
+        "description": "A made-up skill for contract fixtures",
+        "path": "/private/tmp/quiver-fixture-home/.quiver/skills/fixture-skill",
+        "root": "shared",
+        "source": "shared",
+        "harnesses": [
+          "claude"
+        ]
+      }
+    ]
+  }
+}

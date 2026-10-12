@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "data": {
+    "harnesses": [
+      {
+        "name": "claude",
+        "display_name": "Claude Code",
+        "command": "claude",
+        "description": "Anthropic's CLI",
+        "version": "2.0.0",
+        "notes": "Fixture notes for the contract test",
+        "aliases": [
+          "cc"
+        ],
+        "tags": [
+          "agentic",
+          "coding"
+        ],
+        "primary_color": "#D97757",
+        "state": "starred",
+        "sessions_100d": 1,
+        "rate_limit": null,
+        "installed": true,
+        "archived": null
+      },
+      {
+        "name": "codex",
+        "display_name": "Codex",
+        "command": "codex",
+        "description": "OpenAI's CLI",
+        "version": null,
+        "notes": null,
+        "aliases": [
+          "cx"
+        ],
+        "tags": [
+          "agentic"
+        ],
+        "primary_color": "#7A9DFF",
+        "state": "active",
+        "sessions_100d": 0,
+        "rate_limit": null,
+        "installed": true,
+        "archived": null
+      },
+      {
+        "name": "fixturetool",
+        "display_name": null,
+        "command": "no-such-tool-fixture",
+        "description": "A harness swe has never seen run",
+        "version": null,
+        "notes": "Made up for contract fixtures",
+        "aliases": [
+          "ft"
+        ],
+        "tags": [
+          "fixture"
+        ],
+        "primary_color": "#336699",
+        "state": "active",
+        "sessions_100d": null,
+        "rate_limit": null,
+        "installed": false,
+        "archived": null
+      },
+      {
+        "name": "oldtool",
+        "display_name": null,
+        "command": "oldtool-bin",
+        "description": "An archived harness",
+        "version": null,
+        "notes": null,
+        "aliases": [],
+        "tags": [],
+        "primary_color": null,
+        "state": "archived",
+        "sessions_100d": null,
+        "rate_limit": null,
+        "installed": false,
+        "archived": {
+          "reason": "Switched to fixturetool",
+          "archived_at": "2026-01-02T03:04:05",
+          "usage": "trial"
+        }
+      }
+    ]
+  }
+}

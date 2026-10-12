@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "data": {
+    "harnesses": [
+      "claude",
+      "claude-desktop",
+      "codex"
+    ],
+    "servers": [
+      {
+        "name": "fixture-http",
+        "transport": "http",
+        "command": null,
+        "args": [],
+        "url": "https://fixture.example/mcp",
+        "env_keys": [],
+        "header_keys": [
+          "Authorization"
+        ],
+        "harnesses": [
+          "claude"
+        ],
+        "conflict": false,
+        "variants": [
+          [
+            "claude"
+          ]
+        ],
+        "health": "error",
+        "detail": "url unreachable"
+      },
+      {
+        "name": "fixture-stdio",
+        "transport": "stdio",
+        "command": "fixture-mcp",
+        "args": [
+          "serve",
+          "--port",
+          "9999"
+        ],
+        "url": null,
+        "env_keys": [
+          "FIXTURE_KEY",
+          "SECRET_TOKEN"
+        ],
+        "header_keys": [],
+        "harnesses": [
+          "claude",
+          "codex"
+        ],
+        "conflict": true,
+        "variants": [
+          [
+            "claude"
+          ],
+          [
+            "codex"
+          ]
+        ],
+        "health": "error",
+        "detail": "'fixture-mcp' not in PATH"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "data": {
+    "fixed": {
+      "id": "claude:unregistered:/tmp/quiver-fixture-home.4Qxb7r/.quiver/plugins/fixture-market",
+      "harness": "claude",
+      "marketplace": "fixture-market",
+      "plugin": null,
+      "ref": "fixture-market",
+      "kind": "unregistered",
+      "detail": "/tmp/quiver-fixture-home.4Qxb7r/.quiver/plugins/fixture-market is not a claude marketplace",
+      "fix": "claude plugin marketplace add /tmp/quiver-fixture-home.4Qxb7r/.quiver/plugins/fixture-market",
+      "runnable": true,
+      "paths": []
+    }
+  }
+}

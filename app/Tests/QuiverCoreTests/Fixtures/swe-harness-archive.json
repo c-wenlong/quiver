@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "data": {
+    "name": "fixturetool",
+    "state": "archived",
+    "archived": {
+      "reason": "contract fixture",
+      "archived_at": "2026-10-13T04:32:13",
+      "usage": "unknown"
+    }
+  }
+}

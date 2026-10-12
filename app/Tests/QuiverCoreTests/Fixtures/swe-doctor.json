@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "data": {
+    "ok": false,
+    "findings": [
+      {
+        "check": "npm.preferred",
+        "severity": "info",
+        "message": "which npm is /usr/local/bin/npm; swe prefers /opt/homebrew/bin/npm",
+        "fix": null
+      },
+      {
+        "check": "drift.registry",
+        "severity": "warning",
+        "message": "codex: capabilities.skills.root ~/.codex/skills does not exist on disk",
+        "fix": null
+      },
+      {
+        "check": "off-path",
+        "severity": "error",
+        "message": "fixturetool (no-such-tool-fixture) is at /opt/tools/bin/fixturetool [registry], not on PATH",
+        "fix": "swe install fixturetool",
+        "harness": "fixturetool"
+      }
+    ]
+  }
+}
