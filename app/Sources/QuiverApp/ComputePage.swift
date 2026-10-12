@@ -112,9 +112,26 @@ private struct LimitsCard: View {
 /// per process. The rows carry their own Quit menu; quitting the harness's
 /// root asks first, since that closes the app or CLI itself.
 private struct HarnessCard: View {
+    static let visibleRows = 5
+
     var usage: HarnessUsage
     var rows: [ComputeModel.ProcessRow]
     @State private var expanded = true
+    @State private var showsAll = false
+
+    /// Rows are already sorted by memory, largest first: the first five,
+    /// or all of them once Show more opens.
+    private var shown: [ComputeModel.ProcessRow] {
+        RowFold.visible(rows, limit: Self.visibleRows, expanded: showsAll)
+    }
+
+    /// "N flagged" for the expand row while a busy or over-limit process
+    /// is hidden away.
+    private var hiddenNote: String? {
+        let flagged = RowFold.hiddenFlagged(rows, limit: Self.visibleRows,
+                                            expanded: showsAll) { !$0.flags.isEmpty }
+        return flagged == 0 ? nil : "\(flagged) flagged"
+    }
 
     var body: some View {
         Card {
@@ -127,9 +144,19 @@ private struct HarnessCard: View {
                 .plainButton()
                 if expanded {
                     VStack(spacing: 0) {
-                        ForEach(rows) { row in
+                        ForEach(shown) { row in
                             ProcessRowView(row: row, harness: usage.harness)
-                            if row.id != rows.last?.id { Divider().overlay(Theme.border) }
+                            if row.id != shown.last?.id { Divider().overlay(Theme.border) }
+                        }
+                        if RowFold.hiddenCount(total: rows.count, limit: Self.visibleRows) > 0 {
+                            Divider().overlay(Theme.border)
+                            ExpandRow(isExpanded: showsAll,
+                                      hidden: RowFold.hiddenCount(total: rows.count, limit: Self.visibleRows),
+                                      help: (expand: "Show every process",
+                                             collapse: "Show the top \(Self.visibleRows) by memory"),
+                                      edge: .inset, note: hiddenNote) {
+                                withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
+                            }
                         }
                     }
                     .padding(.top, 10)

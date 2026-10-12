@@ -447,6 +447,76 @@ private struct QuiverField: ViewModifier {
     }
 }
 
+// MARK: - Expand row
+
+/// The last row of a list: unfolds the rest of it, or folds it away again.
+/// `.cardBottom` is the card's bottom edge, so its hover fill and focus ring
+/// follow the card's bottom corners; `.inset` sits inside a padded card and
+/// takes the control radius instead.
+struct ExpandRow: View {
+    enum Edge { case cardBottom, inset }
+
+    var isExpanded: Bool
+    var hidden: Int
+    var help: (expand: String, collapse: String)
+    var edge: Edge = .cardBottom
+    var note: String?
+    var action: () -> Void
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    private var shape: AnyShape {
+        switch edge {
+        case .cardBottom:
+            AnyShape(UnevenRoundedRectangle(bottomLeadingRadius: Theme.cardRadius,
+                                            bottomTrailingRadius: Theme.cardRadius))
+        case .inset:
+            AnyShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(isExpanded ? "Show less" : hidden == 1 ? "Show 1 more" : "Show \(hidden) more")
+                    .font(Theme.control)
+                if let note {
+                    Text("· \(note)")
+                        .font(Theme.control).foregroundStyle(Theme.textMuted)
+                }
+            }
+            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(hovering ? Theme.rowHover : .clear, in: shape)
+            .contentShape(shape)
+        }
+        .buttonStyle(RingedPlainStyle(cornerRadius: 0))
+        .focused($focused)
+        .focusEffectDisabled()
+        .overlay(ring.opacity(focused && FocusVisibility.shared.fromKeyboard ? 1 : 0)
+            .allowsHitTesting(false))
+        .onHover { hovering = $0 }
+        .help(isExpanded ? help.collapse : help.expand)
+    }
+
+    @ViewBuilder private var ring: some View {
+        switch edge {
+        case .cardBottom:
+            UnevenRoundedRectangle(bottomLeadingRadius: Theme.cardRadius,
+                                   bottomTrailingRadius: Theme.cardRadius)
+                .inset(by: 2)
+                .stroke(Theme.focus, lineWidth: Theme.focusRing)
+        case .inset:
+            RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .inset(by: 2)
+                .stroke(Theme.focus, lineWidth: Theme.focusRing)
+        }
+    }
+}
+
 // MARK: - States
 
 /// Something went wrong: the message in danger red, selectable.
