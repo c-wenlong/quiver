@@ -86,12 +86,18 @@ Where each came from is in `Resources/harness-icons.tsv`:
 - Claude's colour mark, Qwen, Mistral, goose, Cline and the API key
   provider marks (OpenAI, DeepSeek, Z.ai, Yi, MiniMax, Xiaomi MiMo,
   StepFun, Groq, Upstage, Cerebras, OpenRouter, Together AI, Fireworks
-  AI, Vercel, Nebius, Featherless AI, NVIDIA and Cloudflare) come from
-  LobeHub icons (`@lobehub/icons-static-svg`).
-- npm comes from Simple Icons (simple-icons, CC0-1.0).
+  AI, Vercel, Nebius, NVIDIA and Cloudflare) come from LobeHub icons
+  (`@lobehub/icons-static-svg`).
+- npm comes from Simple Icons (simple-icons, CC0-1.0); Routing.Run's
+  planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).
 - Continue comes from its repository (continuedev/continue,
-  `docs/logo/light.svg`); Droid (Factory), Forge, Augment, Blackbox and
-  Freebuff from each product's own site.
+  `docs/logo/light.svg`); aider from its repository (Aider-AI/aider,
+  Apache-2.0, the site's pinned-tab icon); Crush from the
+  charmbracelet/crush repository (FSL-1.1-MIT); Droid (Factory), Forge,
+  Augment, Blackbox and Freebuff from each product's own site.
+- Featherless's current mark is composed locally: the rebranded F from
+  the inline SVG on featherless.ai, on its favicon's yellow tile; the
+  site states no licence, so the mark is trademark-only like the rest.
 
 TokenTracker is used under the MIT License (Copyright (c) 2026
 xiufengsun; full text above, under OpenUsage, as the same notice). LobeHub

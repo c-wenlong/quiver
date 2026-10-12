@@ -536,7 +536,7 @@ struct FakeShell: ShellEnvironmentReading {
             ("Upstage", "upstage"),
             ("Cerebras", "cerebras"),
             ("Mistral", "mistral-vibe"),
-            ("Routing.Run", nil),
+            ("Routing.Run", "routing-run"),
             ("Opencode Zen", "opencode"),
             ("OpenRouter", "openrouter"),
             ("Together AI", "together"),
