@@ -275,6 +275,7 @@ private struct TrendCard: View {
                     .fixedSize()
                     .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
                     .position(bubbleOrigin(atX: x, plot: geometry[plot]))
+                    .allowsHitTesting(false)
             }
         }
     }
