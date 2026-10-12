@@ -374,8 +374,10 @@ private struct KeyEditor: View {
                     // Another group's name moves the key to the end of it.
                     TextField("ANTHROPIC", text: $draft.provider).quiverField()
                     if !providers.isEmpty {
-                        SelectMenu(options: providers.map { ($0, $0) }, selection: $draft.provider,
-                                   width: nil, title: "Existing")
+                        // "" is a real choice (ungrouped keys); it still
+                        // needs a label in the menu.
+                        SelectMenu(options: providers.map { ($0, $0.isEmpty ? "Ungrouped" : $0) },
+                                   selection: $draft.provider, width: nil, title: "Existing")
                     }
                 }
             }
