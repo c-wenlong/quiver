@@ -8,7 +8,7 @@ public enum RowReorder {
     /// Where the dragged row would land among the others, as an index into
     /// the list with the dragged row removed. Moving down it takes the slot
     /// once its bottom edge passes a row's centre; moving up, once its top
-    /// edge does — so the last slot is reachable at the movement limit.
+    /// edge does; so the last slot is reachable at the movement limit.
     public static func targetIndex(heights: [CGFloat], dragged: Int, translation: CGFloat) -> Int {
         guard heights.indices.contains(dragged) else { return 0 }
         let t = clamped(translation, heights: heights, dragged: dragged)
