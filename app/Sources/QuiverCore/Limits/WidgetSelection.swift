@@ -106,6 +106,13 @@ public struct WidgetSelection: Equatable, Sendable {
         rows.filter { shows(harness: $0.harness, in: widget) }
     }
 
+    /// Every harness the widget's switch list offers: the ones with
+    /// usage, plus any the hidden set still names, so a choice survives
+    /// its usage leaving the range and can be switched back on.
+    public func listedHarnesses(withUsage names: Set<String>, for widget: Widget) -> Set<String> {
+        names.union(hiddenHarnesses[widget] ?? [])
+    }
+
     public static func harnessesKey(_ widget: Widget) -> String {
         "widgetHarnesses.\(widget.rawValue)"
     }

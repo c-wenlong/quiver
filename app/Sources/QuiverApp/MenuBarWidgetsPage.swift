@@ -496,7 +496,7 @@ private struct WidgetCard: View {
                 }
             }
         } else if let harnessWidget {
-            let harnesses = usageHarnesses
+            let harnesses = usageHarnesses(for: harnessWidget)
             if !harnesses.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Counted").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
@@ -519,11 +519,14 @@ private struct WidgetCard: View {
         } + app.others.rows.map { (source: $0.name, harness: $0.name, title: $0.accountTitle) }
     }
 
-    /// Every harness with usage in the Overview data, in the Settings order.
-    private var usageHarnesses: [String] {
+    /// Every harness the widget's switch list offers: ones with usage in
+    /// the Overview data plus any its hidden set still names, in the
+    /// Settings order.
+    private func usageHarnesses(for widget: WidgetSelection.Widget) -> [String] {
         var names = Set((app.overview?.activityRows ?? []).map(\.harness))
         names.formUnion((app.overview?.recentRows ?? []).map(\.harness))
-        return app.providers.ordered(Array(names))
+        let listed = app.widgetSelection.listedHarnesses(withUsage: names, for: widget)
+        return app.providers.ordered(Array(listed))
     }
 }
 

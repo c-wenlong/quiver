@@ -70,6 +70,16 @@ import Testing
         #expect(selection.shows(harness: "some-new-harness", in: .summary))
     }
 
+    @Test func aHiddenHarnessStaysListedWithoutUsage() {
+        var selection = WidgetSelection()
+        selection.setShown(false, harness: "codex", in: .summary)
+        // Usage left the range, but the switch must stay to undo it.
+        #expect(selection.listedHarnesses(withUsage: ["claude"], for: .summary) == ["claude", "codex"])
+        #expect(selection.listedHarnesses(withUsage: ["claude"], for: .models) == ["claude"])
+        selection.setShown(true, harness: "codex", in: .summary)
+        #expect(selection.listedHarnesses(withUsage: ["claude"], for: .summary) == ["claude"])
+    }
+
     @Test func harnessChoicesSaveUnderTheirOwnKeys() {
         var selection = WidgetSelection()
         selection.setShown(false, harness: "codex", in: .models)
