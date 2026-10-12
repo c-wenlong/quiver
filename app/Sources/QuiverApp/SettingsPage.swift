@@ -381,7 +381,8 @@ private struct SettingsFooter: View {
     @Environment(AppModel.self) private var app
 
     private var version: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+        let info = Bundle.main.infoDictionary
+        return info?["QuiverVersion"] as? String ?? info?["CFBundleShortVersionString"] as? String ?? "dev"
     }
 
     var body: some View {
