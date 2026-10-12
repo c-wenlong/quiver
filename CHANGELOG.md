@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-13
+
+First stable release. `swe` and the Quiver macOS app share one data model
+under `~/.quiver`, every `--json` command uses the `{schema, data}`
+envelope, and the design is documented under [docs/](docs/): data model,
+app architecture, backend architecture, JSON contracts and testing.
+
+Highlights since 0.2.10: Cursor's Grok Bot allowance, harness display names
+and primary colours, Devin quota handling, and in the app: per-account menu
+bar and widget projections with live previews, Compute trends, plugin and
+skill editing, MCP Local/Remote groups, collapsed service status cards, API
+key checks and editing, a cached and source-isolated Overview, and four
+audits (databases and caches, app structure and contracts, swe controller /
+service / model layering, tests with an 84% coverage floor).
+
 ### Added
 
 - **Cursor's Grok Bot allowance shows with its other limits.** Cursor gives
@@ -1372,4 +1387,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stdlib-only core; optional FastMCP server extra for session history MCP tool
 - Test suite (15 unit tests) with isolated `$HOME` fixtures
 
+[1.0.0]: https://github.com/c-wenlong/quiver/releases/tag/v1.0.0
 [0.1.0]: https://github.com/c-wenlong/quiver/releases/tag/v0.1.0
