@@ -139,76 +139,87 @@ private struct SettingsSectionView: View {
                 Rectangle().fill(Theme.border).frame(height: Theme.hairline)
             }
             switch section {
-            case .general:
-                SettingsCard {
-                    LoginItemRow(failure: $loginFailure)
-                    SettingsDivider()
-                    @Bindable var app = app
-                    SettingRow(title: "Terminal", detail: "Used by Terminal, Sign in and Resume.") {
-                        Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal)
-                    }
-                    SettingsDivider()
-                    SettingRow(title: "Show in Dock",
-                               detail: "Off keeps Quiver out of the Dock and the app switcher. Open it from the menu bar.",
-                               warning: !app.showsInDock && !app.menuBar.isVisible
-                                   ? "The menu bar item is off in Menu bar and widgets, so Quiver stays in the Dock." : nil) {
-                        SettingSwitch(title: "Show in Dock", isOn: $app.showsInDock)
-                    }
-                }
-            case .preferences:
-                SettingsCard {
-                    @Bindable var app = app
-                    SettingRow(title: "Appearance",
-                               detail: "System follows macOS. Widgets always follow macOS.") {
-                        Tabs(options: AppearanceMode.allCases.map { ($0, $0.title) }, selection: $app.appearance)
-                    }
-                    SettingsDivider()
-                    SettingRow(title: "App icon", detail: "The Dock shows this one. Finder keeps the light icon.") {
-                        Tabs(options: AppIconStyle.allCases.map { ($0, $0.title) }, selection: $app.appIcon)
-                    }
-                }
-            case .notifications:
-                SettingsCard {
-                    @Bindable var limits = app.limits
-                    SettingRow(title: "Notify about limits",
-                               detail: "When a limit reaches 90%, and again when it resets after that. Once per window.",
-                               warning: app.limits.notificationsBlocked && app.limits.notifyEnabled
-                                   ? "Notifications for Quiver are off in System Settings > Notifications." : nil) {
-                        SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
-                    }
-                }
-            case .providers:
-                ProviderVisibilityCard(model: app.providers)
-            case .paths:
-                SettingsCard {
-                    PathRow(title: "swe executable", placeholder: "/opt/homebrew/bin/swe",
-                            stored: app.swePath, draft: $drafts.swe, running: SweLocation.executable(override: app.swePath),
-                            hint: "Empty uses the swe your login shell finds.") { app.swePath = $0 }
-                    SettingsDivider()
-                    PathRow(title: "API keys file", placeholder: "~/.api_keys",
-                            stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,
-                            hint: "Empty uses ~/.api_keys.") { app.apiKeysPath = $0 }
-                    SettingsDivider()
-                    PathRow(title: "MCP servers folder", placeholder: "~/.quiver/mcp/servers",
-                            stored: app.mcpServersPath, draft: $drafts.mcpServers,
-                            running: AppModel.mcpServersFolder(path: app.mcpServersPath).path,
-                            hint: "Empty uses ~/.quiver/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
-                    SettingsDivider()
-                    SettingRow(title: "Editor", detail: "Opens a server folder from the MCP servers page.") {
-                        let editors = CodeEditors.installed()
-                        if editors.isEmpty {
-                            Text("No code editor found")
-                                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        } else {
-                            SelectMenu(options: editors.map { ($0.name, $0.name) },
-                                       selection: Binding(get: { app.codeEditor }, set: { app.codeEditor = $0 }),
-                                       title: app.editor?.name)
-                        }
-                    }
-                }
+            case .general: generalCard
+            case .preferences: preferencesCard
+            case .notifications: notificationsCard
+            case .providers: ProviderVisibilityCard(model: app.providers)
+            case .paths: pathsCard
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var generalCard: some View {
+        SettingsCard {
+            LoginItemRow(failure: $loginFailure)
+            SettingsDivider()
+            @Bindable var app = app
+            SettingRow(title: "Terminal", detail: "Used by Terminal, Sign in and Resume.") {
+                Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal)
+            }
+            SettingsDivider()
+            SettingRow(title: "Show in Dock",
+                       detail: "Off keeps Quiver out of the Dock and the app switcher. Open it from the menu bar.",
+                       warning: !app.showsInDock && !app.menuBar.isVisible
+                           ? "The menu bar item is off in Menu bar and widgets, so Quiver stays in the Dock." : nil) {
+                SettingSwitch(title: "Show in Dock", isOn: $app.showsInDock)
+            }
+        }
+    }
+
+    private var preferencesCard: some View {
+        SettingsCard {
+            @Bindable var app = app
+            SettingRow(title: "Appearance",
+                       detail: "System follows macOS. Widgets always follow macOS.") {
+                Tabs(options: AppearanceMode.allCases.map { ($0, $0.title) }, selection: $app.appearance)
+            }
+            SettingsDivider()
+            SettingRow(title: "App icon", detail: "The Dock shows this one. Finder keeps the light icon.") {
+                Tabs(options: AppIconStyle.allCases.map { ($0, $0.title) }, selection: $app.appIcon)
+            }
+        }
+    }
+
+    private var notificationsCard: some View {
+        SettingsCard {
+            @Bindable var limits = app.limits
+            SettingRow(title: "Notify about limits",
+                       detail: "When a limit reaches 90%, and again when it resets after that. Once per window.",
+                       warning: app.limits.notificationsBlocked && app.limits.notifyEnabled
+                           ? "Notifications for Quiver are off in System Settings > Notifications." : nil) {
+                SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
+            }
+        }
+    }
+
+    private var pathsCard: some View {
+        SettingsCard {
+            PathRow(title: "swe executable", placeholder: "/opt/homebrew/bin/swe",
+                    stored: app.swePath, draft: $drafts.swe, running: SweLocation.executable(override: app.swePath),
+                    hint: "Empty uses the swe your login shell finds.") { app.swePath = $0 }
+            SettingsDivider()
+            PathRow(title: "API keys file", placeholder: "~/.api_keys",
+                    stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,
+                    hint: "Empty uses ~/.api_keys.") { app.apiKeysPath = $0 }
+            SettingsDivider()
+            PathRow(title: "MCP servers folder", placeholder: "~/.quiver/mcp/servers",
+                    stored: app.mcpServersPath, draft: $drafts.mcpServers,
+                    running: AppModel.mcpServersFolder(path: app.mcpServersPath).path,
+                    hint: "Empty uses ~/.quiver/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
+            SettingsDivider()
+            SettingRow(title: "Editor", detail: "Opens a server folder from the MCP servers page.") {
+                let editors = CodeEditors.installed()
+                if editors.isEmpty {
+                    Text("No code editor found")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                } else {
+                    SelectMenu(options: editors.map { ($0.name, $0.name) },
+                               selection: Binding(get: { app.codeEditor }, set: { app.codeEditor = $0 }),
+                               title: app.editor?.name)
+                }
+            }
+        }
     }
 }
 

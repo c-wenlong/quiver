@@ -359,34 +359,7 @@ struct PartsCard: View {
                 NewPartMenu(kinds: kinds) { newPart = $0 }
             }
         } content: {
-            if let tree {
-                let units = Self.units(of: tree)
-                let shown = RowFold.visible(units, limit: Self.foldLimit, expanded: showsAll)
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, unit in
-                        switch unit {
-                        case .header(let section):
-                            Text("\(section.kind.title) · \(section.entries.count)")
-                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                                .padding(.top, index == 0 ? 0 : 14)
-                                .padding(.bottom, 6)
-                        case .entry(let entry):
-                            row(entry)
-                        }
-                    }
-                }
-                if RowFold.hiddenCount(total: units.count, limit: Self.foldLimit) > 0 {
-                    ExpandRow(isExpanded: showsAll,
-                              hidden: RowFold.hiddenCount(total: units.count, limit: Self.foldLimit),
-                              help: (expand: "Show every file and section",
-                                     collapse: "Show the first \(Self.foldLimit) rows"),
-                              edge: .inset) {
-                        withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
-                    }
-                }
-            } else {
-                ProgressView()
-            }
+            treeContent
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.caption).foregroundStyle(Theme.dangerText)
@@ -439,6 +412,39 @@ struct PartsCard: View {
             Button("Cancel", role: .cancel) { trashEntry = nil }
         } message: {
             Text("You can restore it from the Trash.")
+        }
+    }
+
+    /// The folded tree: one row per group header or top-level entry, then
+    /// a Show more row for the rest.
+    @ViewBuilder private var treeContent: some View {
+        if let tree {
+            let units = Self.units(of: tree)
+            let shown = RowFold.visible(units, limit: Self.foldLimit, expanded: showsAll)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, unit in
+                    switch unit {
+                    case .header(let section):
+                        Text("\(section.kind.title) · \(section.entries.count)")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            .padding(.top, index == 0 ? 0 : 14)
+                            .padding(.bottom, 6)
+                    case .entry(let entry):
+                        row(entry)
+                    }
+                }
+            }
+            if RowFold.hiddenCount(total: units.count, limit: Self.foldLimit) > 0 {
+                ExpandRow(isExpanded: showsAll,
+                          hidden: RowFold.hiddenCount(total: units.count, limit: Self.foldLimit),
+                          help: (expand: "Show every file and section",
+                                 collapse: "Show the first \(Self.foldLimit) rows"),
+                          edge: .inset) {
+                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
+                }
+            }
+        } else {
+            ProgressView()
         }
     }
 
@@ -919,26 +925,22 @@ struct SkillDetailView: View {
                 PrimitiveLockNote(text: "Only skills that live under ~/.quiver can be edited, so \(skill.name) is read-only.")
             }
             Card {
-                HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: "graduationcap.fill")
-                        .font(.system(size: 28)).foregroundStyle(Theme.accent)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 8) {
-                            Text(skill.name).font(.system(size: 16, weight: .semibold))
-                            Badge(skill.source.title)
-                            Spacer()
-                            Button { NSWorkspace.shared.activateFileViewerSelecting([root]) } label: {
-                                Label("Show in Finder", systemImage: "folder")
-                            }
-                            .secondaryButton()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(skill.name).font(.system(size: 16, weight: .semibold))
+                        Badge(skill.source.title)
+                        Spacer()
+                        Button { NSWorkspace.shared.activateFileViewerSelecting([root]) } label: {
+                            Label("Show in Finder", systemImage: "folder")
                         }
-                        Text(displayPath(skill.path)).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
-                        if !skill.description.isEmpty {
-                            Text(skill.description).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if let links { links }
+                        .secondaryButton()
                     }
+                    Text(displayPath(skill.path)).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                    if !skill.description.isEmpty {
+                        Text(skill.description).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let links { links }
                 }
             }
             if let skillFile {

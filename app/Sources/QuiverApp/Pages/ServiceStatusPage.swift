@@ -229,68 +229,14 @@ private struct ServiceCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 16) }
-                    Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
-                    Spacer(minLength: 8)
-                    Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
-                        .labelStyle(.iconOnly)
-                        .plainButton(cornerRadius: Theme.smallRadius)
-                        .foregroundStyle(Theme.textSecondary)
-                        .help(status.service.pageURL.absoluteString)
-                    if let remove {
-                        EllipsisMenu {
-                            Button("Remove…") { confirmingRemove = true }
-                        }
-                        .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
-                            Button("Stop tracking", role: .destructive, action: remove)
-                        }
-                    }
-                }
-
+                header
                 VStack(alignment: .leading, spacing: 4) {
                     HealthLabel(health: status.report?.health, isLoading: isLoading && status.checkedAt == nil)
                     if let note = status.service.note {
                         Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
                     }
                 }
-
-                if expanded {
-                    if let summary = status.report?.summary, status.report?.health != .operational {
-                        Text(summary).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    }
-
-                    if let report = status.report, !report.components.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(report.components.prefix(Self.componentLimit), id: \.self) { component in
-                                ComponentRow(component: component)
-                            }
-                            if report.components.count > Self.componentLimit {
-                                Text("And \(report.components.count - Self.componentLimit) more")
-                                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                            }
-                        }
-                    }
-
-                    if let report = status.report, !report.incidents.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(report.incidents.prefix(Self.incidentLimit)) { incident in
-                                IncidentView(incident: incident)
-                            }
-                            if report.incidents.count > Self.incidentLimit {
-                                Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
-                                    openURL(status.service.pageURL)
-                                }
-                                .plainButton(cornerRadius: Theme.smallRadius)
-                                .font(Theme.caption)
-                                .foregroundStyle(Theme.textSecondary)
-                                .underline()
-                            }
-                        }
-                        .padding(.top, 2)
-                    }
-                }
-
+                if expanded { details }
                 ProblemLine(status: status)
             }
             .padding(Theme.cardPadding)
@@ -310,6 +256,65 @@ private struct ServiceCard: View {
             .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 16) }
+            Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
+            Spacer(minLength: 8)
+            Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
+                .labelStyle(.iconOnly)
+                .plainButton(cornerRadius: Theme.smallRadius)
+                .foregroundStyle(Theme.textSecondary)
+                .help(status.service.pageURL.absoluteString)
+            if let remove {
+                EllipsisMenu {
+                    Button("Remove…") { confirmingRemove = true }
+                }
+                .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
+                    Button("Stop tracking", role: .destructive, action: remove)
+                }
+            }
+        }
+    }
+
+    /// The parts behind the fold: an outage summary, components and
+    /// incidents. Both lists cap short and link out for the rest.
+    @ViewBuilder private var details: some View {
+        if let summary = status.report?.summary, status.report?.health != .operational {
+            Text(summary).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+        }
+
+        if let report = status.report, !report.components.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(report.components.prefix(Self.componentLimit), id: \.self) { component in
+                    ComponentRow(component: component)
+                }
+                if report.components.count > Self.componentLimit {
+                    Text("And \(report.components.count - Self.componentLimit) more")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                }
+            }
+        }
+
+        if let report = status.report, !report.incidents.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(report.incidents.prefix(Self.incidentLimit)) { incident in
+                    IncidentView(incident: incident)
+                }
+                if report.incidents.count > Self.incidentLimit {
+                    Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
+                        openURL(status.service.pageURL)
+                    }
+                    .plainButton(cornerRadius: Theme.smallRadius)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .underline()
+                }
+            }
+            .padding(.top, 2)
+        }
     }
 }
 

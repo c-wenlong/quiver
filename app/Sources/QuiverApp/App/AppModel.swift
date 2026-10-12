@@ -348,9 +348,18 @@ final class AppModel {
             Task { [mcp] in await mcp.restore() },
             Task { [plugins] in await plugins.restore() },
             Task { [pluginCatalog] in await pluginCatalog.restore() },
-            // Skills and Plugins > Explore place one inventory against one
-            // catalog, so each skill shows on exactly one of them: each
-            // model is handed the other's latest.
+        ]
+        watchers += watchCatalogPlacement()
+        watchers.append(watchSessions())
+        watchers += watchLimits()
+        watchers.append(watchActivation())
+    }
+
+    /// Skills and Plugins > Explore place one inventory against one
+    /// catalog, so each skill shows on exactly one of them: each model is
+    /// handed the other's latest.
+    private func watchCatalogPlacement() -> [Task<Void, Never>] {
+        [
             Task { [weak self] in
                 let changes = Observations { [weak self] in self?.skills.inventory }
                 for await _ in changes {
@@ -365,19 +374,27 @@ final class AppModel {
                     skills.plugins = pluginCatalog.lookup
                 }
             },
-            Task { [weak self] in
-                guard let sessions = self?.sessions else { return }
-                await sessions.restore()
-                await sessions.loadIfStale(for: self?.swePath ?? "")
-            },
+        ]
+    }
+
+    private func watchSessions() -> Task<Void, Never> {
+        Task { [weak self] in
+            guard let sessions = self?.sessions else { return }
+            await sessions.restore()
+            await sessions.loadIfStale(for: self?.swePath ?? "")
+        }
+    }
+
+    /// Limits change on a fetch; whether a window has reset changes with
+    /// the clock, so look again every minute as well.
+    private func watchLimits() -> [Task<Void, Never>] {
+        [
             Task { [weak self] in
                 while !Task.isCancelled {
                     await self?.others.load()
                     try? await Task.sleep(for: .seconds(300))
                 }
             },
-            // Limits change on a fetch; whether a window has reset changes
-            // with the clock, so look again every minute as well.
             Task { [weak self] in
                 let changes = Observations { [weak self] in
                     self.map { ($0.starredAccountCards, $0.others.rows) }
@@ -399,17 +416,20 @@ final class AppModel {
                     limits.writeWidgets(overview: overview, selection: widgetSelection)
                 }
             },
-            // Notifications may be switched on or off in System Settings
-            // while Quiver is in the background, and a harness installed
-            // from a terminal; the provider check runs again, quietly.
-            Task { [weak self] in
-                await self?.limits.checkNotificationPermission()
-                for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
-                    await self?.limits.checkNotificationPermission()
-                    if let self { await self.providers.recheck(for: self.swePath) }
-                }
-            },
         ]
+    }
+
+    /// Notifications may be switched on or off in System Settings while
+    /// Quiver is in the background, and a harness installed from a
+    /// terminal; the provider check runs again, quietly.
+    private func watchActivation() -> Task<Void, Never> {
+        Task { [weak self] in
+            await self?.limits.checkNotificationPermission()
+            for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+                await self?.limits.checkNotificationPermission()
+                if let self { await self.providers.recheck(for: self.swePath) }
+            }
+        }
     }
 
     private func refreshLimits() {

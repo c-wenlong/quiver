@@ -303,47 +303,53 @@ struct InstructionEditor: View {
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.dangerText)
             case .ready:
-                if document.changedOnDisk {
-                    ChangedOnDiskBanner(
-                        reload: { document.load(); error = nil },
-                        overwrite: { save(overwrite: true) })
-                }
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(Theme.caption).foregroundStyle(Theme.dangerText)
-                }
-                // Fills the card, and the card fills what the page has left.
-                let focused = mode == "raw" ? editing : richFocused
-                Group {
-                    if readOnly {
-                        TextEditor(text: .constant(document.text))
-                            .font(.system(size: 13, design: .monospaced))
-                            .scrollContentBackground(.hidden)
-                    } else if mode == "raw" {
-                        TextEditor(text: $document.text)
-                            .font(.system(size: 13, design: .monospaced))
-                            .scrollContentBackground(.hidden)
-                            .focused($editing)
-                    } else {
-                        MarkdownTextView(text: $document.text, isFocused: $richFocused,
-                                         focusToken: richFocusToken, accessibilityLabel: title)
-                    }
-                }
-                .disabled(readOnly)
-                .focusEffectDisabled()
-                .padding(10)
-                .background(mode == "raw" ? Theme.code : Theme.field,
-                            in: .rect(cornerRadius: Theme.controlRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-                    .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
-                .focusRing(focused, cornerRadius: Theme.controlRadius, afterPointer: true)
-                .frame(minHeight: 160, maxHeight: .infinity)
-                .accessibilityLabel(title)
-                .onChange(of: mode) {
-                    UserDefaults.standard.set(mode, forKey: Self.modeKey)
-                    if mode == "raw" { editing = true } else { richFocusToken += 1 }
-                }
+                editorContent
             }
+        }
+    }
+
+    /// The ready state: the changed-on-disk banner, a save error, and the
+    /// raw or rich editor filling what the card has left.
+    @ViewBuilder private var editorContent: some View {
+        if document.changedOnDisk {
+            ChangedOnDiskBanner(
+                reload: { document.load(); error = nil },
+                overwrite: { save(overwrite: true) })
+        }
+        if let error {
+            Label(error, systemImage: "exclamationmark.triangle")
+                .font(Theme.caption).foregroundStyle(Theme.dangerText)
+        }
+        // Fills the card, and the card fills what the page has left.
+        let focused = mode == "raw" ? editing : richFocused
+        Group {
+            if readOnly {
+                TextEditor(text: .constant(document.text))
+                    .font(.system(size: 13, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+            } else if mode == "raw" {
+                TextEditor(text: $document.text)
+                    .font(.system(size: 13, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .focused($editing)
+            } else {
+                MarkdownTextView(text: $document.text, isFocused: $richFocused,
+                                 focusToken: richFocusToken, accessibilityLabel: title)
+            }
+        }
+        .disabled(readOnly)
+        .focusEffectDisabled()
+        .padding(10)
+        .background(mode == "raw" ? Theme.code : Theme.field,
+                    in: .rect(cornerRadius: Theme.controlRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
+        .focusRing(focused, cornerRadius: Theme.controlRadius, afterPointer: true)
+        .frame(minHeight: 160, maxHeight: .infinity)
+        .accessibilityLabel(title)
+        .onChange(of: mode) {
+            UserDefaults.standard.set(mode, forKey: Self.modeKey)
+            if mode == "raw" { editing = true } else { richFocusToken += 1 }
         }
     }
 
