@@ -18,6 +18,15 @@ struct McpServersPage: View {
     /// list shows at once.
     private var model: McpModel { app.mcp }
 
+    /// The folder the "Server folders" section reads, from the Paths setting.
+    private var repoRoot: URL { AppModel.mcpServersFolder(path: app.mcpServersPath) }
+
+    /// The hub list the page already loaded, for each folder's "Used by" line.
+    private var hub: [McpServer] {
+        if case .loaded(let inventory) = model.state { return inventory.servers }
+        return []
+    }
+
     var body: some View {
         Page(title: "MCP servers",
              subtitle: "Every server your harnesses configure, where each is missing, and where two disagree.") {
@@ -29,6 +38,7 @@ struct McpServersPage: View {
             .help("Run each server's command check and reach each URL")
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth) }
+                Task { await app.mcpRepo.load() }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
@@ -68,8 +78,13 @@ struct McpServersPage: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
+            McpRepoSection(model: app.mcpRepo, root: repoRoot, hub: hub, editor: app.editor)
         }
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
+        .task(id: repoRoot) {
+            app.mcpRepo.root = repoRoot
+            await app.mcpRepo.load()
+        }
         .sheet(item: $selected) { server in
             if case .loaded(let inventory) = model.state {
                 ServerSheet(initial: server, harnesses: inventory.harnesses,
@@ -482,6 +497,145 @@ private struct Facts: View {
             Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary).frame(width: 96, alignment: .leading)
             Text(value).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - Server folders
+
+/// The managed servers folder: a card per group of checkouts, each row
+/// saying which hub servers run from it and what its git state is, with
+/// Finder and editor buttons.
+private struct McpRepoSection: View {
+    var model: McpServerRepoModel
+    var root: URL
+    /// The page's current inventory; recomputed every render so "Used by"
+    /// follows a load, a refresh or a sync.
+    var hub: [McpServer]
+    var editor: CodeEditor?
+
+    /// Group name then its servers, in the scan's order (ungrouped first).
+    private var groups: [(name: String?, servers: [McpRepoServer])] {
+        var order: [String?] = []
+        var byGroup: [String?: [McpRepoServer]] = [:]
+        for server in model.servers {
+            if byGroup[server.group] == nil { order.append(server.group) }
+            byGroup[server.group, default: []].append(server)
+        }
+        return order.map { ($0, byGroup[$0] ?? []) }
+    }
+
+    var body: some View {
+        // Computed once per render: folder path -> the hub servers inside it.
+        let usage = McpServerRepo.hubUsage(servers: model.servers, hub: hub)
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Server folders")
+                    .font(Theme.sectionTitle).tracking(-0.5).foregroundStyle(Theme.textStrong)
+                HStack(spacing: 12) {
+                    Text(displayPath(root))
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Button("Show in Finder", systemImage: "folder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([root])
+                    }
+                    .secondaryButton()
+                }
+            }
+            if let error = model.error {
+                ErrorCard(message: error)
+            } else if !FileManager.default.fileExists(atPath: root.path) {
+                Card {
+                    Label("\(displayPath(root)) doesn't exist. Set the folder in Settings > Paths.",
+                          systemImage: "folder.badge.questionmark")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                }
+            } else if model.servers.isEmpty && model.isLoading {
+                ProgressView().frame(maxWidth: .infinity)
+            } else if model.servers.isEmpty {
+                Card {
+                    Text("No server folders in \(displayPath(root)).")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                }
+            } else {
+                ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                    Card(title: group.name ?? "Servers") {
+                        ForEach(group.servers) { server in
+                            RepoServerRow(server: server,
+                                          usedBy: usage[server.path.standardizedFileURL.path] ?? [],
+                                          editor: editor)
+                            if server.id != group.servers.last?.id { Divider().overlay(Theme.border) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One checkout: its name, which hub servers run from it, its git state,
+/// then Show in Finder and Open in editor.
+private struct RepoServerRow: View {
+    var server: McpRepoServer
+    /// The hub servers that run from this folder, from the live inventory.
+    var usedBy: [String]
+    var editor: CodeEditor?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(server.name)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary).lineLimit(1)
+                if usedBy.isEmpty {
+                    Text("Not in the hub").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                } else {
+                    Text("Used by \(usedBy.joined(separator: ", "))")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                }
+                gitLine
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 8) {
+                Button("Show in Finder", systemImage: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([server.path])
+                }
+                .iconButton()
+                .help("Show in Finder")
+                if let editor {
+                    Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") {
+                        NSWorkspace.shared.open([server.path], withApplicationAt: editor.appURL,
+                                                configuration: .init())
+                    }
+                    .iconButton()
+                    .help("Open in \(editor.name)")
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    /// Branch, ahead/behind counts and the local-changes badge, a note when
+    /// the folder isn't a repository, or a spinner while git answers.
+    @ViewBuilder private var gitLine: some View {
+        if let git = server.git {
+            if git.isRepo {
+                HStack(spacing: 8) {
+                    Text(git.branch ?? "detached HEAD")
+                    let counts = [git.ahead > 0 ? "↑\(git.ahead)" : nil,
+                                  git.behind > 0 ? "↓\(git.behind)" : nil]
+                        .compactMap { $0 }.joined(separator: " ")
+                    if !counts.isEmpty {
+                        Text(counts).monospacedDigit()
+                    }
+                    if git.hasChanges { Badge("Local changes") }
+                }
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else {
+                Text("Not a git repo").font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+        } else {
+            ProgressView().controlSize(.mini)
         }
     }
 }
