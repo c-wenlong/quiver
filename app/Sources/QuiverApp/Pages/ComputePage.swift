@@ -387,7 +387,7 @@ private struct HarnessCard: View {
         Card {
             VStack(alignment: .leading, spacing: 0) {
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { expanded.toggle() }
                 } label: {
                     header
                 }
@@ -405,7 +405,7 @@ private struct HarnessCard: View {
                                       help: (expand: "Show every process",
                                              collapse: "Show the top \(Self.visibleRows) by memory"),
                                       edge: .inset, note: hiddenNote) {
-                                withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
+                                withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
                             }
                         }
                     }
@@ -700,6 +700,9 @@ private struct CleanupSheet: View {
 }
 
 private struct CleanupRow: View {
+    /// The Quit / result column, so the toggle's replacement holds its place.
+    static let statusWidth: CGFloat = 76
+
     var item: CleanupItem
     var isOn: Bool
     var quitting: Bool
@@ -734,12 +737,12 @@ private struct CleanupRow: View {
                 Text(stillThere ? "Still running" : "Quit")
                     .font(Theme.caption)
                     .foregroundStyle(stillThere ? Theme.warningText : Theme.textSecondary)
-                    .frame(width: 76, alignment: .leading)
+                    .frame(width: Self.statusWidth, alignment: .leading)
             } else if quitting {
                 Text("Quitting…")
                     .font(Theme.caption)
                     .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 76, alignment: .leading)
+                    .frame(width: Self.statusWidth, alignment: .leading)
             } else {
                 Toggle(isOn: Binding(get: { isOn }, set: { _ in toggle() })) { EmptyView() }
                     .labelsHidden()

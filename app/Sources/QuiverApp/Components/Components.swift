@@ -134,7 +134,7 @@ private struct PrimaryButtonBody: View {
             .background(Theme.primaryBackground, in: .rect(cornerRadius: Theme.controlRadius))
             .scaleEffect(hovering && isEnabled && !configuration.isPressed ? 1.03 : 1)
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
-            .animation(.easeOut(duration: 0.15), value: hovering)
+            .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
             .onHover { hovering = $0 }
     }
@@ -195,7 +195,7 @@ private struct IconButtonBody: View {
                         in: .rect(cornerRadius: Theme.iconButtonRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.iconButtonRadius).strokeBorder(Theme.border, lineWidth: 1))
             .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
-            .animation(.easeOut(duration: 0.15), value: hovering)
+            .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
             .contentShape(.rect(cornerRadius: Theme.iconButtonRadius))
             .onHover { hovering = $0 }
     }
@@ -254,13 +254,13 @@ struct Tabs<Value: Hashable>: View {
             case .underline:
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 20) { buttons }
-                    Rectangle().fill(Theme.border).frame(height: 1)
+                    Rectangle().fill(Theme.border).frame(height: Theme.hairline)
                 }
             case .segmented:
                 HStack(spacing: 2) { buttons }
                     .padding(2)
-                    .background(Theme.segmentTrack, in: .rect(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+                    .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.blockRadius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
                     .fixedSize()
             case .period, .table:
                 HStack(spacing: 2) { buttons }.fixedSize()
@@ -354,7 +354,7 @@ private struct TabButton<Value: Hashable>: View {
                 .frame(height: Theme.controlHeight)
                 .background(fill, in: .rect(cornerRadius: radius))
                 .shadow(color: style == .segmented && isSelected ? .black.opacity(0.08) : .clear, radius: 1, y: 1)
-                .animation(.easeOut(duration: 0.15), value: hovering)
+                .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
         }
     }
 
@@ -407,11 +407,11 @@ private struct GreenSwitch: View {
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
             }
             .frame(width: 40, height: 24)
-            .animation(.easeOut(duration: 0.15), value: configuration.isOn)
+            .animation(.easeOut(duration: Theme.fadeDuration), value: configuration.isOn)
             .contentShape(Capsule())
         }
         // plainButton already dims a disabled switch to 0.4; no second dim.
-        .plainButton(cornerRadius: 12)
+        .plainButton(cornerRadius: Theme.blockRadius)
         .accessibilityElement()
         .accessibilityLabel { _ in configuration.label }
         .accessibilityAddTraits(.isToggle)

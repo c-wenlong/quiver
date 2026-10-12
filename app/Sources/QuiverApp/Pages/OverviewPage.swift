@@ -73,7 +73,7 @@ private struct OverviewContent: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 // Still the previous period's figures while the new ones load.
                 .opacity(current ? 1 : 0.45)
-                .animation(.easeOut(duration: 0.15), value: current)
+                .animation(.easeOut(duration: Theme.fadeDuration), value: current)
             } else {
                 LoadingCard(text: "Reading your usage logs…")
             }
@@ -256,7 +256,7 @@ private struct HarnessTile: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.borderStrong, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
     }
 }
 
@@ -287,7 +287,7 @@ private struct BreakdownCard: View {
                     .padding(.horizontal, 8)
                     .padding(.bottom, 8)
                 ForEach(summary.days) { row in
-                    Rectangle().fill(Theme.rowDivider).frame(height: 1)
+                    Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline)
                     DailyRow(cells: [
                         row.day.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day()),
                         UsageFormat.tokens(row.totals.totalTokens),
@@ -424,7 +424,7 @@ private struct Chip: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
-        .background(Theme.subtle, in: .rect(cornerRadius: 12))
+        .background(Theme.subtle, in: .rect(cornerRadius: Theme.blockRadius))
     }
 }
 

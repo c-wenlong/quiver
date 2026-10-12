@@ -182,7 +182,7 @@ private struct PopupSection: View {
                     preview
                 }
             } else {
-                VStack(spacing: 32) {
+                VStack(spacing: Theme.sectionGap) {
                     preview
                     settings(app)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -211,7 +211,7 @@ private struct PopupSection: View {
     /// The settings column: both cards and their headings, unchanged.
     private func settings(_ app: AppModel) -> some View {
         @Bindable var app = app
-        return VStack(alignment: .leading, spacing: 32) {
+        return VStack(alignment: .leading, spacing: Theme.sectionGap) {
             VStack(alignment: .leading, spacing: 16) {
                 SectionHeading(title: "Menu bar popup", detail: "What opens when you click the menu bar item.")
                 SettingsCard {
@@ -398,6 +398,9 @@ private struct WidgetsSection: View {
 
 /// A widget drawn as it would sit on the desktop: the system's size and
 /// corner radius, the widget surface colour.
+/// The WidgetKit corner radius, shared by a preview's background and hairline.
+private let widgetSurfaceRadius: CGFloat = 20
+
 private struct WidgetSurface<Content: View>: View {
     var size: CGSize
     var snapshot: WidgetSnapshot
@@ -409,9 +412,9 @@ private struct WidgetSurface<Content: View>: View {
         content(snapshot)
             .padding(16)
             .frame(width: size.width, height: size.height)
-            .background(Palette.card, in: .rect(cornerRadius: 20))
+            .background(Palette.card, in: .rect(cornerRadius: widgetSurfaceRadius))
             .foregroundStyle(Palette.textPrimary)
-            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.border, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: widgetSurfaceRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 }
 

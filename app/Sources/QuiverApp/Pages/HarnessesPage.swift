@@ -65,7 +65,7 @@ private struct HarnessList: View {
                         ExpandRow(isExpanded: model.showsUnstarred, hidden: model.collapsedCount,
                                   help: (expand: "Show the harnesses you haven't starred",
                                          collapse: "Hide the harnesses you haven't starred")) {
-                            withAnimation(.easeOut(duration: 0.15)) { model.showsUnstarred.toggle() }
+                            withAnimation(.easeOut(duration: Theme.fadeDuration)) { model.showsUnstarred.toggle() }
                         }
                     }
                 }

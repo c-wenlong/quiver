@@ -129,7 +129,7 @@ struct ManifestCard: View {
                                   help: (expand: "Show every manifest field",
                                          collapse: "Show the first \(Self.foldLimit) fields"),
                                   edge: .inset) {
-                            withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
+                            withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
                         }
                     }
                     ForEach(fields.problems, id: \.self) { problem in
@@ -240,7 +240,7 @@ struct FrontmatterCard: View {
                                   help: (expand: "Show every frontmatter field",
                                          collapse: "Show the first \(Self.foldLimit) fields"),
                                   edge: .inset) {
-                            withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
+                            withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
                         }
                     }
                     if fields.isEmpty {
@@ -381,7 +381,7 @@ struct PartsCard: View {
                               help: (expand: "Show every file and section",
                                      collapse: "Show the first \(Self.foldLimit) rows"),
                               edge: .inset) {
-                        withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
+                        withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
                     }
                 }
             } else {

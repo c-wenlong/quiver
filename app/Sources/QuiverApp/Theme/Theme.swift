@@ -112,6 +112,21 @@ enum Theme {
     static let iconButtonRadius: CGFloat = 12
     static let usageTrackHeight: CGFloat = 6
     static let heatmapCell: CGFloat = 12
+    /// Inset panels and code blocks inside a card, a step under `cardRadius`.
+    static let blockRadius: CGFloat = 12
+    /// Chips and the hover shape on small text buttons.
+    static let smallRadius: CGFloat = 4
+    /// The filled or stroked status dot.
+    static let statusDot: CGFloat = 7
+    /// A hairline row divider.
+    static let hairline: CGFloat = 1
+    /// Vertical space between the sections of a page.
+    static let sectionGap: CGFloat = 32
+    /// An editor sheet's padding and width.
+    static let sheetPadding: CGFloat = 24
+    static let sheetWidth: CGFloat = 520
+    /// The quick fade behind every hover highlight and expand toggle.
+    static let fadeDuration: TimeInterval = 0.15
 
     static let focusRing: CGFloat = 2
     /// The keyboard focus ring: neutral, since green is kept for money and "on".

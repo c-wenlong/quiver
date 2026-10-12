@@ -240,7 +240,7 @@ private struct PanelIconButton: View {
             .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
             .frame(width: 22, height: 22)
             .contentShape(.rect)
-            .plainButton(cornerRadius: 4)
+            .plainButton(cornerRadius: Theme.smallRadius)
             .onHover { hovering = $0 }
             .help(title)
     }

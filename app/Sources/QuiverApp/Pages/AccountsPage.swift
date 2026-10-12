@@ -124,7 +124,7 @@ private struct AccountCard: View {
                         .contentShape(.rect)
                 }
                 .menuStyle(.button)
-                .plainButton(cornerRadius: 6)
+                .plainButton()
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More")
@@ -379,7 +379,7 @@ private struct HarnessAccountCard: View {
                         .contentShape(.rect)
                 }
                 .menuStyle(.button)
-                .plainButton(cornerRadius: 6)
+                .plainButton()
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More")

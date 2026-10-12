@@ -95,7 +95,7 @@ private struct InstalledSkills: View {
             LazyVStack(spacing: 0) {
                 ForEach(skills) { skill in
                     SkillRow(skill: skill, model: model) { opened = skill }
-                    if skill.id != skills.last?.id { Rectangle().fill(Theme.border).frame(height: 1) }
+                    if skill.id != skills.last?.id { Rectangle().fill(Theme.border).frame(height: Theme.hairline) }
                 }
             }
         }
@@ -153,7 +153,7 @@ private struct PluginSkillsNote: View {
             .foregroundStyle(Theme.textSecondary)
             .contentShape(.rect)
         }
-        .plainButton(cornerRadius: 4)
+        .plainButton(cornerRadius: Theme.smallRadius)
         .onHover { hovering = $0 }
         .help("Open Plugins > Explore, where each plugin lists the skills it ships")
     }
@@ -331,9 +331,9 @@ private struct LinkDot: View {
 
     var body: some View {
         switch link {
-        case .linked: Circle().fill(Theme.accentFill).frame(width: 7, height: 7)
-        case .notLinked: Circle().strokeBorder(Theme.textMuted, lineWidth: 1.2).frame(width: 7, height: 7)
-        case .blocked: Circle().fill(Theme.warning).frame(width: 7, height: 7)
+        case .linked: Circle().fill(Theme.accentFill).frame(width: Theme.statusDot, height: Theme.statusDot)
+        case .notLinked: Circle().strokeBorder(Theme.textMuted, lineWidth: 1.2).frame(width: Theme.statusDot, height: Theme.statusDot)
+        case .blocked: Circle().fill(Theme.warning).frame(width: Theme.statusDot, height: Theme.statusDot)
         }
     }
 }

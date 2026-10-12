@@ -23,7 +23,7 @@ struct SearchField: View {
                     .labelStyle(.iconOnly)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textMuted)
-                    .plainButton(cornerRadius: 4)
+                    .plainButton(cornerRadius: Theme.smallRadius)
                     .help("Clear")
             }
         }

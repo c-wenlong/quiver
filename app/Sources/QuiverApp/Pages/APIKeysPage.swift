@@ -100,9 +100,9 @@ struct APIKeysPage: View {
     private func table(_ model: APIKeysModel) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("Provider").frame(width: 150, alignment: .leading)
+                Text("Provider").frame(width: KeyRow.providerWidth, alignment: .leading)
                 Text("Variable and value").frame(maxWidth: .infinity, alignment: .leading)
-                Text("New terminals").frame(width: 120, alignment: .leading)
+                Text("New terminals").frame(width: KeyRow.statusWidth, alignment: .leading)
                 Color.clear.frame(width: KeyRow.actionsWidth, height: 1)
             }
             .font(Theme.tableHeader).foregroundStyle(Theme.textSecondary)
@@ -165,6 +165,9 @@ struct APIKeysPage: View {
 private struct KeyRow: View {
     /// Three 36pt icon buttons 4pt apart.
     static let actionsWidth: CGFloat = 3 * Theme.iconButton + 2 * 4
+    /// The provider and new-terminals columns, shared with the table header.
+    static let providerWidth: CGFloat = 150
+    static let statusWidth: CGFloat = 120
     var row: APIKeysModel.Row
     var showsProvider: Bool
     var isRevealed: Bool
@@ -197,7 +200,7 @@ private struct KeyRow: View {
                         .help("Rename \(row.provider)")
                 }
             }
-            .frame(width: 150, alignment: .leading)
+            .frame(width: KeyRow.providerWidth, alignment: .leading)
             .contentShape(.rect)
             .onHover { providerHovering = $0 }
             .contextMenu {
@@ -219,7 +222,7 @@ private struct KeyRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             StatusLabel(status: row.status, check: check, isChecking: isChecking,
                         recheck: recheck)
-            .frame(width: 120, alignment: .leading)
+            .frame(width: KeyRow.statusWidth, alignment: .leading)
             HStack(spacing: 4) {
                 // One ring per button, so focus shows which one it's on.
                 Button(isRevealed ? "Hide" : "Reveal", systemImage: isRevealed ? "eye.slash" : "eye", action: toggleReveal)

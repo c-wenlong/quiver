@@ -1,6 +1,10 @@
 import QuiverCore
 import SwiftUI
 
+/// The token and spend columns, shared between the header and each row.
+private let tokensColumnWidth: CGFloat = 80
+private let spendColumnWidth: CGFloat = 84
+
 /// Every recent session across harnesses, with what it cost. Modelled on
 /// TokenTracker's Sessions page: search and filters, a summary strip, then
 /// the sessions grouped by the day they were last active.
@@ -81,8 +85,8 @@ private struct SessionsContent: View {
             VStack(spacing: 0) {
                 HStack(spacing: 16) {
                     Text("Session / project").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Tokens").frame(width: 80, alignment: .trailing)
-                    Text("Spend").frame(width: 84, alignment: .trailing)
+                    Text("Tokens").frame(width: tokensColumnWidth, alignment: .trailing)
+                    Text("Spend").frame(width: spendColumnWidth, alignment: .trailing)
                     Color.clear.frame(width: Theme.iconButton)
                 }
                 .font(Theme.tableHeader).tracking(0.12).foregroundStyle(Theme.tableHeaderText)
@@ -303,8 +307,8 @@ private struct SummaryStrip: View {
                     ? "Plus \(UsageFormat.tokens(summary.totals.unpricedTokens)) tokens with no list price" : nil)
         }
         .frame(height: 76)
-        .background(Theme.card, in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+        .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     private func cell(_ label: String, _ value: Text, note: String? = nil) -> some View {
@@ -351,11 +355,11 @@ private struct SessionRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(row.usage.map { UsageFormat.tokens($0.totals.totalTokens) } ?? "–")
                 .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: tokensColumnWidth, alignment: .trailing)
             Text(row.usage.map { UsageFormat.dollars($0.totals.costUSD) } ?? "–")
                 .font(Theme.bodySmall).monospacedDigit()
                 .foregroundStyle(row.usage == nil ? Theme.textSecondary : Theme.accent)
-                .frame(width: 84, alignment: .trailing)
+                .frame(width: spendColumnWidth, alignment: .trailing)
             Button("Resume", systemImage: "play", action: resume)
                 .buttonStyle(IconButtonStyle())
                 .disabled(s.resume == nil)
@@ -464,8 +468,8 @@ private struct SessionDetail: View {
                     figure("Spend", UsageFormat.dollars(usage.totals.costUSD), money: true)
                 }
                 .padding(.vertical, 12)
-                .background(Theme.card, in: .rect(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+                .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
                 if usage.totals.unpricedTokens > 0 {
                     Text("\(UsageFormat.tokens(usage.totals.unpricedTokens)) tokens from models with no list price.")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)

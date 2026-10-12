@@ -227,14 +227,14 @@ private struct MarketplaceCard: View {
             if open, !market.plugins.isEmpty {
                 // Lazy so a big marketplace does not build every row at once.
                 LazyVStack(spacing: 0) {
-                    Rectangle().fill(Theme.border).frame(height: 1)
+                    Rectangle().fill(Theme.border).frame(height: Theme.hairline)
                         .padding(.horizontal, Theme.cardPadding)
                     ForEach(market.plugins) { entry in
                         PluginRow(entry: entry, catalog: catalog, running: running, busy: busy,
                                   openHealth: openHealth, confirm: confirm, open: { openPlugin(entry) })
                             .padding(.horizontal, Theme.cardPadding)
                         if entry.id != market.plugins.last?.id {
-                            Rectangle().fill(Theme.border).frame(height: 1)
+                            Rectangle().fill(Theme.border).frame(height: Theme.hairline)
                                 .padding(.horizontal, Theme.cardPadding)
                         }
                     }
@@ -246,7 +246,7 @@ private struct MarketplaceCard: View {
                           help: (expand: "Show this marketplace's plugins",
                                  collapse: "Show only the header"),
                           edge: .cardBottom, note: market.countLine(searching: searching)) {
-                    withAnimation(.easeOut(duration: 0.15)) { toggle() }
+                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { toggle() }
                 }
             }
         }
@@ -255,7 +255,7 @@ private struct MarketplaceCard: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
             .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
     }
 
     private var header: some View {
@@ -491,10 +491,10 @@ private struct StatusDot: View {
 
     var body: some View {
         switch status {
-        case .enabled: Circle().fill(Theme.accentFill).frame(width: 7, height: 7)
-        case .installed: Circle().fill(Theme.textSecondary).frame(width: 7, height: 7)
-        case .disabled, .cached: Circle().fill(Theme.borderStrong).frame(width: 7, height: 7)
-        case .available, .absent: Circle().strokeBorder(Theme.textMuted, lineWidth: 1.2).frame(width: 7, height: 7)
+        case .enabled: Circle().fill(Theme.accentFill).frame(width: Theme.statusDot, height: Theme.statusDot)
+        case .installed: Circle().fill(Theme.textSecondary).frame(width: Theme.statusDot, height: Theme.statusDot)
+        case .disabled, .cached: Circle().fill(Theme.borderStrong).frame(width: Theme.statusDot, height: Theme.statusDot)
+        case .available, .absent: Circle().strokeBorder(Theme.textMuted, lineWidth: 1.2).frame(width: Theme.statusDot, height: Theme.statusDot)
         }
     }
 }

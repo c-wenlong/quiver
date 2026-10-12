@@ -2,6 +2,9 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
+/// The caption column a server sheet aligns its labelled rows on.
+private let detailLabelWidth: CGFloat = 96
+
 /// Every MCP server the harnesses configure, as a server × harness grid:
 /// where each is missing, where two definitions disagree, and a sync
 /// through `swe mcp sync` to even them out.
@@ -247,7 +250,7 @@ private struct ServerRow: View {
             HStack(spacing: 0) {
                 HStack(alignment: .top, spacing: 8) {
                     if showHealth, let health = server.health {
-                        Circle().fill(healthColor(health)).frame(width: 7, height: 7)
+                        Circle().fill(healthColor(health)).frame(width: Theme.statusDot, height: Theme.statusDot)
                             .padding(.top, 4)
                             .help(server.detail ?? "Healthy")
                     }
@@ -267,7 +270,7 @@ private struct ServerRow: View {
             .background(hovering ? Theme.rowHover : .clear)
             .contentShape(.rect)
         }
-        .plainButton(cornerRadius: 4)
+        .plainButton(cornerRadius: Theme.smallRadius)
         .onHover { hovering = $0 }
         .accessibilityLabel("\(server.name), in \(harnessNames(server.harnesses))")
         // The Finder/editor buttons sit on the open button, above it in
@@ -379,7 +382,7 @@ private struct ServerSheet: View {
                 Text(server.name).font(Theme.sectionTitle).tracking(-0.5)
                 Badge(server.transport)
                 if let health = server.health {
-                    Circle().fill(healthColor(health)).frame(width: 7, height: 7)
+                    Circle().fill(healthColor(health)).frame(width: Theme.statusDot, height: Theme.statusDot)
                     Text(server.detail ?? "Healthy").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
@@ -429,7 +432,7 @@ private struct ServerSheet: View {
             if server.groups.count > 1 {
                 HStack(spacing: 10) {
                     Text("Copy from").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 96, alignment: .leading)
+                        .frame(width: detailLabelWidth, alignment: .leading)
                     SelectMenu(options: server.groups.enumerated().map { index, group in
                                    (group.first ?? "", "Definition \(variantLetter(index)) (\(harnessNames(group)))",
                                     group.first)
@@ -561,7 +564,7 @@ private struct HarnessFacts: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary).frame(width: 96, alignment: .leading)
+            Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary).frame(width: detailLabelWidth, alignment: .leading)
             FlowLayout(spacing: 10, lineSpacing: 6) {
                 ForEach(harnesses, id: \.self) { HarnessMarkView(harness: $0) }
             }
@@ -577,7 +580,7 @@ private struct Facts: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary).frame(width: 96, alignment: .leading)
+            Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary).frame(width: detailLabelWidth, alignment: .leading)
             Text(value).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -28,8 +28,8 @@ struct ProviderVisibilityCard: View {
                     }
                     .buttonStyle(SegmentActionStyle())
                     .padding(2)
-                    .background(Theme.segmentTrack, in: .rect(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+                    .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.blockRadius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
                     .fixedSize()
                 }
             }
@@ -129,7 +129,7 @@ private struct SegmentAction: View {
             .background(hovering ? Theme.segmentSelected : .clear, in: .rect(cornerRadius: Theme.controlRadius))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(.rect)
-            .animation(.easeOut(duration: 0.15), value: hovering)
+            .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
             .onHover { hovering = $0 }
     }
 }

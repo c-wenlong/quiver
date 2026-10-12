@@ -109,7 +109,7 @@ private struct SubNavItem: View {
             .background(isSelected ? Theme.selected : hovering ? Theme.hover : .clear,
                         in: .rect(cornerRadius: Theme.controlRadius))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
-            .animation(.easeOut(duration: 0.15), value: hovering)
+            .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
         }
         .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
         .focusRing(isFocused, cornerRadius: Theme.controlRadius)
@@ -136,7 +136,7 @@ private struct SettingsSectionView: View {
                     Text(section.detail)
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }
-                Rectangle().fill(Theme.border).frame(height: 1)
+                Rectangle().fill(Theme.border).frame(height: Theme.hairline)
             }
             switch section {
             case .general:
@@ -227,7 +227,7 @@ struct SettingsCard<Content: View>: View {
 }
 
 struct SettingsDivider: View {
-    var body: some View { Rectangle().fill(Theme.border).frame(height: 1) }
+    var body: some View { Rectangle().fill(Theme.border).frame(height: Theme.hairline) }
 }
 
 /// Label 14/20 in `text.label` over a 12/16 description, the control on the
@@ -410,9 +410,9 @@ private struct FooterLink: View {
         Button(action: action) {
             Label(title, systemImage: symbol)
                 .foregroundStyle(hovering ? Theme.footerLinkHover : Theme.textMuted)
-                .animation(.easeOut(duration: 0.15), value: hovering)
+                .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
         }
-        .plainButton(cornerRadius: 4)
+        .plainButton(cornerRadius: Theme.smallRadius)
         .onHover { hovering = $0 }
     }
 }

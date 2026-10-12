@@ -236,7 +236,7 @@ private struct ServiceCard: View {
                     Spacer(minLength: 8)
                     Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
                         .labelStyle(.iconOnly)
-                        .plainButton(cornerRadius: 4)
+                        .plainButton(cornerRadius: Theme.smallRadius)
                         .foregroundStyle(Theme.textSecondary)
                         .help(status.service.pageURL.absoluteString)
                     if let remove {
@@ -249,7 +249,7 @@ private struct ServiceCard: View {
                                 .contentShape(.rect)
                         }
                         .menuStyle(.button)
-                        .plainButton(cornerRadius: 6)
+                        .plainButton()
                         .menuIndicator(.hidden)
                         .fixedSize()
                         .help("More")
@@ -292,7 +292,7 @@ private struct ServiceCard: View {
                                 Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
                                     openURL(status.service.pageURL)
                                 }
-                                .plainButton(cornerRadius: 4)
+                                .plainButton(cornerRadius: Theme.smallRadius)
                                 .font(Theme.caption)
                                 .foregroundStyle(Theme.textSecondary)
                                 .underline()
@@ -312,7 +312,7 @@ private struct ServiceCard: View {
                           help: (expand: "Show the summary, affected components and incidents",
                                  collapse: "Show only the health line"),
                           edge: .cardBottom, note: detailNote) {
-                    withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { expanded.toggle() }
                 }
             }
         }
@@ -320,7 +320,7 @@ private struct ServiceCard: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
             .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
     }
 }
 
@@ -399,7 +399,7 @@ private struct IncidentView: View {
                 if let url = incident.url {
                     Button("Open incident", systemImage: "arrow.up.right") { openURL(url) }
                         .labelStyle(.iconOnly)
-                        .plainButton(cornerRadius: 4)
+                        .plainButton(cornerRadius: Theme.smallRadius)
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary)
                         .help(url.absoluteString)
@@ -486,7 +486,7 @@ struct ServiceStatusMenuLine: View {
                 }
                 .contentShape(.rect)
             }
-            .plainButton(cornerRadius: 4)
+            .plainButton(cornerRadius: Theme.smallRadius)
             .help("Open service status")
             .accessibilityLabel("Service status: \(line)")
         }

@@ -71,8 +71,8 @@ private struct Strip<Content: View>: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: .rect(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+            .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 }
 
@@ -142,7 +142,7 @@ private struct LinkRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 7, height: 7)
+            Circle().fill(color).frame(width: Theme.statusDot, height: Theme.statusDot)
             HarnessMarkView(harness: name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
             // Only what needs attention gets words; a dot says linked.
             if link.state != .linked {
@@ -276,7 +276,7 @@ struct InstructionEditor: View {
                 }
                 if document.isDirty {
                     HStack(spacing: 5) {
-                        Circle().fill(Theme.warning).frame(width: 7, height: 7)
+                        Circle().fill(Theme.warning).frame(width: Theme.statusDot, height: Theme.statusDot)
                         Text("Unsaved").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                     .accessibilityElement(children: .combine)
