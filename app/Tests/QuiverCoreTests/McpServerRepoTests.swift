@@ -190,6 +190,66 @@ private func git(_ args: String..., in dir: URL) async throws {
         #expect(usage["/srv/one"] == ["plain"])
     }
 
+    // MARK: - grouped
+
+    @Test func aServerRunningFromTheFolderGoesLocalAnHttpOneGoesRemote() {
+        let servers = [repo("linear-mcp", at: "/srv/mcp/linear-mcp")]
+        let hub = [
+            hubServer("linear", command: "node", args: ["/srv/mcp/linear-mcp/build/index.js"]),
+            McpServer(name: "notion", transport: "http", url: "https://mcp.notion.com/mcp",
+                      harnesses: ["claude"]),
+            hubServer("hn", command: "npx", args: ["-y", "hn-mcp"]),
+        ]
+        let (local, remote) = McpServerRepo.grouped(servers: hub, folders: servers)
+        #expect(local.map(\.name) == ["linear"])
+        #expect(remote.map(\.name) == ["notion", "hn"])
+        guard case .server(_, let folders) = local[0] else {
+            Issue.record("linear should be a server row")
+            return
+        }
+        #expect(folders.map(\.name) == ["linear-mcp"])
+    }
+
+    @Test func anUnusedFolderJoinsLocalOnceWithNoServer() {
+        let servers = [repo("unused", at: "/srv/mcp/unused")]
+        let hub = [hubServer("notion", command: "npx", args: ["-y", "notion-mcp"])]
+        let (local, remote) = McpServerRepo.grouped(servers: hub, folders: servers)
+        #expect(local == [.folder(servers[0])])
+        #expect(remote.map(\.name) == ["notion"])
+    }
+
+    @Test func aFolderBackingTwoServersSitsUnderEachWithoutARowOfItsOwn() {
+        let shared = repo("shared-mcp", at: "/srv/mcp/shared-mcp")
+        let hub = [
+            hubServer("one", command: "node", args: ["/srv/mcp/shared-mcp/one.js"]),
+            hubServer("two", command: "node", args: ["/srv/mcp/shared-mcp/two.js"]),
+        ]
+        let (local, remote) = McpServerRepo.grouped(servers: hub, folders: [shared])
+        #expect(local.map(\.name) == ["one", "two"])
+        #expect(remote.isEmpty)
+        #expect(local.allSatisfy {
+            if case .server(_, let folders) = $0 { return folders == [shared] }
+            return false
+        })
+    }
+
+    @Test func severalFoldersBackOneServerAndLocalSortsByName() {
+        let a = repo("a-mcp", at: "/srv/mcp/a-mcp")
+        let b = repo("b-mcp", at: "/srv/mcp/b-mcp")
+        let unused = repo("zzz-unused", at: "/srv/mcp/zzz-unused")
+        let hub = [hubServer("aaa-server", command: "node",
+                             args: ["/srv/mcp/b-mcp/index.js", "/srv/mcp/a-mcp/helper.js"])]
+        let (local, remote) = McpServerRepo.grouped(servers: hub, folders: [a, b, unused])
+        // "aaa-server" first, then the unused folder, all in Local.
+        #expect(local.map(\.name) == ["aaa-server", "zzz-unused"])
+        #expect(remote.isEmpty)
+        guard case .server(_, let folders) = local[0] else {
+            Issue.record("aaa-server should be a server row")
+            return
+        }
+        #expect(folders.map(\.name) == ["a-mcp", "b-mcp"])
+    }
+
     // MARK: - GitState.parse
 
     @Test func parseReadsTrackingCountsAndChanges() {

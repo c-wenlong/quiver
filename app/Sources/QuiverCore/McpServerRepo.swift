@@ -183,6 +183,60 @@ public enum McpServerRepo {
         return usage
     }
 
+    /// One row of the page's single server list: a hub server with the
+    /// folders it runs from (empty for a remote one), or a folder no hub
+    /// server uses yet.
+    public enum Row: Equatable, Sendable, Identifiable {
+        case server(McpServer, folders: [McpRepoServer])
+        case folder(McpRepoServer)
+
+        public var id: String {
+            switch self {
+            case .server(let server, _): "server:\(server.name)"
+            case .folder(let folder): "folder:\(folder.id)"
+            }
+        }
+
+        /// The name the Local group sorts by.
+        public var name: String {
+            switch self {
+            case .server(let server, _): server.name
+            case .folder(let folder): folder.name
+            }
+        }
+    }
+
+    /// The hub servers split for the page's one list. A server is Local
+    /// when a folder in the managed servers folder runs it (the `hubUsage`
+    /// match), Remote otherwise; folders nobody uses join Local as
+    /// standalone "Not in the hub" rows, while a folder backing several
+    /// servers sits under each of them with no row of its own. Local is a
+    /// flat list sorted by name, mixing servers and unused folders; Remote
+    /// keeps the hub's order.
+    public static func grouped(servers: [McpServer],
+                             folders: [McpRepoServer]) -> (local: [Row], remote: [Row]) {
+        let usage = hubUsage(servers: folders, hub: servers)
+        var claimed = Set<String>()
+        var local: [Row] = []
+        var remote: [Row] = []
+        for server in servers {
+            let backing = folders
+                .filter { usage[$0.path.standardizedFileURL.path]?.contains(server.name) == true }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            if backing.isEmpty {
+                remote.append(.server(server, folders: []))
+            } else {
+                local.append(.server(server, folders: backing))
+                claimed.formUnion(backing.map { $0.path.standardizedFileURL.path })
+            }
+        }
+        for folder in folders where !claimed.contains(folder.path.standardizedFileURL.path) {
+            local.append(.folder(folder))
+        }
+        local.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return (local, remote)
+    }
+
     /// `word` as a path, exactly as given: `file://` decoded, relative
     /// words ignored. Quotes and backslashes are kept — a literal arg or a
     /// bare command may legitimately contain them, and command-line words

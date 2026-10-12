@@ -18,14 +18,8 @@ struct McpServersPage: View {
     /// list shows at once.
     private var model: McpModel { app.mcp }
 
-    /// The folder the "Server folders" section reads, from the Paths setting.
+    /// The folder the folder scan reads, from the Paths setting.
     private var repoRoot: URL { AppModel.mcpServersFolder(path: app.mcpServersPath) }
-
-    /// The hub list the page already loaded, for each folder's "Used by" line.
-    private var hub: [McpServer] {
-        if case .loaded(let inventory) = model.state { return inventory.servers }
-        return []
-    }
 
     var body: some View {
         Page(title: "MCP servers",
@@ -62,12 +56,13 @@ struct McpServersPage: View {
                 HarnessChips(harnesses: inventory.activeHarnesses, hidden: $hidden)
                     .onChange(of: hidden) { UserDefaults.standard.set(hidden.sorted(), forKey: Self.hiddenKey) }
                 let rows = inventory.servers(filter, across: compared)
-                if rows.isEmpty {
+                let grouped = McpServerRepo.grouped(servers: rows, folders: app.mcpRepo.servers)
+                if grouped.local.isEmpty && grouped.remote.isEmpty {
                     Card { Text("Every server is in every compared harness, defined the same way.").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }
                 } else {
                     Card {
-                        ServerGrid(harnesses: compared, servers: rows,
-                                   showHealth: model.hasHealth) { selected = $0 }
+                        ServerGrid(harnesses: compared, local: grouped.local, remote: grouped.remote,
+                                   showHealth: model.hasHealth, editor: app.editor) { selected = $0 }
                     }
                 }
                 VStack(alignment: .leading, spacing: 4) {
@@ -78,7 +73,7 @@ struct McpServersPage: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
-            McpRepoSection(model: app.mcpRepo, root: repoRoot, hub: hub, editor: app.editor)
+            McpRepoSection(model: app.mcpRepo, root: repoRoot)
         }
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
         .task(id: repoRoot) {
@@ -132,9 +127,20 @@ private struct HarnessChips: View {
 
 private struct ServerGrid: View {
     var harnesses: [String]
-    var servers: [McpServer]
+    /// The grouped list: local servers and unused folders, then remotes.
+    var local: [McpServerRepo.Row]
+    var remote: [McpServerRepo.Row]
     var showHealth: Bool
+    var editor: CodeEditor?
     var open: (McpServer) -> Void
+
+    /// The groups in display order, skipping empty ones.
+    private var sections: [(title: String, rows: [McpServerRepo.Row])] {
+        var out: [(String, [McpServerRepo.Row])] = []
+        if !local.isEmpty { out.append(("Local", local)) }
+        if !remote.isEmpty { out.append(("Remote", remote)) }
+        return out
+    }
 
     /// The name column takes whatever the cells leave, but never less than this.
     static let nameMinWidth: CGFloat = 180
@@ -168,9 +174,20 @@ private struct ServerGrid: View {
                 .foregroundStyle(Theme.tableHeaderText)
                 .padding(.bottom, 8)
                 Divider().overlay(Theme.border)
-                ForEach(servers) { server in
-                    ServerRow(server: server, harnesses: harnesses, showHealth: showHealth) { open(server) }
-                    if server != servers.last { Divider().overlay(Theme.border) }
+                ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                    Text("\(section.title) · \(section.rows.count)")
+                        .font(Theme.cardTitle).foregroundStyle(Theme.textSecondary)
+                        .padding(.top, 14).padding(.bottom, 6)
+                    ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                        switch row {
+                        case .server(let server, let folders):
+                            ServerRow(server: server, folders: folders, harnesses: harnesses,
+                                      showHealth: showHealth, editor: editor) { open(server) }
+                        case .folder(let folder):
+                            FolderRow(folder: folder, harnesses: harnesses, editor: editor)
+                        }
+                        if index < section.rows.count - 1 { Divider().overlay(Theme.border) }
+                    }
                 }
             }
             // Exactly the card's width, or the columns' minimum if wider, so a
@@ -185,37 +202,56 @@ private struct ServerGrid: View {
 
 private struct ServerRow: View {
     var server: McpServer
+    /// The folders in the servers folder this server runs from; empty for
+    /// a remote one.
+    var folders: [McpRepoServer] = []
     var harnesses: [String]
     var showHealth: Bool
+    var editor: CodeEditor?
     var open: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        Button(action: open) {
-            HStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    if showHealth, let health = server.health {
-                        Circle().fill(healthColor(health)).frame(width: 7, height: 7)
-                            .help(server.detail ?? "Healthy")
+        VStack(spacing: 0) {
+            Button(action: open) {
+                HStack(spacing: 0) {
+                    HStack(alignment: .top, spacing: 8) {
+                        if showHealth, let health = server.health {
+                            Circle().fill(healthColor(health)).frame(width: 7, height: 7)
+                                .padding(.top, 4)
+                                .help(server.detail ?? "Healthy")
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(server.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                            Text(server.transport).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        }
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(server.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Text(server.transport).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
+                    let differs = server.conflicts(among: harnesses)
+                    ForEach(harnesses, id: \.self) { harness in
+                        Cell(server: server, harness: harness, differs: differs).frame(width: ServerGrid.columnWidth(harness))
                     }
                 }
-                .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
-                let differs = server.conflicts(among: harnesses)
-                ForEach(harnesses, id: \.self) { harness in
-                    Cell(server: server, harness: harness, differs: differs).frame(width: ServerGrid.columnWidth(harness))
-                }
+                .padding(.vertical, 8)
+                .background(hovering ? Theme.rowHover : .clear)
+                .contentShape(.rect)
             }
-            .padding(.vertical, 8)
-            .background(hovering ? Theme.rowHover : .clear)
-            .contentShape(.rect)
+            .plainButton(cornerRadius: 4)
+            .onHover { hovering = $0 }
+            .accessibilityLabel("\(server.name), in \(harnessNames(server.harnesses))")
+            // The folders this server runs from sit under its row, outside
+            // the open button so their own Finder/editor buttons still work.
+            ForEach(folders) { folder in
+                HStack(spacing: 0) {
+                    RepoFolderRow(folder: folder, usedBy: nil, editor: editor)
+                        .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
+                    ForEach(harnesses, id: \.self) { harness in
+                        Spacer().frame(width: ServerGrid.columnWidth(harness))
+                    }
+                }
+                .padding(.bottom, 6)
+            }
         }
-        .plainButton(cornerRadius: 4)
-        .onHover { hovering = $0 }
-        .accessibilityLabel("\(server.name), in \(harnessNames(server.harnesses))")
     }
 }
 
@@ -503,108 +539,87 @@ private struct Facts: View {
 
 // MARK: - Server folders
 
-/// The managed servers folder: a card per group of checkouts, each row
-/// saying which hub servers run from it and what its git state is, with
-/// Finder and editor buttons.
+/// What is left of the old "Server folders" section: only the states the
+/// grouped list cannot show. A good scan renders nothing here, since its
+/// folders are the Local rows up in the grid.
 private struct McpRepoSection: View {
     var model: McpServerRepoModel
     var root: URL
-    /// The page's current inventory; recomputed every render so "Used by"
-    /// follows a load, a refresh or a sync.
-    var hub: [McpServer]
-    var editor: CodeEditor?
-
-    /// Group name then its servers, in the scan's order (ungrouped first).
-    private var groups: [(name: String?, servers: [McpRepoServer])] {
-        var order: [String?] = []
-        var byGroup: [String?: [McpRepoServer]] = [:]
-        for server in model.servers {
-            if byGroup[server.group] == nil { order.append(server.group) }
-            byGroup[server.group, default: []].append(server)
-        }
-        return order.map { ($0, byGroup[$0] ?? []) }
-    }
 
     var body: some View {
-        // Computed once per render: folder path -> the hub servers inside it.
-        let usage = McpServerRepo.hubUsage(servers: model.servers, hub: hub)
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Server folders")
-                    .font(Theme.sectionTitle).tracking(-0.5).foregroundStyle(Theme.textStrong)
-                HStack(spacing: 12) {
-                    Text(displayPath(root))
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1).truncationMode(.middle)
-                    Button("Show in Finder", systemImage: "folder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([root])
-                    }
-                    .secondaryButton()
-                }
+        if let error = model.error {
+            ErrorCard(message: error)
+        } else if !FileManager.default.fileExists(atPath: root.path) {
+            Card {
+                Label("\(displayPath(root)) doesn't exist. Set the folder in Settings > Paths.",
+                      systemImage: "folder.badge.questionmark")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             }
-            if let error = model.error {
-                ErrorCard(message: error)
-            } else if !FileManager.default.fileExists(atPath: root.path) {
-                Card {
-                    Label("\(displayPath(root)) doesn't exist. Set the folder in Settings > Paths.",
-                          systemImage: "folder.badge.questionmark")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                }
-            } else if model.servers.isEmpty && model.isLoading {
-                ProgressView().frame(maxWidth: .infinity)
-            } else if model.servers.isEmpty {
-                Card {
-                    Text("No server folders in \(displayPath(root)).")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                }
-            } else {
-                ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                    Card(title: group.name ?? "Servers") {
-                        ForEach(group.servers) { server in
-                            RepoServerRow(server: server,
-                                          usedBy: usage[server.path.standardizedFileURL.path] ?? [],
-                                          editor: editor)
-                            if server.id != group.servers.last?.id { Divider().overlay(Theme.border) }
-                        }
-                    }
-                }
+        } else if model.servers.isEmpty && model.isLoading {
+            ProgressView().frame(maxWidth: .infinity)
+        } else if model.servers.isEmpty {
+            Card {
+                Text("No server folders in \(displayPath(root)).")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             }
         }
     }
 }
 
-/// One checkout: its name, which hub servers run from it, its git state,
-/// then Show in Finder and Open in editor.
-private struct RepoServerRow: View {
-    var server: McpRepoServer
-    /// The hub servers that run from this folder, from the live inventory.
-    var usedBy: [String]
+/// A folder in the servers folder that no hub server uses yet: the
+/// folder's details in the name column and nothing in the harness cells.
+private struct FolderRow: View {
+    var folder: McpRepoServer
+    var harnesses: [String]
+    var editor: CodeEditor?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RepoFolderRow(folder: folder, usedBy: [], editor: editor)
+                .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
+            ForEach(harnesses, id: \.self) { harness in
+                Spacer().frame(width: ServerGrid.columnWidth(harness))
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+/// One checkout's details: its name, which hub servers run from it (or
+/// "Not in the hub"), its git state, then Show in Finder and Open in
+/// editor. `usedBy` nil hides the caption, for a folder already sitting
+/// under its server.
+private struct RepoFolderRow: View {
+    var folder: McpRepoServer
+    var usedBy: [String]?
     var editor: CodeEditor?
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(server.name)
+                Text(folder.name)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary).lineLimit(1)
-                if usedBy.isEmpty {
-                    Text("Not in the hub").font(Theme.caption).foregroundStyle(Theme.textMuted)
-                } else {
-                    Text("Used by \(usedBy.joined(separator: ", "))")
-                        .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                if let usedBy {
+                    if usedBy.isEmpty {
+                        Text("Not in the hub").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    } else {
+                        Text("Used by \(usedBy.joined(separator: ", "))")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    }
                 }
                 gitLine
             }
             Spacer(minLength: 8)
             HStack(spacing: 8) {
                 Button("Show in Finder", systemImage: "folder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([server.path])
+                    NSWorkspace.shared.activateFileViewerSelecting([folder.path])
                 }
                 .iconButton()
                 .help("Show in Finder")
                 if let editor {
                     Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") {
-                        NSWorkspace.shared.open([server.path], withApplicationAt: editor.appURL,
+                        NSWorkspace.shared.open([folder.path], withApplicationAt: editor.appURL,
                                                 configuration: .init())
                     }
                     .iconButton()
@@ -612,13 +627,12 @@ private struct RepoServerRow: View {
                 }
             }
         }
-        .padding(.vertical, 8)
     }
 
     /// Branch, ahead/behind counts and the local-changes badge, a note when
     /// the folder isn't a repository, or a spinner while git answers.
     @ViewBuilder private var gitLine: some View {
-        if let git = server.git {
+        if let git = folder.git {
             if git.isRepo {
                 HStack(spacing: 8) {
                     Text(git.branch ?? "detached HEAD")
