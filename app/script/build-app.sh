@@ -66,7 +66,7 @@ describe="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 # Bundle versions must be plain dotted numbers. LaunchServices cannot parse a
 # describe string, and WidgetKit then refuses every widget render with
 # bundleStubNotSupported ("Bundle version did not match").
-version="$(git -C "$here" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"
+version="$( (git -C "$here" describe --tags --abbrev=0 2>/dev/null || true) | sed 's/^v//')"
 case "$version" in ""|*[!0-9.]*) version="0.0.0" ;; esac
 build="$(git -C "$here" rev-list --count HEAD 2>/dev/null || echo 1)"
 cat > "$bundle/Contents/Info.plist" <<PLIST
