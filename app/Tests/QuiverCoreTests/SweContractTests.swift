@@ -220,6 +220,25 @@ import Testing
         let (swe, _) = try client("swe-harness-archive")
         let change = try await swe.archive("fixturetool", reason: "contract fixture")
         #expect(change.state == .archived)
+
+        let (restoring, runner) = try client("swe-harness-restore")
+        let restored = try await restoring.restore("fixturetool")
+        #expect(restored.state == .active)
+        #expect(runner.calls.last == ["harness", "archive", "fixturetool", "--json"])
+    }
+
+    /// Captured from `swe mcp sync claude codex --only=fixture-server
+    /// --no-interactive --json` against a throwaway HOME.
+    @Test func mcpSyncReplyDecodesThroughTheClient() async throws {
+        let (swe, runner) = try client("swe-mcp-sync")
+        let server = McpServer(name: "fixture-server", harnesses: ["claude"])
+        let report = try await swe.mcpSync(server: server, from: "claude", to: ["codex"],
+                                           overwrite: false, dryRun: false)
+        #expect(report.source == "claude")
+        #expect(report.dryRun == false)
+        #expect(report.selected == ["fixture-server"])
+        #expect(report.targets == [McpSyncReport.Target(name: "codex", added: ["fixture-server"])])
+        #expect(runner.calls.last?.prefix(4) == ["mcp", "sync", "claude", "codex"])
     }
 
     @Test func editReplyDecodesTheChangedHarness() async throws {

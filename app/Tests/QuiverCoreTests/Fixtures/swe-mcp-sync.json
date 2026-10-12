@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "data": {
+    "source": "claude",
+    "dry_run": false,
+    "selected": [
+      "fixture-server"
+    ],
+    "targets": [
+      {
+        "name": "codex",
+        "added": [
+          "fixture-server"
+        ],
+        "updated": [],
+        "skipped": [],
+        "pruned": []
+      }
+    ]
+  }
+}
