@@ -21,6 +21,15 @@ from quiver.harness.columns import (
     save_window,
     window_label,
 )
+from quiver.harness.models import (
+    ArchiveReply,
+    DoctorReport,
+    EditReply,
+    HarnessRow,
+    StateReply,
+    display_name,
+    primary_color,
+)
 from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.init.layout import link_states
 from quiver.harness.stars import (
@@ -32,7 +41,7 @@ from quiver.harness.stars import (
 )
 from quiver.harness.tools import extract_version_number, is_installed, live_version
 from quiver.configuration import ConfigurationError
-from quiver.json_output import emit, take_json_flag
+from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.prompt import read_line
 from quiver.table import Table
 
@@ -394,7 +403,7 @@ def cmd_archive(args):
 
     args, json_view = take_json_flag(list(args or []))
     # Under --json a refusal must leave stdout empty: the app decodes it whole.
-    err = sys.stderr if json_view else sys.stdout
+    err = error_stream(json_view)
     entries = load_archive()
 
     if json_view and (not args or args[0] in ("list", "ls")):
@@ -472,7 +481,7 @@ def cmd_archive(args):
     if name in entries and not reason and usage is None:
         old = unarchive(name)
         if json_view:
-            return emit({"name": name, "state": _registry_state(name), "archived": None})
+            return emit(ArchiveReply(name, _registry_state(name), None).to_json())
         print(f"  {c('green', '✓')} Restored {c('bold', name)}")
         print(f"    {c('dim', 'was archived ' + _fmt_when(old['archived_at']))}"
               f"{c('dim', ': ' + old['reason'] if old['reason'] else '')}")
@@ -480,7 +489,7 @@ def cmd_archive(args):
 
     entry = archive(name, reason, usage=usage)
     if json_view:
-        return emit({"name": name, "state": "archived", "archived": entry})
+        return emit(ArchiveReply(name, "archived", entry).to_json())
     verb = "Re-archived" if name in entries else "Archived"
     print(f"  {c('dim', '▪')} {verb} {c('bold', name)} "
           f"{c('dim', _fmt_when(entry['archived_at']))} "
@@ -562,23 +571,6 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False) 
     return holder["result"]
 
 
-def _display_name(info: dict) -> str | None:
-    """The harness's human name ("Qwen Code"), or None when unset or blank."""
-    value = info.get("display_name")
-    return value.strip() or None if isinstance(value, str) else None
-
-
-def _primary_color(name: str, info: dict) -> str | None:
-    """The entry's own ``primary_color``; the catalog default fills in at read time.
-
-    An entry without the field must not be rewritten just to gain the
-    catalog's colour, so the fallback resolves here rather than on load.
-    """
-    from quiver.harness.catalog import HARNESS_CATALOG
-
-    return info.get("primary_color") or HARNESS_CATALOG.get(name, {}).get("primary_color")
-
-
 def _kept_fields(previous: dict | None) -> dict:
     """Fields a re-add carries over from the entry it replaces.
 
@@ -587,7 +579,7 @@ def _kept_fields(previous: dict | None) -> dict:
     """
     previous = previous or {}
     kept = {}
-    name = _display_name(previous)
+    name = display_name(previous)
     if name:
         kept["display_name"] = name
     colour = previous.get("primary_color")
@@ -596,36 +588,10 @@ def _kept_fields(previous: dict | None) -> dict:
     return kept
 
 
-def _harness_json(name, info, starred, archived, counts, rate) -> dict:
-    """One ``swe list --json`` row."""
-    if name in archived:
-        state = "archived"
-    elif name in starred:
-        state = "starred"
-    else:
-        state = "active"
-    return {
-        "name": name,
-        "display_name": _display_name(info),
-        "command": info.get("command") or name,
-        "description": info.get("description") or "",
-        "version": info.get("version") or None,
-        "notes": info.get("notes") or None,
-        "aliases": [a for a in info.get("aliases", []) if a != name],
-        "tags": list(info.get("tags", [])),
-        "primary_color": _primary_color(name, info),
-        "state": state,
-        "sessions_100d": counts.get(name),
-        "rate_limit": rate.to_json() if rate is not None else None,
-        "installed": is_installed(info.get("command") or name),
-        "archived": archived.get(name),
-    }
-
-
 def cmd_list(args):
     args, json_view = take_json_flag(list(args or []))
     # Under --json a refusal must leave stdout empty: the app decodes it whole.
-    err = sys.stderr if json_view else sys.stdout
+    err = error_stream(json_view)
     try:
         args = expand_value_flags(args, {"--scope", "--exclude"})
     except ValueError as exc:
@@ -753,8 +719,8 @@ def cmd_list(args):
         # is set to show.
         counts_100d = _session_counts(100)
         return emit({"harnesses": [
-            _harness_json(name, info, starred_set, archived, counts_100d,
-                          rate_limits.get(name))
+            HarnessRow.of(name, info, starred_set, archived, counts_100d,
+                          rate_limits.get(name)).to_json()
             for name, info in tools.items()
             if not tag_filter or tag_filter in info.get("tags", [])
         ]})
@@ -996,7 +962,7 @@ def cmd_star(args):
         # which harnesses are starred.
         print("swe hs star --json takes exactly one harness name", file=sys.stderr)
         return 1
-    err = sys.stderr if json_view else sys.stdout
+    err = error_stream(json_view)
     tools = load_registry()
 
     if not args:
@@ -1045,7 +1011,7 @@ def cmd_star(args):
 
     now_starred = toggle_star(name)
     if json_view:
-        return emit({"name": name, "state": _registry_state(name)})
+        return emit(StateReply(name, _registry_state(name)).to_json())
     if now_starred:
         print(f"  {c('neon_pink', '★')} Starred {c('neon', name)} — pinned to top of {c('cyan', 'swe list')}")
     else:
@@ -1103,12 +1069,12 @@ def cmd_info(args):
         ),
         ("Path:", path),
     ]
-    colour = _primary_color(name, info)
+    colour = primary_color(name, info)
     if colour:
         rows.append(("Colour:", colour))
-    if _display_name(info):
+    if display_name(info):
         # Only when set, so a harness without one prints exactly as before.
-        rows.insert(0, ("Display name:", _display_name(info)))
+        rows.insert(0, ("Display name:", display_name(info)))
     for label, val in rows:
         # trust_cell_width means the table will not truncate this column,
         # so a long description has to be trimmed before it goes in. Only
@@ -1551,64 +1517,6 @@ def cmd_aliases(args):
     print()
 
 
-def _doctor_finding(check, severity, message, fix=None, harness=None) -> dict:
-    """One ``--json`` row. ``harness`` names the registry harness a finding
-    is about, so the app can show its logo; it is left out of rows that are
-    about the machine rather than one harness."""
-    finding = {"check": check, "severity": severity, "message": message, "fix": fix}
-    if harness:
-        finding["harness"] = harness
-    return finding
-
-
-def _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> list:
-    """Every problem ``swe doctor`` knows about, as ``--json`` rows.
-
-    Severity ``error`` is exactly what makes the exit status 1: an off-PATH
-    harness, an npm global bin missing from PATH, or an error-level drift
-    finding. A missing node or npm, nvm bins off PATH and drift warnings
-    are warnings, and a differing preferred npm is info, so ``ok`` and the
-    exit status always agree.
-    """
-    from quiver.harness.path_health import is_dir_on_path
-
-    findings = []
-    if not env.node:
-        findings.append(_doctor_finding(
-            "node", "warning", "node not found on PATH"))
-    if not env.npm:
-        findings.append(_doctor_finding(
-            "npm", "warning", "npm not found on PATH",
-            "Install Node/npm, or put npm on PATH."))
-    if env.global_bin and not env.global_bin_on_path:
-        findings.append(_doctor_finding(
-            "npm.global-bin", "error",
-            f"npm global bin {env.global_bin} is not on PATH",
-            f'export PATH="{env.global_bin}:$PATH"'))
-    if preferred and which_npm and Path(preferred).resolve() != Path(which_npm).resolve():
-        findings.append(_doctor_finding(
-            "npm.preferred", "info",
-            f"which npm is {which_npm}; swe prefers {preferred}"))
-    if nvm_dirs and not any(is_dir_on_path(d) for d in nvm_dirs):
-        findings.append(_doctor_finding(
-            "nvm", "warning",
-            "nvm node bins are not on PATH, so nvm globals are invisible "
-            "to swe and non-interactive shells",
-            "Avoid `npm install -g` under nvm unless nvm is always on PATH. "
-            "Prefer: swe install <name>"))
-    for name, command, hit in orphans:
-        findings.append(_doctor_finding(
-            "off-path", "error",
-            f"{name} ({command}) is at {hit.path} [{hit.source}], not on PATH",
-            f"swe install {name}", harness=name))
-    for finding in drift:
-        findings.append(_doctor_finding(
-            f"drift.{finding.area}",
-            "error" if finding.severity == "error" else "warning",
-            finding.message))
-    return findings
-
-
 def cmd_doctor(args):
     """Diagnose Node/PATH mismatches that hide globally installed harnesses."""
     args, json_view = take_json_flag(list(args or []))
@@ -1620,10 +1528,10 @@ def cmd_doctor(args):
         else:
             print(c("red", message))
         return 1
+    from quiver.harness.doctor import collect_findings
     from quiver.harness.drift import run_drift_checks
     from quiver.harness.path_health import (
         find_off_path_tools,
-        is_dir_on_path,
         nvm_bin_dirs,
         preferred_npm_bin,
         probe_node_env,
@@ -1637,11 +1545,12 @@ def cmd_doctor(args):
     which_npm = shutil.which("npm")
     orphans = find_off_path_tools(tools)
     drift = run_drift_checks()
-    found = _doctor_findings(env, preferred, which_npm, nvm_dirs, orphans, drift)
-    failed = any(f["severity"] == "error" for f in found)
+    report = DoctorReport(
+        collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift))
+    failed = not report.ok
 
     if json_view:
-        emit({"ok": not failed, "findings": found})
+        emit(report.to_json())
         return 1 if failed else 0
 
     print(f"\n{c('bold', 'swe doctor')} — environment health\n")
@@ -1922,13 +1831,13 @@ def _show_edit_fields(name: str, info: dict) -> None:
     print(f"\n  {c('bold', name)}")
     rows = [
         ("command", info.get("command", "")),
-        ("display name", _display_name(info) or "—"),
+        ("display name", display_name(info) or "—"),
         ("description", info.get("description") or "—"),
         ("aliases", _format_list([a for a in info.get("aliases", []) if a != name])),
         ("tags", _format_list(info.get("tags", []))),
         ("version", info.get("version") or "—"),
         ("notes", info.get("notes") or "—"),
-        ("colour", _primary_color(name, info) or "—"),
+        ("colour", primary_color(name, info) or "—"),
     ]
     for label, val in rows:
         print(f"  {'  ' + label + ':':<16} {val}")
@@ -2165,9 +2074,9 @@ def _edit_harness_json(name: str, info: dict) -> dict:
     """The ``swe list --json`` row for one harness, as ``swe edit --json`` echoes it."""
     from quiver.harness.archive import load_archive
 
-    return _harness_json(
+    return HarnessRow.of(
         name, info, set(load_stars()), load_archive(), _session_counts(100), None
-    )
+    ).to_json()
 
 
 def cmd_edit(args):
@@ -2178,13 +2087,13 @@ def cmd_edit(args):
     except ConfigurationError as exc:
         # The dispatcher does the same for every command; handled here too so
         # a direct call (and its tests) keeps --json stdout empty.
-        print(c("red", str(exc)), file=sys.stderr if json_view else sys.stdout)
+        print(c("red", str(exc)), file=error_stream(json_view))
         return 1
 
 
 def _edit(args, json_view):
     # Under --json a refusal must leave stdout empty: the app decodes it whole.
-    err = sys.stderr if json_view else sys.stdout
+    err = error_stream(json_view)
 
     if not args:
         print(c("red", "Usage: swe edit <name|alias> [--field=value ...]"), file=err)
@@ -2242,8 +2151,8 @@ def _edit(args, json_view):
 
     if not changes:
         if json_view:
-            return emit({"name": name, "changes": [],
-                         "harness": _edit_harness_json(name, info)})
+            return emit(EditReply(name, [],
+                                  _edit_harness_json(name, info)).to_json())
         print(c("dim", "  No changes."))
         return 0
 
@@ -2254,9 +2163,11 @@ def _edit(args, json_view):
     save_registry(tools)
     if json_view:
         # Each change line reads "field: old -> new".
-        return emit({"name": name,
-                     "changes": [line.split(":", 1)[0] for line in changes],
-                     "harness": harness})
+        return emit(EditReply(
+            name,
+            [line.split(":", 1)[0] for line in changes],
+            harness,
+        ).to_json())
     print(f"  {c('green', '✓')} Updated '{name}'")
     for line in changes:
         print(c("dim", f"    · {line}"))
