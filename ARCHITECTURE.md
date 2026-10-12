@@ -6,6 +6,17 @@ session history and rate limits.
 
 The CLI is stdlib-only, with no runtime dependencies at all.
 
+This file is the overview; each topic below has a deeper document in `docs/`:
+
+| Document | What it covers |
+|---|---|
+| [docs/data-model.md](docs/data-model.md) | Every persistent store, the ledger schema and migrations, JSON file formats, UserDefaults keys, the caching map |
+| [docs/app-architecture.md](docs/app-architecture.md) | The macOS app: folder layout, AppModel and the page models, Theme, the component catalogue, navigation |
+| [docs/backend-architecture.md](docs/backend-architecture.md) | The controller / service / model split per domain, the bottom layer, where each `--json` payload lives, how to extend |
+| [docs/json-contracts.md](docs/json-contracts.md) | Every `swe --json` command the app calls, its shape, and the Swift type that decodes it |
+| [docs/testing.md](docs/testing.md) | Running both suites, the throwaway-HOME rule, fixture capture, coverage and floors |
+| [docs/COVERAGE.md](docs/COVERAGE.md) | The dated coverage audit and current risk areas |
+
 ## The shape
 
 ```
@@ -20,18 +31,10 @@ The CLI is stdlib-only, with no runtime dependencies at all.
            console · table · paths · configuration · keys
 ```
 
-Five modules form the bottom layer. None of them may import a domain
-package; among themselves the order is fixed — `table` imports `console`,
-`configuration` imports `paths`, and `paths` takes only the constants in
-`quiver/__init__.py`:
-
-| module | owns |
-|---|---|
-| `paths.py` | every path under `~/.quiver`; the single source of layout truth |
-| `console.py` | colour, padding, width, truncation |
-| `table.py` | column rendering |
-| `configuration.py` | reading and writing `config/config.json` |
-| `keys.py` | one terminal key reader for every raw-mode widget |
+A bottom layer of small modules (`paths`, `console`, `table`,
+`configuration`, `keys`, `flags`, `json_output`) may not import a domain
+package; their allowed ordering and what each owns is in
+[docs/backend-architecture.md](docs/backend-architecture.md).
 
 ## The layout
 
@@ -310,17 +313,10 @@ history" — added after Cursor silently showed 0 sessions for months.
 
 ## Caching
 
-| cache | TTL | why |
-|---|---|---|
-| sessions | 60s | `swe session` should show the run you just finished |
-| rate limits | 300s | network round trip |
-| session counts | 24h | walks every transcript; moves by a handful a day |
-
 `swe list` runs in ~70ms because usage is opt-in. It was 870ms when usage was
-fetched unconditionally.
-
-The full map of persistent stores, their formats, TTLs and the app's ledger
-schema lives in [docs/data-model.md](docs/data-model.md).
+fetched unconditionally. The full map of persistent stores, their formats,
+TTLs and the app's ledger schema lives in
+[docs/data-model.md](docs/data-model.md).
 
 ## MCP
 
@@ -385,25 +381,10 @@ refusals and errors go to stderr with stdout left empty. `schema` changes
 only for a breaking change to an existing shape; adding a field is not one,
 and the app refuses a schema it does not know rather than misreading it.
 
-| Command | `data` |
-|---|---|
-| `swe list [tag] [--usage [--exclude=a,b]] [--scope=all] --json` | `harnesses`: name, command, version, aliases, tags, `primary_color` (the entry's own `#RRGGBB` or the catalog default, null when neither), `state` (active, starred, archived), `sessions_100d`, `rate_limit` (null unless `--usage` and starred), `installed` (command on PATH), `archived` (reason, archived_at, usage, or null) |
-| `swe harness star <name> --json` | `name` and the `state` the toggle left it in |
-| `swe harness archive <name> [why] --json` | `name`, `state`, and the `archived` record (null after a restore) |
-| `swe session [filters] --json` | `sessions`: id, harness, agent, cwd, title, title_source, `last_active_at` (epoch seconds), status, `resume` (`argv` and `cwd`, or null); `failures` names any parser that crashed, so a broken reader is not mistaken for no history |
-| `swe skills --json` | `shared_dir`; `harnesses`: each harness skills root (name, label, path, init's link `state` and `detail`, `archived`); `skills`: every SKILL.md with name, description, path (for a Claude plugin from a directory marketplace, its source folder, not the cache), root, `source` (shared, plugin, harness, builtin, catalog, project) and the `harnesses` that load it |
-| `swe skills hub --json` | `hub` and `plugins`: each plugin in `~/.quiver/plugins` with marketplace, description, version, components, `skills`, and `install` per harness (`state`: installed, unregistered, not-installed, linked-manifest, stale, disabled-here, disabled; `fix`; `id` for `swe find plugins --fix`, null when the fix is an edit by hand) |
-| `swe skills link\|unlink\|move ... --json` | what was done: `action`, `harness`, and the paths |
-| `swe find skills -r --json` | `shared_dir`, `skills` (the shared library), `roots` (per-harness skills root with its link state and skill count) |
-| `swe init --check --json` | `agents_file`, `agents_file_exists`, `harnesses` with `instructions` and `skills`, each a path and link state or null |
-| `swe mcp list --json` | `harnesses` (every config read, servers or not), `servers`: name, transport, command, args, url, `env_keys`, `header_keys`, harnesses, conflict, `variants` (harnesses grouped by identical definition) |
-| `swe mcp status --json` | the `mcp list` fields plus `health` and `detail` |
-| `swe mcp sync <source> <targets…> --json` | `source`, `dry_run`, `selected`, `targets`: name with `added`, `updated`, `skipped`, `pruned` server names; implies `--no-interactive` |
-| `swe find plugins --json` | `sources` (plugins under `~/.quiver/plugins`), `drift`: id, harness, marketplace, plugin, ref, kind, detail, fix, `runnable`, paths |
-| `swe find plugins --fix=<id> --json` | `fixed`: the finding whose commands ran |
-| `swe plugins catalog --json` | `harnesses` read, `actions` (harnesses swe can act in), `errors`, and `marketplaces`: name, `hub`, `path`, `description`, per-harness `source_type`/`location`/`manifest`/`readable`, and `plugins`: name, `ref`, metadata, `listed`, `source_path`, `components`, `skills` (with the `harnesses` whose loaded copy has each), per-harness `available`/`installed` (claude: user scope)/`enabled`/`version`/`scopes`/`path`/`copies`, and `drift` (hub plugins only, as in `swe skills hub`) |
-| `swe plugins install\|uninstall\|enable\|disable <ref> --harness=claude\|codex --json` | `action`, `harness`, `ref`, `changed`, `detail` (why nothing changed), `ran` (argv lists), `edited` (config.toml for a codex enable/disable), `output`, and the new `state` |
-| `swe doctor --json` | `ok` and `findings` (check, severity, message, fix); exit status unchanged |
+Each command's `data` shape and the Swift type that decodes it are listed in
+[docs/json-contracts.md](docs/json-contracts.md); the model that defines each
+payload on the Python side is in the payload table in
+[docs/backend-architecture.md](docs/backend-architecture.md).
 
 A rate limit's `fetched_at` is when the reading was taken. A value served
 from the cache keeps its original time, so the app can show its age

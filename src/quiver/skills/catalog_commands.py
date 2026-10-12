@@ -1,10 +1,10 @@
 """Skills catalog and discover CLI commands."""
 
-import json
 import sys
 from pathlib import Path
 
 from quiver.console import c, elide
+from quiver.json_output import emit
 from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
 from quiver.skills.models import CatalogRow
 from quiver.skills.help_text import print_skills_catalog_help, print_skills_discover_help
@@ -130,14 +130,10 @@ def cmd_skills_discover(args):
 
     findings = discover_skill_catalogs(include_registered=opts["all"])
 
-    if opts["json"]:
-        print(
-            json.dumps(
-                [CatalogRow.of(f).to_json() for f in findings],
-                indent=2,
-            )
-        )
-    else:
+    # The payload is emitted once, at the end, so --apply rides in the
+    # same document instead of printing a second one.
+    data = {"findings": [CatalogRow.of(f).to_json() for f in findings]}
+    if not opts["json"]:
         print(f"\n{c('bold', 'Skills Discover')}\n")
         print(c("dim", "  Scanning ~/Desktop and ~/Documents for */skills/ trees\n"))
         if not findings:
@@ -177,9 +173,8 @@ def cmd_skills_discover(args):
 
     if opts["apply"]:
         added = apply_skill_catalog_findings(findings)
-        if opts["json"]:
-            print(json.dumps({"added": added}, indent=2))
-        elif added:
+        data["applied"] = {"added": added}
+        if not opts["json"] and added:
             print(c("green", f"  ✓ Registered {len(added)} catalog(s): {', '.join(added)}"))
             print(c("dim", "  Run `swe skills` to list all skills.\n"))
         elif not opts["json"]:
@@ -189,4 +184,7 @@ def cmd_skills_discover(args):
         if new:
             print(c("dim", "  Tip: pass --apply to register catalogs\n"))
 
+
+    if opts["json"]:
+        return emit(data)
     return 0

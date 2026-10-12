@@ -36,6 +36,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prints exactly as before. Re-adding or reinstalling a harness
   (`swe add`, `swe add -i`, `swe install`) keeps the name you gave it.
 
+### Changed
+
+- **The discover and setup commands emit the standard JSON envelope.** `swe
+  harness discover --json`, `swe mcp discover --json`, `swe skills discover
+  --json` and `swe setup --json` used to print bare `json.dumps` output.
+  They now emit the same `{schema: 1, data: ...}` document as every other
+  `--json` command: discovery rows live under `data.findings`, and the
+  setup preview under `data.harness` / `data.mcp` / `data.skills`. An
+  `--apply` run adds an `applied` object inside the same `data`, so a
+  `--json --apply` invocation prints one document instead of two.
+
 ### Fixed
 
 - **`swe list --usage --json` served an hour-old limit reading instead of

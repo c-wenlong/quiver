@@ -1,9 +1,9 @@
 """MCP discover CLI command."""
 
-import json
 import sys
 
 from quiver.console import c
+from quiver.json_output import emit
 from quiver.mcp.cli import server_summary
 from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
 from quiver.mcp.models import DiscoveryRow
@@ -83,13 +83,15 @@ def cmd_discover(args):
 
     findings = discover_mcp_servers(include_in_source=opts["all"])
 
-    if opts["json"]:
-        payload = [
+    # The payload is emitted once, at the end, so --apply rides in the
+    # same document instead of printing a second one.
+    data = {
+        "findings": [
             DiscoveryRow.of(f, server_summary(f.server)).to_json()
             for f in findings
         ]
-        print(json.dumps(payload, indent=2))
-    else:
+    }
+    if not opts["json"]:
         print(f"\n{c('bold', 'MCP Discover')}\n")
         if not findings:
             print(c("dim", "  No new MCP servers found outside source-of-truth.\n"))
@@ -113,14 +115,13 @@ def cmd_discover(args):
 
     if opts["apply"]:
         result = apply_mcp_findings(findings, prune=opts["prune"])
-        if opts["json"]:
-            print(json.dumps({
-                "added": result.added,
-                "updated": result.updated,
-                "orphaned": result.orphaned,
-                "pruned": result.pruned,
-            }, indent=2))
-        else:
+        data["applied"] = {
+            "added": result.added,
+            "updated": result.updated,
+            "orphaned": result.orphaned,
+            "pruned": result.pruned,
+        }
+        if not opts["json"]:
             if result.added:
                 print(c("green", f"  ✓ Added {len(result.added)} server(s) to "
                                  f"{MCP_SOURCE_FILE}: {', '.join(result.added)}"))
@@ -141,4 +142,7 @@ def cmd_discover(args):
         if new:
             print(c("dim", "  Tip: pass --apply to write to mcp.json\n"))
 
+  
+    if opts["json"]:
+        return emit(data)
     return 0
