@@ -283,7 +283,9 @@ private struct PanelLimits: View {
                 Text("Every limit is hidden in Menu bar and widgets.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             } else if cards.isEmpty && others.isEmpty {
-                Text("Nothing starred. Star a harness on Harnesses to see its limits here.")
+                Text(app.starredAccountCards.isEmpty && app.others.cards.isEmpty
+                     ? "Nothing starred. Star a harness on Harnesses to see its limits here."
+                     : "No limits to show yet.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             // Harnesses swe reports follow the accounts in one list: each

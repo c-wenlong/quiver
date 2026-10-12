@@ -76,6 +76,10 @@ public final class OtherLimitsModel {
     /// Why there is nothing to show, when that is not simply "nothing starred".
     public private(set) var note: String?
     private let swe: SweClient
+    /// The latest load's ticket: a refresh overtaken while it ran (a star
+    /// change reloading ahead of the five-minute background load) drops
+    /// its answer rather than write back older state.
+    private var request = 0
 
     public init(swe: SweClient) {
         self.swe = swe
@@ -88,6 +92,8 @@ public final class OtherLimitsModel {
     }
 
     public func load() async {
+        request += 1
+        let mine = request
         do {
             let harnesses: [Harness]
             do {
@@ -97,6 +103,8 @@ public final class OtherLimitsModel {
                 // polls Claude and Codex too.
                 harnesses = try await swe.harnesses(withUsage: true)
             }
+            // A newer load already answered; this one's state is older.
+            guard mine == request else { return }
             rows = harnesses.compactMap { harness in
                 // Starred only: swe polls just those, but can still return a
                 // cached reading for one since unstarred.
@@ -119,6 +127,7 @@ public final class OtherLimitsModel {
         } catch is CancellationError {
             return
         } catch {
+            guard mine == request else { return }
             rows = []
             cards = []
             note = error.localizedDescription

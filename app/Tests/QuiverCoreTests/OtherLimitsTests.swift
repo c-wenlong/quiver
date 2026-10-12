@@ -122,11 +122,80 @@ import Testing
         #expect(!HarnessAccess.hasLimits("opencode"))
     }
 
+    @Test func anOlderLoadCannotBringBackAnUnstarredHarness() async {
+        // A star change on Harnesses reloads limits, overlapping the
+        // five-minute background load: the slower answer must not win.
+        let json = #"""
+        {"schema": 1, "data": {"harnesses": [
+          {"name": "pi", "command": "pi", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1, "rate_limit": null}
+        ]}}
+        """#
+        let runner = GatedRunner(
+            first: .init(status: 0, stdout: Data(json.utf8), stderr: ""),
+            later: .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        var outdated: Task<Void, Never>!
+        await withCheckedContinuation { continuation in
+            runner.onFirstCall = { continuation.resume() }
+            outdated = Task { await model.load() }
+        }
+        await model.load()
+        runner.open()
+        await outdated.value
+        // The newer load is the truth: unstarred pi keeps no star, no card.
+        #expect(model.starred == [])
+        #expect(model.cards.isEmpty)
+    }
+
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner))
         await model.load()
         #expect(model.rows.isEmpty)
         #expect(model.note?.contains("older") == true)
+    }
+}
+
+/// The first `run` parks until `open()`; every call after answers at once.
+private final class GatedRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+    /// Fires once, when the first call arrives.
+    var onFirstCall: (@Sendable () -> Void)?
+    let first: CommandResult
+    let later: CommandResult
+
+    init(first: CommandResult, later: CommandResult) {
+        self.first = first
+        self.later = later
+    }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let number = lock.withLock { () -> Int in
+            calls += 1
+            return calls
+        }
+        guard number == 1 else { return later }
+        lock.withLock { onFirstCall?() }
+        await withCheckedContinuation { continuation in
+            let parked = lock.withLock { () -> Bool in
+                if isOpen { return false }
+                waiting = continuation
+                return true
+            }
+            if !parked { continuation.resume() }
+        }
+        return first
+    }
+
+    func open() {
+        let parked = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            isOpen = true
+            defer { waiting = nil }
+            return waiting
+        }
+        parked?.resume()
     }
 }
