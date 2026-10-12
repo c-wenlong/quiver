@@ -173,7 +173,6 @@ public struct LimitsView: View {
                     LimitLine(reading: reading, now: now, compact: compact,
                               old: reading.isOld(now: now, fallback: snapshot.generatedAt))
                 }
-                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
