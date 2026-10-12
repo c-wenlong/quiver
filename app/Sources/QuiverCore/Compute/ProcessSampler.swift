@@ -37,6 +37,7 @@ public struct ProcessSampler: ProcessSampling, Sendable {
         let taskSize = Int32(MemoryLayout<proc_taskinfo>.size)
         let threads = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, taskSize) == taskSize
             ? Int(task.pti_threadnum) : 0
+        let fp = footprint(of: pid)
         return ProcessSample(
             pid: pid,
             ppid: Int32(bsd.pbi_ppid),
@@ -46,9 +47,16 @@ public struct ProcessSampler: ProcessSampling, Sendable {
             startedAt: Date(timeIntervalSince1970: TimeInterval(bsd.pbi_start_tvsec)
                             + TimeInterval(bsd.pbi_start_tvusec) / 1_000_000),
             threads: threads,
-            memoryBytes: footprint(of: pid).memory,
-            cpuTimeNanos: footprint(of: pid).cpu)
+            memoryBytes: fp.memory,
+            cpuTimeNanos: fp.cpu)
     }
+
+    /// mach absolute time -> nanoseconds, read once for every sample.
+    private static let timebase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
 
     /// ri_phys_footprint, plus ri_user_time + ri_system_time converted from
     /// mach absolute time units to nanoseconds.
@@ -63,8 +71,7 @@ public struct ProcessSampler: ProcessSampling, Sendable {
             }
         }
         guard answered >= 0 else { return (0, 0) }
-        var timebase = mach_timebase_info_data_t()
-        mach_timebase_info(&timebase)
+        let timebase = Self.timebase
         let units = info.ri_user_time + info.ri_system_time
         let nanos = units * UInt64(timebase.numer) / UInt64(max(timebase.denom, 1))
         return (info.ri_phys_footprint, nanos)

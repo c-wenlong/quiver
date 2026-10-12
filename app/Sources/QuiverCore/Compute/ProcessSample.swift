@@ -41,6 +41,14 @@ public struct ProcessSample: Sendable, Equatable, Identifiable {
         return "pid \(pid)"
     }
 
+    /// The name a script runner answers to: lowercased, with versioned
+    /// Python builds ("python3.12", the framework's "Python") folded to
+    /// "python".
+    public var runnerName: String {
+        let lower = name.lowercased()
+        return lower.hasPrefix("python") ? "python" : lower
+    }
+
     /// The full command line, when argv could be read.
     public var commandLine: String {
         arguments.isEmpty ? path : arguments.joined(separator: " ")

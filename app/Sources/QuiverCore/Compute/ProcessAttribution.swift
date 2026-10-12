@@ -34,7 +34,7 @@ public enum ProcessAttribution {
         if let appPath = m.appPath, !appPath.isEmpty, p.path.hasPrefix(appPath + "/") { return true }
         if m.commands.contains((p.path as NSString).lastPathComponent) { return true }
         if !m.homeFolder.isEmpty, p.path.hasPrefix(m.homeFolder + "/") { return true }
-        if Self.scriptRunners.contains(p.name), p.arguments.count > 1,
+        if Self.scriptRunners.contains(p.runnerName), p.arguments.count > 1,
            m.commands.contains((p.arguments[1] as NSString).lastPathComponent) {
             return true
         }
@@ -59,7 +59,7 @@ public enum ProcessAttribution {
 
         // An orphan tree's root answered to pid 1 itself.
         var roots: [Int32: ProcessSample] = [:]
-        for p in rest where p.ppid == 1 && OrphanTree.runners.contains(p.name) {
+        for p in rest where p.ppid == 1 && OrphanTree.runners.contains(p.runnerName) {
             roots[p.pid] = p
         }
         var trees: [Int32: [ProcessSample]] = [:]

@@ -93,6 +93,20 @@ import Testing
         #expect(a.byHarness["codex"]?.count == 2)
     }
 
+    @Test func versionedPythonStillCountsAsARunner() {
+        // "python3.12" orphaned under pid 1 is an orphan tree root.
+        let py = Self.proc(10, 1, path: "/usr/bin/python3.12", args: ["python3.12", "/x/serve.py"])
+        let a = ProcessAttribution.attribute([py], matchers: [])
+        #expect(a.orphans.map(\.id) == [10])
+
+        // The framework's "Python" running the harness script is a root.
+        let framework = Self.proc(11, 1,
+                                  path: "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+                                  args: ["Python", "/opt/homebrew/bin/claude"])
+        let b = ProcessAttribution.attribute([framework], matchers: [Self.claude])
+        #expect(b.byHarness["claude"] == [framework])
+    }
+
     // MARK: Usage totals
 
     @Test func usageTotalsSumMemoryThreadsAndCPU() {
@@ -232,6 +246,39 @@ import Testing
         let order = ComputeSummary.killOrder(for: item, in: [launchd, quiver, helper],
                                              selfPID: 99, ancestors: [1])
         #expect(order == [10])
+    }
+
+    @Test func aHarnessRootQuitsAlone() {
+        // The app or CLI shuts its own helpers down; only the root is signalled.
+        let root = Self.proc(10, 1, path: "/opt/homebrew/bin/claude")
+        let child = Self.proc(11, 10, path: "/x/helper")
+        let grandchild = Self.proc(12, 11, path: "/x/worker")
+        let item = CleanupItem(kind: .process(root, harness: "claude"), reason: "",
+                               preselected: false, isHarnessRoot: true)
+        let order = ComputeSummary.killOrder(for: item, in: [root, child, grandchild],
+                                             selfPID: 99, ancestors: [])
+        #expect(order == [10])
+    }
+
+    @Test func aReusedRootPidIsNotSignalled() {
+        // The process the page showed has exited; pid 10 is somebody else now.
+        let shown = Self.proc(10, 1, path: "/x/helper", started: Self.youngStart)
+        let live = Self.proc(10, 1, path: "/x/other")
+        let order = ComputeSummary.killOrder(for: .process(shown, harness: "claude"),
+                                             in: [live], selfPID: 99, ancestors: [])
+        #expect(order == [])
+    }
+
+    @Test func aReusedTreeMemberIsDroppedButTheRestStand() {
+        let root = Self.proc(10, 1, path: "/opt/homebrew/bin/npm", started: Self.oldStart)
+        let child = Self.proc(11, 10, path: "/x/child", started: Self.oldStart)
+        let stale = Self.proc(12, 11, path: "/x/stale", started: Self.oldStart)
+        let tree = OrphanTree(root: root, descendants: [child, stale])
+        // pid 12 still exists in the current sample, but it is a different process.
+        let live = [root, child, Self.proc(12, 11, path: "/x/reused")]
+        let order = ComputeSummary.killOrder(for: .orphanTree(tree), in: live,
+                                             selfPID: 99, ancestors: [])
+        #expect(order == [11, 10])
     }
 
     // MARK: Limits persistence

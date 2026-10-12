@@ -211,7 +211,7 @@ private struct ProcessRowView: View {
     }
 
     private func quit(force: Bool) {
-        let item = CleanupItem.process(row.sample, harness: harness)
+        let item = CleanupItem.process(row.sample, harness: harness, isRoot: row.isRoot)
         Task { await app.compute.quit(item, force: force) }
     }
 }
