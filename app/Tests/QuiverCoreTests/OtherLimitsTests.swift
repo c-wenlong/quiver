@@ -46,9 +46,10 @@ import Testing
         #expect(model.cliInstalled["gemini"] == nil)
     }
 
-    @Test func everyHarnessInUseGetsACardStarredFirstWithOrWithoutALimit() async {
-        // swe's order puts an active harness before a starred one, and lists
-        // an archived one: cards must reorder the first and drop the second.
+    @Test func onlyStarredHarnessesGetCards() async {
+        // swe's list holds active and archived harnesses too: cards keep
+        // the starred ones only, Claude and Codex excluded (accounts of
+        // their own).
         let json = #"""
         {"schema": 1, "data": {"harnesses": [
           {"name": "pi", "command": "pi", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 9, "rate_limit": null},
@@ -61,12 +62,15 @@ import Testing
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
         await model.load()
-        // Starred first, then swe's order; no Claude or Codex (accounts of
-        // their own), no archived harness.
-        #expect(model.cards.map(\.name) == ["devin", "pi", "kilo"])
-        #expect(model.cards.map { $0.limit != nil } == [true, false, false])
-        #expect(model.cards.map(\.title) == ["Devin Teams", "Pi", "Kilo"])
-        #expect(model.cards.map(\.isStarred) == [true, false, false])
+        #expect(model.cards.map(\.name) == ["devin"])
+        #expect(model.cards[0].title == "Devin Teams")
+        #expect(model.cards[0].limit != nil)
+        // The starred set remembers Claude and Codex too: their account
+        // cards hide the moment either is unstarred.
+        #expect(model.starred == ["claude", "devin"])
+        #expect(model.isStarred("claude"))
+        #expect(!model.isStarred("pi"))
+        #expect(!model.isStarred("droid"))
     }
 
     @Test func onlyStarredHarnessesShowALimitAnywhere() async {
@@ -81,10 +85,23 @@ import Testing
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
         await model.load()
-        #expect(model.cards.map(\.name) == ["devin", "cursor"])
-        #expect(model.cards.map { $0.limit != nil } == [true, false])
+        #expect(model.cards.map(\.name) == ["devin"])
         // The menu bar, notifications and widgets read rows: starred only too.
         #expect(model.rows.map(\.name) == ["devin"])
+    }
+
+    @Test func aFailedLoadKeepsTheLastStarredSet() async {
+        // Before swe has answered once, nothing is hidden: unknown means show.
+        let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        #expect(model.starred == nil)
+        #expect(model.isStarred("codex"))
+        await model.load()
+        #expect(model.starred == ["claude", "devin", "cursor"])
+        // A hiccup must not unstar anything.
+        runner.reply = .init(status: 1, stdout: Data(), stderr: "boom\n")
+        await model.load()
+        #expect(model.starred == ["claude", "devin", "cursor"])
     }
 
     @Test func aNamedHarnessReadsLikeAnAccount() {
