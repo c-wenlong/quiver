@@ -168,6 +168,16 @@ private func git(_ args: String..., in dir: URL) async throws {
         #expect(usage["/srv/mcp/my server"] == ["quoted", "bare", "escaped", "arg"])
     }
 
+    @Test func aLiteralBackslashInAnArgIsKept() {
+        // An args element is already an argv entry, so `my\server` is a
+        // real backslash, not an escape, and never matches `myserver`.
+        let servers = [repo("odd", at: "/srv/my\\server"), repo("merged", at: "/srv/myserver")]
+        let hub = [hubServer("odd", command: "run", args: ["/srv/my\\server/index.js"])]
+        let usage = McpServerRepo.hubUsage(servers: servers, hub: hub)
+        #expect(usage["/srv/my\\server"] == ["odd"])
+        #expect(usage["/srv/myserver"] == nil)
+    }
+
     @Test func fileURLsAreDecodedBeforeComparing() {
         let servers = [repo("my server", at: "/srv/my server"), repo("one", at: "/srv/one")]
         let hub = [

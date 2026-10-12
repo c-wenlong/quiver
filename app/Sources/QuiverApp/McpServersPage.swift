@@ -514,11 +514,6 @@ private struct McpRepoSection: View {
     var hub: [McpServer]
     var editor: CodeEditor?
 
-    /// Folder path -> the hub servers that run from inside it.
-    private var usage: [String: [String]] {
-        McpServerRepo.hubUsage(servers: model.servers, hub: hub)
-    }
-
     /// Group name then its servers, in the scan's order (ungrouped first).
     private var groups: [(name: String?, servers: [McpRepoServer])] {
         var order: [String?] = []
@@ -531,6 +526,8 @@ private struct McpRepoSection: View {
     }
 
     var body: some View {
+        // Computed once per render: folder path -> the hub servers inside it.
+        let usage = McpServerRepo.hubUsage(servers: model.servers, hub: hub)
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Server folders")

@@ -170,9 +170,10 @@ public enum McpServerRepo {
                     // A bare executable path can hold spaces, so the whole
                     // string is a candidate; a command line also gets split
                     // quote-aware, so `node "/srv/my server/index.js"` and
-                    // `node /srv/my\ server/index.js` still match.
+                    // `node /srv/my\ server/index.js` still match. The words
+                    // are unquoted the way exec receives them.
                     words.append(command)
-                    words += McpRedaction.shellWords(command)
+                    words += McpRedaction.shellWords(command).map(unquote)
                 }
                 if words.contains(where: { inside($0, folder: base) }) {
                     usage[base, default: []].append(hubServer.name)
@@ -182,31 +183,38 @@ public enum McpServerRepo {
         return usage
     }
 
-    /// `word` as a path: `file://` decoded, shell quotes and backslash
-    /// escapes undone, relative words ignored.
+    /// `word` as a path, exactly as given: `file://` decoded, relative
+    /// words ignored. Quotes and backslashes are kept — a literal arg or a
+    /// bare command may legitimately contain them, and command-line words
+    /// arrive already unquoted.
     private static func inside(_ word: String, folder base: String) -> Bool {
-        var word = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        var word = word
         if word.hasPrefix("file://") {
             guard let decoded = URL(string: word)?.path(percentEncoded: false) else { return false }
             word = decoded
-        } else if word.contains("\\") {
-            word = unescape(word)
         }
         guard word.hasPrefix("/") else { return false }
         let path = URL(fileURLWithPath: word).standardizedFileURL.path
         return path == base || path.hasPrefix(base + "/")
     }
 
-    /// `a\ b` read as `a b`, the way a shell unquotes a word.
-    private static func unescape(_ word: String) -> String {
+    /// A word the way exec receives it: quotes removed and backslash
+    /// escapes undone, since shellWords keeps both in its output. Inside
+    /// single quotes a backslash is literal.
+    private static func unquote(_ word: String) -> String {
         var out = ""
+        var quote: Character?
         var escaped = false
         for character in word {
             if escaped {
                 out.append(character)
                 escaped = false
-            } else if character == "\\" {
+            } else if character == "\\", quote != "'" {
                 escaped = true
+            } else if let open = quote {
+                if character == open { quote = nil } else { out.append(character) }
+            } else if character == "\"" || character == "'" {
+                quote = character
             } else {
                 out.append(character)
             }
