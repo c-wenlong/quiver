@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Synchronization
 import Testing
 @testable import QuiverCore
@@ -255,15 +256,62 @@ import Testing
     }
 }
 
+/// A counter a test can await: `bump` wakes every caller parked in
+/// `reach(_:)` whose target the count has passed. Checking the count and
+/// parking the caller happen in one actor step, so a `bump` can never
+/// slip between them and leave a waiter stranded. The ten-second cap
+/// fails the test instead of hanging the suite.
+actor CountGate {
+    private var count = 0
+    private var nextID = 0
+    private var waiters: [Int: (target: Int,
+                              cont: CheckedContinuation<Bool, Never>)] = [:]
+
+    func bump() {
+        count += 1
+        let ready = waiters.filter { count >= $0.value.target }
+        for id in ready.keys { waiters[id] = nil }
+        for waiter in ready.values { waiter.cont.resume(returning: true) }
+    }
+
+    /// True once the count reaches `target`, false after ten seconds.
+    func reach(_ target: Int) async -> Bool {
+        await withCheckedContinuation { cont in
+            if count >= target {
+                cont.resume(returning: true)
+                return
+            }
+            nextID += 1
+            let id = nextID
+            waiters[id] = (target, cont)
+            Task { await self.expire(id) }
+        }
+    }
+
+    /// The timeout resumes only its own waiter, and only if a `bump` has
+    /// not already answered it.
+    private func expire(_ id: Int) async {
+        try? await Task.sleep(for: .seconds(10))
+        waiters.removeValue(forKey: id)?.cont.resume(returning: false)
+    }
+}
+
 /// Holds every request parked until released, so in-flight counts and
 /// queueing behind the limiter are observable.
 final class GateTransport: HTTPTransport {
     private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest],
                               waiters: [CheckedContinuation<Void, Never>])>((0, 0, [], []))
+    private let sendsStarted = CountGate()
 
     var peak: Int { state.withLock { $0.peak } }
     var inFlight: Int { state.withLock { $0.inFlight } }
     var requestCount: Int { state.withLock { $0.requests.count } }
+
+    /// Parks the caller until `n` requests have been sent, so a test
+    /// awaits a continuation instead of spinning on a counter.
+    func waitForRequests(_ n: Int) async -> Bool {
+        await sendsStarted.reach(n)
+    }
 
     /// Answer `n` parked requests, or all of them.
     func release(_ n: Int = Int.max) {
@@ -279,6 +327,7 @@ final class GateTransport: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         // Count and park under one lock: a release between the two could
         // run before the waiter existed and leave this send parked.
+        let started = sendsStarted
         await withCheckedContinuation { waiter in
             state.withLock { s in
                 s.inFlight += 1
@@ -286,6 +335,7 @@ final class GateTransport: HTTPTransport {
                 s.requests.append(request)
                 s.waiters.append(waiter)
             }
+            Task { await started.bump() }
         }
         state.withLock { $0.inFlight -= 1 }
         return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200,
@@ -408,20 +458,28 @@ final class CountingTransport: HTTPTransport {
         """, transport: transport)
         await model.load()
         let all = Task { await model.checkAll() }
-        while transport.inFlight < 4 { await Task.yield() }
+        #expect(await transport.waitForRequests(4))
         // Two answer; their slots hand over to the pair still queued.
         transport.release(2)
-        while transport.requestCount < 6 || transport.inFlight < 4 { await Task.yield() }
-        while model.checks.count < 2 { await Task.yield() }
+        #expect(await transport.waitForRequests(6))
+        #expect(transport.inFlight == 4)
+        // Wait for the released results to land on the model through its
+        // own change stream; no yield or sleep spins on the pool.
+        for await count in Observations({ model.checks.count }) {
+            if count >= 2 { break }
+        }
+        #expect(model.checks.count == 2)
         // Re-checking finished rows queues at the same limiter: no extra
         // request runs while four are parked.
         let finished = model.checks.keys.sorted().prefix(2)
         let again = finished.map { name in Task { await model.check(name: name) } }
-        while !finished.allSatisfy({ model.checking.contains($0) }) { await Task.yield() }
+        for await checking in Observations({ model.checking }) {
+            if finished.allSatisfy(checking.contains) { break }
+        }
         #expect(transport.inFlight == 4)
         #expect(transport.requestCount == 6)
         transport.release()
-        while transport.requestCount < 8 { await Task.yield() }
+        #expect(await transport.waitForRequests(8))
         transport.release()
         await all.value
         for task in again { await task.value }
@@ -614,13 +672,12 @@ final class CountingTransport: HTTPTransport {
         let first = make(transport)
         await first.load()
         let run = Task { await first.checkAll() }
-        for _ in 0..<2_000 where transport.requestCount < 4 {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(transport.requestCount == 4)
+        #expect(await transport.waitForRequests(4))
         transport.release(2)
-        for _ in 0..<2_000 where first.checks.count < 2 {
-            try await Task.sleep(for: .milliseconds(5))
+        // The two finished results land on the model (and save) one at a
+        // time; Observations yields each change so the test never spins.
+        for await count in Observations({ first.checks.count }) {
+            if count >= 2 { break }
         }
         #expect(first.checks.count == 2)
 
