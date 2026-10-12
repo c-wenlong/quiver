@@ -63,10 +63,9 @@ public struct GPUSampler: GPUSampling {
                 var raw: Unmanaged<CFMutableDictionary>?
                 guard IORegistryEntryCreateCFProperties(child, &raw, kCFAllocatorDefault, 0) == KERN_SUCCESS,
                       let properties = raw?.takeRetainedValue() as? [String: Any],
-                      let creator = properties["IOUserClientCreator"] as? String,
-                      let pid = Self.creatorPID(creator), pid > 1
+                      let sample = Self.clientSample(properties)
                 else { continue }
-                times[pid, default: 0] += Self.gpuTime(properties["AppUsage"])
+                times[sample.pid, default: 0] += sample.nanos
             }
         }
         return times
@@ -79,12 +78,30 @@ public struct GPUSampler: GPUSampling {
         return Int32(digits)
     }
 
+    /// One user client's contribution to the pid map, or nil when its
+    /// creator names no real pid or its AppUsage has no readable counter:
+    /// a client without a counter is skipped, not counted as idle.
+    static func clientSample(_ properties: [String: Any]) -> (pid: Int32, nanos: UInt64)? {
+        guard let creator = properties["IOUserClientCreator"] as? String,
+              let pid = creatorPID(creator), pid > 1,
+              let nanos = gpuTime(properties["AppUsage"]) else { return nil }
+        return (pid, nanos)
+    }
+
     /// The total GPU time one user client reports: AppUsage is a list of
     /// per-service dicts, each with `accumulatedGPUTime` in nanoseconds.
-    static func gpuTime(_ appUsage: Any?) -> UInt64 {
-        guard let entries = appUsage as? [[String: Any]] else { return 0 }
-        return entries.reduce(0) { sum, entry in
-            sum + ((entry["accumulatedGPUTime"] as? NSNumber)?.uint64Value ?? 0)
+    /// Nil when not one dict carries a readable counter; an explicit 0
+    /// counts as a reading.
+    static func gpuTime(_ appUsage: Any?) -> UInt64? {
+        guard let entries = appUsage as? [[String: Any]] else { return nil }
+        var total: UInt64 = 0
+        var seen = false
+        for entry in entries {
+            guard let nanos = (entry["accumulatedGPUTime"] as? NSNumber)?.uint64Value
+            else { continue }
+            seen = true
+            total += nanos
         }
+        return seen ? total : nil
     }
 }

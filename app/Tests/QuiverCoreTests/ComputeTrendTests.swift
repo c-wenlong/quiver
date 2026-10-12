@@ -45,14 +45,21 @@ import Testing
         #expect(history.shown(above: limit) == ["claude"])
     }
 
-    @Test func theWindowIsTheLastWindowPoints() {
+    @Test func theWindowIsASharedTimeRange() {
         var history = ComputeHistory()
-        for i in 0..<ComputeHistory.window + 10 {
-            history.append("claude", Self.point(UInt64(i)))
-        }
-        let window = history.window(for: "claude")
-        #expect(window.count == ComputeHistory.window)
-        #expect(window.first?.memoryBytes == 10)
+        let now = Self.now
+        let range = history.window(endingAt: now, interval: .tenSeconds)
+        // 120 intervals of 10 s: the window opens exactly 1,200 s back.
+        #expect(range.lowerBound == now.addingTimeInterval(-1_200))
+        #expect(range.upperBound == now)
+        // A harness that stopped long ago has no points left in the
+        // window; a live one's earliest point sits at the left edge.
+        history.append("stopped", Self.point(1, at: now.addingTimeInterval(-1_300)))
+        history.append("live", Self.point(1, at: now.addingTimeInterval(-1_200)))
+        history.append("live", Self.point(1, at: now))
+        #expect(history.window(for: "stopped", in: range).isEmpty)
+        #expect(history.window(for: "live", in: range).count == 2)
+        #expect(history.latest == now)
     }
 
     // MARK: GPU
@@ -71,8 +78,26 @@ import Testing
             ["somethingElse": 7 as NSNumber],
         ]
         #expect(GPUSampler.gpuTime(usage) == 1_500)
-        #expect(GPUSampler.gpuTime(nil) == 0)
-        #expect(GPUSampler.gpuTime("not a list") == 0)
+        // No readable counter anywhere is nil, not zero.
+        #expect(GPUSampler.gpuTime(nil) == nil)
+        #expect(GPUSampler.gpuTime("not a list") == nil)
+        #expect(GPUSampler.gpuTime([["somethingElse": 7 as NSNumber]]) == nil)
+        // An explicit zero is a reading and stays a reading.
+        #expect(GPUSampler.gpuTime([["accumulatedGPUTime": 0 as NSNumber]]) == 0)
+    }
+
+    @Test func aClientWithoutAReadableCounterIsSkipped() {
+        let noCounter: [String: Any] = [
+            "IOUserClientCreator": "pid 402, WindowServer",
+            "AppUsage": [["somethingElse": 7 as NSNumber]],
+        ]
+        #expect(GPUSampler.clientSample(noCounter) == nil)
+        let zero: [String: Any] = [
+            "IOUserClientCreator": "pid 402, WindowServer",
+            "AppUsage": [["accumulatedGPUTime": 0 as NSNumber]],
+        ]
+        #expect(GPUSampler.clientSample(zero)?.pid == 402)
+        #expect(GPUSampler.clientSample(zero)?.nanos == 0)
     }
 
     @Test func theMeterTurnsDeltasIntoPercent() {
@@ -160,6 +185,69 @@ import Testing
         var table: [Int32: UInt64]
         init(_ table: [Int32: UInt64]) { self.table = table }
         func times() -> [Int32: UInt64] { table }
+    }
+
+    /// A sampler whose next call parks on a semaphore, so a test can hold
+    /// a slow trend sample open while a faster refresh finishes first.
+    final class GateSampler: ProcessSampling, @unchecked Sendable {
+        var table: [ProcessSample]
+        private(set) var calls = 0
+        private var armed: DispatchSemaphore?
+        private var held: DispatchSemaphore?
+        private(set) var parked = false
+        private let lock = NSLock()
+
+        init(_ table: [ProcessSample]) { self.table = table }
+
+        /// The next sample() call, and only that one, blocks until
+        /// `release()`.
+        func gateNext() {
+            lock.lock()
+            armed = DispatchSemaphore(value: 0)
+            lock.unlock()
+        }
+
+        var isParked: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return parked
+        }
+
+        func sample() -> [ProcessSample] {
+            lock.lock()
+            calls += 1
+            let gate = armed
+            armed = nil
+            // Only a gated call owns `held` and `parked`: an ungated call
+            // must not clear the state a parked call is waiting under.
+            if gate != nil { held = gate; parked = true }
+            lock.unlock()
+            gate?.wait()
+            if gate != nil {
+                lock.lock()
+                parked = false
+                held = nil
+                lock.unlock()
+            }
+            return table
+        }
+
+        func release() {
+            lock.lock()
+            let gate = held ?? armed
+            held = nil
+            armed = nil
+            lock.unlock()
+            gate?.signal()
+        }
+
+        /// Take the gate away entirely, so nothing can park on it when a
+        /// test stops waiting for the gated call.
+        func disarm() {
+            lock.lock()
+            armed = nil
+            lock.unlock()
+        }
     }
 
     final class SleepLog: @unchecked Sendable {
@@ -317,6 +405,102 @@ import Testing
         await model.trendTick(at: Self.now)
         let point = model.history.points(for: "claude").last
         #expect(point?.memoryBytes == UInt64(4) << 30)
+    }
+
+    @MainActor @Test func aStaleSampleFinishingLateCannotMoveTheMetersBack() async {
+        // A trend sample that started before a page refresh but finishes
+        // after it must not feed the meter its older data: the refresh's
+        // baseline and the busy streak it earned stand.
+        let clock = Clock(Self.now)
+        let claudeBin = "/opt/homebrew/bin/claude"
+        let sampler = GateSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
+        let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
+                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 selfPID: 99)
+        await model.loadMatchers()
+
+        // A 130 s run at 100% earns the busy flag.
+        await model.refresh()
+        clock.now = Self.now.addingTimeInterval(130)
+        sampler.table = [Self.proc(10, 1, path: claudeBin, cpu: 130_000_000_000)]
+        await model.refresh()
+        #expect(model.processes["claude"]?.first?.flags.contains(.busy) == true)
+
+        // The trend tick samples first but is held; the refresh's sample
+        // is newer and finishes first, so it is the one that counts.
+        clock.now = Self.now.addingTimeInterval(131)
+        sampler.gateNext()
+        sampler.table = [Self.proc(10, 1, path: claudeBin, cpu: 180_000_000_000)]
+        let tick = Task { await model.trendTick(at: Self.now.addingTimeInterval(140)) }
+        // Wait for the tick's sample to take the gate: only it can park,
+        // since the refresh below has not started yet. A parked tick has
+        // consumed `armed`, so the refresh can never gate instead.
+        let deadline = Date().addingTimeInterval(10)
+        while !sampler.isParked, Date() < deadline { await Task.yield() }
+        if !sampler.isParked { sampler.disarm() }
+        #expect(sampler.isParked)
+
+        clock.now = Self.now.addingTimeInterval(135)
+        sampler.table = [Self.proc(10, 1, path: claudeBin, cpu: 200_000_000_000)]
+        await model.refresh()
+        // 70 s of CPU over 5 s of wall, over all cores.
+        #expect(model.totals.cpuPercent == 1_400)
+
+        // The held sample lands older than the accepted refresh: ignored
+        // for the meters, but the tick still records the newest data.
+        sampler.release()
+        await tick.value
+        #expect(model.history.points(for: "claude").count == 1)
+        #expect(model.totals.cpuPercent == 1_400)
+
+        // The baseline never regressed: the next refresh deltas off the
+        // 200 s counter, not the stale 180, and the streak survives.
+        clock.now = Self.now.addingTimeInterval(140)
+        sampler.table = [Self.proc(10, 1, path: claudeBin, cpu: 210_000_000_000)]
+        await model.refresh()
+        #expect(model.totals.cpuPercent == 200)
+        #expect(model.processes["claude"]?.first?.flags.contains(.busy) == true)
+    }
+
+    @MainActor @Test func changingTheIntervalWakesTheLoopRightAway() async {
+        // A sleep that records each requested duration, then parks until
+        // the task is cancelled; Task.sleep observes the cancellation.
+        actor Parked {
+            var durations: [Duration] = []
+            private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+            func call(_ duration: Duration) async throws {
+                durations.append(duration)
+                let n = durations.count
+                let ready = waiters.filter { n >= $0.0 }
+                waiters.removeAll { n >= $0.0 }
+                for (_, cont) in ready { cont.resume() }
+                try await Task.sleep(for: .seconds(3_600))
+            }
+            func waitForParks(_ n: Int) async {
+                if durations.count >= n { return }
+                await withCheckedContinuation { cont in
+                    waiters.append((n, cont))
+                }
+            }
+        }
+        let clock = Clock(Self.now)
+        let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
+        let parked = Parked()
+        let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
+                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 sleep: { d in try await parked.call(d) },
+                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 selfPID: 99)
+        await model.loadMatchers()
+        model.startTrends()
+        await parked.waitForParks(1)
+        // Parked on the default 10 s: switching to 3 s ticks at once and
+        // parks again on the new interval instead of waiting out the old.
+        model.trendInterval = .threeSeconds
+        await parked.waitForParks(2)
+        #expect(await parked.durations == [.seconds(10), .seconds(3)])
+        #expect(model.history.points(for: "claude").count == 2)
     }
 
     // MARK: Harness decoding

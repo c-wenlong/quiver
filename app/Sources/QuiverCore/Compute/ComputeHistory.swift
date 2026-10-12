@@ -68,7 +68,7 @@ public struct TrendPoint: Sendable, Equatable {
 public struct ComputeHistory: Sendable, Equatable {
     /// Points kept per harness: two hours at the 10 s default.
     public static let capacity = 720
-    /// Points drawn per line; at 3 s that is six minutes, at 5 m ten hours.
+    /// Intervals drawn per line; at 3 s that is six minutes, at 5 m ten hours.
     public static let window = 120
 
     public private(set) var series: [String: [TrendPoint]] = [:]
@@ -93,9 +93,23 @@ public struct ComputeHistory: Sendable, Equatable {
         series[harness] ?? []
     }
 
-    /// The last `window` points of a harness, oldest first.
-    public func window(for harness: String) -> [TrendPoint] {
-        Array(points(for: harness).suffix(Self.window))
+    /// The newest point time anywhere in the ring: where the shared
+    /// window ends, so a stopped harness's stale points slide off the
+    /// left edge instead of holding the axis open.
+    public var latest: Date? {
+        series.values.compactMap { $0.last?.at }.max()
+    }
+
+    /// The shared x range every series is clipped to: `window` intervals
+    /// ending at `now`. The chart pins its domain to exactly this.
+    public func window(endingAt now: Date, interval: TrendInterval) -> ClosedRange<Date> {
+        now.addingTimeInterval(-TimeInterval(Self.window) * interval.seconds)...now
+    }
+
+    /// A harness's points inside `range`, oldest first. A harness that
+    /// stopped before the window opened simply has none.
+    public func window(for harness: String, in range: ClosedRange<Date>) -> [TrendPoint] {
+        points(for: harness).filter { range.contains($0.at) }
     }
 
     /// Every harness that went above `threshold` at any retained point,

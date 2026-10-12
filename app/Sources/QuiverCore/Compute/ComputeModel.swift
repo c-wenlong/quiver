@@ -77,7 +77,16 @@ public final class ComputeModel {
     /// How often the trend sampler ticks; kept in UserDefaults. Changing it
     /// keeps the points already recorded, since x is time.
     public var trendInterval: TrendInterval {
-        didSet { trendInterval.save(to: defaults) }
+        didSet {
+            trendInterval.save(to: defaults)
+            // A loop parked on the old interval must not wait it out.
+            if let task = trendTask {
+                task.cancel()
+                trendTask = Task { [weak self] in
+                    await self?.runTrendLoop()
+                }
+            }
+        }
     }
 
     public private(set) var matchers: [HarnessMatcher] = []
@@ -100,6 +109,10 @@ public final class ComputeModel {
     /// When `samples` was captured, so a trend tick can reuse a fresh page
     /// sample rather than make the Mac answer twice for the same moment.
     private var sampledAt: Date?
+    /// Handed to each `takeSample` in start order; `accept` ignores any
+    /// sample older than the newest one already accepted.
+    private var sampleSeq = 0
+    private var lastAcceptedSeq = 0
     private var cpu: [Int32: Double] = [:]
     private var attribution = Attribution(byHarness: [:], orphans: [])
     /// Pids launchd manages; refreshed with the matchers and once a minute.
@@ -163,16 +176,44 @@ public final class ComputeModel {
             managedPIDs = await managedPIDLoader()
             managedPIDsLoadedAt = .now
         }
-        let sampler = self.sampler
-        let fresh = await runOffPool { sampler.sample() }
+        let sampled = await takeSample()
         guard mine == request else { return }
-        samples = fresh
-        let now = clock()
-        sampledAt = now
-        cpu = meter.update(samples, at: now)
-        attribution = ProcessAttribution.attribute(samples, matchers: matchers,
+        accept(sampled)
+        republish(at: sampledAt ?? clock())
+    }
+
+    /// One process sample in capture order. The seq is handed out before
+    /// the sample runs, so a slow sampler's stale result can be told from
+    /// a faster sample that started later and already finished.
+    private struct Sampled {
+        var seq: Int
+        var table: [ProcessSample]
+        var at: Date
+    }
+
+    /// Take a process sample off the pool, stamped with its own wall time
+    /// right after capture. `refresh()` and the trend tick both come
+    /// through here so the shared meter state only ever moves forward.
+    private func takeSample() async -> Sampled {
+        sampleSeq += 1
+        let seq = sampleSeq
+        let sampler = self.sampler
+        let table = await runOffPool { sampler.sample() }
+        return Sampled(seq: seq, table: table, at: clock())
+    }
+
+    /// Feed the meters and the shared table only when `sampled` is newer
+    /// than the last accepted sample. A slow sample finishing late must
+    /// not move a CPU baseline or a busy streak back; the caller still
+    /// uses the newest accepted state.
+    private func accept(_ sampled: Sampled) {
+        guard sampled.seq > lastAcceptedSeq else { return }
+        lastAcceptedSeq = sampled.seq
+        samples = sampled.table
+        sampledAt = sampled.at
+        cpu = meter.update(sampled.table, at: sampled.at)
+        attribution = ProcessAttribution.attribute(sampled.table, matchers: matchers,
                                                    managedPIDs: managedPIDs)
-        republish(at: now)
     }
 
     // MARK: Trends
@@ -211,21 +252,18 @@ public final class ComputeModel {
         }
         let freshEnough = sampledAt.map { now.timeIntervalSince($0) <= trendInterval.seconds / 2 } ?? false
         if !freshEnough {
-            let sampler = self.sampler
-            let table = await runOffPool { sampler.sample() }
-            samples = table
-            cpu = meter.update(table, at: now)
-            attribution = ProcessAttribution.attribute(table, matchers: matchers,
-                                                       managedPIDs: managedPIDs)
-            sampledAt = now
+            // A stale finish is discarded inside; either way the newest
+            // accepted sample is what the point below describes.
+            accept(await takeSample())
         }
         let gpu = gpuSampler
         let times = await runOffPool { gpu.times() }
+        let gpuAt = clock()
         if !times.isEmpty { gpuAvailable = true }
-        let gpuPercent = gpuMeter.update(times, at: now)
+        let gpuPercent = gpuMeter.update(times, at: gpuAt)
         for (harness, procs) in attribution.byHarness where !procs.isEmpty {
             history.append(harness, TrendPoint(
-                at: now,
+                at: sampledAt ?? now,
                 memoryBytes: procs.reduce(0) { $0 + $1.memoryBytes },
                 cpuPercent: procs.reduce(0) { $0 + (cpu[$1.pid] ?? 0) },
                 gpuPercent: times.isEmpty ? nil

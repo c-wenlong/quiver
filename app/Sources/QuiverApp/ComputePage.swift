@@ -97,11 +97,20 @@ private struct TrendCard: View {
         Binding(get: { model.trendInterval }, set: { model.trendInterval = $0 })
     }
 
+    /// The one x range every series is clipped to: `window` intervals
+    /// ending at the newest recorded point, so a stopped harness's line
+    /// slides off the left edge instead of holding it open.
+    private var chartWindow: ClosedRange<Date>? {
+        guard let end = model.history.latest else { return nil }
+        return model.history.window(endingAt: end, interval: model.trendInterval)
+    }
+
     /// The harness's points in the visible window. The GPU tab drops
     /// points recorded before the GPU counters ever answered, so the
     /// line does not dip to zero for "no reading".
     private func series(_ harness: String) -> [TrendPoint] {
-        let points = model.history.window(for: harness)
+        guard let range = chartWindow else { return [] }
+        let points = model.history.window(for: harness, in: range)
         return tab == "gpu" ? points.filter { $0.gpuPercent != nil } : points
     }
 
@@ -168,6 +177,8 @@ private struct TrendCard: View {
 
     private var chart: some View {
         let limitGB = Double(model.limits.memoryBytes) / Double(UInt64(1) << 30)
+        // The chart only renders once a point exists, so latest is set.
+        let domain = chartWindow ?? Date.now.addingTimeInterval(-60)...Date.now
         return Chart {
             ForEach(shown, id: \.self) { harness in
                 let points = series(harness)
@@ -202,6 +213,7 @@ private struct TrendCard: View {
                     .annotation(position: .top, spacing: 8) { bubble(at: hovered) }
             }
         }
+        .chartXScale(domain: domain)
         .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
         .chartYAxis {
             AxisMarks { value in
