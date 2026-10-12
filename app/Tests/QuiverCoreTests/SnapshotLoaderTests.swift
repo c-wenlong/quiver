@@ -193,8 +193,12 @@ actor NamesSource {
     @Test func aFetchThatIgnoresCancellationStillTimesOutOnTime() async throws {
         // A swe that shrugs off SIGTERM: its runner returns only when it exits.
         let stubborn: @Sendable () async throws -> Names = {
-            let until = ContinuousClock.now + .seconds(60)
-            while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(10)) }
+            // Shrugs off cancellation without spinning: a checked
+            // continuation is never resumed by cancellation, so the
+            // fetch still waits out the full hold.
+            await withCheckedContinuation { (parked: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 60) { parked.resume() }
+            }
             return Names(names: ["late"])
         }
         let loader = loader(clock: TestClock(start), timeout: .milliseconds(50))

@@ -44,8 +44,12 @@ actor HangingSource: SessionListing {
 /// A swe that shrugs off SIGTERM: its runner returns only when it exits.
 struct StubbornSource: SessionListing {
     func sessions(days: Int, limit: Int) async throws -> SessionList {
-        let until = ContinuousClock.now + .seconds(60)
-        while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(10)) }
+        // Shrugs off cancellation without spinning: a checked
+        // continuation is never resumed by cancellation, so the
+        // listing still waits out the full hold.
+        await withCheckedContinuation { (parked: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().asyncAfter(deadline: .now() + 60) { parked.resume() }
+        }
         return SessionList(sessions: [], failures: [])
     }
 }
