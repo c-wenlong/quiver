@@ -3,7 +3,7 @@ antigravity	color	TokenTracker dashboard/public/brand-logos/antigravity.svg	MIT 
 ark	color	TokenTracker dashboard/public/brand-logos/volcano-ark.svg	MIT (TokenTracker)	Volcano Engine Ark mark, used for both Ark plans
 augment	mono	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
 blackbox	mono	https://docs.blackbox.ai/favicon.svg	trademark, no licence stated	cube mark in white on black rounded square; same mark inline on blackbox.ai/brand
-cerebras	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cerebras-color.svg	MIT (LobeHub icons); Cerebras trademark	Cerebras colour mark
+cerebras	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cerebras.svg	MIT (LobeHub icons); Cerebras trademark	Cerebras mark
 claude	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/claude-color.svg	MIT (LobeHub icons)	Anthropic Claude mark in its brand orange, as TokenTracker shows it
 cline	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cline.svg	MIT (LobeHub icons); cline/cline Apache-2.0	filled robot mark; outline variant exists at cline/cline assets/branding/logos/cline-icon-dark.svg
 codex	color	TokenTracker dashboard/public/brand-logos/codex.svg	MIT (TokenTracker)	OpenAI Codex colour mark
@@ -41,6 +41,6 @@ together	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/together
 upstage	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/upstage-color.svg	MIT (LobeHub icons); Upstage trademark	Upstage colour mark
 vercel	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/vercel.svg	MIT (LobeHub icons); Vercel trademark	Vercel mark
 xiaomimimo	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/xiaomimimo.svg	MIT (LobeHub icons); Xiaomi trademark	Xiaomi MiMo mark
-yi	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/yi-color.svg	MIT (LobeHub icons); 01.AI trademark	01.AI Yi colour mark
+yi	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/yi.svg	MIT (LobeHub icons); 01.AI trademark	01.AI Yi mark
 zai	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/zai.svg	MIT (LobeHub icons); Z.ai trademark	Z.ai mark
 zcode	mono	TokenTracker dashboard/public/brand-logos/zcode.svg	MIT (TokenTracker)	ZCode mark
