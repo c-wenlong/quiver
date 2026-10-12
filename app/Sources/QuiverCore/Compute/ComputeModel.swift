@@ -60,6 +60,12 @@ public final class ComputeModel {
     public private(set) var totals = Totals()
     public private(set) var error: String?
 
+    /// The running per-harness history behind the trend card, in memory only.
+    public private(set) var history = ComputeHistory()
+    /// Whether this Mac has ever answered a GPU read; the GPU tab explains
+    /// rather than drawing flat lines when it has not.
+    public private(set) var gpuAvailable = false
+
     /// The thresholds the flags and suggestions follow.
     public var limits: ComputeLimits {
         didSet {
@@ -68,17 +74,32 @@ public final class ComputeModel {
         }
     }
 
+    /// How often the trend sampler ticks; kept in UserDefaults. Changing it
+    /// keeps the points already recorded, since x is time.
+    public var trendInterval: TrendInterval {
+        didSet { trendInterval.save(to: defaults) }
+    }
+
     public private(set) var matchers: [HarnessMatcher] = []
 
     private let sampler: any ProcessSampling
+    private let gpuSampler: any GPUSampling
     private let matcherLoader: @Sendable () async throws -> [HarnessMatcher]
     private let managedPIDLoader: @Sendable () async -> Set<Int32>
     private let signaller: any ProcessSignaller
     private let defaults: UserDefaults
     private let selfPID: Int32
+    /// The wall clock, injectable for tests.
+    private let clock: @Sendable () -> Date
+    /// The trend loop's sleep, injectable for tests.
+    private let trendSleep: @Sendable (Duration) async throws -> Void
 
     private var meter = CPUMeter()
+    private var gpuMeter = GPUMeter()
     private var samples: [ProcessSample] = []
+    /// When `samples` was captured, so a trend tick can reuse a fresh page
+    /// sample rather than make the Mac answer twice for the same moment.
+    private var sampledAt: Date?
     private var cpu: [Int32: Double] = [:]
     private var attribution = Attribution(byHarness: [:], orphans: [])
     /// Pids launchd manages; refreshed with the matchers and once a minute.
@@ -88,20 +109,28 @@ public final class ComputeModel {
     private var signalledAt: [Int32: Date] = [:]
     /// Tickets refreshes so a slower earlier one can never republish.
     private var request = 0
+    private var trendTask: Task<Void, Never>?
 
     public init(sampler: any ProcessSampling,
                 matchers: @escaping @Sendable () async throws -> [HarnessMatcher],
                 managedPIDs: @escaping @Sendable () async -> Set<Int32> = { [] },
                 signaller: any ProcessSignaller = SystemSignaller(),
+                gpu: any GPUSampling = GPUSampler(),
+                clock: @escaping @Sendable () -> Date = { .now },
+                sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                 defaults: UserDefaults = .standard,
                 selfPID: Int32 = getpid()) {
         self.sampler = sampler
+        gpuSampler = gpu
         matcherLoader = matchers
         managedPIDLoader = managedPIDs
         self.signaller = signaller
+        self.clock = clock
+        trendSleep = sleep
         self.defaults = defaults
         self.selfPID = selfPID
         limits = ComputeLimits(defaults: defaults)
+        trendInterval = TrendInterval(defaults: defaults)
     }
 
     /// Who to look for. Runs on page appear and on Refresh, not per tick.
@@ -130,11 +159,67 @@ public final class ComputeModel {
         let fresh = await runOffPool { sampler.sample() }
         guard mine == request else { return }
         samples = fresh
-        let now = Date.now
+        let now = clock()
+        sampledAt = now
         cpu = meter.update(samples, at: now)
         attribution = ProcessAttribution.attribute(samples, matchers: matchers,
                                                    managedPIDs: managedPIDs)
         republish(at: now)
+    }
+
+    // MARK: Trends
+
+    /// Starts the trend sampler, which then runs for as long as the app
+    /// does: one tick now and one every `trendInterval`. AppModel calls it
+    /// once at launch; the page's own three-second refresh is untouched.
+    public func startTrends() {
+        guard trendTask == nil else { return }
+        trendTask = Task { [weak self] in
+            await self?.runTrendLoop()
+        }
+    }
+
+    /// One tick, then sleep the interval, until cancelled. Tests call it
+    /// with a sleep that throws once enough ticks have run.
+    func runTrendLoop() async {
+        while !Task.isCancelled {
+            await trendTick(at: clock())
+            do {
+                try await trendSleep(.seconds(trendInterval.seconds))
+            } catch {
+                return
+            }
+        }
+    }
+
+    /// One trend point per running harness, aggregated exactly the way the
+    /// cards count. A tick whose last sample is still fresh (newer than
+    /// half the interval) reuses it rather than sampling again, so the
+    /// page being open never doubles the sampling cost.
+    func trendTick(at now: Date) async {
+        if matchers.isEmpty { await loadMatchers() }
+        let freshEnough = sampledAt.map { now.timeIntervalSince($0) <= trendInterval.seconds / 2 } ?? false
+        if !freshEnough {
+            let sampler = self.sampler
+            let table = await runOffPool { sampler.sample() }
+            samples = table
+            cpu = meter.update(table, at: now)
+            attribution = ProcessAttribution.attribute(table, matchers: matchers,
+                                                       managedPIDs: managedPIDs)
+            sampledAt = now
+        }
+        let gpu = gpuSampler
+        let times = await runOffPool { gpu.times() }
+        if !times.isEmpty { gpuAvailable = true }
+        let gpuPercent = gpuMeter.update(times, at: now)
+        for (harness, procs) in attribution.byHarness where !procs.isEmpty {
+            history.append(harness, TrendPoint(
+                at: now,
+                memoryBytes: procs.reduce(0) { $0 + $1.memoryBytes },
+                cpuPercent: procs.reduce(0) { $0 + (cpu[$1.pid] ?? 0) },
+                gpuPercent: times.isEmpty ? nil
+                    : procs.reduce(0) { $0 + (gpuPercent[$1.pid] ?? 0) }))
+        }
     }
 
     /// Send SIGTERM (SIGKILL when `force`) to an item, deepest child first,

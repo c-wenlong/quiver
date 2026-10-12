@@ -1,3 +1,4 @@
+import Charts
 import QuiverCore
 import SwiftUI
 
@@ -25,6 +26,7 @@ struct ComputePage: View {
         } content: {
             Text(totalsLine)
                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+            TrendCard()
             if let error = model.error { ErrorCard(message: error) }
             if model.usages.isEmpty && model.orphans.isEmpty {
                 EmptyCard(text: "Nothing a starred harness runs is up right now.", icon: "cpu")
@@ -65,6 +67,203 @@ struct ComputePage: View {
     static func cpu(_ percent: Double) -> String {
         percent.formatted(.number.precision(.fractionLength(percent >= 10 ? 0 : 1)))
     }
+}
+
+// MARK: - Trends
+
+/// RAM, CPU and GPU over time: one line per harness that has gone above
+/// the page's flag threshold, drawn in the harness's colour with its icon
+/// riding the line's right end. Points come from ComputeModel's trend
+/// sampler, which ticks whether the page is open or not.
+private struct TrendCard: View {
+    @Environment(AppModel.self) private var app
+    @State private var tab = UserDefaults.standard.string(forKey: Self.tabKey) ?? "ram"
+    @State private var hovered: Date?
+
+    private static let tabKey = "computeTrendTab"
+
+    private var model: ComputeModel { app.compute }
+
+    /// The harnesses the card draws: above the flag threshold at any
+    /// retained point, the same set on every tab.
+    private var shown: [String] { model.history.shown(above: model.limits.memoryBytes) }
+
+    private var tabSelection: Binding<String> {
+        Binding(get: { tab },
+                set: { tab = $0; UserDefaults.standard.set($0, forKey: Self.tabKey) })
+    }
+
+    private var interval: Binding<TrendInterval> {
+        Binding(get: { model.trendInterval }, set: { model.trendInterval = $0 })
+    }
+
+    /// The harness's points in the visible window. The GPU tab drops
+    /// points recorded before the GPU counters ever answered, so the
+    /// line does not dip to zero for "no reading".
+    private func series(_ harness: String) -> [TrendPoint] {
+        let points = model.history.window(for: harness)
+        return tab == "gpu" ? points.filter { $0.gpuPercent != nil } : points
+    }
+
+    private func value(of point: TrendPoint) -> Double {
+        switch tab {
+        case "cpu": point.cpuPercent
+        case "gpu": point.gpuPercent ?? 0
+        default: Double(point.memoryBytes) / Double(UInt64(1) << 30)
+        }
+    }
+
+    private func formatted(_ point: TrendPoint) -> String {
+        switch tab {
+        case "cpu": "\(ComputePage.cpu(point.cpuPercent))%"
+        case "gpu": point.gpuPercent.map { "\(ComputePage.cpu($0))%" } ?? "-"
+        default: ComputeSummary.bytes(point.memoryBytes)
+        }
+    }
+
+    @MainActor private static var colourCache: [String: Color] = [:]
+
+    /// The line's colour: the harness's declared colour, else a hue out
+    /// of its bundled colour logo, else a stable palette pick. Cached:
+    /// resolve() reads the logo's SVG off disk.
+    private func colour(of harness: String) -> Color {
+        let primary = model.matchers.first { $0.harness == harness }?.primaryColor ?? ""
+        let key = "\(harness)|\(primary)"
+        if let cached = Self.colourCache[key] { return cached }
+        let colour = Color(rgb: HarnessColor.resolve(id: harness,
+                                                     primaryColor: primary.isEmpty ? nil : primary))
+        Self.colourCache[key] = colour
+        return colour
+    }
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Tabs(options: [("ram", "RAM"), ("cpu", "CPU"), ("gpu", "GPU")],
+                         selection: tabSelection, style: .segmented)
+                    Spacer(minLength: 8)
+                    SelectMenu(options: TrendInterval.allCases.map { ($0, $0.title) },
+                               selection: interval, width: 150)
+                }
+                if model.history.isEmpty {
+                    placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")
+                } else if tab == "gpu" && !model.gpuAvailable {
+                    placeholder("GPU time isn't available on this Mac.")
+                } else if shown.isEmpty {
+                    placeholder("No harness has gone above "
+                                + ComputeSummary.bytes(model.limits.memoryBytes) + " yet.")
+                } else {
+                    chart
+                }
+            }
+        }
+    }
+
+    private func placeholder(_ text: String) -> some View {
+        Text(text)
+            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 180)
+    }
+
+    private var chart: some View {
+        let limitGB = Double(model.limits.memoryBytes) / Double(UInt64(1) << 30)
+        return Chart {
+            ForEach(shown, id: \.self) { harness in
+                let points = series(harness)
+                ForEach(points, id: \.at) { point in
+                    LineMark(x: .value("Time", point.at), y: .value("Value", value(of: point)),
+                             series: .value("Harness", harness))
+                        .foregroundStyle(colour(of: harness))
+                        .interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                if let last = points.last {
+                    PointMark(x: .value("Time", last.at), y: .value("Value", value(of: last)))
+                        .foregroundStyle(colour(of: harness))
+                        .symbolSize(16)
+                        .annotation(position: .trailing, alignment: .center) {
+                            HarnessIcon(harness: harness, size: 16)
+                        }
+                }
+            }
+            if tab == "ram" {
+                RuleMark(y: .value("Flag", limitGB))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
+                    .foregroundStyle(Theme.warning)
+                    .annotation(position: .top, alignment: .leading, spacing: 4) {
+                        Text("Flag above \(ComputeSummary.bytes(model.limits.memoryBytes))")
+                            .font(Theme.caption).foregroundStyle(Theme.warning)
+                    }
+            }
+            if let hovered {
+                RuleMark(x: .value("Time", hovered))
+                    .foregroundStyle(Theme.border)
+                    .annotation(position: .top, spacing: 8) { bubble(at: hovered) }
+            }
+        }
+        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+        .chartYAxis {
+            AxisMarks { value in
+                AxisGridLine()
+                AxisValueLabel { axisLabel(value) }
+            }
+        }
+        .padding(.trailing, 22)
+        .frame(height: 180)
+        .chartOverlay { proxy in hoverOverlay(proxy) }
+    }
+
+    private func axisLabel(_ value: AxisValue) -> some View {
+        let number = value.as(Double.self) ?? 0
+        if tab == "ram" {
+            return Text("\(number.formatted(.number.precision(.fractionLength(1)))) GB")
+        }
+        return Text("\(Int(number.rounded()))%")
+    }
+
+    private func hoverOverlay(_ proxy: ChartProxy) -> some View {
+        GeometryReader { geometry in
+            Rectangle().fill(.clear).contentShape(.rect)
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let point):
+                        guard let plot = proxy.plotFrame else { return }
+                        let x = point.x - geometry[plot].origin.x
+                        hovered = proxy.value(atX: x, as: Date.self)
+                    case .ended:
+                        hovered = nil
+                    }
+                }
+        }
+    }
+
+    /// Each shown harness's value at the point nearest the hovered time.
+    private func bubble(at time: Date) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(shown, id: \.self) { harness in
+                if let point = series(harness).min(by: {
+                    abs($0.at.timeIntervalSince(time)) < abs($1.at.timeIntervalSince(time))
+                }) {
+                    HStack(spacing: 6) {
+                        HarnessIcon(harness: harness, size: 12)
+                        Text(UsageFormat.harness(harness))
+                        Spacer()
+                        Text(formatted(point)).monospacedDigit()
+                    }
+                }
+            }
+        }
+        .font(Theme.caption).foregroundStyle(Theme.textPrimary)
+        .padding(8)
+        .background(Theme.panel, in: .rect(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+        .fixedSize()
+    }
+}
+
+private extension Color {
+    init(rgb: HarnessRGB) { self.init(red: rgb.red, green: rgb.green, blue: rgb.blue) }
 }
 
 /// The thresholds at the bottom of the page; changing one reflags the
