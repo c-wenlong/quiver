@@ -61,7 +61,14 @@ for style in light dark; do
   swift "$here/script/make-icon.swift" "$art" "$bundle/Contents/Resources/AppIcon-$style.icns"
 done
 
-version="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
+# What Settings shows: the full describe string ("v0.2.9-296-g571fbd8").
+describe="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
+# Bundle versions must be plain dotted numbers. LaunchServices cannot parse a
+# describe string, and WidgetKit then refuses every widget render with
+# bundleStubNotSupported ("Bundle version did not match").
+version="$( (git -C "$here" describe --tags --abbrev=0 2>/dev/null || true) | sed 's/^v//')"
+case "$version" in ""|*[!0-9.]*) version="0.0.0" ;; esac
+build="$(git -C "$here" rev-list --count HEAD 2>/dev/null || echo 1)"
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -74,7 +81,8 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>AppIcon-light</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
-  <key>CFBundleVersion</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${build}</string>
+  <key>QuiverVersion</key><string>${describe}</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -108,7 +116,8 @@ cat > "$appex/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>QuiverWidgets</string>
   <key>CFBundlePackageType</key><string>XPC!</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
-  <key>CFBundleVersion</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${build}</string>
+  <key>QuiverVersion</key><string>${describe}</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSExtension</key>
   <dict>
