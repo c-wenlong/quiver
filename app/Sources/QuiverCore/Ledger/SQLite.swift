@@ -4,10 +4,11 @@ import SQLite3
 /// A thin wrapper over the system SQLite C API. Not thread-safe: each
 /// connection belongs to one actor or one call.
 final class SQLiteDatabase {
-    struct Failure: Error, CustomStringConvertible {
+    struct Failure: Error, CustomStringConvertible, LocalizedError {
         let code: Int32
         let message: String
         var description: String { "sqlite \(code): \(message)" }
+        var errorDescription: String? { description }
     }
 
     private(set) var handle: OpaquePointer?

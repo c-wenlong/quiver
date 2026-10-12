@@ -101,6 +101,10 @@ public struct ScanReport: Sendable, Equatable {
     /// Lines over the size limit that were skipped.
     public var skippedLines = 0
     public var databasesRead = 0
+    /// Sources that failed this round and were skipped, one note each. A
+    /// source in a transient state (mid-rebuild, locked for recovery, an
+    /// unexpected schema) must not take the rest of the scan down with it.
+    public var notes: [String] = []
     public init() {}
 }
 
@@ -157,12 +161,32 @@ public actor Ledger {
             }
         }
         for database in roots.openCodeDatabases where FileManager.default.fileExists(atPath: database.path) {
-            if try DatabaseSources.scanOpenCode(database, store: store) { report.databasesRead += 1 }
+            report.databasesRead += try scanSource(database, kind: "OpenCode",
+                                                   scan: DatabaseSources.scanOpenCode, report: &report)
         }
         for database in roots.devinDatabases where FileManager.default.fileExists(atPath: database.path) {
-            if try DatabaseSources.scanDevin(database, store: store) { report.databasesRead += 1 }
+            report.databasesRead += try scanSource(database, kind: "Devin",
+                                                   scan: DatabaseSources.scanDevin, report: &report)
         }
         return report
+    }
+
+    /// One database source. A failure reading the source becomes a note and
+    /// a skip: the file can be locked or rebuilt by the app that owns it at
+    /// any moment, and one unreadable source is no reason to drop the
+    /// others. A failure on Quiver's own cache still throws, so the
+    /// Overview shows the error and the scan does not count as complete.
+    private func scanSource(
+        _ url: URL, kind: String,
+        scan: (URL, LedgerStore) throws -> Bool, report: inout ScanReport
+    ) throws -> Int {
+        do {
+            return try scan(url, store) ? 1 : 0
+        } catch let error as DatabaseSources.SourceRead {
+            report.notes.append(
+                "Skipped \(kind)'s database (\(url.path)): \(error.underlying.localizedDescription)")
+            return 0
+        }
     }
 
     private func scanFile<P: FileLogParser>(

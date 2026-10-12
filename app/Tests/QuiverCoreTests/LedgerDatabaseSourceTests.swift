@@ -166,3 +166,67 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(try store.events(in: allTime).map(\.sessionId) == ["s"])
     }
 }
+
+@Suite struct LedgerSourceSkipTests {
+    /// A source database in a transient state (here a mid-rebuild file whose
+    /// schema does not match yet) is skipped with a note instead of failing
+    /// the whole scan: the healthy source still reads.
+    @Test func aBrokenSourceIsSkippedWithANoteAndTheRestStillScans() async throws {
+        let temp = try TempDir()
+        let good = temp.path("devin/cli/sessions.db")
+        try makeDatabase("devin.sql", at: good)
+        // Exists, opens, but has none of the expected tables: like OpenCode's
+        // database caught between delete and recreate.
+        let broken = temp.path("opencode/opencode.db")
+        try FileManager.default.createDirectory(
+            at: broken.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try execute("CREATE TABLE unrelated (id INTEGER)", on: broken)
+
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let report = try await ledger.scan(roots: LedgerRoots(
+            openCodeDatabases: [broken], devinDatabases: [good]))
+
+        #expect(report.databasesRead == 1)
+        let note = try #require(report.notes.first)
+        #expect(note.contains("OpenCode"))
+        #expect(note.contains(broken.path))
+        #expect(note.contains("sqlite"))
+        #expect(await ledger.events(in: allTime).count == 2)
+    }
+
+    /// Only reads of the source are forgiven. A write to Quiver's own cache
+    /// fails the scan, so the Overview can show the error.
+    @Test func aCacheWriteFailureThrowsInsteadOfBecomingANote() async throws {
+        let temp = try TempDir()
+        let db = temp.path("devin/cli/sessions.db")
+        try makeDatabase("devin.sql", at: db)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+
+        // A second connection holding an exclusive lock makes every cache
+        // operation fail, starting at BEGIN IMMEDIATE.
+        let lock = try SQLiteDatabase(url: temp.path("cache/ledger.sqlite"))
+        try lock.execute("BEGIN EXCLUSIVE")
+        do {
+            _ = try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
+            Issue.record("expected the scan to throw")
+        } catch let error as SQLiteDatabase.Failure {
+            #expect(error.message.contains("locked"))
+        }
+    }
+
+    /// The failure carries what SQLite actually said, so the Overview banner
+    /// can show more than "error 1".
+    @Test func aFailureDescribesTheSQLiteCodeAndMessage() throws {
+        let temp = try TempDir()
+        let db = try SQLiteDatabase(url: temp.path("x.sqlite"))
+        do {
+            _ = try db.prepare("SELECT nope FROM missing")
+            Issue.record("expected a Failure")
+        } catch let error as SQLiteDatabase.Failure {
+            #expect(error.code == 1)
+            #expect(error.errorDescription == error.description)
+            #expect(error.localizedDescription.contains("sqlite 1"))
+            #expect(error.localizedDescription.contains("missing"))
+        }
+    }
+}

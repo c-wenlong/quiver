@@ -137,6 +137,9 @@ public final class OverviewModel {
     public private(set) var recentModels: [ModelShare] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
+    /// Sources the last scan skipped, e.g. a database its app had locked or
+    /// was rebuilding. Shown as a note, not a failure: everything else read.
+    public private(set) var scanNotes: [String] = []
     /// Successful scans so far; other views reload their ledger figures when it changes.
     public private(set) var completedScans = 0
     /// When the figures were last rebuilt.
@@ -179,8 +182,9 @@ public final class OverviewModel {
         if scan {
             if let catalog = await refreshPricing() { await ledger.setPricing(catalog) }
             do {
-                _ = try await ledger.scan(roots: roots())
+                let report = try await ledger.scan(roots: roots())
                 error = nil
+                scanNotes = report.notes
                 completedScans += 1
             } catch is CancellationError {
                 return
