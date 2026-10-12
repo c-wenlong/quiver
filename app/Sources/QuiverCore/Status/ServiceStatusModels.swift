@@ -168,8 +168,11 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     static let logoIDs = ["openai": "codex", "github": "copilot"]
 
     /// The bundled harness logo for this service, or nil when there is none
-    /// (npm, Vercel and Cloudflare are not harnesses, so they show no icon).
+    /// (npm, Vercel and Cloudflare are not harnesses, so they show no icon;
+    /// the bundle now holds provider-only marks too, which an infrastructure
+    /// row must never pick up by name).
     public var logoID: String? {
+        guard group == .providers else { return nil }
         let id = Self.logoIDs[id] ?? id
         return HarnessIcons.icon(for: id) != nil ? id : nil
     }

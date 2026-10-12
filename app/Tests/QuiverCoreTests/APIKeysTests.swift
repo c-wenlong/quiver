@@ -506,7 +506,7 @@ struct FakeShell: ShellEnvironmentReading {
     @Test func headingsMatchOnWordsIgnoringCase() {
         #expect(APIKeyProviderLogo.logoID(for: "ANTHROPIC") == "claude")
         #expect(APIKeyProviderLogo.logoID(for: "Claude") == "claude")
-        #expect(APIKeyProviderLogo.logoID(for: "OpenAI") == "codex")
+        #expect(APIKeyProviderLogo.logoID(for: "OpenAI") == "openai")
         #expect(APIKeyProviderLogo.logoID(for: "Moonshot / Kimi") == "kimi")
         #expect(APIKeyProviderLogo.logoID(for: "Google AI Studio") == "gemini")
         #expect(APIKeyProviderLogo.logoID(for: "GEMINI") == "gemini")
@@ -518,11 +518,42 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(APIKeyProviderLogo.logoID(for: "Alibaba Cloud") == "qwen-code")
     }
 
+    /// The headings in a real keys file, as the app shows them.
+    @Test func theUsersHeadingsAllResolve() {
+        let headings: [(String, String?)] = [
+            ("OpenAI", "openai"),
+            ("Anthropic", "claude"),
+            ("Google Gemini", "gemini"),
+            ("DeepSeek", "deepseek"),
+            ("ZAI (01.ai)", "zai"),
+            ("MiniMax", "minimax"),
+            ("Kimi (Moonshot AI)", "kimi"),
+            ("Qwen (Alibaba)", "qwen-code"),
+            ("MiMo (Xiaomi)", "xiaomimimo"),
+            ("xAI (Grok)", "grok"),
+            ("StepFun", "stepfun"),
+            ("Groq", "groq"),
+            ("Upstage", "upstage"),
+            ("Cerebras", "cerebras"),
+            ("Mistral", "mistral-vibe"),
+            ("Routing.Run", nil),
+            ("Opencode Zen", "opencode"),
+            ("OpenRouter", "openrouter"),
+            ("Together AI", "together"),
+            ("Fireworks AI", "fireworks"),
+            ("Vercel Gateway", "vercel"),
+            ("Nebius Token Factory", "nebius"),
+            ("Featherless AI", "featherless"),
+            ("NVIDIA", "nvidia"),
+        ]
+        for (heading, id) in headings {
+            #expect(APIKeyProviderLogo.logoID(for: heading) == id, Comment(rawValue: heading))
+        }
+    }
+
     /// A name only inside another word is no match, and other providers get no logo.
     @Test func otherProvidersHaveNoLogo() {
         #expect(APIKeyProviderLogo.logoID(for: "Keys for every harness") == nil)
-        #expect(APIKeyProviderLogo.logoID(for: "OPENROUTER") == nil)
-        #expect(APIKeyProviderLogo.logoID(for: "Groq") == nil)
         #expect(APIKeyProviderLogo.logoID(for: "Stripe") == nil)
         #expect(APIKeyProviderLogo.logoID(for: "") == nil)
     }

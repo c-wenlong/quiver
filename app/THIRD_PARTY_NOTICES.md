@@ -83,7 +83,10 @@ Where each came from is in `Resources/harness-icons.tsv`:
   Pi, Antigravity, Kimi, ZCode, Command Code, Qoder, Qoder CN and Volcano
   Engine Ark come from TokenTracker (`dashboard/public/brand-logos` and
   `ProviderIcon.jsx`), most of them extracted there from LobeHub icons.
-- Claude's colour mark, Qwen, Mistral, goose and Cline come from LobeHub
+- Claude's colour mark, Qwen, Mistral, goose, Cline and the API key
+  provider marks (OpenAI, DeepSeek, Z.ai, Yi, MiniMax, Xiaomi MiMo,
+  StepFun, Groq, Upstage, Cerebras, OpenRouter, Together AI, Fireworks
+  AI, Vercel, Nebius, Featherless AI and NVIDIA) come from LobeHub
   icons (`@lobehub/icons-static-svg`).
 - Continue comes from its repository (continuedev/continue,
   `docs/logo/light.svg`); Droid (Factory), Forge, Augment, Blackbox and
