@@ -32,6 +32,15 @@ actor Flaky {
 }
 
 /// Counts calls.
+actor CancelsFirst {
+    private(set) var calls = 0
+    func next() throws -> Set<String> {
+        calls += 1
+        if calls == 1 { throw CancellationError() }
+        return ["claude"]
+    }
+}
+
 actor Counter {
     var count = 0
     func tick() { count += 1 }
@@ -239,6 +248,16 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         #expect(model.isVisible("claude"))
     }
 
+    @Test func aCancelledCheckDoesNotBlockTheNextRecheck() async {
+        let cancelsFirst = CancelsFirst()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await cancelsFirst.next() })
+        await model.loadIfNeeded(for: "/usr/local/bin/swe")
+        #expect(!model.isLoading)
+        await model.recheck(for: "/usr/local/bin/swe")
+        #expect(await cancelsFirst.calls == 2)
+        #expect(model.isVisible("claude"))
+    }
+
     @Test func checksOncePerSwePath() async {
         let counter = Counter()
         let model = ProviderVisibilityModel(store: MemoryStore(), detect: { await counter.tick(); return ["claude"] })
@@ -312,7 +331,9 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
 
     @Test func aHarnessInstalledLaterShowsUpOnTheQuietRecheck() async {
         let swe = FakeSwe(results: ["A": ["claude"]])
-        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
+        let clock = TestClock()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() },
+                                            now: { clock.now })
         await model.recheck(for: "A")   // nothing checked yet: no swe call of its own
         #expect(await swe.calls == 0)
         await swe.use("A"); await model.loadIfNeeded(for: "A")
@@ -320,6 +341,7 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         await swe.set("A", ["claude", "codex"])   // installed in a terminal
         await model.loadIfNeeded(for: "A")           // the cache still holds
         #expect(await swe.calls == 1)
+        clock.advance(ProviderVisibilityModel.recheckInterval)
         await model.recheck(for: "A")                        // Quiver is active again
         #expect(await swe.calls == 2)
         #expect(model.isVisible("codex"))
@@ -350,9 +372,12 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
 
     @Test func aQuietRecheckKeepsTheRowsAndHidesItsOwnFailure() async {
         let swe = FakeSwe(results: ["A": ["claude"]])
-        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() })
+        let clock = TestClock()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() },
+                                            now: { clock.now })
         await swe.use("A"); await model.loadIfNeeded(for: "A")
         await swe.set("A", nil)
+        clock.advance(ProviderVisibilityModel.recheckInterval)
         await model.recheck(for: "A")
         #expect(model.checkError == nil)
         #expect(model.hasChecked)
@@ -361,10 +386,49 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         #expect(await swe.calls == 2)
     }
 
+    @Test func aRecheckWithinTheIntervalSkipsSwe() async {
+        let swe = FakeSwe(results: ["A": ["claude"]])
+        let clock = TestClock()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await swe.detect() },
+                                            now: { clock.now })
+        await swe.use("A"); await model.loadIfNeeded(for: "A")
+        await model.recheck(for: "A")   // just checked: nothing new to say
+        #expect(await swe.calls == 1)
+        #expect(model.isVisible("claude"))
+        clock.advance(ProviderVisibilityModel.recheckInterval - 1)
+        await model.recheck(for: "A")
+        #expect(await swe.calls == 1)
+        clock.advance(1)
+        await model.recheck(for: "A")
+        #expect(await swe.calls == 2)
+
+        // A different swe checks right away; the interval only throttles
+        // the quiet same-swe case.
+        await swe.use("B"); await swe.set("B", ["codex"])
+        await model.recheck(for: "B")
+        #expect(await swe.calls == 3)
+        #expect(model.isVisible("codex"))
+
+        // A failed check is throttled too, then tried again once the
+        // interval passes.
+        clock.advance(ProviderVisibilityModel.recheckInterval)
+        await swe.set("B", nil)
+        await model.recheck(for: "B")
+        #expect(await swe.calls == 4)
+        await model.recheck(for: "B")
+        #expect(await swe.calls == 4)
+        clock.advance(ProviderVisibilityModel.recheckInterval)
+        await model.recheck(for: "B")
+        #expect(await swe.calls == 5)
+    }
+
     @Test func noCheckingStateWhileARecheckRuns() async {
         let gate = HeldCheck()
-        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { await gate.next() })
+        let clock = TestClock()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { await gate.next() },
+                                            now: { clock.now })
         await model.loadIfNeeded(for: "A")
+        clock.advance(ProviderVisibilityModel.recheckInterval)
         let recheck = Task { await model.recheck(for: "A") }
         while !(await gate.parked) { await Task.yield() }
         #expect(model.hasChecked)   // rows keep their result, no "Checking…"
