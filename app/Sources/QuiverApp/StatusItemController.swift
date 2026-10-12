@@ -277,13 +277,14 @@ private struct PanelLimits: View {
                 PanelAccountRow(card: card)
             }
             // Limits exist but every one is hidden: say where to bring them
-            // back, ahead of "no accounts", which would read as nothing to show.
+            // back, ahead of "nothing starred", which would read as nothing to show.
             let available = !app.starredAccountCards.isEmpty || app.others.rows.contains { $0.limit.status == .ok }
             if available && cards.isEmpty && others.isEmpty {
                 Text("Every limit is hidden in Menu bar and widgets.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            } else if app.starredAccountCards.isEmpty {
-                Text("No accounts yet.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else if cards.isEmpty && others.isEmpty {
+                Text("Nothing starred. Star a harness on Harnesses to see its limits here.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             // Harnesses swe reports follow the accounts in one list: each
             // row already carries its logo and name, so no heading.

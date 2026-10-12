@@ -121,6 +121,7 @@ private struct ExpandRow: View {
 }
 
 private struct HarnessRow: View {
+    @Environment(AppModel.self) private var app
     var harness: Harness
     var model: HarnessesModel
     @State private var archiving = false
@@ -189,7 +190,7 @@ private struct HarnessRow: View {
 
     @ViewBuilder private var actions: some View {
         if harness.state == .archived {
-            Button("Restore") { Task { await model.restore(harness) } }
+            Button("Restore") { Task { await model.restore(harness); await app.others.load() } }
                 .secondaryButton()
         } else {
             // Archive on top, star under it, one column of icon buttons.
@@ -197,7 +198,7 @@ private struct HarnessRow: View {
                 archiveButton
                 Button(harness.state == .starred ? "Unstar" : "Star",
                        systemImage: harness.state == .starred ? "star.fill" : "star") {
-                    Task { await model.toggleStar(harness) }
+                    Task { await model.toggleStar(harness); await app.others.load() }
                 }
                 .iconButton()
                 .help(harness.state == .starred ? "Unstar: stop pinning it to the top" : "Star: pin it to the top and track its limits")
@@ -242,7 +243,7 @@ private struct HarnessRow: View {
         guard !why.isEmpty else { return }
         archiving = false
         reason = ""
-        Task { await model.archive(harness, reason: why) }
+        Task { await model.archive(harness, reason: why); await app.others.load() }
     }
 
     private func archivedLine(_ archived: Harness.Archive) -> String {
