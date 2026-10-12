@@ -531,18 +531,31 @@ public final class APIKeysModel {
     public private(set) var error: String?
     public private(set) var savedAt: Date?
 
+    /// The latest check per key name. In memory only: a key's health is
+    /// never written anywhere.
+    public private(set) var checks: [String: APIKeyCheck] = [:]
+    /// The names a check is running or queued for.
+    public private(set) var checking: Set<String> = []
+    /// Any check is still running.
+    public var isChecking: Bool { !checking.isEmpty }
+
     public var path: String { store.url.path }
+
+    private static let checkLimit = 4
 
     private let store: APIKeysStore
     private let shell: ShellEnvironmentReading
+    private let checker: APIKeyChecker
     private var file = APIKeysFile(text: "")
     private var stamp = APIKeysStore.Stamp(content: nil)
     private var environment: [String: String]?
     private var shellRead = false
 
-    public init(store: APIKeysStore, shell: ShellEnvironmentReading) {
+    public init(store: APIKeysStore, shell: ShellEnvironmentReading,
+                checker: APIKeyChecker = APIKeyChecker(transport: URLSessionTransport())) {
         self.store = store
         self.shell = shell
+        self.checker = checker
     }
 
     public var providers: [String] {
@@ -580,6 +593,66 @@ public final class APIKeysModel {
         var edited = file
         try edited.remove(name: name)
         try write(edited)
+    }
+
+    /// Check every key that has a value, a few requests in flight at a
+    /// time, each result published as it lands. Keys with no probe become
+    /// "no check" right away, without the network.
+    public func checkAll() async {
+        guard checking.isEmpty else { return }
+        var queue: [(name: String, value: String, probe: APIKeyProbe)] = []
+        for row in rows where !row.value.isEmpty {
+            if let probe = APIKeyProbe.probe(forName: row.name) {
+                queue.append((row.name, row.value, probe))
+                checking.insert(row.name)
+            } else {
+                checks[row.name] = APIKeyCheck(
+                    result: .noCheck(APIKeyProbe.noCheckReason(forName: row.name)),
+                    checkedAt: Date(), value: row.value)
+            }
+        }
+        let checker = self.checker
+        var pending = queue.makeIterator()
+        await withTaskGroup(of: (String, APIKeyCheck).self) { group in
+            var inFlight = 0
+            func enqueue(_ target: (name: String, value: String, probe: APIKeyProbe)) {
+                inFlight += 1
+                group.addTask {
+                    let result = await checker.check(key: target.value, probe: target.probe)
+                    return (target.name, APIKeyCheck(result: result, checkedAt: Date(),
+                                                     value: target.value))
+                }
+            }
+            while inFlight < Self.checkLimit, let target = pending.next() { enqueue(target) }
+            while let (name, check) = await group.next() {
+                inFlight -= 1
+                checks[name] = check
+                checking.remove(name)
+                if let target = pending.next() { enqueue(target) }
+            }
+        }
+    }
+
+    /// Re-check one key, the chip's click.
+    public func check(name: String) async {
+        guard let row = rows.first(where: { $0.name == name }), !row.value.isEmpty,
+              !checking.contains(name) else { return }
+        guard let probe = APIKeyProbe.probe(forName: name) else {
+            checks[name] = APIKeyCheck(result: .noCheck(APIKeyProbe.noCheckReason(forName: name)),
+                                       checkedAt: Date(), value: row.value)
+            return
+        }
+        checking.insert(name)
+        defer { checking.remove(name) }
+        let result = await checker.check(key: row.value, probe: probe)
+        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: row.value)
+    }
+
+    /// The check to show for a row, or nothing when the row's value
+    /// changed since it ran: a result only describes the key it tested.
+    public func check(for row: Row) -> APIKeyCheck? {
+        guard let check = checks[row.name], check.isCurrent(for: row.value) else { return nil }
+        return check
     }
 
     private func write(_ edited: APIKeysFile) throws {

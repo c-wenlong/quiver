@@ -17,9 +17,16 @@ struct APIKeysPage: View {
                 .disabled(model.isLoading)
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Read the file and the shell again (⌘R)")
+            Button("Check keys", systemImage: "checkmark.shield") { Task { await model.checkAll() } }
+                .secondaryButton()
+                .disabled(model.isChecking)
+                .help("Send each key to its own provider to see if it still works")
             Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
                 .primaryButton()
         } content: {
+            if let summary = checkSummary(model) {
+                Text(summary).font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
             if let error = model.error ?? actionError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
@@ -68,6 +75,34 @@ struct APIKeysPage: View {
         }
     }
 
+    /// "18 work · 2 rejected · 1 couldn't check · 3 no check", counting
+    /// only results still current for the row's value; parts with none
+    /// are left out.
+    private func checkSummary(_ model: APIKeysModel) -> String? {
+        var works = 0
+        var noCredit = 0
+        var rejected = 0
+        var failed = 0
+        var noCheck = 0
+        for row in model.rows {
+            switch model.check(for: row)?.result {
+            case .works: works += 1
+            case .noCredit: noCredit += 1
+            case .rejected: rejected += 1
+            case .couldNotCheck: failed += 1
+            case .noCheck: noCheck += 1
+            case nil: break
+            }
+        }
+        var parts: [String] = []
+        if works > 0 { parts.append("\(works) work") }
+        if noCredit > 0 { parts.append("\(noCredit) no credit") }
+        if rejected > 0 { parts.append("\(rejected) rejected") }
+        if failed > 0 { parts.append("\(failed) couldn't check") }
+        if noCheck > 0 { parts.append("\(noCheck) no check") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     private func table(_ model: APIKeysModel) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -82,6 +117,8 @@ struct APIKeysPage: View {
                 let firstOfGroup = index == 0 || model.visible[index - 1].provider != row.provider
                 Divider().overlay(Theme.border).opacity(firstOfGroup ? 1 : 0.5)
                 KeyRow(row: row, showsProvider: firstOfGroup, isRevealed: revealed.contains(row.name),
+                       check: model.check(for: row), isChecking: model.checking.contains(row.name),
+                       recheck: { Task { await model.check(name: row.name) } },
                        toggleReveal: {
                            if revealed.contains(row.name) { revealed.remove(row.name) } else { revealed.insert(row.name) }
                        },
@@ -130,6 +167,9 @@ private struct KeyRow: View {
     var row: APIKeysModel.Row
     var showsProvider: Bool
     var isRevealed: Bool
+    var check: APIKeyCheck?
+    var isChecking: Bool
+    var recheck: () -> Void
     var toggleReveal: () -> Void
     var copy: () -> Void
     var edit: () -> Void
@@ -158,7 +198,11 @@ private struct KeyRow: View {
                     .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            StatusLabel(status: row.status).frame(width: 120, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                StatusLabel(status: row.status)
+                CheckChip(check: check, isChecking: isChecking, recheck: recheck)
+            }
+            .frame(width: 120, alignment: .leading)
             HStack(spacing: 4) {
                 // One ring per button, so focus shows which one it's on.
                 Button(isRevealed ? "Hide" : "Reveal", systemImage: isRevealed ? "eye.slash" : "eye", action: toggleReveal)
@@ -172,6 +216,66 @@ private struct KeyRow: View {
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(hovering ? Theme.rowHover : .clear)
         .onHover { hovering = $0 }
+    }
+}
+
+/// What the last key check said, or a spinner while it runs. Clicking
+/// asks the provider again.
+private struct CheckChip: View {
+    var check: APIKeyCheck?
+    var isChecking: Bool
+    var recheck: () -> Void
+
+    var body: some View {
+        if isChecking {
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.mini)
+                Text("Checking").foregroundStyle(Theme.textMuted)
+            }
+            .font(Theme.caption)
+            .help("Asking the provider whether the key still works")
+        } else if let check {
+            Button(action: recheck) {
+                HStack(spacing: 5) {
+                    Circle().fill(tint(check.result)).frame(width: 6, height: 6)
+                    Text(label(check.result)).foregroundStyle(Theme.textSecondary)
+                }
+                .font(Theme.caption)
+            }
+            .buttonStyle(.plain)
+            .help(tooltip(check))
+        }
+    }
+
+    private func tint(_ result: APIKeyCheckResult) -> Color {
+        switch result {
+        case .works: return Theme.success
+        case .noCredit: return Theme.warning
+        case .rejected: return Theme.danger
+        case .couldNotCheck, .noCheck: return Theme.textMuted
+        }
+    }
+
+    private func label(_ result: APIKeyCheckResult) -> String {
+        switch result {
+        case .works: return "Works"
+        case .noCredit: return "No credit"
+        case .rejected: return "Rejected"
+        case .couldNotCheck: return "Couldn't check"
+        case .noCheck: return "No check"
+        }
+    }
+
+    private func tooltip(_ check: APIKeyCheck) -> String {
+        let when = "Checked \(check.checkedAt.formatted(.relative(presentation: .named)))"
+        switch check.result {
+        case .works: return "The provider accepted this key. \(when)"
+        case .noCredit: return "The key works but the account has no credit. \(when)"
+        case .rejected(let status, let message):
+            return "HTTP \(status)\(message.map { ": \($0)" } ?? "") · \(when)"
+        case .couldNotCheck(let reason), .noCheck(let reason):
+            return "\(reason) · \(when)"
+        }
     }
 }
 
