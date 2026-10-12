@@ -531,8 +531,8 @@ public final class APIKeysModel {
     public private(set) var error: String?
     public private(set) var savedAt: Date?
 
-    /// The latest check per key name. In memory only: a key's health is
-    /// never written anywhere.
+    /// The latest check per key name, read back from the cache at init
+    /// and kept until a newer check replaces it.
     public private(set) var checks: [String: APIKeyCheck] = [:]
     /// The names a check is running or queued for.
     public private(set) var checking: Set<String> = []
@@ -546,7 +546,11 @@ public final class APIKeysModel {
     private let store: APIKeysStore
     private let shell: ShellEnvironmentReading
     private let checker: APIKeyChecker
-    /// The one limiter every check shares, so a chip click during a full
+    /// Where results persist between launches.
+    private let checkCache: APIKeyCheckStore
+    /// The machine's salt, so a stored fingerprint needs this machine.
+    let checkSalt: Data
+    /// The one limiter every check shares, so a click during a full
     /// run queues behind the same four slots instead of opening a lane.
     private let slots = CheckSlots(capacity: checkLimit)
     private var file = APIKeysFile(text: "")
@@ -555,10 +559,15 @@ public final class APIKeysModel {
     private var shellRead = false
 
     public init(store: APIKeysStore, shell: ShellEnvironmentReading,
-                checker: APIKeyChecker = APIKeyChecker(transport: URLSessionTransport())) {
+                checker: APIKeyChecker = APIKeyChecker(transport: URLSessionTransport()),
+                checkCache: APIKeyCheckStore,
+                defaults: UserDefaults = .standard) {
         self.store = store
         self.shell = shell
         self.checker = checker
+        self.checkCache = checkCache
+        checkSalt = APIKeyCheckStore.salt(from: defaults)
+        checks = checkCache.load(for: store.url)
     }
 
     public var providers: [String] {
@@ -611,11 +620,12 @@ public final class APIKeysModel {
             } else {
                 checks[row.name] = APIKeyCheck(
                     result: .noCheck(APIKeyProbe.noCheckReason(forName: row.name)),
-                    checkedAt: Date(), value: row.value)
+                    checkedAt: Date(), value: row.value, salt: checkSalt)
             }
         }
         let checker = self.checker
         let slots = self.slots
+        let salt = checkSalt
         await withTaskGroup(of: (String, APIKeyCheck).self) { group in
             for target in work {
                 group.addTask {
@@ -623,24 +633,31 @@ public final class APIKeysModel {
                     let result = await checker.check(key: target.value, probe: target.probe)
                     await slots.release()
                     return (target.name, APIKeyCheck(result: result, checkedAt: Date(),
-                                                     value: target.value))
+                                                     value: target.value, salt: salt))
                 }
             }
             for await (name, check) in group {
                 checks[name] = check
                 checking.remove(name)
+                // The locked merge makes a save per landing result
+                // safe, and a quit mid-run keeps what already finished.
+                saveChecks()
             }
         }
+        // A last save even when nothing went to the network, so a run
+        // of only "no check" answers still lands on disk.
+        saveChecks()
     }
 
-    /// Re-check one key, the chip's click. Queued at the same limiter as
-    /// a full run, and ignored while that row is already checking.
+    /// Re-check one key, the status label's click. Queued at the same
+    /// limiter as a full run, and ignored while that row is checking.
     public func check(name: String) async {
         guard let row = rows.first(where: { $0.name == name }), !row.value.isEmpty,
               !checking.contains(name) else { return }
         guard let probe = APIKeyProbe.probe(forName: name) else {
             checks[name] = APIKeyCheck(result: .noCheck(APIKeyProbe.noCheckReason(forName: name)),
-                                       checkedAt: Date(), value: row.value)
+                                       checkedAt: Date(), value: row.value, salt: checkSalt)
+            saveChecks()
             return
         }
         checking.insert(name)
@@ -648,14 +665,25 @@ public final class APIKeysModel {
         await slots.acquire()
         let result = await checker.check(key: row.value, probe: probe)
         await slots.release()
-        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: row.value)
+        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: row.value,
+                                   salt: checkSalt)
+        saveChecks()
     }
 
     /// The check to show for a row, or nothing when the row's value
     /// changed since it ran: a result only describes the key it tested.
     public func check(for row: Row) -> APIKeyCheck? {
-        guard let check = checks[row.name], check.isCurrent(for: row.value) else { return nil }
+        guard let check = checks[row.name],
+              check.isCurrent(for: row.value, salt: checkSalt) else { return nil }
         return check
+    }
+
+    /// Persist what the checks know under this keys file's own section,
+    /// dropping names the file no longer has.
+    private func saveChecks() {
+        let names = Set(rows.map(\.name))
+        checkCache.save(checks.filter { names.contains($0.key) },
+                        for: store.url, currentNames: names)
     }
 
     private func write(_ edited: APIKeysFile) throws {
