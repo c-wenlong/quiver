@@ -16,7 +16,7 @@ extension Ledger: LedgerQuerying {}
 
 /// The Overview page's period picker.
 public enum OverviewPeriod: String, CaseIterable, Identifiable, Sendable {
-    case today, week, month, thirtyDays
+    case today, week, month, thirtyDays, ninetyDays, year, allTime
 
     public var id: String { rawValue }
 
@@ -26,6 +26,9 @@ public enum OverviewPeriod: String, CaseIterable, Identifiable, Sendable {
         case .week: "7 days"
         case .month: "This month"
         case .thirtyDays: "30 days"
+        case .ninetyDays: "90 days"
+        case .year: "365 days"
+        case .allTime: "All time"
         }
     }
 
@@ -39,6 +42,12 @@ public enum OverviewPeriod: String, CaseIterable, Identifiable, Sendable {
             DateInterval(start: calendar.dateInterval(of: .month, for: now)?.start ?? now, end: now)
         case .thirtyDays:
             DateInterval(start: now.addingTimeInterval(-30 * 86_400), end: now)
+        case .ninetyDays:
+            DateInterval(start: now.addingTimeInterval(-90 * 86_400), end: now)
+        case .year:
+            DateInterval(start: now.addingTimeInterval(-365 * 86_400), end: now)
+        case .allTime:
+            DateInterval(start: .distantPast, end: now)
         }
     }
 }
@@ -61,6 +70,8 @@ public struct ModelShare: Sendable, Equatable, Identifiable {
     public var totals: UsageTotals
     /// Of the period's tokens, 0...1.
     public var share: Double
+    /// The harnesses that ran the model, most tokens first.
+    public var harnesses: [String] = []
 
     public init(model: String, totals: UsageTotals, share: Double) {
         self.model = model
@@ -243,13 +254,25 @@ public final class OverviewModel {
             models: Self.models(daily))
     }
 
-    /// Each model's share of the rows' tokens, largest first.
+    /// Each model's share of the rows' tokens, largest first, with the
+    /// harnesses that ran it, most tokens first.
     static func models(_ rows: [DailyUsage]) -> [ModelShare] {
         var byModel: [String: UsageTotals] = [:]
-        for row in rows { byModel[row.model, default: UsageTotals()].add(row.totals) }
+        var harnessTokens: [String: [String: Int]] = [:]
+        for row in rows {
+            byModel[row.model, default: UsageTotals()].add(row.totals)
+            harnessTokens[row.model, default: [:]][row.harness, default: 0] += row.totals.totalTokens
+        }
         let grand = Double(max(byModel.values.reduce(0) { $0 + $1.totalTokens }, 1))
         return byModel
-            .map { ModelShare(model: $0.key, totals: $0.value, share: Double($0.value.totalTokens) / grand) }
+            .map { model, totals in
+                var share = ModelShare(model: model, totals: totals,
+                                       share: Double(totals.totalTokens) / grand)
+                share.harnesses = (harnessTokens[model] ?? [:])
+                    .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
+                    .map(\.key)
+                return share
+            }
             .sorted { ($0.totals.totalTokens, $1.model) > ($1.totals.totalTokens, $0.model) }
     }
 

@@ -96,6 +96,24 @@ struct ScanFailed: Error, LocalizedError {
         let range = OverviewPeriod.thirtyDays.range(now: now, calendar: calendar)
         #expect(range.duration == 30 * 86_400)
     }
+
+    @Test func ninetyDaysIsARollingWindow() {
+        let range = OverviewPeriod.ninetyDays.range(now: now, calendar: calendar)
+        #expect(range.duration == 90 * 86_400)
+        #expect(range.end == now)
+    }
+
+    @Test func aYearIsThreeHundredSixtyFiveRollingDays() {
+        let range = OverviewPeriod.year.range(now: now, calendar: calendar)
+        #expect(range.duration == 365 * 86_400)
+        #expect(range.end == now)
+    }
+
+    @Test func allTimeStartsAtTheDistantPast() {
+        let range = OverviewPeriod.allTime.range(now: now, calendar: calendar)
+        #expect(range.start == .distantPast)
+        #expect(range.end == now)
+    }
 }
 
 @MainActor
@@ -164,6 +182,34 @@ struct ScanFailed: Error, LocalizedError {
         #expect(summary.models.map(\.share) == [0.7, 0.2, 0.1])
         #expect(summary.harnesses.map(\.modelCount) == [2, 1])
         #expect(summary.activeDays == 2)
+    }
+
+    @Test func topModelsCarryTheHarnessesThatUsedThem() async throws {
+        let ledger = FakeLedger()
+        let oct11 = Date(timeIntervalSince1970: 1_791_648_000)
+        await ledger.set(harnesses: ["claude": totals(tokens: 5, cost: 0), "devin": totals(tokens: 2, cost: 0)], days: [
+            DailyUsage(day: oct11, harness: "claude", model: "opus", totals: totals(tokens: 5, cost: 0)),
+            DailyUsage(day: oct11, harness: "devin", model: "opus", totals: totals(tokens: 2, cost: 0)),
+        ])
+        let model = model(ledger)
+        await model.load(scan: false)
+        let models = try #require(model.summary?.models)
+        #expect(models.count == 1)
+        #expect(models[0].harnesses == ["claude", "devin"])
+    }
+
+    @Test func allTimeReachesBackToTheFirstDay() async throws {
+        let ledger = FakeLedger()
+        let old = Date(timeIntervalSince1970: 1_600_000_000)   // 2020-09-13
+        let oct11 = Date(timeIntervalSince1970: 1_791_648_000)
+        await ledger.set(harnesses: ["claude": totals(tokens: 3, cost: 0)], days: [
+            DailyUsage(day: old, harness: "claude", model: "a", totals: totals(tokens: 1, cost: 0)),
+            DailyUsage(day: oct11, harness: "claude", model: "a", totals: totals(tokens: 2, cost: 0)),
+        ])
+        let model = model(ledger)
+        model.period = .allTime
+        await model.load(scan: false)
+        #expect(model.summary?.days.map(\.day) == [oct11, old])
     }
 
     @Test func recentModelsCoverTheLastThirtyDaysWhateverThePeriod() async throws {
