@@ -103,15 +103,19 @@ HELP = {
   {c('cyan', 'swe edit <name> --display-name="..."')} Set the human name (e.g. "Qwen Code")
   {c('cyan', 'swe edit <name> --version=<ver>')}      Set version string
   {c('cyan', 'swe edit <name> --notes="..."')}        Set notes
+  {c('cyan', 'swe edit <name> --primary-color=#RRGGBB')}  Set the brand colour
   {c('cyan', 'swe edit <name> --set=field=value')}    Compact multi-set form
   {c('cyan', 'swe edit <name> --notes= --json')}      Apply the flags, print the result as JSON
 
   Editable fields: command, display name, description, aliases, tags,
-  version, notes. The display name is how the app (and swe info) names the
-  harness; the registry name and command stay what they are. --display_name
-  and --set=display_name=... work too.
+  version, notes, primary color. The display name is how the app (and swe info)
+  names the harness; the registry name and command stay what they are.
+  --primary-color accepts #RRGGBB or RRGGBB and stores it uppercase; an
+  empty value drops the entry's own colour so the catalog default shows
+  again. --display_name and --set=display_name=... work too.
   With no field flags, opens an interactive prompt loop (save / quit).
-  An empty value clears a field: --display-name=, --version= and --notes= become unset,
+  An empty value clears a field: --display-name=, --version=, --notes= and
+  --primary-color= become unset,
   --description= becomes "", --aliases= and --tags= become [].
   Alias collisions with other tools are rejected.
   With --json it never prompts: no field flag is an error, and every

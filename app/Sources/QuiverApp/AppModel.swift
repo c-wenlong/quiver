@@ -270,10 +270,12 @@ final class AppModel {
                     return HarnessMatcher(harness: harness.name,
                                           appPath: apps.installedApp(for: harness.name),
                                           commands: commands,
-                                          homeFolder: home + "/." + harness.name)
+                                          homeFolder: home + "/." + harness.name,
+                                          primaryColor: harness.primaryColor)
                 }
         }, managedPIDs: { await Self.launchdManagedPIDs() }, defaults: .standard)
         terminalChoice = { [unowned self] in self.terminal }
+        compute.startTrends()
     }
 
     /// Pids launchd manages, from `launchctl list`: user agents look like

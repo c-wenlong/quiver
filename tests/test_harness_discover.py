@@ -110,6 +110,30 @@ class HarnessDiscoverTest(unittest.TestCase):
                 self.assertEqual(registry["kiro"]["version"], "9.9.9")
                 self.assertEqual(registry["kiro"]["discovered_via"], "catalog")
 
+    def test_apply_copies_the_catalog_primary_color(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            bindir = tmp_path / "bin"
+            bindir.mkdir()
+            self._make_fake_bin(bindir, "opencode")
+            self._make_fake_bin(bindir, "kiro-cli")
+
+            config_dir = tmp_path / ".quiver" / "config"
+            registry_file = config_dir / "harness.json"
+            minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
+
+            p1, p2, p3 = _registry_patches(config_dir, registry_file)
+            with p1, p2, p3, patch("quiver.harness.discover.live_version", return_value="1.0"):
+                save_registry(minimal)
+                findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
+                added = apply_findings(findings, min_confidence="high")
+                self.assertIn("opencode", added)
+                self.assertIn("kiro", added)
+                registry = load_registry()
+                self.assertEqual(registry["opencode"]["primary_color"], "#8B5CF6")
+                # A catalog entry with no colour leaves the field out.
+                self.assertNotIn("primary_color", registry["kiro"])
+
     def test_skips_registered_entries_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
