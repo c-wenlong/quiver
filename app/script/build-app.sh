@@ -84,8 +84,10 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# The widget extension: SwiftPM's executable in an .appex. Its @main
-# WidgetBundle is the whole entry point, so no Xcode project is needed.
+# The widget extension: SwiftPM's executable in an .appex, no Xcode project
+# needed. Its Mach-O entry point is _NSExtensionMain (set in Package.swift's
+# linkerSettings), which hands control to the @main WidgetBundle the way an
+# Xcode-built extension would.
 appex="$bundle/Contents/PlugIns/QuiverWidgets.appex"
 mkdir -p "$appex/Contents/MacOS" "$appex/Contents/Resources"
 cp "$bindir/QuiverWidgets" "$appex/Contents/MacOS/QuiverWidgets"
