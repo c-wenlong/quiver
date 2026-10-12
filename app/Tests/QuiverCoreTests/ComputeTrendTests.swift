@@ -664,3 +664,29 @@ import Testing
     }
 }
 
+
+@Suite struct TrendScaleTests {
+    @Test func ramRoundsUpByTwoGBWithTheThresholdPlusAStepAsFloor() {
+        // Data under the threshold still leaves the flag line headroom.
+        #expect(TrendScale.top([0.5, 1.2], step: 2, floor: 4) == 4)
+        // Data over the threshold climbs by whole steps.
+        #expect(TrendScale.top([5.7], step: 2, floor: 4) == 6)
+        // Exactly on a step still gets the next one, so a line ending at
+        // the top keeps its trailing icon inside the plot.
+        #expect(TrendScale.top([6], step: 2, floor: 4) == 8)
+        // No points yet: the threshold-based floor.
+        #expect(TrendScale.top([], step: 2, floor: 4) == 4)
+    }
+
+    @Test func cpuClimbsPastHundredPercentByQuarters() {
+        #expect(TrendScale.top([137], step: 25, floor: 25) == 150)
+        #expect(TrendScale.top([100], step: 25, floor: 25) == 125)
+        #expect(TrendScale.top([12], step: 25, floor: 25) == 25)
+    }
+
+    @Test func gpuNeverDropsBelowAHundred() {
+        #expect(TrendScale.top([42], step: 25, floor: 100) == 100)
+        #expect(TrendScale.top([], step: 25, floor: 100) == 100)
+        #expect(TrendScale.top([130], step: 25, floor: 100) == 150)
+    }
+}
