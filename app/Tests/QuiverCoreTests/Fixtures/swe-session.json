@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "data": {
+    "sessions": [
+      {
+        "id": "fixture-session",
+        "harness": "claude",
+        "agent": "Claude Code",
+        "cwd": "/tmp/quiver-fixture",
+        "title": "first fixture message",
+        "title_source": null,
+        "last_active_at": 1791837129.1108034,
+        "status": "done",
+        "resume": {
+          "argv": [
+            "claude",
+            "--resume",
+            "fixture-session"
+          ],
+          "cwd": "/tmp/quiver-fixture"
+        }
+      }
+    ],
+    "failures": []
+  }
+}

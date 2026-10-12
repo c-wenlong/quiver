@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "data": {
+    "agents_file": "/tmp/quiver-fixture-home/.quiver/AGENTS.md",
+    "agents_file_exists": true,
+    "harnesses": [
+      {
+        "name": "claude",
+        "instructions": {
+          "path": "/tmp/quiver-fixture-home/.claude/CLAUDE.md",
+          "state": "linked"
+        },
+        "skills": {
+          "path": "/tmp/quiver-fixture-home/.claude/skills",
+          "state": "linked"
+        }
+      },
+      {
+        "name": "codex",
+        "instructions": {
+          "path": "/tmp/quiver-fixture-home/.codex/AGENTS.md",
+          "state": "create"
+        },
+        "skills": {
+          "path": "/tmp/quiver-fixture-home/.codex/skills",
+          "state": "create"
+        }
+      }
+    ]
+  }
+}

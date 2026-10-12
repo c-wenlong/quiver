@@ -1,0 +1,112 @@
+# macOS app architecture
+
+The app under `app/` is a SwiftPM package with three targets: `QuiverCore`
+(models, decoders, stores, samplers), `QuiverApp` (the window, menu bar and
+pages) and `QuiverWidgetsUI` (views shared by the app preview and the widget
+extension). Views live in `QuiverApp`; logic that deserves a test lives in
+`QuiverCore`. This document is the frontend map; [ARCHITECTURE.md](../ARCHITECTURE.md)
+covers the whole repo and [json-contracts.md](json-contracts.md) the `swe`
+decoder shapes.
+
+## Folder layout
+
+```
+Sources/QuiverApp/
+  App/         entry point and app-wide state
+    QuiverApp.swift     @main, the Window and menu bar scenes
+    main.swift          NSApplication bootstrap
+    AppModel.swift      the one app-wide model every page reads
+    LimitsMonitor.swift limit notifications and the menubar figure refresh
+  Navigation/
+    MainWindow.swift    split view: sidebar plus the selected page
+  MenuBar/
+    StatusItemController.swift  the status item, its panel and rows
+  Pages/       one file per page (a page may hold private subviews)
+  Components/  reusable views and controls
+  Theme/       design tokens: colors, type, metrics, Card and Page
+Sources/QuiverCore/
+  one folder per domain: Swe, Primitives, Mcp, Sessions, Ledger,
+  Accounts, Limits, Status, APIKeys, Agents, Compute, Usage,
+  Providers, MenuBar, Markdown, Lists, Snapshots, Support, App
+```
+
+## AppModel
+
+`AppModel` (`App/AppModel.swift`, `@Observable`, `AppModel.shared`) is the
+single environment object. It owns the `SweClient`, the page models that must
+outlive their page (`accounts`, `others`, `skills`, `mcp`, `plugins`,
+`pluginCatalog`, `sessions`, `limits`, `serviceStatus`, `apiKeys`,
+`overview`, `providers`, `apps`, `popup`, `widgetSelection`, `menuBar`), and
+the UserDefaults-backed settings (`swePath`, `terminal`, `appIcon`,
+`appearance`, Dock presence, `lastSection`, `codeEditor`, `navReselects`,
+`pluginsTab`). `start()` kicks off the watchers: model restores, the
+skills/catalog cross-feed, sessions, limit refresh loops, widget snapshot
+writes and the activation-time provider recheck.
+
+Page models are `@Observable` classes in `QuiverCore` (`OverviewModel`,
+`HarnessesModel`, `SkillsModel`, `McpModel`, `McpServerRepoModel`,
+`PluginsModel`, `PluginCatalogModel`, `SessionsModel`, `ServiceStatusModel`,
+`DoctorModel`, `APIKeysModel`, `AccountsModel`, `OtherLimitsModel`,
+`ComputeModel`, `AgentsModel`, `ProviderVisibilityModel`). Pages get them
+from `AppModel` or build them in a `.task` and keep them in `@State`
+(`DoctorModel`).
+
+## Navigation
+
+`MainWindow` is a `NavigationSplitView`: a sidebar of `AppSection` cases and
+the selected page as content. `AppModel.selection` persists across launches.
+Reselecting the current sidebar item (or the Plugins > Explore tab) bumps
+`navReselects`, which detail views watch to go back through their own
+unsaved-changes ask.
+
+## Theme
+
+`Theme` (`Theme/Theme.swift`) is an enum of tokens, never a view: surfaces
+(`wash`, `panel`, `card`, `field`, `code`, `subtle`, `hover`, `selected`),
+text roles (`textPrimary` through `textMuted`, `dangerText`...), borders and
+accents, type (`display`, `figure`, `sectionTitle`, `cardTitle`, `rowTitle`,
+`bodySmall`, `caption`, `control`, `tableHeader`...), and metrics (card and
+control radii, paddings, field/row/icon heights, sheet sizes, animation
+durations, the heatmap palette). Feature-specific numbers stay near their
+view as `private static let`. `Card` (surface with optional title/accessory)
+and `Page` (title, subtitle, actions, centred 1152pt column) are the two
+scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
+
+## Components
+
+| View | What it is |
+|---|---|
+| `Card`, `Page`, `PageHeader` | the card surface and the page scaffold (Theme) |
+| `Tabs` | the one tab switcher; `.underline`, `.segmented`, `.period` styles; `onSelect` fires on reselect |
+| `ExpandRow` | the "Show N more" / "Show less" fold row; `.cardBottom` at a card's edge, `.inset` inside one |
+| `SelectMenu` | the themed dropdown; the icons init draws a harness logo per option |
+| `SearchField` | the filter text field |
+| `EllipsisMenu` | a row's "more" menu: quiet ellipsis, hover shape |
+| `FormField` | a labelled sheet field with an optional hint/problem |
+| `Badge` | a small capsule label (plan, state, count) |
+| `HarnessIcon`, `HarnessMark`, `HarnessMarkView`, `ChartSwatch` | the logo lookup: icon, icon+wordmark, grid cell, legend swatch |
+| `EmptyCard`, `LoadingCard`, `ErrorCard` | status and empty states, always inside a card |
+| `ExpandRow` + `RowFold` (QuiverCore) | the fold pair: `RowFold.visible`/`hiddenCount` cut the rows, `ExpandRow` draws the toggle |
+| `ProviderVisibilityCard` | the Settings provider list (order and show/hide) |
+| `ReorderableRows` | drag-to-reorder rows with grip dots |
+| `HoverTip` | the themed tooltip modifier |
+| `MarkdownTextView` | the rich markdown editor (NSViewRepresentable) |
+| Button styles | `primaryButton`, `secondaryButton`, `iconButton`, `plainButton`, `GreenSwitchStyle`, `SegmentActionStyle` |
+| `focusRing`, `quiverField`, `sheetScaffold` | modifiers: keyboard ring, themed field, sheet frame |
+| `FlowLayout` | left-to-right wrapping layout |
+
+## Conventions
+
+- Every list that can grow long folds with `RowFold` + `ExpandRow`; each
+  view picks its limit as `private static let foldLimit`.
+- Every harness or provider shown by name gets a `HarnessIcon` or
+  `HarnessMark` beside it.
+- Status and empty states render inside `EmptyCard` / `LoadingCard` /
+  `ErrorCard`, never as loose text.
+- User-facing strings use Theme text roles and contain no em dashes.
+- Page actions sit in `Page`'s actions with ⌘R on refresh.
+- Decoding `swe` output happens only in `QuiverCore` decoders, matched to
+  fixtures under `app/Tests/QuiverCoreTests/Fixtures` (see
+  [json-contracts.md](json-contracts.md)).
+- Persistent stores, caches and UserDefaults keys are inventoried in
+  `docs/data-model.md`.

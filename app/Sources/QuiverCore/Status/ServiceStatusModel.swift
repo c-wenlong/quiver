@@ -33,19 +33,6 @@ public final class ServiceStatusModel {
     /// The most recent answer from any page.
     public var lastChecked: Date? { statuses.compactMap(\.checkedAt).max() }
 
-    /// Service ids whose cards show their details. Kept on the model, not
-    /// the views, so navigating away and back keeps them; it lives only as
-    /// long as the model, which is the session.
-    public private(set) var expandedIDs: Set<String> = []
-
-    /// Whether a card shows its details.
-    public func isExpanded(_ id: String) -> Bool { expandedIDs.contains(id) }
-
-    /// Fold or open a card's details.
-    public func toggleExpanded(_ id: String) {
-        if expandedIDs.remove(id) == nil { expandedIDs.insert(id) }
-    }
-
     public var menuLine: String? { ServiceStatusSummary.menuLine(statuses) }
     /// The services `menuLine` names, worst first.
     public var affected: [StatusService] { ServiceStatusSummary.affected(statuses).map(\.service) }

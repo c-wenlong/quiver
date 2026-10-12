@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "data": {
+    "action": "link",
+    "harness": "claude",
+    "source": "/tmp/quiver-fixture-home/.claude/skills",
+    "target": "/tmp/quiver-fixture-home/.quiver/skills"
+  }
+}

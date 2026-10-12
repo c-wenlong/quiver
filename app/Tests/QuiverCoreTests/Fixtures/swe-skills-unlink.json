@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "data": {
+    "action": "unlink",
+    "harness": "claude",
+    "path": "/tmp/quiver-fixture-home/.claude/skills",
+    "mkdir": false
+  }
+}

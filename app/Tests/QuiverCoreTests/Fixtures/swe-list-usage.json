@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "data": {
+    "harnesses": [
+      {
+        "name": "claude",
+        "display_name": "Claude Code",
+        "command": "claude",
+        "description": "Anthropic's CLI",
+        "version": "2.0.0",
+        "notes": "Fixture notes for the contract test",
+        "aliases": [
+          "cc"
+        ],
+        "tags": [
+          "agentic",
+          "coding"
+        ],
+        "primary_color": "#D97757",
+        "state": "starred",
+        "sessions_100d": 1,
+        "rate_limit": {
+          "status": "ok",
+          "used_percent": 62,
+          "remaining_percent": 38,
+          "limit_reached": false,
+          "reset_at": 1791878400.0,
+          "window": "1d",
+          "window_seconds": 86400,
+          "plan_type": "teams",
+          "remaining_units": null,
+          "total_units": null,
+          "windows": [
+            {
+              "window": "1d",
+              "used_percent": 62,
+              "remaining_percent": 38,
+              "limit_reached": false,
+              "reset_at": 1791878400.0,
+              "window_seconds": 86400
+            },
+            {
+              "window": "7d",
+              "used_percent": 41,
+              "remaining_percent": 59,
+              "limit_reached": false,
+              "reset_at": 1792310400.0,
+              "window_seconds": 604800
+            }
+          ],
+          "extra_usage_usd": 12.5,
+          "on_demand": {
+            "state": "unlimited",
+            "scope": "team-member",
+            "used_usd": 0.0,
+            "limit_usd": null
+          },
+          "fetched_at": 1791836666.9968011
+        },
+        "installed": true,
+        "archived": null
+      },
+      {
+        "name": "codex",
+        "display_name": "Codex",
+        "command": "codex",
+        "description": "OpenAI's CLI",
+        "version": null,
+        "notes": null,
+        "aliases": [
+          "cx"
+        ],
+        "tags": [
+          "agentic"
+        ],
+        "primary_color": "#7A9DFF",
+        "state": "active",
+        "sessions_100d": 0,
+        "rate_limit": null,
+        "installed": true,
+        "archived": null
+      },
+      {
+        "name": "fixturetool",
+        "display_name": null,
+        "command": "no-such-tool-fixture",
+        "description": "A harness swe has never seen run",
+        "version": null,
+        "notes": "Made up for contract fixtures",
+        "aliases": [
+          "ft"
+        ],
+        "tags": [
+          "fixture"
+        ],
+        "primary_color": "#336699",
+        "state": "active",
+        "sessions_100d": null,
+        "rate_limit": null,
+        "installed": false,
+        "archived": null
+      }
+    ]
+  }
+}
