@@ -262,6 +262,22 @@ class ListPrimaryColorJsonTest(unittest.TestCase):
         self.assertIn("Colour:", result.stdout)
         self.assertIn("#D97757", result.stdout)
 
+    def test_re_adding_a_harness_keeps_the_chosen_colour(self):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, {"claude": {"command": "claude", "tags": []}})
+
+        result = run_swe(home, "edit", "claude", "--primary-color=#102030")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = run_swe(home, "add", "claude", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        rows = {row["name"]: row for row in
+                decode(run_swe(home, "list", "--json"))["data"]["harnesses"]}
+        self.assertEqual(rows["claude"]["primary_color"], "#102030")
+        result = run_swe(home, "info", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("#102030", result.stdout)
+
 
 class EditJsonTest(unittest.TestCase):
     """`swe edit <name> --field=value --json`: the app's edit sheet."""

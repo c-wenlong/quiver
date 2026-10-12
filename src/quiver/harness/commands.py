@@ -579,14 +579,21 @@ def _primary_color(name: str, info: dict) -> str | None:
     return info.get("primary_color") or HARNESS_CATALOG.get(name, {}).get("primary_color")
 
 
-def _kept_display_name(previous: dict | None) -> dict:
-    """``{"display_name": ...}`` from an entry being replaced, or ``{}``.
+def _kept_fields(previous: dict | None) -> dict:
+    """Fields a re-add carries over from the entry it replaces.
 
-    ``swe add`` and ``swe install`` rewrite a whole entry; the human name is
-    something the user typed, so a re-add must not erase it.
+    ``swe add`` rewrites a whole entry; the human name and a chosen
+    colour are user decisions, so a re-add must not erase them.
     """
-    name = _display_name(previous or {})
-    return {"display_name": name} if name else {}
+    previous = previous or {}
+    kept = {}
+    name = _display_name(previous)
+    if name:
+        kept["display_name"] = name
+    colour = previous.get("primary_color")
+    if colour:
+        kept["primary_color"] = colour
+    return kept
 
 
 def _harness_json(name, info, starred, archived, counts, rate) -> dict:
@@ -1260,7 +1267,7 @@ def _add_interactive(args: list[str]) -> int:
                 "tags": tags_list,
                 "aliases": aliases_list,
                 "added": datetime.now().isoformat(),
-                **_kept_display_name(tools.get(draft["name"])),
+                **_kept_fields(tools.get(draft["name"])),
             }
             save_registry(tools)
             saved_status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
@@ -1332,7 +1339,7 @@ def cmd_add(args):
         "tags": tags,
         "aliases": aliases,
         "added": datetime.now().isoformat(),
-        **_kept_display_name(tools.get(name)),
+        **_kept_fields(tools.get(name)),
     }
     save_registry(tools)
     status = c("green", "installed") if is_installed(command) else c("yellow", "not yet in PATH")

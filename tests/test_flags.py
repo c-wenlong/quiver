@@ -307,6 +307,16 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertEqual(saved["display_name"], "Demo Code")
         self.assertIn("Updated 'demo'", out)
 
+    def test_re_adding_a_harness_keeps_its_colour(self):
+        existing = {"demo": {"command": "old", "primary_color": "#112233"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd"])
+        self.assertEqual(save.call_args[0][0]["demo"]["primary_color"], "#112233")
+
     def test_adding_a_new_harness_sets_no_display_name(self):
         with patch("quiver.harness.commands.load_registry", return_value={}), patch(
             "quiver.harness.commands.save_registry"
