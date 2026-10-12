@@ -7,7 +7,6 @@ import SwiftUI
 struct ProviderVisibilityCard: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: ProviderVisibilityModel
-    @State private var dragging: String?
 
     var body: some View {
         SettingsCard {
@@ -35,37 +34,16 @@ struct ProviderVisibilityCard: View {
                 }
             }
             SettingsDivider()
-            VStack(spacing: 0) {
-                ForEach(model.rows) { row in
-                    ProviderRow(row: row, checked: model.hasChecked, failed: model.checkError != nil,
-                                isDragging: dragging == row.id) {
-                        model.setEnabled(row.id, $0)
-                    }
-                        .draggable(row.id) {
-                            ProviderRow(row: row, checked: model.hasChecked, isDragging: false, toggle: { _ in })
-                                .frame(width: 320)
-                                .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
-                                .onAppear { dragging = row.id }
-                        }
-                        .dropDestination(for: String.self) { ids, _ in
-                            guard let id = ids.first else { return false }
-                            withAnimation(.easeOut(duration: 0.15)) { model.move(id, before: row.id) }
-                            dragging = nil
-                            return true
-                        } isTargeted: { targeted in
-                            if !targeted, dragging == row.id { dragging = nil }
-                        }
+            ReorderableRows(model.rows) { id, before in
+                if let before {
+                    model.move(id, before: before)
+                } else {
+                    model.moveToEnd(id)
                 }
-                // Dropping below the last row moves a provider to the end.
-                Color.clear
-                    .frame(height: 16)
-                    .contentShape(.rect)
-                    .dropDestination(for: String.self) { ids, _ in
-                        guard let id = ids.first else { return false }
-                        withAnimation(.easeOut(duration: 0.15)) { model.moveToEnd(id) }
-                        dragging = nil
-                        return true
-                    }
+            } row: { row in
+                ProviderRow(row: row, checked: model.hasChecked, failed: model.checkError != nil) {
+                    model.setEnabled(row.id, $0)
+                }
             }
             .padding(.vertical, 8)
         }
@@ -79,7 +57,6 @@ private struct ProviderRow: View {
     var row: ProviderVisibilityModel.Row
     var checked: Bool
     var failed = false
-    var isDragging: Bool
     var toggle: (Bool) -> Void
     @State private var hovering = false
 
@@ -108,7 +85,6 @@ private struct ProviderRow: View {
         .padding(.horizontal, 8)
         .frame(height: 44)
         .background(hovering ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
-        .opacity(isDragging ? 0.4 : 1)
         .contentShape(.rect)
         .onHover { hovering = $0 }
         .accessibilityElement(children: .combine)

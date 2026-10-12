@@ -153,7 +153,6 @@ private struct MenuBarPreview: View {
 
 private struct PopupSection: View {
     @Environment(AppModel.self) private var app
-    @State private var dragging: String?
 
     /// Accounts' harnesses in account order, then other harnesses in swe's
     /// order, so the rows stay put as usage changes, until the user drags
@@ -193,36 +192,15 @@ private struct PopupSection: View {
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .padding(.vertical, 14)
                     }
-                    ForEach(harnesses) { harness in
-                        PopupHarnessRow(harness: harness)
-                            .opacity(dragging == harness.id ? 0.4 : 1)
-                            .draggable(harness.id) {
-                                PopupHarnessRow(harness: harness)
-                                    .environment(app)
-                                    .frame(width: 320)
-                                    .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
-                                    .onAppear { dragging = harness.id }
-                            }
-                            .dropDestination(for: String.self) { dropped, _ in
-                                guard let id = dropped.first, ids.contains(id) else { return false }
-                                withAnimation(.easeOut(duration: 0.15)) { app.popup.move(id, before: harness.id, in: ids) }
-                                dragging = nil
-                                return true
-                            } isTargeted: { targeted in
-                                if !targeted, dragging == harness.id { dragging = nil }
-                            }
-                        if harness.id != harnesses.last?.id { SettingsDivider() }
-                    }
-                    // Dropping below the last row moves a harness to the end.
-                    Color.clear
-                        .frame(height: 16)
-                        .contentShape(.rect)
-                        .dropDestination(for: String.self) { dropped, _ in
-                            guard let id = dropped.first, ids.contains(id) else { return false }
-                            withAnimation(.easeOut(duration: 0.15)) { app.popup.moveToEnd(id, in: ids) }
-                            dragging = nil
-                            return true
+                    ReorderableRows(harnesses, showsDividers: true) { id, before in
+                        if let before {
+                            app.popup.move(id, before: before, in: ids)
+                        } else {
+                            app.popup.moveToEnd(id, in: ids)
                         }
+                    } row: { harness in
+                        PopupHarnessRow(harness: harness)
+                    }
                 }
             }
         }
