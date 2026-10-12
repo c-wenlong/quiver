@@ -12,6 +12,10 @@ import Foundation
 /// whatever it covers. Claims are kept per line, so overlap checks stay
 /// local: only fences and multi-line comments span lines, and both are
 /// tracked separately.
+///
+/// Comments are found before inline code so `<!-- `code` -->` is still a
+/// comment, while code that holds a comment marker stays code: the
+/// container wins.
 public enum MarkdownStyleSpans {
     public enum Kind: Equatable, Sendable {
         case heading(Int)
@@ -55,19 +59,16 @@ public enum MarkdownStyleSpans {
         let ns = text as NSString
         guard ns.length > 0 else { return [] }
         var spans: [Span] = []
-        /// Blocking ranges across the whole text: fence lines, code lines
-        /// and inline code. The comment pass at the end skips them.
-        var protected: [NSRange] = []
 
         func emit(_ range: NSRange, _ kind: Kind) {
             guard range.length > 0 else { return }
             spans.append(Span(range: range, kind: kind))
         }
 
+        // One split into lines, shared by both passes.
+        var contents: [NSRange] = []
+        var lines: [NSString] = []
         var start = 0
-        var inFence = false
-        var fenceMark: unichar = 0
-        var fenceLength = 0
         while start < ns.length {
             let lineRange = ns.lineRange(for: NSRange(location: start, length: 0))
             var content = lineRange
@@ -75,34 +76,61 @@ public enum MarkdownStyleSpans {
                 let last = ns.character(at: NSMaxRange(content) - 1)
                 if last == 0x0A || last == 0x0D { content.length -= 1 } else { break }
             }
-            let line = ns.substring(with: content) as NSString
-            let lineLength = line.length
-            let fullLine = NSRange(location: 0, length: lineLength)
-            func at(_ range: NSRange) -> NSRange {
-                NSRange(location: range.location + content.location, length: range.length)
-            }
+            contents.append(content)
+            lines.append(ns.substring(with: content) as NSString)
             start = NSMaxRange(lineRange)
+        }
 
+        // Pass 1: fenced blocks claim whole lines; nothing else may
+        // touch what a fence holds.
+        var fenced: Set<Int> = []
+        var inFence = false
+        var fenceMark: unichar = 0
+        var fenceLength = 0
+        for (index, line) in lines.enumerated() {
             if inFence {
-                protected.append(content)
+                fenced.insert(index)
                 // A closing fence uses the same character, is at least as
                 // long as the opener, and has nothing after it but space.
                 if let run = Self.fenceRun(in: line), run.mark == fenceMark,
                    run.length >= fenceLength, Self.blankTail(in: line, from: run.end) {
-                    emit(content, .fence)
+                    emit(contents[index], .fence)
                     inFence = false
                 } else {
-                    emit(content, .codeBlock)
+                    emit(contents[index], .codeBlock)
                 }
                 continue
             }
             if let run = Self.fenceRun(in: line) {
-                protected.append(content)
-                emit(content, .fence)
+                fenced.insert(index)
+                emit(contents[index], .fence)
                 fenceMark = run.mark
                 fenceLength = run.length
                 inFence = true
-                continue
+            }
+        }
+
+        // Comments are found before inline code: `<!-- `code` -->` is
+        // still a comment, so a code span inside a comment is never
+        // code. Code that holds a comment marker stays code and drops
+        // the comment. Comments emitted last mute what they cover.
+        var comments = Self.comment
+            .matches(in: text, range: NSRange(location: 0, length: ns.length))
+            .map(\.range)
+            .filter { match in
+                !fenced.contains {
+                    NSIntersectionRange(contents[$0], match).length > 0
+                }
+            }
+
+        // Pass 2: line structure and inline styles on the lines the
+        // fences left.
+        for (index, line) in lines.enumerated() where !fenced.contains(index) {
+            let content = contents[index]
+            let lineLength = line.length
+            let fullLine = NSRange(location: 0, length: lineLength)
+            func at(_ range: NSRange) -> NSRange {
+                NSRange(location: range.location + content.location, length: range.length)
             }
 
             // Headings, quotes and list bullets emit but never claim:
@@ -138,9 +166,16 @@ public enum MarkdownStyleSpans {
                 guard range.length > 0,
                       !blocked.contains(where: { NSIntersectionRange($0, range).length > 0 })
                 else { continue }
+                if comments.contains(where: { NSIntersectionRange($0, range).length > 0 }) {
+                    // Inside a comment the backticks are just text; a
+                    // comment inside the code is the code's problem.
+                    if comments.contains(where: {
+                        range.location >= $0.location && NSMaxRange(range) <= NSMaxRange($0)
+                    }) { continue }
+                    comments.removeAll { NSIntersectionRange($0, range).length > 0 }
+                }
                 emit(range, .inlineCode)
                 blocked.append(range)
-                protected.append(range)
             }
             for m in Self.link.matches(in: line as String, range: fullLine) {
                 let name = m.range(at: 1)
@@ -178,11 +213,7 @@ public enum MarkdownStyleSpans {
             }
         }
 
-        // Comments mute whatever they cover, so they go on last.
-        for m in Self.comment.matches(in: text, range: NSRange(location: 0, length: ns.length))
-        where !protected.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
-            spans.append(Span(range: m.range, kind: .comment))
-        }
+        for range in comments { emit(range, .comment) }
         return spans
     }
 

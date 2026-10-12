@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import QuiverCore
@@ -129,10 +130,48 @@ import Testing
         #expect(ranges(text, kind: .inlineCode) == [NSRange(location: 2, length: 12)])
     }
 
+    @Test func codeInsideACommentStaysAComment() {
+        let spans = spans("<!-- use `foo` -->")
+        #expect(spans == [Span(range: NSRange(location: 0, length: 18), kind: .comment)])
+    }
+
+    @Test func aMultiLineCommentWithBackticksStaysAComment() {
+        let text = "before\n<!-- start\n`code`\nend -->\nafter"
+        let comment = NSRange(location: 7, length: 25)
+        #expect(ranges(text, kind: .comment) == [comment])
+        #expect(ranges(text, kind: .inlineCode).isEmpty)
+    }
+
+    @Test func nestedEmphasisKeepsBothTraitsWhenRendered() {
+        // *a __b__ c*: a is italic only, b is bold AND italic.
+        let styled = MarkdownStyleSpans.styled("*a __b__ c*", palette: .test)
+        func traits(_ index: Int) -> NSFontDescriptor.SymbolicTraits {
+            let font = styled.attribute(.font, at: index, effectiveRange: nil) as? NSFont
+            return font?.fontDescriptor.symbolicTraits ?? []
+        }
+        #expect(traits(1).contains(.italic))
+        #expect(!traits(1).contains(.bold))
+        #expect(traits(5).isSuperset(of: [.bold, .italic]))
+        #expect(traits(9).contains(.italic))
+        #expect(!traits(9).contains(.bold))
+    }
+
     @Test func aLongDocumentStylesQuickly() {
         let text = String(repeating: "a **b** and *i* and ~~s~~\n", count: 5_000)
         let start = Date()
         _ = spans(text)
         #expect(Date().timeIntervalSince(start) < 0.5)
     }
+}
+
+/// Plain fonts and colours for attribute tests: the traits are what
+/// matters, not the looks.
+private extension MarkdownStylePalette {
+    static let test = MarkdownStylePalette(
+        bodyFont: .systemFont(ofSize: 13),
+        codeFont: .monospacedSystemFont(ofSize: 12, weight: .regular),
+        headingFonts: [22, 18, 16, 14, 13, 13].map { .systemFont(ofSize: $0, weight: .semibold) },
+        textPrimary: .black, textSecondary: .gray, textMuted: .gray,
+        accent: .blue, codeBackground: .lightGray,
+        lineSpacing: 4, headingSpacingBefore: 10, subheadingSpacingBefore: 6)
 }

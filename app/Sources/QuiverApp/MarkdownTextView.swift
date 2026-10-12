@@ -109,75 +109,27 @@ struct MarkdownTextView: NSViewRepresentable {
             restyle(textView)
         }
 
-        /// One full pass: reset to body attributes, then lay the spans on
-        /// in the order MarkdownStyleSpans found them, so structural looks
-        /// land first and muted marks land last.
+        /// One full pass: reset to body attributes, then lay the spans
+        /// on. The pass lives in QuiverCore so a test can render the same
+        /// attributes without a view.
         func restyle(_ textView: NSTextView) {
             guard let storage = textView.textStorage else { return }
-            let full = NSRange(location: 0, length: storage.length)
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = 4
-            storage.beginEditing()
-            storage.setAttributes([
-                .font: NSFont.systemFont(ofSize: 13),
-                .foregroundColor: NSColor(Theme.textPrimary),
-                .paragraphStyle: paragraph,
-                .backgroundColor: NSColor.clear,
-                .strikethroughStyle: 0,
-            ], range: full)
-            for span in MarkdownStyleSpans.spans(in: storage.string)
-            where NSMaxRange(span.range) <= storage.length {
-                apply(span, to: storage)
-            }
-            storage.endEditing()
-        }
-
-        private func apply(_ span: MarkdownStyleSpans.Span, to storage: NSTextStorage) {
-            switch span.kind {
-            case .heading(let level):
-                let paragraph = NSMutableParagraphStyle()
-                paragraph.lineSpacing = 4
-                paragraph.paragraphSpacingBefore = level <= 2 ? 10 : 6
-                storage.addAttributes([
-                    .font: NSFont.systemFont(ofSize: MarkdownTextView.headingSizes[min(level, 6) - 1],
-                                             weight: .semibold),
-                    .paragraphStyle: paragraph,
-                ], range: span.range)
-            case .headingMarker, .marker, .fence, .linkURL, .comment:
-                storage.addAttribute(.foregroundColor, value: NSColor(Theme.textMuted),
-                                     range: span.range)
-            case .bold:
-                addTrait(.boldFontMask, at: span.range, in: storage)
-            case .italic:
-                addTrait(.italicFontMask, at: span.range, in: storage)
-            case .strike:
-                storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue,
-                                     range: span.range)
-            case .inlineCode, .codeBlock:
-                storage.addAttributes([
-                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-                    .backgroundColor: NSColor(Theme.code),
-                ], range: span.range)
-            case .link:
-                storage.addAttribute(.foregroundColor, value: NSColor(Theme.accent),
-                                     range: span.range)
-            case .quote:
-                storage.addAttribute(.foregroundColor, value: NSColor(Theme.textSecondary),
-                                     range: span.range)
-            }
-        }
-
-        /// Bold and italic ride on whatever the range already has (a bold
-        /// heading stays heading-sized), so convert the font in place.
-        private func addTrait(_ trait: NSFontTraitMask, at range: NSRange, in storage: NSTextStorage) {
-            guard let font = storage.attribute(.font, at: range.location, effectiveRange: nil)
-                    as? NSFont else { return }
-            storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: trait),
-                                 range: range)
+            MarkdownStyleSpans.apply(to: storage, palette: MarkdownTextView.palette)
         }
     }
 
-    private static let headingSizes: [CGFloat] = [22, 18, 16, 14, 13, 13]
+    private static let palette = MarkdownStylePalette(
+        bodyFont: .systemFont(ofSize: 13),
+        codeFont: .monospacedSystemFont(ofSize: 12, weight: .regular),
+        headingFonts: [22, 18, 16, 14, 13, 13].map { NSFont.systemFont(ofSize: $0, weight: .semibold) },
+        textPrimary: NSColor(Theme.textPrimary),
+        textSecondary: NSColor(Theme.textSecondary),
+        textMuted: NSColor(Theme.textMuted),
+        accent: NSColor(Theme.accent),
+        codeBackground: NSColor(Theme.code),
+        lineSpacing: 4,
+        headingSpacingBefore: 10,
+        subheadingSpacingBefore: 6)
 }
 
 /// Reports first-responder changes, which NSTextViewDelegate has no
