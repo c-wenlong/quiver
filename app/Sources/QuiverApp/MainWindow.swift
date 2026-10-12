@@ -130,6 +130,8 @@ struct PageView: View {
             ServiceStatusPage()
         case .harnesses:
             HarnessesPage()
+        case .compute:
+            ComputePage()
         case .skills:
             SkillsPage()
         case .doctor:

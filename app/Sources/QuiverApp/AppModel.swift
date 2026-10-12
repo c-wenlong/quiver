@@ -144,6 +144,8 @@ final class AppModel {
     let serviceStatus: ServiceStatusModel
     /// Which providers show, in what order (Settings).
     let providers: ProviderVisibilityModel
+    /// What the starred harnesses are running right now (the Compute page).
+    let compute: ComputeModel
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
@@ -234,7 +236,55 @@ final class AppModel {
                 commandExists: { ProviderDetection.commandExists($0, path: shellPath) },
                 pathExists: { FileManager.default.fileExists(atPath: $0) }))
         })
+        compute = ComputeModel(sampler: ProcessSampler(), matchers: { [apps] in
+            // The swe chosen in Settings right now, like ProviderVisibility.
+            let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
+            let swe = SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            return try await swe.harnesses(withUsage: false)
+                .filter { $0.state == .starred }
+                .map { harness in
+                    var commands = Set(harness.aliases)
+                    commands.insert((harness.command as NSString).lastPathComponent)
+                    return HarnessMatcher(harness: harness.name,
+                                          appPath: apps.installedApp(for: harness.name),
+                                          commands: commands,
+                                          homeFolder: home + "/." + harness.name)
+                }
+        }, managedPIDs: { await Self.launchdManagedPIDs() }, defaults: .standard)
         terminalChoice = { [unowned self] in self.terminal }
+    }
+
+    /// Pids launchd manages, from `launchctl list`: user agents look like
+    /// orphans (ppid 1, a script runner) but are services, not leftovers.
+    /// Anything going wrong answers with an empty set.
+    private nonisolated static func launchdManagedPIDs() async -> Set<Int32> {
+        await runOffPool { Self.launchdManagedPIDsSync() }
+    }
+
+    /// Synchronous so it can block on the child, off the caller's actor.
+    /// Five seconds, then the process is let go and the list is empty.
+    private nonisolated static func launchdManagedPIDsSync() -> Set<Int32> {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["list"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [] }
+        // Read to EOF while it runs, so a long list can't fill the pipe and
+        // stall it; a hung launchctl is stopped after five seconds, which
+        // ends the read.
+        let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: deadline)
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        deadline.cancel()
+        guard process.terminationStatus == 0 else { return [] }
+        // Columns are tab-separated: PID (or "-"), status, label.
+        return Set(String(decoding: data, as: UTF8.self).split(separator: "\n")
+            .compactMap { Int32($0.split(separator: "\t").first ?? "") }
+            .filter { $0 > 1 })
     }
 
     private var refreshing: Task<Void, Never>?
