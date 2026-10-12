@@ -14,8 +14,15 @@ let package = Package(
         // The SwiftUI shell. Kept thin so behaviour lives in QuiverCore.
         .executableTarget(name: "QuiverApp", dependencies: ["QuiverCore"]),
         // The WidgetKit extension. SwiftPM builds it as a plain executable;
-        // script/build-app.sh wraps it in an .appex inside Quiver.app.
-        .executableTarget(name: "QuiverWidgets", dependencies: ["QuiverCore"]),
+        // script/build-app.sh wraps it in an .appex inside Quiver.app. The
+        // entry point must be _NSExtensionMain (which Xcode sets on extension
+        // targets): without it the Swift main returns at launch and the
+        // extension exits before chronod can read its widgets.
+        .executableTarget(
+            name: "QuiverWidgets",
+            dependencies: ["QuiverCore"],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]
+        ),
         .testTarget(
             name: "QuiverCoreTests",
             dependencies: ["QuiverCore"],
