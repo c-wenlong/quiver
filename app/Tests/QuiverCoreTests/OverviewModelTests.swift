@@ -484,4 +484,81 @@ final class OverviewClock {
         // nothing, so its period is computed again.
         #expect(await ledger.ranges.count == 14)
     }
+
+    /// Waits until the fake has recorded `count` byHarness calls, parked or
+    /// answered, with the same bound as `untilParked`.
+    func untilRanges(_ ledger: FakeLedger, _ count: Int) async {
+        for _ in 0..<4_000 where await ledger.ranges.count < count { await Task.yield() }
+    }
+
+    @Test func aFailedScanInvalidatesEveryEntry() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        await model.warming?.value
+        #expect(model.cachedPeriods == Set(OverviewPeriod.allCases))
+        await ledger.failScans(with: ScanFailed())
+        await model.load(scan: true)
+        // Files may have committed before the throw, so no cached figure
+        // can be trusted: a period switch asks the ledger again.
+        model.period = .allTime
+        let before = await ledger.ranges.count
+        await model.reloadPeriod()
+        #expect(await ledger.ranges.count == before + 1)
+        #expect(model.error == "Couldn't read your usage logs: disk unreadable")
+    }
+
+    @Test func aCacheWriteStampedBeforeAScanIsRejected() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        let model = model(ledger)
+        await model.load(scan: false)
+        await model.warming?.value
+        let stamped = model.revision
+        var report = ScanReport()
+        report.filesRead = 1
+        await ledger.set(report: report)
+        await model.load(scan: true)
+        await model.warming?.value
+        var stale = try #require(model.summary)
+        stale.period = .today
+        stale.totals = totals(tokens: 999, cost: 0)
+        // Queried under the old revision, its figures must not overwrite the
+        // post-scan entry.
+        model.storeCached(stale, at: clock.now, stamped: stamped)
+        model.period = .today
+        await model.reloadPeriod()
+        #expect(model.summary?.totals.totalTokens == 1)
+        // The same write stamped with the current revision does land.
+        stale.period = .week
+        model.storeCached(stale, at: clock.now, stamped: model.revision)
+        model.period = .week
+        await model.reloadPeriod()
+        #expect(model.summary?.totals.totalTokens == 999)
+    }
+
+    @Test func aRevalidationSupersededByAnotherReloadStoresNothing() async throws {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
+        // Calls 1-4 are load's own; call 5 on parks, so warming stops with
+        // only the selected period cached and stays parked for the test.
+        await ledger.holdHarnessQueries(fromCall: 5)
+        let model = model(ledger)
+        await model.load(scan: false)
+        model.warming?.cancel()
+        model.period = .allTime
+        let first = Task { await model.reloadPeriod() }
+        await untilRanges(ledger, 6)
+        model.period = .today
+        let second = Task { await model.reloadPeriod() }
+        await untilRanges(ledger, 7)
+        await ledger.releaseHarnessQueries()
+        await first.value
+        await second.value
+        // The first reload's generation was superseded while it was parked:
+        // its figures were neither published nor cached.
+        #expect(model.summary?.period == .today)
+        #expect(model.cachedPeriods == [.month, .today])
+    }
 }

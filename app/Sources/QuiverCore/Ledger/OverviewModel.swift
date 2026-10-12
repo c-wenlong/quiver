@@ -165,7 +165,8 @@ public final class OverviewModel {
 
     /// Bumped when the ledger's content or pricing changes: a scan that read
     /// anything, or a new price list. Invalidates every cached summary.
-    private var revision = 0
+    /// Tests read it.
+    private(set) var revision = 0
     private var summaryCache: [OverviewPeriod: CachedSummary] = [:]
     /// The background pass that fills every period after a load.
     var warming: Task<Void, Never>?
@@ -186,7 +187,13 @@ public final class OverviewModel {
         return (entry, fresh)
     }
 
-    private func storeCached(_ summary: OverviewSummary, at now: Date) {
+    /// Stores a summary tagged with the revision it was queried under.
+    /// Callers capture `revision` before awaiting the ledger; a query that
+    /// began before a scan committed must not tag its pre-scan figures as
+    /// post-scan, so the write is dropped when the stamp no longer matches.
+    /// Internal for tests.
+    func storeCached(_ summary: OverviewSummary, at now: Date, stamped stampedRevision: Int) {
+        guard stampedRevision == revision else { return }
         summaryCache[summary.period] = CachedSummary(
             summary: summary, revision: revision,
             day: calendar.startOfDay(for: now), computedAt: now)
@@ -228,8 +235,11 @@ public final class OverviewModel {
                     revision += 1
                 }
             } catch is CancellationError {
+                // Stopped partway: files may have committed before the throw.
+                revision += 1
                 return
             } catch {
+                revision += 1
                 self.error = "Couldn't read your usage logs: \(error.localizedDescription)"
                 return
             }
@@ -241,8 +251,9 @@ public final class OverviewModel {
         if let cached = cacheEntry(for: period, now: now), cached.fresh {
             summary = cached.entry.summary
         } else {
+            let stamped = revision
             summary = await summarize(period, now: now)
-            storeCached(summary, at: now)
+            if mySummary == summaryGeneration { storeCached(summary, at: now, stamped: stamped) }
         }
         let todayStart = calendar.startOfDay(for: now)
         let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart) ?? todayStart
@@ -280,9 +291,10 @@ public final class OverviewModel {
             for period in order {
                 guard !Task.isCancelled else { return }
                 if let cached = self.cacheEntry(for: period, now: warmNow), cached.fresh { continue }
+                let stamped = self.revision
                 let summary = await self.summarize(period, now: warmNow)
                 guard !Task.isCancelled else { return }
-                self.storeCached(summary, at: warmNow)
+                self.storeCached(summary, at: warmNow, stamped: stamped)
                 await Task.yield()
             }
         }
@@ -301,9 +313,10 @@ public final class OverviewModel {
         }
         inFlight += 1
         defer { inFlight -= 1 }
+        let stamped = revision
         let summary = await summarize(period, now: now)
         guard mine == summaryGeneration else { return }
-        storeCached(summary, at: now)
+        storeCached(summary, at: now, stamped: stamped)
         self.summary = summary
     }
 
