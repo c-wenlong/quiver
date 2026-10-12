@@ -138,6 +138,22 @@ final class AppModel {
             apiKeys = Self.keysModel(path: apiKeysPath)
         }
     }
+
+    /// The managed MCP servers folder; empty means ~/.quiver/mcp/servers.
+    var mcpServersPath: String {
+        didSet { UserDefaults.standard.set(mcpServersPath, forKey: "mcpServersPath") }
+    }
+
+    /// The app "Open in editor" uses, kept by name; empty means the first found.
+    var codeEditor: String {
+        didSet { UserDefaults.standard.set(codeEditor, forKey: "codeEditor") }
+    }
+
+    /// The editor "Open in editor" uses: the chosen one, or the first installed.
+    var editor: CodeEditor? {
+        let installed = CodeEditors.installed()
+        return installed.first { $0.name == codeEditor } ?? installed.first
+    }
     /// Nil when the ledger database could not be opened; `overviewError` says why.
     let overview: OverviewModel?
     let overviewError: String?
@@ -151,6 +167,8 @@ final class AppModel {
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
     let skills: SkillsModel
     let mcp: McpModel
+    /// The MCP servers page's "Server folders" section.
+    let mcpRepo = McpServerRepoModel()
     let plugins: PluginsModel
     /// Every plugin in every marketplace: the Plugins page's Explore tab,
     /// and what the Skills page moves plugin skills out by.
@@ -176,6 +194,8 @@ final class AppModel {
         let keysPath = UserDefaults.standard.string(forKey: "apiKeysPath") ?? ""
         apiKeysPath = keysPath
         apiKeys = Self.keysModel(path: keysPath)
+        mcpServersPath = UserDefaults.standard.string(forKey: "mcpServersPath") ?? ""
+        codeEditor = UserDefaults.standard.string(forKey: "codeEditor") ?? ""
 
         // Everything Quiver keeps lives under ~/.quiver (see AGENTS.md).
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -391,6 +411,13 @@ final class AppModel {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let trimmed = path.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return home.appending(path: ".api_keys") }
+        return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
+    }
+
+    static func mcpServersFolder(path: String) -> URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let trimmed = path.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return home.appending(path: ".quiver/mcp/servers") }
         return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
     }
 

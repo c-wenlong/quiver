@@ -22,7 +22,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .preferences: "How Quiver looks: light or dark, and its app icon."
         case .notifications: "Alerts when a usage limit runs low."
         case .providers: "Which harnesses show up across the app, and in what order."
-        case .paths: "Where Quiver finds swe and your API keys file."
+        case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
         }
     }
 
