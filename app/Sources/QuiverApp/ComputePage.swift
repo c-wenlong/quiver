@@ -17,7 +17,8 @@ struct ComputePage: View {
                 Task { await model.loadMatchers(); await model.refresh() }
             }
             .iconButton()
-            .help("Refresh")
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Refresh (⌘R)")
             Button(model.cleanup.isEmpty ? "Clean up" : "Clean up (\(model.cleanup.count))") { cleaning = true }
                 .primaryButton()
                 .disabled(model.cleanup.isEmpty)

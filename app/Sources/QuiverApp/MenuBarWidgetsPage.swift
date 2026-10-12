@@ -332,7 +332,8 @@ private struct WidgetsSection: View {
                     Task { await loadPlaced() }
                 }
                 .secondaryButton()
-                .help("Redraw the widgets with the latest figures")
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Redraw the widgets with the latest figures (⌘R)")
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: Theme.gutter)], spacing: Theme.gutter) {
                 ForEach(WidgetCatalog.all) { widget in

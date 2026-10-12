@@ -40,7 +40,8 @@ private struct OverviewContent: View {
             Button("Rescan", systemImage: "arrow.clockwise") { Task { await model.load(scan: true) } }
                 .iconButton()
                 .disabled(model.isLoading)
-                .help("Read new usage from the harness logs")
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Read new usage from the harness logs (⌘R)")
         } content: {
             if let error = model.error {
                 Label(error, systemImage: "exclamationmark.triangle")

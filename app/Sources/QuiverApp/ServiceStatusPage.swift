@@ -22,7 +22,8 @@ struct ServiceStatusPage: View {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(force: true) } }
                 .iconButton()
                 .disabled(model.isLoading)
-                .help("Check every status page now")
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Check every status page now (⌘R)")
             Button("Add service", systemImage: "plus") { adding = true }
                 .primaryButton()
         } content: {

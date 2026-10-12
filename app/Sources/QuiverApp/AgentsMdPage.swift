@@ -20,7 +20,8 @@ struct AgentsMdPage: View {
                 model.checkDisk()
             }
             .iconButton()
-            .help("Check links and reread the file")
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Check links and reread the file (⌘R)")
         } content: {
             Tabs(options: [(Scope.global, "Global"), (Scope.project, "Project")], selection: $scope, style: .underline)
             switch scope {
