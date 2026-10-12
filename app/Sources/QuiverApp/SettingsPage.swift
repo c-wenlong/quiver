@@ -40,13 +40,15 @@ struct SettingsPage: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             SettingsFooter()
         }
-        .onAppear { drafts = PathDrafts(swe: app.swePath, apiKeys: app.apiKeysPath) }
+        .onAppear { drafts = PathDrafts(swe: app.swePath, apiKeys: app.apiKeysPath,
+                                        mcpServers: app.mcpServersPath) }
     }
 }
 
 struct PathDrafts: Equatable {
     var swe = ""
     var apiKeys = ""
+    var mcpServers = ""
 }
 
 // MARK: - Sub-nav
@@ -186,6 +188,23 @@ private struct SettingsSectionView: View {
                     PathRow(title: "API keys file", placeholder: "~/.api_keys",
                             stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,
                             hint: "Empty uses ~/.api_keys.") { app.apiKeysPath = $0 }
+                    SettingsDivider()
+                    PathRow(title: "MCP servers folder", placeholder: "~/.quiver/mcp/servers",
+                            stored: app.mcpServersPath, draft: $drafts.mcpServers,
+                            running: AppModel.mcpServersFolder(path: app.mcpServersPath).path,
+                            hint: "Empty uses ~/.quiver/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
+                    SettingsDivider()
+                    SettingRow(title: "Editor", detail: "Opens a server folder from the MCP servers page.") {
+                        let editors = CodeEditors.installed()
+                        if editors.isEmpty {
+                            Text("No code editor found")
+                                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        } else {
+                            SelectMenu(options: editors.map { ($0.name, $0.name) },
+                                       selection: Binding(get: { app.codeEditor }, set: { app.codeEditor = $0 }),
+                                       title: app.editor?.name)
+                        }
+                    }
                 }
             }
         }
@@ -262,6 +281,8 @@ private struct PathRow: View {
     @Binding var draft: String
     var running: String
     var hint: String
+    /// Choose… picks a folder instead of a file.
+    var folders = false
     var apply: (String) -> Void
 
     var body: some View {
@@ -292,7 +313,8 @@ private struct PathRow: View {
 
     private func choose() {
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = folders
+        panel.canChooseFiles = !folders
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true
         if panel.runModal() == .OK, let url = panel.url {
