@@ -1,5 +1,5 @@
 id	kind	source_url	licence	notes
-aider	mono	https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/assets/icons/safari-pinned-tab.svg	Apache-2.0 repo; aider trademark	pixel 'a' mark, from the site's pinned-tab icon; potrace file: the background-plate subpath it wraps the mark in was removed
+aider	mono	https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/assets/icons/safari-pinned-tab.svg	Apache-2.0 repo; aider trademark	pixel 'a' mark, from the site's pinned-tab icon; potrace file: the background-plate subpath it wraps the mark in was removed, the next subpath's relative move made absolute (M 2705 3998) so the mark keeps its place, and the counter merged into the same path with fill-rule evenodd so the a keeps its hole
 antigravity	color	TokenTracker dashboard/public/brand-logos/antigravity.svg	MIT (TokenTracker)	Google Antigravity mark
 ark	color	TokenTracker dashboard/public/brand-logos/volcano-ark.svg	MIT (TokenTracker)	Volcano Engine Ark mark, used for both Ark plans
 augment	mono	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
