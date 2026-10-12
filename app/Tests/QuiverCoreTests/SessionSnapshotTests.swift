@@ -44,7 +44,7 @@ actor HangingSource: SessionListing {
 /// A swe that shrugs off SIGTERM: its runner returns only when it exits.
 struct StubbornSource: SessionListing {
     func sessions(days: Int, limit: Int) async throws -> SessionList {
-        let until = ContinuousClock.now + .seconds(5)
+        let until = ContinuousClock.now + .seconds(60)
         while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(10)) }
         return SessionList(sessions: [], failures: [])
     }
@@ -152,8 +152,10 @@ struct StubbornSource: SessionListing {
                                   snapshots: MemorySnapshots(), listTimeout: .milliseconds(50),
                                   now: { [start] in start })
         let elapsed = await ContinuousClock().measure { await model.load(for: "/bin/swe") }
-        // Well under the 5s the source holds out, with room for a busy CI runner.
-        #expect(elapsed < .milliseconds(2500))
+        // The bound catches a hang, not latency: the source holds out
+        // for 60s, so ten seconds still fails a broken timeout while a
+        // starved CI runner cannot trip it.
+        #expect(elapsed < .seconds(10))
         #expect(model.error != nil)
         #expect(!model.isLoading)
     }

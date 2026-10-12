@@ -27,7 +27,10 @@ import Testing
         let value = await KeychainCLI(runner: HangingRunner(), timeout: .milliseconds(100))
             .genericPassword(service: "s", account: "a")
         #expect(value == nil)
-        #expect(Date().timeIntervalSince(started) < 5)
+        // The bound catches a hang, not latency: the runner sleeps 60s,
+        // so ten seconds still fails a broken timeout while a starved
+        // CI runner cannot trip it.
+        #expect(Date().timeIntervalSince(started) < 10)
     }
 
     @Test func theRealToolRunsSecurity() {

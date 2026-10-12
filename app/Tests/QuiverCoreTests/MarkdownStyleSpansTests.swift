@@ -160,7 +160,10 @@ import Testing
         let text = String(repeating: "a **b** and *i* and ~~s~~\n", count: 5_000)
         let start = Date()
         _ = spans(text)
-        #expect(Date().timeIntervalSince(start) < 0.5)
+        // The bound catches a pathological slowdown, not latency: 5,000
+        // lines take ~40ms, so three seconds still fails an accidental
+        // quadratic while a starved CI runner cannot trip it.
+        #expect(Date().timeIntervalSince(start) < 3)
     }
 }
 
