@@ -194,6 +194,75 @@ class ListDisplayNameJsonTest(unittest.TestCase):
         self.assertEqual(keys[keys.index("name") + 1], "display_name")
 
 
+class ListPrimaryColorJsonTest(unittest.TestCase):
+    """`primary_color`: the entry's own value, then the catalog, then null.
+
+    The catalog fallback resolves at read time: a registry written before
+    the field existed must not need a rewrite to show its colour.
+    """
+
+    def rows(self, registry):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, registry)
+        return {row["name"]: row for row in
+                decode(run_swe(home, "list", "--json"))["data"]["harnesses"]}
+
+    def test_an_entry_without_the_field_gets_the_catalog_colour(self):
+        rows = self.rows({"claude": {"command": "claude", "tags": []}})
+        self.assertEqual(rows["claude"]["primary_color"], "#D97757")
+
+    def test_an_entry_own_colour_wins_over_the_catalog(self):
+        rows = self.rows({"claude": {"command": "claude",
+                                     "primary_color": "#112233"}})
+        self.assertEqual(rows["claude"]["primary_color"], "#112233")
+
+    def test_an_uncatalogued_harness_without_a_colour_is_null(self):
+        rows = self.rows({"mytool": {"command": "mytool"}})
+        self.assertIn("primary_color", rows["mytool"])
+        self.assertIsNone(rows["mytool"]["primary_color"])
+
+    def test_edit_sets_normalises_and_clears_the_colour(self):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, {"claude": {"command": "claude", "tags": []}})
+
+        result = run_swe(home, "edit", "claude", "--primary-color=d97757")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved = json.loads(
+            (home / ".quiver" / "config" / "harness.json").read_text())
+        self.assertEqual(saved["claude"]["primary_color"], "#D97757")
+        rows = {row["name"]: row for row in
+                decode(run_swe(home, "list", "--json"))["data"]["harnesses"]}
+        self.assertEqual(rows["claude"]["primary_color"], "#D97757")
+
+        # Clearing drops the key, and the catalog default takes over again.
+        result = run_swe(home, "edit", "claude", "--primary-color=")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved = json.loads(
+            (home / ".quiver" / "config" / "harness.json").read_text())
+        self.assertNotIn("primary_color", saved["claude"])
+        rows = {row["name"]: row for row in
+                decode(run_swe(home, "list", "--json"))["data"]["harnesses"]}
+        self.assertEqual(rows["claude"]["primary_color"], "#D97757")
+
+    def test_edit_rejects_a_bad_colour(self):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, {"claude": {"command": "claude"}})
+        result = run_swe(home, "edit", "claude", "--primary-color=notacolour")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Use a colour like #D97757.", result.stderr + result.stdout)
+        saved = json.loads(
+            (home / ".quiver" / "config" / "harness.json").read_text())
+        self.assertNotIn("primary_color", saved["claude"])
+
+    def test_info_shows_the_effective_colour(self):
+        home = Path(tempfile.mkdtemp())
+        write_registry(home, {"claude": {"command": "claude"}})
+        result = run_swe(home, "info", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Colour:", result.stdout)
+        self.assertIn("#D97757", result.stdout)
+
+
 class EditJsonTest(unittest.TestCase):
     """`swe edit <name> --field=value --json`: the app's edit sheet."""
 

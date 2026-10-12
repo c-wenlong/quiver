@@ -52,6 +52,7 @@ class HarnessFinding:
     description: str = ""
     tags: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
+    primary_color: str = ""
 
 
 def _expand_path(path: str, home: Path) -> Path:
@@ -154,6 +155,7 @@ def _catalog_findings(
                     description=meta.get("description", ""),
                     tags=tuple(meta.get("tags", [])),
                     aliases=tuple(meta.get("aliases", [])),
+                    primary_color=meta.get("primary_color", ""),
                 )
             )
         elif in_registry:
@@ -168,6 +170,7 @@ def _catalog_findings(
                     description=meta.get("description", ""),
                     tags=tuple(meta.get("tags", [])),
                     aliases=tuple(meta.get("aliases", [])),
+                    primary_color=meta.get("primary_color", ""),
                 )
             )
     return findings
@@ -420,6 +423,8 @@ def apply_findings(
             "added": datetime.now().isoformat(),
             "discovered_via": finding.source,
         }
+        if finding.primary_color:
+            entry["primary_color"] = finding.primary_color
         if finding.source == "home_scan":
             # A home-scan find has no usage history and often no binary, so
             # it enters shelved: known to the registry, absent from swe

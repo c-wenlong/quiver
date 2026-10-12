@@ -93,6 +93,36 @@ class HarnessEditTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _apply_edits(tools, "droid", {"command": "  "})
 
+    def test_parse_edit_flags_accepts_primary_color(self):
+        for flag in ("--primary-color=#d97757", "--primary_color=#d97757"):
+            updates, rest = _parse_edit_flags(["claude", flag])
+            self.assertEqual(rest, ["claude"])
+            self.assertEqual(updates, {"primary_color": "#d97757"})
+        updates, rest = _parse_edit_flags(["claude", "--primary-color="])
+        self.assertEqual(updates, {"primary_color": ""})
+        with self.assertRaises(ValueError):
+            _parse_edit_flags(["claude", "--primary-color"])
+
+    def test_apply_edits_sets_and_normalises_primary_color(self):
+        tools = {"claude": {"command": "claude", "aliases": [], "tags": []}}
+        for raw in ("#d97757", "d97757", "#D97757", " D97757 "):
+            new_info, changes = _apply_edits(tools, "claude", {"primary_color": raw})
+            self.assertEqual(new_info["primary_color"], "#D97757", raw)
+
+    def test_apply_edits_clears_primary_color(self):
+        tools = {"claude": {"command": "claude", "primary_color": "#123456",
+                            "aliases": [], "tags": []}}
+        new_info, changes = _apply_edits(tools, "claude", {"primary_color": ""})
+        self.assertNotIn("primary_color", new_info)
+        self.assertEqual(changes, ["primary_color: #123456 → —"])
+
+    def test_apply_edits_rejects_a_bad_colour(self):
+        tools = {"claude": {"command": "claude", "aliases": [], "tags": []}}
+        for raw in ("red", "#12345", "1234567", "#GGHHII", "##D97757", "0xD97757"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError) as ctx:
+                _apply_edits(tools, "claude", {"primary_color": raw})
+            self.assertIn("Use a colour like #D97757.", str(ctx.exception))
+
     def test_cmd_edit_flag_mode_persists(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".quiver" / "config"
@@ -135,6 +165,43 @@ class HarnessEditTest(unittest.TestCase):
                 saved = json.loads(registry_file.read_text())
                 self.assertEqual(saved["mastracode"]["description"], "Mastra Code — AI coding agent")
                 self.assertEqual(saved["mastracode"]["aliases"], ["mc"])
+
+    def test_cmd_edit_primary_color_persists_and_clears(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".quiver" / "config"
+            registry_file = config_dir / "harness.json"
+            config_dir.mkdir(parents=True)
+            registry_file.write_text(
+                json.dumps({"claude": {"command": "claude", "aliases": [], "tags": []}})
+            )
+            with patch("quiver.harness.commands.load_registry") as load, patch(
+                "quiver.harness.commands.save_registry"
+            ) as save, patch("quiver.harness.commands.resolve", return_value="claude"):
+                load.side_effect = lambda: json.loads(registry_file.read_text())
+
+                def _save(t):
+                    registry_file.write_text(json.dumps(t, indent=2))
+
+                save.side_effect = _save
+
+                rc = cmd_edit(["claude", "--primary-color=d97757"])
+                self.assertEqual(rc, 0)
+                saved = json.loads(registry_file.read_text())
+                self.assertEqual(saved["claude"]["primary_color"], "#D97757")
+
+                rc = cmd_edit(["claude", "--primary-color="])
+                self.assertEqual(rc, 0)
+                saved = json.loads(registry_file.read_text())
+                self.assertNotIn("primary_color", saved["claude"])
+
+    def test_cmd_edit_rejects_a_bad_colour(self):
+        tools = {"claude": {"command": "claude", "aliases": [], "tags": []}}
+        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch("quiver.harness.commands.resolve", return_value="claude"):
+            rc = cmd_edit(["claude", "--primary-color=notacolour"])
+            self.assertEqual(rc, 1)
+            save.assert_not_called()
 
     def test_cmd_edit_interactive_alias_collision_continues_loop(self):
         """When a user saves an alias that collides, the loop continues instead of exiting."""

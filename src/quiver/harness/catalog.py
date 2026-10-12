@@ -23,18 +23,21 @@ HARNESS_CATALOG: dict[str, dict] = {
         "description": "Anthropic's flagship, defined the skills, MCP and hooks others copy",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["cc"],
+        "primary_color": "#D97757",
     },
     "codex": {
         "command": "codex",
         "description": "OpenAI's, OS-level sandbox by default, network off unless approved",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["cx"],
+        "primary_color": "#B1A7FF",
     },
     "gemini": {
         "command": "gemini",
         "description": "Google's first, 1M token context, 1,000 free requests a day",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["gg"],
+        "primary_color": "#969DFF",
     },
     "copilot": {
         "command": "copilot",
@@ -55,12 +58,14 @@ HARNESS_CATALOG: dict[str, dict] = {
         "description": "Alibaba's Gemini CLI fork, drive it from Telegram or WeChat",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["qw"],
+        "primary_color": "#6F69F7",
     },
     "mistral-vibe": {
         "command": "vibe",
         "description": "Mistral's, own 24B Apache weights, runs offline on one GPU",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["mv"],
+        "primary_color": "#FF8205",
     },
 
     # Open source and model-agnostic.
@@ -69,12 +74,14 @@ HARNESS_CATALOG: dict[str, dict] = {
         "description": "OS, 75+ providers, local model support, fully customisable",
         "tags": ["agentic", "coding", "open-source", "byok"],
         "aliases": ["oc"],
+        "primary_color": "#8B5CF6",
     },
     "crush": {
         "command": "crush",
         "description": "Charm's, prettiest TUI, swaps models mid-session, context intact",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["cr"],
+        "primary_color": "#FF6DAA",
     },
     "cline": {
         "command": "cline",
