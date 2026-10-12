@@ -366,6 +366,7 @@ public enum APIKeyProviderLogo {
                          "vercel": "vercel",
                          "nebius": "nebius",
                          "featherless": "featherless",
+                         "routing": "routing-run", "routingrun": "routing-run",
                          "nvidia": "nvidia"]
 
     public static func logoID(for provider: String) -> String? {

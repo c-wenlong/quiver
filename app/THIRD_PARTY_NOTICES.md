@@ -86,12 +86,18 @@ Where each came from is in `Resources/harness-icons.tsv`:
 - Claude's colour mark, Qwen, Mistral, goose, Cline and the API key
   provider marks (OpenAI, DeepSeek, Z.ai, Yi, MiniMax, Xiaomi MiMo,
   StepFun, Groq, Upstage, Cerebras, OpenRouter, Together AI, Fireworks
-  AI, Vercel, Nebius, Featherless AI, NVIDIA and Cloudflare) come from
-  LobeHub icons (`@lobehub/icons-static-svg`).
-- npm comes from Simple Icons (simple-icons, CC0-1.0).
+  AI, Vercel, Nebius, NVIDIA and Cloudflare) come from LobeHub icons
+  (`@lobehub/icons-static-svg`).
+- npm comes from Simple Icons (simple-icons, CC0-1.0); Routing.Run's
+  planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).
 - Continue comes from its repository (continuedev/continue,
-  `docs/logo/light.svg`); Droid (Factory), Forge, Augment, Blackbox and
-  Freebuff from each product's own site.
+  `docs/logo/light.svg`); aider from its repository (Aider-AI/aider,
+  Apache-2.0, the site's pinned-tab icon); Crush from the
+  charmbracelet/crush repository (FSL-1.1-MIT); Droid (Factory), Forge,
+  Augment, Blackbox and Freebuff from each product's own site.
+- Featherless's current mark is composed locally: the rebranded F from
+  the inline SVG on featherless.ai, on its favicon's yellow tile; the
+  site states no licence, so the mark is trademark-only like the rest.
 
 TokenTracker is used under the MIT License (Copyright (c) 2026
 xiufengsun; full text above, under OpenUsage, as the same notice). LobeHub
@@ -101,6 +107,32 @@ icons are used under the MIT License:
 MIT License
 
 Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+Phosphor Icons (Routing.Run's planet mark) are used under the MIT License:
+
+```
+MIT License
+
+Copyright (c) 2023 Phosphor Icons
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
