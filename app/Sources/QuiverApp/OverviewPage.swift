@@ -107,7 +107,10 @@ private struct TotalCard: View {
 
     var body: some View {
         Card {
-            Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period, style: .period)
+            // Seven periods no longer fit a narrow card: the row scrolls.
+            ScrollView(.horizontal, showsIndicators: false) {
+                Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period, style: .period)
+            }
             VStack(spacing: 6) {
                 Text("Total tokens").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Text(UsageFormat.tokens(summary.totals.totalTokens))
@@ -121,7 +124,7 @@ private struct TotalCard: View {
                     if summary.totals.unpricedTokens > 0 {
                         Image(systemName: "info.circle")
                             .foregroundStyle(Theme.textSecondary)
-                            .help("Plus \(UsageFormat.tokens(summary.totals.unpricedTokens)) tokens from models with no list price: \(summary.totals.unpricedModels.sorted().joined(separator: ", "))")
+                            .hoverTip("\(UsageFormat.tokens(summary.totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(summary.totals.unpricedModels.sorted().joined(separator: ", "))")
                     }
                 }
                 Text(rangeText).font(Theme.caption).foregroundStyle(Theme.textMuted)
@@ -141,9 +144,21 @@ private struct TotalCard: View {
     }
 
     var rangeText: String {
+        if summary.period == .allTime {
+            guard let first = summary.days.last(where: { $0.totals.totalTokens > 0 }) else {
+                return "No usage yet"
+            }
+            return "Since \(first.day.formatted(.dateTime.month(.abbreviated).day().year()))"
+        }
         let range = summary.range
-        let start = range.start.formatted(.dateTime.month(.abbreviated).day())
-        let end = range.end.formatted(.dateTime.month(.abbreviated).day())
+        let crossYear = Calendar.current.component(.year, from: range.start)
+            != Calendar.current.component(.year, from: range.end)
+        let start = range.start.formatted(crossYear
+            ? .dateTime.month(.abbreviated).day().year()
+            : .dateTime.month(.abbreviated).day())
+        let end = range.end.formatted(crossYear
+            ? .dateTime.month(.abbreviated).day().year()
+            : .dateTime.month(.abbreviated).day())
         return start == end ? start : "\(start) to \(end)"
     }
 }
@@ -160,7 +175,7 @@ private struct ShareBar: View {
                     Capsule()
                         .fill(Theme.harness(share.harness))
                         .frame(width: max(3, (geo.size.width - gaps) * share.share))
-                        .help("\(UsageFormat.harness(share.harness)): \(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD))")
+                        .hoverTip("\(UsageFormat.harness(share.harness)): \(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD))")
                 }
             }
         }
@@ -214,7 +229,7 @@ private struct HarnessTile: View {
                 Text(UsageFormat.harness(share.harness)).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1).truncationMode(.tail)
             }
-            .help(UsageFormat.harness(share.harness))
+            .hoverTip(UsageFormat.harness(share.harness))
             Text(share.share > 0 && share.share < 0.001 ? "<0.1%"
                  : share.share.formatted(.percent.precision(.fractionLength(share.share < 0.1 ? 1 : 0))))
                 .font(Theme.figure).monospacedDigit().foregroundStyle(Theme.textPrimary)
@@ -225,7 +240,7 @@ private struct HarnessTile: View {
                 Text(UsageFormat.dollars(share.totals.costUSD)).foregroundStyle(Theme.accent)
                 if share.totals.unpricedTokens > 0 {
                     Image(systemName: "questionmark.circle")
-                        .help("\(UsageFormat.tokens(share.totals.unpricedTokens)) tokens with no list price: \(share.totals.unpricedModels.sorted().joined(separator: ", "))")
+                        .hoverTip("\(UsageFormat.tokens(share.totals.unpricedTokens)) of these tokens have no list price, so they aren't costed: \(share.totals.unpricedModels.sorted().joined(separator: ", "))")
                 }
             }
             .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
@@ -362,6 +377,19 @@ private struct QuickFigures: View {
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                                 .frame(width: 20, height: 20)
                                 .background(Theme.subtle, in: .circle)
+                            if !model.harnesses.isEmpty {
+                                HStack(spacing: 2) {
+                                    ForEach(Array(model.harnesses.prefix(3)), id: \.self) { harness in
+                                        HarnessIcon(harness: harness, size: 14)
+                                            .accessibilityLabel(UsageFormat.harness(harness))
+                                    }
+                                    if model.harnesses.count > 3 {
+                                        Text("+\(model.harnesses.count - 3)")
+                                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                    }
+                                }
+                                .fixedSize()
+                            }
                             Text(model.model).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                                 .lineLimit(1).truncationMode(.middle)
                             Spacer()
@@ -395,6 +423,15 @@ private struct Chip: View {
 private struct ActivityCard: View {
     var days: [DayRow]
     @State private var width: CGFloat = 0
+    /// The cell under the pointer; kept when it sits in a gap between cells.
+    @State private var hovered: Heatmap.Cell?
+    /// The pointer is inside the grid at all: the bubble survives the gaps
+    /// but goes when the grid is left.
+    @State private var inGrid = false
+    /// Every drawn cell's frame in the grid's own coordinate space.
+    @State private var frames: [Date: CGRect] = [:]
+    @State private var gridSize: CGSize = .zero
+    @State private var bubbleSize: CGSize = .zero
 
     /// As many 12pt weeks (3pt apart, after the 24pt day labels) as fit.
     var weekCount: Int { min(26, max(8, Int((width - 24) / (Theme.heatmapCell + 3)))) }
@@ -426,7 +463,10 @@ private struct ActivityCard: View {
                                 RoundedRectangle(cornerRadius: 2)
                                     .fill(Theme.heatmap[cell.level])
                                     .frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
-                                    .help("\(cell.day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())): \(UsageFormat.tokens(cell.tokens)) tokens")
+                                    .onGeometryChange(for: CGRect.self) {
+                                        $0.frame(in: .named("activityGrid"))
+                                    } action: { frames[cell.day] = $0 }
+                                    .onHover { inside in if inside { hovered = cell } }
                             } else {
                                 Color.clear.frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
                             }
@@ -434,6 +474,17 @@ private struct ActivityCard: View {
                     }
                 }
             }
+            .coordinateSpace(name: "activityGrid")
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { gridSize = $0 }
+            .onHover { inGrid = $0 }
+            // One bubble for the whole grid, drawn above it so no cell clips
+            // it and nothing flickers between cells.
+            .overlay {
+                if inGrid, let hovered, let frame = frames[hovered.day] {
+                    bubble(for: hovered, over: frame).transition(.opacity)
+                }
+            }
+            .animation(.easeIn(duration: 0.1), value: inGrid)
             HStack(spacing: 4) {
                 Text("Less").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 ForEach(0..<5, id: \.self) { level in
@@ -442,6 +493,48 @@ private struct ActivityCard: View {
                 Text("More").font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
+    }
+
+    /// The day's stats in a small card that floats over the grid, centred
+    /// on the cell and clamped inside the card; it drops under the cell
+    /// when the first row leaves no room above.
+    private func bubble(for cell: Heatmap.Cell, over frame: CGRect) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(cell.day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                .foregroundStyle(Theme.textPrimary)
+            Text(detail(for: cell)).foregroundStyle(Theme.textSecondary)
+        }
+        .font(Theme.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+        .fixedSize()
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
+        .position(x: bubbleX(over: frame), y: bubbleY(over: frame))
+        .allowsHitTesting(false)
+    }
+
+    private func detail(for cell: Heatmap.Cell) -> String {
+        if cell.tokens == 0 { return "No usage" }
+        let cost = cell.costUSD > 0 ? UsageFormat.dollars(cell.costUSD) : "No priced usage"
+        return "\(UsageFormat.tokens(cell.tokens)) tokens · \(cost)"
+    }
+
+    private func bubbleX(over frame: CGRect) -> CGFloat {
+        let half = bubbleSize.width / 2
+        let low = half + 4
+        let high = max(low, gridSize.width - half - 4)
+        return min(max(frame.midX, low), high)
+    }
+
+    private func bubbleY(over frame: CGRect) -> CGFloat {
+        let gap: CGFloat = 6
+        let above = frame.minY - gap - bubbleSize.height / 2
+        return above - bubbleSize.height / 2 < 0
+            ? frame.maxY + gap + bubbleSize.height / 2
+            : above
     }
 
     static func weekdayName(_ index: Int) -> String {
