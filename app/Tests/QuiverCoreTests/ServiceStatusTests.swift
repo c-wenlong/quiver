@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -454,13 +455,26 @@ private func openGeminiIncident() throws -> Data {
                                     redirectResolver: resolve)
     }
 
-    @Test func customIDsSlugTheNameAndStayUnique() {
-        #expect(StatusService.customID(for: "Groq Cloud", taken: []) == "custom-groq-cloud")
-        #expect(StatusService.customID(for: "ZAI (01.ai)", taken: []) == "custom-zai-01-ai")
-        #expect(StatusService.customID(for: "Acme", taken: ["custom-acme", "custom-acme-2"])
-            == "custom-acme-3")
-        // An id already used by a built-in or another custom moves on too.
-        #expect(StatusService.customID(for: "Claude", taken: ["custom-claude"]) == "custom-claude-2")
+    /// "custom-" + the slugged name + a random suffix; the suffix is
+    /// injected so the test can fix it.
+    @Test func customIDsSlugTheNameAndTakeASuffix() {
+        let suffix = { "aaaa0001" }
+        #expect(StatusService.customID(for: "Groq Cloud", taken: [], suffix: suffix)
+            == "custom-groq-cloud-aaaa0001")
+        #expect(StatusService.customID(for: "ZAI (01.ai)", taken: [], suffix: suffix)
+            == "custom-zai-01-ai-aaaa0001")
+        // The uniqueness loop is a backstop for a suffix collision.
+        #expect(StatusService.customID(for: "Acme", taken: ["custom-acme-aaaa0001"], suffix: suffix)
+            == "custom-acme-aaaa0001-2")
+    }
+
+    /// Two pages with the same name get different ids, so one can never
+    /// inherit the other's poll cache.
+    @Test func sameNameGetsDifferentIdsEachTime() {
+        let first = StatusService.customID(for: "Acme", taken: [], suffix: { "aaaa0001" })
+        let second = StatusService.customID(for: "Acme", taken: [first], suffix: { "bbbb0002" })
+        #expect(first == "custom-acme-aaaa0001")
+        #expect(second == "custom-acme-bbbb0002")
     }
 
     @Test func storeRoundTripsThroughUserDefaults() throws {
@@ -503,11 +517,11 @@ private func openGeminiIncident() throws -> Data {
         let added = await model.add(name: "OpenRouter",
                                     pageURL: URL(string: "https://status.openrouter.ai")!,
                                     group: .providers)
-        #expect(added.id == "custom-openrouter")
+        #expect(added.id.hasPrefix("custom-openrouter-"))
         #expect(added.isCustom)
         #expect(added.feedURL.absoluteString == "https://status.openrouter.ai/api/v2/summary.json")
         #expect(model.services.last == added)
-        #expect(memory.saved.map(\.id) == ["custom-openrouter"])
+        #expect(memory.saved.map(\.id) == [added.id])
         #expect(model.groups.first { $0.group == .providers }?.statuses.last?.service == added)
         // The fetch ran: the card is filled, not left unknown.
         #expect(model.statuses.last?.report?.health == .operational)
@@ -524,13 +538,59 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                     group: .infrastructure)
-        model.remove(id: "claude")
+        await model.remove(id: "claude")
         #expect(model.services.contains { $0.id == "claude" })
         #expect(memory.saved.map(\.id) == [added.id])
-        model.remove(id: added.id)
+        await model.remove(id: added.id)
         #expect(!model.services.contains { $0.id == added.id })
         #expect(!model.statuses.contains { $0.service.id == added.id })
         #expect(memory.saved.isEmpty)
+    }
+
+    /// A load parked mid-flight cannot bring a page removed while it was
+    /// out back into the list or the menu bar.
+    @MainActor @Test func aRemovedPageStaysRemovedWhenAParkedLoadLands() async throws {
+        let transport = GatedTransport(body: try statusFixture("statuspage-claude"))
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let memory = MemoryStatusStore()
+        memory.saved = [customService("custom-acme-aaaa0001", "Acme")]
+        let model = ServiceStatusModel(
+            service: ServiceStatusService(transport: transport,
+                                        cacheURL: dir.appending(path: "service-status.json")),
+            store: memory)
+        let loading = Task { await model.load(force: true) }
+        while transport.inFlight < model.services.count {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await model.remove(id: "custom-acme-aaaa0001")
+        transport.release()
+        await loading.value
+        #expect(!model.statuses.contains { $0.service.id == "custom-acme-aaaa0001" })
+        #expect(!model.affected.map(\.id).contains("custom-acme-aaaa0001"))
+    }
+
+    /// After a remove, the id is gone from memory and the cache file, so a
+    /// same-named page added later starts unknown instead of inheriting
+    /// the old reading.
+    @MainActor @Test func aReAddedPageStartsUnknown() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let cacheFile = dir.appending(path: "service-status.json")
+        let statusService = ServiceStatusService(transport: StubStatusTransport(
+            body: try statusFixture("statuspage-claude")), cacheURL: cacheFile)
+        let model = ServiceStatusModel(service: statusService, store: MemoryStatusStore())
+        let first = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+                                    group: .providers)
+        #expect(model.statuses.last?.report?.health == .minor)
+        await model.remove(id: first.id)
+        // The cache file has no entry for the removed id.
+        let file = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: cacheFile)) as? [String: Any])
+        #expect((file["services"] as? [String: Any])?[first.id] == nil)
+        // And a cached read for it is unknown, as for a page never seen.
+        #expect(await statusService.cached(for: [first]).first?.report == nil)
+        let second = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+                                     group: .providers)
+        #expect(second.id != first.id)
     }
 
     @Test func probeReadsAStatuspageFeed() async throws {
@@ -602,6 +662,41 @@ private struct StubStatusTransport: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                headerFields: nil)!)
+    }
+}
+
+/// Parks every request at the gate until `release`, so a test can remove a
+/// service while its load is still out.
+private final class GatedTransport: HTTPTransport {
+    private struct State {
+        var waiting: [CheckedContinuation<Void, Never>] = []
+        var inFlight = 0
+        var open = false
+    }
+
+    private let state = Mutex(State())
+    let body: Data
+    init(body: Data) { self.body = body }
+
+    var inFlight: Int { state.withLock { $0.inFlight } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        await withCheckedContinuation { continuation in
+            state.withLock { s in
+                s.inFlight += 1
+                if s.open { continuation.resume() } else { s.waiting.append(continuation) }
+            }
+        }
+        return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                                      headerFields: nil)!)
+    }
+
+    func release() {
+        state.withLock { s in
+            s.open = true
+            for continuation in s.waiting { continuation.resume() }
+            s.waiting.removeAll()
+        }
     }
 }
 

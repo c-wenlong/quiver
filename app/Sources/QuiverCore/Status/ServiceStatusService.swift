@@ -161,6 +161,15 @@ public actor ServiceStatusService {
         return (try? await session.data(for: request))?.1.url
     }
 
+    /// Drop everything kept for an id: this process's memory, a request in
+    /// flight and the cache file. Called when a custom page is removed, so
+    /// a same-named page added later cannot inherit its reading.
+    public func forget(id: String) {
+        memory.removeValue(forKey: id)
+        inFlight.removeValue(forKey: id)?.cancel()
+        write { entries in entries.removeValue(forKey: id) }
+    }
+
     /// Of two entries for one page, the one from the later attempt: another
     /// running copy may have saved a newer reading or cooldown.
     static func newer(_ mine: Entry?, _ theirs: Entry?) -> Entry? {
@@ -259,15 +268,23 @@ public actor ServiceStatusService {
     /// nothing for this process: memory still has every entry.
     private func save(_ updated: [String: Entry]) {
         for (id, entry) in updated { memory[id] = Self.newer(entry, memory[id]) }
+        write { entries in
+            for (id, entry) in updated { entries[id] = Self.newer(entry, entries[id]) }
+        }
+    }
+
+    /// Reads the file under the lock, runs `change` and writes it back,
+    /// the same way `save` does: directory created, locked, atomically
+    /// replaced.
+    private func write(_ change: (inout [String: Entry]) -> Void) {
         let manager = FileManager.default
         try? manager.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true,
                                      attributes: [.posixPermissions: 0o700])
-        // Without the lock another copy could overwrite a newer entry; this
-        // process still has the result in memory.
+        // Without the lock another copy could overwrite a newer entry.
         guard let lock = try? FileLock(at: cacheURL.appendingPathExtension("lock")) else { return }
         defer { lock.release() }
         var entries = load()
-        for (id, entry) in updated { entries[id] = Self.newer(entry, entries[id]) }
+        change(&entries)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .deferredToDate
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

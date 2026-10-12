@@ -33,7 +33,7 @@ struct ServiceStatusPage: View {
                         ForEach(entry.statuses) { status in
                             ServiceCard(status: status, isLoading: model.isLoading,
                                         remove: status.service.isCustom
-                                            ? { model.remove(id: status.id) } : nil)
+                                            ? { Task { await model.remove(id: status.id) } } : nil)
                         }
                     }
                 }

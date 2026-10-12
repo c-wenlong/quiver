@@ -61,12 +61,15 @@ public final class ServiceStatusModel {
         return service
     }
 
-    /// Drop a page the user added; a built-in id is left alone.
-    public func remove(id: String) {
+    /// Drop a page the user added; a built-in id is left alone. Its poll
+    /// cache goes too, so a same-named page added later cannot inherit the
+    /// old reading.
+    public func remove(id: String) async {
         guard services.first(where: { $0.id == id })?.isCustom == true else { return }
         services.removeAll { $0.id == id }
         statuses.removeAll { $0.service.id == id }
         persist()
+        await service.forget(id: id)
     }
 
     private func persist() {
@@ -77,13 +80,25 @@ public final class ServiceStatusModel {
         generation += 1
         let mine = generation
         if statuses.allSatisfy({ $0.checkedAt == nil }) {
-            statuses = await service.cached(for: services)
+            statuses = rebuilt(from: await service.cached(for: services))
         }
         isLoading = true
         defer { if mine == generation { isLoading = false } }
         let fresh = await service.statuses(for: services, force: force)
         guard mine == generation else { return }
-        statuses = fresh
+        statuses = rebuilt(from: fresh)
+    }
+
+    /// `results` mapped onto the services list as it stands now: a page
+    /// added while the call was out keeps its row, a page removed while it
+    /// was out stays gone.
+    private func rebuilt(from results: [ServiceStatus]) -> [ServiceStatus] {
+        let fetched = Dictionary(results.map { ($0.service.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let kept = Dictionary(statuses.map { ($0.service.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return services.map {
+            fetched[$0.id] ?? kept[$0.id]
+                ?? ServiceStatus(service: $0, report: nil, checkedAt: nil, problem: nil, isStale: false)
+        }
     }
 
     /// Check on a timer until the calling task is cancelled. The service's

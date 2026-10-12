@@ -179,14 +179,17 @@ public struct StatusService: Sendable, Hashable, Identifiable {
         return HarnessIcons.icon(for: id) != nil ? id : nil
     }
 
-    /// "custom-groq-cloud" for "Groq Cloud": lowercased, non-alphanumerics
-    /// as "-", trimmed, then "-2", "-3"... while `taken` already holds it.
-    static func customID(for name: String, taken: Set<String>) -> String {
+    /// "custom-groq-cloud-a1b2c3d4" for "Groq Cloud": lowercased,
+    /// non-alphanumerics as "-", trimmed, then a random suffix so a removed
+    /// page's id is never reused (its poll cache is keyed by id). The "-2",
+    /// "-3"... loop stays as a backstop.
+    static func customID(for name: String, taken: Set<String>,
+                         suffix: () -> String = { String(UUID().uuidString.prefix(8)).lowercased() }) -> String {
         let slug = name.lowercased()
             .map { $0.isLetter || $0.isNumber ? $0 : "-" }
             .reduce(into: "") { if $1 != "-" || $0.last != "-" { $0.append($1) } }
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        let base = "custom-\(slug.isEmpty ? "page" : slug)"
+        let base = "custom-\(slug.isEmpty ? "page" : slug)-\(suffix())"
         var id = base, n = 2
         while taken.contains(id) { id = "\(base)-\(n)"; n += 1 }
         return id
