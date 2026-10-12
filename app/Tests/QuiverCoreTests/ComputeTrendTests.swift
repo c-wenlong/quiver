@@ -169,39 +169,39 @@ import Testing
     /// never parks fails the test rather than hanging the suite.
     actor GateFlag {
         private var raised = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var nextID = 0
+        private var waiters: [Int: CheckedContinuation<Bool, Never>] = [:]
 
         func raise() {
             guard !raised else { return }
             raised = true
             let pending = waiters
-            waiters = []
-            for waiter in pending { waiter.resume() }
+            waiters = [:]
+            for waiter in pending.values { waiter.resume(returning: true) }
         }
 
+        /// True once `raise` has run, false if ten seconds pass first.
+        /// Checking `raised` and registering the waiter happen inside one
+        /// actor step, so a `raise` can never slip between them and leave
+        /// the waiter parked until the timeout.
         func wait() async -> Bool {
-            if raised { return true }
-            return await withTaskGroup(of: Bool.self) { group in
-                group.addTask { await self.park(); return true }
-                group.addTask {
-                    try? await Task.sleep(for: .seconds(10))
-                    return false
+            await withCheckedContinuation { cont in
+                if raised {
+                    cont.resume(returning: true)
+                    return
                 }
-                let first = await group.next() ?? false
-                group.cancelAll()
-                await self.drain()
-                return first
+                nextID += 1
+                let id = nextID
+                waiters[id] = cont
+                Task { await self.expire(id) }
             }
         }
 
-        private func park() async {
-            await withCheckedContinuation { waiters.append($0) }
-        }
-
-        private func drain() {
-            let pending = waiters
-            waiters = []
-            for waiter in pending { waiter.resume() }
+        /// The timeout resumes only its own waiter, and only if `raise`
+        /// has not already answered it.
+        private func expire(_ id: Int) async {
+            try? await Task.sleep(for: .seconds(10))
+            waiters.removeValue(forKey: id)?.resume(returning: false)
         }
     }
 
