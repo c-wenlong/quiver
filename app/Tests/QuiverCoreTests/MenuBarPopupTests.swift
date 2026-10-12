@@ -77,4 +77,63 @@ private func reading(_ harness: String, _ source: String, _ window: String) -> L
         #expect(groups.first?.windows == ["5h"])
         #expect(groups.first { $0.harness == "devin" }?.windows == [])
     }
+
+    @Test func anEmptyDraggedOrderLeavesTheGivenOrderAlone() {
+        let popup = MenuBarPopup(defaults: defaults())
+        #expect(popup.ordered(["claude", "codex", "cursor", "devin"]) == ["claude", "codex", "cursor", "devin"])
+    }
+
+    @Test func draggingAHarnessBeforeAnotherReordersThePopup() {
+        var popup = MenuBarPopup(defaults: defaults())
+        let shown = ["claude", "codex", "cursor", "devin"]
+        popup.move("devin", before: "claude", in: shown)
+        #expect(popup.ordered(shown) == ["devin", "claude", "codex", "cursor"])
+    }
+
+    @Test func droppingBelowTheLastRowMovesAHarnessToTheEnd() {
+        var popup = MenuBarPopup(defaults: defaults())
+        let shown = ["claude", "codex", "cursor", "devin"]
+        popup.moveToEnd("claude", in: shown)
+        #expect(popup.ordered(shown) == ["codex", "cursor", "devin", "claude"])
+    }
+
+    @Test func anUnstarredHarnessKeepsItsPlaceForWhenItReturns() {
+        var popup = MenuBarPopup(defaults: defaults())
+        let shown = ["claude", "codex", "cursor", "devin"]
+        popup.move("devin", before: "claude", in: shown)
+        // devin unstarred: it leaves the list but keeps its slot.
+        #expect(popup.ordered(["claude", "codex", "cursor"]) == ["claude", "codex", "cursor"])
+        #expect(popup.ordered(shown) == ["devin", "claude", "codex", "cursor"])
+    }
+
+    @Test func aHarnessNewToTheListGoesAfterTheOrderedOnes() {
+        var popup = MenuBarPopup(defaults: defaults())
+        popup.move("devin", before: "claude", in: ["claude", "codex", "cursor", "devin"])
+        #expect(popup.ordered(["claude", "codex", "cursor", "pi"]).last == "pi")
+    }
+
+    @Test func idsNotInTheListCannotBeMoved() {
+        var popup = MenuBarPopup(defaults: defaults())
+        popup.move("x", before: "claude", in: ["claude", "codex", "cursor", "devin"])
+        #expect(popup.harnessOrder.isEmpty)
+    }
+
+    @Test func theDraggedOrderSurvivesARelaunch() {
+        let store = defaults()
+        var popup = MenuBarPopup(defaults: store)
+        popup.move("devin", before: "claude", in: ["claude", "codex", "cursor", "devin"])
+        popup.save(to: store)
+        let back = MenuBarPopup(defaults: store)
+        #expect(back.harnessOrder == popup.harnessOrder)
+    }
+
+    @Test func orderedHarnessesFollowsTheDraggedOrder() {
+        var popup = MenuBarPopup(defaults: defaults())
+        let readings = [reading("claude", "personal", "5h"), reading("devin", "devin", "7d")]
+        popup.move("devin", before: "claude", in: ["claude", "devin"])
+        let groups = popup.orderedHarnesses(in: readings, order: ["claude", "devin"])
+        #expect(groups.map(\.harness) == ["devin", "claude"])
+        #expect(groups[0].windows == ["7d"])
+        #expect(groups[1].windows == ["5h"])
+    }
 }

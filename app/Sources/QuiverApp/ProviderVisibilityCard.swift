@@ -117,7 +117,7 @@ private struct ProviderRow: View {
 }
 
 /// The six-dot drag handle.
-private struct GripDots: View {
+struct GripDots: View {
     var body: some View {
         Grid(horizontalSpacing: 3, verticalSpacing: 3) {
             ForEach(0..<3, id: \.self) { _ in
