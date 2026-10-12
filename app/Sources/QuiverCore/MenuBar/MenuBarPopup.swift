@@ -1,24 +1,44 @@
 import Foundation
 
 /// What the menu bar popup shows: the incidents line, the spend section,
-/// and which harnesses and which of their limit windows are listed. Set on
-/// the Menu bar and widgets page; everything shows until hidden there.
+/// and which accounts and harnesses and which of their limit windows are
+/// listed. Set on the Menu bar and widgets page; everything shows until
+/// hidden there.
+///
+/// Settings are keyed by source: `LimitReading.source`, the profile id
+/// for a Quiver account and the harness name for the other harnesses, so
+/// two accounts of one harness hide and order independently. The older
+/// harness-level keys still read, as legacy fallbacks a per-source
+/// choice always beats; they are never written again.
 public struct MenuBarPopup: Equatable, Sendable {
     public var showIncidents = true
     /// The spend-by-harness section.
     public var showStats = true
-    /// Harness ids (`LimitReading.harness`) left out of the popup.
-    public private(set) var hiddenHarnesses: Set<String> = []
-    /// Window labels left out, per harness id.
-    public private(set) var hiddenWindows: [String: Set<String>] = [:]
-    /// The order the popup lists harnesses in, dragged on the Menu bar and
-    /// widgets page. An id not shown right now keeps its place, so an
-    /// unstarred harness comes back where it was when starred again.
-    public private(set) var harnessOrder: [String] = []
+    /// Source ids left out of the popup.
+    public private(set) var hiddenSources: Set<String> = []
+    /// Window labels left out, per source id. A source with any entry at
+    /// all, an empty set included, has its own window list: it no longer
+    /// falls back to the harness's legacy one, and a legacy harness-wide
+    /// hide no longer covers it either.
+    public private(set) var hiddenSourceWindows: [String: Set<String>] = [:]
+    /// The order the popup lists sources in, dragged on the Menu bar and
+    /// widgets page. A source not shown right now keeps its place, so an
+    /// unstarred account comes back where it was when starred again.
+    public private(set) var sourceOrder: [String] = []
+    /// Harness-level choices the pre-account UI saved. Read from these
+    /// only as fallbacks for sources with no per-source entry.
+    var legacyHiddenHarnesses: Set<String> = []
+    var legacyHiddenWindows: [String: Set<String>] = [:]
+    var legacyHarnessOrder: [String] = []
 
     public enum Key {
         public static let incidents = "popupShowIncidents"
         public static let stats = "popupShowStats"
+        public static let hiddenSources = "popupHiddenSources"
+        public static let hiddenSourceWindows = "popupHiddenSourceWindows"
+        public static let sourceOrder = "popupSourceOrder"
+        /// The old harness-level keys. Kept so the migration that rewrites
+        /// them still compiles; new choices never land here.
         public static let hiddenHarnesses = "popupHiddenHarnesses"
         public static let hiddenWindows = "popupHiddenWindows"
         public static let harnessOrder = "popupHarnessOrder"
@@ -27,104 +47,180 @@ public struct MenuBarPopup: Equatable, Sendable {
     public init(defaults: UserDefaults) {
         showIncidents = defaults.object(forKey: Key.incidents) as? Bool ?? true
         showStats = defaults.object(forKey: Key.stats) as? Bool ?? true
-        hiddenHarnesses = Set(defaults.stringArray(forKey: Key.hiddenHarnesses) ?? [])
-        let windows = defaults.dictionary(forKey: Key.hiddenWindows) as? [String: [String]] ?? [:]
-        hiddenWindows = windows.mapValues(Set.init).filter { !$0.value.isEmpty }
-        harnessOrder = defaults.stringArray(forKey: Key.harnessOrder) ?? []
+        hiddenSources = Set(defaults.stringArray(forKey: Key.hiddenSources) ?? [])
+        let windows = defaults.dictionary(forKey: Key.hiddenSourceWindows) as? [String: [String]] ?? [:]
+        // An empty set is a real entry: it means "show every window".
+        hiddenSourceWindows = windows.mapValues(Set.init)
+        sourceOrder = defaults.stringArray(forKey: Key.sourceOrder) ?? []
+        legacyHiddenHarnesses = Set(defaults.stringArray(forKey: Key.hiddenHarnesses) ?? [])
+        let legacy = defaults.dictionary(forKey: Key.hiddenWindows) as? [String: [String]] ?? [:]
+        legacyHiddenWindows = legacy.mapValues(Set.init).filter { !$0.value.isEmpty }
+        legacyHarnessOrder = defaults.stringArray(forKey: Key.harnessOrder) ?? []
     }
 
     public func save(to defaults: UserDefaults) {
         defaults.set(showIncidents, forKey: Key.incidents)
         defaults.set(showStats, forKey: Key.stats)
-        defaults.set(hiddenHarnesses.sorted(), forKey: Key.hiddenHarnesses)
-        defaults.set(hiddenWindows.mapValues { $0.sorted() }, forKey: Key.hiddenWindows)
-        defaults.set(harnessOrder, forKey: Key.harnessOrder)
+        defaults.set(hiddenSources.sorted(), forKey: Key.hiddenSources)
+        defaults.set(hiddenSourceWindows.mapValues { $0.sorted() }, forKey: Key.hiddenSourceWindows)
+        defaults.set(sourceOrder, forKey: Key.sourceOrder)
     }
 
-    public func shows(harness: String) -> Bool { !hiddenHarnesses.contains(harness) }
-
-    public func shows(window: String, of harness: String) -> Bool {
-        shows(harness: harness) && !(hiddenWindows[harness]?.contains(window) ?? false)
+    /// Whether the popup lists this source at all. An explicit per-source
+    /// state wins; with none, the legacy hide of its harness decides.
+    public func shows(source: String, harness: String) -> Bool {
+        if hiddenSources.contains(source) { return false }
+        // A source with its own window list stands on its own.
+        if hiddenSourceWindows[source] != nil { return true }
+        return !legacyHiddenHarnesses.contains(harness)
     }
 
-    public mutating func setShown(_ shown: Bool, harness: String) {
-        if shown { hiddenHarnesses.remove(harness) } else { hiddenHarnesses.insert(harness) }
+    /// The windows hidden for a source right now: its own list when it
+    /// has one, else the legacy set of its harness, except when that set
+    /// would hide every window the source reports; a legacy rule must
+    /// never make a whole account vanish.
+    private func effectiveHiddenWindows(source: String, harness: String,
+                                        allWindows: [String]) -> Set<String> {
+        if let explicit = hiddenSourceWindows[source] { return explicit }
+        let legacy = legacyHiddenWindows[harness] ?? []
+        if !allWindows.isEmpty, allWindows.allSatisfy(legacy.contains) { return [] }
+        return legacy.intersection(allWindows)
     }
 
-    public mutating func setShown(_ shown: Bool, window: String, of harness: String) {
-        var hidden = hiddenWindows[harness] ?? []
+    public func shows(window: String, source: String, harness: String, allWindows: [String]) -> Bool {
+        shows(source: source, harness: harness)
+            && !effectiveHiddenWindows(source: source, harness: harness,
+                                       allWindows: allWindows).contains(window)
+    }
+
+    /// Writes the source's effective state as its own, then flips the
+    /// switch, so a choice never leaks to the harness's other accounts.
+    public mutating func setShown(_ shown: Bool, source: String, harness: String,
+                                  allWindows: [String]) {
+        if !shows(source: source, harness: harness) { hiddenSources.insert(source) }
+        if shown {
+            hiddenSources.remove(source)
+            // Shown is the default only where no legacy hide covers the
+            // harness; against one, the source needs a record of its own
+            // to stay shown. That record keeps the windows it hides now,
+            // not an empty list that would show them all.
+            if legacyHiddenHarnesses.contains(harness), hiddenSourceWindows[source] == nil {
+                hiddenSourceWindows[source] = effectiveHiddenWindows(
+                    source: source, harness: harness, allWindows: allWindows)
+            }
+        } else {
+            hiddenSources.insert(source)
+        }
+    }
+
+    /// Writes the source's effective state as its own, then flips the one
+    /// window.
+    public mutating func setShown(_ shown: Bool, window: String, source: String,
+                                  harness: String, allWindows: [String]) {
+        if !shows(source: source, harness: harness) { hiddenSources.insert(source) }
+        var hidden = effectiveHiddenWindows(source: source, harness: harness,
+                                            allWindows: allWindows)
         if shown { hidden.remove(window) } else { hidden.insert(window) }
-        hiddenWindows[harness] = hidden.isEmpty ? nil : hidden
+        hiddenSourceWindows[source] = hidden
     }
 
-    /// `ids` in the dragged order: the ones it knows by their place, then
-    /// the ones it doesn't in the order given. An empty dragged order
-    /// leaves `ids` exactly as it came.
-    public func ordered(_ ids: [String]) -> [String] {
-        harnessOrder.filter { ids.contains($0) } + ids.filter { !harnessOrder.contains($0) }
+    /// The given sources in the popup's order: a dragged position wins,
+    /// then the legacy harness order of the source's harness, keeping the
+    /// given order among one harness's accounts. Sources whose harness the
+    /// legacy order doesn't know go last, in the given order.
+    public func ordered(_ sources: [(source: String, harness: String)]) -> [String] {
+        let explicit = sourceOrder.filter { id in sources.contains { $0.source == id } }
+        let rank = Dictionary(legacyHarnessOrder.enumerated().map { ($1, $0) },
+                              uniquingKeysWith: { first, _ in first })
+        let rest = sources.enumerated()
+            .filter { !sourceOrder.contains($0.element.source) }
+            .sorted { a, b in
+                let ra = rank[a.element.harness] ?? .max
+                let rb = rank[b.element.harness] ?? .max
+                return ra != rb ? ra < rb : a.offset < b.offset
+            }
+            .map(\.element.source)
+        return explicit + rest
     }
 
     /// Drag `id` before `target`, where `shown` is what the list shows now.
-    /// Shown ids not yet ordered join `harnessOrder` in their shown order
-    /// first, so the move lands where it was dropped.
-    public mutating func move(_ id: String, before target: String, in shown: [String]) {
-        guard id != target, shown.contains(id), shown.contains(target) else { return }
-        harnessOrder += ordered(shown).filter { !harnessOrder.contains($0) }
-        harnessOrder.removeAll { $0 == id }
-        if let index = harnessOrder.firstIndex(of: target) {
-            harnessOrder.insert(id, at: index)
+    /// Shown sources not yet ordered join `sourceOrder` in their shown
+    /// order first, so the move lands where it was dropped.
+    public mutating func move(_ id: String, before target: String,
+                              in shown: [(source: String, harness: String)]) {
+        guard id != target, shown.contains(where: { $0.source == id }),
+              shown.contains(where: { $0.source == target }) else { return }
+        sourceOrder += ordered(shown).filter { !sourceOrder.contains($0) }
+        sourceOrder.removeAll { $0 == id }
+        if let index = sourceOrder.firstIndex(of: target) {
+            sourceOrder.insert(id, at: index)
         }
     }
 
     /// Drop `id` below the last shown row: it lands at the end of the
-    /// visible list, without jumping past hidden ids that follow it.
-    public mutating func moveToEnd(_ id: String, in shown: [String]) {
-        guard shown.contains(id) else { return }
-        harnessOrder += ordered(shown).filter { !harnessOrder.contains($0) }
-        harnessOrder.removeAll { $0 == id }
+    /// visible list, without jumping past hidden sources that follow it.
+    public mutating func moveToEnd(_ id: String, in shown: [(source: String, harness: String)]) {
+        guard shown.contains(where: { $0.source == id }) else { return }
+        sourceOrder += ordered(shown).filter { !sourceOrder.contains($0) }
+        sourceOrder.removeAll { $0 == id }
         if let last = ordered(shown).last(where: { $0 != id }),
-           let index = harnessOrder.firstIndex(of: last) {
-            harnessOrder.insert(id, at: index + 1)
+           let index = sourceOrder.firstIndex(of: last) {
+            sourceOrder.insert(id, at: index + 1)
         } else {
-            harnessOrder.append(id)
+            sourceOrder.append(id)
         }
     }
 
-    /// `harnesses(in:order:)` re-sorted by the dragged order.
-    public func orderedHarnesses(in readings: [LimitReading], order: [String]) -> [Harness] {
-        let harnesses = Self.harnesses(in: readings, order: order)
-        let byId = Dictionary(uniqueKeysWithValues: harnesses.map { ($0.id, $0) })
-        return ordered(harnesses.map(\.id)).compactMap { byId[$0] }
-    }
-
-    /// One harness the popup can list, and the named windows it reports.
-    public struct Harness: Equatable, Sendable, Identifiable {
-        public var id: String { harness }
+    /// One account or harness the popup can list, and the named windows it
+    /// reports.
+    public struct Row: Equatable, Sendable, Identifiable {
+        public var id: String { source }
+        /// `LimitReading.source`: a profile id, or a harness name.
+        public let source: String
+        /// The harness, for its colour and icon.
         public let harness: String
+        /// Titled like its Accounts card: "Claude: Personal", "Devin".
+        public let title: String
         public let windows: [String]
 
-        public init(harness: String, windows: [String]) {
+        public init(source: String, harness: String, title: String, windows: [String]) {
+            self.source = source
             self.harness = harness
+            self.title = title
             self.windows = windows
         }
     }
 
-    /// Every harness in `order` (accounts, then other harnesses, so the list
-    /// doesn't reshuffle as usage changes), then any other harness in the
-    /// readings, each with its distinct named windows in first-seen order.
-    /// A harness in `order` with no readings yet is listed with no windows.
-    public static func harnesses(in readings: [LimitReading], order given: [String] = []) -> [Harness] {
-        var order: [String] = []
+    /// Every given source, then any other source in the readings, each
+    /// with its distinct named windows in first-seen order. A source with
+    /// no readings yet is listed with no windows, so it can be hidden
+    /// before its limits arrive.
+    public static func rows(in readings: [LimitReading],
+                            sources given: [(source: String, harness: String,
+                                             title: String)]) -> [Row] {
+        var listed: [(source: String, harness: String, title: String)] = []
         var seen: Set<String> = []
-        for harness in given where seen.insert(harness).inserted { order.append(harness) }
+        for source in given where seen.insert(source.source).inserted { listed.append(source) }
         var windows: [String: [String]] = [:]
         for reading in readings {
-            if seen.insert(reading.harness).inserted { order.append(reading.harness) }
-            if windows[reading.harness] == nil { windows[reading.harness] = [] }
-            if !reading.window.isEmpty, !(windows[reading.harness]?.contains(reading.window) ?? false) {
-                windows[reading.harness]?.append(reading.window)
+            if seen.insert(reading.source).inserted {
+                listed.append((reading.source, reading.harness, reading.title))
+            }
+            if windows[reading.source] == nil { windows[reading.source] = [] }
+            if !reading.window.isEmpty, !(windows[reading.source]?.contains(reading.window) ?? false) {
+                windows[reading.source]?.append(reading.window)
             }
         }
-        return order.map { Harness(harness: $0, windows: windows[$0] ?? []) }
+        return listed.map { Row(source: $0.source, harness: $0.harness, title: $0.title,
+                                windows: windows[$0.source] ?? []) }
+    }
+
+    /// `rows(in:sources:)` re-sorted by the dragged order.
+    public func orderedRows(in readings: [LimitReading],
+                            sources given: [(source: String, harness: String,
+                                             title: String)]) -> [Row] {
+        let rows = Self.rows(in: readings, sources: given)
+        let bySource = Dictionary(uniqueKeysWithValues: rows.map { ($0.source, $0) })
+        return ordered(rows.map { ($0.source, $0.harness) }).compactMap { bySource[$0] }
     }
 }

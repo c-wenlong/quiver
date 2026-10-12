@@ -71,10 +71,15 @@ private let older = #"""
         MenuBarMigrations.run(on: store)
         #expect(MenuBarDisplay(defaults: store).watchedLimit == "cursor|included")
         let popup = MenuBarPopup(defaults: store)
-        #expect(!popup.shows(window: "included", of: "cursor"))
-        #expect(popup.shows(window: "auto", of: "cursor"))
-        #expect(!popup.shows(window: "api", of: "cursor"))
-        #expect(!popup.shows(window: "auto", of: "claude"))
+        let cursorWindows = ["included", "auto", "api"]
+        #expect(!popup.shows(window: "included", source: "cursor", harness: "cursor",
+                             allWindows: cursorWindows))
+        #expect(popup.shows(window: "auto", source: "cursor", harness: "cursor",
+                            allWindows: cursorWindows))
+        #expect(!popup.shows(window: "api", source: "cursor", harness: "cursor",
+                             allWindows: cursorWindows))
+        #expect(!popup.shows(window: "auto", source: "claude-default", harness: "claude",
+                             allWindows: ["5h", "auto", "7d"]))
         // A choice made after the upgrade is left alone.
         store.set("cursor|auto", forKey: MenuBarDisplay.Key.watchedLimit)
         MenuBarMigrations.run(on: store)
