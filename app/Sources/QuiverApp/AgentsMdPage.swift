@@ -255,6 +255,8 @@ struct InstructionEditor: View {
     @Bindable var document: InstructionDocument
     var title: String
     var subtitle: String
+    /// View-only: no mode tabs or save controls, just the text.
+    var readOnly = false
     var onSaved: () -> Void = {}
     @State private var error: String?
     @FocusState private var editing: Bool
@@ -265,7 +267,9 @@ struct InstructionEditor: View {
     var body: some View {
         Card(title: title, subtitle: subtitle) {
             HStack(spacing: 8) {
-                Tabs(options: [("raw", "Raw"), ("rich", "Rich")], selection: $mode, style: .segmented)
+                if !readOnly {
+                    Tabs(options: [("raw", "Raw"), ("rich", "Rich")], selection: $mode, style: .segmented)
+                }
                 if document.isDirty {
                     HStack(spacing: 5) {
                         Circle().fill(Theme.warning).frame(width: 7, height: 7)
@@ -273,13 +277,15 @@ struct InstructionEditor: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
-                Button("Revert") { document.revert(); error = nil }
-                    .secondaryButton()
-                    .disabled(!document.isDirty)
-                Button("Save") { save(overwrite: false) }
-                    .primaryButton()
-                    .keyboardShortcut("s", modifiers: .command)
-                    .disabled(!document.isDirty || document.changedOnDisk)
+                if !readOnly {
+                    Button("Revert") { document.revert(); error = nil }
+                        .secondaryButton()
+                        .disabled(!document.isDirty)
+                    Button("Save") { save(overwrite: false) }
+                        .primaryButton()
+                        .keyboardShortcut("s", modifiers: .command)
+                        .disabled(!document.isDirty || document.changedOnDisk)
+                }
             }
         } content: {
             switch document.state {
@@ -300,7 +306,11 @@ struct InstructionEditor: View {
                 // Fills the card, and the card fills what the page has left.
                 let focused = mode == "raw" ? editing : richFocused
                 Group {
-                    if mode == "raw" {
+                    if readOnly {
+                        TextEditor(text: .constant(document.text))
+                            .font(.system(size: 13, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                    } else if mode == "raw" {
                         TextEditor(text: $document.text)
                             .font(.system(size: 13, design: .monospaced))
                             .scrollContentBackground(.hidden)
@@ -310,6 +320,7 @@ struct InstructionEditor: View {
                                          focusToken: richFocusToken, accessibilityLabel: title)
                     }
                 }
+                .disabled(readOnly)
                 .focusEffectDisabled()
                 .padding(10)
                 .background(mode == "raw" ? Theme.code : Theme.field,

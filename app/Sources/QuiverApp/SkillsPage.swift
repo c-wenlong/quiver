@@ -50,20 +50,31 @@ struct SkillsPage: View {
 // MARK: - Installed
 
 private struct InstalledSkills: View {
+    @Environment(AppModel.self) private var app
     @Bindable var model: SkillsModel
     var openPlugins: () -> Void
+    /// The skill open in its detail page, nil while the list shows.
+    @State private var opened: Skill?
 
     var body: some View {
-        switch model.inventory {
-        case .idle, .loading:
-            LoadingCard(text: "Reading skills…")
-        case .failed(let message):
-            ErrorCard(message: message)
-        case .loaded(let inventory):
-            if model.placement == nil {
-                LoadingCard(text: "Finding the skills that ship inside plugins…")
-            } else {
-                list(empty: inventory.skills.isEmpty)
+        if let opened {
+            // A reload swaps the inventory: follow the same folder's row.
+            let skill = model.allSkills.first { $0.path == opened.path } ?? opened
+            SkillDetailView(skill: skill, home: FileManager.default.homeDirectoryForCurrentUser,
+                            onBack: { self.opened = nil },
+                            links: AnyView(SkillLinksBlock(skill: skill, model: model)))
+        } else {
+            switch model.inventory {
+            case .idle, .loading:
+                LoadingCard(text: "Reading skills…")
+            case .failed(let message):
+                ErrorCard(message: message)
+            case .loaded(let inventory):
+                if model.placement == nil {
+                    LoadingCard(text: "Finding the skills that ship inside plugins…")
+                } else {
+                    list(empty: inventory.skills.isEmpty)
+                }
             }
         }
     }
@@ -83,7 +94,7 @@ private struct InstalledSkills: View {
             // between rows, no card around them.
             LazyVStack(spacing: 0) {
                 ForEach(skills) { skill in
-                    SkillRow(skill: skill, model: model)
+                    SkillRow(skill: skill, model: model) { opened = skill }
                     if skill.id != skills.last?.id { Rectangle().fill(Theme.border).frame(height: 1) }
                 }
             }
@@ -344,62 +355,40 @@ private struct LinkLegend: View {
 private struct SkillRow: View {
     var skill: Skill
     var model: SkillsModel
-    @State private var expanded = false
+    /// A click opens the skill's detail page.
+    var open: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } } label: {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(skill.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                        if !skill.description.isEmpty {
-                            Text(skill.description)
-                                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                                .lineLimit(expanded ? nil : 1)
-                                .multilineTextAlignment(.leading)
-                        }
-                        Text(displayPath(skill.path))
-                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                            .lineLimit(1).truncationMode(.middle)
+        Button(action: open) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(skill.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                    if !skill.description.isEmpty {
+                        Text(skill.description)
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .multilineTextAlignment(.leading)
                     }
-                    Spacer(minLength: 12)
-                    HStack(spacing: 10) {
-                        Badge(skill.source.title)
-                        SeenBy(harnesses: skill.harnesses)
-                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                            .monospacedDigit()
-                            .frame(minWidth: 86, alignment: .trailing)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.textMuted)
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                    }
+                    Text(displayPath(skill.path))
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .lineLimit(1).truncationMode(.middle)
                 }
-                .contentShape(.rect)
-            }
-            .plainButton(cornerRadius: Theme.controlRadius)
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    let chips = model.chips(for: skill)
-                    if !chips.isEmpty {
-                        FlowLayout(spacing: 6, lineSpacing: 6) {
-                            ForEach(chips, id: \.root.id) { chip in
-                                LinkChipLabel(name: chip.root.name, link: chip.link, compact: true)
-                                    .help("\(HarnessMark(chip.root.name).name): \(chip.link.title.lowercased())")
-                            }
-                        }
-                    }
-                    Button("Show in Finder", systemImage: "folder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: skill.path)])
-                    }
-                    .secondaryButton()
+                Spacer(minLength: 12)
+                HStack(spacing: 10) {
+                    Badge(skill.source.title)
+                    SeenBy(harnesses: skill.harnesses)
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .monospacedDigit()
+                        .frame(minWidth: 86, alignment: .trailing)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
                 }
-                .padding(.leading, 2)
             }
+            .contentShape(.rect)
         }
+        .plainButton(cornerRadius: Theme.controlRadius)
         .padding(.vertical, 12)
         // The fill reaches past the text so the row reads as one target.
         .background {
@@ -408,6 +397,29 @@ private struct SkillRow: View {
                 .padding(.horizontal, -8)
         }
         .onHover { hovering = $0 }
+        .help("Open \(skill.name)")
+    }
+}
+
+/// What the skill's detail page shows under its header: which harnesses
+/// load it, the link chips a shared skill carries, and its note.
+private struct SkillLinksBlock: View {
+    var skill: Skill
+    var model: SkillsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            let chips = model.chips(for: skill)
+            if !chips.isEmpty {
+                FlowLayout(spacing: 6, lineSpacing: 6) {
+                    ForEach(chips, id: \.root.id) { chip in
+                        LinkChipLabel(name: chip.root.name, link: chip.link, compact: true)
+                            .help("\(HarnessMark(chip.root.name).name): \(chip.link.title.lowercased())")
+                    }
+                }
+            }
+        }
     }
 
     private var note: String {
