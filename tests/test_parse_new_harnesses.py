@@ -524,5 +524,180 @@ class TrackedCountsTest(unittest.TestCase):
             self.assertIn(name, counts)
 
 
+class ParseCrushEdgeTest(unittest.TestCase):
+    def _expand(self, projects, data_dir=None):
+        def expand(path):
+            if path.endswith("projects.json"):
+                return str(projects)
+            if data_dir and "crush" in path and path.startswith("~"):
+                return str(Path(data_dir))
+            return path
+        return expand
+
+    def test_missing_projects_json_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "nope.json"
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=self._expand(missing),
+            ):
+                from quiver.sessions.parsers import parse_crush
+                self.assertEqual(parse_crush(), [])
+
+    def test_non_list_projects_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp) / "projects.json"
+            projects.write_text(json.dumps({"projects": "junk"}))
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=self._expand(projects),
+            ):
+                from quiver.sessions.parsers import parse_crush
+                self.assertEqual(parse_crush(), [])
+
+    def test_project_without_db_falls_back_to_last_accessed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp) / "projects.json"
+            projects.write_text(json.dumps({"projects": [
+                {"path": "/w", "data_dir": str(Path(tmp) / "nodb"),
+                 "last_accessed": 1777032754},
+                {"path": "", "data_dir": ""},   # skipped: missing fields
+                "not a dict",
+            ]}))
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=self._expand(projects),
+            ):
+                from quiver.sessions.parsers import parse_crush
+                sessions = parse_crush()
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].path, "/w")
+            self.assertEqual(sessions[0].tool_name, "crush")
+
+
+class CodexThreadStoreTest(unittest.TestCase):
+    def test_no_store_returns_empty_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=lambda p: str(Path(tmp) / ".codex" / p[7:]) if p.startswith("~/.codex") else p,
+            ):
+                from quiver.sessions.parsers import _codex_thread_store
+                self.assertEqual(_codex_thread_store(), {})
+
+    def test_store_schema_without_threads_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state_5.sqlite"
+            conn = sqlite3.connect(db)
+            conn.execute("CREATE TABLE other (id TEXT)")
+            conn.commit()
+            conn.close()
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=lambda p: str(Path(tmp) / p[9:]) if p.startswith("~/.codex/") else p,
+            ):
+                from quiver.sessions.parsers import _codex_thread_store
+                self.assertEqual(_codex_thread_store(), {})
+
+    def test_reads_names_and_previews(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state_5.sqlite"
+            conn = sqlite3.connect(db)
+            conn.execute("CREATE TABLE threads (id TEXT, name TEXT, preview TEXT)")
+            conn.execute("INSERT INTO threads VALUES ('ABC', 'My Title', 'first msg')")
+            conn.execute("INSERT INTO threads VALUES ('  ', 'blank', 'x')")
+            conn.execute("INSERT INTO threads VALUES (NULL, 'noid', 'x')")
+            conn.commit()
+            conn.close()
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=lambda p: str(Path(tmp) / p[9:]) if p.startswith("~/.codex/") else p,
+            ):
+                from quiver.sessions.parsers import _codex_thread_store
+                store = _codex_thread_store()
+            self.assertEqual(store, {"abc": ("My Title", "first msg")})
+
+
+class CursorMetaTest(unittest.TestCase):
+    def test_missing_chats_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=lambda p: str(Path(tmp) / "chats") if "chats" in p else p,
+            ):
+                from quiver.sessions.parsers import _cursor_meta
+                self.assertEqual(_cursor_meta("s1"), {})
+
+    def test_reads_meta_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "chats" / "hash1" / "s1" / "meta.json"
+            meta.parent.mkdir(parents=True)
+            meta.write_text(json.dumps({"cwd": "/w", "title": "T"}))
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=lambda p: str(Path(tmp) / "chats") if "chats" in p else p,
+            ):
+                from quiver.sessions.parsers import _cursor_meta
+                self.assertEqual(_cursor_meta("s1"), {"cwd": "/w", "title": "T"})
+                self.assertEqual(_cursor_meta("other"), {})
+                self.assertEqual(_cursor_meta(""), {})
+
+
+class ParseFreebuffEnrichTest(unittest.TestCase):
+    def test_run_state_overrides_path_and_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "manicode" / "projects"
+            sess = base / "proj" / "chats" / "sess-1"
+            sess.mkdir(parents=True)
+            (sess / "log.jsonl").write_text(
+                json.dumps({"role": "user", "content": "log line"}) + "\n")
+            (sess / "run-state.json").write_text(json.dumps({
+                "sessionState": {"mainAgentState": {
+                    "cwd": "/real/work",
+                    "messageHistory": [
+                        {"role": "assistant", "content": "skip"},
+                        {"role": "user", "content": "state title"},
+                    ],
+                }}
+            }))
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=lambda p: str(base) + "/" if "manicode" in p else p,
+            ):
+                from quiver.sessions.parsers import parse_freebuff
+                sessions = parse_freebuff()
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].path, "/real/work")
+            self.assertEqual(sessions[0].title, "state title")
+
+
+class ParseGeminiEnrichTest(unittest.TestCase):
+    def test_projects_map_and_logs_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = root / "projects.json"
+            index.write_text(json.dumps({"projects": {"/w/p": "h1"}}))
+            logdir = root / "tmp" / "h1"
+            logdir.mkdir(parents=True)
+            (logdir / "logs.json").write_text(json.dumps([
+                {"type": "system", "message": "skip"},
+                {"type": "user", "message": "  gemini prompt  "},
+            ]))
+
+            def expand(p):
+                if p.endswith("projects.json"):
+                    return str(index)
+                if "gemini/tmp" in p:
+                    return str(root / "tmp" / p.split("/")[-1])
+                return p
+
+            with mock.patch(
+                "quiver.sessions.parsers.os.path.expanduser", side_effect=expand):
+                from quiver.sessions.parsers import parse_gemini
+                sessions = parse_gemini()
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].title, "gemini prompt")
+
+
 if __name__ == "__main__":
     unittest.main()

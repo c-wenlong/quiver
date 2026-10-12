@@ -129,6 +129,32 @@ class ErrorExitCodesTest(unittest.TestCase):
         self.assertIn("Unknown argument: --bogus", out)
 
 
+    def test_help_topic_prints_detail(self):
+        code, out = _run(cmd_help, ["list"])
+        self.assertIsNone(code)
+        self.assertIn("swe list", out)
+
+    def test_help_alias_resolves_to_primary(self):
+        code, out = _run(cmd_help, ["ls"])
+        self.assertIsNone(code)
+        self.assertIn("swe list", out)
+
+    def test_help_without_args_prints_full_help(self):
+        code, out = _run(cmd_help, [])
+        self.assertIsNone(code)
+        self.assertIn("Central manager", out)
+        self.assertIn("USAGE", out)
+        self.assertIn("swe <cmd> --help", out)
+
+    def test_help_full_lists_every_category(self):
+        from quiver.help_text import COMMAND_CATEGORIES, HELP
+        _code, out = _run(cmd_help, [])
+        for cat_name, cmds in COMMAND_CATEGORIES:
+            self.assertIn(cat_name, out)
+            for primary, _alias in cmds:
+                self.assertIn(primary, HELP)
+
+
 class UnknownArgRejectionTest(unittest.TestCase):
     """A leftover dash-token is an error, not a filter or a no-op."""
 

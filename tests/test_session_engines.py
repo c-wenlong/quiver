@@ -17,6 +17,7 @@ from quiver.sessions.engines.common import (
     strip_file_uri,
 )
 from quiver.sessions.engines.json_engine import JsonParserConfig, parse_json_store
+from quiver.sessions.models import Session
 from quiver.sessions.engines.jsonl_engine import (
     JsonlParserConfig,
     first_user_title,
@@ -596,6 +597,394 @@ class JsonEngineTest(unittest.TestCase):
 
             self.assertEqual(len(sessions), 1)
             self.assertEqual(sessions[0].path, "/tmp/work")
+
+
+class JsonlSessionDirsModeTest(unittest.TestCase):
+    """mode="session_dirs": base/<project>/<session_id>/(jsonl files)."""
+
+    def _config(self, tmp, **overrides):
+        kwargs = dict(
+            tool_name="demo",
+            agent="Demo",
+            base_dir=str(Path(tmp) / "base"),
+            mode="session_dirs",
+            require_path=False,
+        )
+        kwargs.update(overrides)
+        return JsonlParserConfig(**kwargs)
+
+    def _seed(self, tmp, proj="projA", sid="s1", records=None):
+        sess_dir = Path(tmp) / "base" / proj / sid
+        sess_dir.mkdir(parents=True)
+        records = records if records is not None else [
+            {"type": "session_start", "cwd": "/work/a"},
+            {"role": "user", "content": "hi there"},
+        ]
+        (sess_dir / "chat.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in records) + "\n")
+        return sess_dir
+
+    def test_session_dirs_finds_primary_and_project_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._seed(tmp)
+            sessions = parse_jsonl_projects(self._config(
+                tmp,
+                path_from_event=lambda e: e.get("cwd") or "",
+                path_from_project_dir=lambda name: f"/from/{name}",
+            ))
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].session_id, "s1")
+            self.assertEqual(sessions[0].path, "/work/a")
+
+    def test_session_dirs_uses_project_fallback_without_cwd_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._seed(tmp, records=[{"role": "user", "content": "hi"}])
+            sessions = parse_jsonl_projects(self._config(
+                tmp, path_from_project_dir=lambda name: f"/from/{name}",
+            ))
+            self.assertEqual(sessions[0].path, "/from/projA")
+
+    def test_session_dirs_chats_subdir_and_enrich(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sess_dir = Path(tmp) / "base" / "projB" / "chats" / "s9"
+            sess_dir.mkdir(parents=True)
+            (sess_dir / "t.jsonl").write_text('{"role":"user","content":"q"}\n')
+
+            def enrich(fields, _dir, proj_name):
+                fields["title"] = "enriched-" + proj_name
+                fields["title_source"] = "auto"
+
+            sessions = parse_jsonl_projects(self._config(
+                tmp, chats_subdir="chats", enrich_session=enrich,
+            ))
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].session_id, "s9")
+            self.assertEqual(sessions[0].title, "enriched-projB")
+            self.assertEqual(sessions[0].title_source, "auto")
+
+    def test_session_dirs_enrich_exception_is_swallowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._seed(tmp)
+
+            def boom(fields, _dir, _proj):
+                raise RuntimeError("enrich blew up")
+
+            sessions = parse_jsonl_projects(self._config(
+                tmp, enrich_session=boom, require_path=False,
+            ))
+            self.assertEqual(len(sessions), 1)
+
+    def test_session_dirs_require_path_drops_unresolved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._seed(tmp, records=[{"role": "user", "content": "x"}])
+            sessions = parse_jsonl_projects(self._config(
+                tmp, require_path=True,
+            ))
+            self.assertEqual(sessions, [])
+
+    def test_session_dirs_skips_files_and_empty_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._seed(tmp)
+            (Path(tmp) / "base" / "afile.txt").write_text("x")
+            (Path(tmp) / "base" / "projA" / "emptydir").mkdir()
+            sessions = parse_jsonl_projects(self._config(tmp))
+            self.assertEqual(len(sessions), 1)
+
+    def test_session_dirs_primary_files_and_skip_basenames(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sess_dir = self._seed(tmp)
+            (sess_dir / "skip.jsonl").write_text('{"cwd":"/skip"}\n')
+            sessions = parse_jsonl_projects(self._config(
+                tmp, skip_basenames={"skip.jsonl"},
+            ))
+            self.assertEqual(len(sessions), 1)
+            # only the whitelisted name counts
+            sessions = parse_jsonl_projects(self._config(
+                tmp, primary_files={"chat.jsonl"},
+            ))
+            self.assertEqual(len(sessions), 1)
+
+
+class JsonlIndexModeTest(unittest.TestCase):
+    """mode="index_jsonl": base/<project>/index.jsonl lists sessions."""
+
+    def _config(self, tmp, **overrides):
+        kwargs = dict(
+            tool_name="demo",
+            agent="Demo",
+            base_dir=str(Path(tmp) / "base"),
+            mode="index_jsonl",
+        )
+        kwargs.update(overrides)
+        return JsonlParserConfig(**kwargs)
+
+    def test_index_entries_become_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "base" / "proj"
+            proj.mkdir(parents=True)
+            (proj / "index.jsonl").write_text("\n".join([
+                json.dumps({"id": "i1", "cwd": "/w1", "title": "First"}),
+                "not json",
+                json.dumps(["not", "a", "dict"]),
+                json.dumps({"id": "i2", "path": "/w2"}),
+                "",
+            ]) + "\n")
+            sessions = parse_jsonl_projects(self._config(
+                tmp,
+                get_title=lambda e: (e["id"].upper(), "auto")
+                if e["id"] == "i2" else e.get("title", ""),
+            ))
+            self.assertEqual([s.session_id for s in sessions], ["i1", "i2"])
+            self.assertEqual(sessions[0].title, "First")
+            self.assertEqual(sessions[1].title, "I2")
+            self.assertEqual(sessions[1].title_source, "auto")
+
+    def test_index_extractor_exceptions_fall_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "base" / "proj"
+            proj.mkdir(parents=True)
+            (proj / "index.jsonl").write_text(
+                json.dumps({"id": "i1", "cwd": "/w", "title": "T"}) + "\n")
+
+            def boom(_e):
+                raise ValueError("bad entry")
+
+            sessions = parse_jsonl_projects(self._config(
+                tmp,
+                get_id=boom, get_path=boom, get_title=boom, get_ts=boom,
+                require_path=False,
+            ))
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].title, "")
+            # timestamp falls back to the index file's mtime
+            self.assertGreater(sessions[0].timestamp, 0)
+            self.assertEqual(sessions[0].path, "")
+
+    def test_index_session_file_enriches_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "base" / "proj"
+            proj.mkdir(parents=True)
+            (proj / "i1.jsonl").write_text(
+                '{"type":"rename","name":"From File"}\n')
+            (proj / "index.jsonl").write_text(
+                json.dumps({"id": "i1", "cwd": "/w"}) + "\n")
+            sessions = parse_jsonl_projects(self._config(
+                tmp,
+                title_from_event=lambda e: (
+                    (e["name"], "rename") if e.get("type") == "rename" else ""
+                ),
+            ))
+            self.assertEqual(sessions[0].title, "From File")
+            self.assertEqual(sessions[0].title_source, "rename")
+
+    def test_missing_index_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "base" / "proj").mkdir(parents=True)
+            self.assertEqual(parse_jsonl_projects(self._config(tmp)), [])
+
+
+class JsonlGlobModeTest(unittest.TestCase):
+    def test_glob_mode_honours_skip_and_primary_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base"
+            (base / "deep").mkdir(parents=True)
+            (base / "one.jsonl").write_text('{"cwd":"/w1"}\n')
+            (base / "deep" / "two.jsonl").write_text('{"cwd":"/w2"}\n')
+            (base / "skip.jsonl").write_text('{"cwd":"/w3"}\n')
+            sessions = parse_jsonl_projects(JsonlParserConfig(
+                tool_name="demo", agent="Demo", base_dir=str(base),
+                mode="glob", skip_basenames={"skip.jsonl"},
+                path_from_event=lambda e: e.get("cwd") or "",
+            ))
+            self.assertEqual({s.session_id for s in sessions}, {"one", "two"})
+            sessions = parse_jsonl_projects(JsonlParserConfig(
+                tool_name="demo", agent="Demo", base_dir=str(base),
+                mode="glob", primary_files={"one.jsonl"},
+                path_from_event=lambda e: e.get("cwd") or "",
+            ))
+            self.assertEqual([s.session_id for s in sessions], ["one"])
+
+    def test_custom_mode_and_its_failure(self):
+        marker = Session(timestamp=1, agent="Demo", path="/w",
+                         session_id="c1", tool_name="demo")
+        sessions = parse_jsonl_projects(JsonlParserConfig(
+            tool_name="demo", agent="Demo", base_dir="/nope",
+            custom=lambda: [marker],
+        ))
+        self.assertEqual(sessions, [marker])
+
+        def boom():
+            raise RuntimeError("custom broke")
+
+        sessions = parse_jsonl_projects(JsonlParserConfig(
+            tool_name="demo", agent="Demo", base_dir="/nope", custom=boom,
+        ))
+        self.assertEqual(sessions, [])
+
+
+class JsonEngineEdgeTest(unittest.TestCase):
+    def test_index_dict_items_and_tuple_normalisation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "sessions.json"
+            index.write_text(json.dumps({
+                "k1": {"cwd": "/w1", "title": "One"},
+                "k2": "not-a-dict-value",
+            }))
+            sessions = parse_json_store(
+                JsonParserConfig(
+                    tool_name="demo", agent="Demo", mode="index",
+                    index_path=str(index), require_path=False,
+                )
+            )
+            self.assertEqual([s.session_id for s in sessions], ["k1", "k2"])
+            self.assertEqual(sessions[0].path, "/w1")
+            self.assertEqual(sessions[1].path, "")
+
+    def test_extractor_exceptions_are_swallowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "i.json"
+            index.write_text(json.dumps([{"id": "x"}]))
+
+            def boom(_e, _f):
+                raise RuntimeError("nope")
+
+            sessions = parse_json_store(
+                JsonParserConfig(
+                    tool_name="demo", agent="Demo", mode="index",
+                    index_path=str(index), require_path=False,
+                    get_id=boom, get_path=boom, get_title=boom, get_ts=boom,
+                )
+            )
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0].title, "")
+            # timestamp falls back to the index file's mtime
+            self.assertGreater(sessions[0].timestamp, 0)
+
+    def test_enrich_and_include_hooks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "i.json"
+            index.write_text(json.dumps([
+                {"id": "keep", "cwd": "/w", "kind": "chat"},
+                {"id": "drop", "cwd": "/w", "kind": "draft"},
+            ]))
+
+            def enrich(fields, entry, _f):
+                fields["title"] = "E:" + entry["id"]
+
+            sessions = parse_json_store(
+                JsonParserConfig(
+                    tool_name="demo", agent="Demo", mode="index",
+                    index_path=str(index),
+                    include=lambda e, _f: e.get("kind") == "chat",
+                    enrich=enrich,
+                )
+            )
+            self.assertEqual([s.session_id for s in sessions], ["keep"])
+            self.assertEqual(sessions[0].title, "E:keep")
+
+    def test_files_mode_skip_basenames_and_include(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "skipme.json").write_text(json.dumps({"id": "s"}))
+            (Path(tmp) / "keep.json").write_text(
+                json.dumps({"id": "k", "cwd": "/w", "flag": True}))
+            (Path(tmp) / "drop.json").write_text(
+                json.dumps({"id": "d", "cwd": "/w"}))
+            sessions = parse_json_store(
+                JsonParserConfig(
+                    tool_name="demo", agent="Demo", mode="files",
+                    base_dir=tmp, skip_basenames={"skipme.json"},
+                    include=lambda e, _f: bool(e.get("flag")),
+                )
+            )
+            self.assertEqual([s.session_id for s in sessions], ["k"])
+
+    def test_missing_index_returns_empty(self):
+        sessions = parse_json_store(
+            JsonParserConfig(tool_name="demo", agent="Demo", mode="index",
+                             index_path="/nope/nothing.json"))
+        self.assertEqual(sessions, [])
+
+
+class EngineCommonHelpersTest(unittest.TestCase):
+    """Error and edge branches in sessions/engines/common.py."""
+
+    def test_expand_path_rules(self):
+        from quiver.sessions.engines.common import expand_path
+        self.assertEqual(expand_path(""), "")
+        self.assertEqual(expand_path("/abs/path"), "/abs/path")
+        self.assertEqual(expand_path("rel/path"), "rel/path")
+        expanded = expand_path("~/x")
+        self.assertNotEqual(expanded, "~/x")
+        self.assertTrue(expanded.endswith("/x"))
+
+    def test_open_sqlite_ro(self):
+        from quiver.sessions.engines.common import open_sqlite_ro
+        self.assertIsNone(open_sqlite_ro("/definitely/not/a/db.sqlite"))
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "d.sqlite"
+            conn = sqlite3.connect(db)
+            conn.execute("CREATE TABLE t (a)")
+            conn.commit()
+            conn.close()
+            ro = open_sqlite_ro(str(db))
+            self.assertIsNotNone(ro)
+            ro.close()
+            # mode=ro connects lazily; garbage only fails when read
+            notadb = Path(tmp) / "notdb.sqlite"
+            notadb.write_text("garbage")
+            lazy = open_sqlite_ro(str(notadb))
+            self.assertIsNotNone(lazy)
+            with self.assertRaises(sqlite3.DatabaseError):
+                lazy.execute("SELECT 1 FROM sqlite_master").fetchall()
+            lazy.close()
+
+    def test_path_from_encoded_dir(self):
+        from quiver.sessions.engines.common import path_from_encoded_dir
+        self.assertEqual(path_from_encoded_dir("-Users-a-b"), "/Users/a/b")
+        self.assertEqual(path_from_encoded_dir("noprefix"), "/noprefix")
+        self.assertEqual(path_from_encoded_dir("-"), "")
+        self.assertEqual(path_from_encoded_dir(""), "")
+
+    def test_strip_file_uri(self):
+        from quiver.sessions.engines.common import strip_file_uri
+        self.assertEqual(strip_file_uri("file:///a%20b/c"), "/a b/c")
+        self.assertEqual(strip_file_uri("/plain"), "/plain")
+        self.assertEqual(strip_file_uri(42), "")
+
+    def test_dig(self):
+        from quiver.sessions.engines.common import dig
+        d = {"a": {"b": {"c": 7}}}
+        self.assertEqual(dig(d, "a", "b", "c"), 7)
+        self.assertEqual(dig(d, "a", "x"), None)
+        self.assertEqual(dig(d, "a", "x", default="dflt"), "dflt")
+        self.assertEqual(dig({"a": "str"}, "a", "b"), None)
+        self.assertEqual(dig(None, "a"), None)
+
+    def test_extract_user_text_shapes(self):
+        from quiver.sessions.engines.common import extract_user_text
+        self.assertEqual(extract_user_text("plain"), "plain")
+        self.assertEqual(extract_user_text(["  ", {"type": "text", "text": "blk"}]), "blk")
+        self.assertEqual(extract_user_text([{"text": "untyped"}]), "untyped")
+        self.assertEqual(extract_user_text({"text": "top"}), "top")
+        self.assertEqual(extract_user_text({"content": {"text": "nested"}}), "nested")
+        self.assertEqual(extract_user_text({"content": [{"text": "deep"}]}), "deep")
+        self.assertEqual(extract_user_text(None), "")
+        self.assertEqual(extract_user_text({}), "")
+
+    def test_parse_iso_ts_edges(self):
+        from quiver.sessions.engines.common import parse_iso_ts
+        self.assertEqual(parse_iso_ts(None), 0.0)
+        self.assertEqual(parse_iso_ts(float("nan")), 0.0)
+        self.assertEqual(parse_iso_ts(float("inf")), 0.0)
+        self.assertEqual(parse_iso_ts(1e15), 1e9)   # ns -> ms
+        self.assertEqual(parse_iso_ts(2e12), 2e12)  # already ms
+        self.assertEqual(parse_iso_ts(2e9), 2e12)   # seconds -> ms
+        self.assertEqual(parse_iso_ts(5), 5.0)
+        from datetime import datetime
+        expected = datetime.fromisoformat("2026-07-10T10:00:00+00:00").timestamp() * 1000
+        self.assertEqual(parse_iso_ts("2026-07-10T10:00:00Z"), expected)
+        self.assertEqual(parse_iso_ts("garbage"), 0.0)
+        self.assertEqual(parse_iso_ts("1777032754"), 1777032754000.0)
 
 
 if __name__ == "__main__":

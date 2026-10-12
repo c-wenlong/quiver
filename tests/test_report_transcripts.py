@@ -614,5 +614,210 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertEqual(transcript.messages, [])
 
 
+class SecondaryReaderTest(TranscriptReaderTest):
+    """Readers with bespoke stores: freebuff, grok, cline, gemini,
+    copilot, crush, forge, and kilo/opencode sqlite parts."""
+
+    def _json(self, relative, data):
+        path = self.home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
+
+    def _sqlite(self, relative, statements):
+        path = self.home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path)
+        try:
+            for statement in statements:
+                conn.execute(statement)
+            conn.commit()
+        finally:
+            conn.close()
+        return path
+
+    def test_freebuff_reads_run_state_history(self):
+        self._jsonl(
+            ".config/manicode/projects/proj/fb-1/log.jsonl",
+            [{"role": "user", "content": "jsonl fallback line"}],
+        )
+        self._json(
+            ".config/manicode/projects/proj/fb-1/run-state.json",
+            {
+                "sessionState": {
+                    "mainAgentState": {
+                        "messageHistory": [
+                            {"role": "user", "content": "state wins"},
+                            {"role": "assistant", "content": "ack"},
+                        ]
+                    }
+                }
+            },
+        )
+        transcript = read_transcript(_session("freebuff", "fb-1"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual([m.text for m in transcript.messages], ["state wins", "ack"])
+
+    def test_freebuff_falls_back_to_log_jsonl(self):
+        self._jsonl(
+            ".config/manicode/projects/proj/fb-2/log.jsonl",
+            [{"role": "user", "content": "from the log"}],
+        )
+        transcript = read_transcript(_session("freebuff", "fb-2"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(transcript.messages[0].text, "from the log")
+
+    def test_freebuff_missing_is_unreadable(self):
+        transcript = read_transcript(_session("freebuff", "nope"))
+        self.assertFalse(transcript.readable)
+        self.assertIn("not found", transcript.error)
+
+    def test_grok_reads_chat_history(self):
+        self._jsonl(
+            ".grok/sessions/g-1/chat_history.jsonl",
+            [{"role": "user", "content": "hi grok"}],
+        )
+        transcript = read_transcript(_session("grok", "g-1"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(transcript.messages[0].text, "hi grok")
+
+    def test_grok_missing_is_unreadable(self):
+        transcript = read_transcript(_session("grok", "nope"))
+        self.assertFalse(transcript.readable)
+        self.assertIn("not found", transcript.error)
+
+    def test_cline_sessions_layout_unwraps_user_input(self):
+        self._json(
+            ".cline/data/sessions/cl-1/cl-1.messages.json",
+            {
+                "sessionId": "cl-1",
+                "messages": [
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "<user_input mode=\"interactive\">wrap me</user_input>"}
+                    ], "ts": 1},
+                    {"role": "assistant", "content": [{"type": "text", "text": "done"}], "ts": 2},
+                    "not a dict",
+                ],
+            },
+        )
+        transcript = read_transcript(_session("cline", "cl-1"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual([m.role for m in transcript.messages], ["human", "assistant"])
+        self.assertEqual(transcript.messages[0].text, "wrap me")
+
+    def test_cline_session_id_mismatch_is_unreadable(self):
+        self._json(
+            ".cline/data/sessions/cl-2/cl-2.messages.json",
+            {"sessionId": "other", "messages": [{"role": "user", "content": "x"}]},
+        )
+        transcript = read_transcript(_session("cline", "cl-2"))
+        self.assertFalse(transcript.readable)
+        self.assertIn("mismatch", transcript.error)
+
+    def test_cline_tasks_layout_fallback(self):
+        self._json(
+            ".cline/data/tasks/cl-3/api_conversation_history.json",
+            [{"role": "user", "content": "legacy task"}],
+        )
+        transcript = read_transcript(_session("cline", "cl-3"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(transcript.messages[0].text, "legacy task")
+
+    def test_gemini_reads_logs_via_projects_map(self):
+        self._json(".gemini/projects.json", {"projects": {"/work/project": "hash123"}})
+        self._json(
+            ".gemini/tmp/hash123/logs.json",
+            [{"role": "user", "content": "gemini says hi"}],
+        )
+        transcript = read_transcript(_session("gemini", "g-9", path="/work/project"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(transcript.messages[0].text, "gemini says hi")
+
+    def test_gemini_without_project_mapping_is_unreadable(self):
+        self._json(".gemini/projects.json", {"projects": {}})
+        transcript = read_transcript(_session("gemini", "g-9", path="/nowhere"))
+        self.assertFalse(transcript.readable)
+        self.assertIn("mapping", transcript.error)
+
+    def test_copilot_reads_turns(self):
+        self._sqlite(
+            ".copilot/session-store.db",
+            [
+                "CREATE TABLE turns (session_id TEXT, turn_index INTEGER, user_message TEXT, assistant_response TEXT)",
+                "INSERT INTO turns VALUES ('cp-1', 0, 'q one', 'a one')",
+                "INSERT INTO turns VALUES ('cp-1', 1, 'q two', 'a two')",
+            ],
+        )
+        transcript = read_transcript(_session("copilot", "cp-1"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(
+            [(m.role, m.text) for m in transcript.messages],
+            [("human", "q one"), ("assistant", "a one"),
+             ("human", "q two"), ("assistant", "a two")],
+        )
+
+    def test_copilot_schema_mismatch_is_unreadable(self):
+        self._sqlite(".copilot/session-store.db",
+                     ["CREATE TABLE other (id INTEGER)"])
+        transcript = read_transcript(_session("copilot", "cp-1"))
+        self.assertFalse(transcript.readable)
+        self.assertIn("schema error", transcript.error.lower())
+
+    def test_crush_reads_messages_for_matching_project(self):
+        self._json(
+            ".local/share/crush/projects.json",
+            {"projects": [{"path": "/work/project", "data_dir": str(self.home / "crushdata")}]},
+        )
+        self._sqlite(
+            "crushdata/crush.db",
+            [
+                "CREATE TABLE messages (role TEXT, content TEXT, session_id TEXT)",
+                "INSERT INTO messages VALUES ('user', 'crush hi', 'cr-1')",
+                "INSERT INTO messages VALUES ('assistant', 'crush ack', 'cr-1')",
+            ],
+        )
+        transcript = read_transcript(_session("crush", "cr-1", path="/work/project"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual([m.text for m in transcript.messages], ["crush hi", "crush ack"])
+
+    def test_crush_without_matching_project_is_unreadable(self):
+        self._json(".local/share/crush/projects.json", {"projects": []})
+        transcript = read_transcript(_session("crush", "cr-1", path="/elsewhere"))
+        self.assertFalse(transcript.readable)
+        self.assertIn("not found", transcript.error)
+
+    def test_forge_reads_conversation_context(self):
+        context = {"messages": [
+            {"role": "user", "content": "forge q"},
+            {"role": "assistant", "content": "forge a"},
+        ]}
+        self._sqlite(
+            ".forge/.forge.db",
+            [
+                "CREATE TABLE conversations (conversation_id TEXT, context TEXT)",
+                "INSERT INTO conversations VALUES ('fg-1', ?)".replace("?", repr(json.dumps(context))),
+            ],
+        )
+        transcript = read_transcript(_session("forge", "fg-1"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual([m.text for m in transcript.messages], ["forge q", "forge a"])
+
+    def test_kilo_reads_sqlite_parts(self):
+        self._sqlite(
+            ".local/share/kilo/kilo.db",
+            [
+                "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)",
+                "CREATE TABLE part (message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)",
+                "INSERT INTO message VALUES ('m1', 'ki-1', 1, ?)".replace("?", repr(json.dumps({"role": "user", "content": "kilo q"}))),
+                "INSERT INTO part VALUES ('m1', 'ki-1', 2, ?)".replace("?", repr(json.dumps({"type": "text", "text": "kilo a"}))),
+            ],
+        )
+        transcript = read_transcript(_session("kilo", "ki-1"))
+        self.assertTrue(transcript.readable)
+        texts = [m.text for m in transcript.messages]
+        self.assertIn("kilo q", texts)
+        self.assertIn("kilo a", texts)
+
+
 if __name__ == "__main__":
     unittest.main()

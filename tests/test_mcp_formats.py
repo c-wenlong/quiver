@@ -97,5 +97,73 @@ class McpFormatsTest(unittest.TestCase):
         self.assertEqual(issues, [])
 
 
+class McpFormatEdgeCasesTest(unittest.TestCase):
+    def test_base_handler_is_abstract(self):
+        from quiver.mcp.formats import McpFormatHandler
+        with self.assertRaises(NotImplementedError):
+            McpFormatHandler().parse({})
+        with self.assertRaises(NotImplementedError):
+            McpFormatHandler().emit({})
+
+    def test_template_handler_contract(self):
+        # The template is documentation for new handlers; its methods still
+        # honour the parse/emit contract (return a dict, tolerate junk).
+        from quiver.mcp.formats import TemplateMcpFormatHandler
+        handler = TemplateMcpFormatHandler()
+        self.assertEqual(handler.parse("not a dict"), {})
+        self.assertEqual(handler.parse({"command": "x"}), {})
+        self.assertEqual(handler.emit("not a dict"), {})
+        self.assertEqual(handler.emit({"command": "x"}), {})
+
+    def test_standard_parse_list_command_and_environment_alias(self):
+        handler = get_format_handler("standard")
+        parsed = handler.parse({"command": ["node", "s.js", "-v"],
+                                "environment": {"A": "1"}})
+        self.assertEqual(parsed["command"], "node")
+        self.assertEqual(parsed["args"], ["s.js", "-v"])
+        self.assertEqual(parsed["env"], {"A": "1"})
+        self.assertEqual(handler.parse(42), {})
+        self.assertEqual(handler.emit(42), {})
+
+    def test_opencode_emit_remote_and_local(self):
+        handler = get_format_handler("opencode")
+        remote = handler.emit({"url": "https://x/mcp", "headers": {"a": "b"}})
+        self.assertEqual(remote["type"], "remote")
+        self.assertEqual(remote["url"], "https://x/mcp")
+        local = handler.emit({"command": "node", "args": ["s.js"],
+                              "env": {"A": "1"}, "url": "u", "headers": {"h": "v"}})
+        self.assertEqual(local["type"], "local")
+        self.assertEqual(local["command"], ["node", "s.js"])
+        self.assertEqual(local["environment"], {"A": "1"})
+        self.assertTrue(local["enabled"])
+        self.assertEqual(handler.emit({}), {})
+
+    def test_opencode_parse_environment_and_env(self):
+        handler = get_format_handler("opencode")
+        via_env = handler.parse({"command": ["n"], "env": {"A": "1"}})
+        self.assertEqual(via_env["env"], {"A": "1"})
+        self.assertEqual(handler.parse([]), {})
+        self.assertEqual(handler.parse({"command": []})["command"], "")
+
+    def test_register_format_handler_override(self):
+        from quiver.mcp.formats import register_format_handler, _FORMAT_MCP_HANDLERS
+        sentinel = get_format_handler("standard")
+        register_format_handler("demo-format", sentinel)
+        try:
+            self.assertIs(get_format_handler("demo-format"), sentinel)
+        finally:
+            del _FORMAT_MCP_HANDLERS["demo-format"]
+        self.assertIs(get_format_handler("demo-format"), _FORMAT_MCP_HANDLERS["standard"])
+
+    def test_conversion_issues_flag_lossy_fields(self):
+        issues = get_conversion_issues(
+            {"command": ["node", "s.js"], "env": {"A": "1"}},
+            source_format="standard", target_format="opencode",
+        )
+        self.assertEqual(issues, [])
+        non_dict = get_conversion_issues("junk", "standard", "opencode")
+        self.assertIn("not a JSON object", non_dict[0])
+
+
 if __name__ == "__main__":
     unittest.main()
