@@ -153,6 +153,10 @@ private struct MenuBarPreview: View {
 
 private struct PopupSection: View {
     @Environment(AppModel.self) private var app
+    @State private var width: CGFloat = 0
+
+    /// Below this the 340pt preview no longer leaves the settings room.
+    static let twoColumnWidth: CGFloat = 760
 
     /// Accounts' harnesses in account order, then other harnesses in swe's
     /// order, so the rows stay put as usage changes, until the user drags
@@ -166,7 +170,44 @@ private struct PopupSection: View {
 
     var body: some View {
         @Bindable var app = app
-        VStack(alignment: .leading, spacing: 32) {
+        Group {
+            if width >= Self.twoColumnWidth {
+                HStack(alignment: .top, spacing: 24) {
+                    settings(app)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    preview
+                }
+            } else {
+                VStack(spacing: 32) {
+                    preview
+                    settings(app)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    /// The real popup the status item opens, live: it reads the same models
+    /// these switches write, and takes no input (its Quit would terminate
+    /// the app, its Refresh would kick off loads). The shadow stands in for
+    /// the panel's window shadow.
+    private var preview: some View {
+        VStack(spacing: 10) {
+            MenuBarContent(openMain: {}, limitsMaxHeight: 360)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+            Text("Preview")
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    /// The settings column: both cards and their headings, unchanged.
+    private func settings(_ app: AppModel) -> some View {
+        @Bindable var app = app
+        return VStack(alignment: .leading, spacing: 32) {
             VStack(alignment: .leading, spacing: 16) {
                 SectionHeading(title: "Menu bar popup", detail: "What opens when you click the menu bar item.")
                 SettingsCard {
