@@ -441,12 +441,44 @@ import Testing
                                  signaller: SystemSignaller(), selfPID: 99)
         await model.loadMatchers()
         let slow = Task { await model.refresh() }
-        // Wait off the main actor so the refresh can reach its sample call.
-        await Task.detached { gated.waitForEntry() }.value
+        // Wait off the main actor and off the cooperative pool, so the
+        // refresh can reach its sample call.
+        await runOffPool { gated.waitForEntry() }
         await model.refresh()
         gated.release.signal()
         await slow.value
         #expect(model.processes["claude"]?.map(\.id) == [11])
+    }
+
+    @MainActor @Test func aQuitPlansOnItsOwnSampleNotThePublishedTable() async {
+        // Table A is what the page showed; when quit() samples, pid 10 has
+        // been reused by a different process, so nothing may be signalled.
+        final class Flip: ProcessSampling, @unchecked Sendable {
+            let tables: [[ProcessSample]]
+            private var calls = 0
+            private let lock = NSLock()
+            init(_ tables: [[ProcessSample]]) { self.tables = tables }
+            func sample() -> [ProcessSample] {
+                lock.lock()
+                defer { lock.unlock() }
+                calls += 1
+                return tables[min(calls, tables.count) - 1]
+            }
+        }
+        final class Signals: ProcessSignaller, @unchecked Sendable {
+            var signalled: [(Int32, Int32)] = []
+            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
+        }
+        let shown = Self.proc(10, 1, path: "/x/worker", cwd: "/Users/test/proj")
+        let reused = Self.proc(10, 1, path: "/x/reused", started: Self.youngStart)
+        let sampler = Flip([[shown], [reused]])
+        let signaller = Signals()
+        let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
+                                 signaller: signaller, selfPID: 99)
+        await model.loadMatchers()
+        await model.refresh()
+        await model.quit(.process(shown, harness: "claude"))
+        #expect(signaller.signalled.isEmpty)
     }
 
     // MARK: Sampler smoke test

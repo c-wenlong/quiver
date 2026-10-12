@@ -127,7 +127,7 @@ public final class ComputeModel {
             managedPIDsLoadedAt = .now
         }
         let sampler = self.sampler
-        let fresh = await Task.detached { sampler.sample() }.value
+        let fresh = await runOffPool { sampler.sample() }
         guard mine == request else { return }
         samples = fresh
         let now = Date.now
@@ -138,13 +138,14 @@ public final class ComputeModel {
     }
 
     /// Send SIGTERM (SIGKILL when `force`) to an item, deepest child first,
-    /// then take a fresh look.
+    /// then take a fresh look. The kill plan is built on this call's own
+    /// sample, not the shared table: a timer refresh landing meanwhile
+    /// would drop this one's publish and leave it signalling a stale view.
     public func quit(_ item: CleanupItem, force: Bool = false) async {
-        // A fresh sample first, so the startedAt check in killOrder is
-        // against what is running now, not a tick ago.
-        await refresh()
-        let order = ComputeSummary.killOrder(for: item, in: samples,
-                                             selfPID: selfPID, ancestors: selfAncestors())
+        let sampler = self.sampler
+        let fresh = await runOffPool { sampler.sample() }
+        let order = ComputeSummary.killOrder(for: item, in: fresh,
+                                             selfPID: selfPID, ancestors: selfAncestors(in: fresh))
         for pid in order where signaller.signal(pid, force ? SIGKILL : SIGTERM) {
             if !force { signalledAt[pid] = .now }
         }
@@ -155,14 +156,14 @@ public final class ComputeModel {
     /// sheet reads this after a quit to tell "Quit" from "Still running".
     public func alivePids(of item: CleanupItem) -> Set<Int32> {
         let order = ComputeSummary.killOrder(for: item, in: samples,
-                                             selfPID: selfPID, ancestors: selfAncestors())
+                                             selfPID: selfPID, ancestors: selfAncestors(in: samples))
         return Set(order.filter { pid in samples.contains { $0.pid == pid } })
     }
 
-    /// The caller's chain of parents, from the last sample, so a kill plan
-    /// can never include them.
-    private func selfAncestors() -> Set<Int32> {
-        let byPid = Dictionary(samples.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+    /// The caller's chain of parents in `table`, so a kill plan can never
+    /// include them.
+    private func selfAncestors(in table: [ProcessSample]) -> Set<Int32> {
+        let byPid = Dictionary(table.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         var ancestors: Set<Int32> = []
         var node = byPid[selfPID]
         for _ in 0..<64 {
