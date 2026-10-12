@@ -267,32 +267,46 @@ private struct PanelLimits: View {
         }
     }
 
-    /// Accounts whose harness is shown and that have something left to show:
-    /// a shown window, or no windows at all (so its status line explains why).
+    /// Accounts the popup shows, with something left to show: a shown
+    /// window, or no windows at all (so its status line explains why).
     private var cards: [AccountsModel.Card] {
         app.starredAccountCards.filter { card in
-            let harness = card.profile.vendor.rawValue
-            guard app.popup.shows(harness: harness) else { return false }
+            let source = card.profile.id, harness = card.profile.vendor.rawValue
+            guard app.popup.shows(source: source, harness: harness) else { return false }
             guard let windows = card.usage?.windows, !windows.isEmpty else { return true }
-            return windows.contains { app.popup.shows(window: $0.label, of: harness) }
+            let labels = windows.map(\.label)
+            return windows.contains {
+                app.popup.shows(window: $0.label, source: source, harness: harness,
+                                allWindows: labels)
+            }
         }
     }
 
     /// Other harnesses that are shown and have a shown window left.
     private var others: [OtherLimitsModel.Row] {
         app.others.rows.filter { row in
-            row.limit.status == .ok && app.popup.shows(harness: row.name)
-                && row.limit.allWindows.contains { app.popup.shows(window: $0.window, of: row.name) }
+            let windows = row.limit.allWindows.map(\.window)
+            return row.limit.status == .ok && app.popup.shows(source: row.name, harness: row.name)
+                && row.limit.allWindows.contains {
+                    app.popup.shows(window: $0.window, source: row.name, harness: row.name,
+                                    allWindows: windows)
+                }
         }
     }
 
-    /// Every shown id in the dragged order: each vendor's cards, then the
-    /// other harnesses' rows, interleaved where the user put them.
+    /// Every shown source in the dragged order, accounts and other
+    /// harnesses interleaved where the user put them.
     private var entries: [PanelEntry] {
-        let ids = app.popup.ordered(unique(cards.map { $0.profile.vendor.rawValue }) + others.map(\.name))
-        return ids.flatMap { id in
-            cards.filter { $0.profile.vendor.rawValue == id }.map(PanelEntry.account)
-                + others.filter { $0.name == id }.map(PanelEntry.harness)
+        let sources = cards.map { (source: $0.profile.id, harness: $0.profile.vendor.rawValue) }
+            + others.map { (source: $0.name, harness: $0.name) }
+        return app.popup.ordered(sources).compactMap { source in
+            if let card = cards.first(where: { $0.profile.id == source }) {
+                return .account(card)
+            }
+            if let row = others.first(where: { $0.name == source }) {
+                return .harness(row)
+            }
+            return nil
         }
     }
 
@@ -320,12 +334,6 @@ private struct PanelLimits: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-}
-
-/// First-seen order, duplicates dropped.
-private func unique(_ ids: [String]) -> [String] {
-    var seen: Set<String> = []
-    return ids.filter { seen.insert($0).inserted }
 }
 
 /// Spend by harness for today, yesterday or the last 30 days.
@@ -426,8 +434,11 @@ private struct PanelAccountRow: View {
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
             }
             if let usage = card.usage, !usage.windows.isEmpty {
-                ForEach(usage.windows.filter { app.popup.shows(window: $0.label, of: card.profile.vendor.rawValue) },
-                        id: \.label) { window in
+                ForEach(usage.windows.filter {
+                            app.popup.shows(window: $0.label, source: card.profile.id,
+                                            harness: card.profile.vendor.rawValue,
+                                            allWindows: usage.windows.map(\.label))
+                        }, id: \.label) { window in
                     PanelLimitRow(label: window.label, percent: window.usedPercent, resetsAt: window.resetsAt)
                 }
                 .opacity(usage.isStale ? 0.55 : 1)
@@ -455,8 +466,10 @@ private struct PanelOtherRow: View {
                 Text(row.accountTitle).font(Theme.rowTitle)
                 if let plan = row.limit.planType { Badge(planTitle(plan)) }
             }
-            ForEach(row.limit.allWindows.filter { app.popup.shows(window: $0.window, of: row.name) },
-                    id: \.window) { window in
+            ForEach(row.limit.allWindows.filter {
+                        app.popup.shows(window: $0.window, source: row.name, harness: row.name,
+                                        allWindows: row.limit.allWindows.map(\.window))
+                    }, id: \.window) { window in
                 PanelLimitRow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),
                               percent: Double(window.usedPercent), resetsAt: window.resetAt)
             }
