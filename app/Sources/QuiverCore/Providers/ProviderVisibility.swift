@@ -201,8 +201,10 @@ public final class ProviderVisibilityModel {
         do { result = .success(try await detect()) } catch { result = .failure(error) }
         // A check replaced while it ran (another swe was chosen) is dropped.
         guard mine == request else { return }
-        if case .failure(let error) = result, error is CancellationError { return }
         isLoading = false
+        // A cancelled check (Settings closed mid-run) says nothing, so it
+        // neither counts against the recheck interval nor changes state.
+        if case .failure(let error) = result, error is CancellationError { return }
         // Every finished check, good or bad, counts against the recheck
         // interval: a swe that keeps failing shouldn't be spawned on each
         // activation either.

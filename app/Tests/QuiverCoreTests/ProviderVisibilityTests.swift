@@ -32,6 +32,15 @@ actor Flaky {
 }
 
 /// Counts calls.
+actor CancelsFirst {
+    private(set) var calls = 0
+    func next() throws -> Set<String> {
+        calls += 1
+        if calls == 1 { throw CancellationError() }
+        return ["claude"]
+    }
+}
+
 actor Counter {
     var count = 0
     func tick() { count += 1 }
@@ -236,6 +245,16 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         await old.value
         #expect(model.checkError == nil)
         #expect(model.isLoading == false)
+        #expect(model.isVisible("claude"))
+    }
+
+    @Test func aCancelledCheckDoesNotBlockTheNextRecheck() async {
+        let cancelsFirst = CancelsFirst()
+        let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await cancelsFirst.next() })
+        await model.loadIfNeeded(for: "/usr/local/bin/swe")
+        #expect(!model.isLoading)
+        await model.recheck(for: "/usr/local/bin/swe")
+        #expect(await cancelsFirst.calls == 2)
         #expect(model.isVisible("claude"))
     }
 
