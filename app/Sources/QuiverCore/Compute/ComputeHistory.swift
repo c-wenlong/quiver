@@ -126,3 +126,16 @@ public struct ComputeHistory: Sendable, Equatable {
             .keys.sorted()
     }
 }
+
+/// The fixed top of a trend chart's y axis. Only the plotted values
+/// feed it, so hover furniture can never move the scale.
+public enum TrendScale {
+    /// The biggest value rounded up to the next whole number of steps,
+    /// at least `minimum`. A value sitting exactly on a step still gets
+    /// the step above it, so the line's end icon is never clipped.
+    public static func top(_ values: [Double], step: Double, floor minimum: Double) -> Double {
+        let highest = values.max() ?? 0
+        let rounded = (highest / step).rounded(.down) + 1
+        return max(rounded * step, minimum)
+    }
+}
