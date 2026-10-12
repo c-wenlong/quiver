@@ -1,10 +1,10 @@
 """First-run setup wizard and domain subcommand routers."""
 
-import json
 import sys
 from pathlib import Path
 
 from quiver.console import c
+from quiver.json_output import emit
 from quiver.setup.models import HarnessPreview, McpPreview, SkillsPreview
 from quiver.harness.discover import apply_findings, discover_harnesses
 from quiver.harness.discover_commands import cmd_discover
@@ -143,30 +143,24 @@ def cmd_setup(args):
     actionable_skills = [h for h in skill_hints if h.action in ("create_shared", "symlink")]
 
     if json_out:
-        print(
-            json.dumps(
-                {
-                    "harness": [HarnessPreview.of(f).to_json() for f in new_harness],
-                    "mcp": [McpPreview.of(f).to_json() for f in new_mcp],
-                    "skills": [
-                        SkillsPreview.of(h).to_json()
-                        for h in skill_hints
-                        if h.action != "ok"
-                    ],
-                },
-                indent=2,
-            )
-        )
+        # One document per --json invocation: --apply results ride inside
+        # the same envelope instead of printing a second document.
+        data = {
+            "harness": [HarnessPreview.of(f).to_json() for f in new_harness],
+            "mcp": [McpPreview.of(f).to_json() for f in new_mcp],
+            "skills": [
+                SkillsPreview.of(h).to_json()
+                for h in skill_hints
+                if h.action != "ok"
+            ],
+        }
         if apply:
-            result = {
-                "applied": {
-                    "harness": apply_findings(new_harness, min_confidence="high") if new_harness else [],
-                    "mcp": apply_mcp_findings(new_mcp).added if new_mcp else [],
-                    "skills": apply_skills_symlink_hints(actionable_skills, home=home),
-                }
+            data["applied"] = {
+                "harness": apply_findings(new_harness, min_confidence="high") if new_harness else [],
+                "mcp": apply_mcp_findings(new_mcp).added if new_mcp else [],
+                "skills": apply_skills_symlink_hints(actionable_skills, home=home),
             }
-            print(json.dumps(result, indent=2))
-        return 0
+        return emit(data)
 
     print(f"\n{c('bold', 'quiver setup')}\n")
 

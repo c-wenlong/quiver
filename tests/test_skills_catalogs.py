@@ -124,5 +124,139 @@ class SkillsCatalogTest(unittest.TestCase):
                 self.assertEqual(load_skill_catalogs(), [])
 
 
+class SkillsCatalogCommandTest(unittest.TestCase):
+    def _run(self, args):
+        import io
+        from contextlib import redirect_stdout
+        from quiver.skills.catalog_commands import cmd_skills_catalog
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cmd_skills_catalog(args)
+        return code, out.getvalue()
+
+    def test_help_runs(self):
+        code, out = self._run(["help"])
+        self.assertEqual(code, 0)
+
+    def test_list_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            catalogs_file = config_dir / "skill_catalogs.json"
+            p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
+            with p1, p2, p3, p4:
+                code, out = self._run(["list"])
+        self.assertEqual(code, 0)
+        self.assertIn("No catalogs configured", out)
+
+    def test_list_renders_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            catalogs_file = config_dir / "skill_catalogs.json"
+            catalog = home / "skills-tree"
+            catalog.mkdir()
+            SkillsCatalogTest()._write_skill(catalog, "one", name="one")
+            p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
+            with p1, p2, p3, p4:
+                add_skill_catalog(catalog, "mine")
+                code, out = self._run(["list"])
+        self.assertEqual(code, 0)
+        self.assertIn("mine", out)
+        self.assertIn("SKILLS", out)
+
+    def test_remove_without_arg_is_usage_error(self):
+        code, out = self._run(["remove"])
+        self.assertEqual(code, 1)
+        self.assertIn("Usage", out)
+
+    def test_remove_missing_catalog_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            catalogs_file = config_dir / "skill_catalogs.json"
+            p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
+            with p1, p2, p3, p4:
+                code, out = self._run(["remove", "ghost"])
+        self.assertEqual(code, 1)
+        self.assertIn("No catalog matching", out)
+
+    def test_add_missing_path_fails(self):
+        code, out = self._run(["add", "/definitely/not/there"])
+        self.assertEqual(code, 1)
+
+    def test_unknown_subcommand_fails(self):
+        code, out = self._run(["frobnicate"])
+        self.assertEqual(code, 1)
+
+    def test_bare_path_argument_adds_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            catalogs_file = config_dir / "skill_catalogs.json"
+            catalog = home / "skills-tree"
+            catalog.mkdir()
+            SkillsCatalogTest()._write_skill(catalog, "one", name="one")
+            p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
+            with p1, p2, p3, p4:
+                code, _ = self._run([str(catalog)])
+                self.assertEqual(code, 0)
+                self.assertEqual(len(load_skill_catalogs()), 1)
+
+
+class SkillsDiscoverCommandTest(unittest.TestCase):
+    def _finding(self, label="cat", status="new", count=2):
+        from quiver.skills.catalog_discover import SkillCatalogFinding
+        return SkillCatalogFinding(path=Path("/x/skills"), label=label,
+                                   skill_count=count, source="desktop",
+                                   status=status)
+
+    def _run(self, args, findings, apply_return=None):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        from quiver.skills import catalog_commands as cc
+        apply_fn = mock.Mock(return_value=apply_return if apply_return is not None else [])
+        out = io.StringIO()
+        with patch.object(cc, "discover_skill_catalogs", lambda **k: findings), \
+                patch.object(cc, "apply_skill_catalog_findings", apply_fn), \
+                redirect_stdout(out):
+            code = cc.cmd_skills_discover(args)
+        return code, out.getvalue(), apply_fn
+
+    def test_table_lists_findings(self):
+        code, out, _ = self._run([], [self._finding()])
+        self.assertEqual(code, 0)
+        self.assertIn("Skills Discover", out)
+        self.assertIn("cat", out)
+
+    def test_empty_findings_say_so(self):
+        code, out, _ = self._run([], [])
+        self.assertEqual(code, 0)
+        self.assertIn("No new skill catalogs", out)
+
+    def test_apply_reports_added(self):
+        code, out, apply_fn = self._run(["--apply"], [self._finding()],
+                                        apply_return=["cat"])
+        self.assertEqual(code, 0)
+        self.assertIn("Registered 1 catalog", out)
+        apply_fn.assert_called_once()
+
+    def test_apply_nothing_to_add(self):
+        code, out, _ = self._run(["--apply"], [self._finding(status="registered")],
+                                 apply_return=[])
+        self.assertEqual(code, 0)
+        self.assertIn("Nothing to add", out)
+
+    def test_help_runs(self):
+        code, _out, _ = self._run(["-h"], [])
+        self.assertEqual(code, 0)
+
+    def test_unknown_arg_fails(self):
+        code, _out, apply_fn = self._run(["bogus"], [])
+        self.assertEqual(code, 1)
+        apply_fn.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -508,7 +508,7 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
         r = self.run_mcp("discover", "--json")
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
         # The warnings all went to stderr, so stdout parses as JSON.
-        payload = json.loads(r.stdout)
+        payload = json.loads(r.stdout)["data"]["findings"]
         self.assertNotIn("ghost", {f["name"] for f in payload})
         self.assertIn("skipping orphan detection", r.stderr)
         r = self.run_mcp("discover", "--apply", "--prune")
@@ -520,7 +520,8 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
         self.claude_path.write_text('{"mcpServers": {}}')
         r = self.run_mcp("discover", "--json")
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
-        by_name = {f["name"]: f["status"] for f in json.loads(r.stdout)}
+        by_name = {f["name"]: f["status"]
+                   for f in json.loads(r.stdout)["data"]["findings"]}
         self.assertEqual(by_name.get("ghost"), "orphaned")
         r = self.run_mcp("discover", "--apply", "--prune")
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)

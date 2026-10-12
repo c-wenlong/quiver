@@ -36,10 +36,10 @@ python3 -m unittest tests.test_table
 python3 -m unittest tests.test_table -k render
 python3 -m unittest tests.test_rate_limits.TestClass.test_method
 
-# Coverage, as CI runs it (floor is 69%, configured in .coveragerc)
+# Coverage, as CI runs it (floor is 84%, configured in .coveragerc)
 test_home="$(mktemp -d)"
-HOME="$test_home" python -m coverage run -m unittest discover -s tests -p 'test_*.py'
-python -m coverage combine && python -m coverage report
+HOME="$test_home" python3 -m coverage run -m unittest discover -s tests -p 'test_*.py'
+python3 -m coverage combine && python3 -m coverage report
 
 # Run the CLI from source without reinstalling
 PYTHONPATH=src python -m quiver.cli list
@@ -145,7 +145,8 @@ The `swe autocomplete` feature relies on hardcoded tables in `src/quiver/complet
 - Engine tests use `expand_path()` which only expands `~` prefixes (mock-safe).
 - Completion tests mock `load_registry` for tool/tag completions and `SHELL_CONFIGS` for script generation.
 - Class-level JSON fixtures like `_SAMPLE_RESPONSE` are shallow-copied by default. Tests that **mutate nested keys** (e.g. `body["rate_limit"]["primary_window"]["reset_at"]`) MUST use `copy.deepcopy` to avoid leaking the mutation into later tests that read the same class fixture. Tests that only **replace top-level keys** are safe with shallow copies.
-- Run all tests: `python -m unittest discover -s tests -p 'test_*.py'`
+- Run all tests: `python3 -m unittest discover -s tests -p 'test_*.py'`
+- The full testing guide (Swift suite and coverage, fixture capture, gates and clocks, no busy-waits) is [docs/testing.md](docs/testing.md).
 
 ## Gotchas log
 

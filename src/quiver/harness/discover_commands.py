@@ -1,12 +1,12 @@
 """Harness discover CLI command."""
 
-import json
 
-from quiver.harness.models import DiscoveryRow
 import sys
 from pathlib import Path
 
 from quiver.console import c, elide
+from quiver.harness.models import DiscoveryRow
+from quiver.json_output import emit
 from quiver.multiselect import Choice, _supported, multiselect
 from quiver.harness.discover import apply_findings, discover_harnesses
 
@@ -138,10 +138,10 @@ def cmd_discover(args):
             print(c("dim", "  cancelled, nothing added\n"))
             return 0
 
-    if opts["json"]:
-        payload = [DiscoveryRow.of(f).to_json() for f in findings]
-        print(json.dumps(payload, indent=2))
-    else:
+    # The payload is emitted once, at the end, so --apply rides in the
+    # same document instead of printing a second one.
+    data = {"findings": [DiscoveryRow.of(f).to_json() for f in findings]}
+    if not opts["json"]:
         print(f"\n{c('bold', 'Harness Discover')}\n")
         if not findings:
             print(c("dim", "  No new harnesses found. Registry looks up to date.\n"))
@@ -177,9 +177,8 @@ def cmd_discover(args):
         # Named or picked findings skip the floor entirely.
         min_conf = "low" if opts["apply_all"] else "high"
         added = apply_findings(findings, min_confidence=min_conf, names=names)
-        if opts["json"]:
-            print(json.dumps({"added": added}, indent=2))
-        elif added:
+        data["applied"] = {"added": added}
+        if not opts["json"] and added:
             print(c("green", f"  ✓ Added {len(added)} tool(s) to registry: {', '.join(added)}"))
             print(c("dim", "  Run `swe list` to verify.\n"))
         elif not opts["json"]:
@@ -190,4 +189,6 @@ def cmd_discover(args):
         if actionable and not sys.stdin.isatty():
             print(c("dim", "  Tip: pass --apply to write matches to harness.json\n"))
 
+    if opts["json"]:
+        return emit(data)
     return 0

@@ -82,7 +82,7 @@ documents, the service function that builds them:
 | `swe session --json` | `SessionRow` (+ `ResumeCmd` via `sessions/resume.py::resume_json`) |
 | `swe skills link / unlink / move --json` | `LinkReply`, `UnlinkReply`, `MoveReply` |
 | `swe skills --json`, `swe skills hub --json` | `skills/inventory.py::installed_skills`, `hub_plugins` |
-| `swe skills catalog discover --json` | `CatalogRow` |
+| `swe skills discover --json` | `CatalogRow` |
 | `swe init --check --json` | `init/models.py::LinkRow` |
 | `swe mcp list / status --json` | `mcp/models.py::ServerRow` (built by `mcp/inventory.py::server_inventory`; `status` adds `health`/`detail`) |
 | `swe mcp discover --json` | `mcp/models.py::DiscoveryRow` |
@@ -94,12 +94,10 @@ documents, the service function that builds them:
 | `swe harness discover --json` | `harness/models.py::DiscoveryRow` |
 | `swe setup --json` | `setup/models.py::{Harness,Mcp,Skills}Preview` |
 
-Two outliers predate the envelope and print bare `json.dumps` documents
-rather than `{schema, data}`: `swe harness discover --json`, `swe mcp
-discover --json`, `swe skills catalog discover --json`, and `swe setup
---json`. Nothing in `app/` decodes them today; wrapping them in `emit()`
-is a contract change left for a deliberate decision. `swe setup --json
---apply` prints two documents, which also breaks the one-document rule.
+The discovery and setup payloads keep their findings under a `findings`
+key (or the `harness` / `mcp` / `skills` preview keys for `swe setup`),
+and an `--apply` run adds an `applied` object inside the same `data`, so
+every `--json` command emits exactly one `{schema, data}` document.
 
 ## Extending
 

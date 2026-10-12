@@ -5,7 +5,7 @@ patch = subprocess
 source = quiver
 
 [report]
-fail_under = 69
+fail_under = 84
 precision = 1
 show_missing = True
 skip_covered = True
