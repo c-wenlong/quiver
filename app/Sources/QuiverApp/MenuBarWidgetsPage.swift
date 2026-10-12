@@ -158,14 +158,17 @@ private struct PopupSection: View {
     /// Below this the 340pt preview no longer leaves the settings room.
     static let twoColumnWidth: CGFloat = 760
 
-    /// Accounts' harnesses in account order, then other harnesses in swe's
-    /// order, so the rows stay put as usage changes, until the user drags
-    /// them; then the dragged order wins. An account whose limits
-    /// haven't come in yet is listed too, so it can be hidden before they do.
-    private var harnesses: [MenuBarPopup.Harness] {
-        let order = app.starredAccountCards.map(\.profile.vendor.rawValue)
-            + app.others.rows.filter { $0.limit.status == .ok }.map(\.name)
-        return app.popup.orderedHarnesses(in: app.limits.readings, order: order)
+    /// The same rows the Accounts page lists: every starred account, even
+    /// before its usage loads, each its own row so two accounts of one
+    /// harness hide and order apart; then the starred other harnesses.
+    /// Rows stay put as usage changes, until the user drags them; then
+    /// the dragged order wins.
+    private var rows: [MenuBarPopup.Row] {
+        let sources = app.starredAccountCards.map {
+            (source: $0.profile.id, harness: $0.profile.vendor.rawValue,
+             title: "\($0.profile.vendor.title): \($0.profile.name)")
+        } + app.others.rows.map { (source: $0.name, harness: $0.name, title: $0.accountTitle) }
+        return app.popup.orderedRows(in: app.limits.readings, sources: sources)
     }
 
     var body: some View {
@@ -224,23 +227,23 @@ private struct PopupSection: View {
             }
             VStack(alignment: .leading, spacing: 16) {
                 SectionHeading(title: "Harnesses and limits",
-                               detail: "Which harnesses the popup lists, which of their limits, and in what order. Drag to reorder.")
+                               detail: "Which accounts and harnesses the popup lists, which of their limits, and in what order. Drag to reorder.")
                 SettingsCard {
-                    let harnesses = harnesses
-                    let ids = harnesses.map(\.id)
-                    if harnesses.isEmpty {
+                    let rows = rows
+                    let sources = rows.map { (source: $0.source, harness: $0.harness) }
+                    if rows.isEmpty {
                         Text("No limits yet. Add an account on the Accounts page, or star a harness on Harnesses.")
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .padding(.vertical, 14)
                     }
-                    ReorderableRows(harnesses, showsDividers: true) { id, before in
+                    ReorderableRows(rows, showsDividers: true) { id, before in
                         if let before {
-                            app.popup.move(id, before: before, in: ids)
+                            app.popup.move(id, before: before, in: sources)
                         } else {
-                            app.popup.moveToEnd(id, in: ids)
+                            app.popup.moveToEnd(id, in: sources)
                         }
-                    } row: { harness in
-                        PopupHarnessRow(harness: harness)
+                    } row: { row in
+                        PopupSourceRow(row: row)
                     }
                 }
             }
@@ -248,30 +251,36 @@ private struct PopupSection: View {
     }
 }
 
-/// A harness's switch, then a chip per limit window it reports.
-private struct PopupHarnessRow: View {
+/// An account's or harness's switch, then a chip per limit window it reports.
+private struct PopupSourceRow: View {
     @Environment(AppModel.self) private var app
-    var harness: MenuBarPopup.Harness
+    var row: MenuBarPopup.Row
 
     var body: some View {
-        let shown = app.popup.shows(harness: harness.harness)
+        let shown = app.popup.shows(source: row.source, harness: row.harness)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 GripDots()
-                HarnessIcon(harness: harness.harness, size: 16)
-                Text(UsageFormat.harness(harness.harness)).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                HarnessIcon(harness: row.harness, size: 16)
+                Text(row.title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
                 Spacer(minLength: 16)
-                SettingSwitch(title: "Show \(UsageFormat.harness(harness.harness))",
+                SettingSwitch(title: "Show \(row.title)",
                               isOn: Binding(get: { shown },
-                                            set: { app.popup.setShown($0, harness: harness.harness) }))
+                                            set: { app.popup.setShown($0, source: row.source,
+                                                                       harness: row.harness) }))
             }
             .padding(.vertical, 12)
-            if !harness.windows.isEmpty {
+            if !row.windows.isEmpty {
                 FlowLayout(spacing: 6, lineSpacing: 6) {
-                    ForEach(harness.windows, id: \.self) { window in
+                    ForEach(row.windows, id: \.self) { window in
                         WindowChip(title: UsageFormat.window(window),
-                                   isOn: Binding(get: { app.popup.shows(window: window, of: harness.harness) },
-                                                 set: { app.popup.setShown($0, window: window, of: harness.harness) }))
+                                   isOn: Binding(get: {
+                                       app.popup.shows(window: window, source: row.source,
+                                                       harness: row.harness, allWindows: row.windows)
+                                   }, set: {
+                                       app.popup.setShown($0, window: window, source: row.source,
+                                                          harness: row.harness, allWindows: row.windows)
+                                   }))
                     }
                 }
                 .padding(.leading, 38)
