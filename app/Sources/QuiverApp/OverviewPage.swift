@@ -465,6 +465,11 @@ private struct ActivityCard: View {
                                 RoundedRectangle(cornerRadius: 2)
                                     .fill(Theme.heatmap[cell.level])
                                     .frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
+                                    // A new day at this slot (the week window
+                                    // slides when the column count settles)
+                                    // must report its frame again: geometry
+                                    // alone would not have changed.
+                                    .id(cell.day)
                                     .onGeometryChange(for: CGRect.self) {
                                         $0.frame(in: .named("activityGrid"))
                                     } action: { frames[cell.day] = $0 }
@@ -483,9 +488,10 @@ private struct ActivityCard: View {
             // it and nothing flickers between cells.
             .overlay {
                 if inGrid, let hovered,
-                   let cell = weeks.joined().compactMap({ $0 }).first(where: { $0.day == hovered }),
-                   let frame = frames[hovered] {
-                    bubble(for: cell, over: frame).transition(.opacity)
+                   let resolved = HeatmapHover.resolve(
+                    day: hovered, cells: weeks.joined().compactMap { $0 },
+                    frames: frames, gridSize: gridSize, bubbleSize: bubbleSize) {
+                    bubble(for: resolved.cell, at: resolved.origin).transition(.opacity)
                 }
             }
             .animation(.easeIn(duration: 0.1), value: inGrid)
@@ -502,7 +508,7 @@ private struct ActivityCard: View {
     /// The day's stats in a small card that floats over the grid, centred
     /// on the cell and clamped inside the card; it drops under the cell
     /// when the first row leaves no room above.
-    private func bubble(for cell: Heatmap.Cell, over frame: CGRect) -> some View {
+    private func bubble(for cell: Heatmap.Cell, at origin: CGPoint) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(cell.day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
                 .foregroundStyle(Theme.textPrimary)
@@ -516,7 +522,7 @@ private struct ActivityCard: View {
         .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
         .fixedSize()
         .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
-        .position(x: bubbleX(over: frame), y: bubbleY(over: frame))
+        .position(origin)
         .allowsHitTesting(false)
     }
 
@@ -528,21 +534,6 @@ private struct ActivityCard: View {
                 + (cell.unpricedTokens > 0 ? " (some tokens unpriced)" : "")
         }
         return cell.unpricedTokens > 0 ? "\(tokens) · No list price" : "\(tokens) · $0.00"
-    }
-
-    private func bubbleX(over frame: CGRect) -> CGFloat {
-        let half = bubbleSize.width / 2
-        let low = half + 4
-        let high = max(low, gridSize.width - half - 4)
-        return min(max(frame.midX, low), high)
-    }
-
-    private func bubbleY(over frame: CGRect) -> CGFloat {
-        let gap: CGFloat = 6
-        let above = frame.minY - gap - bubbleSize.height / 2
-        return above - bubbleSize.height / 2 < 0
-            ? frame.maxY + gap + bubbleSize.height / 2
-            : above
     }
 
     static func weekdayName(_ index: Int) -> String {
