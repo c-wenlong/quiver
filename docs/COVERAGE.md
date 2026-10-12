@@ -29,7 +29,7 @@ The line and branch rows above come from `coverage json -o cov.json`, whose
 `totals` object carries `covered_lines` / `num_statements` and
 `covered_branches` / `num_branches` separately.
 
-CI enforces an 86% combined regression floor (`fail_under` in `.coveragerc`,
+CI enforces an 84% combined regression floor (`fail_under` in `.coveragerc`,
 raised after the audit-4 test pass; this audit was measured when it was 69%)
 and
 uploads a report from Python 3.13 to Codecov. Codecov also reports

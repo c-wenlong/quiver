@@ -15,7 +15,10 @@ def _session(tool, sid, path="/work/project", timestamp=1):
     return Session(timestamp=timestamp, agent=tool, path=path, session_id=sid, tool_name=tool)
 
 
-class TranscriptReaderTest(unittest.TestCase):
+class _HomeCase(unittest.TestCase):
+    """A throwaway HOME and file helpers, with no tests of its own, so
+    each test class below runs only its own methods."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
@@ -32,6 +35,8 @@ class TranscriptReaderTest(unittest.TestCase):
         path.write_text("".join(json.dumps(row) + "\n" for row in records), encoding="utf-8")
         return path
 
+
+class TranscriptReaderTest(_HomeCase):
     def test_registry_covers_every_session_parser(self):
         parser_tools = {name for name, _parser, _aliases in PARSER_REGISTRY}
         self.assertEqual(parser_tools, EXPECTED_READER_TOOLS)
@@ -614,7 +619,7 @@ class TranscriptReaderTest(unittest.TestCase):
         self.assertEqual(transcript.messages, [])
 
 
-class SecondaryReaderTest(TranscriptReaderTest):
+class SecondaryReaderTest(_HomeCase):
     """Readers with bespoke stores: freebuff, grok, cline, gemini,
     copilot, crush, forge, and kilo/opencode sqlite parts."""
 
