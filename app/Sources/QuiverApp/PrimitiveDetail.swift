@@ -536,6 +536,8 @@ struct PartsCard: View {
             newPart = nil
             newName = ""
             newError = nil
+            // A folded card could hide the new file, so show every row.
+            showsAll = true
             selected = file.path
             reload()
             onChanged()
