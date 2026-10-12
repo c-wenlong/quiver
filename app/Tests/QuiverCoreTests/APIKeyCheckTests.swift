@@ -296,6 +296,23 @@ actor CountGate {
     }
 }
 
+/// Races `wait` against a ten-second deadline: the first to finish wins
+/// and the loser is cancelled. Returns false on timeout so a regression
+/// fails the test instead of hanging the suite.
+@MainActor
+private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> Bool) async -> Bool {
+    await withTaskGroup(of: Bool.self) { group in
+        group.addTask { await wait() }
+        group.addTask {
+            try? await Task.sleep(for: .seconds(10))
+            return false
+        }
+        let winner = await group.next() ?? false
+        group.cancelAll()
+        return winner
+    }
+}
+
 /// Holds every request parked until released, so in-flight counts and
 /// queueing behind the limiter are observable.
 final class GateTransport: HTTPTransport {
@@ -464,18 +481,31 @@ final class CountingTransport: HTTPTransport {
         #expect(await transport.waitForRequests(6))
         #expect(transport.inFlight == 4)
         // Wait for the released results to land on the model through its
-        // own change stream; no yield or sleep spins on the pool.
-        for await count in Observations({ model.checks.count }) {
-            if count >= 2 { break }
+        // own change stream, with a deadline so a regression fails
+        // instead of hanging; release on failure so nothing stays parked.
+        let landed = await withinDeadline {
+            for await count in Observations({ model.checks.count }) {
+                if Task.isCancelled || count >= 2 { return count >= 2 }
+            }
+            return false
         }
+        if !landed { transport.release() }
+        #expect(landed)
         #expect(model.checks.count == 2)
         // Re-checking finished rows queues at the same limiter: no extra
         // request runs while four are parked.
         let finished = model.checks.keys.sorted().prefix(2)
         let again = finished.map { name in Task { await model.check(name: name) } }
-        for await checking in Observations({ model.checking }) {
-            if finished.allSatisfy(checking.contains) { break }
+        let requeued = await withinDeadline {
+            for await checking in Observations({ model.checking }) {
+                if Task.isCancelled || finished.allSatisfy(checking.contains) {
+                    return finished.allSatisfy(checking.contains)
+                }
+            }
+            return false
         }
+        if !requeued { transport.release() }
+        #expect(requeued)
         #expect(transport.inFlight == 4)
         #expect(transport.requestCount == 6)
         transport.release()
@@ -675,10 +705,16 @@ final class CountingTransport: HTTPTransport {
         #expect(await transport.waitForRequests(4))
         transport.release(2)
         // The two finished results land on the model (and save) one at a
-        // time; Observations yields each change so the test never spins.
-        for await count in Observations({ first.checks.count }) {
-            if count >= 2 { break }
+        // time; a deadline keeps a regression from hanging, and on
+        // failure the parked requests are released so the run can end.
+        let landed = await withinDeadline {
+            for await count in Observations({ first.checks.count }) {
+                if Task.isCancelled || count >= 2 { return count >= 2 }
+            }
+            return false
         }
+        if !landed { transport.release() }
+        #expect(landed)
         #expect(first.checks.count == 2)
 
         let second = make(FakeTransport())
