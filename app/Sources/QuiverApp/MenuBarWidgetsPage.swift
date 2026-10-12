@@ -153,14 +153,16 @@ private struct MenuBarPreview: View {
 
 private struct PopupSection: View {
     @Environment(AppModel.self) private var app
+    @State private var dragging: String?
 
     /// Accounts' harnesses in account order, then other harnesses in swe's
-    /// order, so the rows stay put as usage changes. An account whose limits
+    /// order, so the rows stay put as usage changes, until the user drags
+    /// them; then the dragged order wins. An account whose limits
     /// haven't come in yet is listed too, so it can be hidden before they do.
     private var harnesses: [MenuBarPopup.Harness] {
         let order = app.starredAccountCards.map(\.profile.vendor.rawValue)
             + app.others.rows.filter { $0.limit.status == .ok }.map(\.name)
-        return MenuBarPopup.harnesses(in: app.limits.readings, order: order)
+        return app.popup.orderedHarnesses(in: app.limits.readings, order: order)
     }
 
     var body: some View {
@@ -182,9 +184,10 @@ private struct PopupSection: View {
             }
             VStack(alignment: .leading, spacing: 16) {
                 SectionHeading(title: "Harnesses and limits",
-                               detail: "Which harnesses the popup lists, and which of their limits.")
+                               detail: "Which harnesses the popup lists, which of their limits, and in what order. Drag to reorder.")
                 SettingsCard {
                     let harnesses = harnesses
+                    let ids = harnesses.map(\.id)
                     if harnesses.isEmpty {
                         Text("No limits yet. Add an account on the Accounts page, or star a harness on Harnesses.")
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -192,8 +195,34 @@ private struct PopupSection: View {
                     }
                     ForEach(harnesses) { harness in
                         PopupHarnessRow(harness: harness)
+                            .opacity(dragging == harness.id ? 0.4 : 1)
+                            .draggable(harness.id) {
+                                PopupHarnessRow(harness: harness)
+                                    .environment(app)
+                                    .frame(width: 320)
+                                    .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+                                    .onAppear { dragging = harness.id }
+                            }
+                            .dropDestination(for: String.self) { dropped, _ in
+                                guard let id = dropped.first, ids.contains(id) else { return false }
+                                withAnimation(.easeOut(duration: 0.15)) { app.popup.move(id, before: harness.id, in: ids) }
+                                dragging = nil
+                                return true
+                            } isTargeted: { targeted in
+                                if !targeted, dragging == harness.id { dragging = nil }
+                            }
                         if harness.id != harnesses.last?.id { SettingsDivider() }
                     }
+                    // Dropping below the last row moves a harness to the end.
+                    Color.clear
+                        .frame(height: 16)
+                        .contentShape(.rect)
+                        .dropDestination(for: String.self) { dropped, _ in
+                            guard let id = dropped.first, ids.contains(id) else { return false }
+                            withAnimation(.easeOut(duration: 0.15)) { app.popup.moveToEnd(id, in: ids) }
+                            dragging = nil
+                            return true
+                        }
                 }
             }
         }
@@ -209,6 +238,7 @@ private struct PopupHarnessRow: View {
         let shown = app.popup.shows(harness: harness.harness)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
+                GripDots()
                 HarnessIcon(harness: harness.harness, size: 16)
                 Text(UsageFormat.harness(harness.harness)).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
                 Spacer(minLength: 16)
@@ -225,11 +255,12 @@ private struct PopupHarnessRow: View {
                                                  set: { app.popup.setShown($0, window: window, of: harness.harness) }))
                     }
                 }
-                .padding(.leading, 26)
+                .padding(.leading, 38)
                 .padding(.bottom, 12)
                 .disabled(!shown)
             }
         }
+        .accessibilityHint("Drag to reorder")
     }
 }
 
