@@ -148,6 +148,7 @@ def cmd_discover(args):
                 "description": f.description,
                 "tags": list(f.tags),
                 "aliases": list(f.aliases),
+                "primary_color": f.primary_color or None,
             }
             for f in findings
         ]

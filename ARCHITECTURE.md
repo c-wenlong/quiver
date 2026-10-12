@@ -382,7 +382,7 @@ and the app refuses a schema it does not know rather than misreading it.
 
 | Command | `data` |
 |---|---|
-| `swe list [tag] [--usage [--exclude=a,b]] [--scope=all] --json` | `harnesses`: name, command, version, aliases, tags, `state` (active, starred, archived), `sessions_100d`, `rate_limit` (null unless `--usage` and starred), `installed` (command on PATH), `archived` (reason, archived_at, usage, or null) |
+| `swe list [tag] [--usage [--exclude=a,b]] [--scope=all] --json` | `harnesses`: name, command, version, aliases, tags, `primary_color` (the entry's own `#RRGGBB` or the catalog default, null when neither), `state` (active, starred, archived), `sessions_100d`, `rate_limit` (null unless `--usage` and starred), `installed` (command on PATH), `archived` (reason, archived_at, usage, or null) |
 | `swe harness star <name> --json` | `name` and the `state` the toggle left it in |
 | `swe harness archive <name> [why] --json` | `name`, `state`, and the `archived` record (null after a restore) |
 | `swe session [filters] --json` | `sessions`: id, harness, agent, cwd, title, title_source, `last_active_at` (epoch seconds), status, `resume` (`argv` and `cwd`, or null); `failures` names any parser that crashed, so a broken reader is not mistaken for no history |

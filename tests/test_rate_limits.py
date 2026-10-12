@@ -3880,6 +3880,10 @@ class DevinFetcherTest(unittest.TestCase):
         plan = data["userStatus"]["planStatus"]
         del plan["dailyQuotaRemainingPercent"]
         del plan["weeklyQuotaRemainingPercent"]
+        # A prompt-credits payload carries no quota reset times either;
+        # leftover resets would read as exhausted quota windows.
+        del plan["dailyQuotaResetAtUnix"]
+        del plan["weeklyQuotaResetAtUnix"]
         plan["availablePromptCredits"] = 125
         plan["planInfo"]["monthlyPromptCredits"] = 500
 
@@ -3890,6 +3894,56 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertEqual(info.used_percent, 75)
         self.assertEqual(info.window, "")
         self.assertEqual(info.reset_at, 1789446386.0)
+
+    def test_an_omitted_remaining_with_a_reset_means_exhausted(self):
+        """proto3 JSON drops zeros: only the reset times are sent."""
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        plan = data["userStatus"]["planStatus"]
+        del plan["dailyQuotaRemainingPercent"]
+        del plan["weeklyQuotaRemainingPercent"]
+
+        info = _parse_devin_status(data)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(
+            [(w["window"], w["used_percent"]) for w in info.windows],
+            [("1d", 100), ("7d", 100)],
+        )
+        self.assertEqual(info.used_percent, 100)
+        self.assertTrue(info.limit_reached)
+
+    def test_an_omitted_window_is_exhausted_next_to_a_live_one(self):
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        plan = data["userStatus"]["planStatus"]
+        plan["dailyQuotaRemainingPercent"] = 40
+        del plan["weeklyQuotaRemainingPercent"]
+
+        info = _parse_devin_status(data)
+
+        self.assertEqual(
+            [(w["window"], w["used_percent"]) for w in info.windows],
+            [("1d", 60), ("7d", 100)],
+        )
+        self.assertEqual(info.window, "7d")
+        self.assertEqual(info.used_percent, 100)
+        self.assertTrue(info.limit_reached)
+
+    def test_no_remaining_and_no_resets_keeps_the_old_behaviour(self):
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        plan = data["userStatus"]["planStatus"]
+        del plan["dailyQuotaRemainingPercent"]
+        del plan["weeklyQuotaRemainingPercent"]
+        del plan["dailyQuotaResetAtUnix"]
+        del plan["weeklyQuotaResetAtUnix"]
+
+        # No quota windows and unlimited credits: nothing to show.
+        self.assertIsNone(_parse_devin_status(data))
 
     def test_parser_rejects_unusable_payloads(self):
         from quiver.harness.rate_limits import _parse_devin_status
