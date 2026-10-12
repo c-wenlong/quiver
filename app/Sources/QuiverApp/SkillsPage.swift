@@ -29,7 +29,8 @@ struct SkillsPage: View {
                 }
             }
             .iconButton()
-            .help("Refresh")
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Refresh (⌘R)")
         } content: {
             InstalledSkills(model: model) {
                 app.pluginsTab = .explore
