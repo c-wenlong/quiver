@@ -437,7 +437,9 @@ struct FakeShell: ShellEnvironmentReading {
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
         let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
-        return (APIKeysModel(store: store, shell: FakeShell(environment: shell)), url)
+        return (APIKeysModel(store: store, shell: FakeShell(environment: shell),
+                             checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                             defaults: UserDefaults(suiteName: "keysmodel-\(UUID().uuidString)")!), url)
     }
 
     @Test func rowsCarryTheirShellStatus() async throws {
@@ -457,7 +459,9 @@ struct FakeShell: ShellEnvironmentReading {
         let url = dir.appending(path: ".api_keys")
         try sampleKeysFile.write(to: url, atomically: true, encoding: .utf8)
         let shell = GatedShell()
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell)
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+                                 checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                                 defaults: UserDefaults(suiteName: "keysgate-\(UUID().uuidString)")!)
         let load = Task { await model.load() }
         while !(await shell.waiting) { await Task.yield() }
         #expect(model.rows.count == 3)

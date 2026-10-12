@@ -322,7 +322,9 @@ final class CountingTransport: HTTPTransport {
         try text.write(to: url, atomically: true, encoding: .utf8)
         let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
         return APIKeysModel(store: store, shell: FakeShell(environment: [:]),
-                            checker: APIKeyChecker(transport: transport))
+                            checker: APIKeyChecker(transport: transport),
+                            checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                            defaults: UserDefaults(suiteName: "keycheck-\(UUID().uuidString)")!)
     }
 
     @Test func checkAllSkipsEmptyValues() async throws {
@@ -390,8 +392,8 @@ final class CountingTransport: HTTPTransport {
         try await model.set(name: "OPENAI_API_KEY", value: "sk-fake-NEW-KEY", provider: "OPENAI")
         let updated = try #require(model.rows.first)
         #expect(model.check(for: updated) == nil)
-        #expect(model.checks["OPENAI_API_KEY"]?.isCurrent(for: "sk-fake-NEW-KEY") == false)
-        #expect(model.checks["OPENAI_API_KEY"]?.isCurrent(for: "sk-fake-OLD-KEY") == true)
+        #expect(model.checks["OPENAI_API_KEY"]?.isCurrent(for: "sk-fake-NEW-KEY", salt: model.checkSalt) == false)
+        #expect(model.checks["OPENAI_API_KEY"]?.isCurrent(for: "sk-fake-OLD-KEY", salt: model.checkSalt) == true)
     }
 
     @Test func aChipClickSharesTheSameLimit() async throws {
@@ -444,5 +446,118 @@ final class CountingTransport: HTTPTransport {
             return
         }
         #expect(model.checks["OPENAI_API_KEY"] == nil)
+    }
+}
+
+/// The cache under ~/.quiver/cache and the salt the fingerprints hash against.
+@Suite struct APIKeyCheckCacheTests {
+    let salt = Data(repeating: 7, count: 32)
+
+    @Test func aSavedResultComesBackFromDisk() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
+        let check = APIKeyCheck(result: .rejected(status: 401, message: "bad key"),
+                                checkedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                                value: "sk-fake-OLD", salt: salt)
+        store.save(["OPENAI_API_KEY": check])
+        #expect(store.load()["OPENAI_API_KEY"] == check)
+        // The file holds the fingerprint, never the value.
+        let text = try String(contentsOf: store.url, encoding: .utf8)
+        #expect(!text.contains("sk-fake-OLD"))
+        #expect(text.contains(check.fingerprint))
+    }
+
+    @Test func everyResultShapeSurvivesTheRoundTrip() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
+        let checks: [String: APIKeyCheck] = [
+            "A": APIKeyCheck(result: .works, checkedAt: .now, value: "a", salt: salt),
+            "B": APIKeyCheck(result: .noCredit, checkedAt: .now, value: "b", salt: salt),
+            "C": APIKeyCheck(result: .rejected(status: 403, message: nil),
+                             checkedAt: .now, value: "c", salt: salt),
+            "D": APIKeyCheck(result: .couldNotCheck("timed out"), checkedAt: .now,
+                             value: "d", salt: salt),
+            "E": APIKeyCheck(result: .noCheck("no probe"), checkedAt: .now,
+                             value: "e", salt: salt),
+        ]
+        store.save(checks)
+        #expect(store.load() == checks)
+    }
+
+    @Test func junkOnDiskReadsAsNoResults() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: "api-key-checks.json")
+        try "this is not json".write(to: url, atomically: true, encoding: .utf8)
+        #expect(APIKeyCheckStore(url: url).load() == [:])
+        try #"{"version": 99, "checks": {}}"#.write(to: url, atomically: true, encoding: .utf8)
+        #expect(APIKeyCheckStore(url: url).load() == [:])
+    }
+
+    @Test func theSaltIsMadeOnceAndReused() {
+        let suite = "keysalt-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = APIKeyCheckStore.salt(from: defaults)
+        #expect(first.count == 32)
+        #expect(APIKeyCheckStore.salt(from: defaults) == first)
+        let other = UserDefaults(suiteName: "keysalt-\(UUID().uuidString)")!
+        #expect(APIKeyCheckStore.salt(from: other) != first)
+    }
+
+    @MainActor
+    @Test func resultsSurviveANewModelAndStaleOnesStayHidden() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keysURL = dir.appending(path: ".api_keys")
+        try """
+        export OPENAI_API_KEY="sk-fake-OLD"
+        export XAI_API_KEY="sk-fake-GONE"
+        """.write(to: keysURL, atomically: true, encoding: .utf8)
+        let cacheURL = dir.appending(path: "api-key-checks.json")
+        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        func make(_ transport: HTTPTransport) -> APIKeysModel {
+            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+                         shell: FakeShell(environment: [:]),
+                         checker: APIKeyChecker(transport: transport),
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+        }
+        let transport = FakeTransport()
+        transport.reply(401)
+        transport.reply(401)
+        let first = make(transport)
+        await first.load()
+        await first.checkAll()
+
+        // A second model over the same cache and salt shows the stored
+        // results without asking the network again.
+        let secondTransport = FakeTransport()
+        let second = make(secondTransport)
+        await second.load()
+        #expect(second.check(for: second.rows[0])?.result == .rejected(status: 401, message: nil))
+        #expect(second.check(for: second.rows[1])?.result == .rejected(status: 401, message: nil))
+        // An edited value hides its stored result, and a name the file
+        // dropped is pruned from the cache on the next save.
+        try await second.set(name: "OPENAI_API_KEY", value: "sk-fake-NEW", provider: "OPENAI")
+        #expect(second.check(for: second.rows[0]) == nil)
+        try await second.remove(name: "XAI_API_KEY")
+        secondTransport.reply(200)
+        await second.check(name: "OPENAI_API_KEY")
+        let stored = APIKeyCheckStore(url: cacheURL).load()
+        #expect(stored["XAI_API_KEY"] == nil)
+        #expect(stored["OPENAI_API_KEY"]?.result == .works)
+    }
+
+    @Test func theLabelStyleFollowsTheResult() {
+        #expect(APIKeyCheckStyle(.works) == .success)
+        #expect(APIKeyCheckStyle(.noCredit) == .success)
+        #expect(APIKeyCheckStyle(.rejected(status: 401, message: nil)) == .rejected)
+        #expect(APIKeyCheckStyle(.couldNotCheck("timeout")) == .unchanged)
+        #expect(APIKeyCheckStyle(.noCheck("no probe")) == .unchanged)
+        #expect(APIKeyCheckStyle(nil) == .unchanged)
+        #expect(APIKeyCheckResult.noCredit.words == "No credit on this account")
+        #expect(APIKeyCheckResult.rejected(status: 401, message: "nope").words == "Rejected: HTTP 401: nope")
+        #expect(APIKeyCheckResult.couldNotCheck("timed out").words == "Couldn't check: timed out")
+        #expect(APIKeyCheckResult.noCheck("no probe").words == "No check: no probe")
     }
 }
