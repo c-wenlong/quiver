@@ -87,4 +87,34 @@ import Testing
         let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin"], timeout: .seconds(5))
         #expect(env["PATH"] == "/custom/bin:/usr/bin")
     }
+
+    @Test func sweOverridesAreDroppedOnTheFallbackPath() async {
+        // The shell never answered, so base comes back — minus the
+        // variables swe children must not inherit.
+        let env = await LoginShell.resolve(
+            shell: "/nonexistent/shell",
+            base: ["PATH": "/usr/bin:/bin", "SWE_RATE_LIMITS_TTL": "inf", "HOME": "/tmp"],
+            timeout: .seconds(1))
+        #expect(env["SWE_RATE_LIMITS_TTL"] == nil)
+        #expect(env["HOME"] == "/tmp")
+        #expect(env["PATH"] == "/usr/bin:/bin")
+    }
+
+    @Test func sweOverridesAreDroppedWhenTheShellAnswers() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shell = dir.appending(path: "fake-shell")
+        try "#!/bin/sh\necho PATH=/fake/answered/bin\necho SWE_RATE_LIMITS_TTL=inf\n"
+            .write(to: shell, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
+        let env = await LoginShell.resolve(
+            shell: shell.path,
+            base: ["PATH": "/usr/bin:/bin", "SWE_RATE_LIMITS_TTL": "inf", "HOME": "/tmp"],
+            timeout: .seconds(5))
+        #expect(env["PATH"] == "/fake/answered/bin")
+        #expect(env["SWE_RATE_LIMITS_TTL"] == nil)
+        #expect(env["HOME"] == "/tmp")
+    }
 }
