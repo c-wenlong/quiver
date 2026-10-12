@@ -187,6 +187,57 @@ import Testing
         func times() -> [Int32: UInt64] { table }
     }
 
+    /// A GPU sampler whose next times() call parks until `release()`, so
+    /// a tick can be held open across the write half of the work.
+    final class GateGPU: GPUSampling, @unchecked Sendable {
+        var table: [Int32: UInt64]
+        private var armed: DispatchSemaphore?
+        private var held: DispatchSemaphore?
+        private(set) var parked = false
+        private let lock = NSLock()
+
+        init(_ table: [Int32: UInt64]) { self.table = table }
+
+        func gateNext() {
+            lock.lock()
+            armed = DispatchSemaphore(value: 0)
+            lock.unlock()
+        }
+
+        var isParked: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return parked
+        }
+
+        func times() -> [Int32: UInt64] {
+            lock.lock()
+            let gate = armed
+            armed = nil
+            // Only a gated call owns `held` and `parked`: an ungated call
+            // must not clear the state a parked call is waiting under.
+            if gate != nil { held = gate; parked = true }
+            lock.unlock()
+            gate?.wait()
+            if gate != nil {
+                lock.lock()
+                parked = false
+                held = nil
+                lock.unlock()
+            }
+            return table
+        }
+
+        func release() {
+            lock.lock()
+            let gate = held ?? armed
+            held = nil
+            armed = nil
+            lock.unlock()
+            gate?.signal()
+        }
+    }
+
     /// A sampler whose next call parks on a semaphore, so a test can hold
     /// a slow trend sample open while a faster refresh finishes first.
     final class GateSampler: ProcessSampling, @unchecked Sendable {
@@ -301,7 +352,8 @@ import Testing
         #expect(sampler.callCount == 1)
         #expect(model.history.points(for: "claude").count == 1)
         // Eleven seconds on, the sample is stale: the tick takes its own.
-        await model.trendTick(at: Self.now.addingTimeInterval(11))
+        clock.now = Self.now.addingTimeInterval(11)
+        await model.trendTick(at: clock.now)
         #expect(sampler.callCount == 2)
         #expect(model.history.points(for: "claude").count == 2)
     }
@@ -500,10 +552,67 @@ import Testing
         model.trendInterval = .threeSeconds
         await parked.waitForParks(2)
         #expect(await parked.durations == [.seconds(10), .seconds(3)])
-        #expect(model.history.points(for: "claude").count == 2)
+        // Both ticks describe the same sample moment, so the second
+        // replaces the first point rather than sharing its x.
+        #expect(model.history.points(for: "claude").count == 1)
     }
 
     // MARK: Harness decoding
+
+    @Test func oneSampleMakesOnePoint() {
+        // Two ticks reusing a page sample agree on `at`: the second
+        // replaces the first instead of sharing its x position.
+        var history = ComputeHistory()
+        history.append("claude", TrendPoint(at: Self.now, memoryBytes: 1,
+                                            cpuPercent: 1, gpuPercent: nil))
+        history.append("claude", TrendPoint(at: Self.now, memoryBytes: 2,
+                                            cpuPercent: 2, gpuPercent: 3))
+        #expect(history.points(for: "claude").count == 1)
+        #expect(history.points(for: "claude").last?.memoryBytes == 2)
+        #expect(history.points(for: "claude").last?.gpuPercent == 3)
+    }
+
+    @MainActor @Test func aReplacedLoopsTickCannotWriteBack() async {
+        // The old loop's tick is parked on its GPU read while the
+        // replacement loop ticks to completion; releasing it must not
+        // let it touch the meter or the history.
+        let clock = Clock(Self.now)
+        let claudeBin = "/opt/homebrew/bin/claude"
+        let sampler = CountingSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
+        let gpu = GateGPU([10: 1_000])
+        let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
+                                 gpu: gpu, clock: { clock.now },
+                                 sleep: { _ in try await Task.sleep(for: .seconds(3_600)) },
+                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 selfPID: 99)
+        await model.loadMatchers()
+
+        // Generation one's tick: samples, then parks on the GPU read.
+        gpu.gateNext()
+        model.startTrends()
+        let deadline = Date().addingTimeInterval(10)
+        while !gpu.isParked, Date() < deadline { await Task.yield() }
+        #expect(gpu.isParked)
+
+        // The interval change cancels it and generation two ticks
+        // through to the end: its first GPU sighting counts no percent.
+        model.trendInterval = .threeSeconds
+        let writeDeadline = Date().addingTimeInterval(10)
+        while model.history.points(for: "claude").isEmpty, Date() < writeDeadline {
+            await Task.yield()
+        }
+        #expect(model.history.points(for: "claude").count == 1)
+        #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
+
+        // The stale tick resumes with a moved counter; had it written,
+        // the delta would repaint the point and add GPU percent.
+        clock.now = Self.now.addingTimeInterval(20)
+        gpu.table = [10: 3_000]
+        gpu.release()
+        for _ in 0..<1_000 { await Task.yield() }
+        #expect(model.history.points(for: "claude").count == 1)
+        #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
+    }
 
     @Test func theHarnessDecodesPrimaryColour() throws {
         let decoder = JSONDecoder()

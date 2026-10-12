@@ -77,7 +77,13 @@ public struct ComputeHistory: Sendable, Equatable {
 
     public mutating func append(_ harness: String, _ point: TrendPoint) {
         var points = series[harness] ?? []
-        points.append(point)
+        // Two ticks reusing one sample agree on `at`; the second replaces
+        // the first so a sample makes one point, not two sharing an x.
+        if points.last?.at == point.at {
+            points[points.count - 1] = point
+        } else {
+            points.append(point)
+        }
         if points.count > Self.capacity {
             points.removeFirst(points.count - Self.capacity)
         }

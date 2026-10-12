@@ -82,9 +82,7 @@ public final class ComputeModel {
             // A loop parked on the old interval must not wait it out.
             if let task = trendTask {
                 task.cancel()
-                trendTask = Task { [weak self] in
-                    await self?.runTrendLoop()
-                }
+                startTrendLoop()
             }
         }
     }
@@ -123,6 +121,9 @@ public final class ComputeModel {
     /// Tickets refreshes so a slower earlier one can never republish.
     private var request = 0
     private var trendTask: Task<Void, Never>?
+    /// Bumped each time a trend loop replaces the last; a tick that
+    /// outlives its loop must not write the meters or the history.
+    private var trendGeneration = 0
     /// Whether the matcher list has ever loaded, so a trend tick does not
     /// respawn `swe list` every interval when nothing is starred.
     private var matchersLoaded = false
@@ -223,16 +224,25 @@ public final class ComputeModel {
     /// once at launch; the page's own three-second refresh is untouched.
     public func startTrends() {
         guard trendTask == nil else { return }
+        startTrendLoop()
+    }
+
+    /// Spawn the loop for a new generation; ticks from an older one are
+    /// dropped even if the cancelled task resumes first.
+    private func startTrendLoop() {
+        trendGeneration += 1
+        let generation = trendGeneration
         trendTask = Task { [weak self] in
-            await self?.runTrendLoop()
+            await self?.runTrendLoop(generation: generation)
         }
     }
 
-    /// One tick, then sleep the interval, until cancelled. Tests call it
-    /// with a sleep that throws once enough ticks have run.
-    func runTrendLoop() async {
-        while !Task.isCancelled {
-            await trendTick(at: clock())
+    /// One tick, then sleep the interval, until cancelled or replaced.
+    /// Tests call it with a sleep that throws once enough ticks have run.
+    func runTrendLoop(generation: Int = 0) async {
+        while !Task.isCancelled, generation == trendGeneration {
+            await trendTick(at: clock(), generation: generation)
+            guard !Task.isCancelled, generation == trendGeneration else { return }
             do {
                 try await trendSleep(.seconds(trendInterval.seconds))
             } catch {
@@ -241,23 +251,33 @@ public final class ComputeModel {
         }
     }
 
+    /// Whether a tick from `generation` lost its loop: its task is dead
+    /// or a newer loop has taken over, so it must not write shared state.
+    private func replaced(_ generation: Int?) -> Bool {
+        Task.isCancelled || (generation != nil && generation != trendGeneration)
+    }
+
     /// One trend point per running harness, aggregated exactly the way the
     /// cards count. A tick whose last sample is still fresh (newer than
     /// half the interval) reuses it rather than sampling again, so the
     /// page being open never doubles the sampling cost.
-    func trendTick(at now: Date) async {
+    func trendTick(at now: Date, generation: Int? = nil) async {
         // Load the list once ever; a failed load may retry once a minute.
         if !matchersLoaded && (matchersFailedAt.map { now.timeIntervalSince($0) >= 60 } ?? true) {
             await loadMatchers()
+            if replaced(generation) { return }
         }
         let freshEnough = sampledAt.map { now.timeIntervalSince($0) <= trendInterval.seconds / 2 } ?? false
         if !freshEnough {
-            // A stale finish is discarded inside; either way the newest
-            // accepted sample is what the point below describes.
-            accept(await takeSample())
+            let sampled = await takeSample()
+            // A stale finish is discarded inside; a tick whose loop was
+            // replaced must not touch the meters or the history at all.
+            if replaced(generation) { return }
+            accept(sampled)
         }
         let gpu = gpuSampler
         let times = await runOffPool { gpu.times() }
+        if replaced(generation) { return }
         let gpuAt = clock()
         if !times.isEmpty { gpuAvailable = true }
         let gpuPercent = gpuMeter.update(times, at: gpuAt)
