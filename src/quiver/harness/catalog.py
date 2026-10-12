@@ -30,7 +30,8 @@ HARNESS_CATALOG: dict[str, dict] = {
         "description": "OpenAI's, OS-level sandbox by default, network off unless approved",
         "tags": ["agentic", "coding", "byok"],
         "aliases": ["cx"],
-        "primary_color": "#B1A7FF",
+        # The logo's middle stop and the blue the app already shows.
+        "primary_color": "#7A9DFF",
     },
     "gemini": {
         "command": "gemini",
