@@ -267,6 +267,46 @@ import Testing
         #expect(defaults.integer(forKey: TrendInterval.defaultsKey) == 300)
     }
 
+    @MainActor @Test func aTickLoadsTheMatcherListOnlyOnce() async {
+        // Nothing starred: the loader answers empty. Five ticks must not
+        // respawn `swe list` five times.
+        final class Empty: @unchecked Sendable { var calls = 0 }
+        let empty = Empty()
+        let clock = Clock(Self.now)
+        let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
+        let model = ComputeModel(sampler: sampler, matchers: { empty.calls += 1; return [] },
+                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 selfPID: 99)
+        for _ in 0..<5 { await model.trendTick(at: clock.now) }
+        #expect(empty.calls == 1)
+    }
+
+    @MainActor @Test func aFailedMatcherLoadRetriesOnceAMinute() async {
+        final class Failing: @unchecked Sendable { var calls = 0 }
+        struct LoaderError: Error {}
+        let failing = Failing()
+        let clock = Clock(Self.now)
+        let model = ComputeModel(sampler: CountingSampler([]),
+                                 matchers: { failing.calls += 1; throw LoaderError() },
+                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 selfPID: 99)
+        await model.trendTick(at: clock.now)
+        #expect(failing.calls == 1)
+        // Inside the minute: no retry.
+        clock.now = Self.now.addingTimeInterval(30)
+        await model.trendTick(at: clock.now)
+        #expect(failing.calls == 1)
+        // Past it: one retry, then quiet again.
+        clock.now = Self.now.addingTimeInterval(61)
+        await model.trendTick(at: clock.now)
+        #expect(failing.calls == 2)
+        clock.now = Self.now.addingTimeInterval(70)
+        await model.trendTick(at: clock.now)
+        #expect(failing.calls == 2)
+    }
+
     @MainActor @Test func aTickAggregatesMemoryLikeTheCardsDo() async {
         let clock = Clock(Self.now)
         let procs = [Self.proc(10, 1, path: "/opt/homebrew/bin/claude", mem: 3 << 30),

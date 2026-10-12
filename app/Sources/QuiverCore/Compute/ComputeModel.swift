@@ -110,6 +110,11 @@ public final class ComputeModel {
     /// Tickets refreshes so a slower earlier one can never republish.
     private var request = 0
     private var trendTask: Task<Void, Never>?
+    /// Whether the matcher list has ever loaded, so a trend tick does not
+    /// respawn `swe list` every interval when nothing is starred.
+    private var matchersLoaded = false
+    /// When a matcher load last failed; a tick may retry once a minute.
+    private var matchersFailedAt: Date?
 
     public init(sampler: any ProcessSampling,
                 matchers: @escaping @Sendable () async throws -> [HarnessMatcher],
@@ -139,8 +144,11 @@ public final class ComputeModel {
         managedPIDsLoadedAt = .now
         do {
             matchers = try await matcherLoader()
+            matchersLoaded = true
+            matchersFailedAt = nil
             if error != nil { error = nil }
         } catch {
+            matchersFailedAt = clock()
             self.error = error.localizedDescription
         }
     }
@@ -197,7 +205,10 @@ public final class ComputeModel {
     /// half the interval) reuses it rather than sampling again, so the
     /// page being open never doubles the sampling cost.
     func trendTick(at now: Date) async {
-        if matchers.isEmpty { await loadMatchers() }
+        // Load the list once ever; a failed load may retry once a minute.
+        if !matchersLoaded && (matchersFailedAt.map { now.timeIntervalSince($0) >= 60 } ?? true) {
+            await loadMatchers()
+        }
         let freshEnough = sampledAt.map { now.timeIntervalSince($0) <= trendInterval.seconds / 2 } ?? false
         if !freshEnough {
             let sampler = self.sampler
