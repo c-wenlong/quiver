@@ -277,13 +277,15 @@ final class GateTransport: HTTPTransport {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        state.withLock { s in
-            s.inFlight += 1
-            s.peak = max(s.peak, s.inFlight)
-            s.requests.append(request)
-        }
+        // Count and park under one lock: a release between the two could
+        // run before the waiter existed and leave this send parked.
         await withCheckedContinuation { waiter in
-            state.withLock { $0.waiters.append(waiter) }
+            state.withLock { s in
+                s.inFlight += 1
+                s.peak = max(s.peak, s.inFlight)
+                s.requests.append(request)
+                s.waiters.append(waiter)
+            }
         }
         state.withLock { $0.inFlight -= 1 }
         return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200,
