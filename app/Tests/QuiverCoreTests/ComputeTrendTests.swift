@@ -163,6 +163,48 @@ import Testing
         init(_ now: Date) { self.now = now }
     }
 
+    /// Signals that a gated fake has parked, so a test awaits the park
+    /// on a continuation instead of spinning the cooperative pool with
+    /// yield loops. `wait` gives up after ten seconds so a fake that
+    /// never parks fails the test rather than hanging the suite.
+    actor GateFlag {
+        private var raised = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func raise() {
+            guard !raised else { return }
+            raised = true
+            let pending = waiters
+            waiters = []
+            for waiter in pending { waiter.resume() }
+        }
+
+        func wait() async -> Bool {
+            if raised { return true }
+            return await withTaskGroup(of: Bool.self) { group in
+                group.addTask { await self.park(); return true }
+                group.addTask {
+                    try? await Task.sleep(for: .seconds(10))
+                    return false
+                }
+                let first = await group.next() ?? false
+                group.cancelAll()
+                await self.drain()
+                return first
+            }
+        }
+
+        private func park() async {
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        private func drain() {
+            let pending = waiters
+            waiters = []
+            for waiter in pending { waiter.resume() }
+        }
+    }
+
     final class CountingSampler: ProcessSampling, @unchecked Sendable {
         var table: [ProcessSample]
         var calls = 0
@@ -195,8 +237,12 @@ import Testing
         private var held: DispatchSemaphore?
         private(set) var parked = false
         private let lock = NSLock()
+        private let flag = GateFlag()
 
         init(_ table: [Int32: UInt64]) { self.table = table }
+
+        /// Suspends until a gated read parks, no pool thread held.
+        func waitForPark() async -> Bool { await flag.wait() }
 
         func gateNext() {
             lock.lock()
@@ -218,6 +264,7 @@ import Testing
             // must not clear the state a parked call is waiting under.
             if gate != nil { held = gate; parked = true }
             lock.unlock()
+            if gate != nil { Task { await flag.raise() } }
             gate?.wait()
             if gate != nil {
                 lock.lock()
@@ -247,8 +294,12 @@ import Testing
         private var held: DispatchSemaphore?
         private(set) var parked = false
         private let lock = NSLock()
+        private let flag = GateFlag()
 
         init(_ table: [ProcessSample]) { self.table = table }
+
+        /// Suspends until a gated sample parks, no pool thread held.
+        func waitForPark() async -> Bool { await flag.wait() }
 
         /// The next sample() call, and only that one, blocks until
         /// `release()`.
@@ -273,6 +324,7 @@ import Testing
             // must not clear the state a parked call is waiting under.
             if gate != nil { held = gate; parked = true }
             lock.unlock()
+            if gate != nil { Task { await flag.raise() } }
             gate?.wait()
             if gate != nil {
                 lock.lock()
@@ -290,14 +342,6 @@ import Testing
             armed = nil
             lock.unlock()
             gate?.signal()
-        }
-
-        /// Take the gate away entirely, so nothing can park on it when a
-        /// test stops waiting for the gated call.
-        func disarm() {
-            lock.lock()
-            armed = nil
-            lock.unlock()
         }
     }
 
@@ -488,10 +532,7 @@ import Testing
         // Wait for the tick's sample to take the gate: only it can park,
         // since the refresh below has not started yet. A parked tick has
         // consumed `armed`, so the refresh can never gate instead.
-        let deadline = Date().addingTimeInterval(10)
-        while !sampler.isParked, Date() < deadline { await Task.yield() }
-        if !sampler.isParked { sampler.disarm() }
-        #expect(sampler.isParked)
+        #expect(await sampler.waitForPark())
 
         clock.now = Self.now.addingTimeInterval(135)
         sampler.table = [Self.proc(10, 1, path: claudeBin, cpu: 200_000_000_000)]
@@ -573,34 +614,28 @@ import Testing
     }
 
     @MainActor @Test func aReplacedLoopsTickCannotWriteBack() async {
-        // The old loop's tick is parked on its GPU read while the
-        // replacement loop ticks to completion; releasing it must not
-        // let it touch the meter or the history.
+        // Generation zero's tick is parked on its GPU read while the
+        // interval change makes it stale; releasing it must not let it
+        // touch the meter or the history.
         let clock = Clock(Self.now)
         let claudeBin = "/opt/homebrew/bin/claude"
         let sampler = CountingSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
         let gpu = GateGPU([10: 1_000])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
                                  gpu: gpu, clock: { clock.now },
-                                 sleep: { _ in try await Task.sleep(for: .seconds(3_600)) },
                                  defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                                  selfPID: 99)
         await model.loadMatchers()
 
-        // Generation one's tick: samples, then parks on the GPU read.
+        // Generation zero's tick: samples, then parks on the GPU read.
         gpu.gateNext()
-        model.startTrends()
-        let deadline = Date().addingTimeInterval(10)
-        while !gpu.isParked, Date() < deadline { await Task.yield() }
-        #expect(gpu.isParked)
+        let staleTick = Task { await model.trendTick(at: clock.now, generation: 0) }
+        #expect(await gpu.waitForPark())
 
-        // The interval change cancels it and generation two ticks
-        // through to the end: its first GPU sighting counts no percent.
+        // The interval change ends generation zero; generation one's tick
+        // runs to the end: a first GPU sighting counts no percent.
         model.trendInterval = .threeSeconds
-        let writeDeadline = Date().addingTimeInterval(10)
-        while model.history.points(for: "claude").isEmpty, Date() < writeDeadline {
-            await Task.yield()
-        }
+        await model.trendTick(at: clock.now, generation: 1)
         #expect(model.history.points(for: "claude").count == 1)
         #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
 
@@ -609,7 +644,7 @@ import Testing
         clock.now = Self.now.addingTimeInterval(20)
         gpu.table = [10: 3_000]
         gpu.release()
-        for _ in 0..<1_000 { await Task.yield() }
+        await staleTick.value
         #expect(model.history.points(for: "claude").count == 1)
         #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
     }

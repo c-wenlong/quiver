@@ -79,7 +79,9 @@ public final class ComputeModel {
     public var trendInterval: TrendInterval {
         didSet {
             trendInterval.save(to: defaults)
-            // A loop parked on the old interval must not wait it out.
+            // Invalidate every tick still in flight, then wake a parked
+            // loop rather than let it sleep out the old interval.
+            trendGeneration += 1
             if let task = trendTask {
                 task.cancel()
                 startTrendLoop()
@@ -227,10 +229,9 @@ public final class ComputeModel {
         startTrendLoop()
     }
 
-    /// Spawn the loop for a new generation; ticks from an older one are
-    /// dropped even if the cancelled task resumes first.
+    /// Spawn the loop for the current generation; ticks from an older
+    /// one are dropped even if the cancelled task resumes first.
     private func startTrendLoop() {
-        trendGeneration += 1
         let generation = trendGeneration
         trendTask = Task { [weak self] in
             await self?.runTrendLoop(generation: generation)
@@ -239,7 +240,8 @@ public final class ComputeModel {
 
     /// One tick, then sleep the interval, until cancelled or replaced.
     /// Tests call it with a sleep that throws once enough ticks have run.
-    func runTrendLoop(generation: Int = 0) async {
+    func runTrendLoop(generation: Int? = nil) async {
+        let generation = generation ?? trendGeneration
         while !Task.isCancelled, generation == trendGeneration {
             await trendTick(at: clock(), generation: generation)
             guard !Task.isCancelled, generation == trendGeneration else { return }
