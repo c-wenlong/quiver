@@ -100,13 +100,21 @@ import Testing
         #expect(env["PATH"] == "/usr/bin:/bin")
     }
 
-    @Test func sweOverridesAreDroppedWhenTheShellAnswers() async {
+    @Test func sweOverridesAreDroppedWhenTheShellAnswers() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shell = dir.appending(path: "fake-shell")
+        try "#!/bin/sh\necho PATH=/fake/answered/bin\necho SWE_RATE_LIMITS_TTL=inf\n"
+            .write(to: shell, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
         let env = await LoginShell.resolve(
-            shell: "/bin/zsh",
+            shell: shell.path,
             base: ["PATH": "/usr/bin:/bin", "SWE_RATE_LIMITS_TTL": "inf", "HOME": "/tmp"],
             timeout: .seconds(5))
+        #expect(env["PATH"] == "/fake/answered/bin")
         #expect(env["SWE_RATE_LIMITS_TTL"] == nil)
         #expect(env["HOME"] == "/tmp")
-        #expect(env["PATH"] != nil)
     }
 }
