@@ -53,3 +53,30 @@ public struct Heatmap: Sendable, Equatable {
         }
     }
 }
+
+/// Which cell the hover bubble belongs to and where it goes. Pure so every
+/// cell in a grid can be exercised at once.
+public enum HeatmapHover {
+    /// The day's cell plus the bubble's center in grid coordinates, clamped
+    /// so the bubble stays fully inside the grid: sideways first, then
+    /// flipped under the cell when the top row leaves no room above.
+    /// Nil when the day is not a drawn cell or has no measured frame.
+    public static func resolve(
+        day: Date, cells: [Heatmap.Cell], frames: [Date: CGRect],
+        gridSize: CGSize, bubbleSize: CGSize
+    ) -> (cell: Heatmap.Cell, origin: CGPoint)? {
+        guard let cell = cells.first(where: { $0.day == day }),
+              let frame = frames[day] else { return nil }
+        let gap: CGFloat = 6
+        let inset: CGFloat = 4
+        let half = bubbleSize.width / 2
+        let low = half + inset
+        let high = max(low, gridSize.width - half - inset)
+        let x = min(max(frame.midX, low), high)
+        let above = frame.minY - gap - bubbleSize.height / 2
+        let y = above - bubbleSize.height / 2 < inset
+            ? frame.maxY + gap + bubbleSize.height / 2
+            : above
+        return (cell, CGPoint(x: x, y: y))
+    }
+}
