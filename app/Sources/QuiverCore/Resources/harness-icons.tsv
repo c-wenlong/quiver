@@ -6,6 +6,7 @@ blackbox	mono	https://docs.blackbox.ai/favicon.svg	trademark, no licence stated	
 cerebras	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cerebras.svg	MIT (LobeHub icons); Cerebras trademark	Cerebras mark
 claude	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/claude-color.svg	MIT (LobeHub icons)	Anthropic Claude mark in its brand orange, as TokenTracker shows it
 cline	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cline.svg	MIT (LobeHub icons); cline/cline Apache-2.0	filled robot mark; outline variant exists at cline/cline assets/branding/logos/cline-icon-dark.svg
+cloudflare	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cloudflare-color.svg	MIT (LobeHub icons); Cloudflare trademark	Cloudflare colour mark
 codex	color	TokenTracker dashboard/public/brand-logos/codex.svg	MIT (TokenTracker)	OpenAI Codex colour mark
 commandcode	color	TokenTracker dashboard/public/brand-logos/commandcode.svg	MIT (TokenTracker)	Command Code mark, white on its black tile
 continue	mono	https://raw.githubusercontent.com/continuedev/continue/main/docs/logo/light.svg	Apache-2.0 repo; logo trademark	hexagon mark, black fill; docs/logo/dark.svg is the white variant
@@ -28,6 +29,7 @@ kiro	mono	TokenTracker dashboard/public/brand-logos/kiro.svg	MIT (TokenTracker)	
 minimax	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/minimax-color.svg	MIT (LobeHub icons); MiniMax trademark	MiniMax colour mark
 mistral-vibe	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mistral-color.svg	MIT (LobeHub icons); Mistral AI trademark	Mistral colour mark
 nebius	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nebius.svg	MIT (LobeHub icons); Nebius trademark	Nebius mark
+npm	mono	https://unpkg.com/simple-icons@16.34.0/icons/npm.svg	CC0-1.0 (Simple Icons); npm trademark	npm mark
 nvidia	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nvidia-color.svg	MIT (LobeHub icons); NVIDIA trademark	NVIDIA colour mark
 openai	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/openai.svg	MIT (LobeHub icons); OpenAI trademark	OpenAI mark
 opencode	color	TokenTracker dashboard/public/brand-logos/opencode.svg	MIT (TokenTracker)	OpenCode mark in its purple

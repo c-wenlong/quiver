@@ -7,6 +7,7 @@ import SwiftUI
 /// with affected components and open incidents underneath.
 struct ServiceStatusPage: View {
     @Environment(AppModel.self) private var app
+    @State private var adding = false
 
     private var model: ServiceStatusModel { app.serviceStatus }
 
@@ -22,22 +23,114 @@ struct ServiceStatusPage: View {
                 .iconButton()
                 .disabled(model.isLoading)
                 .help("Check every status page now")
+            Button("Add service", systemImage: "plus") { adding = true }
+                .primaryButton()
         } content: {
             ForEach(model.groups, id: \.group) { entry in
                 VStack(alignment: .leading, spacing: 12) {
                     Text(entry.group.title).font(Theme.cardTitle).foregroundStyle(Theme.textSecondary)
                     EqualRowGrid(minimumColumnWidth: 360, spacing: Theme.gutter) {
                         ForEach(entry.statuses) { status in
-                            ServiceCard(status: status, isLoading: model.isLoading)
+                            ServiceCard(status: status, isLoading: model.isLoading,
+                                        remove: status.service.isCustom
+                                            ? { model.remove(id: status.id) } : nil)
                         }
                     }
                 }
             }
-            Text("Read from each provider's public status page, at most every five minutes. Gemini comes from Google Cloud's status feed, which covers the Gemini API.")
+            Text("Read from each provider's public status page, at most every five minutes. Gemini comes from Google Cloud's status feed, which covers the Gemini API. Pages you add are checked the same way.")
                 .font(Theme.caption)
                 .foregroundStyle(Theme.textMuted)
         }
         .task { await model.load(force: false) }
+        .sheet(isPresented: $adding) {
+            AddServiceSheet(
+                check: { await model.probe($0) },
+                add: { name, pageURL, group in
+                    Task { await model.add(name: name, pageURL: pageURL, group: group) }
+                })
+        }
+    }
+}
+
+/// The "Track a status page" sheet: name, address and group, with a Check
+/// button that reads the page's summary.json before Add is allowed.
+private struct AddServiceSheet: View {
+    var check: (String) async -> ServiceStatusService.ProbeResult
+    var add: (String, URL, StatusService.Group) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var address = ""
+    @State private var group = StatusService.Group.providers
+    @State private var checking = false
+    /// The last Check's answer, cleared when the address is edited.
+    @State private var checked: ServiceStatusService.ProbeResult?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Track a status page").font(Theme.sectionTitle).tracking(-0.5)
+            TextField("Name, like OpenRouter", text: $name)
+                .quiverField()
+            TextField("https://status.example.com", text: $address)
+                .quiverField()
+                .onChange(of: address) { checked = nil }
+            HStack {
+                Button("Check") { runCheck() }
+                    .secondaryButton()
+                    .disabled(checking || address.trimmingCharacters(in: .whitespaces).isEmpty)
+                if checking {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            switch checked {
+            case .ok(let pageURL, let report):
+                HStack(spacing: 8) {
+                    HealthDot(health: report.health)
+                    Text("\(report.health.title) · Reads \(pageURL.host() ?? pageURL.absoluteString)")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            case .failure(let problem):
+                Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
+            case nil:
+                EmptyView()
+            }
+            Tabs(options: [(.providers, "AI providers"), (.infrastructure, "Infrastructure")],
+                 selection: $group)
+            Text("AI providers also show in the menu bar when they have an incident.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .secondaryButton()
+                Button("Add") {
+                    if case .ok(let pageURL, _) = checked {
+                        add(name.trimmingCharacters(in: .whitespaces), pageURL, group)
+                    }
+                    dismiss()
+                }
+                .primaryButton()
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdd)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private var canAdd: Bool {
+        if case .ok = checked { return !name.trimmingCharacters(in: .whitespaces).isEmpty }
+        return false
+    }
+
+    private func runCheck() {
+        checking = true
+        let text = address
+        Task {
+            let result = await check(text)
+            // The user may have kept typing while the check ran.
+            if address == text { checked = result }
+            checking = false
+        }
     }
 }
 
@@ -92,7 +185,10 @@ private struct EqualRowGrid: Layout {
 private struct ServiceCard: View {
     var status: ServiceStatus
     var isLoading: Bool
+    /// Set for a page the user added; built-ins cannot be removed.
+    var remove: (() -> Void)? = nil
     @State private var hovering = false
+    @State private var confirmingRemove = false
     @Environment(\.openURL) private var openURL
 
     private static let nameFont = Font.system(size: 16, weight: .medium)
@@ -102,7 +198,6 @@ private struct ServiceCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                // Infrastructure (npm, Vercel, Cloudflare) has no harness logo: name only.
                 if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 16) }
                 Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 8)
@@ -111,6 +206,24 @@ private struct ServiceCard: View {
                     .plainButton(cornerRadius: 4)
                     .foregroundStyle(Theme.textSecondary)
                     .help(status.service.pageURL.absoluteString)
+                if let remove {
+                    Menu {
+                        Button("Remove…") { confirmingRemove = true }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: 24, height: 20)
+                            .contentShape(.rect)
+                    }
+                    .menuStyle(.button)
+                    .plainButton(cornerRadius: 6)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("More")
+                    .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
+                        Button("Stop tracking", role: .destructive, action: remove)
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 4) {

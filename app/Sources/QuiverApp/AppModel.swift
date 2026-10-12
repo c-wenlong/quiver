@@ -223,7 +223,8 @@ final class AppModel {
         pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
                                            work: pluginWork, disclosure: UserDefaultsStore())
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
-            transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")))
+            transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")),
+            store: CustomStatusServices())
         providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {
             // swe's installed harnesses, plus the extra providers' own signs.
             let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)

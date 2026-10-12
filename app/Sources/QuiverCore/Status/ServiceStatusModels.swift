@@ -123,7 +123,7 @@ public struct ServiceStatus: Sendable, Equatable, Identifiable {
 
 /// A status page Quiver reads.
 public struct StatusService: Sendable, Hashable, Identifiable {
-    public enum Group: Sendable, Hashable, CaseIterable {
+    public enum Group: String, Sendable, Hashable, CaseIterable, Codable {
         /// The model providers and tools the harnesses run on. Only these
         /// reach the menu bar.
         case providers
@@ -152,6 +152,9 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     public var pageURL: URL
     public var feed: Feed
     public var group: Group
+    /// A page the user added rather than a built-in entry. Customs are the
+    /// only ones that can be removed, and they persist in preferences.
+    public var isCustom = false
     /// Where the reading comes from, when that is not obvious from the name.
     public var note: String?
 
@@ -167,14 +170,26 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     /// Status pages whose logo is filed under the harness's own id.
     static let logoIDs = ["openai": "codex", "github": "copilot"]
 
-    /// The bundled harness logo for this service, or nil when there is none
-    /// (npm, Vercel and Cloudflare are not harnesses, so they show no icon;
-    /// the bundle now holds provider-only marks too, which an infrastructure
-    /// row must never pick up by name).
+    /// The bundled mark for this service, or nil when there is none. A
+    /// custom page is matched on its name first ("OpenRouter" finds
+    /// openrouter), then on its id like a built-in page.
     public var logoID: String? {
-        guard group == .providers else { return nil }
+        if isCustom, let id = APIKeyProviderLogo.logoID(for: name) { return id }
         let id = Self.logoIDs[id] ?? id
         return HarnessIcons.icon(for: id) != nil ? id : nil
+    }
+
+    /// "custom-groq-cloud" for "Groq Cloud": lowercased, non-alphanumerics
+    /// as "-", trimmed, then "-2", "-3"... while `taken` already holds it.
+    static func customID(for name: String, taken: Set<String>) -> String {
+        let slug = name.lowercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : "-" }
+            .reduce(into: "") { if $1 != "-" || $0.last != "-" { $0.append($1) } }
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let base = "custom-\(slug.isEmpty ? "page" : slug)"
+        var id = base, n = 2
+        while taken.contains(id) { id = "\(base)-\(n)"; n += 1 }
+        return id
     }
 
     private static func statuspage(_ id: String, _ name: String, _ base: String, _ group: Group) -> StatusService {

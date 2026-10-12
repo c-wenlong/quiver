@@ -405,15 +405,203 @@ private func openGeminiIncident() throws -> Data {
         #expect(ServiceStatusSummary.affected([try status("claude", .operational)]).isEmpty)
     }
 
-    /// Pages filed under a harness's id draw its logo; infrastructure has none.
+    /// Pages filed under a harness's or provider's id draw its logo,
+    /// infrastructure pages included.
     @Test func logoIDsMapPagesToHarnessLogos() throws {
         #expect(try service("claude").logoID == "claude")
         #expect(try service("openai").logoID == "codex")
         #expect(try service("github").logoID == "copilot")
         #expect(try service("gemini").logoID == "gemini")
-        #expect(try service("npm").logoID == nil)
-        #expect(try service("vercel").logoID == nil)
-        #expect(try service("cloudflare").logoID == nil)
+        #expect(try service("npm").logoID == "npm")
+        #expect(try service("vercel").logoID == "vercel")
+        #expect(try service("cloudflare").logoID == "cloudflare")
+    }
+
+    /// A custom page is matched on its name first, so "OpenRouter" finds
+    /// the openrouter mark while "Acme" finds nothing.
+    @Test func customServicesMatchLogosByName() throws {
+        let openRouter = StatusService(
+            id: "custom-openrouter", name: "OpenRouter",
+            pageURL: URL(string: "https://status.openrouter.ai")!,
+            feed: .statuspage(URL(string: "https://status.openrouter.ai/api/v2/summary.json")!),
+            group: .providers, isCustom: true)
+        #expect(openRouter.logoID == "openrouter")
+        let acme = StatusService(
+            id: "custom-acme", name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+            feed: .statuspage(URL(string: "https://status.acme.test/api/v2/summary.json")!),
+            group: .infrastructure, isCustom: true)
+        #expect(acme.logoID == nil)
+    }
+}
+
+/// The status pages the user adds: slugs, storage, the model's add/remove
+/// and the sheet's Check button.
+@Suite struct CustomStatusTests {
+    private func customService(_ id: String, _ name: String, _ group: StatusService.Group = .providers)
+        -> StatusService {
+        let page = URL(string: "https://status.example.com")!
+        return StatusService(id: id, name: name, pageURL: page,
+                             feed: .statuspage(page.appending(path: "api/v2/summary.json")),
+                             group: group, isCustom: true)
+    }
+
+    private func probeService(_ transport: FakeTransport,
+                              resolve: @escaping @Sendable (URL) async -> URL? = { $0 })
+        -> ServiceStatusService {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        return ServiceStatusService(transport: transport,
+                                    cacheURL: dir.appending(path: "service-status.json"),
+                                    redirectResolver: resolve)
+    }
+
+    @Test func customIDsSlugTheNameAndStayUnique() {
+        #expect(StatusService.customID(for: "Groq Cloud", taken: []) == "custom-groq-cloud")
+        #expect(StatusService.customID(for: "ZAI (01.ai)", taken: []) == "custom-zai-01-ai")
+        #expect(StatusService.customID(for: "Acme", taken: ["custom-acme", "custom-acme-2"])
+            == "custom-acme-3")
+        // An id already used by a built-in or another custom moves on too.
+        #expect(StatusService.customID(for: "Claude", taken: ["custom-claude"]) == "custom-claude-2")
+    }
+
+    @Test func storeRoundTripsThroughUserDefaults() throws {
+        let suite = "quiver-test-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = CustomStatusServices(defaults: defaults)
+        #expect(store.load().isEmpty)
+        let acme = customService("custom-acme", "Acme", .infrastructure)
+        store.save([acme])
+        #expect(try #require(store.load().first) == acme)
+        // Only customs are ever written; a built-in passed in is dropped.
+        store.save([acme, try service("claude")])
+        #expect(store.load().map(\.id) == ["custom-acme"])
+    }
+
+    @Test func badStoreDataReadsAsEmpty() throws {
+        let suite = "quiver-test-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = CustomStatusServices(defaults: defaults)
+        defaults.set(Data("<not json".utf8), forKey: CustomStatusServices.defaultsKey)
+        #expect(store.load().isEmpty)
+        defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":"https://x.test","group":"bogus"}]"#.utf8),
+                     forKey: CustomStatusServices.defaultsKey)
+        #expect(store.load().isEmpty)
+    }
+
+    /// Adding puts the card in its group as unknown until the load fills
+    /// it in, persists it, and lets the poll floors fetch it right away.
+    @MainActor @Test func addStoresFetchesAndGroupsTheService() async throws {
+        let clock = TestClock()
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let memory = MemoryStatusStore()
+        let model = ServiceStatusModel(
+            service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
+                                        cacheURL: dir.appending(path: "service-status.json"),
+                                        now: { clock.now }),
+            store: memory)
+        let added = await model.add(name: "OpenRouter",
+                                    pageURL: URL(string: "https://status.openrouter.ai")!,
+                                    group: .providers)
+        #expect(added.id == "custom-openrouter")
+        #expect(added.isCustom)
+        #expect(added.feedURL.absoluteString == "https://status.openrouter.ai/api/v2/summary.json")
+        #expect(model.services.last == added)
+        #expect(memory.saved.map(\.id) == ["custom-openrouter"])
+        #expect(model.groups.first { $0.group == .providers }?.statuses.last?.service == added)
+        // The fetch ran: the card is filled, not left unknown.
+        #expect(model.statuses.last?.report?.health == .operational)
+        #expect(model.statuses.last?.checkedAt == usageEpoch)
+    }
+
+    /// Only customs can go; a built-in id is left alone.
+    @MainActor @Test func removeDropsOnlyCustomServices() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let memory = MemoryStatusStore()
+        let model = ServiceStatusModel(
+            service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
+                                        cacheURL: dir.appending(path: "service-status.json")),
+            store: memory)
+        let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+                                    group: .infrastructure)
+        model.remove(id: "claude")
+        #expect(model.services.contains { $0.id == "claude" })
+        #expect(memory.saved.map(\.id) == [added.id])
+        model.remove(id: added.id)
+        #expect(!model.services.contains { $0.id == added.id })
+        #expect(!model.statuses.contains { $0.service.id == added.id })
+        #expect(memory.saved.isEmpty)
+    }
+
+    @Test func probeReadsAStatuspageFeed() async throws {
+        let transport = FakeTransport()
+        transport.reply(200, body: try statusFixture("statuspage-github"))
+        let result = await probeService(transport).probe("status.example.com/some/path?x=1")
+        guard case .ok(let pageURL, let report) = result else {
+            Issue.record("expected ok, got \(result)")
+            return
+        }
+        #expect(pageURL == URL(string: "https://status.example.com/"))
+        #expect(report.health == .operational)
+        #expect(transport.requests.first?.url?.absoluteString
+            == "https://status.example.com/api/v2/summary.json")
+    }
+
+    /// The polling transport follows no redirects, so the probe asks the
+    /// resolver and reads the host the page actually answers at.
+    @Test func probeFollowsTheRedirectToTheFinalHost() async throws {
+        let transport = FakeTransport()
+        transport.reply(200, body: try statusFixture("statuspage-github"))
+        let result = await probeService(transport) { _ in URL(string: "https://real.example.org/deep/path") }
+            .probe("https://status.example.com/")
+        guard case .ok(let pageURL, _) = result else {
+            Issue.record("expected ok, got \(result)")
+            return
+        }
+        #expect(pageURL == URL(string: "https://real.example.org/"))
+        #expect(transport.requests.first?.url?.absoluteString
+            == "https://real.example.org/api/v2/summary.json")
+    }
+
+    @Test func probeRejectsPlainHttp() async {
+        let transport = FakeTransport()
+        let result = await probeService(transport).probe("http://status.example.com")
+        #expect(result == .failure("Use the https address of the status page."))
+        #expect(transport.requests.isEmpty)
+    }
+
+    @Test func probeExplainsAPageItCannotRead() async throws {
+        for (status, body) in [(404, Data()), (200, Data("<html>".utf8))] {
+            let transport = FakeTransport()
+            transport.reply(status, body: body)
+            let result = await probeService(transport).probe("status.example.com")
+            #expect(result == .failure("Quiver can read Atlassian Statuspage and incident.io pages, "
+                + "which serve /api/v2/summary.json. status.example.com doesn't."))
+        }
+    }
+
+    @Test func probeReportsAnUnreachableHost() async {
+        let transport = FakeTransport()
+        transport.fail()
+        let result = await probeService(transport).probe("status.example.com")
+        #expect(result == .failure("Couldn't reach status.example.com."))
+    }
+}
+
+/// Where the model's customs go, in memory.
+private final class MemoryStatusStore: CustomStatusStoring, @unchecked Sendable {
+    var saved: [StatusService] = []
+    func load() -> [StatusService] { saved }
+    func save(_ services: [StatusService]) { saved = services }
+}
+
+/// Always answers 200 with the same body: `add` polls every page, and the
+/// built-ins' answers are beside the point.
+private struct StubStatusTransport: HTTPTransport {
+    let body: Data
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                               headerFields: nil)!)
     }
 }
 
