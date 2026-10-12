@@ -2283,21 +2283,29 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
     windows = []
     for remaining_field, reset_field, label in _DEVIN_WINDOWS:
         remaining = plan.get(remaining_field)
-        if isinstance(remaining, bool):
+        reset_at = _devin_unix_to_epoch(plan.get(reset_field))
+        if remaining is None:
+            # proto3 JSON drops zero values, so a spent window arrives
+            # with only its reset time: that reads as 100% used.
+            if reset_at <= 0:
+                continue
+            remaining = 0.0
+        elif isinstance(remaining, bool):
             continue
-        try:
-            remaining = float(remaining)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(remaining):
-            continue
+        else:
+            try:
+                remaining = float(remaining)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(remaining):
+                continue
         used = 100.0 - remaining
-        windows.append(_window(label, used, _devin_unix_to_epoch(plan.get(reset_field)),
+        windows.append(_window(label, used, reset_at,
                                86400 if label == "1d" else 604800))
         if used > best_used:
             best_used = used
             best_label = label
-            best_reset = _devin_unix_to_epoch(plan.get(reset_field))
+            best_reset = reset_at
     if best_used >= 0:
         used_percent = int(round(min(100.0, max(0.0, best_used))))
         return RateLimitInfo(
