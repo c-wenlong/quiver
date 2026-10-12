@@ -185,6 +185,17 @@ import Testing
         #expect(state == GitState(isRepo: false))
     }
 
+    @Test func aFolderInsideAnotherRepoIsStillNotARepo() async throws {
+        let dir = try tempDir()
+        try git("init", in: dir)
+        try git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x", in: dir)
+        let sub = try mkdir("server", in: dir)
+        try "x".write(to: sub.appending(path: "notes.txt"), atomically: true, encoding: .utf8)
+        // Without its own .git, git status would report the parent repo.
+        let state = await McpServerRepo.gitState(of: sub)
+        #expect(state == GitState(isRepo: false))
+    }
+
     // MARK: - model
 
     @Test @MainActor func loadPublishesServersWithHubNamesAndGit() async throws {

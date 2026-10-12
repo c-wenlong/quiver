@@ -175,6 +175,12 @@ public enum McpServerRepo {
     }
 
     private static func gitStateSync(of url: URL) -> GitState {
+        // Without its own .git (a directory, or a file for worktrees and
+        // submodules), `git status` would report the enclosing repository's
+        // state — e.g. quiver-hub's, for folders under ~/.quiver.
+        guard FileManager.default.fileExists(atPath: url.appending(path: ".git").path) else {
+            return GitState(isRepo: false)
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", url.path, "status", "--porcelain=v1", "--branch"]
