@@ -246,10 +246,23 @@ private struct PanelIconButton: View {
     }
 }
 
-/// Every account's windows, then the harnesses swe reports, less whatever
-/// the Menu bar and widgets page hides.
+/// Every account's and harness's windows in the order dragged on the
+/// Menu bar and widgets page, less whatever the page hides.
 private struct PanelLimits: View {
     @Environment(AppModel.self) private var app
+
+    /// One shown account or harness row, as the popup lists them.
+    private enum PanelEntry: Identifiable {
+        case account(AccountsModel.Card)
+        case harness(OtherLimitsModel.Row)
+
+        var id: String {
+            switch self {
+            case .account(let card): "account:\(card.id)"
+            case .harness(let row): "harness:\(row.id)"
+            }
+        }
+    }
 
     /// Accounts whose harness is shown and that have something left to show:
     /// a shown window, or no windows at all (so its status line explains why).
@@ -270,11 +283,24 @@ private struct PanelLimits: View {
         }
     }
 
+    /// Every shown id in the dragged order: each vendor's cards, then the
+    /// other harnesses' rows, interleaved where the user put them.
+    private var entries: [PanelEntry] {
+        let ids = app.popup.ordered(unique(cards.map { $0.profile.vendor.rawValue }) + others.map(\.name))
+        return ids.flatMap { id in
+            cards.filter { $0.profile.vendor.rawValue == id }.map(PanelEntry.account)
+                + others.filter { $0.name == id }.map(PanelEntry.harness)
+        }
+    }
+
     var body: some View {
         let others = others
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(cards) { card in
-                PanelAccountRow(card: card)
+            ForEach(entries) { entry in
+                switch entry {
+                case .account(let card): PanelAccountRow(card: card)
+                case .harness(let row): PanelOtherRow(row: row)
+                }
             }
             // Limits exist but every one is hidden: say where to bring them
             // back, ahead of "nothing starred", which would read as nothing to show.
@@ -288,12 +314,15 @@ private struct PanelLimits: View {
                      : "No limits to show yet.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            // Harnesses swe reports follow the accounts in one list: each
-            // row already carries its logo and name, so no heading.
-            ForEach(others) { row in PanelOtherRow(row: row) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+/// First-seen order, duplicates dropped.
+private func unique(_ ids: [String]) -> [String] {
+    var seen: Set<String> = []
+    return ids.filter { seen.insert($0).inserted }
 }
 
 /// Spend by harness for today, yesterday or the last 30 days.
