@@ -21,22 +21,6 @@ struct PrimitiveLockNote: View {
     }
 }
 
-/// "‹ Plugins": back to the list the detail page covers.
-struct PrimitiveBack: View {
-    var title: String
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
-                Text(title)
-            }
-        }
-        .secondaryButton()
-    }
-}
-
 /// The changed-on-disk banner, the same one the AGENTS.md editor shows:
 /// reload the version on disk or overwrite it, never save over it blind.
 private struct PrimitiveDiskBanner: View {
@@ -86,10 +70,33 @@ private struct FieldRow: View {
 /// the changed-on-disk guard is InstructionDocument's, the same stamp
 /// the file editors use.
 struct ManifestCard: View {
+    /// One labeled form row: the label and the manifest field it edits.
+    struct FieldDef: Identifiable {
+        var label: String
+        var field: WritableKeyPath<PluginManifestFields, String>
+        var id: String { label }
+    }
+
+    /// One form field per row; the card folds to `foldLimit` of them.
+    static let foldLimit = 3
+    static let fieldRows: [FieldDef] = [
+        FieldDef(label: "Description", field: \.description),
+        FieldDef(label: "Version", field: \.version),
+        FieldDef(label: "Author", field: \.authorName),
+        FieldDef(label: "Email", field: \.authorEmail),
+        FieldDef(label: "Author URL", field: \.authorURL),
+        FieldDef(label: "Homepage", field: \.homepage),
+        FieldDef(label: "Repository", field: \.repository),
+        FieldDef(label: "License", field: \.license),
+        FieldDef(label: "Keywords", field: \.keywords),
+    ]
+
     var url: URL
     var onSaved: () -> Void
     @State private var document: InstructionDocument?
     @State private var fields = PluginManifestFields()
+    /// Whether the fold is open for this card's stay on the page.
+    @State private var showsAll = false
     /// The fields as last read or saved: dirty is `fields != loaded`,
     /// which edits to `fields` alone must drive, not `document.text`.
     @State private var loaded = PluginManifestFields()
@@ -108,15 +115,22 @@ struct ManifestCard: View {
                     Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.dangerText)
                 } else {
                     Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
-                        GridRow { FieldRow(label: "Description", value: $fields.description) }
-                        GridRow { FieldRow(label: "Version", value: $fields.version) }
-                        GridRow { FieldRow(label: "Author", value: $fields.authorName) }
-                        GridRow { FieldRow(label: "Email", value: $fields.authorEmail) }
-                        GridRow { FieldRow(label: "Author URL", value: $fields.authorURL) }
-                        GridRow { FieldRow(label: "Homepage", value: $fields.homepage) }
-                        GridRow { FieldRow(label: "Repository", value: $fields.repository) }
-                        GridRow { FieldRow(label: "License", value: $fields.license) }
-                        GridRow { FieldRow(label: "Keywords", value: $fields.keywords) }
+                        ForEach(RowFold.visible(Self.fieldRows, limit: Self.foldLimit, expanded: showsAll)) { row in
+                            GridRow {
+                                FieldRow(label: row.label,
+                                         value: Binding(get: { fields[keyPath: row.field] },
+                                                        set: { fields[keyPath: row.field] = $0 }))
+                            }
+                        }
+                    }
+                    if RowFold.hiddenCount(total: Self.fieldRows.count, limit: Self.foldLimit) > 0 {
+                        ExpandRow(isExpanded: showsAll,
+                                  hidden: RowFold.hiddenCount(total: Self.fieldRows.count, limit: Self.foldLimit),
+                                  help: (expand: "Show every manifest field",
+                                         collapse: "Show the first \(Self.foldLimit) fields"),
+                                  edge: .inset) {
+                            withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
+                        }
                     }
                     ForEach(fields.problems, id: \.self) { problem in
                         Label(problem, systemImage: "exclamationmark.triangle")
@@ -183,11 +197,15 @@ struct ManifestCard: View {
 /// `name` key is the skill's id and stays read-only), the body and any
 /// line the form can't show kept byte for byte.
 struct FrontmatterCard: View {
+    /// One frontmatter field per row, folded to `foldLimit` of them.
+    static let foldLimit = 3
+
     var url: URL
     var editable: Bool
     var onSaved: () -> Void
     @State private var document: InstructionDocument?
     @State private var fields: [(key: String, value: String)] = []
+    @State private var showsAll = false
     /// The fields as last read or saved; dirty is theirs alone, since
     /// editing `fields` never touches `document.text`.
     @State private var loaded: [(key: String, value: String)] = []
@@ -208,11 +226,21 @@ struct FrontmatterCard: View {
                     Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.dangerText)
                 } else {
                     Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
-                        ForEach(fields.indices, id: \.self) { i in
+                        ForEach(RowFold.visible(Array(fields.indices), limit: Self.foldLimit,
+                                                expanded: showsAll), id: \.self) { i in
                             GridRow {
                                 FieldRow(label: fields[i].key, value: $fields[i].value,
                                          disabled: !editable || fields[i].key == "name")
                             }
+                        }
+                    }
+                    if RowFold.hiddenCount(total: fields.count, limit: Self.foldLimit) > 0 {
+                        ExpandRow(isExpanded: showsAll,
+                                  hidden: RowFold.hiddenCount(total: fields.count, limit: Self.foldLimit),
+                                  help: (expand: "Show every frontmatter field",
+                                         collapse: "Show the first \(Self.foldLimit) fields"),
+                                  edge: .inset) {
+                            withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
                         }
                     }
                     if fields.isEmpty {
@@ -277,6 +305,24 @@ struct FrontmatterCard: View {
 /// sheet over the page; binaries and anything over a megabyte can't
 /// preview.
 struct PartsCard: View {
+    /// A section header or a top-level entry is one row; the card folds
+    /// to `foldLimit` of them. An opened folder's children ride along
+    /// with its row and never count.
+    static let foldLimit = 3
+
+    /// One foldable row.
+    private enum Unit: Identifiable {
+        case header(PrimitiveTree.Section)
+        case entry(PrimitiveTree.Entry)
+
+        var id: String {
+            switch self {
+            case .header(let section): "h:" + section.kind.rawValue
+            case .entry(let entry): "e:" + entry.path
+            }
+        }
+    }
+
     var root: URL
     var editable: Bool
     /// Which "New" entries the accessory menu offers; empty for a skill.
@@ -299,6 +345,8 @@ struct PartsCard: View {
     /// at about 90% of it.
     @State private var sheetSize = CGSize(width: 1100, height: 720)
     @State private var expanded: Set<String> = []
+    /// Whether the fold is open for this card's stay on the page.
+    @State private var showsAll = false
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
     @State private var newError: String?
@@ -312,14 +360,28 @@ struct PartsCard: View {
             }
         } content: {
             if let tree {
-                ForEach(tree.sections) { section in
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("\(section.kind.title) · \(section.entries.count)")
-                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                            .padding(.bottom, 6)
-                        ForEach(section.entries) { entry in
+                let units = Self.units(of: tree)
+                let shown = RowFold.visible(units, limit: Self.foldLimit, expanded: showsAll)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, unit in
+                        switch unit {
+                        case .header(let section):
+                            Text("\(section.kind.title) · \(section.entries.count)")
+                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                .padding(.top, index == 0 ? 0 : 14)
+                                .padding(.bottom, 6)
+                        case .entry(let entry):
                             row(entry)
                         }
+                    }
+                }
+                if RowFold.hiddenCount(total: units.count, limit: Self.foldLimit) > 0 {
+                    ExpandRow(isExpanded: showsAll,
+                              hidden: RowFold.hiddenCount(total: units.count, limit: Self.foldLimit),
+                              help: (expand: "Show every file and section",
+                                     collapse: "Show the first \(Self.foldLimit) rows"),
+                              edge: .inset) {
+                        withAnimation(.easeOut(duration: 0.15)) { showsAll.toggle() }
                     }
                 }
             } else {
@@ -377,6 +439,14 @@ struct PartsCard: View {
             Button("Cancel", role: .cancel) { trashEntry = nil }
         } message: {
             Text("You can restore it from the Trash.")
+        }
+    }
+
+    /// The tree flattened for the fold: a unit per group header and per
+    /// top-level entry, in display order.
+    private static func units(of tree: PrimitiveTree) -> [Unit] {
+        tree.sections.flatMap { section in
+            [Unit.header(section)] + section.entries.map { Unit.entry($0) }
         }
     }
 
@@ -656,7 +726,6 @@ struct PluginDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PrimitiveBack(title: "Plugins", action: leave)
             if let leaveError {
                 ErrorCard(message: leaveError)
             }
@@ -676,6 +745,13 @@ struct PluginDetailView: View {
         .onAppear {
             name = app.primitiveNames.name(forPlugin: plugin.ref) ?? plugin.displayName ?? plugin.name
         }
+        .onChange(of: app.navReselects) { leave() }
+        // Invisible, but its shortcut goes back: reselecting the Explore
+        // tab or the Plugins sidebar item does it by pointer.
+        .background(Button("Back", action: leave)
+            .keyboardShortcut("[", modifiers: .command)
+            .opacity(0)
+            .accessibilityHidden(true))
         .alert("Unsaved changes", isPresented: $leaving) {
             Button("Save All") { saveAllAndLeave() }
             Button("Discard", role: .destructive) { onBack() }
@@ -716,10 +792,7 @@ struct PluginDetailView: View {
 
     private var header: some View {
         Card {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "puzzlepiece.extension.fill")
-                    .font(.system(size: 28)).foregroundStyle(Theme.accent)
-                VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         if editable {
                             TextField("Name", text: $name, onCommit: saveName)
@@ -769,10 +842,9 @@ struct PluginDetailView: View {
                         Text(description).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if let nameError {
-                        Label(nameError, systemImage: "exclamationmark.triangle")
-                            .font(Theme.caption).foregroundStyle(Theme.dangerText)
-                    }
+                if let nameError {
+                    Label(nameError, systemImage: "exclamationmark.triangle")
+                        .font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
             }
         }
@@ -838,7 +910,6 @@ struct SkillDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PrimitiveBack(title: "Skills", action: leave)
             if let leaveError {
                 ErrorCard(message: leaveError)
             }
@@ -875,6 +946,13 @@ struct SkillDetailView: View {
             }
             PartsCard(root: root, editable: editable, drafts: drafts, onChanged: reload)
         }
+        .onChange(of: app.navReselects) { leave() }
+        // Invisible, but its shortcut goes back: reselecting the Skills
+        // sidebar item does it by pointer.
+        .background(Button("Back", action: leave)
+            .keyboardShortcut("[", modifiers: .command)
+            .opacity(0)
+            .accessibilityHidden(true))
         .alert("Unsaved changes", isPresented: $leaving) {
             Button("Save All") { saveAllAndLeave() }
             Button("Discard", role: .destructive) { onBack() }

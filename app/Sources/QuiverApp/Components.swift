@@ -243,6 +243,9 @@ struct Tabs<Value: Hashable>: View {
     var onPanel = false
     /// The harness id whose logo goes before a tab's title, by tab value.
     var icons: [Value: String] = [:]
+    /// Runs on every tap, including on the tab already selected, so a
+    /// detail page under a tab can go back on a reselect.
+    var onSelect: ((Value) -> Void)? = nil
     @FocusState private var focused: Int?
 
     var body: some View {
@@ -271,7 +274,10 @@ struct Tabs<Value: Hashable>: View {
     private var buttons: some View {
         ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
             TabButton(title: option.title, icon: icons[option.value], isSelected: option.value == selection,
-                      isFocused: focused == index, style: style, onPanel: onPanel) { selection = option.value }
+                      isFocused: focused == index, style: style, onPanel: onPanel) {
+                selection = option.value
+                onSelect?(option.value)
+            }
                 .focused($focused, equals: index)
         }
     }
