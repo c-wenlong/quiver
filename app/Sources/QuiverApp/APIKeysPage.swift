@@ -24,9 +24,6 @@ struct APIKeysPage: View {
             Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
                 .primaryButton()
         } content: {
-            if let summary = checkSummary(model) {
-                Text(summary).font(Theme.caption).foregroundStyle(Theme.textMuted)
-            }
             if let error = model.error ?? actionError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
@@ -73,34 +70,6 @@ struct APIKeysPage: View {
                 revealed.remove(name)
             })
         }
-    }
-
-    /// "18 work · 2 rejected · 1 couldn't check · 3 no check", counting
-    /// only results still current for the row's value; parts with none
-    /// are left out.
-    private func checkSummary(_ model: APIKeysModel) -> String? {
-        var works = 0
-        var noCredit = 0
-        var rejected = 0
-        var failed = 0
-        var noCheck = 0
-        for row in model.rows {
-            switch model.check(for: row)?.result {
-            case .works: works += 1
-            case .noCredit: noCredit += 1
-            case .rejected: rejected += 1
-            case .couldNotCheck: failed += 1
-            case .noCheck: noCheck += 1
-            case nil: break
-            }
-        }
-        var parts: [String] = []
-        if works > 0 { parts.append("\(works) work") }
-        if noCredit > 0 { parts.append("\(noCredit) no credit") }
-        if rejected > 0 { parts.append("\(rejected) rejected") }
-        if failed > 0 { parts.append("\(failed) couldn't check") }
-        if noCheck > 0 { parts.append("\(noCheck) no check") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func table(_ model: APIKeysModel) -> some View {
@@ -198,10 +167,8 @@ private struct KeyRow: View {
                     .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .leading, spacing: 3) {
-                StatusLabel(status: row.status)
-                CheckChip(check: check, isChecking: isChecking, recheck: recheck)
-            }
+            StatusLabel(status: row.status, check: check, isChecking: isChecking,
+                        recheck: recheck)
             .frame(width: 120, alignment: .leading)
             HStack(spacing: 4) {
                 // One ring per button, so focus shows which one it's on.
@@ -219,88 +186,92 @@ private struct KeyRow: View {
     }
 }
 
-/// What the last key check said, or a spinner while it runs. Clicking
-/// asks the provider again.
-private struct CheckChip: View {
+/// Whether a new terminal gets the key, repainted by the last check:
+/// accepted goes green, refused goes red behind `xmark.circle`, and a
+/// spinner sits where the icon was while the provider is being asked.
+/// Clicking asks again, queued behind the same limiter as a full run.
+private struct StatusLabel: View {
+    var status: APIKeysModel.Status
     var check: APIKeyCheck?
     var isChecking: Bool
     var recheck: () -> Void
 
     var body: some View {
-        if isChecking {
+        Button(action: recheck) {
             HStack(spacing: 5) {
-                ProgressView().controlSize(.mini)
-                Text("Checking").foregroundStyle(Theme.textMuted)
+                if isChecking {
+                    ProgressView().controlSize(.mini)
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: symbol).foregroundStyle(iconColor)
+                }
+                Text(text).foregroundStyle(labelColor)
             }
             .font(Theme.caption)
-            .help("Asking the provider whether the key still works")
-        } else if let check {
-            Button(action: recheck) {
-                HStack(spacing: 5) {
-                    Circle().fill(tint(check.result)).frame(width: 6, height: 6)
-                    Text(label(check.result)).foregroundStyle(Theme.textSecondary)
-                }
-                .font(Theme.caption)
-            }
-            .buttonStyle(.plain)
-            .help(tooltip(check))
+        }
+        .buttonStyle(.plain)
+        .help(tooltip)
+    }
+
+    private var style: APIKeyCheckStyle { APIKeyCheckStyle(check?.result) }
+
+    private var symbol: String {
+        if style == .rejected { return "xmark.circle" }
+        return switch status {
+        case .loaded: "checkmark.circle"
+        case .overridden: "exclamationmark.triangle"
+        case .notLoaded: "minus.circle"
+        case .unknown: "questionmark.circle"
+        case .checking: "ellipsis.circle"
         }
     }
 
-    private func tint(_ result: APIKeyCheckResult) -> Color {
-        switch result {
-        case .works: return Theme.success
-        case .noCredit: return Theme.warning
-        case .rejected: return Theme.danger
-        case .couldNotCheck, .noCheck: return Theme.textMuted
+    private var iconColor: Color {
+        switch style {
+        case .success: Theme.success
+        case .rejected: Theme.danger
+        case .unchanged: statusIconColor
         }
     }
 
-    private func label(_ result: APIKeyCheckResult) -> String {
-        switch result {
-        case .works: return "Works"
-        case .noCredit: return "No credit"
-        case .rejected: return "Rejected"
-        case .couldNotCheck: return "Couldn't check"
-        case .noCheck: return "No check"
+    private var labelColor: Color {
+        switch style {
+        case .success: Theme.success
+        case .rejected: Theme.danger
+        case .unchanged: Theme.textPrimary
         }
     }
 
-    private func tooltip(_ check: APIKeyCheck) -> String {
-        let when = "Checked \(check.checkedAt.formatted(.relative(presentation: .named)))"
-        switch check.result {
-        case .works: return "The provider accepted this key. \(when)"
-        case .noCredit: return "The key works but the account has no credit. \(when)"
-        case .rejected(let status, let message):
-            return "HTTP \(status)\(message.map { ": \($0)" } ?? "") · \(when)"
-        case .couldNotCheck(let reason), .noCheck(let reason):
-            return "\(reason) · \(when)"
-        }
-    }
-}
-
-private struct StatusLabel: View {
-    var status: APIKeysModel.Status
-
-    var body: some View {
+    private var statusIconColor: Color {
         switch status {
-        case .loaded: label("Loaded", "checkmark.circle", Theme.textSecondary, help: "A new terminal gets this value.")
-        case .overridden: label("Overridden", "exclamationmark.triangle", Theme.warningText,
-                                help: "A new terminal gets a different value: something later in your shell setup sets it again.")
-        case .notLoaded: label("Not loaded", "minus.circle", Theme.textSecondary,
-                               help: "A new terminal doesn't have this variable. Is the file sourced from your shell setup?")
-        case .unknown: label("Unknown", "questionmark.circle", Theme.textMuted, help: "Quiver couldn't read your login shell.")
-        case .checking: label("Checking…", "ellipsis.circle", Theme.textMuted, help: "Starting a login shell to see what a new terminal gets.")
+        case .loaded, .notLoaded: Theme.textSecondary
+        case .overridden: Theme.warningText
+        case .unknown, .checking: Theme.textMuted
         }
     }
 
-    private func label(_ text: String, _ symbol: String, _ color: Color, help: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).foregroundStyle(color)
-            Text(text).foregroundStyle(Theme.textPrimary)
+    private var text: String {
+        switch status {
+        case .loaded: "Loaded"
+        case .overridden: "Overridden"
+        case .notLoaded: "Not loaded"
+        case .unknown: "Unknown"
+        case .checking: "Checking…"
         }
-        .font(Theme.caption)
-        .help(help)
+    }
+
+    private var tooltip: String {
+        var text = switch status {
+        case .loaded: "A new terminal gets this value."
+        case .overridden: "A new terminal gets a different value: something later in your shell setup sets it again."
+        case .notLoaded: "A new terminal doesn't have this variable. Is the file sourced from your shell setup?"
+        case .unknown: "Quiver couldn't read your login shell."
+        case .checking: "Starting a login shell to see what a new terminal gets."
+        }
+        if let check {
+            text += "\n\(check.result.words)\nChecked \(check.checkedAt.formatted(.relative(presentation: .named)))"
+        }
+        return text
     }
 }
 

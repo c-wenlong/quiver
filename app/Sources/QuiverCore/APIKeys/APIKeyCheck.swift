@@ -115,27 +115,200 @@ public enum APIKeyCheckResult: Sendable, Equatable {
     case noCheck(String)
 }
 
-/// A check's answer, when it ran, and what it ran against. In memory
-/// only: a key's health is never written anywhere.
-public struct APIKeyCheck: Sendable, Equatable {
+/// A check's answer, when it ran, and a fingerprint of what it ran
+/// against. Persisted under ~/.quiver/cache; the fingerprint is a hash
+/// of the machine's salt then the value, so the value itself is never
+/// written down.
+public struct APIKeyCheck: Sendable, Equatable, Codable {
     public var result: APIKeyCheckResult
     public var checkedAt: Date
-    /// SHA-256 of the value checked, so an edit makes the result old.
+    /// SHA-256 of the salt followed by the value checked; an edit makes
+    /// the result old.
     var fingerprint: String
 
-    public init(result: APIKeyCheckResult, checkedAt: Date, value: String) {
+    public init(result: APIKeyCheckResult, checkedAt: Date, value: String, salt: Data) {
         self.result = result
         self.checkedAt = checkedAt
-        fingerprint = Self.fingerprint(of: value)
+        fingerprint = Self.fingerprint(of: value, salt: salt)
     }
 
     /// The result still describes this value.
-    public func isCurrent(for value: String) -> Bool {
-        fingerprint == Self.fingerprint(of: value)
+    public func isCurrent(for value: String, salt: Data) -> Bool {
+        fingerprint == Self.fingerprint(of: value, salt: salt)
     }
 
-    static func fingerprint(of value: String) -> String {
-        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    static func fingerprint(of value: String, salt: Data) -> String {
+        SHA256.hash(data: salt + Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+extension APIKeyCheckResult: Codable {
+    private enum Kind: String, Codable {
+        case works, noCredit, rejected, couldNotCheck, noCheck
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, status, message, reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .works:
+            self = .works
+        case .noCredit:
+            self = .noCredit
+        case .rejected:
+            self = .rejected(status: try container.decode(Int.self, forKey: .status),
+                             message: try container.decodeIfPresent(String.self, forKey: .message))
+        case .couldNotCheck:
+            self = .couldNotCheck(try container.decode(String.self, forKey: .reason))
+        case .noCheck:
+            self = .noCheck(try container.decode(String.self, forKey: .reason))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .works:
+            try container.encode(Kind.works, forKey: .kind)
+        case .noCredit:
+            try container.encode(Kind.noCredit, forKey: .kind)
+        case .rejected(let status, let message):
+            try container.encode(Kind.rejected, forKey: .kind)
+            try container.encode(status, forKey: .status)
+            try container.encodeIfPresent(message, forKey: .message)
+        case .couldNotCheck(let reason):
+            try container.encode(Kind.couldNotCheck, forKey: .kind)
+            try container.encode(reason, forKey: .reason)
+        case .noCheck(let reason):
+            try container.encode(Kind.noCheck, forKey: .kind)
+            try container.encode(reason, forKey: .reason)
+        }
+    }
+}
+
+extension APIKeyCheckResult {
+    /// The result in words, as the status label's tooltip says it.
+    public var words: String {
+        switch self {
+        case .works: "Works"
+        case .noCredit: "No credit on this account"
+        case .rejected(let status, let message):
+            "Rejected: HTTP \(status)\(message.map { ": \($0)" } ?? "")"
+        case .couldNotCheck(let reason): "Couldn't check: \(reason)"
+        case .noCheck(let reason): "No check: \(reason)"
+        }
+    }
+}
+
+/// How a check result paints a row's status label: works and no credit
+/// turn it green, a rejection turns it red behind `xmark.circle`, and
+/// anything else leaves it exactly as it was.
+public enum APIKeyCheckStyle: Equatable, Sendable {
+    /// Icon and label in the success colour.
+    case success
+    /// `xmark.circle` and label in the danger colour.
+    case rejected
+    /// The label looks as if no check ran.
+    case unchanged
+
+    public init(_ result: APIKeyCheckResult?) {
+        switch result {
+        case .works, .noCredit: self = .success
+        case .rejected: self = .rejected
+        case .couldNotCheck, .noCheck, nil: self = .unchanged
+        }
+    }
+}
+
+/// `~/.quiver/cache/api-key-checks.json`, shaped `{version: 2, files:
+/// {"<standardized keys-file path>": {checks: {NAME: {fingerprint,
+/// result, checkedAt}}}}}`: each keys file owns one section, so models
+/// over different files never clobber each other. A missing, damaged or
+/// version 1 file reads as empty. Writes hold the shared file lock for a
+/// read-modify-write of only their own section, then rename into place.
+public struct APIKeyCheckStore: Sendable {
+    private struct File: Codable {
+        var version: Int
+        var files: [String: Section]
+    }
+
+    private struct Section: Codable {
+        var checks: [String: APIKeyCheck]
+    }
+
+    /// The 32-byte salt fingerprints are hashed against, made once per
+    /// machine and kept in defaults, so a copied cache matches nothing.
+    public static let saltKey = "apiKeyCheckSalt"
+
+    public let url: URL
+
+    public init(url: URL) {
+        self.url = url
+    }
+
+    /// The salt, creating and storing it on first use.
+    public static func salt(from defaults: UserDefaults) -> Data {
+        if let salt = defaults.data(forKey: saltKey), salt.count == 32 {
+            return salt
+        }
+        let salt = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
+        defaults.set(salt, forKey: saltKey)
+        return salt
+    }
+
+    /// The section one keys file owns inside the shared cache.
+    private static func sectionKey(for keysFile: URL) -> String {
+        keysFile.standardizedFileURL.path
+    }
+
+    /// The stored checks for one keys file.
+    public func load(for keysFile: URL) -> [String: APIKeyCheck] {
+        guard let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(File.self, from: data),
+              file.version == 2
+        else { return [:] }
+        return file.files[Self.sectionKey(for: keysFile)]?.checks ?? [:]
+    }
+
+    /// Merge `checks` into the section `keysFile` owns, under the lock so
+    /// a save can never overwrite another model's section or a fresher
+    /// result in its own: a stored check newer than the incoming one
+    /// stays. Stored names missing from `currentNames` are gone from the
+    /// keys file and are dropped; names this save does not carry are
+    /// left as they were.
+    public func save(_ checks: [String: APIKeyCheck], for keysFile: URL,
+                     currentNames: Set<String>) {
+        let manager = FileManager.default
+        try? manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                     attributes: [.posixPermissions: 0o700])
+        guard let lock = try? FileLock(at: url.appendingPathExtension("lock")) else { return }
+        defer { lock.release() }
+        var file = ((try? Data(contentsOf: url))
+            .flatMap { try? JSONDecoder().decode(File.self, from: $0) })
+            .flatMap { $0.version == 2 ? $0 : nil }
+            ?? File(version: 2, files: [:])
+        let key = Self.sectionKey(for: keysFile)
+        var section = file.files[key]?.checks ?? [:]
+        for name in section.keys where !currentNames.contains(name) {
+            section[name] = nil
+        }
+        for (name, check) in checks
+        where (section[name]?.checkedAt ?? .distantPast) < check.checkedAt {
+            section[name] = check
+        }
+        file.files[key] = Section(checks: section)
+        guard let data = try? JSONEncoder().encode(file) else { return }
+        let temporary = url.deletingLastPathComponent()
+            .appending(path: ".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        guard manager.createFile(atPath: temporary.path, contents: data,
+                                 attributes: [.posixPermissions: 0o600])
+        else { return }
+        if rename(temporary.path, url.path) != 0 {
+            try? manager.removeItem(at: temporary)
+        }
     }
 }
 

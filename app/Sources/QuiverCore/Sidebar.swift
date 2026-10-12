@@ -47,7 +47,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
 }
 
 public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
-    case usage, manage, system
+    case usage, manage, primitives, system
 
     public var id: Self { self }
 
@@ -55,6 +55,7 @@ public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
         switch self {
         case .usage: "Usage"
         case .manage: "Manage"
+        case .primitives: "Primitives"
         case .system: "System"
         }
     }
@@ -62,7 +63,8 @@ public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
     public var sections: [AppSection] {
         switch self {
         case .usage: [.overview, .sessions]
-        case .manage: [.accounts, .apiKeys, .harnesses, .compute, .skills, .agentsMd, .mcpServers, .plugins]
+        case .manage: [.harnesses, .accounts, .apiKeys, .compute]
+        case .primitives: [.plugins, .skills, .agentsMd, .mcpServers]
         case .system: [.menuBar, .serviceStatus, .doctor, .settings]
         }
     }

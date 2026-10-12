@@ -414,12 +414,41 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
 /// A shell that answers only when released.
 actor GatedShell: ShellEnvironmentReading {
     private var gate: CheckedContinuation<Void, Never>?
-    private(set) var waiting = false
+    private var nextID = 0
+    private var parkers: [Int: CheckedContinuation<Bool, Never>] = [:]
+
     func freshEnvironment() async -> [String: String]? {
-        waiting = true
+        let parked = parkers
+        parkers = [:]
+        for parker in parked.values { parker.resume(returning: true) }
         await withCheckedContinuation { gate = $0 }
         return ["OPENAI_ORG": "org-test"]
     }
+
+    /// True once the shell is parked on its gate, false after ten
+    /// seconds. Checking the gate and parking the caller happen in one
+    /// actor step, so the park can never be missed and the caller
+    /// stranded until the timeout.
+    func waitForPark() async -> Bool {
+        await withCheckedContinuation { cont in
+            if gate != nil {
+                cont.resume(returning: true)
+                return
+            }
+            nextID += 1
+            let id = nextID
+            parkers[id] = cont
+            Task { await self.expire(id) }
+        }
+    }
+
+    /// The timeout resumes only its own waiter, and only if the shell
+    /// has not already parked.
+    private func expire(_ id: Int) async {
+        try? await Task.sleep(for: .seconds(10))
+        parkers.removeValue(forKey: id)?.resume(returning: false)
+    }
+
     func release() { gate?.resume(); gate = nil }
 }
 
@@ -437,7 +466,9 @@ struct FakeShell: ShellEnvironmentReading {
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
         let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
-        return (APIKeysModel(store: store, shell: FakeShell(environment: shell)), url)
+        return (APIKeysModel(store: store, shell: FakeShell(environment: shell),
+                             checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                             defaults: UserDefaults(suiteName: "keysmodel-\(UUID().uuidString)")!), url)
     }
 
     @Test func rowsCarryTheirShellStatus() async throws {
@@ -457,9 +488,11 @@ struct FakeShell: ShellEnvironmentReading {
         let url = dir.appending(path: ".api_keys")
         try sampleKeysFile.write(to: url, atomically: true, encoding: .utf8)
         let shell = GatedShell()
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell)
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+                                 checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                                 defaults: UserDefaults(suiteName: "keysgate-\(UUID().uuidString)")!)
         let load = Task { await model.load() }
-        while !(await shell.waiting) { await Task.yield() }
+        #expect(await shell.waitForPark())
         #expect(model.rows.count == 3)
         #expect(model.rows.allSatisfy { $0.status == .checking })
         await shell.release()
