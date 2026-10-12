@@ -190,87 +190,132 @@ private struct ServiceCard: View {
     var remove: (() -> Void)? = nil
     @State private var hovering = false
     @State private var confirmingRemove = false
+    /// Cards start folded: the header and health line show, and a bottom
+    /// ExpandRow opens the summary, components and incidents. @State keeps
+    /// each card's fold through refreshes, since the ForEach keys it by id.
+    @State private var expanded = false
     @Environment(\.openURL) private var openURL
 
     private static let nameFont = Font.system(size: 16, weight: .medium)
     private static let componentLimit = 5
     private static let incidentLimit = 3
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 16) }
-                Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 8)
-                Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
-                    .labelStyle(.iconOnly)
-                    .plainButton(cornerRadius: 4)
-                    .foregroundStyle(Theme.textSecondary)
-                    .help(status.service.pageURL.absoluteString)
-                if let remove {
-                    Menu {
-                        Button("Remove…") { confirmingRemove = true }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .foregroundStyle(Theme.textSecondary)
-                            .frame(width: 24, height: 20)
-                            .contentShape(.rect)
-                    }
-                    .menuStyle(.button)
-                    .plainButton(cornerRadius: 6)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help("More")
-                    .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
-                        Button("Stop tracking", role: .destructive, action: remove)
-                    }
-                }
-            }
+    /// What the folded row can open. The summary only counts when the card
+    /// would show it (not on an all-clear reading).
+    private var hasDetails: Bool {
+        if let summary = status.report?.summary, status.report?.health != .operational,
+           !summary.isEmpty { return true }
+        guard let report = status.report else { return false }
+        return !report.components.isEmpty || !report.incidents.isEmpty
+    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HealthLabel(health: status.report?.health, isLoading: isLoading && status.checkedAt == nil)
-                if let summary = status.report?.summary, status.report?.health != .operational {
-                    Text(summary).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                }
-                if let note = status.service.note {
-                    Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                }
+    /// The folded row's note, like "3 incidents · 5 components".
+    private var detailNote: String? {
+        var parts: [String] = []
+        if let report = status.report {
+            if !report.incidents.isEmpty {
+                parts.append(report.incidents.count == 1 ? "1 incident" : "\(report.incidents.count) incidents")
             }
-
-            if let report = status.report, !report.components.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(report.components.prefix(Self.componentLimit), id: \.self) { component in
-                        ComponentRow(component: component)
-                    }
-                    if report.components.count > Self.componentLimit {
-                        Text("And \(report.components.count - Self.componentLimit) more")
-                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    }
-                }
+            if !report.components.isEmpty {
+                parts.append(report.components.count == 1 ? "1 component" : "\(report.components.count) components")
             }
-
-            if let report = status.report, !report.incidents.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(report.incidents.prefix(Self.incidentLimit)) { incident in
-                        IncidentView(incident: incident)
-                    }
-                    if report.incidents.count > Self.incidentLimit {
-                        Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
-                            openURL(status.service.pageURL)
-                        }
-                        .plainButton(cornerRadius: 4)
-                        .font(Theme.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                        .underline()
-                    }
-                }
-                .padding(.top, 2)
-            }
-
-            ProblemLine(status: status)
         }
-        .padding(Theme.cardPadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        if let summary = status.report?.summary, status.report?.health != .operational,
+           !summary.isEmpty {
+            parts.append("summary")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 16) }
+                    Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 8)
+                    Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
+                        .labelStyle(.iconOnly)
+                        .plainButton(cornerRadius: 4)
+                        .foregroundStyle(Theme.textSecondary)
+                        .help(status.service.pageURL.absoluteString)
+                    if let remove {
+                        Menu {
+                            Button("Remove…") { confirmingRemove = true }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .foregroundStyle(Theme.textSecondary)
+                                .frame(width: 24, height: 20)
+                                .contentShape(.rect)
+                        }
+                        .menuStyle(.button)
+                        .plainButton(cornerRadius: 6)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("More")
+                        .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
+                            Button("Stop tracking", role: .destructive, action: remove)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HealthLabel(health: status.report?.health, isLoading: isLoading && status.checkedAt == nil)
+                    if let note = status.service.note {
+                        Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    }
+                }
+
+                if expanded {
+                    if let summary = status.report?.summary, status.report?.health != .operational {
+                        Text(summary).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+
+                    if let report = status.report, !report.components.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(report.components.prefix(Self.componentLimit), id: \.self) { component in
+                                ComponentRow(component: component)
+                            }
+                            if report.components.count > Self.componentLimit {
+                                Text("And \(report.components.count - Self.componentLimit) more")
+                                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            }
+                        }
+                    }
+
+                    if let report = status.report, !report.incidents.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(report.incidents.prefix(Self.incidentLimit)) { incident in
+                                IncidentView(incident: incident)
+                            }
+                            if report.incidents.count > Self.incidentLimit {
+                                Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
+                                    openURL(status.service.pageURL)
+                                }
+                                .plainButton(cornerRadius: 4)
+                                .font(Theme.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                                .underline()
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+
+                ProblemLine(status: status)
+            }
+            .padding(Theme.cardPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            if hasDetails {
+                ExpandRow(isExpanded: expanded, hidden: 0, collapsedTitle: "Show details",
+                          help: (expand: "Show the summary, affected components and incidents",
+                                 collapse: "Show only the health line"),
+                          edge: .cardBottom, note: detailNote) {
+                    withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                }
+            }
+        }
         .background(hovering ? Theme.cardHover : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
             .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))

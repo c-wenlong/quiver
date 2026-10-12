@@ -458,6 +458,9 @@ struct ExpandRow: View {
 
     var isExpanded: Bool
     var hidden: Int
+    /// What the folded row says instead of "Show N more", when the count
+    /// wording does not fit (a details row opens one section, not items).
+    var collapsedTitle: String? = nil
     var help: (expand: String, collapse: String)
     var edge: Edge = .cardBottom
     var note: String?
@@ -480,7 +483,7 @@ struct ExpandRow: View {
             HStack(spacing: 6) {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 12, weight: .semibold))
-                Text(isExpanded ? "Show less" : hidden == 1 ? "Show 1 more" : "Show \(hidden) more")
+                Text(isExpanded ? "Show less" : collapsedTitle ?? (hidden == 1 ? "Show 1 more" : "Show \(hidden) more"))
                     .font(Theme.control)
                 if let note {
                     Text("· \(note)")
