@@ -31,5 +31,9 @@ let package = Package(
             dependencies: ["QuiverCore"],
             resources: [.copy("Fixtures")]
         ),
+        .testTarget(
+            name: "QuiverWidgetsUITests",
+            dependencies: ["QuiverWidgetsUI"]
+        ),
     ]
 )
