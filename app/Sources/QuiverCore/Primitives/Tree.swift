@@ -30,6 +30,9 @@ public struct PrimitiveTree: Sendable, Equatable {
         public var isFolder: Bool
         /// The file this entry opens: itself, or a folder's SKILL.md.
         public var previewPath: String
+        /// A folder's files (`SKILL.md`, `scripts/run.sh`), each name
+        /// relative to the folder; empty for a plain file.
+        public var children: [Entry] = []
     }
 
     /// One group of entries under a kind, with its count.
@@ -58,7 +61,8 @@ public struct PrimitiveTree: Sendable, Equatable {
                 fm.fileExists(atPath: item.path, isDirectory: &itemIsDir)
                 if kind == .skills, itemIsDir.boolValue {
                     entries.append(Entry(name: name, path: item.path, isFolder: true,
-                                         previewPath: item.appending(path: "SKILL.md").path))
+                                         previewPath: item.appending(path: "SKILL.md").path,
+                                         children: PrimitiveTree.files(in: item, prefix: "")))
                 } else if itemIsDir.boolValue {
                     // A nested folder lists its files with relative names.
                     let inside = (try? fm.contentsOfDirectory(atPath: item.path).sorted()) ?? []
@@ -80,6 +84,29 @@ public struct PrimitiveTree: Sendable, Equatable {
         sections.append((.other, PrimitiveTree.otherFiles(root: root)))
         self.sections = sections.filter { !$0.1.isEmpty }
             .map { Section(kind: $0.0, entries: $0.1) }
+    }
+
+    /// Every file under `dir`, names relative to it (`SKILL.md`,
+    /// `scripts/run.sh`), dotfiles skipped at every level. A skill folder
+    /// is more than its SKILL.md, and the detail view expands the folder
+    /// to all of them.
+    private static func files(in dir: URL, prefix: String, depth: Int = 0) -> [Entry] {
+        let fm = FileManager.default
+        guard depth <= 6,
+              let names = try? fm.contentsOfDirectory(atPath: dir.path).sorted() else { return [] }
+        var out: [Entry] = []
+        for name in names where !name.hasPrefix(".") {
+            let item = dir.appending(path: name)
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: item.path, isDirectory: &isDir)
+            if isDir.boolValue {
+                out += files(in: item, prefix: prefix + name + "/", depth: depth + 1)
+            } else {
+                out.append(Entry(name: prefix + name, path: item.path,
+                                 isFolder: false, previewPath: item.path))
+            }
+        }
+        return out
     }
 
     /// Files outside the section folders, paths relative to root,

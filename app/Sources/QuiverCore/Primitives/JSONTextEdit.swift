@@ -41,14 +41,24 @@ public enum JSONTextEdit {
             }
             // The key exists as a scalar or array: make it an object first.
             let replaced = text.replacingCharacters(in: entry.valueRange, with: "{}")
-            let empty = entry.valueRange.lowerBound ..< replaced.index(entry.valueRange.lowerBound, offsetBy: 2)
+            let start = replaced.index(replaced.startIndex,
+                                       offsetBy: text.distance(from: text.startIndex,
+                                                               to: entry.valueRange.lowerBound))
+            let empty = start ..< replaced.index(start, offsetBy: 2)
             return try setIn(replaced, object: empty, path: path.dropFirst(), value: value)
         }
         let inserted = try insert(text, into: object, entries: entries,
                                   key: key, rendered: path.count == 1 ? render(value, indent: "") : "{}")
         if path.count == 1 { return inserted }
-        guard let top = try topLevelObject(in: inserted),
-              let created = try objectEntries(inserted, span: top).first(where: { $0.key == key }),
+        // The new entry landed inside THIS object, which grew by the
+        // inserted text: shift its end by the delta and search it again,
+        // not the top level, so a nested insert finds its own object.
+        let delta = inserted.count - text.count
+        let lower = inserted.index(inserted.startIndex,
+                                   offsetBy: text.distance(from: text.startIndex, to: object.lowerBound))
+        let upper = inserted.index(inserted.startIndex,
+                                   offsetBy: text.distance(from: text.startIndex, to: object.upperBound) + delta)
+        guard let created = try objectEntries(inserted, span: lower..<upper).first(where: { $0.key == key }),
               let inner = try objectSpanAt(inserted, range: created.valueRange)
         else { throw Failure.notJSONObject }
         return try setIn(inserted, object: inner, path: path.dropFirst(), value: value)
@@ -104,13 +114,16 @@ public enum JSONTextEdit {
             index = skipSpace(text, from: index, before: span.upperBound)
             guard index < span.upperBound, text[index] != "}" else { return entries }
             guard text[index] == "\"" else { throw Failure.notJSONObject }
+            // The opening quote's index: whitespace may sit between the
+            // key and its colon, so `index` has moved on by entry time.
+            let keyStart = index
             let keyEnd = try scanStringEnd(text, at: index)
             let key = try unquote(String(text[index..<keyEnd]))
             index = skipSpace(text, from: keyEnd, before: span.upperBound)
             guard index < span.upperBound, text[index] == ":" else { throw Failure.notJSONObject }
             let valueStart = skipSpace(text, from: text.index(after: index), before: span.upperBound)
             guard let valueEnd = try scanValue(text, at: valueStart) else { throw Failure.notJSONObject }
-            entries.append(Entry(key: key, keyRange: index..<keyEnd, valueRange: valueStart..<valueEnd))
+            entries.append(Entry(key: key, keyRange: keyStart..<keyEnd, valueRange: valueStart..<valueEnd))
             index = skipSpace(text, from: valueEnd, before: span.upperBound)
             if index < span.upperBound, text[index] == "," {
                 index = text.index(after: index)

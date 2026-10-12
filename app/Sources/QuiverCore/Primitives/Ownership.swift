@@ -54,6 +54,29 @@ public enum PrimitiveOwnership {
         let resolved = resolve(skillPath)
         return resolved.hasPrefix(quiver + "/") && !resolved.hasPrefix(cache + "/")
     }
+
+    /// Whether `path` stays inside `root` once symlinks resolve. A link
+    /// inside an owned folder that points outside it is not the user's to
+    /// edit, create or delete, even though its name suggests otherwise.
+    public static func isInside(_ path: String, root: String,
+                                resolve: (String) -> String = FolderOwners.realPath) -> Bool {
+        let inside = FolderOwners.trimmed(resolve(root))
+        let resolved = FolderOwners.trimmed(resolve(path))
+        return resolved.hasPrefix(inside + "/")
+    }
+
+    /// `path`'s deepest existing ancestor with symlinks resolved: where a
+    /// file created under `path` would really land. `realpath` stops at
+    /// the first missing component, so a new part's folder is checked
+    /// through the closest ancestor that exists.
+    public static func resolvedAncestor(of path: String,
+                                        resolve: (String) -> String = FolderOwners.realPath) -> String {
+        var candidate = path
+        while !FileManager.default.fileExists(atPath: candidate), candidate != "/" {
+            candidate = URL(fileURLWithPath: candidate).deletingLastPathComponent().path
+        }
+        return FolderOwners.trimmed(resolve(candidate))
+    }
 }
 
 /// Quiver's own names for marketplaces and plugins. Renaming is display

@@ -284,7 +284,9 @@ final class PrimitiveHome {
         let t = try PrimitiveHome()
         let file = try t.write("plugin/commands/x.md", "x")
         var trashed: [String] = []
-        try PrimitiveParts.trash(file) { trashed.append($0.path) }
+        try PrimitiveParts.trash(file, inside: t.home.appending(path: "plugin")) {
+            trashed.append($0.path)
+        }
         #expect(trashed == [file.path])
         #expect(FileManager.default.fileExists(atPath: file.path))
     }
@@ -323,5 +325,119 @@ final class PrimitiveHome {
         #expect(!PrimitiveTree.isTextFile(big))
         let md = try t.write("bin/readme.md", "# ok\n")
         #expect(PrimitiveTree.isTextFile(md))
+    }
+}
+
+
+@Suite struct JSONTextEditSpacingTests {
+    @Test func spacesAroundTheColonDoNotCrash() throws {
+        for gap in [" ", "\t", "\n", "  \n  "] {
+            let text = "{\"name\"" + gap + ": \"eng\"}"
+            let edited = try JSONTextEdit.set("x", at: ["other"], in: text)
+            let object = try JSONSerialization.jsonObject(with: Data(edited.utf8)) as? [String: Any]
+            #expect(object?["name"] as? String == "eng")
+            #expect(object?["other"] as? String == "x")
+        }
+    }
+
+    @Test func aThreeLevelPathSearchesTheCurrentObject() throws {
+        let edited = try JSONTextEdit.set(1, at: ["a", "b", "c"], in: "{\"a\":{}}")
+        let object = try JSONSerialization.jsonObject(with: Data(edited.utf8)) as? [String: Any]
+        let a = object?["a"] as? [String: Any]
+        let b = a?["b"] as? [String: Any]
+        #expect(b?["c"] as? Int == 1)
+    }
+
+    @Test func aScalarBecomesAnObjectForDeeperPaths() throws {
+        let edited = try JSONTextEdit.set("x", at: ["a", "b"], in: "{\"a\":1}")
+        let object = try JSONSerialization.jsonObject(with: Data(edited.utf8)) as? [String: Any]
+        #expect((object?["a"] as? [String: Any])?["b"] as? String == "x")
+    }
+}
+
+@Suite struct FormDirtyTests {
+    @Test func manifestDirtyTracksEditedFieldsNotTheFile() throws {
+        let text = "{\n  \"name\": \"eng\",\n  \"version\": \"1.0.0\"\n}\n"
+        let loaded = PluginManifestFields(parsing: text)
+        #expect(loaded == PluginManifestFields(parsing: text))
+        var fields = loaded
+        // A field edit is dirty without document.text ever changing.
+        fields.description = "A new line."
+        #expect(fields != loaded)
+        fields = loaded
+        #expect(fields == loaded)
+        // A saved form parses back to itself: save clears dirty too.
+        fields.version = "2.0.0"
+        #expect(PluginManifestFields(parsing: try fields.apply(to: text)) == fields)
+    }
+
+    @Test func frontmatterDirtyTracksEditedValues() {
+        let text = "---\nname: x\ndescription: old\n---\nbody\n"
+        let loaded: [(key: String, value: String)] =
+            MarkdownFrontmatter(text: text)?.fields.map { ($0.key, $0.value) } ?? []
+        var fields = loaded
+        let same = { (a: [(key: String, value: String)], b: [(key: String, value: String)]) in
+            a.elementsEqual(b) { $0.key == $1.key && $0.value == $1.value }
+        }
+        #expect(same(fields, loaded))
+        fields[1].value = "new"
+        #expect(!same(fields, loaded))
+    }
+}
+
+@Suite struct SymlinkEscapeTests {
+    @Test func aSymlinkedFileOutsideTheRootIsNotInside() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        let outside = try t.write("elsewhere/secret.md", "x")
+        try FileManager.default.createSymbolicLink(
+            atPath: root.appending(path: "linked.md").path,
+            withDestinationPath: outside.path)
+        try t.write("plugin/inside.md", "y")
+        #expect(PrimitiveOwnership.isInside(root.appending(path: "inside.md").path, root: root.path))
+        #expect(!PrimitiveOwnership.isInside(root.appending(path: "linked.md").path, root: root.path))
+    }
+
+    @Test func creatingThroughASymlinkedFolderIsRefused() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        let outside = try t.dir("elsewhere")
+        try FileManager.default.createSymbolicLink(
+            atPath: root.appending(path: "commands").path,
+            withDestinationPath: outside.path)
+        #expect(throws: Error.self) {
+            try PrimitiveParts.create(.command, named: "go", in: root)
+        }
+        #expect(!FileManager.default.fileExists(atPath: outside.appending(path: "go.md").path))
+    }
+
+    @Test func trashingASymlinkEscapeIsRefused() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        let outside = try t.write("elsewhere/keep.md", "x")
+        let link = root.appending(path: "linked.md")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: outside.path)
+        var trashed: [String] = []
+        #expect(throws: Error.self) {
+            try PrimitiveParts.trash(link, inside: root) { trashed.append($0.path) }
+        }
+        #expect(trashed.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: outside.path))
+    }
+}
+
+@Suite struct SkillFolderTreeTests {
+    @Test func aSkillFolderListsAllItsFiles() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        try t.write("plugin/skills/tdd/SKILL.md", "---\nname: tdd\n---\n")
+        try t.write("plugin/skills/tdd/scripts/run.sh", "echo hi")
+        try t.write("plugin/skills/tdd/references/api.md", "# api")
+        try t.write("plugin/skills/tdd/references/deep/more.md", "x")
+        let tree = PrimitiveTree(root: root)
+        let skill = tree.sections.first { $0.kind == .skills }?.entries.first
+        #expect(skill?.isFolder == true)
+        #expect(skill?.children.map(\.name)
+            == ["SKILL.md", "references/api.md", "references/deep/more.md", "scripts/run.sh"])
     }
 }

@@ -32,10 +32,21 @@ public enum PrimitiveParts {
     }
 
     /// Create a part's file (and its folder) with a starter template;
-    /// fails rather than overwrite something already there.
+    /// fails rather than overwrite something already there. The write is
+    /// also refused when the part's folder, resolved through symlinks,
+    /// would land outside `root`.
     @discardableResult
-    public static func create(_ kind: Kind, named name: String, in root: URL) throws -> URL {
+    public static func create(_ kind: Kind, named name: String, in root: URL,
+                              resolve: (String) -> String = FolderOwners.realPath) throws -> URL {
         let file = path(of: kind, named: name, in: root)
+        let resolvedRoot = FolderOwners.trimmed(resolve(root.path))
+        let landing = PrimitiveOwnership.resolvedAncestor(
+            of: file.deletingLastPathComponent().path, resolve: resolve)
+        guard landing == resolvedRoot || landing.hasPrefix(resolvedRoot + "/") else {
+            throw NSError(domain: "PrimitiveParts", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "\(kind.rawValue)s links outside \(root.lastPathComponent), so nothing was created."])
+        }
         guard !FileManager.default.fileExists(atPath: file.path) else {
             throw NSError(domain: "PrimitiveParts", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "\(name) already exists."])
@@ -76,12 +87,18 @@ public enum PrimitiveParts {
     }
 
     /// Move a file or folder to the Trash; injectable so tests never
-    /// touch the real one. The user confirms first in the UI, and nothing
-    /// here ever deletes outright.
-    public static func trash(_ url: URL,
+    /// touch the real one. The user confirms first in the UI, nothing
+    /// here ever deletes outright, and a symlink inside `root` that
+    /// resolves outside it is refused.
+    public static func trash(_ url: URL, inside root: URL,
                              using trashItem: (URL) throws -> Void = { url in
                                  _ = try FileManager.default.trashItem(at: url, resultingItemURL: nil)
                              }) throws {
+        guard PrimitiveOwnership.isInside(url.path, root: root.path) else {
+            throw NSError(domain: "PrimitiveParts", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "\(url.lastPathComponent) links outside \(root.lastPathComponent), so it was not trashed."])
+        }
         try trashItem(url)
     }
 }

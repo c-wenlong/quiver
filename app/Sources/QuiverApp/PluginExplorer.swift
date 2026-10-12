@@ -14,12 +14,13 @@ struct PluginExplorer: View {
     /// A marketplace being renamed (display name only) when editable.
     @State private var renaming: String?
     @State private var renameText = ""
+    @State private var renameError: String?
     private var home: URL { FileManager.default.homeDirectoryForCurrentUser }
 
     var body: some View {
         // Outside the switch: when the reload after a failed action also
         // fails, the reason the action failed must stay on screen.
-        if let error = model.actionError {
+        if let error = model.actionError ?? renameError {
             ErrorCard(message: error)
         } else if let done = model.lastResult {
             Card {
@@ -94,9 +95,18 @@ struct PluginExplorer: View {
                 TextField("Display name", text: $renameText)
                 Button("Rename") {
                     guard let id = renaming else { return }
+                    let previous = app.primitiveNames.name(forMarketplace: id)
                     app.primitiveNames.set(renameText, forMarketplace: id)
-                    try? app.primitiveNames.save(to: PluginDisplayNames.file(home: home))
-                    renaming = nil
+                    do {
+                        try app.primitiveNames.save(to: PluginDisplayNames.file(home: home))
+                        renameError = nil
+                        renaming = nil
+                    } catch {
+                        // The write failed: put the old name back and say so.
+                        app.primitiveNames.set(previous, forMarketplace: id)
+                        renameError = "Couldn't save the name: \(error.localizedDescription)"
+                        renaming = nil
+                    }
                 }
                 Button("Cancel", role: .cancel) { renaming = nil }
             } message: {

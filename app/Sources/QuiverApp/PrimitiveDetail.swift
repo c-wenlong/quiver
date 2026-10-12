@@ -21,6 +21,30 @@ struct PrimitiveLockNote: View {
     }
 }
 
+/// A detail page's open file documents, one per path for the page's
+/// life: picking another file or stepping away and back never drops an
+/// unsaved edit.
+@MainActor
+@Observable
+final class PrimitiveDrafts {
+    private(set) var documents: [String: InstructionDocument] = [:]
+
+    /// The document for `path`, opened and loaded on first ask.
+    @discardableResult
+    func document(for path: String) -> InstructionDocument {
+        if let document = documents[path] { return document }
+        let document = InstructionDocument(url: URL(fileURLWithPath: path))
+        document.load()
+        documents[path] = document
+        return document
+    }
+
+    /// The paths with unsaved text.
+    var dirty: [String: InstructionDocument] {
+        documents.filter { $0.value.isDirty }
+    }
+}
+
 /// "‹ Plugins": back to the list the detail page covers.
 struct PrimitiveBack: View {
     var title: String
@@ -90,7 +114,12 @@ struct ManifestCard: View {
     var onSaved: () -> Void
     @State private var document: InstructionDocument?
     @State private var fields = PluginManifestFields()
+    /// The fields as last read or saved: dirty is `fields != loaded`,
+    /// which edits to `fields` alone must drive, not `document.text`.
+    @State private var loaded = PluginManifestFields()
     @State private var error: String?
+
+    private var formDirty: Bool { fields != loaded }
 
     var body: some View {
         Card(title: "Manifest", subtitle: displayPath(url)) {
@@ -123,9 +152,9 @@ struct ManifestCard: View {
                     }
                     HStack(spacing: 8) {
                         Spacer()
-                        Button("Revert") { read() }.secondaryButton().disabled(!document.isDirty)
+                        Button("Revert") { revert() }.secondaryButton().disabled(!formDirty)
                         Button("Save") { save(overwrite: false) }.primaryButton()
-                            .disabled(!document.isDirty || document.changedOnDisk || !fields.problems.isEmpty)
+                            .disabled(!formDirty || document.changedOnDisk || !fields.problems.isEmpty)
                     }
                 }
             } else {
@@ -145,7 +174,14 @@ struct ManifestCard: View {
     private func read() {
         guard let document else { return }
         fields = PluginManifestFields(parsing: document.text)
+        loaded = fields
         document.revert()
+        error = nil
+    }
+
+    private func revert() {
+        fields = loaded
+        document?.revert()
         error = nil
     }
 
@@ -158,7 +194,7 @@ struct ManifestCard: View {
             return
         }
         switch document.save(overwrite: overwrite) {
-        case .saved: error = nil; onSaved()
+        case .saved: loaded = fields; error = nil; onSaved()
         case .changedOnDisk: error = nil
         case .failed(let message): error = message
         }
@@ -176,7 +212,14 @@ struct FrontmatterCard: View {
     var onSaved: () -> Void
     @State private var document: InstructionDocument?
     @State private var fields: [(key: String, value: String)] = []
+    /// The fields as last read or saved; dirty is theirs alone, since
+    /// editing `fields` never touches `document.text`.
+    @State private var loaded: [(key: String, value: String)] = []
     @State private var error: String?
+
+    private var formDirty: Bool {
+        !fields.elementsEqual(loaded) { $0.key == $1.key && $0.value == $1.value }
+    }
 
     var body: some View {
         Card(title: "Frontmatter", subtitle: displayPath(url)) {
@@ -206,9 +249,9 @@ struct FrontmatterCard: View {
                     if editable {
                         HStack(spacing: 8) {
                             Spacer()
-                            Button("Revert") { read() }.secondaryButton().disabled(!document.isDirty)
+                            Button("Revert") { revert() }.secondaryButton().disabled(!formDirty)
                             Button("Save") { save(overwrite: false) }.primaryButton()
-                                .disabled(!document.isDirty || document.changedOnDisk)
+                                .disabled(!formDirty || document.changedOnDisk)
                         }
                     }
                 }
@@ -229,7 +272,14 @@ struct FrontmatterCard: View {
         guard let document else { return }
         fields = MarkdownFrontmatter(text: document.text)?.fields
             .map { ($0.key, $0.value) } ?? []
+        loaded = fields
         document.revert()
+        error = nil
+    }
+
+    private func revert() {
+        fields = loaded
+        document?.revert()
         error = nil
     }
 
@@ -237,7 +287,7 @@ struct FrontmatterCard: View {
         guard let document else { return }
         document.text = MarkdownFrontmatter.update(document.text, set: fields)
         switch document.save(overwrite: overwrite) {
-        case .saved: error = nil; onSaved()
+        case .saved: loaded = fields; error = nil; onSaved()
         case .changedOnDisk: error = nil
         case .failed(let message): error = message
         }
@@ -255,10 +305,14 @@ struct PartsCard: View {
     var editable: Bool
     /// Which "New" entries the accessory menu offers; empty for a skill.
     var kinds: [PrimitiveParts.Kind] = []
+    /// The open file documents, owned by the detail page so a file
+    /// switch or a step away and back keeps unsaved edits.
+    var drafts: PrimitiveDrafts
     var onChanged: () -> Void
 
     @State private var tree: PrimitiveTree?
     @State private var selected: String?
+    @State private var expanded: Set<String> = []
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
     @State private var newError: String?
@@ -285,8 +339,9 @@ struct PartsCard: View {
             } else {
                 ProgressView()
             }
-            if let selected {
-                PrimitiveFilePane(path: selected, editable: editable)
+            if let selected, let document = drafts.documents[selected] {
+                PrimitiveFilePane(path: selected, root: root, editable: editable,
+                                  document: document, onSaved: onChanged)
             }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -294,6 +349,11 @@ struct PartsCard: View {
             }
         }
         .task { reload() }
+        .task(id: selected) {
+            // Open the document here rather than in the view body, so a
+            // lazy create never mutates the draft store during render.
+            if let selected { drafts.document(for: selected) }
+        }
         .alert("New \(newPart?.title ?? "")", isPresented: .init(
             get: { newPart != nil }, set: { if !$0 { newPart = nil } })) {
             TextField("name", text: $newName)
@@ -312,11 +372,38 @@ struct PartsCard: View {
     }
 
     private func row(_ entry: PrimitiveTree.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            rowLine(entry)
+            if entry.isFolder, expanded.contains(entry.path) {
+                ForEach(entry.children) { child in
+                    rowLine(child)
+                        .padding(.leading, 18)
+                }
+            }
+        }
+    }
+
+    private func rowLine(_ entry: PrimitiveTree.Entry) -> some View {
         HStack(spacing: 8) {
             Button {
-                selected = entry.previewPath
+                if entry.isFolder {
+                    if expanded.contains(entry.path) {
+                        expanded.remove(entry.path)
+                    } else {
+                        expanded.insert(entry.path)
+                    }
+                } else {
+                    selected = entry.previewPath
+                }
             } label: {
                 HStack(spacing: 8) {
+                    if entry.isFolder {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.textMuted)
+                            .rotationEffect(.degrees(expanded.contains(entry.path) ? 90 : 0))
+                            .frame(width: 10)
+                    }
                     Image(systemName: entry.isFolder ? "folder.fill" : "doc.text")
                         .foregroundStyle(entry.isFolder ? Theme.accent : Theme.textSecondary)
                     Text(entry.name)
@@ -327,7 +414,9 @@ struct PartsCard: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            if editable {
+            // A symlink inside the folder that resolves outside it is
+            // not the user's to trash.
+            if editable, PrimitiveOwnership.isInside(entry.path, root: root.path) {
                 Button { trashEntry = entry } label: {
                     Image(systemName: "trash").font(.system(size: 11))
                 }
@@ -339,8 +428,9 @@ struct PartsCard: View {
 
     private func reload() {
         tree = PrimitiveTree(root: root)
-        if let selected, !(tree?.sections.flatMap(\.entries).contains { $0.previewPath == selected } ?? false) {
-            self.selected = nil
+        if let selected {
+            let all = (tree?.sections.flatMap(\.entries) ?? []).flatMap { [$0] + $0.children }
+            if !all.contains(where: { $0.previewPath == selected }) { self.selected = nil }
         }
     }
 
@@ -366,7 +456,7 @@ struct PartsCard: View {
     private func trash() {
         guard let entry = trashEntry else { return }
         do {
-            try PrimitiveParts.trash(URL(fileURLWithPath: entry.path))
+            try PrimitiveParts.trash(URL(fileURLWithPath: entry.path), inside: root)
             if selected == entry.previewPath { selected = nil }
             trashEntry = nil
             reload()
@@ -395,15 +485,21 @@ struct NewPartMenu: View {
     }
 }
 
-/// One file in the InstructionEditor, reloading when a different file is
-/// picked. Editable only where the page says the folder is the user's.
+/// One file in the InstructionEditor, sharing the detail page's document
+/// so a switch back shows the edits it left. Editable only where the
+/// page says the folder is the user's AND the file itself resolves
+/// inside it: a symlink pointing out stays read-only.
 struct PrimitiveFilePane: View {
     var path: String
+    var root: URL
     var editable: Bool
+    var document: InstructionDocument
     var onSaved: () -> Void = {}
-    @State private var document: InstructionDocument?
 
     private var url: URL { URL(fileURLWithPath: path) }
+    private var fileEditable: Bool {
+        editable && PrimitiveOwnership.isInside(path, root: root.path)
+    }
 
     var body: some View {
         Group {
@@ -411,17 +507,10 @@ struct PrimitiveFilePane: View {
                 Text("Can't preview this file.")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-            } else if let document {
-                InstructionEditor(document: document, title: url.lastPathComponent,
-                                  subtitle: displayPath(url), readOnly: !editable, onSaved: onSaved)
             } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                InstructionEditor(document: document, title: url.lastPathComponent,
+                                  subtitle: displayPath(url), readOnly: !fileEditable, onSaved: onSaved)
             }
-        }
-        .task(id: path) {
-            let doc = InstructionDocument(url: url)
-            doc.load()
-            document = doc
         }
     }
 }
@@ -440,13 +529,22 @@ struct PluginDetailView: View {
 
     @State private var name = ""
     @State private var nameError: String?
+    @State private var drafts = PrimitiveDrafts()
+    @State private var leaving = false
+    @State private var leaveError: String?
 
     private var plugin: CatalogPlugin { entry.row.plugin }
     private var editableDir: URL? {
         PrimitiveOwnership.pluginDirectory(plugin, in: market, home: home)
     }
     private var dir: URL? {
-        editableDir ?? plugin.sourcePath.map { URL(fileURLWithPath: $0) }
+        if let editableDir { return editableDir }
+        // No editable folder: an installed or cached copy still shows its
+        // files, read-only.
+        let fm = FileManager.default
+        return plugin.folders
+            .first { fm.fileExists(atPath: $0) }
+            .map { URL(fileURLWithPath: $0) }
     }
     private var editable: Bool { editableDir != nil }
     private var manifest: URL? {
@@ -456,13 +554,17 @@ struct PluginDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PrimitiveBack(title: "Plugins", action: onBack)
+            PrimitiveBack(title: "Plugins", action: leave)
+            if let leaveError {
+                Label(leaveError, systemImage: "exclamationmark.triangle")
+                    .font(Theme.caption).foregroundStyle(Theme.dangerText)
+            }
             if !editable { lockNote }
             header
             if let manifest { ManifestCard(url: manifest, onSaved: reload) }
             if let dir {
-                PartsCard(root: dir, editable: editable,
-                          kinds: [.skill, .command, .agent], onChanged: reload)
+                PartsCard(root: dir, editable: editable, kinds: [.skill, .command, .agent],
+                          drafts: drafts, onChanged: reload)
             } else {
                 Text("This plugin has no local folder: its files come from a checkout swe manages.")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
@@ -470,6 +572,35 @@ struct PluginDetailView: View {
         }
         .onAppear {
             name = app.primitiveNames.name(forPlugin: plugin.ref) ?? plugin.displayName ?? plugin.name
+        }
+        .alert("Unsaved changes", isPresented: $leaving) {
+            Button("Save All") { saveAllAndLeave() }
+            Button("Discard", role: .destructive) { onBack() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(drafts.dirty.count) file\(drafts.dirty.count == 1 ? " has" : "s have") unsaved changes.")
+        }
+    }
+
+    /// Back with nothing unsaved; otherwise ask first.
+    private func leave() {
+        if drafts.dirty.isEmpty { onBack() } else { leaving = true }
+    }
+
+    /// Save every draft, then leave; a file that will not save keeps the
+    /// page open and says why.
+    private func saveAllAndLeave() {
+        var failed: [String] = []
+        for (path, document) in drafts.dirty {
+            if document.save() != .saved {
+                failed.append(URL(fileURLWithPath: path).lastPathComponent)
+            }
+        }
+        if failed.isEmpty {
+            leaveError = nil
+            onBack()
+        } else {
+            leaveError = "Couldn't save \(failed.joined(separator: ", "))."
         }
     }
 
@@ -539,11 +670,15 @@ struct PluginDetailView: View {
     /// `interface.displayName` when the plugin ships one.
     private func saveName() {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let previous = app.primitiveNames.name(forPlugin: plugin.ref)
         app.primitiveNames.set(trimmed.isEmpty ? nil : trimmed, forPlugin: plugin.ref)
         do {
             try app.primitiveNames.save(to: PluginDisplayNames.file(home: home))
             nameError = nil
         } catch {
+            // The write failed: put the old name back and say so.
+            app.primitiveNames.set(previous, forPlugin: plugin.ref)
+            name = previous ?? plugin.displayName ?? plugin.name
             nameError = "Couldn't save the name: \(error.localizedDescription)"
         }
         guard editable, let dir else { return }
@@ -575,6 +710,10 @@ struct SkillDetailView: View {
     /// The link chips a shared skill carries, from the Skills page.
     var links: AnyView?
 
+    @State private var drafts = PrimitiveDrafts()
+    @State private var leaving = false
+    @State private var leaveError: String?
+
     private var root: URL { URL(fileURLWithPath: skill.path) }
     private var editable: Bool {
         PrimitiveOwnership.isEditable(skillPath: skill.path, home: home)
@@ -586,7 +725,11 @@ struct SkillDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PrimitiveBack(title: "Skills", action: onBack)
+            PrimitiveBack(title: "Skills", action: leave)
+            if let leaveError {
+                Label(leaveError, systemImage: "exclamationmark.triangle")
+                    .font(Theme.caption).foregroundStyle(Theme.dangerText)
+            }
             if !editable {
                 PrimitiveLockNote(text: "Only skills that live under ~/.quiver can be edited, so \(skill.name) is read-only.")
             }
@@ -613,8 +756,38 @@ struct SkillDetailView: View {
                     }
                 }
             }
-            if let skillFile { FrontmatterCard(url: skillFile, editable: editable, onSaved: reload) }
-            PartsCard(root: root, editable: editable, onChanged: reload)
+            if let skillFile {
+                FrontmatterCard(url: skillFile,
+                                editable: editable && PrimitiveOwnership.isInside(skillFile.path, root: root.path),
+                                onSaved: reload)
+            }
+            PartsCard(root: root, editable: editable, drafts: drafts, onChanged: reload)
+        }
+        .alert("Unsaved changes", isPresented: $leaving) {
+            Button("Save All") { saveAllAndLeave() }
+            Button("Discard", role: .destructive) { onBack() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(drafts.dirty.count) file\(drafts.dirty.count == 1 ? " has" : "s have") unsaved changes.")
+        }
+    }
+
+    private func leave() {
+        if drafts.dirty.isEmpty { onBack() } else { leaving = true }
+    }
+
+    private func saveAllAndLeave() {
+        var failed: [String] = []
+        for (path, document) in drafts.dirty {
+            if document.save() != .saved {
+                failed.append(URL(fileURLWithPath: path).lastPathComponent)
+            }
+        }
+        if failed.isEmpty {
+            leaveError = nil
+            onBack()
+        } else {
+            leaveError = "Couldn't save \(failed.joined(separator: ", "))."
         }
     }
 
