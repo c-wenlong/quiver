@@ -41,11 +41,31 @@ public enum ProcessAttribution {
         return false
     }
 
+    /// Whether `p` is the harness's entry process itself: the app bundle's
+    /// own executable straight under Contents/MacOS (not a helper inside a
+    /// nested bundle), its CLI command or an alias, or a script runner
+    /// running the harness's script. A helper that merely lives under the
+    /// harness's home folder is not the main process.
+    static func isMainProcess(_ p: ProcessSample, of m: HarnessMatcher) -> Bool {
+        if let appPath = m.appPath, !appPath.isEmpty,
+           (p.path as NSString).deletingLastPathComponent == appPath + "/Contents/MacOS" {
+            return true
+        }
+        if m.commands.contains((p.path as NSString).lastPathComponent) { return true }
+        if Self.scriptRunners.contains(p.runnerName), p.arguments.count > 1,
+           m.commands.contains((p.arguments[1] as NSString).lastPathComponent) {
+            return true
+        }
+        return false
+    }
+
     /// Each process goes to the harness of its nearest self-or-ancestor
     /// root; what is left and hangs from pid 1 under a script runner is an
     /// orphan tree. Anything else is dropped, so nothing unrelated is ever
-    /// listed (or quittable).
-    public static func attribute(_ samples: [ProcessSample], matchers: [HarnessMatcher]) -> Attribution {
+    /// listed (or quittable). `managedPIDs` are launchd services: they
+    /// also hang under pid 1 but are not leftovers.
+    public static func attribute(_ samples: [ProcessSample], matchers: [HarnessMatcher],
+                                 managedPIDs: Set<Int32> = []) -> Attribution {
         let byPid = Dictionary(samples.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         var byHarness: [String: [ProcessSample]] = [:]
         var rest: [ProcessSample] = []
@@ -57,10 +77,14 @@ public enum ProcessAttribution {
             }
         }
 
-        // An orphan tree's root answered to pid 1 itself.
+        // An orphan tree's root answered to pid 1 itself. Anything launchd
+        // manages looks the same but is a service, not a leftover: it sits
+        // in "/" or has no working directory, or launchd lists its pid.
         var roots: [Int32: ProcessSample] = [:]
         for p in rest where p.ppid == 1 && OrphanTree.runners.contains(p.runnerName) {
-            roots[p.pid] = p
+            if let cwd = p.cwd, cwd != "/", !managedPIDs.contains(p.pid) {
+                roots[p.pid] = p
+            }
         }
         var trees: [Int32: [ProcessSample]] = [:]
         for p in rest where roots[p.pid] == nil {

@@ -26,8 +26,9 @@ public final class ComputeModel {
         public var sample: ProcessSample
         public var cpuPercent: Double?
         public var flags: Set<ProcessFlag>
-        /// Whether it is the harness's own process (the app or CLI), not a helper.
-        public var isRoot: Bool
+        /// Whether it is the harness's own entry process (the app's
+        /// executable or the CLI), not a helper.
+        public var isMain: Bool
         /// Still there five seconds after a SIGTERM, so Force quit is offered.
         public var stillRunning: Bool
     }
@@ -71,6 +72,7 @@ public final class ComputeModel {
 
     private let sampler: any ProcessSampling
     private let matcherLoader: @Sendable () async throws -> [HarnessMatcher]
+    private let managedPIDLoader: @Sendable () async -> Set<Int32>
     private let signaller: any ProcessSignaller
     private let defaults: UserDefaults
     private let selfPID: Int32
@@ -79,16 +81,23 @@ public final class ComputeModel {
     private var samples: [ProcessSample] = []
     private var cpu: [Int32: Double] = [:]
     private var attribution = Attribution(byHarness: [:], orphans: [])
+    /// Pids launchd manages; refreshed with the matchers and once a minute.
+    private var managedPIDs: Set<Int32> = []
+    private var managedPIDsLoadedAt: Date?
     /// When each pid was last sent SIGTERM, for the stillRunning mark.
     private var signalledAt: [Int32: Date] = [:]
+    /// Tickets refreshes so a slower earlier one can never republish.
+    private var request = 0
 
     public init(sampler: any ProcessSampling,
                 matchers: @escaping @Sendable () async throws -> [HarnessMatcher],
+                managedPIDs: @escaping @Sendable () async -> Set<Int32> = { [] },
                 signaller: any ProcessSignaller = SystemSignaller(),
                 defaults: UserDefaults = .standard,
                 selfPID: Int32 = getpid()) {
         self.sampler = sampler
         matcherLoader = matchers
+        managedPIDLoader = managedPIDs
         self.signaller = signaller
         self.defaults = defaults
         self.selfPID = selfPID
@@ -97,6 +106,8 @@ public final class ComputeModel {
 
     /// Who to look for. Runs on page appear and on Refresh, not per tick.
     public func loadMatchers() async {
+        managedPIDs = await managedPIDLoader()
+        managedPIDsLoadedAt = .now
         do {
             matchers = try await matcherLoader()
             if error != nil { error = nil }
@@ -105,13 +116,24 @@ public final class ComputeModel {
         }
     }
 
-    /// One sample, off the main actor, then a republish.
+    /// One sample, off the main actor, then a republish. A refresh that
+    /// started earlier but finished later is dropped, so stale samples
+    /// never overwrite a newer view.
     public func refresh() async {
+        request += 1
+        let mine = request
+        if managedPIDsLoadedAt.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
+            managedPIDs = await managedPIDLoader()
+            managedPIDsLoadedAt = .now
+        }
         let sampler = self.sampler
-        samples = await Task.detached { sampler.sample() }.value
+        let fresh = await Task.detached { sampler.sample() }.value
+        guard mine == request else { return }
+        samples = fresh
         let now = Date.now
         cpu = meter.update(samples, at: now)
-        attribution = ProcessAttribution.attribute(samples, matchers: matchers)
+        attribution = ProcessAttribution.attribute(samples, matchers: matchers,
+                                                   managedPIDs: managedPIDs)
         republish(at: now)
     }
 
@@ -165,7 +187,7 @@ public final class ComputeModel {
                     sample: sample,
                     cpuPercent: cpu[sample.pid],
                     flags: ComputeSummary.flags(for: sample, busy: meter.isBusy(sample.pid), limits: limits),
-                    isRoot: matcher.map { ProcessAttribution.isRoot(sample, of: $0) } ?? false,
+                    isMain: matcher.map { ProcessAttribution.isMainProcess(sample, of: $0) } ?? false,
                     stillRunning: isStillRunning(sample.pid, at: now))
             }.sorted { $0.sample.memoryBytes > $1.sample.memoryBytes }
         }

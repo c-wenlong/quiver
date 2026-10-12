@@ -114,21 +114,21 @@ public struct CleanupItem: Sendable, Equatable, Identifiable {
     public var reason: String
     /// Ticked in the sheet by default.
     public var preselected: Bool
-    /// A harness's own process (the app or CLI): quitting it alone is
-    /// enough, it shuts its own helpers down.
-    public var isHarnessRoot: Bool
+    /// The harness's own entry process (the app's executable or the CLI):
+    /// quitting it alone is enough, it shuts its own helpers down.
+    public var isMain: Bool
 
-    public init(kind: Kind, reason: String, preselected: Bool, isHarnessRoot: Bool = false) {
+    public init(kind: Kind, reason: String, preselected: Bool, isMain: Bool = false) {
         self.kind = kind
         self.reason = reason
         self.preselected = preselected
-        self.isHarnessRoot = isHarnessRoot
+        self.isMain = isMain
     }
 
     /// A single process to quit, for the row menu rather than the sheet.
-    public static func process(_ sample: ProcessSample, harness: String, isRoot: Bool = false) -> CleanupItem {
+    public static func process(_ sample: ProcessSample, harness: String, isMain: Bool = false) -> CleanupItem {
         CleanupItem(kind: .process(sample, harness: harness), reason: "",
-                    preselected: false, isHarnessRoot: isRoot)
+                    preselected: false, isMain: isMain)
     }
 
     public static func orphanTree(_ tree: OrphanTree) -> CleanupItem {
@@ -182,7 +182,7 @@ public enum ComputeSummary {
             let flags = orphanFlags[tree.root.pid] ?? []
             var reasons: [String] = []
             if flags.contains(.old) {
-                reasons.append("Parent gone for \(duration(now.timeIntervalSince(tree.root.startedAt)))")
+                reasons.append("Running for \(duration(now.timeIntervalSince(tree.root.startedAt)))")
             }
             if flags.contains(.overMemory) {
                 reasons.append("Using \(bytes(tree.memoryBytes))")
@@ -197,11 +197,11 @@ public enum ComputeSummary {
             for sample in samples.sorted(by: { $0.memoryBytes > $1.memoryBytes }) {
                 let flags = processFlags[sample.pid] ?? []
                 guard !flags.isEmpty else { continue }
-                let isRoot = ProcessAttribution.isRoot(sample, of: matcher)
+                let isMain = ProcessAttribution.isMainProcess(sample, of: matcher)
                 var reasons: [String] = []
                 var preselected = false
                 if flags.contains(.overMemory) {
-                    if isRoot {
+                    if isMain {
                         reasons.append("This is \(UsageFormat.harness(harness)) itself; quitting closes it")
                     } else {
                         reasons.append("Using \(bytes(sample.memoryBytes))")
@@ -213,20 +213,23 @@ public enum ComputeSummary {
                 }
                 items.append(CleanupItem(kind: .process(sample, harness: harness),
                                          reason: reasons.joined(separator: "; "),
-                                         preselected: preselected, isHarnessRoot: isRoot))
+                                         preselected: preselected, isMain: isMain))
             }
         }
         return items
     }
 
-    /// The order to signal an item's processes in: a harness's own process
-    /// goes alone (the app or CLI shuts its helpers down itself); anything
-    /// else goes descendants deepest-first, then the root, so children do
-    /// not die as zombies waiting on a parent that already went. Never
-    /// pid 1, the caller, or the caller's ancestors: Quiver can never quit
-    /// itself. A pid the item recorded is only signalled when the current
-    /// sample still has it with the same startedAt: a pid that died and
-    /// got reused is somebody else's process now.
+    /// The order to signal an item's processes in: a harness's own entry
+    /// process goes alone (the app or CLI shuts its helpers down itself);
+    /// anything else goes descendants deepest-first, then the root, so
+    /// children do not die as zombies waiting on a parent that already
+    /// went. Never pid 1, the caller, or the caller's ancestors: Quiver
+    /// can never quit itself. A pid the item recorded is only signalled
+    /// when the current sample still has it with the same startedAt: a
+    /// pid that died and got reused is somebody else's process now. A
+    /// tree's membership comes from the current sample, so a worker the
+    /// root spawned after the page listed it is still quit, and so is a
+    /// recorded child that outlived its root.
     public static func killOrder(for item: CleanupItem, in samples: [ProcessSample],
                                  selfPID: Int32, ancestors: Set<Int32>) -> [Int32] {
         let byPid = Dictionary(samples.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
@@ -234,15 +237,18 @@ public enum ComputeSummary {
         for p in samples { children[p.ppid, default: []].append(p) }
         let root: ProcessSample
         let members: [ProcessSample]
+        let rootIsLive: Bool
         switch item.kind {
         case .orphanTree(let tree):
             root = tree.root
-            guard byPid[root.pid]?.startedAt == root.startedAt else { return [] }
-            members = tree.descendants.filter { byPid[$0.pid]?.startedAt == $0.startedAt }
+            rootIsLive = byPid[root.pid]?.startedAt == root.startedAt
+            let survivors = tree.descendants.filter { byPid[$0.pid]?.startedAt == $0.startedAt }
+            members = (rootIsLive ? descendants(of: root.pid, under: children) : [])
+                + survivors + survivors.flatMap { descendants(of: $0.pid, under: children) }
         case .process(let sample, _):
             root = sample
-            guard byPid[root.pid]?.startedAt == root.startedAt else { return [] }
-            members = item.isHarnessRoot ? [] : descendants(of: sample.pid, under: children)
+            rootIsLive = byPid[root.pid]?.startedAt == root.startedAt
+            members = rootIsLive && !item.isMain ? descendants(of: root.pid, under: children) : []
         }
         // Depth is the distance down from the root within this item's
         // tree, so deeper members are signalled first.
@@ -256,7 +262,8 @@ public enum ComputeSummary {
             }
             depth[member.pid] = d
         }
-        let ordered = members.sorted { (depth[$0.pid] ?? 0) > (depth[$1.pid] ?? 0) } + [root]
+        let ordered = members.sorted { (depth[$0.pid] ?? 0) > (depth[$1.pid] ?? 0) }
+            + (rootIsLive ? [root] : [])
         var out: [Int32] = []
         var seen: Set<Int32> = []
         for p in ordered {

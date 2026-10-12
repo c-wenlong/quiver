@@ -251,8 +251,39 @@ final class AppModel {
                                           commands: commands,
                                           homeFolder: home + "/." + harness.name)
                 }
-        }, defaults: .standard)
+        }, managedPIDs: { await Self.launchdManagedPIDs() }, defaults: .standard)
         terminalChoice = { [unowned self] in self.terminal }
+    }
+
+    /// Pids launchd manages, from `launchctl list`: user agents look like
+    /// orphans (ppid 1, a script runner) but are services, not leftovers.
+    /// Anything going wrong answers with an empty set.
+    private nonisolated static func launchdManagedPIDs() async -> Set<Int32> {
+        await Task.detached { Self.launchdManagedPIDsSync() }.value
+    }
+
+    /// Synchronous so it can block on the child, off the caller's actor.
+    /// Five seconds, then the process is let go and the list is empty.
+    private nonisolated static func launchdManagedPIDsSync() -> Set<Int32> {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["list"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [] }
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
+        if done.wait(timeout: .now() + 5) == .timedOut {
+            process.terminationHandler = nil
+            process.terminate()
+            return []
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        // Columns are tab-separated: PID (or "-"), status, label.
+        return Set(String(decoding: data, as: UTF8.self).split(separator: "\n")
+            .compactMap { Int32($0.split(separator: "\t").first ?? "") }
+            .filter { $0 > 1 })
     }
 
     private var refreshing: Task<Void, Never>?

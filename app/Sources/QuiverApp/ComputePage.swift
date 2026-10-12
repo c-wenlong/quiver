@@ -160,7 +160,8 @@ private struct ProcessRowView: View {
     @Environment(AppModel.self) private var app
     var row: ComputeModel.ProcessRow
     var harness: String
-    @State private var confirmingRoot = false
+    @State private var confirmingQuit = false
+    @State private var confirmingForce = false
 
     private var limit: UInt64 { app.compute.limits.memoryBytes }
 
@@ -185,11 +186,9 @@ private struct ProcessRowView: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
                 .frame(minWidth: 44, alignment: .trailing)
             Menu {
-                Button("Quit") {
-                    if row.isRoot { confirmingRoot = true } else { quit(force: false) }
-                }
+                Button("Quit") { confirmingQuit = true }
                 if row.stillRunning {
-                    Button("Force quit", role: .destructive) { quit(force: true) }
+                    Button("Force quit", role: .destructive) { confirmingForce = true }
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -202,16 +201,23 @@ private struct ProcessRowView: View {
             .menuStyle(.borderlessButton)
         }
         .help(row.sample.commandLine)
-        .alert("Quit \(UsageFormat.harness(harness))?", isPresented: $confirmingRoot) {
+        .alert(row.isMain ? "Quit \(UsageFormat.harness(harness))?" : "Quit \(row.sample.name)?",
+               isPresented: $confirmingQuit) {
             Button("Quit", role: .destructive) { quit(force: false) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its open windows close.")
+            if row.isMain { Text("Its open windows close.") }
+        }
+        .alert("Force quit \(row.sample.name)?", isPresented: $confirmingForce) {
+            Button("Force quit", role: .destructive) { quit(force: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It stops at once without saving.")
         }
     }
 
     private func quit(force: Bool) {
-        let item = CleanupItem.process(row.sample, harness: harness, isRoot: row.isRoot)
+        let item = CleanupItem.process(row.sample, harness: harness, isMain: row.isMain)
         Task { await app.compute.quit(item, force: force) }
     }
 }
@@ -237,6 +243,8 @@ private struct OrphansCard: View {
 private struct OrphanRowView: View {
     @Environment(AppModel.self) private var app
     var row: ComputeModel.OrphanRow
+    @State private var confirmingQuit = false
+    @State private var confirmingForce = false
 
     private var limit: UInt64 { app.compute.limits.memoryBytes }
     private var root: ProcessSample { row.tree.root }
@@ -267,17 +275,33 @@ private struct OrphanRowView: View {
             Spacer(minLength: 8)
             Text(ComputeSummary.bytes(row.tree.memoryBytes))
                 .font(Theme.caption).foregroundStyle(Theme.textPrimary).monospacedDigit()
-            Button("Quit") { Task { await app.compute.quit(.orphanTree(row.tree)) } }
+            Button("Quit") { confirmingQuit = true }
                 .secondaryButton()
             if row.stillRunning {
-                Button("Force quit", role: .destructive) {
-                    Task { await app.compute.quit(.orphanTree(row.tree), force: true) }
-                }
-                .secondaryButton()
+                Button("Force quit", role: .destructive) { confirmingForce = true }
+                    .secondaryButton()
             }
         }
         .padding(.vertical, 10)
         .help(root.commandLine)
+        .alert("Quit \(command)?", isPresented: $confirmingQuit) {
+            Button("Quit", role: .destructive) { quit(force: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let n = row.tree.descendants.count
+            Text(n == 0 ? "It gets a quit signal."
+                 : "It and its \(n) child process\(n == 1 ? "" : "es") get a quit signal.")
+        }
+        .alert("Force quit \(command)?", isPresented: $confirmingForce) {
+            Button("Force quit", role: .destructive) { quit(force: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It stops at once without saving.")
+        }
+    }
+
+    private func quit(force: Bool) {
+        Task { await app.compute.quit(.orphanTree(row.tree), force: force) }
     }
 
     private var cwdFolder: String? {
@@ -296,6 +320,8 @@ private struct CleanupSheet: View {
     var model: ComputeModel
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<String> = []
+    /// Ids whose quits are being given their five seconds to take.
+    @State private var quitting: Set<String> = []
     /// item id -> true when the process is still there after the quit.
     @State private var stillThere: [String: Bool] = [:]
     @State private var working = false
@@ -318,6 +344,7 @@ private struct CleanupSheet: View {
                 VStack(spacing: 0) {
                     ForEach(items) { item in
                         CleanupRow(item: item, isOn: selected.contains(item.id),
+                                   quitting: quitting.contains(item.id),
                                    stillThere: stillThere[item.id]) {
                             if selected.contains(item.id) { selected.remove(item.id) }
                             else { selected.insert(item.id) }
@@ -352,10 +379,18 @@ private struct CleanupSheet: View {
 
     private func quitSelected() async {
         working = true
-        for item in items where selected.contains(item.id) {
+        quitting = selected
+        for item in items where quitting.contains(item.id) {
             await model.quit(item)
+        }
+        // SIGTERM is not instant; give it five seconds and a fresh sample
+        // before calling anything still running.
+        try? await Task.sleep(for: .seconds(5))
+        await model.refresh()
+        for item in items where quitting.contains(item.id) {
             stillThere[item.id] = !model.alivePids(of: item).isEmpty
         }
+        quitting = []
         selected = []
         working = false
     }
@@ -369,6 +404,7 @@ private struct CleanupSheet: View {
 private struct CleanupRow: View {
     var item: CleanupItem
     var isOn: Bool
+    var quitting: Bool
     var stillThere: Bool?
     var toggle: () -> Void
     var force: () -> Void
@@ -400,6 +436,11 @@ private struct CleanupRow: View {
                 Text(stillThere ? "Still running" : "Quit")
                     .font(Theme.caption)
                     .foregroundStyle(stillThere ? Theme.warningText : Theme.textSecondary)
+                    .frame(width: 76, alignment: .leading)
+            } else if quitting {
+                Text("Quitting…")
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.textSecondary)
                     .frame(width: 76, alignment: .leading)
             } else {
                 Toggle(isOn: Binding(get: { isOn }, set: { _ in toggle() })) { EmptyView() }

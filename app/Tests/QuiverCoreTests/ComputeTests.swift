@@ -8,11 +8,12 @@ import Testing
     static let home = "/Users/test"
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    /// A fake process. `path` doubles as the name source.
+    /// A fake process. `path` doubles as the name source. Orphan roots
+    /// need a real cwd: "/" or none reads as a launchd service.
     static func proc(_ pid: Int32, _ ppid: Int32, path: String, args: [String] = [],
-                     mem: UInt64 = 1 << 20, cpu: UInt64 = 0, threads: Int = 1,
-                     started: Date = now) -> ProcessSample {
-        ProcessSample(pid: pid, ppid: ppid, path: path, arguments: args,
+                     cwd: String? = nil, mem: UInt64 = 1 << 20, cpu: UInt64 = 0,
+                     threads: Int = 1, started: Date = now) -> ProcessSample {
+        ProcessSample(pid: pid, ppid: ppid, path: path, arguments: args, cwd: cwd,
                       startedAt: started, threads: threads,
                       memoryBytes: mem, cpuTimeNanos: cpu)
     }
@@ -74,7 +75,8 @@ import Testing
     }
 
     @Test func aRunnerOrphanAndItsChildrenFormOneTree() {
-        let npm = Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "studio"])
+        let npm = Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "studio"],
+                            cwd: "/Users/test/proj")
         let node1 = Self.proc(11, 10, path: "/opt/homebrew/bin/node", args: ["node", "/x/studio.js"])
         let node2 = Self.proc(12, 11, path: "/opt/homebrew/bin/node", args: ["node", "/x/worker.js"])
         let a = ProcessAttribution.attribute([npm, node1, node2], matchers: [Self.claude])
@@ -95,7 +97,8 @@ import Testing
 
     @Test func versionedPythonStillCountsAsARunner() {
         // "python3.12" orphaned under pid 1 is an orphan tree root.
-        let py = Self.proc(10, 1, path: "/usr/bin/python3.12", args: ["python3.12", "/x/serve.py"])
+        let py = Self.proc(10, 1, path: "/usr/bin/python3.12", args: ["python3.12", "/x/serve.py"],
+                           cwd: "/Users/test/proj")
         let a = ProcessAttribution.attribute([py], matchers: [])
         #expect(a.orphans.map(\.id) == [10])
 
@@ -106,6 +109,22 @@ import Testing
         let b = ProcessAttribution.attribute([framework], matchers: [Self.claude])
         #expect(b.byHarness["claude"] == [framework])
     }
+
+    @Test func launchdServicesAreNotOrphans() {
+        // A user LaunchAgent also reports ppid 1 under a runner, but its
+        // working directory is "/" (or unreadable), or launchd lists it.
+        let daemon = Self.proc(10, 1, path: "/usr/bin/node", args: ["node", "/x/agent.js"],
+                               cwd: "/")
+        let noCwd = Self.proc(11, 1, path: "/usr/bin/node", args: ["node", "/x/other.js"])
+        let server = Self.proc(12, 1, path: "/usr/bin/node", args: ["node", "/x/serve.js"],
+                               cwd: "/Users/test/proj")
+        let a = ProcessAttribution.attribute([daemon, noCwd, server], matchers: [])
+        #expect(a.orphans.map(\.id) == [12])
+        let b = ProcessAttribution.attribute([server], matchers: [], managedPIDs: [12])
+        #expect(b.orphans.isEmpty)
+    }
+
+    // MARK: Main process
 
     // MARK: Usage totals
 
@@ -166,6 +185,42 @@ import Testing
         t += 130; cpuTime += 130_000_000_000
         _ = meter.update([Self.proc(10, 1, path: "/x", cpu: cpuTime)], at: t)
         #expect(meter.isBusy(10))
+    }
+
+    // MARK: Main process
+
+    @Test func theBundleExecutableIsMainButNestedHelpersAreNot() {
+        let main = Self.proc(10, 1, path: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
+        let renderer = Self.proc(11, 10,
+                                 path: "/Applications/ChatGPT.app/Contents/Frameworks/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)")
+        // Both attribute to codex, but only the bundle executable is main.
+        #expect(ProcessAttribution.isRoot(main, of: Self.codex))
+        #expect(ProcessAttribution.isMainProcess(main, of: Self.codex))
+        #expect(ProcessAttribution.isRoot(renderer, of: Self.codex))
+        #expect(!ProcessAttribution.isMainProcess(renderer, of: Self.codex))
+        // Home-folder processes are helpers, never main.
+        let homeProc = Self.proc(12, 1, path: Self.home + "/.codex/bin/x")
+        #expect(ProcessAttribution.isRoot(homeProc, of: Self.codex))
+        #expect(!ProcessAttribution.isMainProcess(homeProc, of: Self.codex))
+    }
+
+    @Test func anOverMemoryHelperAppIsPreselectedAndQuitsWithItsChildren() {
+        let over = UInt64(3) << 30
+        let renderer = Self.proc(10, 1,
+                                 path: "/Applications/ChatGPT.app/Contents/Frameworks/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+                                 mem: over)
+        let child = Self.proc(11, 10, path: "/x/worker")
+        let flags: [Int32: Set<ProcessFlag>] = [10: [.overMemory]]
+        let items = ComputeSummary.cleanup(byHarness: ["codex": [renderer]], orphans: [],
+                                           orphanFlags: [:], processFlags: flags,
+                                           matchers: [Self.codex], limits: ComputeLimits(),
+                                           now: Self.now)
+        #expect(items.count == 1)
+        #expect(items[0].preselected)
+        #expect(!items[0].isMain)
+        let order = ComputeSummary.killOrder(for: items[0], in: [renderer, child],
+                                             selfPID: 99, ancestors: [])
+        #expect(order == [11, 10])
     }
 
     // MARK: Flags and cleanup
@@ -254,7 +309,7 @@ import Testing
         let child = Self.proc(11, 10, path: "/x/helper")
         let grandchild = Self.proc(12, 11, path: "/x/worker")
         let item = CleanupItem(kind: .process(root, harness: "claude"), reason: "",
-                               preselected: false, isHarnessRoot: true)
+                               preselected: false, isMain: true)
         let order = ComputeSummary.killOrder(for: item, in: [root, child, grandchild],
                                              selfPID: 99, ancestors: [])
         #expect(order == [10])
@@ -274,11 +329,36 @@ import Testing
         let child = Self.proc(11, 10, path: "/x/child", started: Self.oldStart)
         let stale = Self.proc(12, 11, path: "/x/stale", started: Self.oldStart)
         let tree = OrphanTree(root: root, descendants: [child, stale])
-        // pid 12 still exists in the current sample, but it is a different process.
-        let live = [root, child, Self.proc(12, 11, path: "/x/reused")]
+        // pid 12 still exists, but as a different process owned elsewhere:
+        // its startedAt differs and it does not hang under the root.
+        let live = [root, child, Self.proc(12, 1, path: "/x/reused")]
         let order = ComputeSummary.killOrder(for: .orphanTree(tree), in: live,
                                              selfPID: 99, ancestors: [])
         #expect(order == [11, 10])
+    }
+
+    @Test func aWorkerSpawnedAfterTheRowWasBuiltStillGetsSignalled() {
+        let root = Self.proc(10, 1, path: "/opt/homebrew/bin/npm", started: Self.oldStart)
+        let recorded = Self.proc(11, 10, path: "/x/worker", started: Self.oldStart)
+        let tree = OrphanTree(root: root, descendants: [recorded])
+        // pid 12 hangs under the root in the current sample only.
+        let live = [root, recorded, Self.proc(12, 10, path: "/x/new", started: Self.oldStart)]
+        let order = ComputeSummary.killOrder(for: .orphanTree(tree), in: live,
+                                             selfPID: 99, ancestors: [])
+        #expect(Set(order.dropLast()) == [11, 12])
+        #expect(order.last == 10)
+    }
+
+    @Test func aSurvivingChildIsSignalledWhenTheRootIsGone() {
+        let root = Self.proc(10, 1, path: "/opt/homebrew/bin/npm", started: Self.oldStart)
+        let child = Self.proc(11, 10, path: "/x/worker", started: Self.oldStart)
+        let tree = OrphanTree(root: root, descendants: [child])
+        // The root exited; the child was reparented to launchd but is the
+        // same process it was (same pid, same startedAt).
+        let live = [Self.proc(11, 1, path: "/x/worker", started: Self.oldStart)]
+        let order = ComputeSummary.killOrder(for: .orphanTree(tree), in: live,
+                                             selfPID: 99, ancestors: [])
+        #expect(order == [11])
     }
 
     // MARK: Limits persistence
@@ -312,7 +392,7 @@ import Testing
             // oldStart is anchored to Self.now, but the model compares
             // against the real clock, so this one needs real age.
             Self.proc(20, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "studio"],
-                      started: .now.addingTimeInterval(-30 * 3600)),
+                      cwd: "/Users/test/proj", started: .now.addingTimeInterval(-30 * 3600)),
         ])
         let suite = "compute-test-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -330,6 +410,43 @@ import Testing
         await model.quit(.process(fake.table[1], harness: "claude"))
         #expect(fake.signalled.map(\.0) == [11])
         #expect(fake.signalled.map(\.1) == [SIGTERM])
+    }
+
+    @MainActor @Test func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
+        // The first sample blocks until the test releases it; the second
+        // returns at once. The parked one must not publish over the new.
+        final class Gated: ProcessSampling, @unchecked Sendable {
+            let tables: [[ProcessSample]]
+            let entered = DispatchSemaphore(value: 0)
+            let release = DispatchSemaphore(value: 0)
+            private var calls = 0
+            private let lock = NSLock()
+            init(_ tables: [[ProcessSample]]) { self.tables = tables }
+            func sample() -> [ProcessSample] {
+                lock.lock()
+                calls += 1
+                let n = calls
+                lock.unlock()
+                if n == 1 { entered.signal(); waitForRelease() }
+                return tables[min(n, tables.count) - 1]
+            }
+            /// Sync wrappers, callable from the async test.
+            func waitForEntry() { entered.wait() }
+            func waitForRelease() { release.wait() }
+        }
+        let first = [Self.proc(10, 1, path: "/opt/homebrew/bin/claude")]
+        let second = [Self.proc(11, 1, path: "/opt/homebrew/bin/claude")]
+        let gated = Gated([first, second])
+        let model = ComputeModel(sampler: gated, matchers: { [Self.claude] },
+                                 signaller: SystemSignaller(), selfPID: 99)
+        await model.loadMatchers()
+        let slow = Task { await model.refresh() }
+        // Wait off the main actor so the refresh can reach its sample call.
+        await Task.detached { gated.waitForEntry() }.value
+        await model.refresh()
+        gated.release.signal()
+        await slow.value
+        #expect(model.processes["claude"]?.map(\.id) == [11])
     }
 
     // MARK: Sampler smoke test
