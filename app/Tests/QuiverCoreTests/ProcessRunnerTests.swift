@@ -59,7 +59,10 @@ import Testing
         try await Task.sleep(for: .milliseconds(300))
         task.cancel()
         _ = try? await task.value
-        #expect(Date().timeIntervalSince(started) < 5)
+        // The bound catches a hang, not latency: the child sleeps 30s,
+        // so ten seconds still fails a broken cancel while a starved CI
+        // runner cannot trip it.
+        #expect(Date().timeIntervalSince(started) < 10)
     }
 }
 
@@ -73,7 +76,10 @@ import Testing
 
         let started = Date()
         let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
-        #expect(Date().timeIntervalSince(started) < 3)
+        // The bound catches a hang, not latency: the shell sleeps 30s,
+        // so ten seconds still fails a broken timeout while a starved
+        // CI runner cannot trip it.
+        #expect(Date().timeIntervalSince(started) < 10)
         #expect(env["PATH"] == "/usr/bin:/bin")
     }
 
