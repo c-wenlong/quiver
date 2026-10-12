@@ -9,55 +9,31 @@ from pathlib import Path
 
 from quiver.console import c, cpad, fit_widths, sanitize, terminal_width, truncate, visible_len
 from quiver.flags import expand_value_flags
-from quiver.json_output import emit, take_json_flag
+from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.markdown import render_markdown
 from quiver.sessions import failures
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.identity import launch_tool
+from quiver.sessions.models import SessionRow
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
 from quiver.sessions.picker import pick_session
+from quiver.sessions.resume import (
+    LIMITED_RESUME,
+    RESUME_FLAGS,
+    codex_resume_args,
+    launch_tool_name,
+    resume_flags,
+    resume_json,
+)
 from quiver.sessions.query import SessionQuery, calendar_range_ms
 from quiver.sessions.status import session_statuses
 from quiver.table import Table
 
-def _codex_resume_args(session_id: str) -> list[str]:
-    """``codex resume <uuid>``, or nothing when there is no uuid to pass.
-
-    Codex resumes through a subcommand rather than a flag, and its argument
-    is the thread uuid or a thread name. Quiver's session id is the rollout
-    file's stem, which is neither, so the uuid has to be lifted out of it: a
-    ``--resume rollout-2026-09-09T14-52-42-<uuid>`` never resumed anything.
-    """
-    from quiver.sessions.parsers import codex_thread_id
-
-    thread_id = codex_thread_id(session_id)
-    return ["resume", thread_id] if thread_id else []
-
-
-# Resume flag strategies keyed by tool_name (not launch key)
-_RESUME_FLAGS = {
-    "opencode": lambda sid: ["--session", sid] if sid else [],
-    "kilo": lambda sid: ["--session", sid] if sid else [],
-    "claude": lambda sid: ["--resume", sid] if sid else [],
-    "codex": _codex_resume_args,
-    "pi": lambda sid: ["--session", sid] if sid else [],
-    "droid": lambda sid: ["--resume", sid] if sid else [],
-    "copilot": lambda sid: ["--resume", sid] if sid else [],
-    "devin": lambda sid: ["--resume", sid] if sid else [],
-    "freebuff": lambda sid: ["--continue", sid] if sid else [],
-    "cursor": lambda sid: ["--resume", sid] if sid else [],
-    "cline": lambda sid: ["--id", sid] if sid else [],
-}
-
-_LIMITED_RESUME = frozenset(
-    {
-        "gemini",
-        "continue",
-        "crush",
-        "grok",
-        "forge",
-    }
-)
+# Kept importable from here: tests and older call sites use these names.
+_codex_resume_args = codex_resume_args
+_launch_tool_name = launch_tool_name
+_RESUME_FLAGS = RESUME_FLAGS
+_LIMITED_RESUME = LIMITED_RESUME
 
 
 def _help_requested(args: list[str], value_flags: set[str]) -> bool:
@@ -300,56 +276,10 @@ def _parse_session_args(args: list[str]):
     )
 
 
-def _filter_search(sessions, search: str | None):
-    if not search:
-        return sessions
-    needle = search.lower()
-    out = []
-    for s in sessions:
-        hay = " ".join(
-            [
-                s.agent or "",
-                s.tool_name or "",
-                s.path or "",
-                s.title or "",
-                s.session_id or "",
-            ]
-        ).lower()
-        if needle in hay:
-            out.append(s)
-    return out
-
-
-def _launch_tool_name(tool_name: str) -> str:
-    return launch_tool(tool_name)
-
-
-def _resume_flags(session) -> list[str]:
-    """The flags that reopen ``session`` in its harness, or [] when none do."""
-    builder = _RESUME_FLAGS.get(session.tool_name)
-    return builder(session.session_id) if builder else []
-
-
-def _resume_json(session) -> dict | None:
-    """The command that resumes ``session``, or None when none can.
-
-    A harness in ``_LIMITED_RESUME`` only launches in the session's
-    directory, and a session whose id yields no flags (a codex rollout with
-    no uuid in its name) has nothing to reopen. Neither is a resume.
-    """
-    flags = _resume_flags(session)
-    if not flags:
-        return None
-    return {
-        "argv": [_launch_tool_name(session.tool_name), *flags],
-        "cwd": session.path or None,
-    }
-
-
 def _resume_cmd_args(session) -> list[str]:
-    launch = _launch_tool_name(session.tool_name)
-    cmd_args = [launch, *_resume_flags(session)]
-    if session.tool_name in _LIMITED_RESUME and session.tool_name not in _RESUME_FLAGS:
+    launch = launch_tool_name(session.tool_name)
+    cmd_args = [launch, *resume_flags(session)]
+    if session.tool_name in LIMITED_RESUME and session.tool_name not in RESUME_FLAGS:
         if session.tool_name == "gemini":
             print(
                 c(
@@ -369,21 +299,24 @@ def _resume_cmd_args(session) -> list[str]:
     return cmd_args
 
 
-def _session_json(session, status: str) -> dict:
-    """One ``swe session --json`` row."""
-    return {
-        "id": session.session_id or None,
-        "harness": session.tool_name,
-        "agent": session.agent,
-        "cwd": session.path or None,
-        "title": session.title,
-        "title_source": session.title_source or None,
-        # Session.timestamp is the transcript mtime in epoch ms; the contract
-        # is seconds, named for what it is: when the session last moved.
-        "last_active_at": session.timestamp / 1000,
-        "status": status or None,
-        "resume": _resume_json(session),
-    }
+def _filter_search(sessions, search: str | None):
+    if not search:
+        return sessions
+    needle = search.lower()
+    out = []
+    for s in sessions:
+        hay = " ".join(
+            [
+                s.agent or "",
+                s.tool_name or "",
+                s.path or "",
+                s.title or "",
+                s.session_id or "",
+            ]
+        ).lower()
+        if needle in hay:
+            out.append(s)
+    return out
 
 
 def _display_title(session, width: int) -> str:
@@ -661,7 +594,7 @@ def cmd_session(args):
     args, json_view = take_json_flag(args)
     # Under --json a refusal must leave stdout empty, so the message goes
     # to stderr instead.
-    with redirect_stdout(sys.stderr if json_view else sys.stdout):
+    with redirect_stdout(error_stream(json_view)):
         parsed = _parse_session_args(args)
     if parsed is None:
         return 1
@@ -711,7 +644,7 @@ def cmd_session(args):
         statuses = session_statuses(sessions)
         return emit({
             "sessions": [
-                _session_json(s, status)
+                SessionRow.of(s, status, resume_json(s)).to_json()
                 for s, status in zip(sessions, statuses)
             ],
             # A parser that crashed returns nothing, which reads exactly like

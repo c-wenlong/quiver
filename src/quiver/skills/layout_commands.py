@@ -1,19 +1,16 @@
 """Skills tree, link, unlink, and move CLI commands."""
 
-import sys
 from pathlib import Path
 
-from quiver.console import c, truncate
+from quiver.console import c
 from quiver.flags import expand_value_flags
-from quiver.json_output import emit
+from quiver.json_output import emit, error_stream
 from quiver.skills.help_text import (
     print_skills_link_help,
     print_skills_move_help,
     print_skills_unlink_help,
 )
-from quiver.skills.layout import (
-    enumerate_skill_roots,
-)
+from quiver.skills.models import LinkReply, MoveReply, UnlinkReply
 from quiver.skills.link_ops import (
     SkillLayoutError,
     link_skill_root,
@@ -54,41 +51,32 @@ def _parse_flags(args: list[str], allowed: frozenset[str]) -> tuple[dict, list[s
     return opts, rest
 
 
-def _err(json_view: bool):
-    """Where a refusal goes. Under --json stdout must stay empty: the app
-    decodes it whole, so an error line there reads as malformed output."""
-    return sys.stderr if json_view else sys.stdout
-
-
 def cmd_skills_link(args):
     json_view = "--json" in args
     try:
         opts, rest = _parse_flags(args, {"--force", "--json"})
     except ValueError as exc:
-        print(c("red", f"  {exc}"), file=_err(json_view))
+        print(c("red", f"  {exc}"), file=error_stream(json_view))
         return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_link_help()
         return 0
     if not rest:
         print(c("red", "  Usage: swe skills link <source> [target] [--force]"),
-              file=_err(json_view))
+              file=error_stream(json_view))
         return 1
     source = rest[0]
     target = rest[1] if len(rest) > 1 else None
     if len(rest) > 2:
-        print(c("red", f"  Unexpected args: {' '.join(rest[2:])}"), file=_err(json_view))
+        print(c("red", f"  Unexpected args: {' '.join(rest[2:])}"), file=error_stream(json_view))
         return 1
     try:
         label, src, tgt = link_skill_root(source, target, force=opts["force"])
     except SkillLayoutError as exc:
-        print(c("red", f"  {exc}"), file=_err(json_view))
+        print(c("red", f"  {exc}"), file=error_stream(json_view))
         return 1
     if opts["json"]:
-        return emit({
-            "action": "link", "harness": label,
-            "source": str(src), "target": str(tgt),
-        })
+        return emit(LinkReply(label, str(src), str(tgt)).to_json())
     home = Path.home()
     print(c("green", f"  ✓ Linked {label}: {_tilde(src, home)} → {_tilde(tgt, home)}"))
     print(c("dim", "  Run `swe skills tree` to verify.\n"))
@@ -100,25 +88,22 @@ def cmd_skills_unlink(args):
     try:
         opts, rest = _parse_flags(args, {"--mkdir", "--json"})
     except ValueError as exc:
-        print(c("red", f"  {exc}"), file=_err(json_view))
+        print(c("red", f"  {exc}"), file=error_stream(json_view))
         return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_unlink_help()
         return 0
     if not rest or len(rest) > 1:
         print(c("red", "  Usage: swe skills unlink <harness|path> [--mkdir]"),
-              file=_err(json_view))
+              file=error_stream(json_view))
         return 1
     try:
         label, path = unlink_skill_root(rest[0], mkdir=opts["mkdir"])
     except SkillLayoutError as exc:
-        print(c("red", f"  {exc}"), file=_err(json_view))
+        print(c("red", f"  {exc}"), file=error_stream(json_view))
         return 1
     if opts["json"]:
-        return emit({
-            "action": "unlink", "harness": label,
-            "path": str(path), "mkdir": opts["mkdir"],
-        })
+        return emit(UnlinkReply(label, str(path), opts["mkdir"]).to_json())
     home = Path.home()
     msg = f"  ✓ Unlinked {label}: {_tilde(path, home)}"
     if opts["mkdir"]:
@@ -133,14 +118,14 @@ def cmd_skills_move(args):
     try:
         opts, rest = _parse_flags(args, {"--from", "--to", "--force", "--json"})
     except ValueError as exc:
-        print(c("red", f"  {exc}"), file=_err(json_view))
+        print(c("red", f"  {exc}"), file=error_stream(json_view))
         return 1
     if rest and rest[0] in ("-h", "--help"):
         print_skills_move_help()
         return 0
     if not rest or len(rest) > 1 or not opts["from"] or not opts["to"]:
         print(c("red", "  Usage: swe skills move <name> --from=<scope> --to=<scope>"),
-              file=_err(json_view))
+              file=error_stream(json_view))
         return 1
     name = rest[0]
     try:
@@ -151,13 +136,10 @@ def cmd_skills_move(args):
             force=opts["force"],
         )
     except SkillLayoutError as exc:
-        print(c("red", f"  {exc}"), file=_err(json_view))
+        print(c("red", f"  {exc}"), file=error_stream(json_view))
         return 1
     if opts["json"]:
-        return emit({
-            "action": "move", "name": name,
-            "from": str(src), "to": str(dest),
-        })
+        return emit(MoveReply(name, str(src), str(dest)).to_json())
     home = Path.home()
     print(c("green", f"  ✓ Moved {name}"))
     print(c("dim", f"    from {_tilde(src, home)}"))

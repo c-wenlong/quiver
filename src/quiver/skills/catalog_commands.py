@@ -6,6 +6,7 @@ from pathlib import Path
 
 from quiver.console import c, elide
 from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
+from quiver.skills.models import CatalogRow
 from quiver.skills.help_text import print_skills_catalog_help, print_skills_discover_help
 from quiver.skills.catalogs import (
     add_skill_catalog,
@@ -13,7 +14,6 @@ from quiver.skills.catalogs import (
     load_skill_catalogs,
     remove_skill_catalog,
     resolve_catalog_path,
-    suggest_catalog_label,
 )
 
 _CATALOG_SUBCOMMANDS = frozenset({"list", "ls", "add", "remove", "rm", "help", "-h", "--help"})
@@ -133,16 +133,7 @@ def cmd_skills_discover(args):
     if opts["json"]:
         print(
             json.dumps(
-                [
-                    {
-                        "label": f.label,
-                        "path": str(f.path),
-                        "skill_count": f.skill_count,
-                        "source": f.source,
-                        "status": f.status,
-                    }
-                    for f in findings
-                ],
+                [CatalogRow.of(f).to_json() for f in findings],
                 indent=2,
             )
         )

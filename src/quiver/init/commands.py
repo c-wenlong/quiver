@@ -23,6 +23,7 @@ from quiver.init.manage import (
     register,
 )
 from quiver.init.migrate import apply_migration, plan_migration, write_gitignore
+from quiver.init.models import LinkRow
 from quiver.init.layout import (
     LinkIgnoreError,
     LinkStatus,
@@ -259,17 +260,14 @@ def _link_json(instructions: list[LinkStatus], skills: list[LinkStatus]) -> list
     share a name (``~/.agents`` and ``~/.config/agents``) the first in plan
     order is the one reported.
     """
-    rows: dict[str, dict] = {}
+    rows: dict[str, LinkRow] = {}
     for key, statuses in (("instructions", instructions), ("skills", skills)):
         for status in statuses:
-            row = rows.setdefault(
-                registry_name(status.label),
-                {"name": registry_name(status.label),
-                 "instructions": None, "skills": None},
-            )
-            if row[key] is None:
-                row[key] = {"path": str(status.path), "state": status.state}
-    return [rows[name] for name in sorted(rows)]
+            name = registry_name(status.label)
+            row = rows.setdefault(name, LinkRow(name))
+            if getattr(row, key) is None:
+                setattr(row, key, {"path": str(status.path), "state": status.state})
+    return [rows[name].to_json() for name in sorted(rows)]
 
 
 def cmd_init(args) -> int:

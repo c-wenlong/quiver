@@ -43,3 +43,58 @@ class Session:
             value = getattr(self, field)
             if not isinstance(value, str):
                 setattr(self, field, "" if value is None else str(value))
+
+
+@dataclass(frozen=True)
+class ResumeCmd:
+    """The ``resume`` block of one ``swe session --json`` row."""
+
+    argv: list
+    cwd: str | None
+
+    def to_json(self) -> dict:
+        return {"argv": self.argv, "cwd": self.cwd}
+
+
+@dataclass(frozen=True)
+class SessionRow:
+    """One ``swe session --json`` row."""
+
+    id: str | None
+    harness: str
+    agent: str
+    cwd: str | None
+    title: str
+    title_source: str | None
+    last_active_at: float
+    status: str | None
+    resume: dict | None
+
+    @classmethod
+    def of(cls, session, status: str, resume: dict | None) -> "SessionRow":
+        # Session.timestamp is the transcript mtime in epoch ms; the contract
+        # is seconds, named for what it is: when the session last moved.
+        return cls(
+            id=session.session_id or None,
+            harness=session.tool_name,
+            agent=session.agent,
+            cwd=session.path or None,
+            title=session.title,
+            title_source=session.title_source or None,
+            last_active_at=session.timestamp / 1000,
+            status=status or None,
+            resume=resume,
+        )
+
+    def to_json(self) -> dict:
+        return {
+            "id": self.id,
+            "harness": self.harness,
+            "agent": self.agent,
+            "cwd": self.cwd,
+            "title": self.title,
+            "title_source": self.title_source,
+            "last_active_at": self.last_active_at,
+            "status": self.status,
+            "resume": self.resume,
+        }

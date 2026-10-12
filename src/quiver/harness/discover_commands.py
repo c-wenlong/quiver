@@ -1,6 +1,8 @@
 """Harness discover CLI command."""
 
 import json
+
+from quiver.harness.models import DiscoveryRow
 import sys
 from pathlib import Path
 
@@ -137,21 +139,7 @@ def cmd_discover(args):
             return 0
 
     if opts["json"]:
-        payload = [
-            {
-                "name": f.name,
-                "command": f.command,
-                "path": f.path,
-                "confidence": f.confidence,
-                "source": f.source,
-                "status": f.status,
-                "description": f.description,
-                "tags": list(f.tags),
-                "aliases": list(f.aliases),
-                "primary_color": f.primary_color or None,
-            }
-            for f in findings
-        ]
+        payload = [DiscoveryRow.of(f).to_json() for f in findings]
         print(json.dumps(payload, indent=2))
     else:
         print(f"\n{c('bold', 'Harness Discover')}\n")

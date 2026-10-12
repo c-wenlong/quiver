@@ -3,11 +3,11 @@
 
 import sys
 
+from quiver.json_output import error_stream
 from quiver.config_commands import cmd_config
 from quiver.configuration import ConfigurationError
 from quiver.console import c
 from quiver.harness.commands import (
-    cmd_list_edit,
     cmd_add,
     cmd_aliases,
     cmd_check,
@@ -184,7 +184,7 @@ def main():
         except ConfigurationError as exc:
             # Under --json the app decodes stdout whole, so the message goes
             # to stderr there; everywhere else it stays where it always was.
-            print(c("red", str(exc)), file=sys.stderr if "--json" in rest else sys.stdout)
+            print(c("red", str(exc)), file=error_stream("--json" in rest))
             return 1
         return result if isinstance(result, int) else 0
     print(f"Unknown command: '{cmd}'")
