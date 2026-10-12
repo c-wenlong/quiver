@@ -47,7 +47,13 @@ private struct Sidebar: View {
                         ForEach(group.sections) { section in
                             NavItem(section: section, isSelected: model.selection == section,
                                     isFocused: focused == section) {
-                                model.selection = section
+                                // Reselecting the open page asks a detail
+                                // view on it to go back.
+                                if model.selection == section {
+                                    model.navReselects += 1
+                                } else {
+                                    model.selection = section
+                                }
                             }
                             .focused($focused, equals: section)
                         }
