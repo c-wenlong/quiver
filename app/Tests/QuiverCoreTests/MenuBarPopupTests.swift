@@ -109,7 +109,8 @@ private func reading(_ harness: String, _ source: String, _ window: String) -> L
 
     @Test func aHiddenSourceHidesItsWindowsToo() {
         var popup = MenuBarPopup(defaults: defaults())
-        popup.setShown(false, source: "claude-default", harness: "claude")
+        popup.setShown(false, source: "claude-default", harness: "claude",
+                       allWindows: ["5h"])
         #expect(!popup.shows(source: "claude-default", harness: "claude"))
         #expect(!popup.shows(window: "5h", source: "claude-default", harness: "claude",
                              allWindows: ["5h"]))
@@ -121,10 +122,27 @@ private func reading(_ harness: String, _ source: String, _ window: String) -> L
         store.set(["claude"], forKey: MenuBarPopup.Key.hiddenHarnesses)
         var popup = MenuBarPopup(defaults: store)
         #expect(!popup.shows(source: "claude-cortex", harness: "claude"))
-        popup.setShown(true, source: "claude-cortex", harness: "claude")
+        popup.setShown(true, source: "claude-cortex", harness: "claude",
+                       allWindows: ["5h"])
         #expect(popup.shows(source: "claude-cortex", harness: "claude"))
         // Personal still follows the harness-level hide.
         #expect(!popup.shows(source: "claude-default", harness: "claude"))
+    }
+
+    @Test func enablingAnAccountKeepsItsWindowChoices() {
+        let store = userStore()
+        store.set(["claude"], forKey: MenuBarPopup.Key.hiddenHarnesses)
+        var popup = MenuBarPopup(defaults: store)
+        popup.setShown(true, source: "claude-default", harness: "claude",
+                       allWindows: ["5h", "7d"])
+        #expect(popup.shows(source: "claude-default", harness: "claude"))
+        // The legacy 5h hide is the account's effective state, so it
+        // moves with it; showing the account must not show what the
+        // rule hid.
+        #expect(!popup.shows(window: "5h", source: "claude-default", harness: "claude",
+                             allWindows: ["5h", "7d"]))
+        #expect(popup.shows(window: "7d", source: "claude-default", harness: "claude",
+                            allWindows: ["5h", "7d"]))
     }
 
     @Test func hidingASourceUnderALegacyHideMaterialisesItsWindows() {
@@ -218,7 +236,7 @@ private func reading(_ harness: String, _ source: String, _ window: String) -> L
         var popup = MenuBarPopup(defaults: store)
         popup.showIncidents = false
         popup.showStats = false
-        popup.setShown(false, source: "devin", harness: "devin")
+        popup.setShown(false, source: "devin", harness: "devin", allWindows: [])
         popup.setShown(true, window: "7d Fable", source: "claude-default",
                        harness: "claude", allWindows: ["5h", "7d", "7d Fable"])
         popup.move("cursor", before: "claude-default",
@@ -239,7 +257,7 @@ private func reading(_ harness: String, _ source: String, _ window: String) -> L
         let windows = store.dictionary(forKey: MenuBarPopup.Key.hiddenWindows)
         let order = store.stringArray(forKey: MenuBarPopup.Key.harnessOrder)
         var popup = MenuBarPopup(defaults: store)
-        popup.setShown(false, source: "claude-cortex", harness: "claude")
+        popup.setShown(false, source: "claude-cortex", harness: "claude", allWindows: [])
         popup.setShown(true, window: "5h", source: "claude-default", harness: "claude",
                        allWindows: ["5h", "7d"])
         popup.move("cursor", before: "claude-default",

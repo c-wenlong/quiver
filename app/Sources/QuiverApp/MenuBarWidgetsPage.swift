@@ -267,7 +267,8 @@ private struct PopupSourceRow: View {
                 SettingSwitch(title: "Show \(row.title)",
                               isOn: Binding(get: { shown },
                                             set: { app.popup.setShown($0, source: row.source,
-                                                                       harness: row.harness) }))
+                                                                       harness: row.harness,
+                                                                       allWindows: row.windows) }))
             }
             .padding(.vertical, 12)
             if !row.windows.isEmpty {

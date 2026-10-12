@@ -95,15 +95,18 @@ public struct MenuBarPopup: Equatable, Sendable {
 
     /// Writes the source's effective state as its own, then flips the
     /// switch, so a choice never leaks to the harness's other accounts.
-    public mutating func setShown(_ shown: Bool, source: String, harness: String) {
+    public mutating func setShown(_ shown: Bool, source: String, harness: String,
+                                  allWindows: [String]) {
         if !shows(source: source, harness: harness) { hiddenSources.insert(source) }
         if shown {
             hiddenSources.remove(source)
             // Shown is the default only where no legacy hide covers the
             // harness; against one, the source needs a record of its own
-            // to stay shown. An empty window list shows every window.
+            // to stay shown. That record keeps the windows it hides now,
+            // not an empty list that would show them all.
             if legacyHiddenHarnesses.contains(harness), hiddenSourceWindows[source] == nil {
-                hiddenSourceWindows[source] = []
+                hiddenSourceWindows[source] = effectiveHiddenWindows(
+                    source: source, harness: harness, allWindows: allWindows)
             }
         } else {
             hiddenSources.insert(source)
