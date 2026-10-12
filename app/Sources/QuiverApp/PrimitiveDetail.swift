@@ -21,30 +21,6 @@ struct PrimitiveLockNote: View {
     }
 }
 
-/// A detail page's open file documents, one per path for the page's
-/// life: picking another file or stepping away and back never drops an
-/// unsaved edit.
-@MainActor
-@Observable
-final class PrimitiveDrafts {
-    private(set) var documents: [String: InstructionDocument] = [:]
-
-    /// The document for `path`, opened and loaded on first ask.
-    @discardableResult
-    func document(for path: String) -> InstructionDocument {
-        if let document = documents[path] { return document }
-        let document = InstructionDocument(url: URL(fileURLWithPath: path))
-        document.load()
-        documents[path] = document
-        return document
-    }
-
-    /// The paths with unsaved text.
-    var dirty: [String: InstructionDocument] {
-        documents.filter { $0.value.isDirty }
-    }
-}
-
 /// "‹ Plugins": back to the list the detail page covers.
 struct PrimitiveBack: View {
     var title: String
@@ -312,6 +288,9 @@ struct PartsCard: View {
 
     @State private var tree: PrimitiveTree?
     @State private var selected: String?
+    /// Whether `selected` can preview, checked off the main actor before
+    /// any document is opened for it.
+    @State private var previewable = false
     @State private var expanded: Set<String> = []
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
@@ -339,9 +318,10 @@ struct PartsCard: View {
             } else {
                 ProgressView()
             }
-            if let selected, let document = drafts.documents[selected] {
+            if let selected {
                 PrimitiveFilePane(path: selected, root: root, editable: editable,
-                                  document: document, onSaved: onChanged)
+                                  previewable: previewable, document: drafts.documents[selected],
+                                  onSaved: onChanged)
             }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -350,9 +330,13 @@ struct PartsCard: View {
         }
         .task { reload() }
         .task(id: selected) {
-            // Open the document here rather than in the view body, so a
-            // lazy create never mutates the draft store during render.
-            if let selected { drafts.document(for: selected) }
+            guard let selected else { previewable = false; return }
+            // Size and type first, off the main actor: a document is only
+            // ever opened for a file that can preview.
+            let url = URL(fileURLWithPath: selected)
+            let canPreview = await Task.detached { PrimitiveTree.isTextFile(url) }.value
+            previewable = canPreview
+            if canPreview { drafts.document(for: selected) }
         }
         .alert("New \(newPart?.title ?? "")", isPresented: .init(
             get: { newPart != nil }, set: { if !$0 { newPart = nil } })) {
@@ -457,6 +441,7 @@ struct PartsCard: View {
         guard let entry = trashEntry else { return }
         do {
             try PrimitiveParts.trash(URL(fileURLWithPath: entry.path), inside: root)
+            drafts.remove(under: entry.path)
             if selected == entry.previewPath { selected = nil }
             trashEntry = nil
             reload()
@@ -493,7 +478,10 @@ struct PrimitiveFilePane: View {
     var path: String
     var root: URL
     var editable: Bool
-    var document: InstructionDocument
+    /// Set from the caller's off-actor check, so nothing reads the file
+    /// on the main thread just to decide whether to show it.
+    var previewable: Bool
+    var document: InstructionDocument?
     var onSaved: () -> Void = {}
 
     private var url: URL { URL(fileURLWithPath: path) }
@@ -503,13 +491,15 @@ struct PrimitiveFilePane: View {
 
     var body: some View {
         Group {
-            if !PrimitiveTree.isTextFile(url) {
+            if !previewable {
                 Text("Can't preview this file.")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-            } else {
+            } else if let document {
                 InstructionEditor(document: document, title: url.lastPathComponent,
                                   subtitle: displayPath(url), readOnly: !fileEditable, onSaved: onSaved)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             }
         }
     }
@@ -670,16 +660,16 @@ struct PluginDetailView: View {
     /// `interface.displayName` when the plugin ships one.
     private func saveName() {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let previous = app.primitiveNames.name(forPlugin: plugin.ref)
-        app.primitiveNames.set(trimmed.isEmpty ? nil : trimmed, forPlugin: plugin.ref)
         do {
-            try app.primitiveNames.save(to: PluginDisplayNames.file(home: home))
+            try app.primitiveNames.saved({ $0.set(trimmed.isEmpty ? nil : trimmed, forPlugin: plugin.ref) },
+                                         to: PluginDisplayNames.file(home: home))
             nameError = nil
         } catch {
-            // The write failed: put the old name back and say so.
-            app.primitiveNames.set(previous, forPlugin: plugin.ref)
-            name = previous ?? plugin.displayName ?? plugin.name
+            // The write left the overlay untouched: show that name again
+            // and stop, so a failed rename changes nothing.
+            name = app.primitiveNames.name(forPlugin: plugin.ref) ?? plugin.displayName ?? plugin.name
             nameError = "Couldn't save the name: \(error.localizedDescription)"
+            return
         }
         guard editable, let dir else { return }
         let codex = dir.appending(path: ".codex-plugin/plugin.json")

@@ -441,3 +441,45 @@ final class PrimitiveHome {
             == ["SKILL.md", "references/api.md", "references/deep/more.md", "scripts/run.sh"])
     }
 }
+
+
+@Suite struct DraftStoreTests {
+    @MainActor @Test func trashDropsDraftsAtAndUnderThePath() {
+        let drafts = PrimitiveDrafts()
+        drafts.document(for: "/tmp/nope/file.md")
+        drafts.document(for: "/tmp/nope/sub/deep.md")
+        drafts.document(for: "/tmp/other.md")
+        drafts.remove(under: "/tmp/nope")
+        #expect(drafts.documents.keys.sorted() == ["/tmp/other.md"])
+        drafts.document(for: "/tmp/a/b.md")
+        drafts.remove(under: "/tmp/a/b.md")
+        #expect(drafts.documents["/tmp/a/b.md"] == nil)
+        #expect(drafts.documents.keys.sorted() == ["/tmp/other.md"])
+    }
+}
+
+@Suite struct OverlaySaveTests {
+    @Test func aFailedWriteRollsTheRenameBack() throws {
+        let t = try PrimitiveHome()
+        var names = PluginDisplayNames()
+        names.set("Old", forPlugin: "p@m")
+        struct Boom: Error {}
+        #expect(throws: Boom.self) {
+            try names.saved({ $0.set("New", forPlugin: "p@m") },
+                            to: PluginDisplayNames.file(home: t.home),
+                            write: { _, _ in throw Boom() })
+        }
+        #expect(names.name(forPlugin: "p@m") == "Old")
+    }
+
+    @Test func aGoodWriteKeepsTheRename() throws {
+        let t = try PrimitiveHome()
+        var names = PluginDisplayNames()
+        var written: PluginDisplayNames?
+        try names.saved({ $0.set("New", forPlugin: "p@m") },
+                        to: PluginDisplayNames.file(home: t.home),
+                        write: { n, _ in written = n })
+        #expect(written?.name(forPlugin: "p@m") == "New")
+        #expect(names.name(forPlugin: "p@m") == "New")
+    }
+}

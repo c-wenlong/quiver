@@ -125,6 +125,21 @@ public struct PluginDisplayNames: Sendable, Equatable, Codable {
         return names
     }
 
+    /// Apply `change`, persist it, and roll the overlay back when the
+    /// write fails: a failed rename changes nothing. `write` is
+    /// injectable so a failing save can be exercised in tests.
+    public mutating func saved(_ change: (inout PluginDisplayNames) -> Void, to url: URL,
+                               write: (PluginDisplayNames, URL) throws -> Void = { try $0.save(to: $1) }) throws {
+        let before = self
+        change(&self)
+        do {
+            try write(self, url)
+        } catch {
+            self = before
+            throw error
+        }
+    }
+
     /// Write atomically, creating `config/` when needed.
     public func save(to url: URL) throws {
         let data = try JSONEncoder().encode(self)

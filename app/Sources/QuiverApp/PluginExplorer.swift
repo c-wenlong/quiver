@@ -95,15 +95,12 @@ struct PluginExplorer: View {
                 TextField("Display name", text: $renameText)
                 Button("Rename") {
                     guard let id = renaming else { return }
-                    let previous = app.primitiveNames.name(forMarketplace: id)
-                    app.primitiveNames.set(renameText, forMarketplace: id)
                     do {
-                        try app.primitiveNames.save(to: PluginDisplayNames.file(home: home))
+                        try app.primitiveNames.saved({ $0.set(renameText, forMarketplace: id) },
+                                                     to: PluginDisplayNames.file(home: home))
                         renameError = nil
                         renaming = nil
                     } catch {
-                        // The write failed: put the old name back and say so.
-                        app.primitiveNames.set(previous, forMarketplace: id)
                         renameError = "Couldn't save the name: \(error.localizedDescription)"
                         renaming = nil
                     }
