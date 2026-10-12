@@ -2,7 +2,7 @@ import Foundation
 
 /// Who may edit a marketplace, a plugin or a skill: the user's own only.
 /// A marketplace is editable when a harness registers it as a `directory`
-/// source inside `~/.quiver/plugins` — the hub. A plugin is editable when
+/// source inside `~/.quiver/plugins` (the hub). A plugin is editable when
 /// its files sit inside such a marketplace's folder. A skill is editable
 /// when its folder, symlinks resolved, lives under `~/.quiver` without
 /// being part of a marketplace checkout or a cache. Anything else is
@@ -80,7 +80,7 @@ public enum PrimitiveOwnership {
 }
 
 /// Quiver's own names for marketplaces and plugins. Renaming is display
-/// only — a plugin's `name@marketplace` id never changes, so nothing is
+/// only: a plugin's `name@marketplace` id never changes, so nothing is
 /// reinstalled and nothing on disk a harness validates is touched. Kept in
 /// `~/.quiver/config/plugin-display-names.json` and written atomically.
 public struct PluginDisplayNames: Sendable, Equatable, Codable {
