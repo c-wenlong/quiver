@@ -1043,6 +1043,44 @@ class CmdInfoMigrationTest(unittest.TestCase):
         plain = strip_ansi(output)
         self.assertNotIn("Notes:", plain)
 
+
+class CmdInfoPrimaryColorTest(unittest.TestCase):
+    """The ``Colour:`` row: entry value first, then the catalog default."""
+
+    def setUp(self):
+        _setup_info_patches(self)
+
+    def _info_with(self, registry, name="claude"):
+        patches = [
+            patch(
+                "quiver.harness.commands.load_registry",
+                return_value=registry,
+            ),
+            patch("quiver.harness.commands.is_installed", return_value=True),
+            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return _run_cmd_info(name)
+
+    def test_the_catalog_colour_shows_for_an_entry_without_the_field(self):
+        output = _run_cmd_info()
+        plain = strip_ansi(output)
+        self.assertIn("Colour:", plain)
+        self.assertIn("#D97757", plain)
+
+    def test_an_entry_own_colour_wins(self):
+        registry = copy.deepcopy(_INFO_REGISTRY)
+        registry["claude"]["primary_color"] = "#112233"
+        plain = strip_ansi(self._info_with(registry))
+        self.assertIn("#112233", plain)
+        self.assertNotIn("#D97757", plain)
+
+    def test_the_row_is_omitted_when_neither_source_has_a_colour(self):
+        plain = strip_ansi(self._info_with({"mytool": {"command": "mytool"}}, name="mytool"))
+        self.assertNotIn("Colour:", plain)
+
     def test_display_name_row_only_present_when_set(self):
         self.assertNotIn("Display name:", strip_ansi(_run_cmd_info()))
         named = copy.deepcopy(_INFO_REGISTRY)

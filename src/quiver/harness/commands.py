@@ -568,14 +568,32 @@ def _display_name(info: dict) -> str | None:
     return value.strip() or None if isinstance(value, str) else None
 
 
-def _kept_display_name(previous: dict | None) -> dict:
-    """``{"display_name": ...}`` from an entry being replaced, or ``{}``.
+def _primary_color(name: str, info: dict) -> str | None:
+    """The entry's own ``primary_color``; the catalog default fills in at read time.
 
-    ``swe add`` and ``swe install`` rewrite a whole entry; the human name is
-    something the user typed, so a re-add must not erase it.
+    An entry without the field must not be rewritten just to gain the
+    catalog's colour, so the fallback resolves here rather than on load.
     """
-    name = _display_name(previous or {})
-    return {"display_name": name} if name else {}
+    from quiver.harness.catalog import HARNESS_CATALOG
+
+    return info.get("primary_color") or HARNESS_CATALOG.get(name, {}).get("primary_color")
+
+
+def _kept_fields(previous: dict | None) -> dict:
+    """Fields a re-add carries over from the entry it replaces.
+
+    ``swe add`` rewrites a whole entry; the human name and a chosen
+    colour are user decisions, so a re-add must not erase them.
+    """
+    previous = previous or {}
+    kept = {}
+    name = _display_name(previous)
+    if name:
+        kept["display_name"] = name
+    colour = previous.get("primary_color")
+    if colour:
+        kept["primary_color"] = colour
+    return kept
 
 
 def _harness_json(name, info, starred, archived, counts, rate) -> dict:
@@ -595,6 +613,7 @@ def _harness_json(name, info, starred, archived, counts, rate) -> dict:
         "notes": info.get("notes") or None,
         "aliases": [a for a in info.get("aliases", []) if a != name],
         "tags": list(info.get("tags", [])),
+        "primary_color": _primary_color(name, info),
         "state": state,
         "sessions_100d": counts.get(name),
         "rate_limit": rate.to_json() if rate is not None else None,
@@ -1084,6 +1103,9 @@ def cmd_info(args):
         ),
         ("Path:", path),
     ]
+    colour = _primary_color(name, info)
+    if colour:
+        rows.append(("Colour:", colour))
     if _display_name(info):
         # Only when set, so a harness without one prints exactly as before.
         rows.insert(0, ("Display name:", _display_name(info)))
@@ -1245,7 +1267,7 @@ def _add_interactive(args: list[str]) -> int:
                 "tags": tags_list,
                 "aliases": aliases_list,
                 "added": datetime.now().isoformat(),
-                **_kept_display_name(tools.get(draft["name"])),
+                **_kept_fields(tools.get(draft["name"])),
             }
             save_registry(tools)
             saved_status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
@@ -1317,7 +1339,7 @@ def cmd_add(args):
         "tags": tags,
         "aliases": aliases,
         "added": datetime.now().isoformat(),
-        **_kept_display_name(tools.get(name)),
+        **_kept_fields(tools.get(name)),
     }
     save_registry(tools)
     status = c("green", "installed") if is_installed(command) else c("yellow", "not yet in PATH")
@@ -1761,6 +1783,7 @@ def cmd_install(args):
     desc = entry.get("description") or catalog.get("description") or ""
     tags = list(entry.get("tags") or catalog.get("tags") or ["agentic", "coding"])
     aliases = list(entry.get("aliases") or catalog.get("aliases") or [])
+    colour = entry.get("primary_color") or catalog.get("primary_color")
 
     print(f"\n{c('bold', 'swe install')}\n")
     print(f"  name:     {reg_name}")
@@ -1833,6 +1856,8 @@ def cmd_install(args):
         "tags": tags,
         "aliases": aliases,
     }
+    if colour:
+        entry["primary_color"] = colour
     if reg_name in tools:
         # Preserve display name / notes / added if present
         prev = tools[reg_name]
@@ -1857,7 +1882,8 @@ def cmd_install(args):
 
 
 EDITABLE_FIELDS = (
-    "command", "display_name", "description", "aliases", "tags", "version", "notes",
+    "command", "display_name", "description", "aliases", "tags", "version",
+    "notes", "primary_color",
 )
 
 
@@ -1902,6 +1928,7 @@ def _show_edit_fields(name: str, info: dict) -> None:
         ("tags", _format_list(info.get("tags", []))),
         ("version", info.get("version") or "—"),
         ("notes", info.get("notes") or "—"),
+        ("colour", _primary_color(name, info) or "—"),
     ]
     for label, val in rows:
         print(f"  {'  ' + label + ':':<16} {val}")
@@ -1927,6 +1954,20 @@ def _parse_set_string(raw: str) -> dict:
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(raw)
         updates[field] = raw[start:end].strip().rstrip(",")
     return updates
+
+
+_COLOUR_HINT = "Use a colour like #D97757."
+
+
+def _normalise_colour(value) -> str | None:
+    """``#d97757`` or ``d97757`` -> ``#D97757``; blank clears the field."""
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return None
+    hex_part = text[1:] if text.startswith("#") else text
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", hex_part):
+        raise ValueError(_COLOUR_HINT)
+    return "#" + hex_part.upper()
 
 
 def _parse_edit_flags(args: list[str]) -> tuple[dict, list[str]]:
@@ -1967,6 +2008,8 @@ def _normalize_field_value(field: str, value):
     if field in ("notes", "display_name"):
         text = "" if value is None else str(value).strip()
         return text or None
+    if field == "primary_color":
+        return _normalise_colour(value)
     return "" if value is None else str(value).strip()
 
 
@@ -2040,7 +2083,7 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
     """Interactive field editor. Returns updates dict, or None if cancelled."""
     draft = dict(info)
     updates: dict = {}
-    print(c("dim", "  Edit fields: command, display name, description, aliases, tags, version, notes"))
+    print(c("dim", "  Edit fields: command, display name, description, aliases, tags, version, notes, primary color"))
     print(c("dim", "  Commands:  save  |  quit  |  show  |  <field>"))
     print(c("dim", "  Blank value keeps current. For lists, use commas (e.g. mc,ms).\n"))
 
@@ -2105,8 +2148,12 @@ def _edit_interactive(name: str, info: dict, tools: dict) -> dict | None:
             print(c("dim", "  (kept)"))
             continue
 
+        try:
+            normalized = _normalize_field_value(choice, new_raw)
+        except ValueError as exc:
+            print(c("red", f"  {exc}"))
+            continue
         updates[choice] = new_raw
-        normalized = _normalize_field_value(choice, new_raw)
         draft[choice] = normalized if normalized is not None else ""
         if choice in ("aliases", "tags"):
             print(c("green", f"  set {label} = {_format_list(normalized)}"))
