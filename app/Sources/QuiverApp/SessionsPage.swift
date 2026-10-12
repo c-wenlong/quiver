@@ -41,17 +41,23 @@ private struct SessionsContent: View {
             FilterBar(model: model)
             SummaryStrip(summary: model.summary)
             if let error = model.error ?? actionError {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+                Card {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+                }
             }
             if !model.failures.isEmpty {
-                Label("Couldn't read: \(model.failures.joined(separator: "; "))", systemImage: "exclamationmark.circle")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                Card {
+                    Label("Couldn't read: \(model.failures.joined(separator: "; "))", systemImage: "exclamationmark.circle")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
             }
             if model.isCapped {
-                Label("Showing the most recent \(model.rows.count) sessions; older ones are left out.",
-                      systemImage: "info.circle")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                Card {
+                    Label("Showing the most recent \(model.rows.count) sessions; older ones are left out.",
+                          systemImage: "info.circle")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
             }
             list
         }
@@ -66,36 +72,37 @@ private struct SessionsContent: View {
 
     @ViewBuilder private var list: some View {
         let groups = model.groupedByDay()
-        VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                Text("Session / project").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Tokens").frame(width: 80, alignment: .trailing)
-                Text("Spend").frame(width: 84, alignment: .trailing)
-                Color.clear.frame(width: Theme.iconButton)
-            }
-            .font(Theme.tableHeader).tracking(0.12).foregroundStyle(Theme.tableHeaderText)
-            // The rows' side padding, so each heading sits over its column.
-            .padding(.horizontal, 8)
-            .padding(.bottom, 10)
-            Divider().overlay(Theme.border)
+        if model.rows.isEmpty && model.isLoading {
+            LoadingCard(text: "Listing sessions…")
+        } else if groups.isEmpty {
+            EmptyCard(text: model.rows.isEmpty ? "No sessions listed." : "No sessions match these filters.",
+                      icon: "clock")
+        } else {
+            VStack(spacing: 0) {
+                HStack(spacing: 16) {
+                    Text("Session / project").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Tokens").frame(width: 80, alignment: .trailing)
+                    Text("Spend").frame(width: 84, alignment: .trailing)
+                    Color.clear.frame(width: Theme.iconButton)
+                }
+                .font(Theme.tableHeader).tracking(0.12).foregroundStyle(Theme.tableHeaderText)
+                // The rows' side padding, so each heading sits over its column.
+                .padding(.horizontal, 8)
+                .padding(.bottom, 10)
+                Divider().overlay(Theme.border)
 
-            if model.rows.isEmpty && model.isLoading {
-                ProgressView("Listing sessions…").padding(.vertical, 40)
-            } else if groups.isEmpty {
-                ContentUnavailableView("No sessions", systemImage: "clock",
-                                       description: Text("Nothing matches these filters."))
-                    .padding(.vertical, 24)
-            }
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(groups) { group in
-                    Text(group.day, format: .dateTime.month(.abbreviated).day().year())
-                        .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 8)
-                        .padding(.top, 18).padding(.bottom, 10)
-                    Divider().overlay(Theme.border)
-                    ForEach(group.rows) { row in
-                        SessionRow(row: row, open: { detail = row }, resume: { resume(row) })
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(groups) { group in
+                        Text(group.day, format: .dateTime.month(.abbreviated).day().year())
+                            .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 18).padding(.bottom, 10)
                         Divider().overlay(Theme.border)
+                        ForEach(group.rows) { row in
+                            SessionRow(row: row, project: model.project(for: row.session),
+                                       open: { detail = row }, resume: { resume(row) })
+                            Divider().overlay(Theme.border)
+                        }
                     }
                 }
             }
@@ -145,10 +152,140 @@ private struct FilterBar: View {
                    title: model.filter.harness.map(UsageFormat.harness) ?? "All tools")
         SelectMenu(symbol: "calendar", options: SessionsModel.Window.allCases.map { ($0, $0.title) },
                    selection: $model.filter.window)
-        SelectMenu(symbol: "folder", options: [(nil, "All projects")] + model.projects.map { (Optional($0), $0) },
-                   selection: $model.filter.project, title: model.filter.project ?? "All projects")
-        SelectMenu(options: [(nil, "All models")] + model.models.map { (Optional($0), $0) },
-                   selection: $model.filter.model, title: model.filter.model ?? "All models")
+        CountedMenu(symbol: "folder", allTitle: "All projects",
+                    title: selectedProject ?? "All projects",
+                    rows: model.projects.map { ($0.key, $0.name, "\($0.count)") },
+                    selection: $model.filter.project)
+        CountedMenu(allTitle: "All models",
+                    title: model.filter.model ?? "All models",
+                    rows: model.models.map { ($0.model, $0.model, UsageFormat.tokens($0.tokens)) },
+                    selection: $model.filter.model,
+                    limit: 30)
+    }
+
+    /// The selected project's display name for its filter key.
+    private var selectedProject: String? {
+        model.filter.project.flatMap { key in model.projects.first { $0.key == key }?.name }
+    }
+}
+
+/// A select whose options carry a count and can number in the hundreds,
+/// so it opens a popover with a search field and, when `limit` is set, a
+/// "Show all" row that expands past a top slice. Closed it looks like the
+/// `SelectMenu` beside it.
+private struct CountedMenu: View {
+    var symbol: String? = nil
+    /// The "no filter" row's text.
+    var allTitle: String
+    /// The closed control's text: the selection or `allTitle`.
+    var title: String
+    /// The rows, already in display order: key, label, detail.
+    var rows: [(key: String, title: String, detail: String)]
+    @Binding var selection: String?
+    /// Show only this many rows behind "Show all"; nil shows them all.
+    var limit: Int? = nil
+    /// A search field appears once there are more rows than this.
+    var searchThreshold = 15
+    @State private var open = false
+    @State private var query = ""
+    @State private var showAll = false
+    @State private var hovering = false
+
+    private var needle: String { query.trimmingCharacters(in: .whitespaces).lowercased() }
+
+    /// The rows to list: the matches while searching, else the top slice.
+    private var shown: [(key: String, title: String, detail: String)] {
+        if !needle.isEmpty {
+            return rows.filter { $0.title.lowercased().contains(needle) }
+        }
+        if let limit, !showAll, rows.count > limit { return Array(rows.prefix(limit)) }
+        return rows
+    }
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 6) {
+                if let symbol { Image(systemName: symbol).foregroundStyle(Theme.textSecondary) }
+                Text(title).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .font(Theme.bodySmall)
+            .padding(.horizontal, 12)
+            .frame(width: 168, height: Theme.fieldHeight)
+            .background(Theme.field, in: .rect(cornerRadius: Theme.selectRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.selectRadius)
+                .strokeBorder(hovering || open ? Theme.borderHover : Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.selectRadius))
+        }
+        .plainButton(cornerRadius: Theme.selectRadius)
+        .onHover { hovering = $0 }
+        .popover(isPresented: $open, arrowEdge: .bottom) { popover }
+        .onChange(of: open) {
+            if !open { query = ""; showAll = false }
+        }
+    }
+
+    private var popover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if rows.count > searchThreshold {
+                SearchField(prompt: "Search", text: $query)
+                    .padding(8)
+                Divider().overlay(Theme.border)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    option(key: nil, title: allTitle, detail: nil)
+                    Divider().overlay(Theme.border)
+                    ForEach(shown, id: \.key) { row in
+                        option(key: row.key, title: row.title, detail: row.detail)
+                    }
+                    if let limit, rows.count > limit, !showAll, needle.isEmpty {
+                        Divider().overlay(Theme.border)
+                        Button {
+                            showAll = true
+                        } label: {
+                            Text("Show all (\(rows.count))")
+                                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                                .padding(.horizontal, 8).padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(.rect)
+                        }
+                        .plainButton(cornerRadius: Theme.controlRadius)
+                    }
+                }
+                .padding(6)
+            }
+            .frame(maxHeight: 360)
+        }
+        .frame(width: 300)
+    }
+
+    private func option(key: String?, title: String, detail: String?) -> some View {
+        Button {
+            selection = key
+            open = false
+        } label: {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(Theme.bodySmall)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let detail {
+                    Text(detail).font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
+                }
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .opacity(selection == key ? 1 : 0)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: Theme.controlRadius)
     }
 }
 
@@ -187,6 +324,8 @@ private struct SummaryStrip: View {
 
 private struct SessionRow: View {
     var row: SessionsModel.Row
+    /// The session's project resolved to its main repository.
+    var project: String?
     var open: () -> Void
     var resume: () -> Void
     @State private var hovering = false
@@ -255,7 +394,7 @@ private struct SessionRow: View {
     var details: String {
         let s = row.session
         var parts: [String] = []
-        if let project = s.project { parts.append(project) }
+        if let project { parts.append(project) }
         parts.append(s.agent)
         if let models = row.usage?.models, !models.isEmpty { parts.append(models.joined(separator: ", ")) }
         parts.append(s.lastActiveAt.formatted(date: .omitted, time: .shortened))

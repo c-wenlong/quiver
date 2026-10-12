@@ -766,15 +766,16 @@ public final class PluginCatalogModel {
     public var harness: String?
     public var query = "" {
         didSet {
-            if PluginExploreIndex.needle(query) != PluginExploreIndex.needle(oldValue) { disclosure.searchChanged() }
+            if PluginExploreIndex.needle(query) != PluginExploreIndex.needle(oldValue) { closedInSearch = [] }
         }
     }
 
-    /// Which sources and marketplaces are open, kept across launches.
-    public private(set) var disclosure: ExploreDisclosure
-    private let disclosureStore: (any KeyValueStoring)?
-    static let openedKey = "pluginsExploreOpened"
-    static let closedKey = "pluginsExploreClosed"
+    /// The marketplaces the user opened this session; they start closed,
+    /// and nothing writes the set, so a quit forgets it.
+    public private(set) var expanded: Set<String> = []
+    /// Marketplaces closed during the current search; forgotten when the
+    /// search changes, so the user's own set carries on untouched.
+    private var closedInSearch: Set<String> = []
 
     /// Held while an action runs, shared with the Health tab's fixes.
     public let work: PluginWork
@@ -788,31 +789,28 @@ public final class PluginCatalogModel {
     ///     run at once.
     public init(snapshots: (any SnapshotStoring<Snapshot<PluginCatalog>>)? = nil, maxAge: TimeInterval = 60,
                 timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init,
-                work: PluginWork = PluginWork(), disclosure: (any KeyValueStoring)? = nil) {
+                work: PluginWork = PluginWork()) {
         loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
         self.work = work
-        disclosureStore = disclosure
-        self.disclosure = ExploreDisclosure(opened: Set(disclosure?.strings(forKey: Self.openedKey) ?? []),
-                                            closed: Set(disclosure?.strings(forKey: Self.closedKey) ?? []))
     }
 
-    /// A search is on: everything it matches shows open.
+    /// A search is on: every marketplace it matches shows open.
     public var isSearching: Bool { !PluginExploreIndex.needle(query).isEmpty }
 
-    /// Whether the source or marketplace `id` shows its contents now.
+    /// Whether the marketplace `id`'s plugins show now. A search opens
+    /// everything it matched without touching the user's own set.
     public func isOpen(_ id: String) -> Bool {
-        disclosure.isOpen(id, searching: isSearching)
+        isSearching ? !closedInSearch.contains(id) : expanded.contains(id)
     }
 
-    /// Opens or closes a source or marketplace. Kept across launches,
-    /// except during a search, which opens what it matches and leaves the
-    /// kept state alone.
+    /// Opens or closes a marketplace. Kept for the session only; during a
+    /// search the change lasts until the search changes.
     public func toggle(_ id: String) {
-        let searching = isSearching
-        disclosure.toggle(id, searching: searching)
-        guard !searching, let store = disclosureStore else { return }
-        store.set(disclosure.opened.sorted(), forKey: Self.openedKey)
-        store.set(disclosure.closed.sorted(), forKey: Self.closedKey)
+        if isSearching {
+            if closedInSearch.remove(id) == nil { closedInSearch.insert(id) }
+        } else if expanded.remove(id) == nil {
+            expanded.insert(id)
+        }
     }
 
     /// What the Skills page places skills with.

@@ -190,9 +190,11 @@ public struct APIKeysFile: Equatable, Sendable {
         lines[entry.line] = String(match.1) + newName + line[match.range.upperBound...]
     }
 
-    /// Moves a key to the end of another provider's group, starting a new
-    /// group at the end of the file when the provider isn't in the file
-    /// yet (the same rules `set` uses). A move to its own provider does
+    /// Moves a key to the end of an existing provider's group, and starts
+    /// a new group near where the key left when the provider isn't in the
+    /// file yet: a rename in place when the key was its group's only one,
+    /// right after the old group when it wasn't, or where the ungrouped
+    /// block ends for an ungrouped key. A move to its own provider does
     /// nothing, and the old heading goes once its group empties.
     public mutating func move(name: String, toProvider provider: String) throws {
         guard !provider.contains(where: \.isNewline) else { throw APIKeysError.invalidProvider }
@@ -204,8 +206,20 @@ public struct APIKeysFile: Equatable, Sendable {
         // A group that isn't in the file needs a label it would read
         // back; check before any line moves, so a refused move leaves
         // the file alone.
-        if !all.contains(where: { $0.provider == provider }) {
+        // A provider counts as known when its group or even just its
+        // heading is in the file: an empty group is a real destination.
+        let providerKnown = all.contains { $0.provider == provider }
+            || lines.contains { Self.heading($0) == provider }
+        if !providerKnown {
             guard Self.isLabel(provider) else { throw APIKeysError.invalidProvider }
+        }
+        // Its group's only key leaving for a group that does not exist
+        // is a provider rename: rewrite the heading where it sits so the
+        // group keeps its place in the file.
+        if !providerKnown, !entry.provider.isEmpty,
+           !all.contains(where: { $0.provider == entry.provider && $0.name != name }) {
+            try renameProvider(from: entry.provider, to: provider)
+            return
         }
         let line = lines[entry.line]
         lines.remove(at: entry.line)
@@ -215,15 +229,38 @@ public struct APIKeysFile: Equatable, Sendable {
             // Leave one blank line between groups, not two.
             if heading > 0, heading < lines.count, lines[heading - 1].isEmpty, lines[heading].isEmpty {
                 lines.remove(at: heading)
+            } else if heading == 0, lines.first?.isEmpty == true {
+                // The emptied group was the file's first: no stray leading blank.
+                lines.removeFirst()
             }
         }
         if let last = entries.last(where: { $0.provider == provider }) {
             lines.insert(line, at: last.line + 1)
             return
         }
-        if !lines.isEmpty, lines.last?.isEmpty == false { lines.append("") }
-        lines.append("# \(provider)")
-        lines.append(line)
+        // An empty group still counts: the key lands right after its heading.
+        if let heading = lines.lastIndex(where: { Self.heading($0) == provider }) {
+            lines.insert(line, at: heading + 1)
+            return
+        }
+        // The provider isn't in the file, so the new group goes where
+        // the key's old block ends: right after the old group's last key
+        // when the group survived, or after the last ungrouped key, which
+        // is where the key sat when it was the last of them.
+        if let last = entries.last(where: { $0.provider == entry.provider }) {
+            lines.insert(contentsOf: ["", "# \(provider)", line], at: last.line + 1)
+            return
+        }
+        // The key was the ungrouped block's only line: the new group
+        // takes that block's place, after the leading comments and
+        // before the first heading (or at the end when there is none).
+        if let first = lines.indices.first(where: { Self.heading(lines[$0]) != nil }) {
+            lines.insert(contentsOf: ["# \(provider)", line, ""], at: first)
+        } else {
+            if !lines.isEmpty, lines.last?.isEmpty == false { lines.append("") }
+            lines.append("# \(provider)")
+            lines.append(line)
+        }
     }
 
     /// Renames a provider: every heading reading exactly `from` becomes

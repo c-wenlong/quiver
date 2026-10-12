@@ -50,44 +50,36 @@ struct PluginExplorer: View {
         let searching = model.isSearching
         let sources = index.sources(harness: model.harness, query: model.query)
         filters(index, shown: PluginExploreIndex.distinctPlugins(in: sources))
-        if !catalog.errors.isEmpty { Problems(problems: catalog.errors) }
+        if !catalog.errors.isEmpty { Card { Problems(problems: catalog.errors) } }
         if index.total == 0 {
             EmptyCard(text: "No plugin marketplaces registered in Claude Code, Codex or Cursor.",
                       icon: "puzzlepiece.extension")
         } else if sources.isEmpty {
             EmptyCard(text: "No plugins match.", icon: "puzzlepiece.extension")
         } else {
-            // Source, then marketplace, then plugin, flattened into one lazy
-            // stack: it builds only the lines on screen, and a closed
-            // marketplace's plugins are not lines at all. Straight on the
-            // panel, hairlines between plugin rows.
-            let lines = ExploreLine.lines(sources, disclosure: model.disclosure, searching: searching)
+            // A source is a static heading; each marketplace under it is
+            // a card whose bottom row opens the plugins inside it.
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(lines) { line in
-                    switch line {
-                    case .source(let source, let open):
-                        SourceHeader(source: source, open: open, searching: searching) { model.toggle(source.id) }
-                            .padding(.top, source.id == sources.first?.id ? 0 : 16)
-                    case .marketplace(let market, let open):
-                        MarketplaceHeader(market: market,
-                                          name: app.primitiveNames.name(forMarketplace: market.name) ?? market.name,
-                                          canRename: catalog.marketplaces
-                                              .first { $0.name == market.name }
-                                              .map { PrimitiveOwnership.isEditable($0, home: home) } ?? false,
-                                          open: open, searching: searching,
-                                          onRename: { renaming = market.name
-                                              renameText = app.primitiveNames.name(forMarketplace: market.name) ?? market.name },
-                                          toggle: { model.toggle(market.id) })
-                            .padding(.leading, Self.marketIndent)
-                    case .plugin(let entry, let last):
-                        VStack(spacing: 0) {
-                            PluginRow(entry: entry, catalog: catalog, running: model.running, busy: model.work.isBusy,
-                                      openHealth: openHealth, confirm: confirm, open: { opened = entry })
-                            if !last { Rectangle().fill(Theme.border).frame(height: 1) }
+                ForEach(sources) { source in
+                    SourceHeader(source: source, searching: searching)
+                        .padding(.top, source.id == sources.first?.id ? 0 : 32)
+                    VStack(spacing: 12) {
+                        ForEach(source.marketplaces) { market in
+                            MarketplaceCard(market: market,
+                                            name: app.primitiveNames.name(forMarketplace: market.name) ?? market.name,
+                                            canRename: catalog.marketplaces
+                                                .first { $0.name == market.name }
+                                                .map { PrimitiveOwnership.isEditable($0, home: home) } ?? false,
+                                            catalog: catalog, running: model.running, busy: model.work.isBusy,
+                                            open: model.isOpen(market.id), searching: searching,
+                                            openHealth: openHealth, confirm: confirm,
+                                            onRename: { renaming = market.name
+                                                renameText = app.primitiveNames.name(forMarketplace: market.name) ?? market.name },
+                                            openPlugin: { opened = $0 },
+                                            toggle: { model.toggle(market.id) })
                         }
-                        .padding(.leading, Self.pluginIndent)
-                        .padding(.bottom, last ? 8 : 0)
                     }
+                    .padding(.top, 16)
                 }
             }
             .alert("Rename marketplace", isPresented: .init(
@@ -112,11 +104,6 @@ struct PluginExplorer: View {
         }
     }
 
-    /// A marketplace's chevron sits under its source's title; a plugin's
-    /// name under its marketplace's.
-    private static let marketIndent: CGFloat = 20
-    private static let pluginIndent: CGFloat = 40
-
     /// The tab's one filter bar: the harness select, then search taking
     /// the slack, then the count. No source select: the sources are the
     /// list's top level, and a marketplace is opened in place.
@@ -124,7 +111,8 @@ struct PluginExplorer: View {
         let harnesses = index.catalog.harnesses
         return HStack(spacing: 8) {
             SelectMenu(label: "Harness",
-                       options: [(String?.none, "All harnesses")] + harnesses.map { (String?.some($0), HarnessMark($0).name) },
+                       options: [(String?.none, "All harnesses", nil)]
+                           + harnesses.map { (String?.some($0), HarnessMark($0).name, $0) },
                        selection: $model.harness,
                        title: model.harness.map { HarnessMark($0).name } ?? "All")
             SearchField(prompt: "Search plugins and their skills", text: $model.query)
@@ -159,18 +147,15 @@ private struct Problems: View {
     }
 }
 
-/// A source: Local, a harness, or Not registered. The whole line is the
-/// button that opens or closes it.
+/// A source: Local, a harness, or Not registered. A static heading, never
+/// a fold: the marketplaces under it are the cards that open and close.
 private struct SourceHeader: View {
     var source: ExploreSource
-    var open: Bool
     var searching: Bool
-    var toggle: () -> Void
 
     var body: some View {
-        let count = source.countLine(searching: searching)
-        DisclosureHeader(open: open, verticalPadding: 10, label: "\(source.title), \(source.note), \(count)",
-                         toggle: toggle) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            icon
             Text(source.title)
                 // Body size at the section weight: above a marketplace's
                 // 14/500 name, well under the page title.
@@ -182,90 +167,132 @@ private struct SourceHeader: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: 8)
-            Text(count)
+            Text(source.countLine(searching: searching))
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize()
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    /// Local gets a folder, a harness its logo (the same id and title
+    /// Settings' provider list pairs up), the unregistered a question mark.
+    @ViewBuilder private var icon: some View {
+        switch source.kind {
+        case .local:
+            Image(systemName: "folder")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+        case .harness(let harness):
+            HarnessIcon(harness: harness, size: 16)
+        case .unregistered:
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+        }
     }
 }
 
-/// A marketplace under its source: its name, where it comes from, and
-/// how many of its plugins the source's harness has installed.
-private struct MarketplaceHeader: View {
+/// A marketplace under its source: a card in the service status style.
+/// Folded it is the header row alone (name, source tag, installed count,
+/// a lock note for a GitHub source); the ExpandRow underneath opens the
+/// plugin rows inside the card, a hairline between each.
+private struct MarketplaceCard: View {
     var market: ExploreMarketplace
     /// The display name: Quiver's overlay name or the marketplace id.
     var name: String
     /// A directory-sourced marketplace under ~/.quiver/plugins can rename.
     var canRename: Bool
+    var catalog: PluginCatalog
+    var running: PluginAction?
+    /// An action or a Health fix is running: one change at a time.
+    var busy: Bool
     var open: Bool
     var searching: Bool
+    var openHealth: () -> Void
+    var confirm: (PluginAction) -> Void
     var onRename: () -> Void
+    /// The name block opens the plugin's detail page.
+    var openPlugin: (ExplorePlugin) -> Void
     var toggle: () -> Void
+    @State private var hovering = false
 
     var body: some View {
-        let count = market.countLine(searching: searching)
-        DisclosureHeader(open: open, verticalPadding: 8,
-                         label: [name, market.tag, count].compactMap { $0 }.joined(separator: ", "),
-                         toggle: toggle) {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, Theme.cardPadding)
+                .padding(.vertical, 14)
+            if open, !market.plugins.isEmpty {
+                // Lazy so a big marketplace does not build every row at once.
+                LazyVStack(spacing: 0) {
+                    Rectangle().fill(Theme.border).frame(height: 1)
+                        .padding(.horizontal, Theme.cardPadding)
+                    ForEach(market.plugins) { entry in
+                        PluginRow(entry: entry, catalog: catalog, running: running, busy: busy,
+                                  openHealth: openHealth, confirm: confirm, open: { openPlugin(entry) })
+                            .padding(.horizontal, Theme.cardPadding)
+                        if entry.id != market.plugins.last?.id {
+                            Rectangle().fill(Theme.border).frame(height: 1)
+                                .padding(.horizontal, Theme.cardPadding)
+                        }
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+            if !market.plugins.isEmpty {
+                ExpandRow(isExpanded: open, hidden: 0, collapsedTitle: "Show plugins",
+                          help: (expand: "Show this marketplace's plugins",
+                                 collapse: "Show only the header"),
+                          edge: .cardBottom, note: market.countLine(searching: searching)) {
+                    withAnimation(.easeOut(duration: 0.15)) { toggle() }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(hovering ? Theme.cardHover : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
+            .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(name)
                 .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
+            if canRename, hovering {
+                Button("Rename", systemImage: "pencil", action: onRename)
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textSecondary)
+                    .buttonStyle(.plain)
+                    .help("Rename \(name)")
+            }
             if name != market.name {
                 Text(market.name).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             if let tag = market.tag { SourceTag(text: tag) }
+            if market.tag == "github" {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textMuted)
+                    .help("Updates from GitHub would undo edits, so this marketplace is read-only.")
+            }
             Spacer(minLength: 8)
-            Text(count)
+            Text(market.installed == 1 ? "1 installed" : "\(market.installed) installed")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize()
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
         .contextMenu {
             if canRename { Button("Rename…", action: onRename) }
         }
-    }
-}
-
-/// A full-width button that opens or closes what is under it: a chevron
-/// that turns down when open, then the caller's line. VoiceOver reads it
-/// as a header with an expanded or collapsed value; the focus ring is the
-/// shared one.
-private struct DisclosureHeader<Content: View>: View {
-    var open: Bool
-    var verticalPadding: CGFloat
-    var label: String
-    var toggle: () -> Void
-    @ViewBuilder var content: Content
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: toggle) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(hovering ? Theme.textPrimary : Theme.textMuted)
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .animation(.easeOut(duration: 0.15), value: open)
-                    .frame(width: 12)
-                content
-            }
-            .padding(.vertical, verticalPadding)
-            // The fill reaches past the text, which stays in line with the
-            // rows; the stack's own edge is outside the page's padding.
-            .padding(.horizontal, 8)
-            .background(hovering ? Theme.panelHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
-            .contentShape(.rect(cornerRadius: Theme.controlRadius))
-        }
-        .plainButton(cornerRadius: Theme.controlRadius)
-        .padding(.horizontal, -8)
-        .onHover { hovering = $0 }
-        .accessibilityLabel(label)
-        .accessibilityValue(open ? "Expanded" : "Collapsed")
-        .accessibilityAddTraits(.isHeader)
-        .help(open ? "Collapse" : "Expand")
     }
 }
 

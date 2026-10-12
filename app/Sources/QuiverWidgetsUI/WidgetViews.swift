@@ -135,29 +135,34 @@ public struct LimitsView: View {
 
     var effectiveFamily: WidgetFamily { family ?? envFamily }
 
-    var rows: Int {
-        switch effectiveFamily {
-        case .systemSmall: 3
-        case .systemLarge: 6
-        default: 4
-        }
+    /// One limit line's height: its label, the gap and the 3pt bar.
+    static let rowHeight: CGFloat = 20
+
+    /// The rows the height holds: the widget fills with as many limits as
+    /// fit, so the small and medium sizes no longer stop at a fixed few.
+    static func rows(for height: CGFloat, compact: Bool) -> Int {
+        let gap: CGFloat = compact ? 6 : 8
+        return max(1, Int((height + gap) / (rowHeight + gap)))
     }
 
     public var body: some View {
-        let limits = snapshot.limits.prefix(rows)
-        VStack(alignment: .leading, spacing: effectiveFamily == .systemSmall ? 6 : 8) {
-            if limits.isEmpty {
-                Text("No limits yet").font(.system(size: 12, weight: .medium))
-                Text("Add an account in Quiver, or star a harness in swe.")
-                    .font(.system(size: 11)).foregroundStyle(Palette.textSecondary)
+        let compact = effectiveFamily == .systemSmall
+        GeometryReader { geo in
+            let limits = snapshot.limits.prefix(Self.rows(for: geo.size.height, compact: compact))
+            VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+                if limits.isEmpty {
+                    Text("No limits yet").font(.system(size: 12, weight: .medium))
+                    Text("Add an account in Quiver, or star a harness in swe.")
+                        .font(.system(size: 11)).foregroundStyle(Palette.textSecondary)
+                }
+                ForEach(Array(limits), id: \.id) { reading in
+                    LimitLine(reading: reading, now: now, compact: compact,
+                              old: reading.isOld(now: now, fallback: snapshot.generatedAt))
+                }
+                Spacer(minLength: 0)
             }
-            ForEach(Array(limits), id: \.id) { reading in
-                LimitLine(reading: reading, now: now, compact: effectiveFamily == .systemSmall,
-                          old: reading.isOld(now: now, fallback: snapshot.generatedAt))
-            }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -310,7 +315,7 @@ public struct ModelsView: View {
             ForEach(Array(snapshot.models.enumerated()), id: \.offset) { _, model in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        Circle().fill(Palette.textSecondary).frame(width: 6, height: 6)
+                        ModelLogos(harnesses: model.harnesses)
                         Text(model.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
                         Spacer(minLength: 4)
                         Text(UsageFormat.tokens(model.tokens))
@@ -327,6 +332,27 @@ public struct ModelsView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// A model's harness logos where its dot was: the first one's, up to two
+/// overlapped when several ran it, and the old dot when none is known.
+private struct ModelLogos: View {
+    var harnesses: [String]
+
+    var body: some View {
+        if let first = harnesses.first {
+            ZStack(alignment: .leading) {
+                HarnessLogo(harness: first, size: 12)
+                if harnesses.count > 1 {
+                    HarnessLogo(harness: harnesses[1], size: 12).offset(x: 7)
+                }
+            }
+            .frame(width: harnesses.count > 1 ? 19 : 12, height: 12, alignment: .leading)
+            .help(harnesses.map { UsageFormat.harness($0) }.joined(separator: ", "))
+        } else {
+            Circle().fill(Palette.textSecondary).frame(width: 6, height: 6)
+        }
     }
 }
 

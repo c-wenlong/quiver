@@ -53,7 +53,7 @@ struct McpServersPage: View {
         } content: {
             switch model.state {
             case .idle, .loading:
-                ProgressView().frame(maxWidth: .infinity)
+                LoadingCard(text: "Reading the configs…")
             case .failed(let message):
                 ErrorCard(message: message)
                 folderOnlyRows(hubKnown: false)
@@ -231,47 +231,74 @@ private struct ServerRow: View {
     var open: () -> Void
     @State private var hovering = false
 
+    /// The harness cells' total width: the folder actions overlay the row
+    /// just left of them, so the checkmark columns never move.
+    private var cellsWidth: CGFloat {
+        harnesses.map(ServerGrid.columnWidth).reduce(0, +)
+    }
+
+    /// What the name column leaves for the folder actions.
+    private var actionsWidth: CGFloat {
+        folders.isEmpty ? 0 : CGFloat(editor == nil ? 1 : 2) * Theme.iconButton + 24
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            Button(action: open) {
-                HStack(spacing: 0) {
-                    HStack(alignment: .top, spacing: 8) {
-                        if showHealth, let health = server.health {
-                            Circle().fill(healthColor(health)).frame(width: 7, height: 7)
-                                .padding(.top, 4)
-                                .help(server.detail ?? "Healthy")
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(server.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                            Text(server.transport).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                        }
+        Button(action: open) {
+            HStack(spacing: 0) {
+                HStack(alignment: .top, spacing: 8) {
+                    if showHealth, let health = server.health {
+                        Circle().fill(healthColor(health)).frame(width: 7, height: 7)
+                            .padding(.top, 4)
+                            .help(server.detail ?? "Healthy")
                     }
-                    .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
-                    let differs = server.conflicts(among: harnesses)
-                    ForEach(harnesses, id: \.self) { harness in
-                        Cell(server: server, harness: harness, differs: differs).frame(width: ServerGrid.columnWidth(harness))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(server.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        secondary
                     }
                 }
-                .padding(.vertical, 8)
-                .background(hovering ? Theme.rowHover : .clear)
-                .contentShape(.rect)
+                .padding(.trailing, actionsWidth)
+                .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
+                let differs = server.conflicts(among: harnesses)
+                ForEach(harnesses, id: \.self) { harness in
+                    Cell(server: server, harness: harness, differs: differs).frame(width: ServerGrid.columnWidth(harness))
+                }
             }
-            .plainButton(cornerRadius: 4)
-            .onHover { hovering = $0 }
-            .accessibilityLabel("\(server.name), in \(harnessNames(server.harnesses))")
-            // The folders this server runs from sit under its row, outside
-            // the open button so their own Finder/editor buttons still work.
-            ForEach(folders) { folder in
-                HStack(spacing: 0) {
-                    RepoFolderRow(folder: folder, usedBy: nil, editor: editor)
-                        .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
-                    ForEach(harnesses, id: \.self) { harness in
-                        Spacer().frame(width: ServerGrid.columnWidth(harness))
-                    }
-                }
-                .padding(.bottom, 6)
+            .padding(.vertical, 8)
+            .background(hovering ? Theme.rowHover : .clear)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 4)
+        .onHover { hovering = $0 }
+        .accessibilityLabel("\(server.name), in \(harnessNames(server.harnesses))")
+        // The Finder/editor buttons sit on the open button, above it in
+        // hit order, so they stay clickable without breaking the cells'
+        // alignment or losing the row's click to open.
+        .overlay(alignment: .trailing) {
+            if !folders.isEmpty {
+                FolderActions(folders: folders, editor: editor)
+                    .padding(.trailing, cellsWidth + 8)
             }
         }
+    }
+
+    /// "stdio · linear-mcp · main ↑1 ↓45 · Local changes": the transport,
+    /// the folder name(s) in mono, then the git state when there is one
+    /// folder; several folders leave their git state to the menus.
+    @ViewBuilder private var secondary: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(server.transport)
+            if !folders.isEmpty {
+                Text("·")
+                Text(folders.map(\.name).joined(separator: ", "))
+                    .font(.system(size: 12, design: .monospaced))
+                if folders.count == 1 {
+                    Text("·")
+                    GitPieces(folder: folders[0])
+                }
+            }
+        }
+        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+        .lineLimit(1)
     }
 }
 
@@ -576,7 +603,7 @@ private struct McpRepoSection: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             }
         } else if model.servers.isEmpty && model.isLoading {
-            ProgressView().frame(maxWidth: .infinity)
+            LoadingCard(text: "Scanning server folders…")
         } else if model.servers.isEmpty {
             Card {
                 Text("No server folders in \(displayPath(root)).")
@@ -608,12 +635,126 @@ private struct FolderRow: View {
     }
 }
 
-/// One checkout's details: its name, which hub servers run from it (or
-/// "Not in the hub"), its git state, then Show in Finder and Open in
-/// editor. `usedBy` nil hides the caption, for a folder already sitting
-/// under its server.
+/// The Local rows' folder buttons: Show in Finder and Open in the
+/// editor. One folder gets plain buttons; a server backed by several
+/// gives each button a menu to pick the folder.
+private struct FolderActions: View {
+    var folders: [McpRepoServer]
+    var editor: CodeEditor?
+
+    private var single: McpRepoServer? { folders.count == 1 ? folders[0] : nil }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let folder = single {
+                Button("Show in Finder", systemImage: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder.path])
+                }
+                .iconButton()
+                .help("Show \(folder.name) in Finder")
+            } else if !folders.isEmpty {
+                Menu {
+                    ForEach(folders) { folder in
+                        Button(Self.menuTitle(folder)) {
+                            NSWorkspace.shared.activateFileViewerSelecting([folder.path])
+                        }
+                    }
+                } label: { actionIcon("folder") }
+                .menuStyle(.button).menuIndicator(.hidden)
+                .plainButton(cornerRadius: Theme.iconButtonRadius).fixedSize()
+                .help("Show in Finder")
+            }
+            if let editor {
+                if let folder = single {
+                    Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") {
+                        NSWorkspace.shared.open([folder.path], withApplicationAt: editor.appURL,
+                                                configuration: .init())
+                    }
+                    .iconButton()
+                    .help("Open \(folder.name) in \(editor.name)")
+                } else if !folders.isEmpty {
+                    Menu {
+                        ForEach(folders) { folder in
+                            Button(Self.menuTitle(folder)) {
+                                NSWorkspace.shared.open([folder.path], withApplicationAt: editor.appURL,
+                                                        configuration: .init())
+                            }
+                        }
+                    } label: { actionIcon("chevron.left.forwardslash.chevron.right") }
+                    .menuStyle(.button).menuIndicator(.hidden)
+                    .plainButton(cornerRadius: Theme.iconButtonRadius).fixedSize()
+                    .help("Open in \(editor.name)")
+                }
+            }
+        }
+    }
+
+    /// "linear-mcp · main ↑1 ↓2 · Local changes" so a folder picker names
+    /// its checkout the way the row's caption does, or just the name
+    /// while git is still answering.
+    private static func menuTitle(_ folder: McpRepoServer) -> String {
+        var parts = [folder.name]
+        if let git = folder.git {
+            if git.isRepo {
+                parts.append(git.branch ?? "detached HEAD")
+                let counts = [git.ahead > 0 ? "↑\(git.ahead)" : nil,
+                              git.behind > 0 ? "↓\(git.behind)" : nil].compactMap { $0 }
+                if !counts.isEmpty { parts.append(counts.joined(separator: " ")) }
+                if git.hasChanges { parts.append("Local changes") }
+            } else {
+                parts.append("Not a git repo")
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The icon buttons' chrome, applied by hand since IconButtonStyle is
+    /// a ButtonStyle and a Menu cannot take it.
+    private func actionIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 16))
+            .foregroundStyle(Theme.textNav)
+            .frame(width: Theme.iconButton, height: Theme.iconButton)
+            .overlay(RoundedRectangle(cornerRadius: Theme.iconButtonRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.iconButtonRadius))
+    }
+}
+
+/// A folder's git state as dot-separated caption pieces: the branch, the
+/// ahead/behind counts and a Local changes badge; "Not a git repo" when
+/// the folder isn't a repository, or a spinner while git answers.
+private struct GitPieces: View {
+    var folder: McpRepoServer
+
+    var body: some View {
+        if let git = folder.git {
+            if git.isRepo {
+                Text(git.branch ?? "detached HEAD").foregroundStyle(Theme.textSecondary)
+                let counts = [git.ahead > 0 ? "↑\(git.ahead)" : nil,
+                              git.behind > 0 ? "↓\(git.behind)" : nil].compactMap { $0 }
+                if !counts.isEmpty {
+                    Text(counts.joined(separator: " ")).foregroundStyle(Theme.textSecondary).monospacedDigit()
+                }
+                if git.hasChanges {
+                    Text("·")
+                    Badge("Local changes")
+                }
+            } else {
+                Text("Not a git repo")
+            }
+        } else {
+            ProgressView().controlSize(.mini)
+        }
+    }
+}
+
+/// A folder in the servers folder that no hub server uses yet: its name
+/// as the title, "Not in the hub · main" folded into the secondary line,
+/// then Show in Finder and Open in editor.
 private struct RepoFolderRow: View {
     var folder: McpRepoServer
+    /// nil hides the hub caption (the inventory never loaded); [] shows
+    /// "Not in the hub".
     var usedBy: [String]?
     var editor: CodeEditor?
 
@@ -621,58 +762,21 @@ private struct RepoFolderRow: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(folder.name)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary).lineLimit(1)
-                if let usedBy {
-                    if usedBy.isEmpty {
-                        Text("Not in the hub").font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    } else {
-                        Text("Used by \(usedBy.joined(separator: ", "))")
-                            .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    if let usedBy {
+                        Text(usedBy.isEmpty ? "Not in the hub" : "Used by \(usedBy.joined(separator: ", "))")
+                            .foregroundStyle(usedBy.isEmpty ? Theme.textMuted : Theme.textSecondary)
+                            .lineLimit(1)
+                        Text("·")
                     }
+                    GitPieces(folder: folder)
                 }
-                gitLine
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
             Spacer(minLength: 8)
-            HStack(spacing: 8) {
-                Button("Show in Finder", systemImage: "folder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([folder.path])
-                }
-                .iconButton()
-                .help("Show in Finder")
-                if let editor {
-                    Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") {
-                        NSWorkspace.shared.open([folder.path], withApplicationAt: editor.appURL,
-                                                configuration: .init())
-                    }
-                    .iconButton()
-                    .help("Open in \(editor.name)")
-                }
-            }
-        }
-    }
-
-    /// Branch, ahead/behind counts and the local-changes badge, a note when
-    /// the folder isn't a repository, or a spinner while git answers.
-    @ViewBuilder private var gitLine: some View {
-        if let git = folder.git {
-            if git.isRepo {
-                HStack(spacing: 8) {
-                    Text(git.branch ?? "detached HEAD")
-                    let counts = [git.ahead > 0 ? "↑\(git.ahead)" : nil,
-                                  git.behind > 0 ? "↓\(git.behind)" : nil]
-                        .compactMap { $0 }.joined(separator: " ")
-                    if !counts.isEmpty {
-                        Text(counts).monospacedDigit()
-                    }
-                    if git.hasChanges { Badge("Local changes") }
-                }
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            } else {
-                Text("Not a git repo").font(Theme.caption).foregroundStyle(Theme.textMuted)
-            }
-        } else {
-            ProgressView().controlSize(.mini)
+            FolderActions(folders: [folder], editor: editor)
         }
     }
 }

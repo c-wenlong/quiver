@@ -255,8 +255,12 @@ struct InstructionEditor: View {
     @Bindable var document: InstructionDocument
     var title: String
     var subtitle: String
+    /// The subtitle is a path: draw it in mono.
+    var monoSubtitle = false
     /// View-only: no mode tabs or save controls, just the text.
     var readOnly = false
+    /// A Close button in the header, for the editor inside a sheet.
+    var close: (() -> Void)? = nil
     var onSaved: () -> Void = {}
     @State private var error: String?
     @FocusState private var editing: Bool
@@ -265,7 +269,7 @@ struct InstructionEditor: View {
     @State private var richFocusToken = 0
 
     var body: some View {
-        Card(title: title, subtitle: subtitle) {
+        Card(title: title, subtitle: subtitle, monoSubtitle: monoSubtitle) {
             HStack(spacing: 8) {
                 if !readOnly {
                     Tabs(options: [("raw", "Raw"), ("rich", "Rich")], selection: $mode, style: .segmented)
@@ -285,6 +289,11 @@ struct InstructionEditor: View {
                         .primaryButton()
                         .keyboardShortcut("s", modifiers: .command)
                         .disabled(!document.isDirty || document.changedOnDisk)
+                }
+                if let close {
+                    Button("Close") { close() }
+                        .secondaryButton()
+                        .keyboardShortcut(.cancelAction)
                 }
             }
         } content: {

@@ -253,7 +253,7 @@ final class AppModel {
         plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")),
                                work: pluginWork)
         pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
-                                           work: pluginWork, disclosure: UserDefaultsStore())
+                                           work: pluginWork)
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")),
             store: CustomStatusServices())
@@ -460,7 +460,7 @@ private struct UserDefaultsStore: KeyValueStoring {
 
 /// The swe chosen in Settings at the moment of each call.
 private struct CurrentSwe: SessionListing {
-    func sessions(days: Int, limit: Int) async throws -> SessionList {
+    func sessions(days: Int?, limit: Int) async throws -> SessionList {
         let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
         return try await SweClient(runner: ProcessRunner(executable: SweLocation.executable(override: path)))
             .sessions(days: days, limit: limit)

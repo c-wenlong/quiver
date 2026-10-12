@@ -21,7 +21,7 @@ actor CancellableGatedSource: SessionListing {
     private var gate: CheckedContinuation<Void, Never>?
     private(set) var calls = 0
     init(_ list: SessionList) { self.list = list }
-    func sessions(days: Int, limit: Int) async throws -> SessionList {
+    func sessions(days: Int?, limit: Int) async throws -> SessionList {
         calls += 1
         await withCheckedContinuation { gate = $0 }
         try Task.checkCancellation()
@@ -34,7 +34,7 @@ actor CancellableGatedSource: SessionListing {
 /// A swe that never answers, until it is cancelled.
 actor HangingSource: SessionListing {
     private(set) var calls = 0
-    func sessions(days: Int, limit: Int) async throws -> SessionList {
+    func sessions(days: Int?, limit: Int) async throws -> SessionList {
         calls += 1
         try await Task.sleep(for: .seconds(3600))
         return SessionList(sessions: [], failures: [])
@@ -43,7 +43,7 @@ actor HangingSource: SessionListing {
 
 /// A swe that shrugs off SIGTERM: its runner returns only when it exits.
 struct StubbornSource: SessionListing {
-    func sessions(days: Int, limit: Int) async throws -> SessionList {
+    func sessions(days: Int?, limit: Int) async throws -> SessionList {
         // Shrugs off cancellation without spinning: a checked
         // continuation is never resumed by cancellation, so the
         // listing still waits out the full hold.
