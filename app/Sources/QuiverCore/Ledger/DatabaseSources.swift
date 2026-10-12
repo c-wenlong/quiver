@@ -7,6 +7,19 @@ import Foundation
 /// rows past a watermark are read, and every row is keyed so re-reading one
 /// is harmless.
 enum DatabaseSources {
+    /// A read from the source database failed. `Ledger.scan` downgrades
+    /// only these to a per-source note: a failure on Quiver's own cache
+    /// (meta, upsert, BEGIN, COMMIT) still throws so the Overview shows a
+    /// real error instead of quietly skipping.
+    struct SourceRead: Error {
+        var underlying: Error
+    }
+
+    /// Runs a call against the source database, tagging its failure.
+    private static func reading<T>(_ body: () throws -> T) throws -> T {
+        do { return try body() } catch { throw SourceRead(underlying: error) }
+    }
+
     struct Fingerprint: Equatable {
         var text: String
         var inode: UInt64
@@ -45,8 +58,8 @@ enum DatabaseSources {
         if try store.meta(metaKey + ":fingerprint") == fingerprint.text { return false }
         let watermark = try watermark(metaKey, fingerprint, store: store)
 
-        let source = try SQLiteDatabase(readOnly: url)
-        let statement = try source.prepare("""
+        let source = try reading { try SQLiteDatabase(readOnly: url) }
+        let statement = try reading { try source.prepare("""
             SELECT m.id, m.session_id, m.time_created, m.time_updated, s.directory,
                 json_extract(m.data, '$.modelID'), json_extract(m.data, '$.cost'),
                 json_extract(m.data, '$.tokens.input'), json_extract(m.data, '$.tokens.output'),
@@ -55,13 +68,13 @@ enum DatabaseSources {
             FROM message m LEFT JOIN session s ON s.id = m.session_id
             WHERE m.time_updated >= ? AND json_extract(m.data, '$.role') = 'assistant'
             ORDER BY m.time_updated
-            """)
+            """) }
         statement.bind([.int(watermark)])
         let accountHome = url.deletingLastPathComponent().path
         var highest = watermark
         try store.db.execute("BEGIN IMMEDIATE")
         do {
-            while try statement.step() {
+            while try reading({ try statement.step() }) {
                 highest = max(highest, statement.int(3))
                 let input = Int(statement.int(7)), output = Int(statement.int(8))
                 let reasoning = Int(statement.int(9)), cacheRead = Int(statement.int(10))
@@ -111,14 +124,14 @@ enum DatabaseSources {
         if try store.meta(metaKey + ":fingerprint") == fingerprint.text { return false }
         var watermark = try watermark(metaKey, fingerprint, store: store)
 
-        let source = try SQLiteDatabase(readOnly: url)
+        let source = try reading { try SQLiteDatabase(readOnly: url) }
         // Row ids only grow, so a highest id below the watermark means the
         // file was rebuilt in place.
-        let top = try source.prepare("SELECT COALESCE(MAX(row_id), 0) FROM message_nodes")
-        if try top.step(), top.int(0) < watermark { watermark = 0 }
-        let hasSessions = try source.prepare(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").step()
-        let statement = try source.prepare("""
+        let top = try reading { try source.prepare("SELECT COALESCE(MAX(row_id), 0) FROM message_nodes") }
+        if try reading({ try top.step() }), top.int(0) < watermark { watermark = 0 }
+        let hasSessions = try reading { try source.prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").step() }
+        let statement = try reading { try source.prepare("""
             SELECT n.row_id, n.session_id, n.created_at, \(hasSessions ? "s.working_directory" : "NULL"),
                 json_extract(n.chat_message, '$.metadata.request_id'),
                 json_extract(n.chat_message, '$.metadata.generation_model'),
@@ -132,7 +145,7 @@ enum DatabaseSources {
                 AND json_extract(n.chat_message, '$.role') = 'assistant'
                 AND json_extract(n.chat_message, '$.metadata.request_id') IS NOT NULL
             ORDER BY n.row_id
-            """)
+            """) }
         statement.bind([.int(watermark)])
         let accountHome = url.deletingLastPathComponent().path
         var highest = watermark
@@ -140,7 +153,7 @@ enum DatabaseSources {
         var pending: [String: Int64] = [:]
         try store.db.execute("BEGIN IMMEDIATE")
         do {
-            while try statement.step() {
+            while try reading({ try statement.step() }) {
                 let rowID = statement.int(0)
                 let session = statement.text(1) ?? "unknown"
                 highest = max(highest, rowID)

@@ -47,6 +47,10 @@ private struct OverviewContent: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
             }
+            ForEach(model.scanNotes, id: \.self) { note in
+                Label(note, systemImage: "info.circle")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+            }
             if let summary = model.summary {
                 let current = summary.period == model.period
                 Group {
