@@ -22,13 +22,16 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
     public let archived: Archive?
     /// Free-form notes from harness.json. Nil when unset or from an older swe.
     public let notes: String?
+    /// The harness's brand colour as "#RRGGBB", for charts. Nil from a swe
+    /// that predates the field.
+    public let primaryColor: String?
 
     enum CodingKeys: String, CodingKey {
         case name, displayName, command, description, version, aliases, tags, state
         // convertFromSnakeCase capitalises "100d" to "100D", so the
         // wire key `sessions_100d` arrives as `sessions100D`.
         case sessions100d = "sessions100D"
-        case rateLimit, installed, archived, notes
+        case rateLimit, installed, archived, notes, primaryColor
     }
 
     /// What the app calls it: the display name when set, else the brand
