@@ -448,6 +448,12 @@ was the leftover of an earlier layout where that boundary did not exist.
 
 ## Layering rules
 
+The domain packages each follow a controller / service / model split:
+`commands.py` files own argv and presentation, logic modules never print,
+and `models.py` holds the records and `--json` payload shapes. The full
+map, the bottom-layer ordering and the per-extension checklists are in
+[docs/backend-architecture.md](docs/backend-architecture.md).
+
 1. `console`, `table`, `paths`, `configuration` and `keys` are the bottom
    layer and never import a domain package. Among themselves the order is
    fixed: `table` imports `console`, `configuration` imports `paths`.
