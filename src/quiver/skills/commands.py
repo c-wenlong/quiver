@@ -4,9 +4,9 @@ import sys
 from pathlib import Path
 
 from quiver.console import c, cpad, elide, terminal_width, truncate
-from quiver.json_output import emit, take_json_flag
+from quiver.json_output import emit, take_json_flag, error_stream
 from quiver.skills.catalog_commands import cmd_skills_catalog, cmd_skills_discover
-from quiver.skills.discovery import discover_skills, skill_roots
+from quiver.skills.discovery import discover_skills
 from quiver.skills.help_text import cmd_skills_help, print_skills_overview
 from quiver.skills.layout_commands import (
     cmd_skills_link,
@@ -203,7 +203,7 @@ def cmd_skills_hub(args) -> int:
         return 0
     if args:
         print(c("red", f"  Unexpected args: {' '.join(args)}"),
-              file=sys.stderr if json_view else sys.stdout)
+              file=error_stream(json_view))
         return 1
     data = hub_plugins()
     if json_view:

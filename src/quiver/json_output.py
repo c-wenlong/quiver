@@ -26,3 +26,12 @@ def emit(data) -> int:
     )
     sys.stdout.flush()
     return 0
+
+
+def error_stream(json_view: bool):
+    """stderr under ``--json``, stdout otherwise.
+
+    A refusal must not corrupt the document on stdout, which the app
+    decodes whole, so errors switch streams when ``--json`` is set.
+    """
+    return sys.stderr if json_view else sys.stdout

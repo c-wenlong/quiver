@@ -35,180 +35,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict
 from typing import Callable, Iterable
 
 from quiver import __version__
 from quiver.console import c
+from quiver.harness.models import RateLimitInfo, _window
 from quiver.paths import RATE_LIMITS_CACHE_FILE
-
-
-# ---------------------------------------------------------------------------
-# Data model
-# ---------------------------------------------------------------------------
-
-# One-glyph pie: five fill steps, colour does the fine-grained work on a
-# red→green xterm ramp (196 = red, 226 = yellow, 46 = green).
-_PIE_GLYPHS = "○◔◑◕●"
-_PIE_RAMP = (196, 202, 208, 214, 220, 226, 190, 154, 118, 46)
-
-
-def _pie(remaining_percent: int) -> str:
-    """A one-cell pie glyph, red when empty through green when full."""
-    remaining_percent = max(0, min(100, remaining_percent))
-    glyph = _PIE_GLYPHS[round(remaining_percent / 25)]
-    code = _PIE_RAMP[round(remaining_percent / 100 * (len(_PIE_RAMP) - 1))]
-    return f"\033[38;5;{code}m{glyph}\033[0m"
-
-
-def _window(label: str, used: float, reset_at: float, window_seconds: int) -> dict:
-    """One quota window, as ``RateLimitInfo.windows`` holds it."""
-    return {
-        "window": label,
-        "used_percent": int(round(min(100.0, max(0.0, used)))),
-        "limit_reached": used >= 100,
-        "reset_at": reset_at,
-        "window_seconds": window_seconds,
-    }
-
-
-@dataclass
-class RateLimitInfo:
-    """Normalised rate limit data for a single tool."""
-
-    tool_name: str
-    used_percent: int          # 0-100
-    limit_reached: bool
-    reset_at: float            # epoch seconds, 0 if unknown
-    plan_type: str             # e.g. "plus", "individual/edu", "—"
-    window_seconds: int        # e.g. 604800 for weekly, 0 if unknown
-    window: str = ""           # e.g. "5h"/"7d"/"7d_sonnet" — Claude returns
-                                # 3 windows in one request; we surface the
-                                # most-restrictive (highest utilization) and
-                                # label it via this short abbreviation in
-                                # format_column(). Empty for Codex / Copilot
-                                # (single-window response). Default keeps
-                                # all existing call sites + cache
-                                # reconstruction (RateLimitInfo(**raw))
-                                # backward-compatible.
-    remaining_units: float | None = None
-    total_units: float | None = None
-    # Every window the provider reported, each a ``_window()`` dict, for
-    # tools with more than one (Devin's daily and weekly, Cursor's included,
-    # auto and API). The fields above stay the most-used one, which the
-    # table shows; the app lists them all. Empty for single-window tools.
-    windows: list = field(default_factory=list)
-    # Prepaid usage left beyond the plan (Devin's overage balance), in USD.
-    extra_usage_usd: float | None = None
-    # Usage billed beyond the plan, as ``_cursor_on_demand()`` describes it.
-    on_demand: dict | None = None
-    fetched_at: float = 0.0    # when the reading was actually taken;
-                               # 0 means "just now", the common case.
-                               # Lets a fetcher hand back a saved reading
-                               # (Claude's refresh-pending path) without
-                               # the aggregator stamping it fresh.
-
-    def to_json(self) -> dict:
-        """The ``swe list --usage --json`` shape.
-
-        The sentinel plan types become ``status`` so the app never shows
-        "no-sub" as a plan name.
-        """
-        status = (self.plan_type
-                  if self.plan_type in ("no-sub", "auth-required", "timeout")
-                  else "ok")
-        return {
-            "status": status,
-            "used_percent": self.used_percent,
-            "remaining_percent": self.remaining_percent,
-            "limit_reached": self.limit_reached,
-            "reset_at": self.reset_at or None,
-            "window": self.window or None,
-            "window_seconds": self.window_seconds or None,
-            # "—" is the table's placeholder for a provider that names no
-            # plan; in JSON that is null, not a plan called "—".
-            "plan_type": (None if status != "ok" or self.plan_type in ("", "\u2014", "-")
-                          else self.plan_type),
-            "remaining_units": self.remaining_units,
-            "total_units": self.total_units,
-            "windows": [
-                {
-                    "window": w["window"],
-                    "used_percent": w["used_percent"],
-                    "remaining_percent": 100 - w["used_percent"],
-                    "limit_reached": w["limit_reached"],
-                    "reset_at": w["reset_at"] or None,
-                    "window_seconds": w["window_seconds"] or None,
-                }
-                for w in self.windows
-            ] if status == "ok" else [],
-            "extra_usage_usd": self.extra_usage_usd if status == "ok" else None,
-            "on_demand": self.on_demand if status == "ok" else None,
-            "fetched_at": self.fetched_at or None,
-        }
-
-    @property
-    def remaining_percent(self) -> int:
-        """Percentage of the selected quota window still available."""
-        return max(0, min(100, 100 - self.used_percent))
-
-    @property
-    def reset_in_human(self) -> str:
-        """Human-readable reset countdown (e.g. '5d12h', '3h45m')."""
-        if self.reset_at <= 0:
-            return "—"
-        remaining = self.reset_at - time.time()
-        if remaining <= 0:
-            return "now"
-        days = int(remaining // 86400)
-        hours = int((remaining % 86400) // 3600)
-        minutes = int((remaining % 3600) // 60)
-        if days > 0:
-            return f"{days}d{hours}h"
-        if hours > 0:
-            return f"{hours}h{minutes}m"
-        return f"{minutes}m"
-
-    def format_column(self) -> str:
-        """One-line display string for the ``swe list`` column."""
-        # Sentinel plan type for tools whose rate-limit endpoint is
-        # intentionally not polled (e.g. Claude with no subscription).
-        # Renders a compact label instead of a misleading "0% —" figure.
-        if self.plan_type == "no-sub":
-            return c("dim", "no-sub")
-        if self.plan_type == "auth-required":
-            return c("red", "re-login")
-        if self.plan_type == "timeout":
-            return c("yellow", "…")
-        remaining = self.remaining_percent
-        if self.remaining_units is not None and self.total_units is not None:
-            def compact(value: float) -> str:
-                return (
-                    str(int(value)) if value.is_integer()
-                    else f"{value:.1f}".rstrip("0").rstrip(".")
-                )
-
-            tail = (
-                f"{compact(float(self.remaining_units))}/"
-                f"{compact(float(self.total_units))}"
-            )
-            reset = self.reset_in_human
-            # Unit quotas still carry a reset (Devin's planEnd,
-            # Freebuff's resetAt), so it rides the tail when known.
-            if reset != "—":
-                tail += f" {reset}"
-        else:
-            reset = self.reset_in_human
-            # Compact form (`5h`, `7d`, `7ds`) keeps the column narrow
-            # while letting the user tell which window the pie is
-            # drawn from. Examples:
-            #     ◔ 5h:3h12m  ← most-restrictive is the 5h rolling
-            #     ○ 7d:4d3h   ← most-restrictive is the weekly
-            tail = f"{self.window}:{reset}" if self.window else reset
-        # Blocked trumps the percentage when a provider derives the two
-        # independently (Droid averages budgets, Copilot derives it
-        # separately): a reached limit renders the empty red pie.
-        return f"{_pie(0 if self.limit_reached else remaining)} {c('dim', tail)}"
 
 
 # ---------------------------------------------------------------------------
@@ -908,15 +741,6 @@ def _get_claude_oauth_credentials() -> dict | None:
         return None
     candidates = [creds for creds in (file_creds, keychain_creds) if creds]
     return max(candidates, key=_claude_expires_at_seconds) if candidates else None
-
-
-def _get_claude_access_token() -> str | None:
-    """Return the access token from Claude Code's OAuth credentials."""
-    oauth = _get_claude_oauth_credentials()
-    if not oauth:
-        return None
-    token = oauth.get("accessToken")
-    return token if isinstance(token, str) and token else None
 
 
 def _fetch_claude_url(

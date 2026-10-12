@@ -7,10 +7,11 @@ from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, elide, sanitize, terminal_width, truncate
+from quiver.find.models import DriftRow
 from quiver.flags import expand_value_flags
 from quiver.harness.registry import load_registry_if_present
 from quiver.init.layout import classify_skill_root, skill_folder_names
-from quiver.json_output import emit, take_json_flag
+from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.find.tree import (
     agents_tree,
     flat_skills,
@@ -432,35 +433,6 @@ def _flow(items: list[str], indent: str = "      ", sep: str = " · ",
         used += addition
     if line:
         print(prefix + c(colour, sep.join(line)))
-
-
-def _skill_columns(names: list[str], indent: str = "    ", cols: int = 4,
-                   width: int = 34, limit: int = 0) -> None:
-    """Print skill names in columns under their root.
-
-    A root can hold 117 skills, so one name per line would bury the tree
-    it is meant to sit inside. ``limit`` caps a very long list and says
-    how many were left out rather than truncating silently.
-    """
-    # Fit the grid to the window: drop columns first, then narrow them,
-    # so names stay readable rather than every row wrapping.
-    avail = max(20, terminal_width() - len(indent))
-    while cols > 1 and cols * width > avail:
-        cols -= 1
-    width = max(12, min(width, avail // cols))
-
-    shown = names if not limit or len(names) <= limit else names[:limit]
-    line: list[str] = []
-    for name in shown:
-        line.append(elide(name, width - 2).ljust(width))
-        if len(line) == cols:
-            print(indent + c("dim", "".join(line).rstrip()))
-            line = []
-    if line:
-        print(indent + c("dim", "".join(line).rstrip()))
-    if len(shown) < len(names):
-        rest = len(names) - len(shown)
-        print(indent + c("dim", f"... and {rest} more (swe skills <filter> to search)"))
 
 
 def _summarise_skill_scan(root: Path, nodes, home: Path, scope: str) -> int:
@@ -892,18 +864,7 @@ def _quiver_drift(home: Path, visible) -> list | None:
 
 
 def _drift_json(f) -> dict:
-    return {
-        "id": f.id,
-        "harness": f.harness,
-        "marketplace": f.marketplace,
-        "plugin": f.plugin or None,
-        "ref": f.ref,
-        "kind": f.kind,
-        "detail": f.detail,
-        "fix": f.fix,
-        "runnable": bool(f.argv),
-        "paths": list(f.paths),
-    }
+    return DriftRow.of(f).to_json()
 
 
 def _plugins_json(home: Path, harness: str) -> dict:
@@ -1098,7 +1059,7 @@ def cmd_find(args) -> int:
     def fail(message: str) -> int:
         # --json promises stdout holds one document or nothing, so a
         # failure speaks on stderr and leaves stdout empty.
-        print(message, file=sys.stderr if json_view else sys.stdout)
+        print(message, file=error_stream(json_view))
         return 1
 
     root_flag = any(a in ("--root", "-r") for a in args)

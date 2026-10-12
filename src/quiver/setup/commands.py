@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from quiver.console import c
+from quiver.setup.models import HarnessPreview, McpPreview, SkillsPreview
 from quiver.harness.discover import apply_findings, discover_harnesses
 from quiver.harness.discover_commands import cmd_discover
 from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
@@ -145,18 +146,10 @@ def cmd_setup(args):
         print(
             json.dumps(
                 {
-                    "harness": [
-                        {"name": f.name, "command": f.command, "path": f.path}
-                        for f in new_harness
-                    ],
-                    "mcp": [{"name": f.name, "tools": list(f.tools)} for f in new_mcp],
+                    "harness": [HarnessPreview.of(f).to_json() for f in new_harness],
+                    "mcp": [McpPreview.of(f).to_json() for f in new_mcp],
                     "skills": [
-                        {
-                            "label": h.label,
-                            "action": h.action,
-                            "command": h.command,
-                            "reason": h.reason,
-                        }
+                        SkillsPreview.of(h).to_json()
                         for h in skill_hints
                         if h.action != "ok"
                     ],
