@@ -122,15 +122,14 @@ private struct HarnessCard: View {
     /// Rows are already sorted by memory, largest first: the first five,
     /// or all of them once Show more opens.
     private var shown: [ComputeModel.ProcessRow] {
-        if showsAll || rows.count <= Self.visibleRows { return rows }
-        return Array(rows.prefix(Self.visibleRows))
+        RowFold.visible(rows, limit: Self.visibleRows, expanded: showsAll)
     }
 
     /// "N flagged" for the expand row while a busy or over-limit process
     /// is hidden away.
     private var hiddenNote: String? {
-        guard !showsAll else { return nil }
-        let flagged = rows.dropFirst(Self.visibleRows).count(where: { !$0.flags.isEmpty })
+        let flagged = RowFold.hiddenFlagged(rows, limit: Self.visibleRows,
+                                            expanded: showsAll) { !$0.flags.isEmpty }
         return flagged == 0 ? nil : "\(flagged) flagged"
     }
 
@@ -149,9 +148,10 @@ private struct HarnessCard: View {
                             ProcessRowView(row: row, harness: usage.harness)
                             if row.id != shown.last?.id { Divider().overlay(Theme.border) }
                         }
-                        if rows.count > Self.visibleRows {
+                        if RowFold.hiddenCount(total: rows.count, limit: Self.visibleRows) > 0 {
                             Divider().overlay(Theme.border)
-                            ExpandRow(isExpanded: showsAll, hidden: rows.count - Self.visibleRows,
+                            ExpandRow(isExpanded: showsAll,
+                                      hidden: RowFold.hiddenCount(total: rows.count, limit: Self.visibleRows),
                                       help: (expand: "Show every process",
                                              collapse: "Show the top \(Self.visibleRows) by memory"),
                                       edge: .inset, note: hiddenNote) {
