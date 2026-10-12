@@ -11,8 +11,11 @@ let package = Package(
     targets: [
         // Everything testable: models, the swe client, scanners, view models.
         .target(name: "QuiverCore", resources: [.process("Resources")]),
+        // The widget views, shared by the extension that draws them and the
+        // app's Desktop widgets previews.
+        .target(name: "QuiverWidgetsUI", dependencies: ["QuiverCore"]),
         // The SwiftUI shell. Kept thin so behaviour lives in QuiverCore.
-        .executableTarget(name: "QuiverApp", dependencies: ["QuiverCore"]),
+        .executableTarget(name: "QuiverApp", dependencies: ["QuiverCore", "QuiverWidgetsUI"]),
         // The WidgetKit extension. SwiftPM builds it as a plain executable;
         // script/build-app.sh wraps it in an .appex inside Quiver.app. The
         // entry point must be _NSExtensionMain (which Xcode sets on extension
@@ -20,7 +23,7 @@ let package = Package(
         // extension exits before chronod can read its widgets.
         .executableTarget(
             name: "QuiverWidgets",
-            dependencies: ["QuiverCore"],
+            dependencies: ["QuiverCore", "QuiverWidgetsUI"],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]
         ),
         .testTarget(

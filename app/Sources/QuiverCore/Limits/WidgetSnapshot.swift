@@ -3,8 +3,11 @@ import Foundation
 /// Everything the widgets show, written by the app and read by the widget
 /// extension. Usage figures and limit readings only: never a credential,
 /// email or session detail.
+///
+/// Schema 2 gives each widget its own section, so the Desktop widgets
+/// tab's switches change one widget without touching another's figures.
 public struct WidgetSnapshot: Codable, Sendable, Equatable {
-    public static let currentSchema = 1
+    public static let currentSchema = 2
 
     public struct Figure: Codable, Sendable, Equatable {
         public var tokens: Int
@@ -19,6 +22,11 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     public struct Day: Codable, Sendable, Equatable {
         public var day: Date
         public var tokens: Int
+
+        public init(day: Date, tokens: Int) {
+            self.day = day
+            self.tokens = tokens
+        }
     }
 
     public struct Model: Codable, Sendable, Equatable {
@@ -34,18 +42,45 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    /// What the Usage summary widget draws, from its own harnesses.
+    public struct SummarySection: Codable, Sendable, Equatable {
+        public var today: Figure
+        /// The last seven days, today included.
+        public var week: Figure
+        /// Days with usage in the heatmap's span, oldest first; the
+        /// sparkline reads its tail.
+        public var days: [Day]
+
+        public init(today: Figure, week: Figure, days: [Day]) {
+            self.today = today
+            self.week = week
+            self.days = days
+        }
+    }
+
+    /// What the Activity heatmap widget draws, from its own harnesses.
+    public struct HeatmapSection: Codable, Sendable, Equatable {
+        /// Days with usage in the heatmap's span, oldest first.
+        public var days: [Day]
+        public var activeDays: Int
+        public var activityTokens: Int
+
+        public init(days: [Day], activeDays: Int, activityTokens: Int) {
+            self.days = days
+            self.activeDays = activeDays
+            self.activityTokens = activityTokens
+        }
+    }
+
     public var schema: Int
     public var generatedAt: Date
-    public var today: Figure
-    /// The last seven days, today included.
-    public var week: Figure
-    /// Days with usage in the heatmap's span, oldest first.
-    public var days: [Day]
-    public var activeDays: Int
-    public var activityTokens: Int
-    /// The last 30 days' heaviest models, largest first.
+    public var summary: SummarySection
+    public var heatmap: HeatmapSection
+    /// The last 30 days' heaviest models, largest first, from the models
+    /// widget's own harnesses.
     public var models: [Model]
-    /// Most used first, current ones before stale ones.
+    /// Most used first, current ones before stale ones, from the limits
+    /// widget's own sources and windows.
     public var limits: [LimitReading]
 
     /// The heatmap's span: 26 weeks, as on the Overview page.
@@ -53,31 +88,51 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     static let modelCount = 4
     static let limitCount = 6
 
-    public static func make(activity: [DayRow], models: [ModelShare], limits: [LimitReading],
+    /// `activity` covers the heatmap's half-year span, `models` the last
+    /// 30 days; each is filtered down to the harnesses its widget counts.
+    /// `limits` drops the sources and windows the limits selection hides.
+    public static func make(activity: [DailyUsage], models: [DailyUsage], limits: [LimitReading],
+                            selection: WidgetSelection = WidgetSelection(),
                             now: Date, calendar: Calendar) -> WidgetSnapshot {
         let today = calendar.startOfDay(for: now)
         let weekStart = calendar.date(byAdding: .day, value: -6, to: today) ?? today
         let spanStart = calendar.date(byAdding: .day, value: -7 * heatmapWeeks, to: today) ?? today
-        func figure(from start: Date) -> Figure {
-            activity.filter { $0.day >= start && $0.day <= now }.reduce(Figure(tokens: 0, costUSD: 0)) {
+
+        let summaryRows = selection.filter(activity, for: .summary)
+        let heatmapRows = selection.filter(activity, for: .heatmap)
+        let modelRows = selection.filter(models, for: .models)
+
+        func figure(from start: Date, in rows: [DailyUsage]) -> Figure {
+            rows.filter { $0.day >= start && $0.day <= now }.reduce(Figure(tokens: 0, costUSD: 0)) {
                 Figure(tokens: $0.tokens + $1.totals.totalTokens, costUSD: $0.costUSD + $1.totals.costUSD)
             }
         }
-        let days = activity
-            .filter { $0.day >= spanStart && $0.totals.totalTokens > 0 }
-            .sorted { $0.day < $1.day }
-            .map { Day(day: $0.day, tokens: $0.totals.totalTokens) }
+        /// Token totals per day over the span, quiet days skipped.
+        func days(in rows: [DailyUsage]) -> [Day] {
+            var byDay: [Date: Int] = [:]
+            for row in rows where row.day >= spanStart && row.totals.totalTokens > 0 {
+                byDay[row.day, default: 0] += row.totals.totalTokens
+            }
+            return byDay.sorted { $0.key < $1.key }.map { Day(day: $0.key, tokens: $0.value) }
+        }
+
+        let summaryDays = days(in: summaryRows)
+        let heatmapDays = days(in: heatmapRows)
         return WidgetSnapshot(
             schema: currentSchema, generatedAt: now,
-            today: figure(from: today), week: figure(from: weekStart),
-            days: days, activeDays: days.count, activityTokens: days.reduce(0) { $0 + $1.tokens },
-            models: models.prefix(modelCount).map { Model(name: $0.model, tokens: $0.totals.totalTokens, share: $0.share) },
-            limits: Array(LimitReading.byPressure(limits, now: now).prefix(limitCount)))
+            summary: SummarySection(today: figure(from: today, in: summaryRows),
+                                    week: figure(from: weekStart, in: summaryRows),
+                                    days: summaryDays),
+            heatmap: HeatmapSection(days: heatmapDays, activeDays: heatmapDays.count,
+                                    activityTokens: heatmapDays.reduce(0) { $0 + $1.tokens }),
+            models: OverviewModel.models(modelRows).prefix(modelCount)
+                .map { Model(name: $0.model, tokens: $0.totals.totalTokens, share: $0.share) },
+            limits: Array(LimitReading.byPressure(selection.limits.filter(limits), now: now).prefix(limitCount)))
     }
 
     /// Today's figure, or nothing when the snapshot was written on another day.
     public func today(at now: Date, calendar: Calendar) -> Figure {
-        calendar.isDate(generatedAt, inSameDayAs: now) ? today : Figure(tokens: 0, costUSD: 0)
+        calendar.isDate(generatedAt, inSameDayAs: now) ? summary.today : Figure(tokens: 0, costUSD: 0)
     }
 
     /// How old the snapshot is: the app writes it only while it runs.
@@ -89,14 +144,14 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     public func sparkline(days count: Int, now: Date, calendar: Calendar) -> [Int] {
         let today = calendar.startOfDay(for: now)
         var byDay: [Date: Int] = [:]
-        for row in days { byDay[calendar.startOfDay(for: row.day), default: 0] += row.tokens }
+        for row in summary.days { byDay[calendar.startOfDay(for: row.day), default: 0] += row.tokens }
         return (0..<count).reversed().map { back in
             calendar.date(byAdding: .day, value: -back, to: today).map { byDay[$0] ?? 0 } ?? 0
         }
     }
 
     public func heatmap(weeks: Int, now: Date, calendar: Calendar) -> Heatmap {
-        let rows = days.map { day -> DayRow in
+        let rows = heatmap.days.map { day -> DayRow in
             var totals = UsageTotals()
             totals.inputTokens = day.tokens
             return DayRow(day: day.day, totals: totals)

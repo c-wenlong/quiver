@@ -48,6 +48,14 @@ final class AppModel {
     var popup = MenuBarPopup(defaults: .standard) {
         didSet { popup.save(to: .standard) }
     }
+    /// What each desktop widget lists; a change rewrites their snapshot
+    /// and redraws them right away.
+    var widgetSelection = WidgetSelection(defaults: .standard) {
+        didSet {
+            widgetSelection.save(to: .standard)
+            limits.writeWidgets(overview: overview, selection: widgetSelection)
+        }
+    }
 
     var terminal: TerminalApp {
         didSet { UserDefaults.standard.set(terminal.rawValue, forKey: "terminalApp") }
@@ -378,7 +386,10 @@ final class AppModel {
                 let changes = Observations { [weak self] in
                     self.map { ($0.overview?.activity, $0.overview?.recentModels, $0.limits.readings) }
                 }
-                for await _ in changes { self?.limits.writeWidgets(overview: self?.overview) }
+                for await _ in changes {
+                    guard let self else { continue }
+                    limits.writeWidgets(overview: overview, selection: widgetSelection)
+                }
             },
             // Notifications may be switched on or off in System Settings
             // while Quiver is in the background, and a harness installed

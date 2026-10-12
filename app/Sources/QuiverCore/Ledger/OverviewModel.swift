@@ -132,6 +132,11 @@ public final class OverviewModel {
     public private(set) var spend: [SpendSlice]?
     /// Days of the last half year with their token totals, for the heatmap.
     public private(set) var activity: [DayRow] = []
+    /// `activity` before the days are combined: one row per harness, model
+    /// and day, so the widgets can count a chosen set of harnesses.
+    public private(set) var activityRows: [DailyUsage] = []
+    /// The last 30 days the same way, the span `recentModels` covers.
+    public private(set) var recentRows: [DailyUsage] = []
     /// The last 30 days' models, largest first, whatever the period picker
     /// says. For the widgets.
     public private(set) var recentModels: [ModelShare] = []
@@ -209,12 +214,15 @@ public final class OverviewModel {
         let activity = Self.combineDays(halfYearRows)
         let thirtyDays = OverviewPeriod.thirtyDays.range(now: now, calendar: calendar)
         // The same rolling range as the Overview's "30 days", to the minute.
-        let recentModels = Self.models(await ledger.daily(in: thirtyDays, calendar: calendar))
+        let recentRows = await ledger.daily(in: thirtyDays, calendar: calendar)
+        let recentModels = Self.models(recentRows)
 
         if mySummary == summaryGeneration { self.summary = summary }
         guard mine == loadGeneration else { return }
         self.spend = spend
         self.activity = activity
+        self.activityRows = halfYearRows
+        self.recentRows = recentRows
         self.recentModels = recentModels
         updatedAt = now
     }
@@ -260,7 +268,7 @@ public final class OverviewModel {
 
     /// Each model's share of the rows' tokens, largest first, with the
     /// harnesses that ran it, most tokens first.
-    static func models(_ rows: [DailyUsage]) -> [ModelShare] {
+    nonisolated static func models(_ rows: [DailyUsage]) -> [ModelShare] {
         var byModel: [String: UsageTotals] = [:]
         var harnessTokens: [String: [String: Int]] = [:]
         for row in rows {
