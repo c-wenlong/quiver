@@ -93,13 +93,40 @@ import Testing
                       row(-1, tokens: 5, model: "e")]
         let snapshot = make(models: models)
         #expect(snapshot.models.map(\.name) == ["a", "b", "c", "d"])
-        #expect(snapshot.models.first == .init(name: "a", tokens: 50, share: 0.5))
+        #expect(snapshot.models.first == .init(name: "a", tokens: 50, share: 0.5, harnesses: ["claude"]))
+    }
+
+    @Test func topModelsCarryTheirHarnesses() {
+        // Two harnesses ran opus; the logos show heaviest first.
+        let models = [row(-1, tokens: 50, harness: "claude", model: "opus"),
+                      row(-1, tokens: 30, harness: "codex", model: "opus"),
+                      row(-1, tokens: 20, harness: "cursor", model: "composer")]
+        let snapshot = make(models: models)
+        #expect(snapshot.models.first?.harnesses == ["claude", "codex"])
+        #expect(snapshot.models.last?.harnesses == ["cursor"])
+    }
+
+    @Test func aSnapshotWithoutModelHarnessesDecodes() throws {
+        // A file an older build wrote has no harnesses key per model.
+        let snapshot = make(models: [row(-1, tokens: 50, harness: "claude", model: "opus")])
+        var json = try JSONSerialization.jsonObject(with: WidgetSnapshot.encoder.encode(snapshot)) as! [String: Any]
+        json["models"] = (json["models"] as! [[String: Any]]).map {
+            var model = $0
+            model["harnesses"] = nil
+            return model
+        }
+        let decoded = try WidgetSnapshot.decoder.decode(WidgetSnapshot.self,
+                                                        from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.models.map(\.harnesses) == [[]])
+        #expect(decoded.summary == snapshot.summary)
     }
 
     @Test func limitsAreMostUsedFirstAndCapped() {
-        let limits = (0..<8).map { reading("s\($0)", used: Double($0 * 10)) }
+        let limits = (0..<14).map { reading("s\($0)", used: Double($0 * 5)) }
         let snapshot = make(limits: limits)
-        #expect(snapshot.limits.map(\.source) == ["s7", "s6", "s5", "s4", "s3", "s2"])
+        // The cap covers the large widget's rows.
+        #expect(snapshot.limits.count == 12)
+        #expect(snapshot.limits.map(\.source) == (0..<12).reversed().map { "s\($0 + 2)" })
     }
 
     @Test func theLimitsSelectionFiltersSourcesAndWindows() {
@@ -142,6 +169,8 @@ import Testing
         let limit = (json["limits"] as! [[String: Any]])[0]
         #expect(Set(limit.keys) == ["source", "harness", "title", "window", "usedPercent", "resetsAt",
                                     "fetchedAt", "isStale"])
+        let model = (json["models"] as! [[String: Any]])[0]
+        #expect(Set(model.keys) == ["name", "tokens", "share", "harnesses"])
     }
 
     @Test func theStoreWritesAndReadsBack() throws {

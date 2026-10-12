@@ -112,9 +112,10 @@ private struct InstalledSkills: View {
             // Closed, the menus say "All" so "Harness: All harnesses" never
             // truncates in a 168pt select.
             SelectMenu(label: "Harness",
-                       options: [(String?.none, "All harnesses", nil)] + harnesses.map { (String?.some($0), $0, $0) },
+                       options: [(String?.none, "All harnesses", nil)]
+                           + harnesses.map { (String?.some($0), HarnessMark($0).name, $0) },
                        selection: $model.harness,
-                       title: model.harness ?? "All")
+                       title: model.harness.map { HarnessMark($0).name } ?? "All")
             SelectMenu(label: "Source",
                        options: [(Skill.Source?.none, "All sources")] + sources.map { (Skill.Source?.some($0), $0.title) },
                        selection: $model.source,

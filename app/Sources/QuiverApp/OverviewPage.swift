@@ -44,12 +44,15 @@ private struct OverviewContent: View {
                 .help("Read new usage from the harness logs (⌘R)")
         } content: {
             if let error = model.error {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+                ErrorCard(message: error)
             }
-            ForEach(model.scanNotes, id: \.self) { note in
-                Label(note, systemImage: "info.circle")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+            if !model.scanNotes.isEmpty {
+                Card {
+                    ForEach(model.scanNotes, id: \.self) { note in
+                        Label(note, systemImage: "info.circle")
+                            .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+                    }
+                }
             }
             if let summary = model.summary {
                 let current = summary.period == model.period

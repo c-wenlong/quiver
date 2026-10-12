@@ -345,11 +345,19 @@ private struct WidgetsSection: View {
     /// Kinds of Quiver's widgets on the desktop or in Notification Center.
     @State private var placed: Set<String> = []
     @State private var refreshed = false
+    /// One widget's card at a time, picked by the tabs; remembered on this Mac.
+    @AppStorage("desktopWidgetTab") private var widgetTab = "limits"
 
     /// The snapshot a widget on the desktop would draw right now: what the
     /// app would write to the shared file, settings applied.
     private var snapshot: WidgetSnapshot {
         app.limits.widgetSnapshot(overview: app.overview, selection: app.widgetSelection)
+    }
+
+    /// The tab's widget, falling back to the first for a stored kind that
+    /// no longer ships.
+    private var widget: WidgetCatalog {
+        WidgetCatalog.all.first { $0.kind == widgetTab } ?? WidgetCatalog.all[0]
     }
 
     var body: some View {
@@ -367,12 +375,10 @@ private struct WidgetsSection: View {
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Redraw the widgets with the latest figures (⌘R)")
             }
-            VStack(spacing: Theme.gutter) {
-                ForEach(WidgetCatalog.all) { widget in
-                    WidgetCard(widget: widget, isPlaced: placed.contains(widget.kind),
-                               snapshot: snapshot)
-                }
-            }
+            Tabs(options: WidgetCatalog.all.map { ($0.kind, $0.title) },
+                 selection: $widgetTab, style: .segmented, onPanel: true)
+            WidgetCard(widget: widget, isPlaced: placed.contains(widget.kind),
+                       snapshot: snapshot)
         }
         .task { await loadPlaced() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

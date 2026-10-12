@@ -273,8 +273,8 @@ struct FrontmatterCard: View {
 // MARK: - Contents and file pane
 
 /// A plugin or skill folder's files, grouped by kind, with add and trash
-/// when the folder is the user's own. Selecting a file opens it in the
-/// InstructionEditor below; binaries and anything over a megabyte can't
+/// when the folder is the user's own. Selecting a file opens it in a
+/// sheet over the page; binaries and anything over a megabyte can't
 /// preview.
 struct PartsCard: View {
     var root: URL
@@ -289,11 +289,15 @@ struct PartsCard: View {
     @State private var tree: PrimitiveTree?
     @State private var selected: String?
     /// Whether `selected` can preview, checked off the main actor before
-    /// any document is opened for it.
-    @State private var previewable = false
+    /// any document is opened for it; nil while the check still runs.
+    @State private var previewable: Bool?
     /// The running previewability check, kept so a new selection can
     /// cancel it before a stale result lands on the shared flag.
     @State private var previewTask: Task<Void, Never>?
+    @State private var sheetOpen = false
+    /// The main window's size when the file was picked; the sheet opens
+    /// at about 90% of it.
+    @State private var sheetSize = CGSize(width: 1100, height: 720)
     @State private var expanded: Set<String> = []
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
@@ -302,7 +306,7 @@ struct PartsCard: View {
     @State private var error: String?
 
     var body: some View {
-        Card(title: "Contents", subtitle: displayPath(root)) {
+        Card(title: "Contents", subtitle: displayPath(root), monoSubtitle: true) {
             if editable && !kinds.isEmpty {
                 NewPartMenu(kinds: kinds) { newPart = $0 }
             }
@@ -321,11 +325,6 @@ struct PartsCard: View {
             } else {
                 ProgressView()
             }
-            if let selected {
-                PrimitiveFilePane(path: selected, root: root, editable: editable,
-                                  previewable: previewable, document: drafts.documents[selected],
-                                  onSaved: onChanged)
-            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.caption).foregroundStyle(Theme.dangerText)
@@ -335,7 +334,7 @@ struct PartsCard: View {
         .task(id: selected) {
             previewTask?.cancel()
             guard let selected else {
-                previewable = false
+                previewable = nil
                 return
             }
             previewTask = Task {
@@ -349,6 +348,19 @@ struct PartsCard: View {
                 guard !Task.isCancelled, self.selected == selected else { return }
                 previewable = canPreview
                 if canPreview { drafts.document(for: selected) }
+            }
+        }
+        .sheet(isPresented: $sheetOpen, onDismiss: {
+            // Drop the pick so reopening the same file restarts the
+            // size and type check; a draft still in the store reopens
+            // with its edits.
+            selected = nil
+            previewable = nil
+        }) {
+            if let selected {
+                PrimitiveFileSheet(path: selected, root: root, editable: editable,
+                                   previewable: previewable, document: drafts.documents[selected],
+                                   drafts: drafts, windowSize: sheetSize, onSaved: onChanged)
             }
         }
         .alert("New \(newPart?.title ?? "")", isPresented: .init(
@@ -390,7 +402,7 @@ struct PartsCard: View {
                         expanded.insert(entry.path)
                     }
                 } else {
-                    selected = entry.previewPath
+                    present(entry)
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -421,6 +433,18 @@ struct PartsCard: View {
             }
         }
         .padding(.vertical, 3)
+    }
+
+    /// Open `entry` in the sheet: the size and type check is still
+    /// running, so `previewable` resets and the sheet spins until it lands.
+    private func present(_ entry: PrimitiveTree.Entry) {
+        selected = entry.previewPath
+        previewable = nil
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            sheetSize = CGSize(width: max(900, window.frame.width * 0.9),
+                               height: max(640, window.frame.height * 0.9))
+        }
+        sheetOpen = true
     }
 
     private func reload() {
@@ -483,19 +507,28 @@ struct NewPartMenu: View {
     }
 }
 
-/// One file in the InstructionEditor, sharing the detail page's document
-/// so a switch back shows the edits it left. Editable only where the
-/// page says the folder is the user's AND the file itself resolves
-/// inside it: a symlink pointing out stays read-only.
-struct PrimitiveFilePane: View {
+/// One file in a large sheet over the detail page: about 90% of the
+/// window, at least 900 by 640, resizable. The header is the editor's
+/// own (path in muted mono, Raw/Rich, Unsaved, Revert, Save, Close) and
+/// Esc closes. The document is the page's drafts store's, so edits
+/// survive close and reopen; closing with unsaved changes asks first.
+struct PrimitiveFileSheet: View {
     var path: String
     var root: URL
     var editable: Bool
-    /// Set from the caller's off-actor check, so nothing reads the file
-    /// on the main thread just to decide whether to show it.
-    var previewable: Bool
+    /// nil while the off-actor size and type check still runs.
+    var previewable: Bool?
     var document: InstructionDocument?
+    var drafts: PrimitiveDrafts
+    /// The window's size when the file was picked.
+    var windowSize: CGSize
     var onSaved: () -> Void = {}
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingClose = false
+    /// A save in the close prompt that failed: the reason shows in the
+    /// sheet, which stays open.
+    @State private var saveError: String?
 
     private var url: URL { URL(fileURLWithPath: path) }
     private var fileEditable: Bool {
@@ -503,17 +536,83 @@ struct PrimitiveFilePane: View {
     }
 
     var body: some View {
-        Group {
-            if !previewable {
+        VStack(alignment: .leading, spacing: 12) {
+            if let saveError {
+                ErrorCard(message: saveError)
+            }
+            if !fileEditable, previewable == true {
+                PrimitiveLockNote(text: "Only files inside the plugin or skill's own folder can be edited, so this one is read-only.")
+            }
+            switch previewable {
+            case .none:
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .some(false):
+                HStack {
+                    Text(displayPath(url))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button("Close") { dismiss() }
+                        .secondaryButton()
+                        .keyboardShortcut(.cancelAction)
+                }
                 Text("Can't preview this file.")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-            } else if let document {
-                InstructionEditor(document: document, title: url.lastPathComponent,
-                                  subtitle: displayPath(url), readOnly: !fileEditable, onSaved: onSaved)
-            } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .some(true):
+                if let document {
+                    InstructionEditor(document: document, title: url.lastPathComponent,
+                                      subtitle: displayPath(url), monoSubtitle: true,
+                                      readOnly: !fileEditable, close: requestClose, onSaved: onSaved)
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+        }
+        .padding(20)
+        .frame(minWidth: 900, idealWidth: max(900, windowSize.width * 0.9),
+               minHeight: 640, idealHeight: max(640, windowSize.height * 0.9))
+        .presentationSizing(.fitted)
+        .onChange(of: document?.isDirty) {
+            // A save or a revert from the editor's own buttons clears a
+            // save error the sheet was showing.
+            if document?.isDirty != true { saveError = nil }
+        }
+        .onExitCommand(perform: requestClose)
+        .alert("Unsaved changes", isPresented: $confirmingClose) {
+            Button("Save") { saveAndClose() }
+            Button("Discard", role: .destructive) {
+                // Drop the draft outright: reopening reads the file fresh.
+                drafts.remove(under: path)
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("“\(url.lastPathComponent)” has unsaved changes.")
+        }
+    }
+
+    /// Close now when the file is clean, ask first when it is not.
+    private func requestClose() {
+        guard document?.isDirty == true else { dismiss(); return }
+        confirmingClose = true
+    }
+
+    /// A failed save or a changed-on-disk stop keeps the sheet open; the
+    /// editor's own error or banner says why.
+    private func saveAndClose() {
+        guard let document else { dismiss(); return }
+        switch document.save() {
+        case .saved:
+            saveError = nil
+            onSaved()
+            dismiss()
+        case .changedOnDisk:
+            // The editor's own banner explains it.
+            saveError = nil
+        case .failed(let message):
+            saveError = "Couldn't save \(url.lastPathComponent): \(message)"
         }
     }
 }
@@ -559,8 +658,7 @@ struct PluginDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             PrimitiveBack(title: "Plugins", action: leave)
             if let leaveError {
-                Label(leaveError, systemImage: "exclamationmark.triangle")
-                    .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                ErrorCard(message: leaveError)
             }
             if !editable { lockNote }
             header
@@ -569,8 +667,10 @@ struct PluginDetailView: View {
                 PartsCard(root: dir, editable: editable, kinds: [.skill, .command, .agent],
                           drafts: drafts, onChanged: reload)
             } else {
-                Text("This plugin has no local folder: its files come from a checkout swe manages.")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                Card {
+                    Text("This plugin has no local folder: its files come from a checkout swe manages.")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                }
             }
         }
         .onAppear {
@@ -651,7 +751,17 @@ struct PluginDetailView: View {
                         }
                         ForEach(entry.harnesses, id: \.self) { harness in
                             if let state = plugin.harnesses[harness] {
-                                Badge("\(HarnessMark(harness).name) · \(state.status.title)")
+                                HStack(spacing: 5) {
+                                    HarnessIcon(harness: harness, size: 12)
+                                    Text("\(HarnessMark(harness).name) · \(state.status.title)")
+                                }
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.textLabel)
+                                .lineLimit(1)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 1)
+                                .background(Theme.subtle, in: .capsule)
+                                .overlay(Capsule().strokeBorder(Theme.borderStrong, lineWidth: 1))
                             }
                         }
                     }
@@ -730,8 +840,7 @@ struct SkillDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             PrimitiveBack(title: "Skills", action: leave)
             if let leaveError {
-                Label(leaveError, systemImage: "exclamationmark.triangle")
-                    .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                ErrorCard(message: leaveError)
             }
             if !editable {
                 PrimitiveLockNote(text: "Only skills that live under ~/.quiver can be edited, so \(skill.name) is read-only.")

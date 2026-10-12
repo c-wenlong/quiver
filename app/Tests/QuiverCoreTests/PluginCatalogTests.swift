@@ -512,80 +512,55 @@ func decodedInventory() throws -> [Skill] {
         #expect(index.sources(harness: "codex").first { $0.id == "local" }?.marketplaces[0].installed == 2)
     }
 
-    @Test func theHubStartsOpenAndEverythingElseClosed() async throws {
+    @Test func marketplacesStartClosedAndOpenPerToggle() async throws {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
-        let index = try #require(model.index)
-        let lines = ExploreLine.lines(index.sources, disclosure: model.disclosure, searching: false)
-        #expect(lines.map(\.id) == ["s:local", "m:local/kit", "p:local/drawer@kit", "p:local/toolkit@kit",
-                                    "s:claude", "s:codex", "s:cursor", "s:unregistered"])
-        #expect(lines[3] == .plugin(index.sources[0].marketplaces[0].plugins[1], last: true))
-
-        // An open source with a closed marketplace: its plugins are no lines.
-        model.toggle("claude")
-        let opened = ExploreLine.lines(index.sources, disclosure: model.disclosure, searching: false)
-        #expect(opened.map(\.id).contains("m:claude/official"))
-        #expect(!opened.map(\.id).contains { $0.hasPrefix("p:claude/") })
-        #expect(opened.contains(.marketplace(index.sources[1].marketplaces[0], open: false)))
-    }
-
-    @Test func openStateIsKeptAcrossLaunchesByStableIDs() async throws {
-        let store = MemoryStore()
-        let model = PluginCatalogModel(disclosure: store)
-        model.toggle("claude")
-        model.toggle("claude/official")
+        #expect(model.index != nil)
+        // Every marketplace starts closed, hub or not.
+        #expect(!model.isOpen("local/kit"))
+        #expect(!model.isOpen("claude/official"))
         model.toggle("local/kit")
-        #expect(store.values["pluginsExploreOpened"] == ["claude", "claude/official"])
-        #expect(store.values["pluginsExploreClosed"] == ["local/kit"])
-        // Back to its default: nothing kept for it, so it follows the default.
-        model.toggle("claude/official")
-        #expect(store.values["pluginsExploreOpened"] == ["claude"])
-
-        let next = PluginCatalogModel(disclosure: store)
-        #expect(next.isOpen("claude"))
-        #expect(!next.isOpen("claude/official"))
-        #expect(!next.isOpen("local/kit"))
-        #expect(next.isOpen("local"))
-        // A hub marketplace never seen before starts open.
-        #expect(next.isOpen("local/new"))
-        #expect(!next.isOpen("codex/new"))
+        #expect(model.isOpen("local/kit"))
+        #expect(model.expanded == ["local/kit"])
+        model.toggle("local/kit")
+        #expect(!model.isOpen("local/kit"))
     }
 
-    @Test func aSearchOpensWhatItFindsAndLeavesTheKeptStateAlone() async throws {
-        let store = MemoryStore()
-        let model = PluginCatalogModel(disclosure: store)
+    @Test func openStateIsSessionOnly() {
+        let model = PluginCatalogModel()
+        model.toggle("claude/official")
+        #expect(model.isOpen("claude/official"))
+        // Nothing is kept between runs: a fresh model starts closed.
+        let next = PluginCatalogModel()
+        #expect(!next.isOpen("claude/official"))
+        #expect(next.expanded.isEmpty)
+    }
+
+    @Test func aSearchOpensWhatItFindsAndLeavesTheOwnStateAlone() async throws {
+        let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
         model.toggle("local/kit")
-        model.toggle("codex")
-        let kept = store.values
 
         model.query = "deploy"
         #expect(model.isSearching)
-        let index = try #require(model.index)
-        let found = index.sources(query: model.query)
-        let lines = ExploreLine.lines(found, disclosure: model.disclosure, searching: model.isSearching)
-        #expect(lines.map(\.id) == ["s:claude", "m:claude/official", "p:claude/vercel@official",
-                                    "s:codex", "m:codex/official", "p:codex/vercel@official"])
-        #expect(model.isOpen("local/kit"))
+        // Matching marketplaces show open without touching the user's set.
+        #expect(model.isOpen("claude/official"))
+        #expect(model.isOpen("codex/official"))
+        #expect(model.expanded == ["local/kit"])
         // Closing one during the search lasts only as long as the search.
         model.toggle("claude/official")
         #expect(!model.isOpen("claude/official"))
-        #expect(store.values == kept)
         model.query = "deploy "
         #expect(!model.isOpen("claude/official"))
         model.query = "deplo"
         #expect(model.isOpen("claude/official"))
-        model.toggle("claude")
 
         // Cleared: what was open before the search is open again.
         model.query = ""
         #expect(!model.isSearching)
-        #expect(store.values == kept)
-        #expect(model.isOpen("local"))
-        #expect(!model.isOpen("local/kit"))
-        #expect(model.isOpen("codex"))
-        #expect(!model.isOpen("claude"))
+        #expect(model.isOpen("local/kit"))
         #expect(!model.isOpen("claude/official"))
+        #expect(!model.isOpen("codex/official"))
     }
 
     @Test func aPluginListsItsSkillsAndEveryInstalledCopyOncePerName() async throws {

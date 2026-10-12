@@ -171,6 +171,8 @@ extension NSColor {
 struct Card<Content: View, Accessory: View>: View {
     var title: String?
     var subtitle: String?
+    /// A path under the title reads better in mono.
+    var monoSubtitle = false
     @ViewBuilder var accessory: Accessory
     @ViewBuilder var content: Content
 
@@ -180,7 +182,11 @@ struct Card<Content: View, Accessory: View>: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
                         if let title { Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary) }
-                        if let subtitle { Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(monoSubtitle ? .system(size: 12, design: .monospaced) : Theme.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
                     }
                     Spacer(minLength: 8)
                     accessory
@@ -196,8 +202,10 @@ struct Card<Content: View, Accessory: View>: View {
 }
 
 extension Card where Accessory == EmptyView {
-    init(title: String? = nil, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
-        self.init(title: title, subtitle: subtitle, accessory: { EmptyView() }, content: content)
+    init(title: String? = nil, subtitle: String? = nil, monoSubtitle: Bool = false,
+         @ViewBuilder content: () -> Content) {
+        self.init(title: title, subtitle: subtitle, monoSubtitle: monoSubtitle,
+                  accessory: { EmptyView() }, content: content)
     }
 }
 

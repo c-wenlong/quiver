@@ -34,11 +34,23 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         public var tokens: Int
         /// Of all tokens in the last 30 days, 0...1.
         public var share: Double
+        /// The harnesses that ran the model, most tokens first.
+        public var harnesses: [String]
 
-        public init(name: String, tokens: Int, share: Double) {
+        public init(name: String, tokens: Int, share: Double, harnesses: [String] = []) {
             self.name = name
             self.tokens = tokens
             self.share = share
+            self.harnesses = harnesses
+        }
+
+        /// `harnesses` is absent from snapshots an older build wrote.
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            tokens = try container.decode(Int.self, forKey: .tokens)
+            share = try container.decode(Double.self, forKey: .share)
+            harnesses = try container.decodeIfPresent([String].self, forKey: .harnesses) ?? []
         }
     }
 
@@ -86,7 +98,8 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     /// The heatmap's span: 26 weeks, as on the Overview page.
     public static let heatmapWeeks = 26
     static let modelCount = 4
-    static let limitCount = 6
+    /// Enough rows for the large widget, which sizes its rows to its height.
+    static let limitCount = 12
 
     /// `activity` covers the heatmap's half-year span, `models` the last
     /// 30 days; each is filtered down to the harnesses its widget counts.
@@ -126,7 +139,8 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
             heatmap: HeatmapSection(days: heatmapDays, activeDays: heatmapDays.count,
                                     activityTokens: heatmapDays.reduce(0) { $0 + $1.tokens }),
             models: OverviewModel.models(modelRows).prefix(modelCount)
-                .map { Model(name: $0.model, tokens: $0.totals.totalTokens, share: $0.share) },
+                .map { Model(name: $0.model, tokens: $0.totals.totalTokens,
+                             share: $0.share, harnesses: $0.harnesses) },
             limits: Array(LimitReading.byPressure(selection.limits.filter(limits), now: now).prefix(limitCount)))
     }
 
