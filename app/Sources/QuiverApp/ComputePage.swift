@@ -79,10 +79,26 @@ private struct TrendCard: View {
     @Environment(AppModel.self) private var app
     @State private var tab = UserDefaults.standard.string(forKey: Self.tabKey) ?? "ram"
     @State private var hovered: Date?
+    @State private var bubbleSize: CGSize = .zero
 
     private static let tabKey = "computeTrendTab"
 
     private var model: ComputeModel { app.compute }
+
+    /// The y axis's fixed top, from the plotted values only: RAM rounds
+    /// up to the next 2 GB with the threshold plus a step as its floor,
+    /// CPU and GPU to the next 25% (GPU at least 100%). Nothing the
+    /// hover state touches feeds it, so the scale cannot move under the
+    /// cursor.
+    private var yTop: Double {
+        let limitGB = Double(model.limits.memoryBytes) / Double(UInt64(1) << 30)
+        let values = shown.flatMap { series($0).map { value(of: $0) } }
+        switch tab {
+        case "cpu": return TrendScale.top(values, step: 25, floor: 25)
+        case "gpu": return TrendScale.top(values, step: 25, floor: 100)
+        default: return TrendScale.top(values, step: 2, floor: limitGB + 2)
+        }
+    }
 
     /// The harnesses the card draws: above the flag threshold at any
     /// retained point, the same set on every tab.
@@ -193,7 +209,8 @@ private struct TrendCard: View {
                     PointMark(x: .value("Time", last.at), y: .value("Value", value(of: last)))
                         .foregroundStyle(colour(of: harness))
                         .symbolSize(16)
-                        .annotation(position: .trailing, alignment: .center) {
+                        .annotation(position: .trailing, alignment: .center,
+                                    overflowResolution: .init(x: .disabled, y: .disabled)) {
                             HarnessIcon(harness: harness, size: 16)
                         }
                 }
@@ -207,13 +224,16 @@ private struct TrendCard: View {
                             .font(Theme.caption).foregroundStyle(Theme.warning)
                     }
             }
+            // An x-only rule cannot touch the y domain, and the bubble it
+            // used to carry now lives in the overlay where no chart mark
+            // or annotation can grow the scale.
             if let hovered {
                 RuleMark(x: .value("Time", hovered))
                     .foregroundStyle(Theme.border)
-                    .annotation(position: .top, spacing: 8) { bubble(at: hovered) }
             }
         }
         .chartXScale(domain: domain)
+        .chartYScale(domain: 0...yTop)
         .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
         .chartYAxis {
             AxisMarks { value in
@@ -247,7 +267,27 @@ private struct TrendCard: View {
                         hovered = nil
                     }
                 }
+            // The readout rides the overlay: positioned against the plot
+            // and clamped inside it, never a mark the scales can see.
+            if let hovered, let plot = proxy.plotFrame,
+               let x = proxy.position(forX: hovered) {
+                bubble(at: hovered)
+                    .fixedSize()
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
+                    .position(bubbleOrigin(atX: x, plot: geometry[plot]))
+                    .allowsHitTesting(false)
+            }
         }
+    }
+
+    /// The bubble's center at the hovered x, just under the plot's top
+    /// edge, slid sideways until it clears both edges of the plot.
+    private func bubbleOrigin(atX x: CGFloat, plot: CGRect) -> CGPoint {
+        let half = bubbleSize.width / 2
+        let px = plot.origin.x + x
+        let lo = plot.minX + half + 4, hi = plot.maxX - half - 4
+        let cx = lo <= hi ? min(max(px, lo), hi) : plot.midX
+        return CGPoint(x: cx, y: plot.minY + bubbleSize.height / 2 + 4)
     }
 
     /// Each shown harness's value at the point nearest the hovered time.
