@@ -291,6 +291,9 @@ struct PartsCard: View {
     /// Whether `selected` can preview, checked off the main actor before
     /// any document is opened for it.
     @State private var previewable = false
+    /// The running previewability check, kept so a new selection can
+    /// cancel it before a stale result lands on the shared flag.
+    @State private var previewTask: Task<Void, Never>?
     @State private var expanded: Set<String> = []
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
@@ -330,13 +333,23 @@ struct PartsCard: View {
         }
         .task { reload() }
         .task(id: selected) {
-            guard let selected else { previewable = false; return }
-            // Size and type first, off the main actor: a document is only
-            // ever opened for a file that can preview.
-            let url = URL(fileURLWithPath: selected)
-            let canPreview = await Task.detached { PrimitiveTree.isTextFile(url) }.value
-            previewable = canPreview
-            if canPreview { drafts.document(for: selected) }
+            previewTask?.cancel()
+            guard let selected else {
+                previewable = false
+                return
+            }
+            previewTask = Task {
+                // Size and type first, off the main actor: a document is
+                // only ever opened for a file that can preview.
+                let url = URL(fileURLWithPath: selected)
+                let canPreview = await Task.detached { PrimitiveTree.isTextFile(url) }.value
+                // A check for an older selection can still finish after a
+                // newer one: publish only when this task was not cancelled
+                // and the path it checked is still the selected one.
+                guard !Task.isCancelled, self.selected == selected else { return }
+                previewable = canPreview
+                if canPreview { drafts.document(for: selected) }
+            }
         }
         .alert("New \(newPart?.title ?? "")", isPresented: .init(
             get: { newPart != nil }, set: { if !$0 { newPart = nil } })) {
