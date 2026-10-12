@@ -135,21 +135,35 @@ public struct LimitsView: View {
 
     var effectiveFamily: WidgetFamily { family ?? envFamily }
 
-    /// One limit line's height: its label, the gap and the 3pt bar.
+    /// One limit line's height: the 11pt label line, the 3pt gap to it
+    /// and the 3pt bar.
     static let rowHeight: CGFloat = 20
+    /// The tightest spacing two rows can take.
+    static func minGap(compact: Bool) -> CGFloat { compact ? 3 : 4 }
+    /// The most a gap spreads to before leftover room sits at the bottom.
+    static func maxGap(compact: Bool) -> CGFloat { compact ? 6 : 8 }
 
-    /// The rows the height holds: the widget fills with as many limits as
-    /// fit, so the small and medium sizes no longer stop at a fixed few.
+    /// The rows `height` holds at the minimum gap, so a widget just short
+    /// of the roomy layout still fits its fifth (or nth) row.
     static func rows(for height: CGFloat, compact: Bool) -> Int {
-        let gap: CGFloat = compact ? 6 : 8
+        let gap = minGap(compact: compact)
         return max(1, Int((height + gap) / (rowHeight + gap)))
+    }
+
+    /// The spacing `count` rows spread over `height`: the minimum when it
+    /// is tight, up to the maximum when there is room to spare.
+    static func rowSpacing(for height: CGFloat, count: Int, compact: Bool) -> CGFloat {
+        guard count > 1 else { return 0 }
+        return min(maxGap(compact: compact),
+                   (height - CGFloat(count) * rowHeight) / CGFloat(count - 1))
     }
 
     public var body: some View {
         let compact = effectiveFamily == .systemSmall
         GeometryReader { geo in
             let limits = snapshot.limits.prefix(Self.rows(for: geo.size.height, compact: compact))
-            VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+            VStack(alignment: .leading,
+                   spacing: Self.rowSpacing(for: geo.size.height, count: limits.count, compact: compact)) {
                 if limits.isEmpty {
                     Text("No limits yet").font(.system(size: 12, weight: .medium))
                     Text("Add an account in Quiver, or star a harness in swe.")
