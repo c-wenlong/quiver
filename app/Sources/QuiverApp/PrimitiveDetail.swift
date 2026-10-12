@@ -574,6 +574,11 @@ struct PrimitiveFileSheet: View {
         .frame(minWidth: 900, idealWidth: max(900, windowSize.width * 0.9),
                minHeight: 640, idealHeight: max(640, windowSize.height * 0.9))
         .presentationSizing(.fitted)
+        .onChange(of: document?.isDirty) {
+            // A save or a revert from the editor's own buttons clears a
+            // save error the sheet was showing.
+            if document?.isDirty != true { saveError = nil }
+        }
         .onExitCommand(perform: requestClose)
         .alert("Unsaved changes", isPresented: $confirmingClose) {
             Button("Save") { saveAndClose() }
