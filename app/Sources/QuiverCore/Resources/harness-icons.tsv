@@ -1,4 +1,5 @@
 id	kind	source_url	licence	notes
+aider	mono	https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/assets/icons/safari-pinned-tab.svg	Apache-2.0 repo; aider trademark	pixel 'a' mark, from the site's pinned-tab icon; potrace file: the background-plate subpath it wraps the mark in was removed, the next subpath's relative move made absolute (M 2705 3998) so the mark keeps its place, and the counter merged into the same path with fill-rule evenodd so the a keeps its hole
 antigravity	color	TokenTracker dashboard/public/brand-logos/antigravity.svg	MIT (TokenTracker)	Google Antigravity mark
 ark	color	TokenTracker dashboard/public/brand-logos/volcano-ark.svg	MIT (TokenTracker)	Volcano Engine Ark mark, used for both Ark plans
 augment	mono	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
@@ -11,11 +12,12 @@ codex	color	TokenTracker dashboard/public/brand-logos/codex.svg	MIT (TokenTracke
 commandcode	color	TokenTracker dashboard/public/brand-logos/commandcode.svg	MIT (TokenTracker)	Command Code mark, white on its black tile
 continue	mono	https://raw.githubusercontent.com/continuedev/continue/main/docs/logo/light.svg	Apache-2.0 repo; logo trademark	hexagon mark, black fill; docs/logo/dark.svg is the white variant
 copilot	mono	TokenTracker dashboard/public/brand-logos/copilot.svg	MIT (TokenTracker)	GitHub Copilot mark
+crush	color	https://raw.githubusercontent.com/charmbracelet/crush/main/internal/oauth/callback/heartbit.svg	FSL-1.1-MIT repo; Charm trademark	"Crush's pink pixel heart (aria-label ""Crush"")"
 cursor	mono	TokenTracker dashboard/public/brand-logos/cursor.svg	MIT (TokenTracker)	Cursor mark
 deepseek	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/deepseek-color.svg	MIT (LobeHub icons); DeepSeek trademark	DeepSeek colour mark
 devin	mono	TokenTracker dashboard/public/brand-logos/devin.svg	MIT (TokenTracker)	Devin mark, traced by TokenTracker from app.devin.ai
 droid	mono	https://factory.ai/ (redirects to factory.com; inline svg id=mobile-nav-logo)	trademark, no licence stated	Factory asterisk mark, currentColor; extracted verbatim from page HTML; favicon.svg there is same mark on black square
-featherless	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/featherless-color.svg	MIT (LobeHub icons); Featherless AI trademark	Featherless AI colour mark
+featherless	color	https://featherless.ai/	trademark, no licence stated	the rebranded F (the site's inline SVG) on Featherless's yellow tile #FEF47A, as the favicon shows it; composed locally, F at 64% of the tile
 fireworks	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/fireworks-color.svg	MIT (LobeHub icons); Fireworks AI trademark	Fireworks AI colour mark
 forge	mono	https://forgecode.dev/shared/brand/favicon-light.svg	trademark, no licence stated	{F} mark, fill #1c1d1f; favicon-dark.svg (white) and favicon.svg (media-query) also on site
 freebuff	mono	https://freebuff.com/logo.svg	trademark, no licence stated	white F on black rounded square, from Freebuff official site
@@ -38,6 +40,7 @@ pi	mono	TokenTracker dashboard/public/brand-logos/pi.svg	MIT (TokenTracker)	Pi m
 qoder	mono	TokenTracker dashboard/public/brand-logos/qoder.svg	MIT (TokenTracker)	Qoder mono mark (LobeHub icons)
 qoder-cn	color	TokenTracker dashboard/public/brand-logos/qoder-cn.svg	MIT (TokenTracker)	Qoder CN mark in its green
 qwen-code	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/qwen-color.svg	MIT (LobeHub icons); Qwen mark is Alibaba trademark	Qwen colour mark
+routing-run	mono	https://unpkg.com/@phosphor-icons/core@2.1.1/assets/bold/planet-bold.svg	MIT (Phosphor Icons)	Phosphor planet (bold); the same mark as routing.run's logo, which the site only publishes as a PNG (/logo_trans_black.png)
 stepfun	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/stepfun-color.svg	MIT (LobeHub icons); StepFun trademark	StepFun colour mark
 together	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/together-color.svg	MIT (LobeHub icons); Together AI trademark	Together AI colour mark
 upstage	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/upstage-color.svg	MIT (LobeHub icons); Upstage trademark	Upstage colour mark

@@ -103,7 +103,7 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
     @Test func everyProviderHasALogoOrAnInitial() {
         let withLogo = ProviderCatalog.all.filter { HarnessIcons.icon(for: $0.icon) != nil }.map(\.id)
         #expect(withLogo.contains("ark-agent-plan"))
-        #expect(Set(ProviderCatalog.all.map(\.id)).subtracting(withLogo) == ["aider", "crush"])
+        #expect(Set(ProviderCatalog.all.map(\.id)).subtracting(withLogo).isEmpty)
     }
 }
 
