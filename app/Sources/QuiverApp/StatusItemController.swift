@@ -178,9 +178,6 @@ final class MenuBarPanel: NSPanel {
 struct MenuBarContent: View {
     @Environment(AppModel.self) private var app
     var openMain: () -> Void
-    /// Caps the limits area; nil keeps the screen-sized cap the panel uses.
-    /// The page preview passes a smaller one so a long list stays a preview.
-    var limitsMaxHeight: CGFloat? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -205,7 +202,7 @@ struct MenuBarContent: View {
                 PanelLimits()
                 ScrollView { PanelLimits() }.scrollIndicators(.automatic)
             }
-            .frame(maxHeight: limitsMaxHeight ?? Self.limitsMaxHeight)
+            .frame(maxHeight: Self.limitsMaxHeight)
             if app.popup.showStats, let spend = app.overview?.spend {
                 Divider()
                 SpendDonut(slices: spend)

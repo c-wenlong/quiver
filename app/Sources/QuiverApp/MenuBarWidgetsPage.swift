@@ -198,7 +198,7 @@ private struct PopupSection: View {
     /// the panel's window shadow.
     private var preview: some View {
         VStack(spacing: 10) {
-            MenuBarContent(openMain: {}, limitsMaxHeight: 360)
+            MenuBarContent(openMain: {})
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
                 .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
