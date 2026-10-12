@@ -7,12 +7,11 @@ already means active|all. Here ``--harness`` names the harness to act in.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from quiver.console import c, sanitize, truncate
 from quiver.flags import expand_value_flags
-from quiver.json_output import emit, take_json_flag
+from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.plugins.actions import ACTIONS, ActionError, plugin_action
 from quiver.plugins.catalog import ACTIONABLE, build_catalog
 from quiver.table import Table
@@ -40,7 +39,7 @@ def cmd_plugins(args) -> int:
 
     def fail(message: str) -> int:
         # --json promises stdout holds one document or nothing.
-        print(message, file=sys.stderr if json_view else sys.stdout)
+        print(message, file=error_stream(json_view))
         return 1
 
     sub = args[0] if args else "catalog"

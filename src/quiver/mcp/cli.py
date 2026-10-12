@@ -35,11 +35,11 @@ from quiver.configuration import (
     parse_json_object,
 )
 from quiver.console import c, cpad, sanitize, strip_ansi, terminal_width, truncate, visible_len
-from quiver.json_output import emit, take_json_flag
+from quiver.json_output import emit, take_json_flag, error_stream
 from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
-from quiver.mcp.secrets import load_secrets, scrub_args, scrub_url
+from quiver.mcp.inventory import server_inventory
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
 from quiver.mcp.secrets import unresolved_names
@@ -712,94 +712,6 @@ def _tool_header(name: str, width: int) -> str:
     return label.center(width)
 
 
-def _transport(raw, canonical: dict) -> str:
-    """How a server is reached: stdio, http, sse, wrapped or unknown.
-
-    The canonical shape drops ``type``, so the one distinction it cannot
-    carry, legacy SSE against streamable HTTP, is read from the raw entry.
-    """
-    kind = server_type(canonical)
-    if (kind == "http" and isinstance(raw, dict)
-            and str(raw.get("type", "")).lower() == "sse"):
-        return "sse"
-    return kind
-
-
-def _identity(raw, canonical: dict) -> tuple:
-    """What makes two definitions of one server the same server.
-
-    Compared on canonical fields with absent and empty treated alike, so a
-    harness that spells out ``args: []`` or ``type: stdio`` does not
-    disagree with one that leaves them off. Only ever compared, never
-    printed: it holds the env and header values.
-    """
-    return (
-        # SSE and streamable HTTP at one URL are different servers to a
-        # client, and only the raw entry still says which one it is.
-        _transport(raw, canonical),
-        canonical.get("command") or "",
-        tuple(canonical.get("args") or ()),
-        tuple(sorted((canonical.get("env") or {}).items())),
-        canonical.get("url") or "",
-        tuple(sorted((canonical.get("headers") or {}).items())),
-    )
-
-
-def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
-    """One ``(json_row, first_raw_config)`` per server name, sorted by name.
-
-    ``tool_data`` maps each tool to its raw ``{name: config}``. The row is
-    what ``--json`` prints: identity taken from the first tool that defines
-    the server, every tool it appears in, whether those tools disagree, and
-    ``variants``: the tools grouped by identical definition, in order of
-    first appearance, so a caller can say which ones agree.
-    Env and header values stay out; only their names go into the row. The
-    command, arguments and URL are scrubbed, since a credential can sit in
-    any of them (see ``quiver.mcp.secrets.scrub_url``).
-    """
-    secrets = load_secrets()
-    seen: dict[str, dict] = {}
-    for tool, servers in tool_data.items():
-        handler = get_mcp_handler(tool)
-        for name, raw in servers.items():
-            canonical = handler.parse(raw) if isinstance(raw, dict) else {}
-            entry = seen.setdefault(
-                name, {"raw": raw, "canonical": canonical, "tools": [],
-                       "identities": []})
-            entry["tools"].append(tool)
-            entry["identities"].append(_identity(raw, canonical))
-    inventory = []
-    for name in sorted(seen):
-        entry = seen[name]
-        canonical = entry["canonical"]
-        env = canonical.get("env") or {}
-        headers = canonical.get("headers") or {}
-        # Grouped by equality, not hashing: an identity can hold a list or a
-        # dict straight from a hand-edited config.
-        groups: list[tuple[tuple, list[str]]] = []
-        for tool, ident in zip(entry["tools"], entry["identities"]):
-            group = next((g for g in groups if g[0] == ident), None)
-            if group is None:
-                groups.append((ident, [tool]))
-            else:
-                group[1].append(tool)
-        inventory.append(({
-            "name": name,
-            "transport": _transport(entry["raw"], canonical),
-            "command": (redact_secrets(str(canonical["command"]), secrets)
-                        if canonical.get("command") else None),
-            "args": scrub_args(canonical.get("args") or [], secrets),
-            "url": (scrub_url(str(canonical["url"]), secrets)
-                    if canonical.get("url") else None),
-            "env_keys": sorted(str(k) for k in env),
-            "header_keys": sorted(str(k) for k in headers),
-            "harnesses": entry["tools"],
-            "conflict": len(groups) > 1,
-            "variants": [tools for _, tools in groups],
-        }, entry["raw"]))
-    return inventory
-
-
 def cmd_list(args):
     args, json_view = take_json_flag(list(args))
     if args and args[0] in ("-h", "--help", "help"):
@@ -808,7 +720,7 @@ def cmd_list(args):
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
     # Under --json stdout is one document, so refusals go to stderr.
-    refusal = sys.stderr if json_view else sys.stdout
+    refusal = error_stream(json_view)
 
     target = None
     if args:
@@ -910,7 +822,7 @@ def cmd_status(args):
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
     # Under --json stdout is one document, so refusals go to stderr.
-    refusal = sys.stderr if json_view else sys.stdout
+    refusal = error_stream(json_view)
 
     target = None
     if args:
@@ -1800,7 +1712,7 @@ def main(argv=None):
         return COMMANDS[cmd](args[1:])
     except ConfigurationError as exc:
         # Under --json stdout is one document, so the error goes to stderr.
-        print(c("red", str(exc)), file=sys.stderr if "--json" in args else sys.stdout)
+        print(c("red", str(exc)), file=error_stream("--json" in args))
         return 1
 
 

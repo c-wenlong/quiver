@@ -32,6 +32,7 @@ from pathlib import Path
 
 from quiver.find.plugin_drift import _harness_env
 from quiver.paths import cache_dir_for
+from quiver.plugins.models import ActionResult
 from quiver.plugins.catalog import ACTIONABLE, READERS
 
 ACTIONS = ("install", "uninstall", "enable", "disable")
@@ -148,17 +149,17 @@ def plugin_action(home: Path, action: str, ref: str, harness: str, run=None) -> 
     changed = (after["installed"], after["enabled"]) != (before["installed"], before["enabled"])
     if reason is None and not changed:
         reason = "the command finished but the state did not change"
-    return {
-        "action": action,
-        "harness": harness,
-        "ref": ref,
-        "changed": changed,
-        "detail": reason,
-        "ran": ran,
-        "edited": edited,
-        "output": output or None,
-        "state": {k: after[k] for k in ("installed", "enabled", "version")},
-    }
+    return ActionResult(
+        action=action,
+        harness=harness,
+        ref=ref,
+        changed=changed,
+        detail=reason,
+        ran=ran,
+        edited=edited,
+        output=output or None,
+        state={k: after[k] for k in ("installed", "enabled", "version")},
+    ).to_json()
 
 
 # --------------------------------------------------------------------------

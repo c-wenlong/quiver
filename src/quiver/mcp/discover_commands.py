@@ -6,6 +6,7 @@ import sys
 from quiver.console import c
 from quiver.mcp.cli import server_summary
 from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
+from quiver.mcp.models import DiscoveryRow
 from quiver.paths import MCP_SOURCE_FILE
 
 
@@ -84,13 +85,7 @@ def cmd_discover(args):
 
     if opts["json"]:
         payload = [
-            {
-                "name": f.name,
-                "tools": list(f.tools),
-                "status": f.status,
-                "source_tool": f.source_tool,
-                "summary": server_summary(f.server),
-            }
+            DiscoveryRow.of(f, server_summary(f.server)).to_json()
             for f in findings
         ]
         print(json.dumps(payload, indent=2))
