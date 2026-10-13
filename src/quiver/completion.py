@@ -44,6 +44,9 @@ _TOOL_TARGET_COMMANDS = frozenset({
 # Flags for specific commands. Keys are either a bare command ("list") or a
 # "<domain> <sub>" pair referenced by _NESTED_FLAGS below.
 _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
+    "version": [
+        ("--json", "Print the version as JSON"),
+    ],
     "list": [
         ("--scope=active", "Hide archived harnesses (default)"),
         ("--scope=archived", "Show only archived harnesses"),

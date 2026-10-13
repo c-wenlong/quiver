@@ -42,6 +42,9 @@ def cmd_providers(args):
     return providers_cli.main(args)
 
 
+_HELP_NAME = {"-v": "version", "-V": "version", "--version": "version"}
+
+
 def cmd_version(args):
     """swe version / -v / -V / --version. Reads no config, so it works even
     when ~/.quiver is unparseable."""
@@ -199,7 +202,9 @@ def main():
                 # pointing back at `swe providers --help` itself.
                 if cmd in ("providers", "pv"):
                     return COMMANDS[cmd](rest)
-                cmd_help([cmd])
+                # The version flags are spellings of `version`; the help
+                # topic lives under the canonical name.
+                cmd_help([_HELP_NAME.get(cmd, cmd)])
                 return 0
             result = COMMANDS[cmd](rest)
         except ConfigurationError as exc:

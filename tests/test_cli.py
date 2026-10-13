@@ -1,6 +1,5 @@
 import io
 import json
-import os
 import pathlib
 import tempfile
 import unittest
@@ -51,19 +50,32 @@ class VersionCommandTest(unittest.TestCase):
         self.assertIn("Unexpected args: extra", out + err)
 
     def test_works_when_config_is_broken(self):
+        # Patch the path registry.py actually reads, the way
+        # test_registry_state.py isolates ~/.quiver: the module constants
+        # are bound at import, so HOME alone proves nothing.
+        from quiver import cli
+        from quiver.configuration import ConfigurationError
+        from quiver.harness import registry
         with tempfile.TemporaryDirectory() as home:
-            config = pathlib.Path(home) / ".quiver" / "config"
-            config.mkdir(parents=True)
-            (config / "harness.json").write_text("{corrupt")
-            with mock.patch.dict(os.environ, {"HOME": home}):
-                status, out, err = _run_main(["--version"])
+            harness_file = (pathlib.Path(home) / ".quiver" / "config"
+                            / "harness.json")
+            harness_file.parent.mkdir(parents=True)
+            harness_file.write_text("{corrupt")
+            with mock.patch.object(registry, "HARNESS_FILE", harness_file):
+                with self.assertRaises(ConfigurationError):
+                    registry.load_registry()
+                out, err = io.StringIO(), io.StringIO()
+                with redirect_stdout(out), redirect_stderr(err):
+                    status = cli.cmd_version([])
         self.assertEqual(status, 0)
-        self.assertEqual(out, f"swe {quiver.__version__}\n")
+        self.assertEqual(out.getvalue(), f"swe {quiver.__version__}\n")
 
     def test_version_help_routes_through_cmd_help(self):
-        status, out, err = _run_main(["version", "--help"])
-        self.assertEqual(status, 0)
-        self.assertIn("swe version", out)
+        for spelling in ("version", "-v", "-V", "--version"):
+            with self.subTest(spelling=spelling):
+                status, out, err = _run_main([spelling, "--help"])
+                self.assertEqual(status, 0)
+                self.assertIn("swe version", out)
 
 
 class VersionCompletionTest(unittest.TestCase):
@@ -71,6 +83,11 @@ class VersionCompletionTest(unittest.TestCase):
         from quiver.completion import _PRIMARY_COMMANDS
         names = [name for name, _ in _PRIMARY_COMMANDS]
         self.assertIn("version", names)
+
+    def test_version_flag_completion_offers_json(self):
+        from quiver.completion import get_completions
+        candidates = [name for name, _ in get_completions(["version", "--"])]
+        self.assertIn("--json", candidates)
 
 
 class ProvidersCliRoutingTest(unittest.TestCase):
