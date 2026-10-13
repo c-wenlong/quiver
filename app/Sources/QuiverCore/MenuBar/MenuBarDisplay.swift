@@ -17,7 +17,7 @@ public enum MenuBarFigure: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// What the menu bar item shows, and whether it's there at all. Set on the
-/// Menu bar and widgets page; the icon is always the watched limit's ring.
+/// Menu bar page; the icon is always the watched limit's ring.
 public struct MenuBarDisplay: Equatable, Sendable {
     public var isVisible = true
     public var primary = MenuBarFigure.none

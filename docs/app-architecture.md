@@ -65,7 +65,10 @@ pointer leaves once (`hoverSuppressed`). The View menu's Toggle Sidebar
 (⌃⌘S) and the sidebar's own first row flip the same flag.
 Reselecting the current sidebar item (or the Plugins > Explore tab) bumps
 `navReselects`, which detail views watch to go back through their own
-unsaved-changes ask.
+unsaved-changes ask. The menu bar and the desktop widgets are separate
+pages: `MenuBarPage.swift` (status item and popup tabs) and
+`WidgetsPage.swift` (one underline tab per `WidgetCatalog` kind, its
+previews and settings, the chosen kind stored in `desktopWidgetTab`).
 
 ## Theme
 

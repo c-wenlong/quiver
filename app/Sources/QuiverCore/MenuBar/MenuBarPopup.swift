@@ -2,7 +2,7 @@ import Foundation
 
 /// What the menu bar popup shows: the incidents line, the spend section,
 /// and which accounts and harnesses and which of their limit windows are
-/// listed. Set on the Menu bar and widgets page; everything shows until
+/// listed. Set on the Menu bar page; everything shows until
 /// hidden there.
 ///
 /// Settings are keyed by source: `LimitReading.source`, the profile id

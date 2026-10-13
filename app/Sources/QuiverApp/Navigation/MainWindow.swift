@@ -233,7 +233,9 @@ struct PageView: View {
         case .apiKeys:
             APIKeysPage()
         case .menuBar:
-            MenuBarWidgetsPage()
+            MenuBarPage()
+        case .widgets:
+            WidgetsPage()
         case .serviceStatus:
             ServiceStatusPage()
         case .harnesses:
