@@ -173,8 +173,11 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         let renewed = Set(renewer.renewals.map(\.home))
         #expect(renewed == [root.appending(path: ".claude").path, expiredHome])
         #expect(model.renewing.isEmpty)
-        // The reload afterwards isn't forced: healthy readings are reused.
-        #expect(usage.requests.last?.1 == false)
+        // After renewing, only the renewed accounts are read forced; the
+        // healthy Codex account reuses its reading.
+        let last = usage.requests.suffix(3)
+        #expect(Set(last.filter { $0.1 }.map(\.0.configHome)) == [root.appending(path: ".claude").path, expiredHome])
+        #expect(last.filter { !$0.1 }.count == 1)
     }
 
     @Test func aFailedRenewalIsMarkedUntilTheAccountIsNoLongerExpired() async throws {
@@ -208,9 +211,10 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         await model.refreshFromButton()
 
         #expect(renewer.renewals.map(\.home) == [home])
-        // A forced read finds the lapse, then a plain read after renewing.
+        // A forced read finds the lapse, and the renewed account is forced
+        // again after renewing, so a failed renewal can't hide.
         let reads = usage.requests[readsBefore...].filter { $0.0.configHome == home }
-        #expect(reads.map(\.1) == [true, false])
+        #expect(reads.map(\.1) == [true, true])
     }
 
     @Test func aPressWithNothingExpiredLoadsOnce() async throws {

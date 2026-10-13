@@ -124,8 +124,9 @@ public final class AccountsModel {
     }
 
     /// Reload profiles, then every account's usage at once. `force` skips the
-    /// five-minute cache but never a provider's cooldown.
-    public func load(force: Bool) async {
+    /// five-minute cache but never a provider's cooldown; `forcing` skips
+    /// it for just those account ids.
+    public func load(force: Bool, forcing: Set<String> = []) async {
         generation += 1
         let mine = generation
         let profiles: [Profile]
@@ -157,7 +158,7 @@ public final class AccountsModel {
         let usage = self.usage
         let results = await withTaskGroup(of: (String, AccountUsage).self) { group in
             for (id, key) in keys {
-                group.addTask { (id, await usage.usage(for: key, force: force)) }
+                group.addTask { (id, await usage.usage(for: key, force: force || forcing.contains(id))) }
             }
             var out: [String: AccountUsage] = [:]
             for await (id, reading) in group { out[id] = reading }
@@ -206,10 +207,10 @@ public final class AccountsModel {
         }
         renewing.subtract(targets.map(\.id))
         renewFailed.formUnion(targets.map(\.id).filter { results[$0] == false })
-        // Not forced: healthy accounts reuse the readings the first load
-        // just took, while a renewed account's new token starts a fresh
-        // cache entry (UsageService keys it by token) and is fetched.
-        await load(force: false)
+        // Only the renewed accounts are forced: a failed renewal must not
+        // hide behind a reading from before the token lapsed, and healthy
+        // accounts reuse the readings the first load just took.
+        await load(force: false, forcing: Set(targets.map(\.id)))
     }
 
     /// Reload on a timer until the calling task is cancelled, so a page left
