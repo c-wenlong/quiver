@@ -1,34 +1,48 @@
 import Foundation
 
-/// Which sources and limit windows one surface shows, from the switch and
-/// chips on the Desktop widgets tab. Unlike the menu bar popup's
-/// `MenuBarPopup` there is no ordering (the Usage limits widget always
-/// sorts by pressure) and no legacy keys: the choice starts clean.
+/// Which sources and limit windows one surface shows, and in what order,
+/// from the switches, chips and drags on the Desktop widgets tab. Unlike
+/// the menu bar popup's `MenuBarPopup` there are no legacy keys: the
+/// choice starts clean.
 public struct SourceSelection: Equatable, Sendable {
-    /// Sources hidden under this key prefix.
+    /// Sources hidden under this key.
     public let hiddenSourcesKey: String
-    /// Window labels hidden per source id, under this key prefix.
+    /// Window labels hidden per source id, under this key.
     public let hiddenWindowsKey: String
+    /// The dragged source order under this key; empty disables it.
+    public let sourceOrderKey: String
     /// Source ids left out.
     public private(set) var hiddenSources: Set<String> = []
     /// Window labels left out, per source id.
     public private(set) var hiddenWindows: [String: Set<String>] = [:]
+    /// The order the surface lists sources in, dragged on the settings
+    /// row. A source not shown right now keeps its place.
+    public private(set) var sourceOrder: [String] = []
 
-    public init(hiddenSourcesKey: String, hiddenWindowsKey: String) {
+    public init(hiddenSourcesKey: String, hiddenWindowsKey: String, sourceOrderKey: String = "") {
         self.hiddenSourcesKey = hiddenSourcesKey
         self.hiddenWindowsKey = hiddenWindowsKey
+        self.sourceOrderKey = sourceOrderKey
     }
 
-    public init(defaults: UserDefaults, hiddenSourcesKey: String, hiddenWindowsKey: String) {
-        self.init(hiddenSourcesKey: hiddenSourcesKey, hiddenWindowsKey: hiddenWindowsKey)
+    public init(defaults: UserDefaults, hiddenSourcesKey: String, hiddenWindowsKey: String,
+                sourceOrderKey: String = "") {
+        self.init(hiddenSourcesKey: hiddenSourcesKey, hiddenWindowsKey: hiddenWindowsKey,
+                  sourceOrderKey: sourceOrderKey)
         hiddenSources = Set(defaults.stringArray(forKey: hiddenSourcesKey) ?? [])
         let windows = defaults.dictionary(forKey: hiddenWindowsKey) as? [String: [String]] ?? [:]
         hiddenWindows = windows.mapValues(Set.init)
+        if !sourceOrderKey.isEmpty {
+            sourceOrder = defaults.stringArray(forKey: sourceOrderKey) ?? []
+        }
     }
 
     public func save(to defaults: UserDefaults) {
         defaults.set(hiddenSources.sorted(), forKey: hiddenSourcesKey)
         defaults.set(hiddenWindows.mapValues { $0.sorted() }, forKey: hiddenWindowsKey)
+        if !sourceOrderKey.isEmpty {
+            defaults.set(sourceOrder, forKey: sourceOrderKey)
+        }
     }
 
     /// Whether the source shows at all.
@@ -50,6 +64,23 @@ public struct SourceSelection: Equatable, Sendable {
         hiddenWindows[source] = hidden
     }
 
+    /// The given ids in the dragged order: explicitly ordered ids first,
+    /// then the rest in the given order.
+    public func ordered(_ ids: [String]) -> [String] {
+        sourceOrder.filter(ids.contains) + ids.filter { !sourceOrder.contains($0) }
+    }
+
+    /// Drag `id` before `target`, where `shown` is what the list shows
+    /// now. The first move freezes the shown order into `sourceOrder`.
+    public mutating func move(_ id: String, before target: String, in shown: [String]) {
+        SourceOrdering.move(id, before: target, in: shown, order: &sourceOrder)
+    }
+
+    /// Drop `id` below the last shown row.
+    public mutating func moveToEnd(_ id: String, in shown: [String]) {
+        SourceOrdering.moveToEnd(id, in: shown, order: &sourceOrder)
+    }
+
     /// The readings this selection keeps: shown sources, shown windows.
     public func filter(_ readings: [LimitReading]) -> [LimitReading] {
         readings.filter { shows(window: $0.window, source: $0.source) }
@@ -66,9 +97,10 @@ public struct WidgetSelection: Equatable, Sendable {
         case summary, heatmap, models
     }
 
-    /// The Usage limits widget's sources and windows.
+    /// The Usage limits widget's sources and windows, in the dragged order.
     public var limits = SourceSelection(hiddenSourcesKey: SourceSelection.widgetHiddenSourcesKey,
-                                        hiddenWindowsKey: SourceSelection.widgetHiddenWindowsKey)
+                                        hiddenWindowsKey: SourceSelection.widgetHiddenWindowsKey,
+                                        sourceOrderKey: SourceSelection.widgetSourceOrderKey)
     /// Harnesses each usage widget leaves out.
     public private(set) var hiddenHarnesses: [Widget: Set<String>] = [:]
 
@@ -77,7 +109,8 @@ public struct WidgetSelection: Equatable, Sendable {
     public init(defaults: UserDefaults) {
         limits = SourceSelection(defaults: defaults,
                                  hiddenSourcesKey: SourceSelection.widgetHiddenSourcesKey,
-                                 hiddenWindowsKey: SourceSelection.widgetHiddenWindowsKey)
+                                 hiddenWindowsKey: SourceSelection.widgetHiddenWindowsKey,
+                                 sourceOrderKey: SourceSelection.widgetSourceOrderKey)
         for widget in Widget.allCases {
             hiddenHarnesses[widget] = Set(defaults.stringArray(forKey: Self.harnessesKey(widget)) ?? [])
         }
@@ -121,4 +154,5 @@ public struct WidgetSelection: Equatable, Sendable {
 extension SourceSelection {
     public static let widgetHiddenSourcesKey = "widgetLimitsHiddenSources"
     public static let widgetHiddenWindowsKey = "widgetLimitsHiddenSourceWindows"
+    public static let widgetSourceOrderKey = "widgetLimitsSourceOrder"
 }

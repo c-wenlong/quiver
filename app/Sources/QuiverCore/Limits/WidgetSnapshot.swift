@@ -91,8 +91,9 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     /// The last 30 days' heaviest models, largest first, from the models
     /// widget's own harnesses.
     public var models: [Model]
-    /// Most used first, current ones before stale ones, from the limits
-    /// widget's own sources and windows.
+    /// Grouped by source in the dragged order (by pressure until the
+    /// first drag), a source's own windows most used first with current
+    /// ones before stale ones, from the limits widget's own sources.
     public var limits: [LimitReading]
 
     /// The heatmap's span: 26 weeks, as on the Overview page.
@@ -129,6 +130,18 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
             return byDay.sorted { $0.key < $1.key }.map { Day(day: $0.key, tokens: $0.value) }
         }
 
+        // Sources group together in the dragged order; until the first
+        // drag that's pressure, so the widget changes nothing. A source's
+        // own windows keep their byPressure order inside the group.
+        let sortedLimits = LimitReading.byPressure(selection.limits.filter(limits), now: now)
+        var listed: [String] = []
+        for reading in sortedLimits where !listed.contains(reading.source) {
+            listed.append(reading.source)
+        }
+        let limitRows = selection.limits.ordered(listed)
+            .flatMap { source in sortedLimits.filter { $0.source == source } }
+            .prefix(limitCount)
+
         let summaryDays = days(in: summaryRows)
         let heatmapDays = days(in: heatmapRows)
         return WidgetSnapshot(
@@ -141,7 +154,7 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
             models: OverviewModel.models(modelRows).prefix(modelCount)
                 .map { Model(name: $0.model, tokens: $0.totals.totalTokens,
                              share: $0.share, harnesses: $0.harnesses) },
-            limits: Array(LimitReading.byPressure(selection.limits.filter(limits), now: now).prefix(limitCount)))
+            limits: Array(limitRows))
     }
 
     /// Today's figure, or nothing when the snapshot was written on another day.

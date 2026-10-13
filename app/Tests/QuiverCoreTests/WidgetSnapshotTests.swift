@@ -129,6 +129,23 @@ import Testing
         #expect(snapshot.limits.map(\.source) == (0..<12).reversed().map { "s\($0 + 2)" })
     }
 
+    @Test func limitsGroupBySourceInPressureOrderUntilDragged() {
+        // a's top reading is heavier than b's, so a's whole group lands
+        // first even where a b reading sits between two a readings.
+        let limits = [reading("a", "5h", used: 80), reading("b", "5h", used: 70),
+                      reading("a", "7d", used: 20)]
+        let snapshot = make(limits: limits)
+        #expect(snapshot.limits.map(\.id) == ["a|5h", "a|7d", "b|5h"])
+    }
+
+    @Test func theDraggedOrderDecidesTheSourceGroups() {
+        var selection = WidgetSelection()
+        selection.limits.move("b", before: "a", in: ["a", "b"])
+        let limits = [reading("a", "5h", used: 90), reading("b", "5h", used: 10)]
+        let snapshot = make(limits: limits, selection: selection)
+        #expect(snapshot.limits.map(\.id) == ["b|5h", "a|5h"])
+    }
+
     @Test func theLimitsSelectionFiltersSourcesAndWindows() {
         var selection = WidgetSelection()
         selection.limits.setShown(false, source: "claude-work")

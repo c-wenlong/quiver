@@ -125,15 +125,30 @@ private struct WidgetCard: View {
         let now = Date.now
         switch widget.kind {
         case "limits":
-            FlowLayout(spacing: 16, lineSpacing: 16) {
-                WidgetSurface(size: Self.small, snapshot: snapshot) {
-                    LimitsView(snapshot: $0, now: now, family: .systemSmall)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    WidgetSurface(size: Self.large, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemLarge)
+                    }
+                    VStack(alignment: .leading, spacing: 16) {
+                        WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                            LimitsView(snapshot: $0, now: now, family: .systemMedium)
+                        }
+                        WidgetSurface(size: Self.small, snapshot: snapshot) {
+                            LimitsView(snapshot: $0, now: now, family: .systemSmall)
+                        }
+                    }
                 }
-                WidgetSurface(size: Self.medium, snapshot: snapshot) {
-                    LimitsView(snapshot: $0, now: now, family: .systemMedium)
-                }
-                WidgetSurface(size: Self.large, snapshot: snapshot) {
-                    LimitsView(snapshot: $0, now: now, family: .systemLarge)
+                FlowLayout(spacing: 16, lineSpacing: 16) {
+                    WidgetSurface(size: Self.large, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemLarge)
+                    }
+                    WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemMedium)
+                    }
+                    WidgetSurface(size: Self.small, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemSmall)
+                    }
                 }
             }
         case "summary":
@@ -156,13 +171,22 @@ private struct WidgetCard: View {
     /// or which harnesses the usage widgets count.
     @ViewBuilder private var settings: some View {
         if widget.kind == "limits" {
-            let rows = MenuBarPopup.rows(in: app.limits.readings, sources: sources)
-            if !rows.isEmpty {
+            let limits = limitRows
+            if !limits.rows.isEmpty {
+                let shown = limits.shown
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Shown").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
-                    ForEach(rows) { row in
+                    Text("Drag to reorder.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .padding(.bottom, 4)
+                    ReorderableRows(limits.rows, showsDividers: true) { id, before in
+                        if let before {
+                            app.widgetSelection.limits.move(id, before: before, in: shown)
+                        } else {
+                            app.widgetSelection.limits.moveToEnd(id, in: shown)
+                        }
+                    } row: { row in
                         SourceSettingsRow(
-                            row: row,
+                            row: row, grip: true,
                             shown: app.widgetSelection.limits.shows(source: row.source),
                             setShown: { app.widgetSelection.limits.setShown($0, source: row.source) },
                             showsWindow: { app.widgetSelection.limits.shows(window: $0, source: row.source) },
@@ -183,6 +207,25 @@ private struct WidgetCard: View {
                 }
             }
         }
+    }
+
+    /// The limits sources in display order: the dragged order over
+    /// sources ranked by their first reading (the readings arrive
+    /// byPressure); a source with no reading goes last, in row order.
+    /// `shown` is the ids the ReorderableRows callbacks reorder within.
+    private var limitRows: (rows: [MenuBarPopup.Row], shown: [String]) {
+        let rows = MenuBarPopup.rows(in: app.limits.readings, sources: sources)
+        var rank: [String: Int] = [:]
+        for (index, reading) in app.limits.readings.enumerated() where rank[reading.source] == nil {
+            rank[reading.source] = index
+        }
+        let ranked = rows.enumerated().sorted {
+            ((rank[$0.element.source] ?? .max), $0.offset)
+                < ((rank[$1.element.source] ?? .max), $1.offset)
+        }.map(\.element.source)
+        let shown = app.widgetSelection.limits.ordered(ranked)
+        let bySource = Dictionary(uniqueKeysWithValues: rows.map { ($0.source, $0) })
+        return (rows: shown.compactMap { bySource[$0] }, shown: shown)
     }
 
     /// The same sources the popup's settings list: every starred account

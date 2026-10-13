@@ -97,7 +97,7 @@ public struct WidgetCatalog: Sendable, Identifiable {
 
     public static let all = [
         WidgetCatalog(kind: "limits", title: "Usage limits",
-                      detail: "How much of each rate limit is used, most used first.",
+                      detail: "How much of each rate limit is used, in the order you set in Quiver.",
                       sizes: "Small, medium and large", symbol: "gauge.with.dots.needle.67percent"),
         WidgetCatalog(kind: "summary", title: "Usage summary",
                       detail: "Today and the last seven days, with a sparkline.",
