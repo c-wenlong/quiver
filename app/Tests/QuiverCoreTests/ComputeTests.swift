@@ -240,7 +240,7 @@ import Testing
         #expect(items[0].preselected)
     }
 
-    @Test func aYoungSmallOrphanIsNoCandidate() {
+    @Test func aYoungSmallOrphanIsListedButNotPreselected() {
         let tree = OrphanTree(root: Self.proc(10, 1, path: "/opt/homebrew/bin/npm", started: Self.youngStart),
                               descendants: [])
         let flags: [Int32: Set<OrphanFlag>] = [10: ComputeSummary.flags(for: tree, limits: ComputeLimits(), now: Self.now)]
@@ -248,7 +248,8 @@ import Testing
         let items = ComputeSummary.cleanup(byHarness: [:], orphans: [tree], orphanFlags: flags,
                                            processFlags: [:], matchers: [],
                                            limits: ComputeLimits(), now: Self.now)
-        #expect(items.isEmpty)
+        #expect(items.count == 1)
+        #expect(items[0].preselected == false)
     }
 
     @Test func anOverMemoryHelperIsPreselectedButNotTheRoot() {
@@ -481,6 +482,229 @@ import Testing
         #expect(signaller.signalled.isEmpty)
     }
 
+    // MARK: Earlier-launch leftovers
+
+    static let appMain = "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+    static let appHelper = "/Applications/ChatGPT.app/Contents/Helpers/Crashpad"
+
+    private static func cleanup(_ byHarness: [String: [ProcessSample]],
+                                orphans: [OrphanTree] = [],
+                                orphanFlags: [Int32: Set<OrphanFlag>] = [:],
+                                processFlags: [Int32: Set<ProcessFlag>] = [:],
+                                matchers: [HarnessMatcher],
+                                managedPIDs: Set<Int32> = []) -> [CleanupItem] {
+        ComputeSummary.cleanup(byHarness: byHarness, orphans: orphans,
+                               orphanFlags: orphanFlags, processFlags: processFlags,
+                               matchers: matchers, limits: ComputeLimits(),
+                               now: Self.now, managedPIDs: managedPIDs)
+    }
+
+    @Test func aBundleHelperFromAnEarlierLaunchIsPreselected() {
+        let main = Self.proc(10, 1, path: Self.appMain, started: Self.youngStart)
+        let helper = Self.proc(11, 1, path: Self.appHelper,
+                               started: Self.youngStart.addingTimeInterval(-4 * 86400))
+        let items = Self.cleanup(["codex": [main, helper]], matchers: [Self.codex])
+        #expect(items.count == 1)
+        #expect(items[0].preselected)
+        #expect(items[0].reason == "Left over from an earlier Codex launch")
+        #expect(items[0].harness == "codex")
+    }
+
+    @Test func aBundleHelperStartedWithThisLaunchIsNoCandidate() {
+        let main = Self.proc(10, 1, path: Self.appMain, started: Self.youngStart)
+        let helper = Self.proc(11, 1, path: Self.appHelper,
+                               started: Self.youngStart.addingTimeInterval(-30))
+        #expect(Self.cleanup(["codex": [main, helper]], matchers: [Self.codex]).isEmpty)
+    }
+
+    @Test func aManagedBundleHelperIsNoCandidate() {
+        let main = Self.proc(10, 1, path: Self.appMain, started: Self.youngStart)
+        let helper = Self.proc(11, 1, path: Self.appHelper,
+                               started: Self.youngStart.addingTimeInterval(-4 * 86400))
+        #expect(Self.cleanup(["codex": [main, helper]], matchers: [Self.codex],
+                             managedPIDs: [11]).isEmpty)
+    }
+
+    @Test func theAppMainProcessIsNeverAnEarlierLaunchCandidate() {
+        let oldMain = Self.proc(10, 1, path: Self.appMain,
+                                started: Self.youngStart.addingTimeInterval(-4 * 86400))
+        let main = Self.proc(11, 1, path: Self.appMain, started: Self.youngStart)
+        #expect(Self.cleanup(["codex": [oldMain, main]], matchers: [Self.codex]).isEmpty)
+    }
+
+    @Test func aBundleHelperAfterTheAppQuitIsPreselected() {
+        let helper = Self.proc(11, 1, path: Self.appHelper, started: Self.oldStart)
+        let items = Self.cleanup(["codex": [helper]], matchers: [Self.codex])
+        #expect(items.count == 1)
+        #expect(items[0].preselected)
+        #expect(items[0].reason == "Left over after Codex quit")
+    }
+
+    @Test func aProcessOutsideTheAppBundleIsNoEarlierLaunchCandidate() {
+        let main = Self.proc(10, 1, path: Self.appMain, started: Self.youngStart)
+        let stray = Self.proc(11, 1, path: "/usr/bin/codex",
+                              started: Self.youngStart.addingTimeInterval(-4 * 86400))
+        #expect(Self.cleanup(["codex": [main, stray]], matchers: [Self.codex]).isEmpty)
+    }
+
+    // MARK: Duplicate servers
+
+    private static func dupCopies(_ pids: [Int32], parent: Int32 = 10,
+                                  path: String = "/x/mcp-server",
+                                  args: [String] = ["mcp-server", "--stdio"],
+                                  cwd: String? = "/Users/test/proj",
+                                  started: Date = oldStart) -> [ProcessSample] {
+        pids.enumerated().map { i, pid in
+            Self.proc(pid, parent, path: path, args: args, cwd: cwd,
+                      started: started.addingTimeInterval(TimeInterval(i) * 60))
+        }
+    }
+
+    @Test func theOldestDuplicatesArePreselectedAndTheNewestIsKept() {
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.oldStart)
+        let copies = Self.dupCopies([11, 12, 13])
+        let items = Self.cleanup(["claude": [parent] + copies], matchers: [Self.claude])
+        // pid 13 started last of the three, so it stays.
+        #expect(items.map(\.id).sorted() == ["process-11", "process-12"])
+        #expect(items.allSatisfy { $0.preselected })
+        #expect(items.allSatisfy { $0.reason.contains("Duplicate of a newer copy") })
+    }
+
+    @Test func youngDuplicateCopiesAreNoCandidates() {
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude")
+        let copies = Self.dupCopies([11, 12], started: Self.youngStart)
+        #expect(Self.cleanup(["claude": [parent] + copies], matchers: [Self.claude]).isEmpty)
+    }
+
+    @Test func copiesInDifferentWorkingDirectoriesAreNoCandidates() {
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.oldStart)
+        let copies = [Self.proc(11, 10, path: "/x/mcp-server", args: ["mcp-server"],
+                                cwd: "/a", started: Self.oldStart),
+                      Self.proc(12, 10, path: "/x/mcp-server", args: ["mcp-server"],
+                                cwd: "/b", started: Self.oldStart)]
+        #expect(Self.cleanup(["claude": [parent] + copies], matchers: [Self.claude]).isEmpty)
+    }
+
+    @Test func copiesWithNoWorkingDirectoryAreNoCandidates() {
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.oldStart)
+        let copies = Self.dupCopies([11, 12], cwd: nil)
+        #expect(Self.cleanup(["claude": [parent] + copies], matchers: [Self.claude]).isEmpty)
+    }
+
+    @Test func shellCopiesAreNoCandidates() {
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.oldStart)
+        let copies = Self.dupCopies([11, 12], path: "/bin/zsh", args: ["zsh"])
+        #expect(Self.cleanup(["claude": [parent] + copies], matchers: [Self.claude]).isEmpty)
+    }
+
+    @Test func chromiumHelpersAreNoCandidates() {
+        let parent = Self.proc(10, 1, path: Self.appMain, started: Self.oldStart)
+        let copies = Self.dupCopies([11, 12], parent: 10, path: Self.appHelper,
+                                    args: ["Crashpad", "--type=renderer"])
+        #expect(Self.cleanup(["codex": [parent] + copies], matchers: [Self.codex]).isEmpty)
+    }
+
+    @Test func aBusyDuplicateIsNotSuggestedAsADuplicate() {
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.oldStart)
+        let copies = Self.dupCopies([11, 12])
+        let items = Self.cleanup(["claude": [parent] + copies], processFlags: [11: [.busy]],
+                                 matchers: [Self.claude])
+        // 12 is kept as the newest; 11 is busy, so no duplicate suggestion.
+        let item11 = items.first { $0.id == "process-11" }
+        #expect(items.allSatisfy { !$0.reason.contains("Duplicate") })
+        #expect(item11 == nil || item11?.preselected == false)
+    }
+
+    // MARK: Merging and grouping
+
+    @Test func aDuplicateOverMemoryMergesIntoOneItemWithBothReasons() {
+        let over = UInt64(3) << 30
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.oldStart)
+        var copies = Self.dupCopies([11, 12])
+        copies[0] = Self.proc(11, 10, path: "/x/mcp-server", args: ["mcp-server", "--stdio"],
+                              cwd: "/Users/test/proj", mem: over, started: Self.oldStart)
+        let items = Self.cleanup(["claude": [parent] + copies], processFlags: [11: [.overMemory]],
+                                 matchers: [Self.claude])
+        let item = items.first { $0.id == "process-11" }
+        #expect(item != nil)
+        #expect(item?.reason.contains("Duplicate of a newer copy") == true)
+        #expect(item?.reason.contains("Using") == true)
+        #expect(item?.reason.contains("; ") == true)
+        #expect(item?.preselected == true)
+    }
+
+    @Test func aChildOfACandidateIsNotListedSeparately() {
+        // 11 is an old duplicate; 13 is its over-memory child: quitting 11's
+        // tree already takes 13, so the child is not its own row.
+        let over = UInt64(3) << 30
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.oldStart)
+        let copies = Self.dupCopies([11, 12])
+        let child = Self.proc(13, 11, path: "/x/worker", mem: over)
+        let items = Self.cleanup(["claude": [parent] + copies + [child]], processFlags: [13: [.overMemory]],
+                                 matchers: [Self.claude])
+        #expect(items.map(\.id) == ["process-11"])
+    }
+
+    @Test func anUnflaggedOrphanIsListedButNotPreselected() {
+        let tree = OrphanTree(root: Self.proc(20, 1, path: "/opt/homebrew/bin/npm",
+                                              started: Self.youngStart),
+                              descendants: [])
+        let items = Self.cleanup([:], orphans: [tree], matchers: [])
+        #expect(items.count == 1)
+        #expect(items[0].preselected == false)
+        #expect(items[0].reason.hasPrefix("Orphaned, running for "))
+        #expect(items[0].harness == nil)
+    }
+
+    @Test func groupsFollowMatcherOrderWithOrphansFirst() {
+        let codexHelper = Self.proc(30, 1, path: Self.appHelper,
+                                    started: Self.oldStart)
+        let claudeHelper = Self.proc(20, 10, path: "/x/helper", mem: UInt64(3) << 30)
+        let claudeParent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude")
+        let orphan = OrphanTree(root: Self.proc(40, 1, path: "/opt/homebrew/bin/npm",
+                                                started: Self.youngStart),
+                                descendants: [])
+        // claude is listed before codex in the table; matchers order codex first.
+        let items = Self.cleanup(["claude": [claudeParent, claudeHelper],
+                                  "codex": [codexHelper]],
+                                 orphans: [orphan],
+                                 processFlags: [20: [.overMemory]],
+                                 matchers: [Self.codex, Self.claude])
+        #expect(items.map(\.harness) == [nil, "codex", "claude"])
+    }
+
+    // MARK: Batch quit
+
+    @MainActor @Test func aBatchQuitSamplesOnceAndSignalsEveryPidOnce() async {
+        final class Counting: ProcessSampling, ProcessSignaller, @unchecked Sendable {
+            var table: [ProcessSample]
+            var calls = 0
+            var signalled: [Int32] = []
+            init(_ table: [ProcessSample]) { self.table = table }
+            func sample() -> [ProcessSample] { calls += 1; return table }
+            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append(pid); return true }
+        }
+        let root = Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"])
+        let sharedChild = Self.proc(11, 10, path: "/opt/homebrew/bin/node")
+        let other = Self.proc(12, 1, path: "/x/worker")
+        let fake = Counting([root, sharedChild, other])
+        let suite = "compute-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = await ComputeModel(sampler: fake, matchers: { [Self.claude] },
+                                       signaller: fake, defaults: defaults, selfPID: 99)
+        await model.loadMatchers()
+        await model.refresh()
+        let callsBefore = fake.calls
+        let tree = OrphanTree(root: root, descendants: [sharedChild])
+        // The two items share pid 11 between their kill plans; it is
+        // signalled once.
+        await model.quit([.orphanTree(tree), .process(sharedChild, harness: "claude")])
+        // One fresh sample for the kill plans, one for the refresh after.
+        #expect(fake.calls - callsBefore == 2)
+        #expect(fake.signalled.sorted() == [10, 11])
+    }
+
     // MARK: Sampler smoke test
 
     @Test func theSamplerSeesThisProcess() {
@@ -493,3 +717,5 @@ import Testing
         #expect(me?.startedAt ?? .distantFuture < .now)
     }
 }
+
+

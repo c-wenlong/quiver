@@ -298,12 +298,24 @@ public final class ComputeModel {
     /// sample, not the shared table: a timer refresh landing meanwhile
     /// would drop this one's publish and leave it signalling a stale view.
     public func quit(_ item: CleanupItem, force: Bool = false) async {
+        await quit([item], force: force)
+    }
+
+    /// The batch form: one fresh sample for every item's kill plan, so a
+    /// clean-up confirm costs one table no matter how long the list is,
+    /// then one refresh. A pid two items share is signalled once.
+    public func quit(_ items: [CleanupItem], force: Bool = false) async {
         let sampler = self.sampler
         let fresh = await runOffPool { sampler.sample() }
-        let order = ComputeSummary.killOrder(for: item, in: fresh,
-                                             selfPID: selfPID, ancestors: selfAncestors(in: fresh))
-        for pid in order where signaller.signal(pid, force ? SIGKILL : SIGTERM) {
-            if !force { signalledAt[pid] = .now }
+        let ancestors = selfAncestors(in: fresh)
+        var seen: Set<Int32> = []
+        for item in items {
+            let order = ComputeSummary.killOrder(for: item, in: fresh,
+                                                 selfPID: selfPID, ancestors: ancestors)
+            for pid in order where !seen.contains(pid) && signaller.signal(pid, force ? SIGKILL : SIGTERM) {
+                seen.insert(pid)
+                if !force { signalledAt[pid] = .now }
+            }
         }
         await refresh()
     }
@@ -368,7 +380,8 @@ public final class ComputeModel {
                                          orphans: attribution.orphans,
                                          orphanFlags: orphanFlags,
                                          processFlags: processFlags,
-                                         matchers: matchers, limits: limits, now: now)
+                                         matchers: matchers, limits: limits, now: now,
+                                         managedPIDs: managedPIDs)
 
         let all = attribution.byHarness.values.flatMap { $0 } + attribution.orphans.flatMap { [$0.root] + $0.descendants }
         totals = Totals(

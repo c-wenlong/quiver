@@ -7,7 +7,11 @@ import SwiftUI
 /// orphans and hogs; nothing is quit without a confirmation.
 struct ComputePage: View {
     @Environment(AppModel.self) private var app
+    @State private var showingSettings = false
     @State private var cleaning = false
+    /// The list as it was when the sheet opened: the page refreshes
+    /// every three seconds, and the list must not move under the user.
+    @State private var cleanupSnapshot: [CleanupItem] = []
 
     private var model: ComputeModel { app.compute }
 
@@ -20,9 +24,40 @@ struct ComputePage: View {
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
             .help("Refresh (⌘R)")
-            Button(model.cleanup.isEmpty ? "Clean up" : "Clean up (\(model.cleanup.count))") { cleaning = true }
-                .primaryButton()
-                .disabled(model.cleanup.isEmpty)
+            Button("Settings", systemImage: "gearshape") { showingSettings = true }
+                .iconButton()
+                .help("Settings")
+                .popover(isPresented: $showingSettings, arrowEdge: .bottom) {
+                    CleanupLimitsView()
+                        .padding(16)
+                        .frame(width: 440)
+                }
+            Button {
+                cleanupSnapshot = model.cleanup
+                cleaning = true
+            } label: {
+                Label { Text("Clean up") } icon: { BroomIcon() }
+            }
+            .iconButton()
+            .disabled(model.cleanup.isEmpty)
+            .help(model.cleanup.isEmpty ? "Clean up" : "Clean up (\(model.cleanup.count))")
+            .overlay(alignment: .topTrailing) {
+                if !model.cleanup.isEmpty {
+                    Text("\(model.cleanup.count)")
+                        .font(.system(size: 10, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textLabel)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Theme.subtle, in: .capsule)
+                        .overlay(Capsule().strokeBorder(Theme.borderStrong, lineWidth: 1))
+                        .offset(x: 6, y: -6)
+                        .allowsHitTesting(false)
+                }
+            }
+            .sheet(isPresented: $cleaning) {
+                CleanupSheet(items: cleanupSnapshot, model: model)
+            }
         } content: {
             Text(totalsLine)
                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
@@ -38,7 +73,6 @@ struct ComputePage: View {
             ForEach(model.notRunning, id: \.self) { harness in
                 IdleHarnessCard(harness: harness)
             }
-            limitsCard
         }
         // Sampling is this page's only: it ticks while the page is open and
         // stops when the view goes away.
@@ -49,17 +83,12 @@ struct ComputePage: View {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
-        .sheet(isPresented: $cleaning) { CleanupSheet(items: model.cleanup, model: model) }
     }
 
     private var totalsLine: String {
         let t = model.totals
         return "\(ComputeSummary.bytes(t.memoryBytes)) across \(t.processCount) processes "
             + "· CPU \(Self.cpu(t.cpuPercent))% · \(t.threads) threads"
-    }
-
-    private var limitsCard: some View {
-        LimitsCard().padding(.top, 8)
     }
 
     /// Whole percent once it is two digits, one decimal below it.
@@ -317,15 +346,15 @@ private extension Color {
     init(rgb: HarnessRGB) { self.init(red: rgb.red, green: rgb.green, blue: rgb.blue) }
 }
 
-/// The thresholds at the bottom of the page; changing one reflags the
+/// The thresholds, behind the header's gear; changing one reflags the
 /// current sample at once (ComputeModel.limits.didSet republishes).
-private struct LimitsCard: View {
+private struct CleanupLimitsView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        SettingsCard {
+        VStack(alignment: .leading, spacing: 0) {
             SettingRow(title: "Orphans count as old after",
-                       detail: "Orphaned helpers older than this are suggested for clean-up.") {
+                       detail: "Orphans and duplicate servers older than this are suggested for clean-up.") {
                 SelectMenu(options: orphanAgeOptions, selection: orphanAge, width: 120)
             }
             SettingsDivider()
@@ -347,7 +376,7 @@ private struct LimitsCard: View {
     }
 
     private var orphanAgeOptions: [(value: TimeInterval, title: String)] {
-        [(6 * 3600, "6h"), (24 * 3600, "24h"), (72 * 3600, "72h"), (7 * 86400, "7 days")]
+        [(3600, "1h"), (6 * 3600, "6h"), (24 * 3600, "24h"), (72 * 3600, "72h"), (7 * 86400, "7 days")]
     }
 
     private var memoryOptions: [(value: UInt64, title: String)] {
@@ -625,18 +654,21 @@ private struct OrphanRowView: View {
 
 // MARK: - Clean up
 
-/// The suggested quits: each candidate with a checkbox, ticked the way the
-/// rules marked it. Results land inline after Quit selected runs.
+/// One group in the sheet: Orphaned first, then each harness in the
+/// matchers' order. The switch ticks every row in the group at once;
+/// the header's chevron fold keeps long lists scannable.
 private struct CleanupSheet: View {
     var items: [CleanupItem]
     var model: ComputeModel
     @Environment(\.dismiss) private var dismiss
-    @State private var selected: Set<String> = []
+    @State private var selected: Set<String>
     /// Ids whose quits are being given their five seconds to take.
     @State private var quitting: Set<String> = []
     /// item id -> true when the process is still there after the quit.
     @State private var stillThere: [String: Bool] = [:]
     @State private var working = false
+    /// Groups start collapsed; a key is the harness id, or "orphaned".
+    @State private var expanded: Set<String> = []
 
     init(items: [CleanupItem], model: ComputeModel) {
         self.items = items
@@ -644,33 +676,45 @@ private struct CleanupSheet: View {
         _selected = State(initialValue: Set(items.filter(\.preselected).map(\.id)))
     }
 
+    private struct Group: Identifiable {
+        var id: String
+        var harness: String?
+        var items: [CleanupItem]
+    }
+
+    private var groups: [Group] {
+        var out: [Group] = []
+        let orphanItems = items.filter { $0.harness == nil }
+        if !orphanItems.isEmpty {
+            out.append(Group(id: "orphaned", harness: nil, items: orphanItems))
+        }
+        for matcher in model.matchers {
+            let group = items.filter { $0.harness == matcher.harness }
+            if !group.isEmpty {
+                out.append(Group(id: matcher.harness, harness: matcher.harness, items: group))
+            }
+        }
+        return out
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Clean up").font(Theme.sectionTitle).tracking(-0.5)
                     .foregroundStyle(Theme.textPrimary)
-                Text("Suggested by what a process costs or how long it has been orphaned. Nothing is quit until you confirm.")
+                Text("Orphaned processes and leftovers the rules found. Nothing is quit until you confirm.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(items) { item in
-                        CleanupRow(item: item, isOn: selected.contains(item.id),
-                                   quitting: quitting.contains(item.id),
-                                   stillThere: stillThere[item.id]) {
-                            if selected.contains(item.id) { selected.remove(item.id) }
-                            else { selected.insert(item.id) }
-                        } force: {
-                            Task { await forceQuit(item) }
-                        }
-                        if item.id != items.last?.id { Divider().overlay(Theme.border) }
+                VStack(spacing: 8) {
+                    ForEach(groups) { group in
+                        groupCard(group)
                     }
                 }
-                .padding(.horizontal, 20).padding(.vertical, 4)
-                .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
             }
-            .frame(maxHeight: 320)
+            .scrollIndicators(.automatic)
+            .frame(minHeight: 160, maxHeight: 480)
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -684,17 +728,85 @@ private struct CleanupSheet: View {
                 .disabled(working || selected.isEmpty)
             }
         }
-        .padding(24)
+        .padding(20)
         .frame(width: 560)
         .background(Theme.panel)
+    }
+
+    private func groupCard(_ group: Group) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            groupHeader(group)
+            if expanded.contains(group.id) {
+                VStack(spacing: 0) {
+                    ForEach(group.items) { item in
+                        CleanupRow(item: item, showsHarness: false,
+                                   isOn: selected.contains(item.id),
+                                   quitting: quitting.contains(item.id),
+                                   stillThere: stillThere[item.id]) {
+                            if !working {
+                                if selected.contains(item.id) { selected.remove(item.id) }
+                                else { selected.insert(item.id) }
+                            }
+                        } force: {
+                            Task { await forceQuit(item) }
+                        }
+                        if item.id != group.items.last?.id { Divider().overlay(Theme.border) }
+                    }
+                }
+                .padding(.leading, 26)
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
+    private func groupHeader(_ group: Group) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                withAnimation(.easeOut(duration: Theme.fadeDuration)) {
+                    if expanded.contains(group.id) { expanded.remove(group.id) }
+                    else { expanded.insert(group.id) }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: expanded.contains(group.id) ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                    if let harness = group.harness {
+                        HarnessIcon(harness: harness, size: 16)
+                    } else {
+                        Image(systemName: "circle.dashed")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Theme.textNav)
+                    }
+                    Text(group.harness.map(UsageFormat.harness) ?? "Orphaned")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    Text("\(group.items.count)")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
+                }
+                .contentShape(.rect)
+            }
+            .plainButton()
+            Spacer(minLength: 8)
+            Toggle(isOn: Binding(
+                get: { group.items.allSatisfy { selected.contains($0.id) } },
+                set: { on in
+                    for item in group.items {
+                        if on { selected.insert(item.id) } else { selected.remove(item.id) }
+                    }
+                })) { EmptyView() }
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .disabled(working)
+        }
     }
 
     private func quitSelected() async {
         working = true
         quitting = selected
-        for item in items where quitting.contains(item.id) {
-            await model.quit(item)
-        }
+        await model.quit(items.filter { selected.contains($0.id) })
         // SIGTERM is not instant; give it five seconds and a fresh sample
         // before calling anything still running.
         try? await Task.sleep(for: .seconds(5))
@@ -718,6 +830,9 @@ private struct CleanupRow: View {
     static let statusWidth: CGFloat = 76
 
     var item: CleanupItem
+    /// Inside a harness group the header already says whose it is: no
+    /// icon and no "(Codex)" suffix on every row.
+    var showsHarness = true
     var isOn: Bool
     var quitting: Bool
     var stillThere: Bool?
@@ -733,7 +848,7 @@ private struct CleanupRow: View {
             words += tree.root.arguments.dropFirst().prefix(2)
             return words.joined(separator: " ")
         case .process(let sample, let harness):
-            return "\(sample.name) (\(UsageFormat.harness(harness)))"
+            return showsHarness ? "\(sample.name) (\(UsageFormat.harness(harness)))" : sample.name
         }
     }
 
@@ -764,7 +879,7 @@ private struct CleanupRow: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    if case .process(_, let harness) = item.kind {
+                    if showsHarness, case .process(_, let harness) = item.kind {
                         HarnessIcon(harness: harness, size: 14)
                     }
                     Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)

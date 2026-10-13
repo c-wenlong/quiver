@@ -125,6 +125,15 @@ public struct CleanupItem: Sendable, Equatable, Identifiable {
         self.isMain = isMain
     }
 
+    /// The group the clean-up sheet files it under: the harness a
+    /// process belongs to, nil for an orphan tree.
+    public var harness: String? {
+        switch kind {
+        case .orphanTree: nil
+        case .process(_, let harness): harness
+        }
+    }
+
     /// A single process to quit, for the row menu rather than the sheet.
     public static func process(_ sample: ProcessSample, harness: String, isMain: Bool = false) -> CleanupItem {
         CleanupItem(kind: .process(sample, harness: harness), reason: "",
@@ -168,17 +177,29 @@ public enum ComputeSummary {
         return flags
     }
 
-    /// What Clean up suggests. Old or over-memory orphan trees come
-    /// preselected; an over-memory process does too unless it is a harness
-    /// root (quitting that closes the app or CLI itself); busy processes
-    /// are listed but left to the user.
+    /// What Clean up suggests, in sheet group order: the orphan trees
+    /// first, then each harness in the matchers' (swe's) order, and inside
+    /// a group the preselected candidates before the rest, most memory
+    /// first. One item per pid: a process several rules hit keeps every
+    /// reason and is preselected when any rule preselects it. A candidate
+    /// hanging under another candidate is dropped: quitting the
+    /// ancestor's tree covers it.
     public static func cleanup(byHarness: [String: [ProcessSample]], orphans: [OrphanTree],
                                orphanFlags: [Int32: Set<OrphanFlag>],
                                processFlags: [Int32: Set<ProcessFlag>],
                                matchers: [HarnessMatcher], limits: ComputeLimits,
-                               now: Date) -> [CleanupItem] {
-        var items: [CleanupItem] = []
-        for tree in orphans {
+                               now: Date, managedPIDs: Set<Int32> = []) -> [CleanupItem] {
+        /// A process candidate as the rules merge it.
+        struct Candidate {
+            var sample: ProcessSample
+            var reasons: [String] = []
+            var preselected = false
+            var isMain = false
+        }
+
+        /// Every orphan tree is listed: the flagged ones preselected, the
+        /// rest left to the user.
+        var items: [CleanupItem] = orphans.map { tree in
             let flags = orphanFlags[tree.root.pid] ?? []
             var reasons: [String] = []
             if flags.contains(.old) {
@@ -187,36 +208,136 @@ public enum ComputeSummary {
             if flags.contains(.overMemory) {
                 reasons.append("Using \(bytes(tree.memoryBytes))")
             }
-            if !reasons.isEmpty {
-                items.append(CleanupItem(kind: .orphanTree(tree),
-                                         reason: reasons.joined(separator: "; "), preselected: true))
+            if reasons.isEmpty {
+                return CleanupItem(kind: .orphanTree(tree),
+                                   reason: "Orphaned, running for \(duration(now.timeIntervalSince(tree.root.startedAt)))",
+                                   preselected: false)
             }
+            return CleanupItem(kind: .orphanTree(tree),
+                               reason: reasons.joined(separator: "; "), preselected: true)
         }
-        for (harness, samples) in byHarness.sorted(by: { $0.key < $1.key }) {
-            guard let matcher = matchers.first(where: { $0.harness == harness }) else { continue }
-            for sample in samples.sorted(by: { $0.memoryBytes > $1.memoryBytes }) {
+        items.sort { $0.preselected != $1.preselected
+            ? $0.preselected : memory(of: $0) > memory(of: $1) }
+
+        /// Shells: copies of a prompt are not duplicate servers.
+        let shells: Set<String> = ["zsh", "bash", "sh", "fish", "dash", "tcsh", "login", "nu"]
+        struct DuplicateKey: Hashable {
+            var ppid: Int32
+            var path: String
+            var arguments: [String]
+            var cwd: String
+        }
+
+        for matcher in matchers {
+            guard let samples = byHarness[matcher.harness], !samples.isEmpty else { continue }
+            let harness = matcher.harness
+            let name = UsageFormat.harness(harness)
+            var candidates: [Int32: Candidate] = [:]
+            func add(_ sample: ProcessSample, _ reason: String, preselected: Bool, isMain: Bool) {
+                var entry = candidates[sample.pid] ?? Candidate(sample: sample)
+                entry.reasons.append(reason)
+                entry.preselected = entry.preselected || preselected
+                entry.isMain = entry.isMain || isMain
+                candidates[sample.pid] = entry
+            }
+
+            // Leftovers from an earlier launch of the app: helpers hung on
+            // launchd out of the bundle, started before this launch's main
+            // process (or with no main running at all).
+            if let appPath = matcher.appPath, !appPath.isEmpty {
+                let macos = appPath + "/Contents/MacOS"
+                let launch = samples
+                    .filter { ($0.path as NSString).deletingLastPathComponent == macos }
+                    .map(\.startedAt).min()
+                for p in samples where p.ppid == 1
+                    && p.path.hasPrefix(appPath + "/")
+                    && !ProcessAttribution.isMainProcess(p, of: matcher)
+                    && !managedPIDs.contains(p.pid)
+                    && (launch.map { p.startedAt < $0.addingTimeInterval(-60) } ?? true) {
+                    add(p, launch == nil
+                        ? "Left over after \(name) quit"
+                        : "Left over from an earlier \(name) launch",
+                        preselected: true, isMain: false)
+                }
+            }
+
+            // Duplicate servers: identical children of the same harness
+            // parent, where only the newest copy is wanted.
+            let pids = Set(samples.map(\.pid))
+            var groups: [DuplicateKey: [ProcessSample]] = [:]
+            for p in samples where pids.contains(p.ppid)
+                && p.cwd != nil
+                && !shells.contains(p.runnerName)
+                && !p.arguments.contains(where: { $0.hasPrefix("--type=") })
+                && !ProcessAttribution.isMainProcess(p, of: matcher) {
+                groups[DuplicateKey(ppid: p.ppid, path: p.path,
+                                    arguments: p.arguments, cwd: p.cwd!), default: []].append(p)
+            }
+            for members in groups.values where members.count > 1 {
+                let sorted = members.sorted {
+                    ($0.startedAt, $0.pid) > ($1.startedAt, $1.pid)
+                }
+                for p in sorted.dropFirst()
+                where now.timeIntervalSince(p.startedAt) > limits.orphanAge
+                    && !(processFlags[p.pid]?.contains(.busy) ?? false) {
+                    add(p, "Duplicate of a newer copy, started "
+                        + duration(now.timeIntervalSince(p.startedAt)) + " ago",
+                        preselected: true, isMain: false)
+                }
+            }
+
+            // Cost and busy flags, as before.
+            for sample in samples {
                 let flags = processFlags[sample.pid] ?? []
                 guard !flags.isEmpty else { continue }
                 let isMain = ProcessAttribution.isMainProcess(sample, of: matcher)
-                var reasons: [String] = []
-                var preselected = false
                 if flags.contains(.overMemory) {
                     if isMain {
-                        reasons.append("This is \(UsageFormat.harness(harness)) itself; quitting closes it")
+                        add(sample, "This is \(name) itself; quitting closes it", preselected: false, isMain: true)
                     } else {
-                        reasons.append("Using \(bytes(sample.memoryBytes))")
-                        preselected = true
+                        add(sample, "Using \(bytes(sample.memoryBytes))", preselected: true, isMain: false)
                     }
                 }
                 if flags.contains(.busy) {
-                    reasons.append("Busy for over two minutes")
+                    add(sample, "Busy for over two minutes", preselected: false, isMain: isMain)
                 }
-                items.append(CleanupItem(kind: .process(sample, harness: harness),
-                                         reason: reasons.joined(separator: "; "),
-                                         preselected: preselected, isMain: isMain))
             }
+
+            // A candidate whose ancestor is also a non-main candidate goes:
+            // the ancestor's tree quit covers it.
+            let byPid = Dictionary(samples.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+            var covered: Set<Int32> = []
+            for (pid, _) in candidates {
+                var node = byPid[pid]
+                while let current = node {
+                    guard let parent = byPid[current.ppid], parent.pid != current.pid else { break }
+                    if let ancestor = candidates[parent.pid], !ancestor.isMain {
+                        covered.insert(pid)
+                        break
+                    }
+                    node = parent
+                }
+            }
+            for pid in covered { candidates[pid] = nil }
+
+            let group = candidates.values.map { entry in
+                CleanupItem(kind: .process(entry.sample, harness: harness),
+                            reason: entry.reasons.joined(separator: "; "),
+                            preselected: entry.preselected, isMain: entry.isMain)
+            }
+            .sorted { $0.preselected != $1.preselected
+                ? $0.preselected : memory(of: $0) > memory(of: $1) }
+            items.append(contentsOf: group)
         }
         return items
+    }
+
+    /// The memory figure a group's sort goes by.
+    private static func memory(of item: CleanupItem) -> UInt64 {
+        switch item.kind {
+        case .orphanTree(let tree): tree.memoryBytes
+        case .process(let sample, _): sample.memoryBytes
+        }
     }
 
     /// The order to signal an item's processes in: a harness's own entry

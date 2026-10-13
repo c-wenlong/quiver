@@ -38,11 +38,22 @@ public struct ProcessSampler: ProcessSampling, Sendable {
         let threads = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, taskSize) == taskSize
             ? Int(task.pti_threadnum) : 0
         let fp = footprint(of: pid)
+        let args = arguments(of: pid)
+        // proc_pidpath answers "" when the executable was deleted after
+        // launch (an app update swapped the versioned folder); argv[0]
+        // still names it, so fall back to an absolute argv[0].
+        let rawPath = path(of: pid)
+        let path: String
+        if rawPath.isEmpty, let argv0 = args.first, argv0.hasPrefix("/") {
+            path = argv0
+        } else {
+            path = rawPath
+        }
         return ProcessSample(
             pid: pid,
             ppid: Int32(bsd.pbi_ppid),
-            path: path(of: pid),
-            arguments: arguments(of: pid),
+            path: path,
+            arguments: args,
             cwd: cwd(of: pid),
             startedAt: Date(timeIntervalSince1970: TimeInterval(bsd.pbi_start_tvsec)
                             + TimeInterval(bsd.pbi_start_tvusec) / 1_000_000),
