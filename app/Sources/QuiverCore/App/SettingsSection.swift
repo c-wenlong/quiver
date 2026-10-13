@@ -1,7 +1,7 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, preferences, notifications, providers, paths
+    case general, preferences, notifications, updates, providers, paths
 
     public var id: String { rawValue }
 
@@ -10,6 +10,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .general: "General"
         case .preferences: "Preferences"
         case .notifications: "Notifications"
+        case .updates: "Updates"
         case .providers: "Providers"
         case .paths: "Paths"
         }
@@ -21,6 +22,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .general: "When Quiver starts, which terminal it opens, and whether it's in the Dock."
         case .preferences: "How Quiver looks: light or dark, and its app icon."
         case .notifications: "Alerts when a usage limit runs low."
+        case .updates: "Which version you're running and where updates come from."
         case .providers: "Which harnesses show up across the app, and in what order."
         case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
         }
@@ -32,6 +34,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .general: "gearshape"
         case .preferences: "paintbrush"
         case .notifications: "bell"
+        case .updates: "arrow.triangle.2.circlepath"
         case .providers: "square.stack.3d.up"
         case .paths: "folder"
         }
@@ -65,7 +68,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
 
     public var sections: [SettingsSection] {
         switch self {
-        case .app: [.general, .preferences, .notifications]
+        case .app: [.general, .preferences, .notifications, .updates]
         case .usage: [.providers]
         case .advanced: [.paths]
         }

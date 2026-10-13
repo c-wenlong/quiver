@@ -27,7 +27,8 @@ Sources/QuiverApp/
 Sources/QuiverCore/
   one folder per domain: Swe, Primitives, Mcp, Sessions, Ledger,
   Accounts, Limits, Status, APIKeys, Agents, Compute, Usage,
-  Providers, MenuBar, Markdown, Lists, Snapshots, Support, App
+  Providers, MenuBar, Markdown, Lists, Snapshots, Support, App,
+  Updates
 ```
 
 ## AppModel
@@ -47,7 +48,8 @@ Page models are `@Observable` classes in `QuiverCore` (`OverviewModel`,
 `HarnessesModel`, `SkillsModel`, `McpModel`, `McpServerRepoModel`,
 `PluginsModel`, `PluginCatalogModel`, `SessionsModel`, `ServiceStatusModel`,
 `DoctorModel`, `APIKeysModel`, `AccountsModel`, `OtherLimitsModel`,
-`ComputeModel`, `AgentsModel`, `ProviderVisibilityModel`). Pages get them
+`ComputeModel`, `AgentsModel`, `ProviderVisibilityModel`, `UpdatesModel`).
+Pages get them
 from `AppModel` or build them in a `.task` and keep them in `@State`
 (`DoctorModel`).
 
