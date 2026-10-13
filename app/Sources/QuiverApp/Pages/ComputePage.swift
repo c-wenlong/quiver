@@ -389,18 +389,19 @@ private struct CleanupLimitsView: View {
             ageValue = value
             ageUnit = unit
         }
+        .onDisappear(perform: commitAge)
     }
 
-    /// The field only writes on Return or focus loss, never per
-    /// keystroke; a value under a minute snaps back to what is saved.
+    /// The field only writes on Return, focus loss or the popover
+    /// closing, never per keystroke. Zero or less snaps back to what is
+    /// saved; anything else clamps into the range.
     private func commitAge() {
-        let seconds = TimeInterval(ageValue) * ageUnit.seconds
-        guard ageValue > 0, ComputeLimits.orphanAgeRange.contains(seconds) else {
-            let (value, _) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
-            ageValue = value
-            return
+        let range = ComputeLimits.orphanAgeRange
+        if ageValue > 0 {
+            let seconds = min(max(TimeInterval(ageValue) * ageUnit.seconds, range.lowerBound), range.upperBound)
+            if seconds != app.compute.limits.orphanAge { app.compute.limits.orphanAge = seconds }
         }
-        app.compute.limits.orphanAge = seconds
+        (ageValue, ageUnit) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
     }
 
     private var unit: Binding<OrphanAgeUnit> {
