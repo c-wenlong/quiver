@@ -177,14 +177,19 @@ public final class AccountsModel {
     /// Quiver never touches the token), then load fresh. Nothing else —
     /// launch, timers, page appear, plain `load` — runs a renewal.
     public func refreshFromButton() async {
-        let expired = cards.filter { $0.profile.vendor == .claude && $0.usage?.status == .expired }
+        // Cards already renewing skip this press: two `claude` runs in
+        // one account race on refresh-token rotation and can sign it out.
+        let expired = cards.filter {
+            $0.profile.vendor == .claude && $0.usage?.status == .expired
+                && !renewing.contains($0.id)
+        }
         if !expired.isEmpty {
-            renewing = Set(expired.map(\.id))
-            let renewer = self.renewer
             let targets = expired.map { card in
                 (id: card.id, home: store.paths(for: card.profile).home.path,
                  isDefault: card.profile.isDefault)
             }
+            renewing.formUnion(targets.map(\.id))
+            let renewer = self.renewer
             let results = await withTaskGroup(of: (String, Bool).self) { group in
                 for target in targets {
                     group.addTask {
@@ -195,7 +200,7 @@ public final class AccountsModel {
                 for await (id, ok) in group { out[id] = ok }
                 return out
             }
-            renewing = []
+            renewing.subtract(targets.map(\.id))
             renewFailed.formUnion(targets.map(\.id).filter { results[$0] == false })
         }
         await load(force: true)

@@ -37,6 +37,31 @@ final class FakeRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     }
 }
 
+/// Answers only once `releaseAll` runs, so a test can press Refresh
+/// while a renewal is mid-flight.
+final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    var calls: [String] { lock.withLock { recorded } }
+
+    func renew(home: String, isDefault _: Bool) async -> Bool {
+        lock.withLock { recorded.append(home) }
+        await withCheckedContinuation { continuation in
+            lock.withLock { waiters.append(continuation) }
+        }
+        return true
+    }
+
+    func releaseAll() {
+        let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            defer { waiters = [] }
+            return waiters
+        }
+        for waiter in pending { waiter.resume() }
+    }
+}
+
 @MainActor
 @Suite struct AccountsModelTests {
     let root: URL
@@ -164,6 +189,29 @@ final class FakeRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         await model.load(force: true)
         #expect(model.renewFailed.isEmpty)
         #expect(renewer.renewals.count == 1)
+    }
+
+    @Test func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
+        let renewer = SuspendingRenewer()
+        let model = AccountsModel(store: store, usage: usage, launcher: launcher,
+                                  terminal: { .terminal }, loginPath: { "" }, renewer: renewer)
+        let home = root.appending(path: ".claude").path
+        usage.byHome[home] = AccountUsage(status: .expired)
+        await model.load(force: false)
+
+        async let first: Void = model.refreshFromButton()
+        // Wait until the renewal is actually running before pressing again.
+        while renewer.calls.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(model.renewing == ["claude-default"])
+
+        // A second press loads but never starts a second claude run.
+        await model.refreshFromButton()
+        #expect(renewer.calls == [home])
+
+        renewer.releaseAll()
+        await first
+        #expect(model.renewing.isEmpty)
+        #expect(renewer.calls.count == 1)
     }
 
     @Test func plainLoadNeverRenews() async throws {
