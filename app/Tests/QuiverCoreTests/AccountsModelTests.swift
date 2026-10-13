@@ -46,9 +46,13 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     var calls: [String] { lock.withLock { recorded } }
 
     func renew(home: String, isDefault _: Bool) async -> Bool {
-        lock.withLock { recorded.append(home) }
+        // Call record and waiter land under the same lock, so releaseAll
+        // can never slip between them and leave the run suspended.
         await withCheckedContinuation { continuation in
-            lock.withLock { waiters.append(continuation) }
+            lock.withLock {
+                recorded.append(home)
+                waiters.append(continuation)
+            }
         }
         return true
     }
@@ -191,6 +195,25 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         #expect(renewer.renewals.count == 1)
     }
 
+    @Test func aSignInExpiredSinceTheLastReadingIsRenewed() async throws {
+        let renewer = FakeRenewer()
+        let model = renewalModel(renewer: renewer)
+        let home = root.appending(path: ".claude").path
+        usage.byHome[home] = reading
+        await model.load(force: false)
+
+        // The token lapses between readings; the press's first load sees it.
+        usage.byHome[home] = AccountUsage(status: .expired)
+        let readsBefore = usage.requests.count
+        await model.refreshFromButton()
+
+        #expect(renewer.renewals.map(\.home) == [home])
+        // It ends on a second load: the card was read twice for the press.
+        let reads = usage.requests[readsBefore...].filter { $0.0.configHome == home }
+        #expect(reads.count == 2)
+        #expect(reads.allSatisfy { $0.1 })
+    }
+
     @Test func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
         let renewer = SuspendingRenewer()
         let model = AccountsModel(store: store, usage: usage, launcher: launcher,
@@ -256,5 +279,37 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         let (_, standard) = ClaudeSignInRenewer.plan(home: "/u/.claude",
                                                      isDefault: true, base: base)
         #expect(standard["CLAUDE_CONFIG_DIR"] == nil)
+    }
+
+    private func cli(_ script: String, timeout: Duration = .seconds(3),
+                     sigtermGrace: Duration = .milliseconds(200))
+        throws -> (dir: URL, renewer: ClaudeSignInRenewer) {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "renew-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let executable = dir.appending(path: "claude")
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                              ofItemAtPath: executable.path)
+        let path = dir.path
+        return (dir, ClaudeSignInRenewer(
+            timeout: timeout, sigtermGrace: sigtermGrace,
+            command: "claude", workingDirectory: dir,
+            environment: { ["PATH": path] }))
+    }
+
+    @Test func aCleanExitRenews() async throws {
+        let (dir, renewer) = try cli("#!/bin/sh\nexit 0\n")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(await renewer.renew(home: dir.path, isDefault: true))
+    }
+
+    @Test func aStuckRunIsTerminatedThenKilled() async throws {
+        // A child that ignores SIGTERM is SIGKILLed; renew never reports
+        // done while it still runs.
+        let (dir, renewer) = try cli("#!/bin/sh\ntrap '' TERM\nsleep 60\n",
+                                     timeout: .milliseconds(300))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(await renewer.renew(home: dir.path, isDefault: true) == false)
     }
 }

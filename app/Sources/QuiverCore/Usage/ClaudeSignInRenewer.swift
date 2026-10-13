@@ -26,12 +26,18 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
                                    "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"]
 
     var timeout: Duration
+    /// How long SIGTERM gets before SIGKILL follows it.
+    var sigtermGrace: Duration
+    /// The executable looked up on the login PATH; tests swap in a script.
+    var command: String
     /// One fixed folder, so every run writes to the same projects slug.
     var workingDirectory: URL
     let environment: @Sendable () async -> [String: String]
     var isExecutable: @Sendable (String) -> Bool
 
     public init(timeout: Duration = .seconds(45),
+                sigtermGrace: Duration = .seconds(5),
+                command: String = "claude",
                 workingDirectory: URL? = nil,
                 environment: @escaping @Sendable () async -> [String: String] = {
                     await LoginShell.cachedEnvironment()
@@ -40,6 +46,8 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
                     FileManager.default.isExecutableFile(atPath: $0)
                 }) {
         self.timeout = timeout
+        self.sigtermGrace = sigtermGrace
+        self.command = command
         self.workingDirectory = workingDirectory
             ?? realHome().appending(path: ".quiver/cache/claude-renew")
         self.environment = environment
@@ -58,15 +66,34 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         return (arguments, env)
     }
 
-    /// `claude` as the login PATH resolves it, or nil.
-    static func executable(path: String, isExecutable: @Sendable (String) -> Bool) -> String? {
-        path.split(separator: ":").lazy.map { "\($0)/claude" }.first(where: isExecutable)
+    /// The command as the login PATH resolves it, or nil.
+    static func executable(_ command: String, path: String,
+                           isExecutable: @Sendable (String) -> Bool) -> String? {
+        path.split(separator: ":").lazy.map { "\($0)/\(command)" }.first(where: isExecutable)
+    }
+
+    /// `task`'s result if it finishes inside `timeout`, else nil. The
+    /// task itself keeps running: a timed-out wait here is followed by
+    /// SIGTERM and SIGKILL waits on the same exit.
+    private static func awaiting(_ task: Task<Int32, Never>,
+                                 for timeout: Duration) async -> Int32? {
+        await withTaskGroup(of: Int32?.self) { group in
+            group.addTask { await task.value }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
     }
 
     public func renew(home: String, isDefault: Bool) async -> Bool {
         let (arguments, env) = Self.plan(home: home, isDefault: isDefault,
                                        base: await environment())
-        guard let executable = Self.executable(path: env["PATH"] ?? "", isExecutable: isExecutable)
+        guard let executable = Self.executable(command, path: env["PATH"] ?? "",
+                                               isExecutable: isExecutable)
         else { return false }
         try? FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
 
@@ -81,10 +108,13 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
-        let exited = AsyncStream<Int32> { continuation in
-            process.terminationHandler = { finished in
-                continuation.yield(finished.terminationStatus)
-                continuation.finish()
+        // One exit task for the whole run: the timeout, SIGTERM and
+        // SIGKILL waits all await it, so a late exit can't be missed.
+        let exited = Task<Int32, Never> {
+            await withCheckedContinuation { continuation in
+                process.terminationHandler = {
+                    continuation.resume(returning: $0.terminationStatus)
+                }
             }
         }
         do {
@@ -92,20 +122,17 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         } catch {
             return false
         }
-        let status: Int32? = await withTaskGroup(of: Int32?.self) { group in
-            group.addTask { await exited.first { _ in true } }
-            group.addTask { [timeout] in
-                try? await Task.sleep(for: timeout)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        if let status = await Self.awaiting(exited, for: timeout) {
+            return status == 0
         }
-        guard let status else {
-            if process.isRunning { process.terminate() }
-            return false
+        // Timed out, but the child may still hold the keychain lock:
+        // grace it, then kill it. Renewing never reports done while it
+        // lives, or a second press would race it.
+        process.terminate()
+        if await Self.awaiting(exited, for: sigtermGrace) == nil {
+            kill(process.processIdentifier, SIGKILL)
+            _ = await Self.awaiting(exited, for: .seconds(5))
         }
-        return status == 0
+        return false
     }
 }

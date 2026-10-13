@@ -172,37 +172,40 @@ public final class AccountsModel {
         }
     }
 
-    /// What the Refresh buttons do, and only them: renew each expired
-    /// Claude sign-in (Claude Code renews its own keychain credential;
-    /// Quiver never touches the token), then load fresh. Nothing else —
-    /// launch, timers, page appear, plain `load` — runs a renewal.
+    /// What the Refresh buttons do, and only them: load fresh, renew each
+    /// expired Claude sign-in (Claude Code renews its own keychain
+    /// credential; Quiver never touches the token), then load again so
+    /// the renewed accounts read ok. Nothing else — launch, timers, page
+    /// appear, plain `load` — runs a renewal.
     public func refreshFromButton() async {
+        // The first load is what may show a sign-in expired since the
+        // last reading; renewals are picked from that, not stale cards.
+        await load(force: true)
         // Cards already renewing skip this press: two `claude` runs in
         // one account race on refresh-token rotation and can sign it out.
         let expired = cards.filter {
             $0.profile.vendor == .claude && $0.usage?.status == .expired
                 && !renewing.contains($0.id)
         }
-        if !expired.isEmpty {
-            let targets = expired.map { card in
-                (id: card.id, home: store.paths(for: card.profile).home.path,
-                 isDefault: card.profile.isDefault)
-            }
-            renewing.formUnion(targets.map(\.id))
-            let renewer = self.renewer
-            let results = await withTaskGroup(of: (String, Bool).self) { group in
-                for target in targets {
-                    group.addTask {
-                        (target.id, await renewer.renew(home: target.home, isDefault: target.isDefault))
-                    }
-                }
-                var out: [String: Bool] = [:]
-                for await (id, ok) in group { out[id] = ok }
-                return out
-            }
-            renewing.subtract(targets.map(\.id))
-            renewFailed.formUnion(targets.map(\.id).filter { results[$0] == false })
+        guard !expired.isEmpty else { return }
+        let targets = expired.map { card in
+            (id: card.id, home: store.paths(for: card.profile).home.path,
+             isDefault: card.profile.isDefault)
         }
+        renewing.formUnion(targets.map(\.id))
+        let renewer = self.renewer
+        let results = await withTaskGroup(of: (String, Bool).self) { group in
+            for target in targets {
+                group.addTask {
+                    (target.id, await renewer.renew(home: target.home, isDefault: target.isDefault))
+                }
+            }
+            var out: [String: Bool] = [:]
+            for await (id, ok) in group { out[id] = ok }
+            return out
+        }
+        renewing.subtract(targets.map(\.id))
+        renewFailed.formUnion(targets.map(\.id).filter { results[$0] == false })
         await load(force: true)
     }
 
