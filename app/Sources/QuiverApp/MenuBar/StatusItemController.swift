@@ -247,7 +247,7 @@ private struct PanelIconButton: View {
 }
 
 /// Every account's and harness's windows in the order dragged on the
-/// Menu bar and widgets page, less whatever the page hides.
+/// Menu bar page, less whatever the page hides.
 private struct PanelLimits: View {
     @Environment(AppModel.self) private var app
 
@@ -320,7 +320,7 @@ private struct PanelLimits: View {
             // back, ahead of "nothing starred", which would read as nothing to show.
             let available = !app.starredAccountCards.isEmpty || app.others.rows.contains { $0.limit.status == .ok }
             if available && cards.isEmpty && others.isEmpty {
-                Text("Every limit is hidden in Menu bar and widgets.")
+                Text("Every limit is hidden in Menu bar.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             } else if cards.isEmpty && others.isEmpty {
                 Text(app.starredAccountCards.isEmpty && app.others.cards.isEmpty
