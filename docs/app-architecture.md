@@ -59,7 +59,10 @@ from `AppModel` or build them in a `.task` and keep them in `@State`
 the selected page as content. `AppModel.selection` persists across launches.
 Reselecting the current sidebar item (or the Plugins > Explore tab) bumps
 `navReselects`, which detail views watch to go back through their own
-unsaved-changes ask.
+unsaved-changes ask. The menu bar and the desktop widgets are separate
+pages: `MenuBarPage.swift` (status item and popup tabs) and
+`WidgetsPage.swift` (one underline tab per `WidgetCatalog` kind, its
+previews and settings, the chosen kind stored in `desktopWidgetTab`).
 
 ## Theme
 

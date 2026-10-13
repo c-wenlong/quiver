@@ -73,6 +73,13 @@ service / model layering, tests with an 84% coverage floor).
 
 ### Changed
 
+- **The desktop widgets get their own sidebar page.** "Menu bar and
+  widgets" split in two: "Menu bar" keeps the status item and popup
+  settings and previews, and a new "Widgets" page lists the four widget
+  kinds with the same underline tabs, previews and per-widget settings.
+  The stored tab settings keep working; a leftover "widgets" selection
+  on the Menu bar page falls back to the first tab.
+
 - **The discover and setup commands emit the standard JSON envelope.** `swe
   harness discover --json`, `swe mcp discover --json`, `swe skills discover
   --json` and `swe setup --json` used to print bare `json.dumps` output.
