@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Collapsible sidebar.** A toggle row under the traffic lights (or
+  View > Toggle Sidebar, ⌃⌘S) pins the sidebar to a 72pt icon rail;
+  the choice persists. Hovering the rail floats it open over the page
+  after a short delay, a collapse under the pointer stays shut until the
+  pointer leaves once, and Reduce Motion applies every change without
+  animating.
+
 - **Settings > Updates shows whether the installed app is outdated.**
   `build-app.sh` now stamps the channel (`QUIVER_CHANNEL=dev|prod`, dev
   default), commit, source checkout and dirty state into the app's
