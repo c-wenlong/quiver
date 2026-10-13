@@ -31,7 +31,8 @@ enum AppRelauncher {
         case "$src_dir" in
           "$HOME/.quiver/cache/rebuild/"*)
             case "${src_dir#"$HOME/.quiver/cache/rebuild/"}" in
-              *[!/]) echo $$ > "$src_dir/owner.pid" ;;
+              ""|*/*) ;;
+              *) echo $$ > "$src_dir/owner.pid" ;;
             esac ;;
         esac
         if [ "$src" = "$dest" ]; then
