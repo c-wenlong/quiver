@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   even when `~/.quiver` is unparseable. `--json` emits the standard
   envelope with `name`, `version` and the Python version under `data`.
 
+- **Refresh renews expired Claude sign-ins.** Claude Code's OAuth
+  token lasts eight hours and only Claude Code renews it, so an unused
+  account read "Sign-in expired. Open the CLI once." Pressing Refresh
+  on the Accounts page or in the menu bar now runs a headless `claude`
+  in that account's home, which renews its own keychain credential;
+  Quiver still never reads or writes the token. Renewals run only on
+  that press, never on launch, timers or plain reloads.
+
 - **The Usage limits widget's sources reorder.** The Widgets page lists
   them like the menu bar popup does, draggable, with each source's
   windows grouped under it; until the first drag the widget still sorts

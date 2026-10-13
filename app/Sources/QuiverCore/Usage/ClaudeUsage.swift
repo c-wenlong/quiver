@@ -27,7 +27,8 @@ public enum ClaudeKeychain {
 }
 
 /// Claude: Claude Code's OAuth credential and the endpoint its `/usage`
-/// screen reads. Tokens are never refreshed and never written.
+/// screen reads. Tokens are never refreshed or written by Quiver itself:
+/// a manual Refresh runs Claude Code, which renews its own credential.
 enum ClaudeUsageAPI {
     static let url = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 

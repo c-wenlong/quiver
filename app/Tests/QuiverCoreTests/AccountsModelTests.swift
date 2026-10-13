@@ -24,6 +24,19 @@ final class FakeLauncher: Launching, @unchecked Sendable {
     func launch(_ command: LaunchCommand) async throws { launched.append(command) }
 }
 
+/// Records the accounts asked to renew, and answers per home.
+final class FakeRenewer: ClaudeSignInRenewing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(home: String, isDefault: Bool)] = []
+    var results: [String: Bool] = [:]
+    var renewals: [(home: String, isDefault: Bool)] { lock.withLock { recorded } }
+
+    func renew(home: String, isDefault: Bool) async -> Bool {
+        lock.withLock { recorded.append((home, isDefault)) }
+        return results[home] ?? true
+    }
+}
+
 @MainActor
 @Suite struct AccountsModelTests {
     let root: URL
@@ -107,5 +120,93 @@ final class FakeLauncher: Launching, @unchecked Sendable {
         let claude = try #require(model.cards.first?.profile)
         await #expect(throws: (any Error).self) { try await model.remove(claude) }
         #expect(model.cards.count == 2)
+    }
+
+    // MARK: Sign-in renewal
+
+    func renewalModel(renewer: FakeRenewer) -> AccountsModel {
+        AccountsModel(store: store, usage: usage, launcher: launcher,
+                      terminal: { .terminal }, loginPath: { "" }, renewer: renewer)
+    }
+
+    @Test func refreshFromButtonRenewsOnlyExpiredClaudeCardsThenLoads() async throws {
+        let work = try store.add(vendor: .claude, name: "Work")
+        let expiredHome = store.paths(for: work).home.path
+        usage.byHome[root.appending(path: ".claude").path] = AccountUsage(status: .expired)
+        usage.byHome[expiredHome] = AccountUsage(status: .expired)
+        // A signed-out card is not renewed; the codex card never is.
+        let renewer = FakeRenewer()
+        let model = renewalModel(renewer: renewer)
+        await model.load(force: false)
+
+        await model.refreshFromButton()
+
+        let renewed = Set(renewer.renewals.map(\.home))
+        #expect(renewed == [root.appending(path: ".claude").path, expiredHome])
+        #expect(model.renewing.isEmpty)
+        // The reload afterwards is forced.
+        #expect(usage.requests.last?.1 == true)
+    }
+
+    @Test func aFailedRenewalIsMarkedUntilTheAccountIsNoLongerExpired() async throws {
+        let renewer = FakeRenewer()
+        let model = renewalModel(renewer: renewer)
+        let home = root.appending(path: ".claude").path
+        usage.byHome[home] = AccountUsage(status: .expired)
+        await model.load(force: false)
+
+        renewer.results[home] = false
+        await model.refreshFromButton()
+        #expect(model.renewFailed == ["claude-default"])
+
+        // A later load finds it renewed: the failure clears.
+        usage.byHome[home] = reading
+        await model.load(force: true)
+        #expect(model.renewFailed.isEmpty)
+        #expect(renewer.renewals.count == 1)
+    }
+
+    @Test func plainLoadNeverRenews() async throws {
+        let renewer = FakeRenewer()
+        let model = renewalModel(renewer: renewer)
+        usage.byHome[root.appending(path: ".claude").path] = AccountUsage(status: .expired)
+        await model.load(force: true)
+        await model.load(force: false)
+        #expect(renewer.renewals.isEmpty)
+    }
+}
+
+@Suite struct ClaudeSignInRenewerTests {
+    let base: [String: String] = [
+        "PATH": "/usr/bin:/opt/homebrew/bin",
+        "ANTHROPIC_API_KEY": "sk-test",
+        "ANTHROPIC_AUTH_TOKEN": "tok",
+        "CLAUDE_CODE_OAUTH_TOKEN": "oauth",
+        "CLAUDE_CONFIG_DIR": "/somewhere/else",
+        "HOME": "/Users/me",
+    ]
+
+    @Test func theRunIsOneThrowawayPrompt() {
+        let (arguments, _) = ClaudeSignInRenewer.plan(home: "/h", isDefault: false, base: [:])
+        #expect(arguments == ["-p", "ok", "--model", "haiku",
+                              "--no-session-persistence", "--tools", ""])
+    }
+
+    @Test func keysAndTokensLeaveTheEnvironment() {
+        let (_, env) = ClaudeSignInRenewer.plan(home: "/h", isDefault: false, base: base)
+        #expect(env["ANTHROPIC_API_KEY"] == nil)
+        #expect(env["ANTHROPIC_AUTH_TOKEN"] == nil)
+        #expect(env["CLAUDE_CODE_OAUTH_TOKEN"] == nil)
+        #expect(env["PATH"] == base["PATH"])
+        #expect(env["HOME"] == base["HOME"])
+    }
+
+    @Test func aNonDefaultProfileGetsItsHomeAndTheDefaultNone() {
+        let (_, named) = ClaudeSignInRenewer.plan(home: "/u/.quiver/accounts/work/.claude",
+                                                  isDefault: false, base: base)
+        #expect(named["CLAUDE_CONFIG_DIR"] == "/u/.quiver/accounts/work/.claude")
+        let (_, standard) = ClaudeSignInRenewer.plan(home: "/u/.claude",
+                                                     isDefault: true, base: base)
+        #expect(standard["CLAUDE_CONFIG_DIR"] == nil)
     }
 }
