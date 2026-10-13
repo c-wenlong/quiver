@@ -60,7 +60,8 @@ enum AppRelauncher {
         case "$src_dir" in
           "$HOME/.quiver/cache/rebuild/"*)
             case "${src_dir#"$HOME/.quiver/cache/rebuild/"}" in
-              *[!/]) rm -rf "$src_dir" ;;
+              ""|*/*) ;;
+              *) rm -rf "$src_dir" ;;
             esac ;;
         esac
         open "$dest"
