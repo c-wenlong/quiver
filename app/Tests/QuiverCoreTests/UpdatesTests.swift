@@ -393,12 +393,20 @@ struct UpdatesModelTests {
         await model.refresh(force: false)
         #expect(model.local != nil)
         await model.rebuild()
-        #expect(model.rebuildState == .built(rebuildDir.appending(path: "Quiver.app")))
+        guard case .built(let url) = model.rebuildState else {
+            Issue.record("expected a built rebuild, got \(model.rebuildState)")
+            return
+        }
+        let buildDir = url.deletingLastPathComponent()
+        #expect(url.lastPathComponent == "Quiver.app")
+        #expect(buildDir.deletingLastPathComponent().path == rebuildDir.path)
+        #expect(FileManager.default.fileExists(atPath: buildDir.path))
 
         model.setCheckout("")
         #expect(model.checkout == nil)
         #expect(model.local == nil)
         #expect(model.rebuildState == .idle)
+        #expect(!FileManager.default.fileExists(atPath: buildDir.path))
     }
 
     @Test func aBuildThatOutlivesItsCheckoutIsDiscarded() async throws {
@@ -421,11 +429,28 @@ struct UpdatesModelTests {
         let model = makeModel(checkout: dir.path, rebuildRunner: runner,
                               rebuildDir: rebuildDir)
         await model.rebuild()
-        #expect(runner.calls == [[
-            "QUIVER_BUILD_DIR=\(rebuildDir.path)", "bash",
-            dir.path + "/app/script/build-app.sh",
-        ]])
-        #expect(model.rebuildState == .built(rebuildDir.appending(path: "Quiver.app")))
+        #expect(runner.calls.count == 1)
+        let argv = try #require(runner.calls.first)
+        #expect(argv.count == 3)
+        #expect(argv[1] == "bash")
+        #expect(argv[2] == dir.path + "/app/script/build-app.sh")
+        let buildDir = String(argv[0].dropFirst("QUIVER_BUILD_DIR=".count))
+        #expect(buildDir.hasPrefix(rebuildDir.path + "/"))
+        #expect(buildDir != rebuildDir.path)
+        guard case .built(let url) = model.rebuildState else {
+            Issue.record("expected a built rebuild, got \(model.rebuildState)")
+            return
+        }
+        #expect(url == URL(fileURLWithPath: buildDir)
+            .appending(path: "Quiver.app"))
+
+        // A second rebuild gets its own folder and clears the first.
+        model.resetRebuild()
+        await model.rebuild()
+        let second = try #require(runner.calls.last)[0]
+            .dropFirst("QUIVER_BUILD_DIR=".count)
+        #expect(String(second) != buildDir)
+        #expect(!FileManager.default.fileExists(atPath: buildDir))
     }
 
     @Test func aFailedRebuildKeepsTheLastLines() async throws {

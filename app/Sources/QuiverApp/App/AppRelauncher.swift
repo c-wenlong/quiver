@@ -54,6 +54,15 @@ enum AppRelauncher {
           exit 1
         fi
         /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$trash"
+        # The build came from a per-build folder under the rebuild cache;
+        # remove it, but only ever a direct child of that cache.
+        src_dir="$(dirname "$src")"
+        case "$src_dir" in
+          "$HOME/.quiver/cache/rebuild/"*)
+            case "${src_dir#"$HOME/.quiver/cache/rebuild/"}" in
+              *[!/]) rm -rf "$src_dir" ;;
+            esac ;;
+        esac
         open "$dest"
         """
 

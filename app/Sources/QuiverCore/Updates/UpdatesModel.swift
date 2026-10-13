@@ -32,8 +32,12 @@ public final class UpdatesModel {
     private let releaseCheck: ReleaseCheck
     private let swe: @Sendable () -> SweClient
     private let rebuildRunner: any CommandRunning
-    /// Rebuilds land here, never on top of the running bundle.
+    /// Rebuilds land in per-build folders under here, never on top of
+    /// the running bundle.
     private let rebuildDir: URL
+    /// The UUID folder this model's last build wrote into, so a reset or
+    /// a new build can delete it without touching anything else.
+    private var buildDir: URL?
     private var generation = 0
 
     /// `swe` is resolved at call time so a changed swe executable in
@@ -81,7 +85,9 @@ public final class UpdatesModel {
         generation += 1
         local = nil
         switch rebuildState {
-        case .built, .failed: rebuildState = .idle
+        case .built, .failed:
+            rebuildState = .idle
+            removeBuildDir()
         case .idle, .building: break
         }
         Task { await refresh(force: false) }
@@ -129,30 +135,37 @@ public final class UpdatesModel {
         sweVersionKnown = version != nil
     }
 
-    /// Rebuild the app from the checkout's build script into the rebuild
-    /// cache, never over the running bundle. One build at a time; the
-    /// last lines of output explain a failure. If the checkout changed
-    /// while the build ran, the result is stale and discarded.
+    /// Rebuild the app from the checkout's build script into a fresh
+    /// per-build folder under the rebuild cache, never over the running
+    /// bundle or another finished build. One build at a time; the last
+    /// lines of output explain a failure. If the checkout changed while
+    /// the build ran, the result is stale and discarded.
     public func rebuild() async {
         guard case .idle = rebuildState, let checkout else { return }
         rebuildState = .building
+        removeBuildDir()
+        let buildDir = rebuildDir.appending(path: UUID().uuidString)
         let startedCheckout = checkout
-        try? FileManager.default.createDirectory(at: rebuildDir,
+        try? FileManager.default.createDirectory(at: buildDir,
                                                  withIntermediateDirectories: true)
         let script = checkout + "/app/script/build-app.sh"
         let result = try? await rebuildRunner.run(
-            ["QUIVER_BUILD_DIR=\(rebuildDir.path)", "bash", script])
+            ["QUIVER_BUILD_DIR=\(buildDir.path)", "bash", script])
         guard self.checkout == startedCheckout else {
+            try? FileManager.default.removeItem(at: buildDir)
             rebuildState = .idle
             return
         }
         guard let result else {
+            try? FileManager.default.removeItem(at: buildDir)
             rebuildState = .failed("The build could not be started.")
             return
         }
         if result.status == 0 {
-            rebuildState = .built(rebuildDir.appending(path: "Quiver.app"))
+            self.buildDir = buildDir
+            rebuildState = .built(buildDir.appending(path: "Quiver.app"))
         } else {
+            try? FileManager.default.removeItem(at: buildDir)
             let lines = (result.stderr + "\n" + String(decoding: result.stdout, as: UTF8.self))
                 .split(separator: "\n")
                 .map(String.init)
@@ -164,8 +177,19 @@ public final class UpdatesModel {
     /// The build finished earlier; reset so another rebuild can run.
     public func resetRebuild() {
         switch rebuildState {
-        case .idle, .built, .failed: rebuildState = .idle
+        case .idle, .built, .failed:
+            rebuildState = .idle
+            removeBuildDir()
         case .building: break
+        }
+    }
+
+    /// Drop the folder this model's last build wrote into. Only ever the
+    /// UUID folder it created, so another running copy's build survives.
+    private func removeBuildDir() {
+        if let buildDir {
+            try? FileManager.default.removeItem(at: buildDir)
+            self.buildDir = nil
         }
     }
 }
