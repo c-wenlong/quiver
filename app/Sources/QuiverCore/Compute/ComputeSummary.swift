@@ -61,6 +61,14 @@ public enum OrphanAgeUnit: String, CaseIterable, Sendable {
         }
     }
 
+    /// What the field saves for `value` in `unit`: nil for zero or less
+    /// (the field snaps back), otherwise clamped into the allowed range.
+    public static func resolve(value: Int, unit: OrphanAgeUnit) -> TimeInterval? {
+        guard value > 0 else { return nil }
+        let range = ComputeLimits.orphanAgeRange
+        return min(max(TimeInterval(value) * unit.seconds, range.lowerBound), range.upperBound)
+    }
+
     /// The largest unit the duration divides evenly into, so 2880
     /// minutes shows as "2 Day" not "2880 Min". Rounds to whole
     /// minutes first, so nothing under a minute survives.

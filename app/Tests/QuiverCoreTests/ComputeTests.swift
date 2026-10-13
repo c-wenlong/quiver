@@ -751,6 +751,19 @@ import Testing
         #expect(OrphanAgeUnit.split(86400 + 3600) == (25, .hour))
     }
 
+    @Test func resolveSavesWhatWasTypedInTheChosenUnit() {
+        // "60" saved as minutes, then the unit switched to Hour: 60 hours.
+        #expect(OrphanAgeUnit.resolve(value: 60, unit: .minute) == 3600)
+        #expect(OrphanAgeUnit.resolve(value: 60, unit: .hour) == TimeInterval(60 * 3600))
+        #expect(OrphanAgeUnit.resolve(value: 3, unit: .day) == TimeInterval(3 * 86400))
+    }
+
+    @Test func resolveRejectsZeroAndClampsTheTop() {
+        #expect(OrphanAgeUnit.resolve(value: 0, unit: .hour) == nil)
+        #expect(OrphanAgeUnit.resolve(value: -5, unit: .minute) == nil)
+        #expect(OrphanAgeUnit.resolve(value: 400, unit: .day) == ComputeLimits.orphanAgeRange.upperBound)
+    }
+
     private static func defaultsSuite() -> (UserDefaults, String) {
         let suite = "compute-test-\(UUID().uuidString)"
         return (UserDefaults(suiteName: suite)!, suite)

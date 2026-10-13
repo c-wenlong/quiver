@@ -394,14 +394,17 @@ private struct CleanupLimitsView: View {
 
     /// The field only writes on Return, focus loss or the popover
     /// closing, never per keystroke. Zero or less snaps back to what is
-    /// saved; anything else clamps into the range.
+    /// saved; anything else clamps into the range. A valid entry stays as
+    /// typed, so "60" then picking Hour means 60 hours, not 1.
     private func commitAge() {
-        let range = ComputeLimits.orphanAgeRange
-        if ageValue > 0 {
-            let seconds = min(max(TimeInterval(ageValue) * ageUnit.seconds, range.lowerBound), range.upperBound)
-            if seconds != app.compute.limits.orphanAge { app.compute.limits.orphanAge = seconds }
+        guard let seconds = OrphanAgeUnit.resolve(value: ageValue, unit: ageUnit) else {
+            (ageValue, ageUnit) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
+            return
         }
-        (ageValue, ageUnit) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
+        if seconds != app.compute.limits.orphanAge { app.compute.limits.orphanAge = seconds }
+        if seconds != TimeInterval(ageValue) * ageUnit.seconds {
+            (ageValue, ageUnit) = OrphanAgeUnit.split(seconds)
+        }
     }
 
     private var unit: Binding<OrphanAgeUnit> {
