@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """swe — Central manager for AI coding CLI tools."""
 
+import platform
 import sys
 
-from quiver.json_output import error_stream
+from quiver import __version__
+from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.config_commands import cmd_config
 from quiver.configuration import ConfigurationError
 from quiver.console import c
@@ -38,6 +40,24 @@ def cmd_mcp(args):
 
 def cmd_providers(args):
     return providers_cli.main(args)
+
+
+_HELP_NAME = {"-v": "version", "-V": "version", "--version": "version"}
+
+
+def cmd_version(args):
+    """swe version / -v / -V / --version. Reads no config, so it works even
+    when ~/.quiver is unparseable."""
+    args, json_view = take_json_flag(args)
+    if args:
+        print(c("red", f"Unexpected args: {' '.join(args)}"),
+              file=error_stream(json_view))
+        return 1
+    if json_view:
+        return emit({"name": "swe", "version": __version__,
+                     "python": platform.python_version()})
+    print(f"swe {__version__}")
+    return 0
 
 
 def cmd_complete(args):
@@ -151,6 +171,10 @@ COMMANDS = {
     "report": cmd_report,
     "discover": lambda args: cmd_harness(["discover", *args]),
     "autocomplete": cmd_autocomplete,
+    "version": cmd_version,
+    "-v": cmd_version,
+    "-V": cmd_version,
+    "--version": cmd_version,
     "help": cmd_help,
     "--help": cmd_help,
     "-h": cmd_help,
@@ -178,7 +202,9 @@ def main():
                 # pointing back at `swe providers --help` itself.
                 if cmd in ("providers", "pv"):
                     return COMMANDS[cmd](rest)
-                cmd_help([cmd])
+                # The version flags are spellings of `version`; the help
+                # topic lives under the canonical name.
+                cmd_help([_HELP_NAME.get(cmd, cmd)])
                 return 0
             result = COMMANDS[cmd](rest)
         except ConfigurationError as exc:

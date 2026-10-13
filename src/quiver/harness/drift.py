@@ -56,6 +56,7 @@ class Finding:
 # new alias-only entry.
 NO_TOPIC_WHITELIST = frozenset({
     "__complete", "ls", "rm", "run", "sk", "hs", "pv", "-h", "--help", "help",
+    "-v", "-V", "--version",
 })
 
 _HELP_KEY_RE = re.compile(r'^    "([A-Za-z0-9_-]+)":\s*\(', re.MULTILINE)
