@@ -187,7 +187,7 @@ struct MenuBarContent: View {
                 Text("Quiver").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 Spacer()
                 PanelIconButton(title: "Refresh", symbol: "arrow.clockwise") {
-                    Task { await app.accounts.load(force: true) }
+                    Task { await app.accounts.refreshFromButton() }
                     Task { await app.others.load() }
                     Task { await app.overview?.load(scan: true) }
                 }
@@ -439,9 +439,9 @@ private struct PanelAccountRow: View {
                     PanelLimitRow(label: window.label, percent: window.usedPercent, resetsAt: window.resetsAt)
                 }
                 .opacity(usage.isStale ? 0.55 : 1)
-                if usage.isStale { StatusLine(usage: usage) }
+                if usage.isStale { StatusLine(usage: usage, card: card) }
             } else {
-                StatusLine(usage: card.usage)
+                StatusLine(usage: card.usage, card: card)
             }
         }
     }
