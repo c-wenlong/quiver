@@ -100,11 +100,15 @@ private struct Sidebar: View {
         .clipped()
         // A floating rail covers the page: it needs the window surface,
         // a hairline edge and a shadow, fading in with the expansion.
-        .background(Theme.wash.opacity(isFloating ? 1 : 0))
+        // The shadow sits on the surface only, so the labels stay crisp.
+        .background {
+            Theme.wash
+                .shadow(color: .black.opacity(0.12), radius: 8)
+                .opacity(isFloating ? 1 : 0)
+        }
         .overlay(alignment: .trailing) {
             Theme.border.frame(width: 1).opacity(isFloating ? 1 : 0)
         }
-        .shadow(color: .black.opacity(isFloating ? 0.12 : 0), radius: 8)
         .frame(maxHeight: .infinity)
         .animation(animation, value: isExpanded)
         .onHover(perform: hover)
