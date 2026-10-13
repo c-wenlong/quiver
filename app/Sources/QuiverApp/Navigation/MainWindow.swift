@@ -130,18 +130,9 @@ private struct Sidebar: View {
     }
 
     /// The collapse/expand button: its own row under the traffic lights,
-    /// trailing-aligned. Expanded it hugs the sidebar's trailing edge; in
-    /// the rail the trailing padding parks it right over the icon pill,
-    /// and the animated padding slides it with the width change. It
-    /// follows the pinned state only, so a hover expansion never slides
-    /// it out from under the pointer.
+    /// over the icon column, in the same top-left spot whether the
+    /// sidebar is collapsed, pinned open or hover-floating.
     @State private var hoveringToggle = false
-
-    private var toggleTrailingPadding: CGFloat {
-        !expansion.collapsed ? 0
-            : Theme.sidebarWidth - Theme.sidebarLeadingPadding - Theme.sidebarTrailingPadding
-                - Theme.navIconPillWidth
-    }
 
     private var toggleRow: some View {
         let label = model.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
@@ -165,8 +156,7 @@ private struct Sidebar: View {
         .onHover { hoveringToggle = $0 }
         .accessibilityLabel(label)
         .help("\(label) ⌃⌘S")
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.trailing, toggleTrailingPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Only a collapsed sidebar reacts to the pointer: in after 0.12 s,
