@@ -20,6 +20,11 @@ final class AppModel {
     /// this; a detail page open there goes back through its own ask.
     var navReselects = 0
 
+    /// The sidebar pinned to an icon rail; hovering it floats it open.
+    var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed") {
+        didSet { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }
+    }
+
     /// Opens (or reopens) the main window. Captured from the window's scene,
     /// because the menu bar panel lives outside SwiftUI's scene graph and
     /// its own `openWindow` cannot reach the `Window` scene.

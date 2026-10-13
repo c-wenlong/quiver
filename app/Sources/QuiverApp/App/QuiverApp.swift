@@ -15,6 +15,14 @@ struct QuiverApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1180, height: 800)
+        .commands {
+            CommandGroup(after: .sidebar) {
+                Button("Toggle Sidebar") {
+                    model.sidebarCollapsed.toggle()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+            }
+        }
     }
 }
 

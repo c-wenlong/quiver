@@ -18,7 +18,7 @@ Sources/QuiverApp/
     AppModel.swift      the one app-wide model every page reads
     LimitsMonitor.swift limit notifications and the menubar figure refresh
   Navigation/
-    MainWindow.swift    split view: sidebar plus the selected page
+    MainWindow.swift    sidebar (collapsible to a rail) plus the page
   MenuBar/
     StatusItemController.swift  the status item, its panel and rows
   Pages/       one file per page (a page may hold private subviews)
@@ -55,8 +55,14 @@ from `AppModel` or build them in a `.task` and keep them in `@State`
 
 ## Navigation
 
-`MainWindow` is a `NavigationSplitView`: a sidebar of `AppSection` cases and
-the selected page as content. `AppModel.selection` persists across launches.
+`MainWindow` lays the sidebar and the selected page out in an `HStack`:
+the layout reserves `sidebarCollapsedWidth` or `sidebarWidth` and the
+`Sidebar` view overlays it at its own width. `AppModel.selection` and
+`sidebarCollapsed` persist across launches; `QuiverCore`'s
+`SidebarExpansion` carries the pointer state so a collapsed rail floats
+open under hover and a toggle under the pointer stays shut until the
+pointer leaves once (`hoverSuppressed`). The View menu's Toggle Sidebar
+(⌃⌘S) and the sidebar's own first row flip the same flag.
 Reselecting the current sidebar item (or the Plugins > Explore tab) bumps
 `navReselects`, which detail views watch to go back through their own
 unsaved-changes ask.
