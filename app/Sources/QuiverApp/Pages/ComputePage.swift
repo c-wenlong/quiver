@@ -682,16 +682,17 @@ private struct CleanupSheet: View {
         var items: [CleanupItem]
     }
 
+    /// Groups in the items' own order (ComputeSummary.cleanup already
+    /// sorts orphans first, then swe's order), so every selected item is
+    /// always in a visible group.
     private var groups: [Group] {
         var out: [Group] = []
-        let orphanItems = items.filter { $0.harness == nil }
-        if !orphanItems.isEmpty {
-            out.append(Group(id: "orphaned", harness: nil, items: orphanItems))
-        }
-        for matcher in model.matchers {
-            let group = items.filter { $0.harness == matcher.harness }
-            if !group.isEmpty {
-                out.append(Group(id: matcher.harness, harness: matcher.harness, items: group))
+        for item in items {
+            let id = item.harness ?? "orphaned"
+            if let last = out.indices.last, out[last].id == id {
+                out[last].items.append(item)
+            } else {
+                out.append(Group(id: id, harness: item.harness, items: [item]))
             }
         }
         return out
