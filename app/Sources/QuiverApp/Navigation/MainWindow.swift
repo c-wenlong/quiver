@@ -46,6 +46,8 @@ private struct Sidebar: View {
     @State private var expansion = SidebarExpansion()
     /// The delayed hover change; a new pointer event replaces it.
     @State private var pending: Task<Void, Never>?
+    /// Where the pointer is right now, ahead of the delayed hover change.
+    @State private var pointerInside = false
 
     private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
     private var isExpanded: Bool { expansion.isExpanded }
@@ -117,7 +119,7 @@ private struct Sidebar: View {
             // The button already toggled expansion, so this only fires
             // for outside changes like the menu shortcut: route them
             // through toggle() so hover suppression still applies.
-            if new != expansion.collapsed { expansion.toggle() }
+            if new != expansion.collapsed { toggleExpansion() }
         }
     }
 
@@ -128,7 +130,7 @@ private struct Sidebar: View {
     private var toggleRow: some View {
         let label = model.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
         return Button {
-            expansion.toggle()
+            toggleExpansion()
             model.sidebarCollapsed = expansion.collapsed
         } label: {
             Image(systemName: "sidebar.left")
@@ -150,8 +152,18 @@ private struct Sidebar: View {
     /// Only a collapsed sidebar reacts to the pointer: in after 0.12 s,
     /// out after 0.2 s, so a quick pass over the rail does not flash it
     /// open and a short exit does not slam it shut.
+    /// A toggle settles any pending hover change first, so a collapse
+    /// right after entering still suppresses the hover expansion and a
+    /// late entry can't reopen it.
+    private func toggleExpansion() {
+        pending?.cancel()
+        expansion.pointer(inside: pointerInside)
+        expansion.toggle()
+    }
+
     private func hover(_ inside: Bool) {
         pending?.cancel()
+        pointerInside = inside
         if !inside { expansion.pointerLeft() }
         guard model.sidebarCollapsed else {
             expansion.pointer(inside: inside)
