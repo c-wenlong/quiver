@@ -476,7 +476,11 @@ final class AppModel {
             },
             Task { [weak self] in
                 let changes = Observations { [weak self] in
-                    self.map { ($0.overview?.activity, $0.overview?.recentModels, $0.limits.readings) }
+                    // The series order and colours also feed the file:
+                    // a provider reorder or a newly loaded primary colour
+                    // must rewrite it like a reading change does.
+                    self.map { ($0.overview?.activity, $0.overview?.recentModels,
+                               $0.limits.readings, $0.providers.rows, $0.compute.matchers) }
                 }
                 for await _ in changes {
                     guard let self else { continue }

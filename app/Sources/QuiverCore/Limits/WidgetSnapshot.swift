@@ -173,11 +173,7 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         // drag that's pressure, so the widget changes nothing. A source's
         // own windows keep their byPressure order inside the group.
         let sortedLimits = LimitReading.byPressure(selection.limits.filter(limits), now: now)
-        var listed: [String] = []
-        for reading in sortedLimits where !listed.contains(reading.source) {
-            listed.append(reading.source)
-        }
-        let limitRows = selection.limits.ordered(listed)
+        let limitRows = selection.limits.ordered(selection.limits.defaultRank(sortedLimits))
             .flatMap { source in sortedLimits.filter { $0.source == source } }
             .prefix(limitCount)
 

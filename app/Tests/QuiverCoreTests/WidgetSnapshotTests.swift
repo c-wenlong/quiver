@@ -188,6 +188,16 @@ import Testing
         #expect(snapshot.limits.map(\.id) == ["a|5h", "a|7d", "b|5h"])
     }
 
+    @Test func theGroupRankFollowsShownWindowsOnly() {
+        // a's 90% window is hidden; its group ranks at the shown 5% one.
+        var selection = WidgetSelection()
+        selection.limits.setShown(false, window: "5h", source: "a")
+        let limits = [reading("a", "5h", used: 90), reading("b", "5h", used: 80),
+                      reading("a", "7d", used: 5)]
+        let snapshot = make(limits: limits, selection: selection)
+        #expect(snapshot.limits.map(\.id) == ["b|5h", "a|7d"])
+    }
+
     @Test func theDraggedOrderDecidesTheSourceGroups() {
         var selection = WidgetSelection()
         selection.limits.move("b", before: "a", in: ["a", "b"])

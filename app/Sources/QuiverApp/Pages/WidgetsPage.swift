@@ -197,14 +197,14 @@ private struct WidgetCard: View {
             }
         } else if let harnessWidget {
             let harnesses = usageHarnesses(for: harnessWidget)
-            if !harnesses.isEmpty {
+            if harnessWidget == .summary || !harnesses.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Counted").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
                     if harnessWidget == .summary {
                         TotalPickRow(isOn: Binding(
                             get: { app.widgetSelection.summaryShowsTotal },
                             set: { app.widgetSelection.summaryShowsTotal = $0 }))
-                        SettingsDivider()
+                        if !harnesses.isEmpty { SettingsDivider() }
                     }
                     ForEach(harnesses, id: \.self) { harness in
                         HarnessPickRow(harness: harness, isOn: Binding(
@@ -217,19 +217,14 @@ private struct WidgetCard: View {
     }
 
     /// The limits sources in display order: the dragged order over
-    /// sources ranked by their first reading (the readings arrive
-    /// byPressure); a source with no reading goes last, in row order.
-    /// `shown` is the ids the ReorderableRows callbacks reorder within.
+    /// `defaultRank` of the live (byPressure) readings, matching what
+    /// WidgetSnapshot.make draws; a source with no shown reading goes
+    /// last, in row order. `shown` is the ids the ReorderableRows
+    /// callbacks reorder within.
     private var limitRows: (rows: [MenuBarPopup.Row], shown: [String]) {
         let rows = MenuBarPopup.rows(in: app.limits.readings, sources: sources)
-        var rank: [String: Int] = [:]
-        for (index, reading) in app.limits.readings.enumerated() where rank[reading.source] == nil {
-            rank[reading.source] = index
-        }
-        let ranked = rows.enumerated().sorted {
-            ((rank[$0.element.source] ?? .max), $0.offset)
-                < ((rank[$1.element.source] ?? .max), $1.offset)
-        }.map(\.element.source)
+        let withReadings = app.widgetSelection.limits.defaultRank(app.limits.readings)
+        let ranked = withReadings + rows.map(\.source).filter { !withReadings.contains($0) }
         let shown = app.widgetSelection.limits.ordered(ranked)
         let bySource = Dictionary(uniqueKeysWithValues: rows.map { ($0.source, $0) })
         return (rows: shown.compactMap { bySource[$0] }, shown: shown)
