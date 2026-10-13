@@ -181,6 +181,8 @@ final class AppModel {
     let mcp: McpModel
     /// The MCP servers page's "Server folders" section.
     let mcpRepo = McpServerRepoModel()
+    /// The Settings > Updates section's build and release state.
+    let updates: UpdatesModel
     let plugins: PluginsModel
     /// Every plugin in every marketplace: the Plugins page's Explore tab,
     /// and what the Skills page moves plugin skills out by.
@@ -258,6 +260,17 @@ final class AppModel {
                                work: pluginWork)
         pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
                                            work: pluginWork)
+        updates = UpdatesModel(
+            build: BuildInfo(infoDictionary: Bundle.main.infoDictionary),
+            preferences: UpdatePreferences(),
+            releaseCheck: ReleaseCheck(
+                transport: URLSessionTransport(),
+                cacheURL: quiver.appending(path: "cache/latest-release.json")),
+            swe: {
+                let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
+                return SweClient(runner: ProcessRunner(
+                    executable: SweLocation.executable(override: path)))
+            })
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")),
             store: CustomStatusServices())

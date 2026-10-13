@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Settings > Updates shows whether the installed app is outdated.**
+  `build-app.sh` now stamps the channel (`QUIVER_CHANNEL=dev|prod`, dev
+  default), commit, source checkout and dirty state into the app's
+  Info.plist. The new section compares a dev build against its checkout's
+  HEAD (unbuilt commits, another branch, dirty tree, upstream counts,
+  `git fetch` on Check now) and offers a one-click Rebuild plus
+  "Relaunch to update" that swaps the bundle through a detached script
+  (old app to Trash, `lsregister -u`, reopen). Prod builds check GitHub's
+  latest release (6-hour cache at `~/.quiver/cache/latest-release.json`)
+  and link to it when a newer tag exists; no auto-install. The card also
+  shows the app's and swe's versions side by side and warns when they
+  differ.
+
 - **`swe version` (and `-v` / `-V` / `--version`) prints the installed
   version.** `swe 1.0.0` on stdout, exit 0, and no config read, so it works
   even when `~/.quiver` is unparseable. `--json` emits the standard

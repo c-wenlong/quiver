@@ -7,6 +7,15 @@
 # Contents/PlugIns/QuiverWidgets.appex. Open it with
 # `open app/build/Quiver.app`.
 #
+# Output: QUIVER_BUILD_DIR overrides where the bundle lands
+# (default "$here/build"); the app ends up at
+# "$QUIVER_BUILD_DIR/Quiver.app". The rebuild button in Settings uses
+# this so a build never overwrites the running copy.
+#
+# Channel: QUIVER_CHANNEL=dev|prod stamps QuiverChannel in the app's
+# Info.plist (default dev). Dev builds also stamp the checkout's commit,
+# path and dirty state, which Settings > Updates compares against HEAD.
+#
 # Signing: macOS remembers privacy grants (Desktop and Documents access,
 # Accessibility) against the app's signing identity. An ad-hoc signature
 # changes with every build, so each rebuild would ask again. The script
@@ -17,15 +26,28 @@
 set -euo pipefail
 
 config="${1:-release}"
+channel="${QUIVER_CHANNEL:-dev}"
+case "$channel" in
+  dev|prod) ;;
+  *) echo "build-app: QUIVER_CHANNEL must be dev or prod" >&2; exit 1 ;;
+esac
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
+build_dir="${QUIVER_BUILD_DIR:-$here/build}"
+mkdir -p "$build_dir"
+
+# Info.plist values come from git and the environment, so a checkout in a
+# path containing &, < or > would otherwise write broken XML.
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
 
 swift build -c "$config" --product Quiver
 swift build -c "$config" --product QuiverWidgets
 bindir="$(swift build -c "$config" --show-bin-path)"
 bin="$bindir/Quiver"
 
-bundle="$here/build/Quiver.app"
+bundle="$build_dir/Quiver.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$bin" "$bundle/Contents/MacOS/Quiver"
@@ -69,6 +91,24 @@ describe="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 version="$( (git -C "$here" describe --tags --abbrev=0 2>/dev/null || true) | sed 's/^v//')"
 case "$version" in ""|*[!0-9.]*) version="0.0.0" ;; esac
 build="$(git -C "$here" rev-list --count HEAD 2>/dev/null || echo 1)"
+# Update stamping: dev builds record where they were built from, so
+# Settings > Updates can tell the user the checkout has moved on. Prod
+# builds stamp the channel only; GitHub releases carry no source path.
+commit="$(git -C "$here" rev-parse HEAD 2>/dev/null || echo "")"
+if [ "$channel" = "dev" ]; then
+  source_path="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || echo "")"
+else
+  source_path=""
+fi
+if [ -n "$(git -C "$here" status --porcelain 2>/dev/null || echo "")" ]; then
+  dirty=true
+else
+  dirty=false
+fi
+describe_xml="$(xml_escape "$describe")"
+channel_xml="$(xml_escape "$channel")"
+commit_xml="$(xml_escape "$commit")"
+source_path_xml="$(xml_escape "$source_path")"
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -82,7 +122,11 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${build}</string>
-  <key>QuiverVersion</key><string>${describe}</string>
+  <key>QuiverVersion</key><string>${describe_xml}</string>
+  <key>QuiverChannel</key><string>${channel_xml}</string>
+  <key>QuiverCommit</key><string>${commit_xml}</string>
+  <key>QuiverSourcePath</key><string>${source_path_xml}</string>
+  <key>QuiverDirty</key><${dirty}/>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -117,7 +161,7 @@ cat > "$appex/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>XPC!</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${build}</string>
-  <key>QuiverVersion</key><string>${describe}</string>
+  <key>QuiverVersion</key><string>${describe_xml}</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSExtension</key>
   <dict>
