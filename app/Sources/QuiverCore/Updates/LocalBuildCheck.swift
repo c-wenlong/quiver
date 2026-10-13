@@ -24,13 +24,17 @@ public struct LocalBuildCheck: Sendable {
         public var state: State
         /// The checkout has uncommitted changes the build does not contain.
         public var checkoutDirty: Bool
+        /// The build itself was stamped dirty: QuiverDirty was true.
+        public var buildDirty: Bool
         /// Commits the configured upstream (or origin/HEAD) has that HEAD
         /// does not, nil when neither ref resolves.
         public var upstreamBehind: Int?
 
-        public init(state: State, checkoutDirty: Bool = false, upstreamBehind: Int? = nil) {
+        public init(state: State, checkoutDirty: Bool = false, buildDirty: Bool = false,
+                    upstreamBehind: Int? = nil) {
             self.state = state
             self.checkoutDirty = checkoutDirty
+            self.buildDirty = buildDirty
             self.upstreamBehind = upstreamBehind
         }
     }
@@ -43,7 +47,8 @@ public struct LocalBuildCheck: Sendable {
 
     /// The checkout's relationship to `builtCommit`. Every git failure is
     /// a state, never a throw.
-    public func check(path: String, builtCommit: String?) async -> Result {
+    public func check(path: String, builtCommit: String?,
+                      builtDirty: Bool = false) async -> Result {
         guard let head = await git(path, "rev-parse", "HEAD"),
               head.status == 0
         else { return Result(state: .notARepo) }
@@ -85,7 +90,8 @@ public struct LocalBuildCheck: Sendable {
                 break
             }
         }
-        return Result(state: state, checkoutDirty: dirty, upstreamBehind: upstreamBehind)
+        return Result(state: state, checkoutDirty: dirty, buildDirty: builtDirty,
+                      upstreamBehind: upstreamBehind)
     }
 
     /// `git fetch`, for the explicit "Check now" path only. The working

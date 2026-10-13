@@ -16,7 +16,7 @@ public final class UpdatesModel {
     public private(set) var sweVersionKnown = false
 
     public private(set) var local: LocalBuildCheck.Result?
-    public private(set) var release: ReleaseCheck.Outcome?
+    public private(set) var release: ReleaseCheck.ReleaseReport?
     public private(set) var checking = false
 
     public enum RebuildState: Equatable {
@@ -32,6 +32,8 @@ public final class UpdatesModel {
     private let releaseCheck: ReleaseCheck
     private let swe: @Sendable () -> SweClient
     private let rebuildRunner: any CommandRunning
+    /// Rebuilds land here, never on top of the running bundle.
+    private let rebuildDir: URL
     private var generation = 0
 
     /// `swe` is resolved at call time so a changed swe executable in
@@ -40,13 +42,16 @@ public final class UpdatesModel {
                 localCheck: LocalBuildCheck = LocalBuildCheck(),
                 releaseCheck: ReleaseCheck,
                 swe: @escaping @Sendable () -> SweClient = { SweClient() },
-                rebuildRunner: any CommandRunning = ProcessRunner(executable: "bash")) {
+                rebuildRunner: any CommandRunning = ProcessRunner(executable: "env"),
+                rebuildDir: URL = FileManager.default.homeDirectoryForCurrentUser
+                    .appending(path: ".quiver/cache/rebuild")) {
         self.build = build
         self.preferences = preferences
         self.localCheck = localCheck
         self.releaseCheck = releaseCheck
         self.swe = swe
         self.rebuildRunner = rebuildRunner
+        self.rebuildDir = rebuildDir
         channel = preferences.channel(build: build)
         checkout = preferences.checkout(build: build)
     }
@@ -67,10 +72,19 @@ public final class UpdatesModel {
         self.channel = preferences.channel(build: build)
     }
 
-    /// The Source checkout field changed.
+    /// The Source checkout field changed. Stale answers and finished
+    /// rebuilds belong to the old checkout; a build still running is
+    /// discarded when it finishes.
     public func setCheckout(_ path: String) {
         preferences.checkoutOverride = path
         checkout = preferences.checkout(build: build)
+        generation += 1
+        local = nil
+        switch rebuildState {
+        case .built, .failed: rebuildState = .idle
+        case .idle, .building: break
+        }
+        Task { await refresh(force: false) }
     }
 
     /// The app's version and swe's disagree.
@@ -91,12 +105,13 @@ public final class UpdatesModel {
 
         let path = checkout
         let commit = build.commit
+        let dirty = build.dirty
         let check = localCheck
         let swe = self.swe()
         async let localResult: LocalBuildCheck.Result? = {
             guard let path else { return nil }
             if force { _ = await check.fetch(path: path) }
-            return await check.check(path: path, builtCommit: commit)
+            return await check.check(path: path, builtCommit: commit, builtDirty: dirty)
         }()
         async let releaseResult = releaseCheck.check(current: build.version, force: force)
         async let sweAnswer: String? = {
@@ -114,19 +129,29 @@ public final class UpdatesModel {
         sweVersionKnown = version != nil
     }
 
-    /// Rebuild the app from the checkout's build script. One build at a
-    /// time; the last lines of output explain a failure.
+    /// Rebuild the app from the checkout's build script into the rebuild
+    /// cache, never over the running bundle. One build at a time; the
+    /// last lines of output explain a failure. If the checkout changed
+    /// while the build ran, the result is stale and discarded.
     public func rebuild() async {
         guard case .idle = rebuildState, let checkout else { return }
         rebuildState = .building
+        let startedCheckout = checkout
+        try? FileManager.default.createDirectory(at: rebuildDir,
+                                                 withIntermediateDirectories: true)
         let script = checkout + "/app/script/build-app.sh"
-        let result = try? await rebuildRunner.run([script])
+        let result = try? await rebuildRunner.run(
+            ["QUIVER_BUILD_DIR=\(rebuildDir.path)", "bash", script])
+        guard self.checkout == startedCheckout else {
+            rebuildState = .idle
+            return
+        }
         guard let result else {
             rebuildState = .failed("The build could not be started.")
             return
         }
         if result.status == 0 {
-            rebuildState = .built(URL(fileURLWithPath: checkout + "/app/build/Quiver.app"))
+            rebuildState = .built(rebuildDir.appending(path: "Quiver.app"))
         } else {
             let lines = (result.stderr + "\n" + String(decoding: result.stdout, as: UTF8.self))
                 .split(separator: "\n")
@@ -138,7 +163,9 @@ public final class UpdatesModel {
 
     /// The build finished earlier; reset so another rebuild can run.
     public func resetRebuild() {
-        if case .built = rebuildState { return }
-        rebuildState = .idle
+        switch rebuildState {
+        case .idle, .built, .failed: rebuildState = .idle
+        case .building: break
+        }
     }
 }

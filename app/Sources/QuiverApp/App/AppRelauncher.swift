@@ -4,9 +4,10 @@ import Foundation
 /// Replaces the running Quiver.app with a freshly built copy, then quits.
 ///
 /// The swap has to happen after this process exits, so the work lives in a
-/// detached shell script: it waits for our pid to die, moves the installed
-/// app to the Trash (recoverable), copies the build in, unregisters the
-/// Trash copy with LaunchServices, and opens the new app. Output lands in
+/// detached shell script: it waits for our pid to die, copies the build
+/// next to the installed app, swaps them only when the copy is good,
+/// unregisters the Trash copy with LaunchServices, and opens the new app.
+/// Every failure path reopens the old app. Output lands in
 /// ~/.quiver/cache/relaunch.log.
 enum AppRelauncher {
 
@@ -30,13 +31,26 @@ enum AppRelauncher {
         fi
         stamp="$(date +%Y%m%d-%H%M%S)"
         trash="$HOME/.Trash/$(basename "$dest" .app) $stamp.app"
-        if ! mv "$dest" "$trash"; then
-          echo "quiver relauncher: could not move $dest to Trash" >&2
+        new="$(dirname "$dest")/$(basename "$dest" .app).new-$stamp.app"
+        # Copy next to the destination first: a failed copy leaves the
+        # installed app untouched.
+        if ! ditto "$src" "$new"; then
+          echo "quiver relauncher: could not copy $src" >&2
+          rm -rf "$new"
+          open "$dest"
           exit 1
         fi
-        if ! ditto "$src" "$dest"; then
-          echo "quiver relauncher: ditto failed, restoring the old app" >&2
+        if ! mv "$dest" "$trash"; then
+          echo "quiver relauncher: could not move $dest to Trash" >&2
+          rm -rf "$new"
+          open "$dest"
+          exit 1
+        fi
+        if ! mv "$new" "$dest"; then
+          echo "quiver relauncher: could not place the new app, restoring" >&2
           mv "$trash" "$dest"
+          rm -rf "$new"
+          open "$dest"
           exit 1
         fi
         /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$trash"

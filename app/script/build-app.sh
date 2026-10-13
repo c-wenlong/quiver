@@ -7,6 +7,11 @@
 # Contents/PlugIns/QuiverWidgets.appex. Open it with
 # `open app/build/Quiver.app`.
 #
+# Output: QUIVER_BUILD_DIR overrides where the bundle lands
+# (default "$here/build"); the app ends up at
+# "$QUIVER_BUILD_DIR/Quiver.app". The rebuild button in Settings uses
+# this so a build never overwrites the running copy.
+#
 # Channel: QUIVER_CHANNEL=dev|prod stamps QuiverChannel in the app's
 # Info.plist (default dev). Dev builds also stamp the checkout's commit,
 # path and dirty state, which Settings > Updates compares against HEAD.
@@ -28,13 +33,25 @@ case "$channel" in
 esac
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
+build_dir="${QUIVER_BUILD_DIR:-$here/build}"
+mkdir -p "$build_dir"
+
+# Info.plist values come from git and the environment, so a checkout in a
+# path containing &, < or > would otherwise write broken XML.
+xml_escape() {
+  local s="$1"
+  s="${s//&/&amp;}"
+  s="${s//</&lt;}"
+  s="${s//>/&gt;}"
+  printf '%s' "$s"
+}
 
 swift build -c "$config" --product Quiver
 swift build -c "$config" --product QuiverWidgets
 bindir="$(swift build -c "$config" --show-bin-path)"
 bin="$bindir/Quiver"
 
-bundle="$here/build/Quiver.app"
+bundle="$build_dir/Quiver.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$bin" "$bundle/Contents/MacOS/Quiver"
@@ -92,6 +109,10 @@ if [ -n "$(git -C "$here" status --porcelain 2>/dev/null || echo "")" ]; then
 else
   dirty=false
 fi
+describe_xml="$(xml_escape "$describe")"
+channel_xml="$(xml_escape "$channel")"
+commit_xml="$(xml_escape "$commit")"
+source_path_xml="$(xml_escape "$source_path")"
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -105,10 +126,10 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${build}</string>
-  <key>QuiverVersion</key><string>${describe}</string>
-  <key>QuiverChannel</key><string>${channel}</string>
-  <key>QuiverCommit</key><string>${commit}</string>
-  <key>QuiverSourcePath</key><string>${source_path}</string>
+  <key>QuiverVersion</key><string>${describe_xml}</string>
+  <key>QuiverChannel</key><string>${channel_xml}</string>
+  <key>QuiverCommit</key><string>${commit_xml}</string>
+  <key>QuiverSourcePath</key><string>${source_path_xml}</string>
   <key>QuiverDirty</key><${dirty}/>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -144,7 +165,7 @@ cat > "$appex/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>XPC!</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${build}</string>
-  <key>QuiverVersion</key><string>${describe}</string>
+  <key>QuiverVersion</key><string>${describe_xml}</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSExtension</key>
   <dict>

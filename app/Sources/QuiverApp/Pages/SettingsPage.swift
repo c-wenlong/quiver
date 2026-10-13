@@ -264,7 +264,9 @@ private struct SettingsSectionView: View {
         var text: String
         switch result.state {
         case .upToDate:
-            text = "Built from current code"
+            text = result.buildDirty
+                ? "Built from this commit plus uncommitted edits; can't tell if they match yours"
+                : "Built from current code"
         case .behind(let n):
             text = "\(n) commit\(n == 1 ? "" : "s") not built yet"
         case .diverged(let buildOnly, _):
@@ -275,6 +277,9 @@ private struct SettingsSectionView: View {
             text = "This build has no commit recorded"
         case .builtCommitMissing:
             text = "Built from a commit this checkout doesn't have"
+        }
+        if result.buildDirty, result.state != .upToDate {
+            text += " · built with uncommitted edits"
         }
         if result.checkoutDirty { text += " · uncommitted changes not built" }
         if let upstream = result.upstreamBehind, upstream > 0 {
@@ -318,7 +323,8 @@ private struct SettingsSectionView: View {
             title: "Latest release",
             detail: releaseDetail(updates.release)) {
                 HStack(spacing: 12) {
-                    if case .available(let release) = updates.release, let url = release.url {
+                    if updates.release?.comparison == .available,
+                       let url = updates.release?.release?.url {
                         Link("Open", destination: url).secondaryButton()
                     }
                     if prod {
@@ -331,19 +337,24 @@ private struct SettingsSectionView: View {
             .opacity(prod ? 1 : 0.6)
     }
 
-    private func releaseDetail(_ outcome: ReleaseCheck.Outcome?) -> String {
-        switch outcome {
-        case .upToDate(let release):
-            return "\(release.tag) · up to date"
-        case .available(let release):
-            return "\(release.tag) available"
-        case .unknown(let message, let release):
-            if let message { return "Couldn't check: \(message)" }
-            if let release { return "\(release.tag) · up to date" }
-            return "Not checked yet."
-        case nil:
-            return "Not checked yet."
+    private func releaseDetail(_ report: ReleaseCheck.ReleaseReport?) -> String {
+        var text: String
+        if let release = report?.release {
+            switch report?.comparison {
+            case .available:
+                text = "\(release.tag) available"
+            case .upToDate:
+                text = "\(release.tag) · up to date"
+            default:
+                text = "\(release.tag) · can't compare with \(app.updates.build.version)"
+            }
+        } else {
+            text = "Not checked yet."
         }
+        if let error = report?.error {
+            text += " · couldn't check: \(error)"
+        }
+        return text
     }
 
     private var pathsCard: some View {

@@ -15,15 +15,26 @@ public struct ReleaseCheck: Sendable {
         }
     }
 
-    /// What `check` reports for the UI to render.
-    public enum Outcome: Sendable, Equatable {
-        /// The newest release is not newer than `current`.
-        case upToDate(Release)
-        /// A newer release exists.
-        case available(Release)
-        /// The last fetch or tag did not produce a comparable version;
-        /// `release` is the last cached answer, if any.
-        case unknown(String?, Release?)
+    /// How the latest release compares to the running version.
+    public enum Comparison: Sendable, Equatable {
+        case upToDate
+        case available
+        /// The tag (or the installed version) is not dotted numbers.
+        case incomparable
+    }
+
+    /// What `check` reports for the UI to render: the release it knows
+    /// (fresh or cached), how it compares, and why the fetch failed.
+    public struct ReleaseReport: Sendable, Equatable {
+        public var release: Release?
+        public var comparison: Comparison?
+        public var error: String?
+
+        public init(release: Release?, comparison: Comparison?, error: String?) {
+            self.release = release
+            self.comparison = comparison
+            self.error = error
+        }
     }
 
     public static let endpoint = URL(
@@ -58,36 +69,48 @@ public struct ReleaseCheck: Sendable {
 
     /// Latest release state. A fresh-enough cache answers unless `force`;
     /// a failed fetch keeps reporting the cached release.
-    public func check(current version: String, force: Bool) async -> Outcome {
+    public func check(current version: String, force: Bool) async -> ReleaseReport {
         let entry = readCache()
         if !force, let entry, now().timeIntervalSince(entry.fetchedAt) < Self.cacheTTL {
-            return Self.compare(version: version, to: entry.release)
+            return report(version: version, release: entry.release, error: nil)
         }
         do {
             var request = URLRequest(url: Self.endpoint)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let (data, response) = try await transport.send(request)
             guard response.statusCode == 200 else {
-                return .unknown("GitHub answered \(response.statusCode)", entry?.release)
+                return report(version: version, release: entry?.release,
+                              error: "GitHub answered \(response.statusCode)")
             }
             let release = try decode(data)
             writeCache(release)
-            return Self.compare(version: version, to: release)
+            return report(version: version, release: release, error: nil)
         } catch {
-            return .unknown(error.localizedDescription, entry?.release)
+            return report(version: version, release: entry?.release,
+                          error: error.localizedDescription)
         }
     }
 
+    private func report(version: String, release: Release?, error: String?) -> ReleaseReport {
+        ReleaseReport(release: release,
+                      comparison: release.map { Self.compare(version: version, to: $0) },
+                      error: error)
+    }
+
     /// Dotted numeric compare: "v1.0.10" beats "1.0.9", "1.0" equals
-    /// "1.0.0". A non-numeric tag is not an update; it is unknown.
-    public static func compare(version current: String, to release: Release) -> Outcome {
+    /// "1.0.0". A non-numeric tag is not an update; it is incomparable.
+    public static func compare(version current: String, to release: Release) -> Comparison {
         let tag = release.tag.hasPrefix("v") ? String(release.tag.dropFirst()) : release.tag
         guard let latest = numbers(tag), let installed = numbers(current) else {
-            return .unknown(nil, release)
+            return .incomparable
         }
-        if latest == installed { return .upToDate(release) }
-        return installed.lexicographicallyPrecedes(latest)
-            ? .available(release) : .upToDate(release)
+        if latest == installed { return .upToDate }
+        for i in 0..<max(latest.count, installed.count) {
+            let a = i < latest.count ? latest[i] : 0
+            let b = i < installed.count ? installed[i] : 0
+            if a != b { return a > b ? .available : .upToDate }
+        }
+        return .upToDate
     }
 
     private static func numbers(_ version: String) -> [Int]? {

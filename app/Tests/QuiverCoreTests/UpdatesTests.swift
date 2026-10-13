@@ -17,7 +17,7 @@ private final class GitFake: CommandRunning, @unchecked Sendable {
     }
 }
 
-private func okReply(_ text: String) -> CommandResult {
+private func gitOk(_ text: String) -> CommandResult {
     CommandResult(status: 0, stdout: Data(text.utf8), stderr: "")
 }
 
@@ -105,17 +105,18 @@ struct UpdatePreferencesTests {
 @Suite("Local build check")
 struct LocalBuildCheckTests {
     private func check(_ replies: [String: CommandResult],
-                       builtCommit: String? = built) async -> LocalBuildCheck.Result {
+                       builtCommit: String? = built,
+                       builtDirty: Bool = false) async -> LocalBuildCheck.Result {
         await LocalBuildCheck(runner: GitFake(replies))
-            .check(path: "/tmp/checkout", builtCommit: builtCommit)
+            .check(path: "/tmp/checkout", builtCommit: builtCommit, builtDirty: builtDirty)
     }
 
     @Test func upToDate() async {
         let result = await check([
-            "rev-parse HEAD": okReply(head + "\n"),
-            "cat-file -e \(built)^{commit}": okReply(""),
-            "rev-list --left-right --count \(built)...HEAD": okReply("0\t0\n"),
-            "status --porcelain": okReply(""),
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("0\t0\n"),
+            "status --porcelain": gitOk(""),
         ])
         #expect(result.state == .upToDate)
         #expect(!result.checkoutDirty)
@@ -123,20 +124,20 @@ struct LocalBuildCheckTests {
 
     @Test func behind() async {
         let result = await check([
-            "rev-parse HEAD": okReply(head + "\n"),
-            "cat-file -e \(built)^{commit}": okReply(""),
-            "rev-list --left-right --count \(built)...HEAD": okReply("0\t3\n"),
-            "status --porcelain": okReply(""),
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("0\t3\n"),
+            "status --porcelain": gitOk(""),
         ])
         #expect(result.state == .behind(3))
     }
 
     @Test func diverged() async {
         let result = await check([
-            "rev-parse HEAD": okReply(head + "\n"),
-            "cat-file -e \(built)^{commit}": okReply(""),
-            "rev-list --left-right --count \(built)...HEAD": okReply("2\t5\n"),
-            "status --porcelain": okReply(""),
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("2\t5\n"),
+            "status --porcelain": gitOk(""),
         ])
         #expect(result.state == .diverged(buildOnly: 2, headOnly: 5))
     }
@@ -147,54 +148,65 @@ struct LocalBuildCheckTests {
     }
 
     @Test func unknownBuild() async {
-        let result = await check(["rev-parse HEAD": okReply(head + "\n")],
+        let result = await check(["rev-parse HEAD": gitOk(head + "\n")],
                                  builtCommit: nil)
         #expect(result.state == .unknownBuild)
     }
 
     @Test func builtCommitMissing() async {
-        let result = await check(["rev-parse HEAD": okReply(head + "\n")])
+        let result = await check(["rev-parse HEAD": gitOk(head + "\n")])
         #expect(result.state == .builtCommitMissing)
     }
 
     @Test func dirtyCheckout() async {
         let result = await check([
-            "rev-parse HEAD": okReply(head + "\n"),
-            "cat-file -e \(built)^{commit}": okReply(""),
-            "rev-list --left-right --count \(built)...HEAD": okReply("0\t0\n"),
-            "status --porcelain": okReply(" M file.swift\n"),
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("0\t0\n"),
+            "status --porcelain": gitOk(" M file.swift\n"),
         ])
         #expect(result.checkoutDirty)
     }
 
     @Test func upstreamBehind() async {
         let result = await check([
-            "rev-parse HEAD": okReply(head + "\n"),
-            "cat-file -e \(built)^{commit}": okReply(""),
-            "rev-list --left-right --count \(built)...HEAD": okReply("0\t0\n"),
-            "status --porcelain": okReply(""),
-            "rev-list --count HEAD..@{upstream}": okReply("7\n"),
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("0\t0\n"),
+            "status --porcelain": gitOk(""),
+            "rev-list --count HEAD..@{upstream}": gitOk("7\n"),
         ])
         #expect(result.upstreamBehind == 7)
     }
 
     @Test func upstreamFallsBackToOriginHEAD() async {
         let result = await check([
-            "rev-parse HEAD": okReply(head + "\n"),
-            "cat-file -e \(built)^{commit}": okReply(""),
-            "rev-list --left-right --count \(built)...HEAD": okReply("0\t0\n"),
-            "status --porcelain": okReply(""),
-            "rev-list --count HEAD..origin/HEAD": okReply("4\n"),
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("0\t0\n"),
+            "status --porcelain": gitOk(""),
+            "rev-list --count HEAD..origin/HEAD": gitOk("4\n"),
         ])
         #expect(result.upstreamBehind == 4)
     }
 
+    @Test func aDirtyBuildIsReported() async {
+        let result = await check([
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("0\t0\n"),
+            "status --porcelain": gitOk(""),
+        ], builtDirty: true)
+        #expect(result.state == .upToDate)
+        #expect(result.buildDirty)
+    }
+
     @Test func upstreamIsNilWhenNeitherRefWorks() async {
         let result = await check([
-            "rev-parse HEAD": okReply(head + "\n"),
-            "cat-file -e \(built)^{commit}": okReply(""),
-            "rev-list --left-right --count \(built)...HEAD": okReply("0\t0\n"),
-            "status --porcelain": okReply(""),
+            "rev-parse HEAD": gitOk(head + "\n"),
+            "cat-file -e \(built)^{commit}": gitOk(""),
+            "rev-list --left-right --count \(built)...HEAD": gitOk("0\t0\n"),
+            "status --porcelain": gitOk(""),
         ])
         #expect(result.upstreamBehind == nil)
     }
@@ -231,31 +243,25 @@ struct ReleaseCheckTests {
         let newer = ReleaseCheck.Release(tag: "v1.1.0", url: nil, publishedAt: nil)
         let same = ReleaseCheck.Release(tag: "v1.0.0", url: nil, publishedAt: nil)
         let weird = ReleaseCheck.Release(tag: "next", url: nil, publishedAt: nil)
-        #expect(ReleaseCheck.compare(version: "1.0.0", to: newer) == .available(newer))
-        #expect(ReleaseCheck.compare(version: "1.0.0", to: same) == .upToDate(same))
-        #expect(ReleaseCheck.compare(version: "1.0", to: same) == .upToDate(same))
+        #expect(ReleaseCheck.compare(version: "1.0.0", to: newer) == .available)
+        #expect(ReleaseCheck.compare(version: "1.0.0", to: same) == .upToDate)
+        #expect(ReleaseCheck.compare(version: "1.0", to: same) == .upToDate)
         #expect(ReleaseCheck.compare(version: "1.0.9",
                                    to: .init(tag: "v1.0.10", url: nil, publishedAt: nil))
-              == .available(.init(tag: "v1.0.10", url: nil, publishedAt: nil)))
-        if case .unknown(_, let release) = ReleaseCheck.compare(version: "1.0.0", to: weird) {
-            #expect(release == weird)
-        } else {
-            Issue.record("malformed tag should read as unknown")
-        }
+              == .available)
+        #expect(ReleaseCheck.compare(version: "1.0.0", to: weird) == .incomparable)
     }
 
     @Test func fetchesDecodesAndCaches() async throws {
         var transport = FakeTransport()
         transport.answer = .success((Data(Self.payload.utf8), 200))
         let check = ReleaseCheck(transport: transport, cacheURL: tempCache())
-        let outcome = await check.check(current: "1.0.0", force: false)
-        guard case .available(let release) = outcome else {
-            Issue.record("expected an available release, got \(outcome)")
-            return
-        }
-        #expect(release.tag == "v1.1.0")
-        #expect(release.url?.absoluteString.contains("/tag/v1.1.0") == true)
-        #expect(release.publishedAt != nil)
+        let report = await check.check(current: "1.0.0", force: false)
+        #expect(report.comparison == .available)
+        #expect(report.release?.tag == "v1.1.0")
+        #expect(report.release?.url?.absoluteString.contains("/tag/v1.1.0") == true)
+        #expect(report.release?.publishedAt != nil)
+        #expect(report.error == nil)
     }
 
     @Test func freshCacheSkipsTheNetworkAndForceBypasses() async throws {
@@ -267,19 +273,15 @@ struct ReleaseCheckTests {
         // A second checker with a failing transport still answers from the
         // warm cache.
         let cold = ReleaseCheck(transport: FakeTransport(), cacheURL: cacheURL)
-        guard case .available = await cold.check(current: "1.0.0", force: false) else {
-            Issue.record("warm cache should skip the network")
-            return
-        }
-        // Forced, the same dead transport surfaces its error but keeps the
-        // cached release.
-        guard case .unknown(let message, let release) =
-                await cold.check(current: "1.0.0", force: true) else {
-            Issue.record("forced check on a dead transport should be unknown")
-            return
-        }
-        #expect(message != nil)
-        #expect(release?.tag == "v1.1.0")
+        let warmed = await cold.check(current: "1.0.0", force: false)
+        #expect(warmed.comparison == .available)
+        #expect(warmed.error == nil)
+        // Forced, the same dead transport surfaces its error but the cached
+        // newer release still compares as available.
+        let forced = await cold.check(current: "1.0.0", force: true)
+        #expect(forced.error != nil)
+        #expect(forced.release?.tag == "v1.1.0")
+        #expect(forced.comparison == .available)
     }
 }
 
@@ -301,5 +303,143 @@ struct SweVersionTests {
         struct Version: Decodable { let version: String }
         let reply: Version? = try? await swe.call(["version", "--json"])
         #expect(reply == nil)
+    }
+}
+
+/// Runs whatever it was asked, immediately; argv is captured for checks.
+private final class RecordingRunner: CommandRunning, @unchecked Sendable {
+    var result: CommandResult
+    private(set) var calls: [[String]] = []
+
+    init(_ result: CommandResult) { self.result = result }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        calls.append(arguments)
+        return result
+    }
+}
+
+/// Blocks inside run until finishCall, so a test can change the checkout
+/// while a build is in flight.
+private final class GateRunner: CommandRunning, @unchecked Sendable {
+    private(set) var calls: [[String]] = []
+    private var finish: CheckedContinuation<CommandResult, Never>?
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var called = false
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        calls.append(arguments)
+        called = true
+        waiter?.resume()
+        waiter = nil
+        return await withCheckedContinuation { finish = $0 }
+    }
+
+    func waitUntilCalled() async {
+        if called { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func finishCall(_ result: CommandResult) {
+        finish?.resume(returning: result)
+        finish = nil
+    }
+}
+
+private struct DeadTransport: HTTPTransport {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw URLError(.notConnectedToInternet)
+    }
+}
+
+@Suite("Updates model")
+@MainActor
+struct UpdatesModelTests {
+    private func tempDir(_ name: String = UUID().uuidString) -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func makeModel(checkout: String,
+                           rebuildRunner: any CommandRunning,
+                           rebuildDir: URL) -> UpdatesModel {
+        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let prefs = UpdatePreferences(defaults: defaults)
+        prefs.checkoutOverride = checkout
+        return UpdatesModel(
+            build: BuildInfo(commit: built),
+            preferences: prefs,
+            localCheck: LocalBuildCheck(runner: GitFake([
+                "rev-parse HEAD": gitOk(head + "\n"),
+                "cat-file -e \(built)^{commit}": gitOk(""),
+                "rev-list --left-right --count \(built)...HEAD": gitOk("0\t0\n"),
+                "status --porcelain": gitOk(""),
+            ])),
+            releaseCheck: ReleaseCheck(
+                transport: DeadTransport(),
+                cacheURL: tempDir().appending(path: "latest-release.json")),
+            rebuildRunner: rebuildRunner,
+            rebuildDir: rebuildDir)
+    }
+
+    @Test func changingTheCheckoutDropsStaleAnswersAndBuilds() async throws {
+        let dir = tempDir()
+        let rebuildDir = tempDir()
+        let model = makeModel(
+            checkout: dir.path,
+            rebuildRunner: RecordingRunner(gitOk("")),
+            rebuildDir: rebuildDir)
+        await model.refresh(force: false)
+        #expect(model.local != nil)
+        await model.rebuild()
+        #expect(model.rebuildState == .built(rebuildDir.appending(path: "Quiver.app")))
+
+        model.setCheckout("")
+        #expect(model.checkout == nil)
+        #expect(model.local == nil)
+        #expect(model.rebuildState == .idle)
+    }
+
+    @Test func aBuildThatOutlivesItsCheckoutIsDiscarded() async throws {
+        let dir = tempDir()
+        let gate = GateRunner()
+        let model = makeModel(
+            checkout: dir.path, rebuildRunner: gate, rebuildDir: tempDir())
+        async let build: Void = model.rebuild()
+        await gate.waitUntilCalled()
+        model.setCheckout("")
+        gate.finishCall(gitOk(""))
+        await build
+        #expect(model.rebuildState == .idle)
+    }
+
+    @Test func rebuildRunsTheScriptIntoTheRebuildCache() async throws {
+        let dir = tempDir()
+        let rebuildDir = tempDir()
+        let runner = RecordingRunner(gitOk(""))
+        let model = makeModel(checkout: dir.path, rebuildRunner: runner,
+                              rebuildDir: rebuildDir)
+        await model.rebuild()
+        #expect(runner.calls == [[
+            "QUIVER_BUILD_DIR=\(rebuildDir.path)", "bash",
+            dir.path + "/app/script/build-app.sh",
+        ]])
+        #expect(model.rebuildState == .built(rebuildDir.appending(path: "Quiver.app")))
+    }
+
+    @Test func aFailedRebuildKeepsTheLastLines() async throws {
+        let dir = tempDir()
+        let runner = RecordingRunner(CommandResult(
+            status: 1,
+            stdout: Data("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\n".utf8), stderr: ""))
+        let model = makeModel(checkout: dir.path, rebuildRunner: runner,
+                              rebuildDir: tempDir())
+        await model.rebuild()
+        guard case .failed(let message) = model.rebuildState else {
+            Issue.record("expected a failed rebuild, got \(model.rebuildState)")
+            return
+        }
+        #expect(message == "l3\nl4\nl5\nl6\nl7\nl8")
     }
 }
