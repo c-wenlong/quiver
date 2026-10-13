@@ -42,7 +42,7 @@ struct MainWindow: View {
             .highPriorityGesture(TapGesture(count: 2).onEnded { _ in
                 dragWidth = nil
                 withAnimation(animation) {
-                    model.sidebarWidth = SidebarWidth.standard
+                    model.resetSidebarWidth()
                 }
             })
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
@@ -64,6 +64,28 @@ struct MainWindow: View {
                     dragStart = nil
                     dragWidth = nil
                 })
+            // A collapse mid-gesture removes the handle before onEnded:
+            // drop the unfinished drag instead of saving it.
+            .onDisappear {
+                dragStart = nil
+                dragWidth = nil
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Sidebar width")
+            .accessibilityValue("\(Int(sidebarWidth)) points")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment:
+                    model.adjustSidebarWidth(by: SidebarWidth.step)
+                case .decrement:
+                    model.adjustSidebarWidth(by: -SidebarWidth.step)
+                default:
+                    break
+                }
+            }
+            .accessibilityAction(named: "Reset width") {
+                model.resetSidebarWidth()
+            }
     }
 
     var body: some View {
@@ -95,6 +117,12 @@ struct MainWindow: View {
             }
         }
         .animation(animation, value: model.sidebarCollapsed)
+        .animation(animation, value: model.sidebarWidth)
+        // ⌃⌘S mid-drag removes the handle without onEnded: discard.
+        .onChange(of: model.sidebarCollapsed) { _, _ in
+            dragStart = nil
+            dragWidth = nil
+        }
         .onAppear {
             model.openMainWindow = { [openWindow] in openWindow(id: "main") }
         }

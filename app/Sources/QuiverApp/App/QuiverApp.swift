@@ -21,6 +21,18 @@ struct QuiverApp: App {
                     model.sidebarCollapsed.toggle()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
+                Button("Widen Sidebar") {
+                    model.adjustSidebarWidth(by: SidebarWidth.step)
+                }
+                .disabled(model.sidebarCollapsed)
+                Button("Narrow Sidebar") {
+                    model.adjustSidebarWidth(by: -SidebarWidth.step)
+                }
+                .disabled(model.sidebarCollapsed)
+                Button("Reset Sidebar Width") {
+                    model.resetSidebarWidth()
+                }
+                .disabled(model.sidebarCollapsed)
             }
         }
     }

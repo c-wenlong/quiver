@@ -5,6 +5,8 @@
 public enum SidebarWidth {
     public static let standard = 196.0
     public static let range = 160.0...360.0
+    /// One keyboard or VoiceOver step.
+    public static let step = 20.0
 
     public static func clamped(_ width: Double) -> Double {
         min(max(width, range.lowerBound), range.upperBound)

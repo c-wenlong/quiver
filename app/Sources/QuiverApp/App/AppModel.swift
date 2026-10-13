@@ -34,6 +34,16 @@ final class AppModel {
         didSet { UserDefaults.standard.set(sidebarWidth, forKey: "sidebarWidth") }
     }
 
+    /// Every non-drag width change goes through here, so menu commands
+    /// and VoiceOver share the clamp and the persisted write.
+    func adjustSidebarWidth(by delta: Double) {
+        sidebarWidth = SidebarWidth.clamped(sidebarWidth + delta)
+    }
+
+    func resetSidebarWidth() {
+        sidebarWidth = SidebarWidth.standard
+    }
+
     /// Opens (or reopens) the main window. Captured from the window's scene,
     /// because the menu bar panel lives outside SwiftUI's scene graph and
     /// its own `openWindow` cannot reach the `Window` scene.

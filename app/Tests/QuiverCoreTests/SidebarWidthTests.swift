@@ -13,4 +13,13 @@ import Testing
         #expect(SidebarWidth.clamped(400) == SidebarWidth.range.upperBound)
         #expect(SidebarWidth.clamped(.infinity) == SidebarWidth.range.upperBound)
     }
+
+    @Test func stepsMoveByTheStepAndClampAtTheBounds() {
+        #expect(SidebarWidth.clamped(SidebarWidth.standard + SidebarWidth.step) == 216)
+        #expect(SidebarWidth.clamped(SidebarWidth.standard - SidebarWidth.step) == 176)
+        #expect(SidebarWidth.clamped(SidebarWidth.range.upperBound + SidebarWidth.step)
+            == SidebarWidth.range.upperBound)
+        #expect(SidebarWidth.clamped(SidebarWidth.range.lowerBound - SidebarWidth.step)
+            == SidebarWidth.range.lowerBound)
+    }
 }
