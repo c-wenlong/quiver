@@ -453,6 +453,31 @@ struct UpdatesModelTests {
         #expect(!FileManager.default.fileExists(atPath: buildDir))
     }
 
+    @Test func pruneRemovesOnlyOldFoldersInsideTheCache() async throws {
+        let dir = tempDir()
+        let rebuildDir = tempDir()
+        let model = makeModel(checkout: dir.path,
+                              rebuildRunner: RecordingRunner(gitOk("")),
+                              rebuildDir: rebuildDir)
+        let old = rebuildDir.appending(path: "old-build")
+        let fresh = rebuildDir.appending(path: "fresh-build")
+        let outside = tempDir().appending(path: "keep-me")
+        for url in [old, fresh] {
+            try FileManager.default.createDirectory(at: url,
+                                                    withIntermediateDirectories: true)
+        }
+        try "x".write(to: outside, atomically: true, encoding: .utf8)
+        let twoDaysAgo = Date().addingTimeInterval(-2 * 24 * 3600)
+        try FileManager.default.setAttributes(
+            [.modificationDate: twoDaysAgo], ofItemAtPath: old.path)
+
+        model.pruneStaleBuilds()
+
+        #expect(!FileManager.default.fileExists(atPath: old.path))
+        #expect(FileManager.default.fileExists(atPath: fresh.path))
+        #expect(FileManager.default.fileExists(atPath: outside.path))
+    }
+
     @Test func aFailedRebuildKeepsTheLastLines() async throws {
         let dir = tempDir()
         let runner = RecordingRunner(CommandResult(

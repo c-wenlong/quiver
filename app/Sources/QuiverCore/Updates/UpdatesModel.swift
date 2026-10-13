@@ -39,6 +39,7 @@ public final class UpdatesModel {
     /// a new build can delete it without touching anything else.
     private var buildDir: URL?
     private var generation = 0
+    private var prunedStaleBuilds = false
 
     /// `swe` is resolved at call time so a changed swe executable in
     /// Settings applies to the next refresh.
@@ -106,6 +107,14 @@ public final class UpdatesModel {
     public func refresh(force: Bool) async {
         generation += 1
         let mine = generation
+        if !prunedStaleBuilds {
+            prunedStaleBuilds = true
+            let dir = rebuildDir, skip = buildDir
+            Task.detached(priority: .utility) {
+                Self.pruneStaleBuilds(in: dir, skipping: skip,
+                                      olderThan: 24 * 3600, now: Date())
+            }
+        }
         checking = true
         defer { if mine == generation { checking = false } }
 
@@ -190,6 +199,37 @@ public final class UpdatesModel {
         if let buildDir {
             try? FileManager.default.removeItem(at: buildDir)
             self.buildDir = nil
+        }
+    }
+
+    /// Delete per-build folders abandoned under the rebuild cache by a
+    /// quit that never relaunched. Only direct children of `rebuildDir`
+    /// older than the cutoff go; a missing cache is a no-op and this
+    /// model's own current build is always skipped. The default keeps
+    /// another running copy's fresh build and any build awaiting
+    /// relaunch for a day.
+    public func pruneStaleBuilds(olderThan: TimeInterval = 24 * 3600,
+                                 now: Date = Date()) {
+        Self.pruneStaleBuilds(in: rebuildDir, skipping: buildDir,
+                              olderThan: olderThan, now: now)
+    }
+
+    nonisolated private static func pruneStaleBuilds(in dir: URL, skipping: URL?,
+                                                     olderThan: TimeInterval,
+                                                     now: Date) {
+        let cutoff = now.addingTimeInterval(-olderThan)
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles])
+        else { return }
+        for child in children {
+            guard child != skipping,
+                  let modified = try? child.resourceValues(
+                    forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  modified < cutoff
+            else { continue }
+            try? FileManager.default.removeItem(at: child)
         }
     }
 }
