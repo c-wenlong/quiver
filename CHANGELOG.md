@@ -36,6 +36,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   even when `~/.quiver` is unparseable. `--json` emits the standard
   envelope with `name`, `version` and the Python version under `data`.
 
+### Changed
+
+- **Compute's clean-up moved into the header and finds more leftovers.**
+  The limits card left the bottom of the page for a settings popover
+  behind a gear button (with a new 1h orphan-age option), and the
+  "Clean up" button is a broom icon with a count badge opening a
+  centred sheet. The sheet groups candidates under an Orphaned header
+  and one header per harness in registry order, each collapsible with a
+  mini switch that ticks the whole group; quitting a selection now costs
+  one process sample no matter how many items it holds. The rules grew:
+  bundle helpers still hung on launchd from an earlier app launch (or
+  after the app quit) are suggested, so are duplicate servers, identical
+  children of the same harness parent older than the orphan age, while
+  every orphan tree is listed ticked or not. Processes whose executable
+  was deleted after launch (a versioned helper an update replaced) are
+  seen again: the sampler falls back to argv[0] when proc_pidpath goes
+  empty.
+
 ## [1.0.0] - 2026-10-13
 
 First stable release. `swe` and the Quiver macOS app share one data model
