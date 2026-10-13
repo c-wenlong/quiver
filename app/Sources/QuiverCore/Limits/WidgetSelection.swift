@@ -103,6 +103,9 @@ public struct WidgetSelection: Equatable, Sendable {
                                         sourceOrderKey: SourceSelection.widgetSourceOrderKey)
     /// Harnesses each usage widget leaves out.
     public private(set) var hiddenHarnesses: [Widget: Set<String>] = [:]
+    /// Whether the Usage summary widget draws the aggregate total line
+    /// on top of the per-harness ones.
+    public var summaryShowsTotal = true
 
     public init() {}
 
@@ -114,6 +117,7 @@ public struct WidgetSelection: Equatable, Sendable {
         for widget in Widget.allCases {
             hiddenHarnesses[widget] = Set(defaults.stringArray(forKey: Self.harnessesKey(widget)) ?? [])
         }
+        summaryShowsTotal = defaults.object(forKey: Self.summaryShowsTotalKey) as? Bool ?? true
     }
 
     public func save(to defaults: UserDefaults) {
@@ -121,7 +125,10 @@ public struct WidgetSelection: Equatable, Sendable {
         for widget in Widget.allCases {
             defaults.set((hiddenHarnesses[widget] ?? []).sorted(), forKey: Self.harnessesKey(widget))
         }
+        defaults.set(summaryShowsTotal, forKey: Self.summaryShowsTotalKey)
     }
+
+    public static let summaryShowsTotalKey = "widgetSummaryShowsTotal"
 
     /// Whether `widget` counts `harness`.
     public func shows(harness: String, in widget: Widget) -> Bool {

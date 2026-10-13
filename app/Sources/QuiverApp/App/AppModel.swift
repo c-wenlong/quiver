@@ -81,8 +81,26 @@ final class AppModel {
     var widgetSelection = WidgetSelection(defaults: .standard) {
         didSet {
             widgetSelection.save(to: .standard)
-            limits.writeWidgets(overview: overview, selection: widgetSelection)
+            let style = widgetHarnessStyle
+            limits.writeWidgets(overview: overview, selection: widgetSelection,
+                                harnessOrder: style.order, harnessColors: style.colors)
         }
+    }
+
+    /// The Settings provider order and each harness's trend-chart colour
+    /// as hex, as the widget snapshot's per-harness lines want them.
+    var widgetHarnessStyle: (order: [String], colors: [String: String]) {
+        let order = providers.rows.map(\.provider.id)
+        let primaries = Dictionary(compute.matchers.map { ($0.harness, $0.primaryColor) },
+                                   uniquingKeysWith: { first, _ in first })
+        var colors: [String: String] = [:]
+        var harnesses = Set(order)
+        harnesses.formUnion((overview?.activityRows ?? []).map(\.harness))
+        for harness in harnesses {
+            colors[harness] = HarnessColor.resolve(id: harness,
+                                                   primaryColor: primaries[harness] ?? nil).hex
+        }
+        return (order, colors)
     }
 
     var terminal: TerminalApp {
@@ -450,7 +468,9 @@ final class AppModel {
                 }
                 for await _ in changes {
                     guard let self else { continue }
-                    limits.writeWidgets(overview: overview, selection: widgetSelection)
+                    let style = widgetHarnessStyle
+                    limits.writeWidgets(overview: overview, selection: widgetSelection,
+                                        harnessOrder: style.order, harnessColors: style.colors)
                 }
             },
         ]

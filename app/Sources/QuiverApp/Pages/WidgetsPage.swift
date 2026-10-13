@@ -16,7 +16,9 @@ struct WidgetsPage: View {
     /// The snapshot a widget on the desktop would draw right now: what the
     /// app would write to the shared file, settings applied.
     private var snapshot: WidgetSnapshot {
-        app.limits.widgetSnapshot(overview: app.overview, selection: app.widgetSelection)
+        let style = app.widgetHarnessStyle
+        return app.limits.widgetSnapshot(overview: app.overview, selection: app.widgetSelection,
+                                         harnessOrder: style.order, harnessColors: style.colors)
     }
 
     /// The tab's widget, falling back to the first for a stored kind that
@@ -115,7 +117,6 @@ private struct WidgetCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                 previews
                 settings
-                Text(widget.sizes).font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
     }
@@ -199,6 +200,12 @@ private struct WidgetCard: View {
             if !harnesses.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Counted").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                    if harnessWidget == .summary {
+                        TotalPickRow(isOn: Binding(
+                            get: { app.widgetSelection.summaryShowsTotal },
+                            set: { app.widgetSelection.summaryShowsTotal = $0 }))
+                        SettingsDivider()
+                    }
                     ForEach(harnesses, id: \.self) { harness in
                         HarnessPickRow(harness: harness, isOn: Binding(
                             get: { app.widgetSelection.shows(harness: harness, in: harnessWidget) },
@@ -245,6 +252,24 @@ private struct WidgetCard: View {
         names.formUnion((app.overview?.recentRows ?? []).map(\.harness))
         let listed = app.widgetSelection.listedHarnesses(withUsage: names, for: widget)
         return app.providers.ordered(Array(listed))
+    }
+}
+
+/// The summary widget's aggregate line, switched on its own.
+private struct TotalPickRow: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sum")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 16, height: 16)
+            Text("Total").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+            Spacer(minLength: 16)
+            SettingSwitch(title: "Show the total line", isOn: $isOn)
+        }
+        .padding(.vertical, 12)
     }
 }
 

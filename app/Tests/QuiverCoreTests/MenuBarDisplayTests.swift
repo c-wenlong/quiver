@@ -123,6 +123,5 @@ private var today: UsageTotals {
     @Test func listsTheFourWidgetsByTheirKinds() {
         #expect(WidgetCatalog.all.map(\.kind) == ["limits", "summary", "heatmap", "models"])
         #expect(WidgetCatalog.all.map(\.title) == ["Usage limits", "Usage summary", "Activity heatmap", "Top models"])
-        #expect(WidgetCatalog.all.first?.sizes == "Small, medium and large")
     }
 }

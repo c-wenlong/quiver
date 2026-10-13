@@ -133,6 +133,12 @@ import Testing
         #expect(defaults.stringArray(forKey: "widgetHarnesses.summary") == [])
         #expect(defaults.stringArray(forKey: "widgetLimitsHiddenSources") == ["claude-work"])
 
+        selection.summaryShowsTotal = false
+        selection.save(to: defaults)
+        #expect(defaults.bool(forKey: "widgetSummaryShowsTotal") == false)
+        let reloaded = WidgetSelection(defaults: defaults)
+        #expect(!reloaded.summaryShowsTotal)
+
         let back = WidgetSelection(defaults: defaults)
         #expect(!back.shows(harness: "codex", in: .models))
         #expect(!back.shows(harness: "cursor", in: .heatmap))
