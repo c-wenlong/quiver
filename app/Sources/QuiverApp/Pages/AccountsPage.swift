@@ -12,7 +12,7 @@ struct AccountsPage: View {
         Page(title: "Accounts",
              subtitle: "Each account keeps its own sign-in. Open it in its app or a terminal without logging out.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await reloadAll(force: true) }
+                Task { await reloadAll(force: true, renewExpired: true) }
             }
             .iconButton()
             .disabled(model.isLoading)
@@ -32,7 +32,8 @@ struct AccountsPage: View {
             if !cards.isEmpty || !harnesses.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter, alignment: .top)], spacing: Theme.gutter) {
                     ForEach(cards) { card in
-                        AccountCard(card: card, perform: perform, reloadAll: reloadAll)
+                        AccountCard(card: card, perform: perform,
+                                    reloadAll: { await reloadAll(force: $0) })
                     }
                     ForEach(harnesses) { row in
                         HarnessAccountCard(row: row, perform: perform)
@@ -64,8 +65,13 @@ struct AccountsPage: View {
         .task { await app.others.load() }
     }
 
-    private func reloadAll(force: Bool) async {
-        await app.accounts.load(force: force)
+    private func reloadAll(force: Bool, renewExpired: Bool = false) async {
+        // Only the Refresh button renews; every other caller just loads.
+        if renewExpired {
+            await app.accounts.refreshFromButton()
+        } else {
+            await app.accounts.load(force: force)
+        }
         await app.others.load()
     }
 
@@ -124,7 +130,7 @@ private struct AccountCard: View {
             }
             UsageBars(usage: card.usage)
             HStack {
-                StatusLine(usage: card.usage)
+                StatusLine(usage: card.usage, card: card)
                 Spacer()
                 LaunchButtons(
                     appPath: app.apps.installedApp(for: profile.vendor.rawValue),
@@ -190,7 +196,11 @@ struct UsageBar: View {
 
 /// What the reading is and how old it is, in one quiet line.
 struct StatusLine: View {
+    @Environment(AppModel.self) private var app
     var usage: AccountUsage?
+    /// Set on the Accounts page and in the menu bar panel, so an expired
+    /// Claude sign-in can offer the renewal wording.
+    var card: AccountsModel.Card? = nil
 
     var body: some View {
         Group {
@@ -206,7 +216,19 @@ struct StatusLine: View {
             case .signedOut:
                 Text("Signed out. Use Sign in from the menu.")
             case .expired:
-                Text("Sign-in expired. Open the CLI once to refresh it.")
+                if let card, card.profile.vendor == .claude {
+                    if app.accounts.renewing.contains(card.id) {
+                        Text("Renewing sign-in…")
+                    } else if app.accounts.renewFailed.contains(card.id) {
+                        Text("Couldn't renew the sign-in. Open the CLI once to sign in again.")
+                    } else if app.accounts.cliOnPath[.claude] == true {
+                        Text("Sign-in expired. Press refresh to renew it.")
+                    } else {
+                        Text("Sign-in expired. Open the CLI once to refresh it.")
+                    }
+                } else {
+                    Text("Sign-in expired. Open the CLI once to refresh it.")
+                }
             case .rateLimited(let until):
                 Text("Usage API busy until \(until, format: .dateTime.hour().minute())")
             case .error(let message):

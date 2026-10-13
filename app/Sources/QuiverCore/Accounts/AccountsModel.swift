@@ -95,6 +95,11 @@ public final class AccountsModel {
     /// every load. swe's registry says the same for harnesses it knows, but
     /// a fresh registry may not list Claude or Codex at all.
     public private(set) var cliOnPath: [Vendor: Bool] = [:]
+    /// Claude accounts whose sign-in renewal is running right now.
+    public private(set) var renewing: Set<String> = []
+    /// Accounts whose last renewal failed; cleared when a load finds the
+    /// account no longer expired.
+    public private(set) var renewFailed: Set<String> = []
     public private(set) var isLoading = false
     public private(set) var error: String?
 
@@ -103,21 +108,25 @@ public final class AccountsModel {
     private let launcher: Launching
     private let terminal: () -> TerminalApp
     private let loginPath: @Sendable () async -> String
+    private let renewer: ClaudeSignInRenewing
     private var generation = 0
 
     public init(store: ProfileStore, usage: UsageFetching, launcher: Launching,
                 terminal: @escaping () -> TerminalApp,
-                loginPath: @escaping @Sendable () async -> String = { await CLIPath.terminalShellPath() }) {
+                loginPath: @escaping @Sendable () async -> String = { await CLIPath.terminalShellPath() },
+                renewer: ClaudeSignInRenewing = ClaudeSignInRenewer()) {
         self.store = store
         self.usage = usage
         self.launcher = launcher
         self.terminal = terminal
         self.loginPath = loginPath
+        self.renewer = renewer
     }
 
     /// Reload profiles, then every account's usage at once. `force` skips the
-    /// five-minute cache but never a provider's cooldown.
-    public func load(force: Bool) async {
+    /// five-minute cache but never a provider's cooldown; `forcing` skips
+    /// it for just those account ids.
+    public func load(force: Bool, forcing: Set<String> = []) async {
         generation += 1
         let mine = generation
         let profiles: [Profile]
@@ -149,7 +158,7 @@ public final class AccountsModel {
         let usage = self.usage
         let results = await withTaskGroup(of: (String, AccountUsage).self) { group in
             for (id, key) in keys {
-                group.addTask { (id, await usage.usage(for: key, force: force)) }
+                group.addTask { (id, await usage.usage(for: key, force: force || forcing.contains(id))) }
             }
             var out: [String: AccountUsage] = [:]
             for await (id, reading) in group { out[id] = reading }
@@ -157,6 +166,51 @@ public final class AccountsModel {
         }
         guard mine == generation else { return }
         cards = cards.map { Card(profile: $0.profile, usage: results[$0.id] ?? $0.usage) }
+        // A sign-in that came back (or was never expired) clears its
+        // failed renewal.
+        for card in cards where card.usage?.status != .expired {
+            renewFailed.remove(card.id)
+        }
+    }
+
+    /// What the Refresh buttons do, and only them: load fresh, renew each
+    /// expired Claude sign-in (Claude Code renews its own keychain
+    /// credential; Quiver never touches the token), then load again so
+    /// the renewed accounts read ok. Nothing else — launch, timers, page
+    /// appear, plain `load` — runs a renewal.
+    public func refreshFromButton() async {
+        // The first load is what may show a sign-in expired since the
+        // last reading; renewals are picked from that, not stale cards.
+        await load(force: true)
+        // Cards already renewing skip this press: two `claude` runs in
+        // one account race on refresh-token rotation and can sign it out.
+        let expired = cards.filter {
+            $0.profile.vendor == .claude && $0.usage?.status == .expired
+                && !renewing.contains($0.id)
+        }
+        guard !expired.isEmpty else { return }
+        let targets = expired.map { card in
+            (id: card.id, home: store.paths(for: card.profile).home.path,
+             isDefault: card.profile.isDefault)
+        }
+        renewing.formUnion(targets.map(\.id))
+        let renewer = self.renewer
+        let results = await withTaskGroup(of: (String, Bool).self) { group in
+            for target in targets {
+                group.addTask {
+                    (target.id, await renewer.renew(home: target.home, isDefault: target.isDefault))
+                }
+            }
+            var out: [String: Bool] = [:]
+            for await (id, ok) in group { out[id] = ok }
+            return out
+        }
+        renewing.subtract(targets.map(\.id))
+        renewFailed.formUnion(targets.map(\.id).filter { results[$0] == false })
+        // Only the renewed accounts are forced: a failed renewal must not
+        // hide behind a reading from before the token lapsed, and healthy
+        // accounts reuse the readings the first load just took.
+        await load(force: false, forcing: Set(targets.map(\.id)))
     }
 
     /// Reload on a timer until the calling task is cancelled, so a page left
