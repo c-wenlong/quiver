@@ -110,16 +110,22 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
 
         // One exit task for the whole run: the timeout, SIGTERM and
         // SIGKILL waits all await it, so a late exit can't be missed.
-        let exited = Task<Int32, Never> {
-            await withCheckedContinuation { continuation in
-                process.terminationHandler = {
-                    continuation.resume(returning: $0.terminationStatus)
-                }
+        // The stream's builder runs right here, so the handler is in place
+        // before run(): even an instant exit is buffered, never missed.
+        let statuses = AsyncStream<Int32> { continuation in
+            process.terminationHandler = {
+                continuation.yield($0.terminationStatus)
+                continuation.finish()
             }
+        }
+        let exited = Task<Int32, Never> {
+            for await status in statuses { return status }
+            return -1
         }
         do {
             try process.run()
         } catch {
+            exited.cancel()
             return false
         }
         if let status = await Self.awaiting(exited, for: timeout) {
