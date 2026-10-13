@@ -11,13 +11,68 @@ struct MainWindow: View {
 
     private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
 
+    /// The live width while the edge is being dragged; nil otherwise,
+    /// so the persisted value is written once, on drop.
+    @State private var dragWidth: CGFloat?
+
+    private var sidebarWidth: CGFloat { dragWidth ?? CGFloat(model.sidebarWidth) }
+
+    /// An invisible 8pt strip centred on the sidebar's trailing edge:
+    /// drag to resize live, double-click to reset to the standard
+    /// width. Its centre column draws a hairline on hover and drag.
+    @State private var hoveringHandle = false
+    @GestureState private var draggingHandle = false
+    /// The width the drag started from; set on the first change event.
+    @State private var dragStart: Double?
+
+    private var resizeHandle: some View {
+        Color.clear
+            .frame(width: Theme.sidebarResizeHandleWidth)
+            .frame(maxHeight: .infinity)
+            .contentShape(.rect)
+            .overlay {
+                Theme.border.frame(width: 1)
+                    .opacity(hoveringHandle || draggingHandle ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .onHover { hoveringHandle = $0 }
+            .pointerStyle(.frameResize(position: .trailing))
+            .animation(.easeOut(duration: Theme.fadeDuration),
+                       value: hoveringHandle || draggingHandle)
+            .highPriorityGesture(TapGesture(count: 2).onEnded { _ in
+                dragWidth = nil
+                withAnimation(animation) {
+                    model.sidebarWidth = SidebarWidth.standard
+                }
+            })
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .updating($draggingHandle) { _, state, _ in state = true }
+                .onChanged { value in
+                    if dragStart == nil { dragStart = model.sidebarWidth }
+                    var transaction = Transaction()
+                    transaction.animation = nil
+                    withTransaction(transaction) {
+                        if let start = dragStart {
+                            dragWidth = CGFloat(SidebarWidth.clamped(start + value.translation.width))
+                        }
+                    }
+                }
+                .onEnded { value in
+                    if let start = dragStart {
+                        model.sidebarWidth = SidebarWidth.clamped(start + value.translation.width)
+                    }
+                    dragStart = nil
+                    dragWidth = nil
+                })
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             // The page reflows only when the pinned state changes; a
             // hover expansion floats over the panel instead.
             Color.clear
                 .frame(width: model.sidebarCollapsed
-                    ? Theme.sidebarCollapsedWidth : Theme.sidebarWidth)
+                    ? Theme.sidebarCollapsedWidth : sidebarWidth)
             PageView(section: model.selection ?? .overview)
                 // A page never widens the window: it gets the panel's width.
                 .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
@@ -30,7 +85,15 @@ struct MainWindow: View {
         }
         .background(Theme.wash)
         .ignoresSafeArea(.container, edges: .top)
-        .overlay(alignment: .leading) { Sidebar() }
+        .overlay(alignment: .topLeading) {
+            Sidebar(width: sidebarWidth)
+            // The resize strip lives only while the sidebar is pinned
+            // open: not in the rail, not while it floats. Padding, not
+            // offset, keeps its hit area centred on the sidebar's edge.
+            if !model.sidebarCollapsed {
+                resizeHandle.padding(.leading, sidebarWidth - Theme.sidebarResizeHandleWidth / 2)
+            }
+        }
         .animation(animation, value: model.sidebarCollapsed)
         .onAppear {
             model.openMainWindow = { [openWindow] in openWindow(id: "main") }
@@ -39,6 +102,9 @@ struct MainWindow: View {
 }
 
 private struct Sidebar: View {
+    /// The live expanded width: the model's value, or the pointer's
+    /// while the resize strip is being dragged.
+    var width: CGFloat
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focused: AppSection?
@@ -94,13 +160,13 @@ private struct Sidebar: View {
             .padding(.top, 28)
             // Always laid out at full width; the rail clips the right
             // side instead of reflowing, so icons keep their position.
-            .frame(width: Theme.sidebarWidth, alignment: .leading)
+            .frame(width: width, alignment: .leading)
             // Like a source list: up and down move the selection and focus.
             .onKeyPress(.upArrow) { move(-1) }
             .onKeyPress(.downArrow) { move(1) }
         }
         .scrollIndicators(.never)
-        .frame(width: isExpanded ? Theme.sidebarWidth : Theme.sidebarCollapsedWidth,
+        .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth,
                alignment: .leading)
         .clipped()
         // A floating rail covers the page: it needs the window surface,
@@ -185,6 +251,7 @@ private struct Sidebar: View {
             expansion.pointer(inside: inside)
         }
     }
+
 
     private func move(_ offset: Int) -> KeyPress.Result {
         let next = (focused ?? model.selection ?? .overview).step(offset)

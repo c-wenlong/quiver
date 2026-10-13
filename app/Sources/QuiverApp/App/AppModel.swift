@@ -25,6 +25,15 @@ final class AppModel {
         didSet { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }
     }
 
+    /// The pinned sidebar's width, clamped on load so a stale value
+    /// cannot leave the window unusable.
+    var sidebarWidth: Double = {
+        let stored = UserDefaults.standard.object(forKey: "sidebarWidth") as? Double
+        return stored.map(SidebarWidth.clamped) ?? SidebarWidth.standard
+    }() {
+        didSet { UserDefaults.standard.set(sidebarWidth, forKey: "sidebarWidth") }
+    }
+
     /// Opens (or reopens) the main window. Captured from the window's scene,
     /// because the menu bar panel lives outside SwiftUI's scene graph and
     /// its own `openWindow` cannot reach the `Window` scene.
