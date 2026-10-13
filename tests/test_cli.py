@@ -1,7 +1,76 @@
+import io
+import json
+import os
+import pathlib
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
+import quiver
 from quiver.cli import COMMANDS, cmd_providers
+
+
+def _run_main(argv):
+    out, err = io.StringIO(), io.StringIO()
+    with mock.patch("sys.argv", ["swe", *argv]), \
+            redirect_stdout(out), redirect_stderr(err):
+        from quiver.cli import main
+        status = main()
+    return status, out.getvalue(), err.getvalue()
+
+
+class VersionCommandTest(unittest.TestCase):
+    def test_each_spelling_prints_the_version(self):
+        for spelling in ("version", "-v", "-V", "--version"):
+            with self.subTest(spelling=spelling):
+                status, out, err = _run_main([spelling])
+                self.assertEqual(status, 0)
+                self.assertEqual(out, f"swe {quiver.__version__}\n")
+                self.assertEqual(err, "")
+
+    def test_version_is_dispatchable_not_an_alias_hack(self):
+        for spelling in ("version", "-v", "-V", "--version"):
+            self.assertIs(COMMANDS[spelling], COMMANDS["version"])
+
+    def test_json_envelope(self):
+        for argv in (["version", "--json"], ["--version", "--json"]):
+            with self.subTest(argv=argv):
+                status, out, err = _run_main(argv)
+                self.assertEqual(status, 0)
+                doc = json.loads(out)
+                self.assertEqual(doc["schema"], 1)
+                self.assertEqual(doc["data"]["name"], "swe")
+                self.assertEqual(doc["data"]["version"], quiver.__version__)
+                self.assertIn("python", doc["data"])
+                self.assertEqual(err, "")
+
+    def test_extra_args_are_rejected(self):
+        status, out, err = _run_main(["-v", "extra"])
+        self.assertEqual(status, 1)
+        self.assertIn("Unexpected args: extra", out + err)
+
+    def test_works_when_config_is_broken(self):
+        with tempfile.TemporaryDirectory() as home:
+            config = pathlib.Path(home) / ".quiver" / "config"
+            config.mkdir(parents=True)
+            (config / "harness.json").write_text("{corrupt")
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                status, out, err = _run_main(["--version"])
+        self.assertEqual(status, 0)
+        self.assertEqual(out, f"swe {quiver.__version__}\n")
+
+    def test_version_help_routes_through_cmd_help(self):
+        status, out, err = _run_main(["version", "--help"])
+        self.assertEqual(status, 0)
+        self.assertIn("swe version", out)
+
+
+class VersionCompletionTest(unittest.TestCase):
+    def test_version_is_in_primary_completions(self):
+        from quiver.completion import _PRIMARY_COMMANDS
+        names = [name for name, _ in _PRIMARY_COMMANDS]
+        self.assertIn("version", names)
 
 
 class ProvidersCliRoutingTest(unittest.TestCase):

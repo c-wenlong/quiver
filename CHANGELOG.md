@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`swe version` (and `-v` / `-V` / `--version`) prints the installed
+  version.** `swe 1.0.0` on stdout, exit 0, and no config read, so it works
+  even when `~/.quiver` is unparseable. `--json` emits the standard
+  envelope with `name`, `version` and the Python version under `data`.
+
 ## [1.0.0] - 2026-10-13
 
 First stable release. `swe` and the Quiver macOS app share one data model

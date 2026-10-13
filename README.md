@@ -147,6 +147,7 @@ swe setup                    # six-stage interactive onboarding wizard
 swe setup --quick            # only missing or actionable setup stages
 swe setup report             # configure coding-session report models only
 swe setup --apply            # apply safe defaults without prompting
+swe --version                # print the swe version (also: swe -v, swe version)
 swe harness discover         # scan PATH for unregistered AI CLIs
 swe mcp discover             # find MCP servers not in ~/.quiver/mcp.json
 swe init                     # create ~/.quiver and link every harness to it

@@ -558,6 +558,15 @@ to use their own login state and environment."""
   The completion script calls {c('cyan', 'swe __complete')} under the hood to
   provide dynamic completions for tool names, aliases, tags, and flags."""
     ),
+    "version": (
+        "Print the swe version",
+        f"""\
+  {c('cyan', 'swe version')}    {c('cyan', 'swe -v')}    {c('cyan', 'swe --version')}
+
+  Prints the installed version and exits. Reads no config, so it works even
+  when ~/.quiver is broken. {c('cyan', '--json')} emits the standard envelope:
+  name, version and the Python version under `data`."""
+    ),
 }
 
 COMMAND_CATEGORIES = [
@@ -599,6 +608,7 @@ COMMAND_CATEGORIES = [
     ]),
     ("Shell", [
         ("autocomplete", None),
+        ("version",      None),
     ]),
 ]
 

@@ -32,6 +32,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("setup", "Onboarding wizard"),
     ("init", "Create ~/.quiver and link every harness"),
     ("autocomplete", "Generate shell completion"),
+    ("version", "Print the swe version"),
 ]
 
 # Commands that take a tool name/alias as their first positional argument.
