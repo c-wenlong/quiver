@@ -37,7 +37,7 @@ struct WidgetsPage: View {
             .keyboardShortcut("r", modifiers: .command)
             .help("Redraw the widgets with the latest figures (⌘R)")
         } content: {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 Tabs(options: WidgetCatalog.all.map { ($0.kind, $0.title) },
                      selection: $widgetTab, style: .underline)
                 WidgetCard(widget: widget, isPlaced: placed.contains(widget.kind),
