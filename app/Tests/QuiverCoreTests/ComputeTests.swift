@@ -673,6 +673,43 @@ import Testing
         #expect(items.map(\.harness) == [nil, "codex", "claude"])
     }
 
+    @Test func anUntickedAncestorDoesNotCoverAPreselectedChild() {
+        // 11 is busy only (unticked); its over-memory child must still be
+        // listed and ticked: quitting 11 was never suggested.
+        let over = UInt64(3) << 30
+        let parent = Self.proc(10, 1, path: "/opt/homebrew/bin/claude")
+        let helper = Self.proc(11, 10, path: "/x/helper")
+        let child = Self.proc(12, 11, path: "/x/worker", mem: over)
+        let items = Self.cleanup(["claude": [parent, helper, child]],
+                                 processFlags: [11: [.busy], 12: [.overMemory]],
+                                 matchers: [Self.claude])
+        let helperItem = items.first { $0.id == "process-11" }
+        let childItem = items.first { $0.id == "process-12" }
+        #expect(helperItem?.preselected == false)
+        #expect(childItem?.preselected == true)
+    }
+
+    // MARK: Path resolution
+
+    @Test func aDeletedBinaryFallsBackToAnAbsoluteArgv0() {
+        #expect(ProcessSampler.resolvedPath(native: "",
+                                            arguments: ["/Applications/X.app/Contents/MacOS/x"])
+                == "/Applications/X.app/Contents/MacOS/x")
+    }
+
+    @Test func aRelativeArgv0IsNoPath() {
+        #expect(ProcessSampler.resolvedPath(native: "", arguments: ["npm", "run"]) == "")
+    }
+
+    @Test func noArgumentsIsNoPath() {
+        #expect(ProcessSampler.resolvedPath(native: "", arguments: []) == "")
+    }
+
+    @Test func aNativePathBeatsArgv0() {
+        #expect(ProcessSampler.resolvedPath(native: "/real/bin",
+                                            arguments: ["/other/bin"]) == "/real/bin")
+    }
+
     // MARK: Batch quit
 
     @MainActor @Test func aBatchQuitSamplesOnceAndSignalsEveryPidOnce() async {

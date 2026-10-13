@@ -39,16 +39,7 @@ public struct ProcessSampler: ProcessSampling, Sendable {
             ? Int(task.pti_threadnum) : 0
         let fp = footprint(of: pid)
         let args = arguments(of: pid)
-        // proc_pidpath answers "" when the executable was deleted after
-        // launch (an app update swapped the versioned folder); argv[0]
-        // still names it, so fall back to an absolute argv[0].
-        let rawPath = path(of: pid)
-        let path: String
-        if rawPath.isEmpty, let argv0 = args.first, argv0.hasPrefix("/") {
-            path = argv0
-        } else {
-            path = rawPath
-        }
+        let path = Self.resolvedPath(native: path(of: pid), arguments: args)
         return ProcessSample(
             pid: pid,
             ppid: Int32(bsd.pbi_ppid),
@@ -93,6 +84,15 @@ public struct ProcessSampler: ProcessSampling, Sendable {
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
         return info
+    }
+
+    /// proc_pidpath answers "" when the executable was deleted after
+    /// launch (an app update swapped the versioned folder); argv[0]
+    /// still names it, so fall back to an absolute argv[0].
+    static func resolvedPath(native: String, arguments: [String]) -> String {
+        if !native.isEmpty { return native }
+        if let argv0 = arguments.first, argv0.hasPrefix("/") { return argv0 }
+        return ""
     }
 
     private func path(of pid: Int32) -> String {

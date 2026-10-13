@@ -762,6 +762,13 @@ private struct CleanupSheet: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 
+    /// "N" normally, "k of N" when the group is only partly ticked.
+    private func groupCountLabel(_ group: Group) -> String {
+        let on = group.items.count { selected.contains($0.id) }
+        return on == 0 || on == group.items.count
+            ? "\(group.items.count)" : "\(on) of \(group.items.count)"
+    }
+
     private func groupHeader(_ group: Group) -> some View {
         HStack(spacing: 8) {
             Button {
@@ -783,7 +790,7 @@ private struct CleanupSheet: View {
                     }
                     Text(group.harness.map(UsageFormat.harness) ?? "Orphaned")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                    Text("\(group.items.count)")
+                    Text(groupCountLabel(group))
                         .font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
                 }
                 .contentShape(.rect)

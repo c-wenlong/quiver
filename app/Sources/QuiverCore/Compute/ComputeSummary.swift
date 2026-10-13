@@ -303,15 +303,17 @@ public enum ComputeSummary {
                 }
             }
 
-            // A candidate whose ancestor is also a non-main candidate goes:
-            // the ancestor's tree quit covers it.
+            // A candidate whose ancestor is also a ticked non-main
+            // candidate goes: the ancestor's tree quit covers it. An
+            // unticked ancestor (busy only, say) covers nothing, so the
+            // child stays listed.
             let byPid = Dictionary(samples.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
             var covered: Set<Int32> = []
             for (pid, _) in candidates {
                 var node = byPid[pid]
                 while let current = node {
                     guard let parent = byPid[current.ppid], parent.pid != current.pid else { break }
-                    if let ancestor = candidates[parent.pid], !ancestor.isMain {
+                    if let ancestor = candidates[parent.pid], !ancestor.isMain, ancestor.preselected {
                         covered.insert(pid)
                         break
                     }
