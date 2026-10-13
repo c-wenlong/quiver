@@ -248,7 +248,7 @@ private struct SettingsSectionView: View {
             detail: localDetail(result),
             warning: {
                 if case .failed(let message) = updates.rebuildState { return message }
-                return nil
+                return updates.rebuildNotice
             }()) {
                 HStack(spacing: 12) {
                     Button("Check now") { Task { await updates.refresh(force: true) } }
@@ -301,9 +301,11 @@ private struct SettingsSectionView: View {
                 ProgressView().controlSize(.small)
                 Text("Building…").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             }
-        case .built(let appURL):
+        case .built:
             Button("Relaunch to update") {
-                AppRelauncher.relaunch(into: appURL)
+                if let url = updates.relaunchURL() {
+                    AppRelauncher.relaunch(into: url)
+                }
             }
             .primaryButton()
         case .failed:

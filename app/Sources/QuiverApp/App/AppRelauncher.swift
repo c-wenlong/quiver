@@ -25,6 +25,15 @@ enum AppRelauncher {
           fi
           sleep 0.1 2>/dev/null || sleep 1
         done
+        # Take ownership of the build folder while we copy: a prune in
+        # another running copy must not delete it under us.
+        src_dir="$(dirname "$src")"
+        case "$src_dir" in
+          "$HOME/.quiver/cache/rebuild/"*)
+            case "${src_dir#"$HOME/.quiver/cache/rebuild/"}" in
+              *[!/]) echo $$ > "$src_dir/owner.pid" ;;
+            esac ;;
+        esac
         if [ "$src" = "$dest" ]; then
           open "$dest"
           exit 0
@@ -56,7 +65,6 @@ enum AppRelauncher {
         /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$trash"
         # The build came from a per-build folder under the rebuild cache;
         # remove it, but only ever a direct child of that cache.
-        src_dir="$(dirname "$src")"
         case "$src_dir" in
           "$HOME/.quiver/cache/rebuild/"*)
             case "${src_dir#"$HOME/.quiver/cache/rebuild/"}" in

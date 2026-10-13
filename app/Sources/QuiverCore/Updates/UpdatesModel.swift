@@ -26,6 +26,9 @@ public final class UpdatesModel {
         case failed(String)
     }
     public private(set) var rebuildState: RebuildState = .idle
+    /// A notice for the Local code row that isn't tied to a build run,
+    /// e.g. a finished build that got cleaned up before relaunch.
+    public private(set) var rebuildNotice: String?
 
     private var preferences: UpdatePreferences
     private let localCheck: LocalBuildCheck
@@ -88,6 +91,7 @@ public final class UpdatesModel {
         switch rebuildState {
         case .built, .failed:
             rebuildState = .idle
+            rebuildNotice = nil
             removeBuildDir()
         case .idle, .building: break
         }
@@ -152,11 +156,18 @@ public final class UpdatesModel {
     public func rebuild() async {
         guard case .idle = rebuildState, let checkout else { return }
         rebuildState = .building
+        rebuildNotice = nil
         removeBuildDir()
         let buildDir = rebuildDir.appending(path: UUID().uuidString)
         let startedCheckout = checkout
         try? FileManager.default.createDirectory(at: buildDir,
                                                  withIntermediateDirectories: true)
+        // The pid marker keeps pruneStaleBuilds from deleting a build
+        // whose owner is still running (the relauncher swaps in its own
+        // pid before it copies, for the same reason).
+        try? "\(ProcessInfo.processInfo.processIdentifier)".write(
+            to: buildDir.appending(path: "owner.pid"),
+            atomically: true, encoding: .utf8)
         let script = checkout + "/app/script/build-app.sh"
         let result = try? await rebuildRunner.run(
             ["QUIVER_BUILD_DIR=\(buildDir.path)", "bash", script])
@@ -181,6 +192,17 @@ public final class UpdatesModel {
                 .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             rebuildState = .failed(lines.suffix(6).joined(separator: "\n"))
         }
+    }
+
+    /// What "Relaunch to update" swaps in. When the finished build was
+    /// cleaned up while the app waited, reset and explain instead.
+    public func relaunchURL() -> URL? {
+        guard case .built(let url) = rebuildState else { return nil }
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        buildDir = nil
+        rebuildState = .idle
+        rebuildNotice = "The build was cleaned up. Rebuild to try again."
+        return nil
     }
 
     /// The build finished earlier; reset so another rebuild can run.
@@ -229,7 +251,19 @@ public final class UpdatesModel {
                     forKeys: [.contentModificationDateKey]).contentModificationDate,
                   modified < cutoff
             else { continue }
+            // A live owner pid means another copy of the app still owns
+            // this build and its "Relaunch to update" needs it.
+            guard !ownerIsAlive(at: child) else { continue }
             try? FileManager.default.removeItem(at: child)
         }
+    }
+
+    nonisolated private static func ownerIsAlive(at folder: URL) -> Bool {
+        let marker = folder.appending(path: "owner.pid")
+        guard let text = try? String(contentsOf: marker, encoding: .utf8),
+              let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        else { return false }
+        if kill(pid, 0) == 0 { return true }
+        return errno == EPERM
     }
 }

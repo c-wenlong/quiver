@@ -478,6 +478,56 @@ struct UpdatesModelTests {
         #expect(FileManager.default.fileExists(atPath: outside.path))
     }
 
+    @Test func pruneKeepsAFolderWhoseOwnerIsAlive() async throws {
+        let dir = tempDir()
+        let rebuildDir = tempDir()
+        let model = makeModel(checkout: dir.path,
+                              rebuildRunner: RecordingRunner(gitOk("")),
+                              rebuildDir: rebuildDir)
+        func oldFolder(_ name: String, owner: String?) throws -> URL {
+            let folder = rebuildDir.appending(path: name)
+            try FileManager.default.createDirectory(at: folder,
+                                                    withIntermediateDirectories: true)
+            if let owner {
+                try owner.write(to: folder.appending(path: "owner.pid"),
+                                atomically: true, encoding: .utf8)
+            }
+            // Backdating goes last: the marker write touches the folder's
+            // own mtime.
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(-2 * 24 * 3600)],
+                ofItemAtPath: folder.path)
+            return folder
+        }
+        let live = try oldFolder("live", owner: "\(ProcessInfo.processInfo.processIdentifier)")
+        let dead = try oldFolder("dead", owner: "999999")
+        #expect(kill(999999, 0) != 0)
+        let unmarked = try oldFolder("unmarked", owner: nil)
+
+        model.pruneStaleBuilds()
+
+        #expect(FileManager.default.fileExists(atPath: live.path))
+        #expect(!FileManager.default.fileExists(atPath: dead.path))
+        #expect(!FileManager.default.fileExists(atPath: unmarked.path))
+    }
+
+    @Test func relaunchOnACleanedUpBuildExplainsItself() async throws {
+        let dir = tempDir()
+        let model = makeModel(checkout: dir.path,
+                              rebuildRunner: RecordingRunner(gitOk("")),
+                              rebuildDir: tempDir())
+        await model.rebuild()
+        guard case .built(let url) = model.rebuildState else {
+            Issue.record("expected a built rebuild, got \(model.rebuildState)")
+            return
+        }
+        try FileManager.default.removeItem(at: url.deletingLastPathComponent())
+
+        #expect(model.relaunchURL() == nil)
+        #expect(model.rebuildState == .idle)
+        #expect(model.rebuildNotice == "The build was cleaned up. Rebuild to try again.")
+    }
+
     @Test func aFailedRebuildKeepsTheLastLines() async throws {
         let dir = tempDir()
         let runner = RecordingRunner(CommandResult(
