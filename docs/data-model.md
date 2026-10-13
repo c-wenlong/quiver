@@ -75,7 +75,7 @@ every key below is live.
 | `popupHiddenHarnesses`, `popupHiddenWindows`, `popupHarnessOrder` | legacy popup keys, read-only migration fallbacks; keep until the new keys have covered every install |
 | `mcpHiddenHarnesses` | harness columns hidden on the MCP page |
 | `providerOrder`, `providerDisabled` | provider list order and switches |
-| `computeTrendInterval`, `computeTrendTab`, `computeMemoryLimitGB`, `computeOrphanAgeHours` | Compute page preferences |
+| `computeTrendInterval`, `computeTrendTab`, `computeMemoryLimitGB`, `computeOrphanAgeMinutes` | Compute page preferences |
 | `customStatusServices` | user-added status services |
 | `apiKeyCheckSalt` | salt for cached key-check results (not a secret itself) |
 | `widgetHarnesses.summary`, `widgetHarnesses.heatmap`, `widgetHarnesses.models` | per-widget harness picks |
