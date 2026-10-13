@@ -48,6 +48,38 @@ struct SidebarExpansionTests {
         #expect(!e.isFloating)
     }
 
+    @Test func aQuickReturnAfterSuppressionStillExpands() {
+        var e = SidebarExpansion()
+        e.pointer(inside: true)
+        e.toggle()
+        // The pointer left and came back before the delayed exit ran:
+        // pointerLeft records the leave, the re-entry clears suppression.
+        e.pointerLeft()
+        e.pointer(inside: true)
+        #expect(e.isExpanded)
+        #expect(e.isFloating)
+    }
+
+    @Test func leavingWhileSuppressedDoesNotFlashOpen() {
+        var e = SidebarExpansion()
+        e.pointer(inside: true)
+        e.toggle()
+        // The immediate exit call alone must not change what shows.
+        e.pointerLeft()
+        #expect(!e.isExpanded)
+        #expect(e.hoverSuppressed)
+    }
+
+    @Test func suppressionHoldsWhileThePointerNeverLeft() {
+        var e = SidebarExpansion()
+        e.pointer(inside: true)
+        e.toggle()
+        // No leave happened, so a repeat enter event stays suppressed.
+        e.pointer(inside: true)
+        #expect(e.hoverSuppressed)
+        #expect(!e.isExpanded)
+    }
+
     @Test func hoverDoesNothingToAnExpandedSidebar() {
         var e = SidebarExpansion()
         e.pointer(inside: true)

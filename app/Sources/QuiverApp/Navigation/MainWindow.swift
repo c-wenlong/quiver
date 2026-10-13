@@ -114,7 +114,10 @@ private struct Sidebar: View {
         .onHover(perform: hover)
         .onAppear { expansion.collapsed = model.sidebarCollapsed }
         .onChange(of: model.sidebarCollapsed) { _, new in
-            expansion.collapsed = new
+            // The button already toggled expansion, so this only fires
+            // for outside changes like the menu shortcut: route them
+            // through toggle() so hover suppression still applies.
+            if new != expansion.collapsed { expansion.toggle() }
         }
     }
 
@@ -149,6 +152,7 @@ private struct Sidebar: View {
     /// open and a short exit does not slam it shut.
     private func hover(_ inside: Bool) {
         pending?.cancel()
+        if !inside { expansion.pointerLeft() }
         guard model.sidebarCollapsed else {
             expansion.pointer(inside: inside)
             return

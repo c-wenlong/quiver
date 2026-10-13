@@ -9,6 +9,9 @@ public struct SidebarExpansion: Equatable, Sendable {
     /// A toggle happened while the pointer was inside: stay collapsed
     /// until the pointer leaves once, or the rail snaps right back open.
     public var hoverSuppressed = false
+    /// The pointer left while suppressed, so the next entry may expand
+    /// even if the delayed exit never ran.
+    public var leftSinceSuppressed = false
 
     public init(collapsed: Bool = false) {
         self.collapsed = collapsed
@@ -24,12 +27,29 @@ public struct SidebarExpansion: Equatable, Sendable {
     public mutating func toggle() {
         collapsed.toggle()
         hoverSuppressed = hovering
+        leftSinceSuppressed = false
     }
 
-    /// Pointer tracking. Leaving clears the suppression so the next
-    /// entry expands again.
+    /// Called immediately on every pointer exit, before the delayed
+    /// collapse: remember the leave so a quick return can re-expand.
+    public mutating func pointerLeft() {
+        if hoverSuppressed { leftSinceSuppressed = true }
+    }
+
+    /// Pointer tracking. A real exit clears the suppression so the next
+    /// entry expands again; an entry after a recorded leave clears it
+    /// too, since the delayed exit may not have run yet.
     public mutating func pointer(inside: Bool) {
-        hovering = inside
-        if !inside { hoverSuppressed = false }
+        if inside {
+            if leftSinceSuppressed {
+                hoverSuppressed = false
+                leftSinceSuppressed = false
+            }
+            hovering = true
+        } else {
+            hovering = false
+            hoverSuppressed = false
+            leftSinceSuppressed = false
+        }
     }
 }
