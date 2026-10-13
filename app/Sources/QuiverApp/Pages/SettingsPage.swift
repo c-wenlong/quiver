@@ -41,7 +41,8 @@ struct SettingsPage: View {
             SettingsFooter()
         }
         .onAppear { drafts = PathDrafts(swe: app.swePath, apiKeys: app.apiKeysPath,
-                                        mcpServers: app.mcpServersPath) }
+                                        mcpServers: app.mcpServersPath,
+                                        sourceCheckout: app.updates.checkoutOverride) }
     }
 }
 
@@ -49,6 +50,7 @@ struct PathDrafts: Equatable {
     var swe = ""
     var apiKeys = ""
     var mcpServers = ""
+    var sourceCheckout = ""
 }
 
 // MARK: - Sub-nav
@@ -142,6 +144,7 @@ private struct SettingsSectionView: View {
             case .general: generalCard
             case .preferences: preferencesCard
             case .notifications: notificationsCard
+            case .updates: updatesCard
             case .providers: ProviderVisibilityCard(model: app.providers)
             case .paths: pathsCard
             }
@@ -190,6 +193,156 @@ private struct SettingsSectionView: View {
                            ? "Notifications for Quiver are off in System Settings > Notifications." : nil) {
                 SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
             }
+        }
+    }
+
+    private var updatesCard: some View {
+        SettingsCard {
+            SettingRow(title: "Version",
+                       detail: versionLine,
+                       warning: app.updates.versionMismatch.map {
+                           "swe is \($0.swe), the app is \($0.app)."
+                       }) {
+                EmptyView()
+            }
+            SettingsDivider()
+            SettingRow(title: "Updates from",
+                       detail: "This build defaults to \(app.updates.build.channel.title).") {
+                Tabs(options: UpdateChannel.allCases.map { ($0, $0.title) },
+                     selection: Binding(get: { app.updates.channel },
+                                        set: { app.updates.setChannel($0) }))
+            }
+            if app.updates.channel == .dev {
+                SettingsDivider()
+                PathRow(title: "Source checkout",
+                        placeholder: "~/code/quiver",
+                        stored: app.updates.checkoutOverride,
+                        draft: $drafts.sourceCheckout,
+                        running: app.updates.checkout ?? "",
+                        hint: app.updates.stampedCheckout.map {
+                            "Empty uses the folder this build came from: \($0)"
+                        } ?? "Empty: no source folder recorded in this build.",
+                        folders: true) { app.updates.setCheckout($0) }
+                SettingsDivider()
+                localCodeRow
+            }
+            SettingsDivider()
+            releaseRow
+        }
+        .task { await app.updates.refresh(force: false) }
+    }
+
+    private var versionLine: String {
+        let updates = app.updates
+        var line = "Quiver \(updates.build.version)"
+        if let describe = updates.build.describe { line += " (\(describe))" }
+        line += " · swe " + (updates.sweVersionKnown ? (updates.sweVersion ?? "?") : "unknown")
+        return line
+    }
+
+    private var localCodeRow: some View {
+        let updates = app.updates
+        let result = updates.local
+        return SettingRow(
+            title: "Local code",
+            detail: localDetail(result),
+            warning: {
+                if case .failed(let message) = updates.rebuildState { return message }
+                if let upstream = result?.upstreamBehind, upstream > 0 {
+                    return "\(upstream) new commit\(upstream == 1 ? "" : "s") upstream, not pulled"
+                }
+                return nil
+            }()) {
+                HStack(spacing: 12) {
+                    Button("Check now") { Task { await updates.refresh(force: true) } }
+                        .secondaryButton()
+                        .disabled(updates.checking)
+                    rebuildControl
+                }
+            }
+    }
+
+    private func localDetail(_ result: LocalBuildCheck.Result?) -> String {
+        guard let result else { return "No source checkout to compare against." }
+        var text: String
+        switch result.state {
+        case .upToDate:
+            text = "Built from current code"
+        case .behind(let n):
+            text = "\(n) commit\(n == 1 ? "" : "s") not built yet"
+        case .diverged(let buildOnly, _):
+            text = "Built from another branch (\(buildOnly) commit\(buildOnly == 1 ? "" : "s") not in this checkout)"
+        case .notARepo:
+            text = "Not a git checkout"
+        case .unknownBuild:
+            text = "This build has no commit recorded"
+        case .builtCommitMissing:
+            text = "Built from a commit this checkout doesn't have"
+        }
+        if result.checkoutDirty { text += " · uncommitted changes not built" }
+        return text
+    }
+
+    @ViewBuilder
+    private var rebuildControl: some View {
+        let updates = app.updates
+        switch updates.rebuildState {
+        case .idle:
+            Button("Rebuild") { Task { await updates.rebuild() } }
+                .primaryButton()
+                .disabled(updates.checkout == nil)
+        case .building:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Building…").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+            }
+        case .built(let appURL):
+            Button("Relaunch to update") {
+                AppRelauncher.relaunch(into: appURL)
+            }
+            .primaryButton()
+        case .failed:
+            Button("Rebuild") {
+                updates.resetRebuild()
+                Task { await updates.rebuild() }
+            }
+            .primaryButton()
+            .disabled(updates.checkout == nil)
+        }
+    }
+
+    private var releaseRow: some View {
+        let updates = app.updates
+        let prod = updates.channel == .prod
+        return SettingRow(
+            title: "Latest release",
+            detail: releaseDetail(updates.release)) {
+                HStack(spacing: 12) {
+                    if case .available(let release) = updates.release, let url = release.url {
+                        Link("Open", destination: url).secondaryButton()
+                    }
+                    if prod {
+                        Button("Check now") { Task { await updates.refresh(force: true) } }
+                            .secondaryButton()
+                            .disabled(updates.checking)
+                    }
+                }
+            }
+            .opacity(prod ? 1 : 0.6)
+    }
+
+    private func releaseDetail(_ outcome: ReleaseCheck.Outcome?) -> String {
+        switch outcome {
+        case .upToDate(let release):
+            return "\(release.tag) · up to date"
+        case .available(let release):
+            return "\(release.tag) available"
+        case .unknown(let message, let release):
+            if let message { return "Couldn't check: \(message)" }
+            if let release { return "\(release.tag) · up to date" }
+            return "Not checked yet."
+        case nil:
+            return "Not checked yet."
         }
     }
 

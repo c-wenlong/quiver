@@ -7,6 +7,10 @@
 # Contents/PlugIns/QuiverWidgets.appex. Open it with
 # `open app/build/Quiver.app`.
 #
+# Channel: QUIVER_CHANNEL=dev|prod stamps QuiverChannel in the app's
+# Info.plist (default dev). Dev builds also stamp the checkout's commit,
+# path and dirty state, which Settings > Updates compares against HEAD.
+#
 # Signing: macOS remembers privacy grants (Desktop and Documents access,
 # Accessibility) against the app's signing identity. An ad-hoc signature
 # changes with every build, so each rebuild would ask again. The script
@@ -17,6 +21,11 @@
 set -euo pipefail
 
 config="${1:-release}"
+channel="${QUIVER_CHANNEL:-dev}"
+case "$channel" in
+  dev|prod) ;;
+  *) echo "build-app: QUIVER_CHANNEL must be dev or prod" >&2; exit 1 ;;
+esac
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
@@ -69,6 +78,20 @@ describe="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 version="$( (git -C "$here" describe --tags --abbrev=0 2>/dev/null || true) | sed 's/^v//')"
 case "$version" in ""|*[!0-9.]*) version="0.0.0" ;; esac
 build="$(git -C "$here" rev-list --count HEAD 2>/dev/null || echo 1)"
+# Update stamping: dev builds record where they were built from, so
+# Settings > Updates can tell the user the checkout has moved on. Prod
+# builds stamp the channel only; GitHub releases carry no source path.
+commit="$(git -C "$here" rev-parse HEAD 2>/dev/null || echo "")"
+if [ "$channel" = "dev" ]; then
+  source_path="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || echo "")"
+else
+  source_path=""
+fi
+if [ -n "$(git -C "$here" status --porcelain 2>/dev/null || echo "")" ]; then
+  dirty=true
+else
+  dirty=false
+fi
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -83,6 +106,10 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${build}</string>
   <key>QuiverVersion</key><string>${describe}</string>
+  <key>QuiverChannel</key><string>${channel}</string>
+  <key>QuiverCommit</key><string>${commit}</string>
+  <key>QuiverSourcePath</key><string>${source_path}</string>
+  <key>QuiverDirty</key><${dirty}/>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
