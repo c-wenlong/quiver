@@ -100,6 +100,10 @@ enum Theme {
     static let cardPadding: CGFloat = 20
     static let gutter: CGFloat = 16
     static let sidebarWidth: CGFloat = 220
+    /// The icon rail: wide enough to clear the traffic lights (~x 68).
+    static let sidebarCollapsedWidth: CGFloat = 72
+    /// Sidebar collapse, expand and hover-float all use this.
+    static let sidebarAnimation: Animation = .smooth(duration: 0.25)
     static let navRowHeight: CGFloat = 32
     static let controlHeight: CGFloat = 28
     /// `control.md`: secondary buttons.
