@@ -99,9 +99,16 @@ enum Theme {
     static let controlRadius: CGFloat = 8
     static let cardPadding: CGFloat = 20
     static let gutter: CGFloat = 16
-    static let sidebarWidth: CGFloat = 220
+    /// Narrow enough to leave the panel room; the longest labels
+    /// ("Service status", "MCP servers", "AGENTS.md") still fit.
+    static let sidebarWidth: CGFloat = 196
     /// The icon rail: wide enough to clear the traffic lights (~x 68).
     static let sidebarCollapsedWidth: CGFloat = 72
+    /// Leading keeps the icons put; trailing hugs the panel.
+    static let sidebarLeadingPadding: CGFloat = 8
+    static let sidebarTrailingPadding: CGFloat = 4
+    /// The collapsed nav pill that hugs an icon: 8 + 18 + 8.
+    static let navIconPillWidth: CGFloat = 34
     /// Sidebar collapse, expand and hover-float all use this.
     static let sidebarAnimation: Animation = .smooth(duration: 0.25)
     static let navRowHeight: CGFloat = 32
