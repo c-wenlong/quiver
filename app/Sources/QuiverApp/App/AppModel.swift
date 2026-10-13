@@ -81,8 +81,38 @@ final class AppModel {
     var widgetSelection = WidgetSelection(defaults: .standard) {
         didSet {
             widgetSelection.save(to: .standard)
-            limits.writeWidgets(overview: overview, selection: widgetSelection)
+            let style = widgetHarnessStyle
+            limits.writeWidgets(overview: overview, selection: widgetSelection,
+                                harnessOrder: style.order, harnessColors: style.colors)
         }
+    }
+
+    /// Resolved widget line colours, by "harness|primaryColor":
+    /// resolve() reads logo SVGs off disk, and the Widgets page's
+    /// snapshot asks for this every body pass.
+    @ObservationIgnored private var widgetColourCache: [String: String] = [:]
+
+    /// The Settings provider order and each harness's trend-chart colour
+    /// as hex, as the widget snapshot's per-harness lines want them.
+    var widgetHarnessStyle: (order: [String], colors: [String: String]) {
+        let order = providers.rows.map(\.provider.id)
+        let primaries = Dictionary(compute.matchers.map { ($0.harness, $0.primaryColor) },
+                                   uniquingKeysWith: { first, _ in first })
+        var colors: [String: String] = [:]
+        var harnesses = Set(order)
+        harnesses.formUnion((overview?.activityRows ?? []).map(\.harness))
+        for harness in harnesses {
+            let primary = primaries[harness] ?? nil
+            let key = "\(harness)|\(primary ?? "")"
+            if let cached = widgetColourCache[key] {
+                colors[harness] = cached
+            } else {
+                let hex = HarnessColor.resolve(id: harness, primaryColor: primary).hex
+                widgetColourCache[key] = hex
+                colors[harness] = hex
+            }
+        }
+        return (order, colors)
     }
 
     var terminal: TerminalApp {
@@ -446,11 +476,17 @@ final class AppModel {
             },
             Task { [weak self] in
                 let changes = Observations { [weak self] in
-                    self.map { ($0.overview?.activity, $0.overview?.recentModels, $0.limits.readings) }
+                    // The series order and colours also feed the file:
+                    // a provider reorder or a newly loaded primary colour
+                    // must rewrite it like a reading change does.
+                    self.map { ($0.overview?.activity, $0.overview?.recentModels,
+                               $0.limits.readings, $0.providers.rows, $0.compute.matchers) }
                 }
                 for await _ in changes {
                     guard let self else { continue }
-                    limits.writeWidgets(overview: overview, selection: widgetSelection)
+                    let style = widgetHarnessStyle
+                    limits.writeWidgets(overview: overview, selection: widgetSelection,
+                                        harnessOrder: style.order, harnessColors: style.colors)
                 }
             },
         ]

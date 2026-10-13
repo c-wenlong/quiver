@@ -235,15 +235,32 @@ public struct SummaryView: View {
                         .font(.system(size: 10)).foregroundStyle(Palette.textSecondary)
                 }
             }
-            Chart(Array(points.enumerated()), id: \.offset) { point in
-                AreaMark(x: .value("Day", point.offset), y: .value("Tokens", point.element))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(LinearGradient(colors: [Palette.accentFill.opacity(0.35), .clear],
-                                                    startPoint: .top, endPoint: .bottom))
-                LineMark(x: .value("Day", point.offset), y: .value("Tokens", point.element))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(Palette.accentFill)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+            Chart {
+                if snapshot.summary.showsTotal {
+                    ForEach(Array(points.enumerated()), id: \.offset) { point in
+                        AreaMark(x: .value("Day", point.offset), y: .value("Tokens", point.element),
+                                 series: .value("Series", "Total"))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(LinearGradient(colors: [Palette.accentFill.opacity(0.35), .clear],
+                                                            startPoint: .top, endPoint: .bottom))
+                        LineMark(x: .value("Day", point.offset), y: .value("Tokens", point.element),
+                                 series: .value("Series", "Total"))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(Palette.accentFill)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+                ForEach(snapshot.summary.series) { series in
+                    let points = snapshot.sparkline(series, days: 14, now: now, calendar: .current)
+                    ForEach(Array(points.enumerated()), id: \.offset) { point in
+                        LineMark(x: .value("Day", point.offset), y: .value("Tokens", point.element),
+                                 series: .value("Series", series.harness))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(series.colorHex.isEmpty
+                                             ? Palette.accent : Color(nsColor: NSColor(hex: series.colorHex)))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
+                    }
+                }
             }
             .chartXAxis(.hidden)
             .chartYAxis(.hidden)

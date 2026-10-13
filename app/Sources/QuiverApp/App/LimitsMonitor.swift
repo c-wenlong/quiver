@@ -52,18 +52,26 @@ final class LimitsMonitor {
 
     /// The snapshot the widgets would show now, under `selection`. The
     /// Desktop widgets tab previews this, so it matches what a settings
-    /// change writes.
+    /// change writes. `harnessOrder` is the Settings order for the
+    /// summary's per-harness lines, `harnessColors` their hex colours.
     func widgetSnapshot(overview: OverviewModel?, selection: WidgetSelection,
+                        harnessOrder: [String] = [], harnessColors: [String: String] = [:],
                         now: Date = .now) -> WidgetSnapshot {
         WidgetSnapshot.make(
             activity: overview?.activityRows ?? [], models: overview?.recentRows ?? [],
-            limits: readings, selection: selection, now: now, calendar: .current)
+            limits: readings, selection: selection,
+            harnessOrder: harnessOrder, harnessColors: harnessColors,
+            now: now, calendar: .current)
     }
 
     /// Rewrite the widgets' file when what they show has changed, and ask
     /// WidgetKit to redraw.
-    func writeWidgets(overview: OverviewModel?, selection: WidgetSelection, now: Date = .now) {
-        let snapshot = widgetSnapshot(overview: overview, selection: selection, now: now)
+    func writeWidgets(overview: OverviewModel?, selection: WidgetSelection,
+                      harnessOrder: [String] = [], harnessColors: [String: String] = [:],
+                      now: Date = .now) {
+        let snapshot = widgetSnapshot(overview: overview, selection: selection,
+                                      harnessOrder: harnessOrder, harnessColors: harnessColors,
+                                      now: now)
         var comparable = snapshot
         comparable.generatedAt = lastWidgetSnapshot?.generatedAt ?? now
         guard comparable != lastWidgetSnapshot else { return }

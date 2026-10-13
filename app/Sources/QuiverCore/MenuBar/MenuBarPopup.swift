@@ -148,27 +148,13 @@ public struct MenuBarPopup: Equatable, Sendable {
     /// order first, so the move lands where it was dropped.
     public mutating func move(_ id: String, before target: String,
                               in shown: [(source: String, harness: String)]) {
-        guard id != target, shown.contains(where: { $0.source == id }),
-              shown.contains(where: { $0.source == target }) else { return }
-        sourceOrder += ordered(shown).filter { !sourceOrder.contains($0) }
-        sourceOrder.removeAll { $0 == id }
-        if let index = sourceOrder.firstIndex(of: target) {
-            sourceOrder.insert(id, at: index)
-        }
+        SourceOrdering.move(id, before: target, in: ordered(shown), order: &sourceOrder)
     }
 
     /// Drop `id` below the last shown row: it lands at the end of the
     /// visible list, without jumping past hidden sources that follow it.
     public mutating func moveToEnd(_ id: String, in shown: [(source: String, harness: String)]) {
-        guard shown.contains(where: { $0.source == id }) else { return }
-        sourceOrder += ordered(shown).filter { !sourceOrder.contains($0) }
-        sourceOrder.removeAll { $0 == id }
-        if let last = ordered(shown).last(where: { $0 != id }),
-           let index = sourceOrder.firstIndex(of: last) {
-            sourceOrder.insert(id, at: index + 1)
-        } else {
-            sourceOrder.append(id)
-        }
+        SourceOrdering.moveToEnd(id, in: ordered(shown), order: &sourceOrder)
     }
 
     /// One account or harness the popup can list, and the named windows it
