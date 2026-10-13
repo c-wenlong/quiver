@@ -91,22 +91,21 @@ public struct WidgetCatalog: Sendable, Identifiable {
     public let kind: String
     public let title: String
     public let detail: String
-    public let sizes: String
     /// SF Symbol name.
     public let symbol: String
 
     public static let all = [
         WidgetCatalog(kind: "limits", title: "Usage limits",
-                      detail: "How much of each rate limit is used, most used first.",
-                      sizes: "Small, medium and large", symbol: "gauge.with.dots.needle.67percent"),
+                      detail: "How much of each rate limit is used, in the order you set in Quiver.",
+                      symbol: "gauge.with.dots.needle.67percent"),
         WidgetCatalog(kind: "summary", title: "Usage summary",
                       detail: "Today and the last seven days, with a sparkline.",
-                      sizes: "Medium", symbol: "chart.bar.xaxis"),
+                      symbol: "chart.bar.xaxis"),
         WidgetCatalog(kind: "heatmap", title: "Activity heatmap",
                       detail: "Tokens per day for the last half year.",
-                      sizes: "Medium", symbol: "square.grid.3x3.fill"),
+                      symbol: "square.grid.3x3.fill"),
         WidgetCatalog(kind: "models", title: "Top models",
                       detail: "Your most used models over the last 30 days, by token share.",
-                      sizes: "Medium", symbol: "list.number"),
+                      symbol: "list.number"),
     ]
 }

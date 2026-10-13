@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   even when `~/.quiver` is unparseable. `--json` emits the standard
   envelope with `name`, `version` and the Python version under `data`.
 
+- **The Usage limits widget's sources reorder.** The Widgets page lists
+  them like the menu bar popup does, draggable, with each source's
+  windows grouped under it; until the first drag the widget still sorts
+  by pressure. The preview now sits large left with medium over small
+  beside it, taking less vertical room.
+
+- **The Usage summary widget draws one line per counted harness.** Each
+  takes its trend-chart colour, the aggregate total stays on top, and a
+  Total switch at the top of the Counted list turns it off.
+
 ### Changed
 
 - **Compute's clean-up moved into the header and finds more leftovers.**

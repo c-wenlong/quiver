@@ -52,6 +52,56 @@ import Testing
                         reading("codex", "7d", used: 3)]
         #expect(selection.filter(readings).map(\.id) == ["codex|7d"])
     }
+
+    @Test func anEmptyOrderPassesTheGivenOrderThrough() {
+        let selection = SourceSelection(hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows)
+        #expect(selection.ordered(["a", "b", "c"]) == ["a", "b", "c"])
+    }
+
+    @Test func movingBeforeATargetWritesTheOrder() {
+        var selection = SourceSelection(hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows)
+        selection.move("c", before: "a", in: ["a", "b", "c"])
+        #expect(selection.ordered(["a", "b", "c"]) == ["c", "a", "b"])
+        // The first move freezes the shown order.
+        #expect(selection.sourceOrder == ["c", "a", "b"])
+    }
+
+    @Test func movingToTheEndDropsBelowTheLastShownRow() {
+        var selection = SourceSelection(hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows)
+        selection.moveToEnd("a", in: ["a", "b", "c"])
+        #expect(selection.ordered(["a", "b", "c"]) == ["b", "c", "a"])
+    }
+
+    @Test func unknownIdsAreIgnored() {
+        var selection = SourceSelection(hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows)
+        selection.move("ghost", before: "a", in: ["a", "b"])
+        selection.move("a", before: "ghost", in: ["a", "b"])
+        selection.moveToEnd("ghost", in: ["a", "b"])
+        #expect(selection.sourceOrder.isEmpty)
+    }
+
+    @Test func theDefaultRankFollowsOnlyShownWindows() {
+        var selection = SourceSelection(hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows)
+        selection.setShown(false, window: "5h", source: "a")
+        // a's heaviest reading is hidden; it ranks where the shown one sits.
+        let readings = [reading("a", "5h", used: 90), reading("b", "5h", used: 80),
+                        reading("a", "7d", used: 5)]
+        #expect(selection.defaultRank(readings) == ["b", "a"])
+    }
+
+    @Test func theOrderSurvivesAReloadThroughTheWidgetKey() {
+        var selection = SourceSelection(defaults: defaults,
+                                        hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows,
+                                        sourceOrderKey: SourceSelection.widgetSourceOrderKey)
+        selection.move("codex", before: "claude", in: ["claude", "codex", "devin"])
+        selection.save(to: defaults)
+
+        let back = SourceSelection(defaults: defaults,
+                                   hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows,
+                                   sourceOrderKey: SourceSelection.widgetSourceOrderKey)
+        #expect(back.sourceOrder == ["codex", "claude", "devin"])
+        #expect(back.ordered(["claude", "codex", "devin"]) == ["codex", "claude", "devin"])
+    }
 }
 
 @Suite struct WidgetSelectionTests {
@@ -91,6 +141,12 @@ import Testing
         #expect(defaults.stringArray(forKey: "widgetHarnesses.heatmap") == ["cursor"])
         #expect(defaults.stringArray(forKey: "widgetHarnesses.summary") == [])
         #expect(defaults.stringArray(forKey: "widgetLimitsHiddenSources") == ["claude-work"])
+
+        selection.summaryShowsTotal = false
+        selection.save(to: defaults)
+        #expect(defaults.bool(forKey: "widgetSummaryShowsTotal") == false)
+        let reloaded = WidgetSelection(defaults: defaults)
+        #expect(!reloaded.summaryShowsTotal)
 
         let back = WidgetSelection(defaults: defaults)
         #expect(!back.shows(harness: "codex", in: .models))

@@ -16,7 +16,9 @@ struct WidgetsPage: View {
     /// The snapshot a widget on the desktop would draw right now: what the
     /// app would write to the shared file, settings applied.
     private var snapshot: WidgetSnapshot {
-        app.limits.widgetSnapshot(overview: app.overview, selection: app.widgetSelection)
+        let style = app.widgetHarnessStyle
+        return app.limits.widgetSnapshot(overview: app.overview, selection: app.widgetSelection,
+                                         harnessOrder: style.order, harnessColors: style.colors)
     }
 
     /// The tab's widget, falling back to the first for a stored kind that
@@ -115,7 +117,6 @@ private struct WidgetCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                 previews
                 settings
-                Text(widget.sizes).font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
     }
@@ -125,15 +126,30 @@ private struct WidgetCard: View {
         let now = Date.now
         switch widget.kind {
         case "limits":
-            FlowLayout(spacing: 16, lineSpacing: 16) {
-                WidgetSurface(size: Self.small, snapshot: snapshot) {
-                    LimitsView(snapshot: $0, now: now, family: .systemSmall)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    WidgetSurface(size: Self.large, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemLarge)
+                    }
+                    VStack(alignment: .leading, spacing: 16) {
+                        WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                            LimitsView(snapshot: $0, now: now, family: .systemMedium)
+                        }
+                        WidgetSurface(size: Self.small, snapshot: snapshot) {
+                            LimitsView(snapshot: $0, now: now, family: .systemSmall)
+                        }
+                    }
                 }
-                WidgetSurface(size: Self.medium, snapshot: snapshot) {
-                    LimitsView(snapshot: $0, now: now, family: .systemMedium)
-                }
-                WidgetSurface(size: Self.large, snapshot: snapshot) {
-                    LimitsView(snapshot: $0, now: now, family: .systemLarge)
+                FlowLayout(spacing: 16, lineSpacing: 16) {
+                    WidgetSurface(size: Self.large, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemLarge)
+                    }
+                    WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemMedium)
+                    }
+                    WidgetSurface(size: Self.small, snapshot: snapshot) {
+                        LimitsView(snapshot: $0, now: now, family: .systemSmall)
+                    }
                 }
             }
         case "summary":
@@ -156,13 +172,22 @@ private struct WidgetCard: View {
     /// or which harnesses the usage widgets count.
     @ViewBuilder private var settings: some View {
         if widget.kind == "limits" {
-            let rows = MenuBarPopup.rows(in: app.limits.readings, sources: sources)
-            if !rows.isEmpty {
+            let limits = limitRows
+            if !limits.rows.isEmpty {
+                let shown = limits.shown
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Shown").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
-                    ForEach(rows) { row in
+                    Text("Drag to reorder.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .padding(.bottom, 4)
+                    ReorderableRows(limits.rows, showsDividers: true) { id, before in
+                        if let before {
+                            app.widgetSelection.limits.move(id, before: before, in: shown)
+                        } else {
+                            app.widgetSelection.limits.moveToEnd(id, in: shown)
+                        }
+                    } row: { row in
                         SourceSettingsRow(
-                            row: row,
+                            row: row, grip: true,
                             shown: app.widgetSelection.limits.shows(source: row.source),
                             setShown: { app.widgetSelection.limits.setShown($0, source: row.source) },
                             showsWindow: { app.widgetSelection.limits.shows(window: $0, source: row.source) },
@@ -172,9 +197,15 @@ private struct WidgetCard: View {
             }
         } else if let harnessWidget {
             let harnesses = usageHarnesses(for: harnessWidget)
-            if !harnesses.isEmpty {
+            if harnessWidget == .summary || !harnesses.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Counted").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                    if harnessWidget == .summary {
+                        TotalPickRow(isOn: Binding(
+                            get: { app.widgetSelection.summaryShowsTotal },
+                            set: { app.widgetSelection.summaryShowsTotal = $0 }))
+                        if !harnesses.isEmpty { SettingsDivider() }
+                    }
                     ForEach(harnesses, id: \.self) { harness in
                         HarnessPickRow(harness: harness, isOn: Binding(
                             get: { app.widgetSelection.shows(harness: harness, in: harnessWidget) },
@@ -183,6 +214,20 @@ private struct WidgetCard: View {
                 }
             }
         }
+    }
+
+    /// The limits sources in display order: the dragged order over
+    /// `defaultRank` of the live (byPressure) readings, matching what
+    /// WidgetSnapshot.make draws; a source with no shown reading goes
+    /// last, in row order. `shown` is the ids the ReorderableRows
+    /// callbacks reorder within.
+    private var limitRows: (rows: [MenuBarPopup.Row], shown: [String]) {
+        let rows = MenuBarPopup.rows(in: app.limits.readings, sources: sources)
+        let withReadings = app.widgetSelection.limits.defaultRank(app.limits.readings)
+        let ranked = withReadings + rows.map(\.source).filter { !withReadings.contains($0) }
+        let shown = app.widgetSelection.limits.ordered(ranked)
+        let bySource = Dictionary(uniqueKeysWithValues: rows.map { ($0.source, $0) })
+        return (rows: shown.compactMap { bySource[$0] }, shown: shown)
     }
 
     /// The same sources the popup's settings list: every starred account
@@ -202,6 +247,24 @@ private struct WidgetCard: View {
         names.formUnion((app.overview?.recentRows ?? []).map(\.harness))
         let listed = app.widgetSelection.listedHarnesses(withUsage: names, for: widget)
         return app.providers.ordered(Array(listed))
+    }
+}
+
+/// The summary widget's aggregate line, switched on its own.
+private struct TotalPickRow: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sum")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 16, height: 16)
+            Text("Total").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+            Spacer(minLength: 16)
+            SettingSwitch(title: "Show the total line", isOn: $isOn)
+        }
+        .padding(.vertical, 12)
     }
 }
 

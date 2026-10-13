@@ -45,6 +45,12 @@ public struct HarnessRGB: Sendable, Equatable {
         return high == 0 ? 0 : (high - low) / high
     }
 
+    /// "#RRGGBB", for surfaces that can't resolve a colour themselves.
+    public var hex: String {
+        String(format: "#%02x%02x%02x",
+               Int((red * 255).rounded()), Int((green * 255).rounded()), Int((blue * 255).rounded()))
+    }
+
     /// Mixed toward white until its luminance clears `floor`. Dark brand
     /// marks (Cursor's black, GitHub's near-black) would vanish on
     /// Theme.card without this.

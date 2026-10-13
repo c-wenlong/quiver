@@ -44,6 +44,41 @@ import Testing
         #expect(snapshot.generatedAt == now)
     }
 
+    @Test func theSummarySeriesCoverEachCountedHarnessInOrder() {
+        var selection = WidgetSelection()
+        selection.setShown(false, harness: "cursor", in: .summary)
+        let activity = [row(-1, tokens: 100, harness: "codex"),
+                        row(-1, tokens: 50, harness: "cursor"),
+                        row(-2, tokens: 30, harness: "claude"),
+                        row(-1, tokens: 70, harness: "claude")]
+        let snapshot = WidgetSnapshot.make(
+            activity: activity, models: [], limits: [], selection: selection,
+            harnessOrder: ["claude", "codex", "cursor"],
+            harnessColors: ["claude": "#4ec9b0", "codex": "#5aa2ff"],
+            now: now, calendar: calendar)
+        #expect(snapshot.summary.series.map(\.harness) == ["claude", "codex"])
+        #expect(snapshot.summary.series.allSatisfy { !$0.colorHex.isEmpty })
+        #expect(snapshot.summary.series[0].days.map(\.tokens) == [30, 70])
+        #expect(snapshot.summary.series[1].days.map(\.tokens) == [100])
+        // The aggregate stays over the counted harnesses only.
+        #expect(snapshot.summary.days.map(\.tokens) == [30, 170])
+    }
+
+    @Test func theSummaryTotalFollowsTheSelection() {
+        var selection = WidgetSelection()
+        selection.summaryShowsTotal = false
+        let snapshot = make(activity: [row(-1, tokens: 100)], selection: selection)
+        #expect(!snapshot.summary.showsTotal)
+    }
+
+    @Test func aSeriesSparklineZeroFillsQuietDays() {
+        let series = WidgetSnapshot.HarnessSeries(
+            harness: "claude", colorHex: "#4ec9b0",
+            days: [.init(day: day(-2), tokens: 40), .init(day: day(0), tokens: 10)])
+        let snapshot = make()
+        #expect(snapshot.sparkline(series, days: 4, now: now, calendar: calendar) == [0, 40, 0, 10])
+    }
+
     @Test func aSnapshotFromYesterdayShowsNothingForToday() {
         // The app may not have run since midnight; its "today" is not today.
         let snapshot = make(activity: [row(0, tokens: 4, cost: 1)])
@@ -121,12 +156,54 @@ import Testing
         #expect(decoded.summary == snapshot.summary)
     }
 
+    @Test func aSnapshotWithoutSeriesDecodesWithDefaults() throws {
+        // A file an older build wrote has no series or showsTotal.
+        let snapshot = make(activity: [row(-1, tokens: 50)])
+        var json = try JSONSerialization.jsonObject(with: WidgetSnapshot.encoder.encode(snapshot)) as! [String: Any]
+        var summary = json["summary"] as! [String: Any]
+        summary["series"] = nil
+        summary["showsTotal"] = nil
+        json["summary"] = summary
+        let decoded = try WidgetSnapshot.decoder.decode(WidgetSnapshot.self,
+                                                        from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.summary.series.isEmpty)
+        #expect(decoded.summary.showsTotal)
+        #expect(decoded.summary.days == snapshot.summary.days)
+    }
+
     @Test func limitsAreMostUsedFirstAndCapped() {
         let limits = (0..<14).map { reading("s\($0)", used: Double($0 * 5)) }
         let snapshot = make(limits: limits)
         // The cap covers the large widget's rows.
         #expect(snapshot.limits.count == 12)
         #expect(snapshot.limits.map(\.source) == (0..<12).reversed().map { "s\($0 + 2)" })
+    }
+
+    @Test func limitsGroupBySourceInPressureOrderUntilDragged() {
+        // a's top reading is heavier than b's, so a's whole group lands
+        // first even where a b reading sits between two a readings.
+        let limits = [reading("a", "5h", used: 80), reading("b", "5h", used: 70),
+                      reading("a", "7d", used: 20)]
+        let snapshot = make(limits: limits)
+        #expect(snapshot.limits.map(\.id) == ["a|5h", "a|7d", "b|5h"])
+    }
+
+    @Test func theGroupRankFollowsShownWindowsOnly() {
+        // a's 90% window is hidden; its group ranks at the shown 5% one.
+        var selection = WidgetSelection()
+        selection.limits.setShown(false, window: "5h", source: "a")
+        let limits = [reading("a", "5h", used: 90), reading("b", "5h", used: 80),
+                      reading("a", "7d", used: 5)]
+        let snapshot = make(limits: limits, selection: selection)
+        #expect(snapshot.limits.map(\.id) == ["b|5h", "a|7d"])
+    }
+
+    @Test func theDraggedOrderDecidesTheSourceGroups() {
+        var selection = WidgetSelection()
+        selection.limits.move("b", before: "a", in: ["a", "b"])
+        let limits = [reading("a", "5h", used: 90), reading("b", "5h", used: 10)]
+        let snapshot = make(limits: limits, selection: selection)
+        #expect(snapshot.limits.map(\.id) == ["b|5h", "a|5h"])
     }
 
     @Test func theLimitsSelectionFiltersSourcesAndWindows() {
@@ -163,7 +240,9 @@ import Testing
         let json = try JSONSerialization.jsonObject(with: WidgetSnapshot.encoder.encode(snapshot)) as! [String: Any]
         #expect(Set(json.keys) == ["schema", "generatedAt", "summary", "heatmap", "models", "limits"])
         let summary = json["summary"] as! [String: Any]
-        #expect(Set(summary.keys) == ["today", "week", "days"])
+        #expect(Set(summary.keys) == ["today", "week", "days", "series", "showsTotal"])
+        let series = (summary["series"] as! [[String: Any]])[0]
+        #expect(Set(series.keys) == ["harness", "colorHex", "days"])
         let heatmap = json["heatmap"] as! [String: Any]
         #expect(Set(heatmap.keys) == ["days", "activeDays", "activityTokens"])
         let limit = (json["limits"] as! [[String: Any]])[0]

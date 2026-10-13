@@ -45,7 +45,7 @@ struct UsageLimitsWidget: Widget {
             WidgetFrame(entry: entry) { LimitsView(snapshot: $0, now: entry.date) }
         }
         .configurationDisplayName("Usage limits")
-        .description("How much of each rate limit is used, most used first.")
+        .description("How much of each rate limit is used, in the order you set in Quiver.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }

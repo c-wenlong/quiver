@@ -54,6 +54,23 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    /// One harness's daily usage for the summary chart's own line.
+    public struct HarnessSeries: Codable, Sendable, Equatable, Identifiable {
+        public var id: String { harness }
+        public var harness: String
+        /// The trend-chart colour as "#RRGGBB", so the sandboxed widget
+        /// never reads the app's logo files.
+        public var colorHex: String
+        /// Days with usage in the heatmap's span, oldest first.
+        public var days: [Day]
+
+        public init(harness: String, colorHex: String, days: [Day]) {
+            self.harness = harness
+            self.colorHex = colorHex
+            self.days = days
+        }
+    }
+
     /// What the Usage summary widget draws, from its own harnesses.
     public struct SummarySection: Codable, Sendable, Equatable {
         public var today: Figure
@@ -62,11 +79,29 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         /// Days with usage in the heatmap's span, oldest first; the
         /// sparkline reads its tail.
         public var days: [Day]
+        /// A line per counted harness, in the Settings order.
+        public var series: [HarnessSeries]
+        /// Whether the aggregate line draws on top of the series.
+        public var showsTotal: Bool
 
-        public init(today: Figure, week: Figure, days: [Day]) {
+        public init(today: Figure, week: Figure, days: [Day],
+                    series: [HarnessSeries] = [], showsTotal: Bool = true) {
             self.today = today
             self.week = week
             self.days = days
+            self.series = series
+            self.showsTotal = showsTotal
+        }
+
+        /// `series` and `showsTotal` are absent from snapshots an older
+        /// build wrote; they read as no series, total shown.
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            today = try container.decode(Figure.self, forKey: .today)
+            week = try container.decode(Figure.self, forKey: .week)
+            days = try container.decode([Day].self, forKey: .days)
+            series = try container.decodeIfPresent([HarnessSeries].self, forKey: .series) ?? []
+            showsTotal = try container.decodeIfPresent(Bool.self, forKey: .showsTotal) ?? true
         }
     }
 
@@ -91,8 +126,9 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     /// The last 30 days' heaviest models, largest first, from the models
     /// widget's own harnesses.
     public var models: [Model]
-    /// Most used first, current ones before stale ones, from the limits
-    /// widget's own sources and windows.
+    /// Grouped by source in the dragged order (by pressure until the
+    /// first drag), a source's own windows most used first with current
+    /// ones before stale ones, from the limits widget's own sources.
     public var limits: [LimitReading]
 
     /// The heatmap's span: 26 weeks, as on the Overview page.
@@ -104,8 +140,12 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     /// `activity` covers the heatmap's half-year span, `models` the last
     /// 30 days; each is filtered down to the harnesses its widget counts.
     /// `limits` drops the sources and windows the limits selection hides.
+    /// `harnessOrder` ranks the summary's per-harness series (the
+    /// Settings order; unknown harnesses keep their first-seen places)
+    /// and `harnessColors` gives each its hex.
     public static func make(activity: [DailyUsage], models: [DailyUsage], limits: [LimitReading],
                             selection: WidgetSelection = WidgetSelection(),
+                            harnessOrder: [String] = [], harnessColors: [String: String] = [:],
                             now: Date, calendar: Calendar) -> WidgetSnapshot {
         let today = calendar.startOfDay(for: now)
         let weekStart = calendar.date(byAdding: .day, value: -6, to: today) ?? today
@@ -129,19 +169,44 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
             return byDay.sorted { $0.key < $1.key }.map { Day(day: $0.key, tokens: $0.value) }
         }
 
+        // Sources group together in the dragged order; until the first
+        // drag that's pressure, so the widget changes nothing. A source's
+        // own windows keep their byPressure order inside the group.
+        let sortedLimits = LimitReading.byPressure(selection.limits.filter(limits), now: now)
+        let limitRows = selection.limits.ordered(selection.limits.defaultRank(sortedLimits))
+            .flatMap { source in sortedLimits.filter { $0.source == source } }
+            .prefix(limitCount)
+
         let summaryDays = days(in: summaryRows)
         let heatmapDays = days(in: heatmapRows)
+
+        // A series per counted harness with usage in the span, in the
+        // given order; a harness the order doesn't know keeps the place
+        // its usage earned.
+        var seen: [String] = []
+        for row in summaryRows where !seen.contains(row.harness) { seen.append(row.harness) }
+        let rank = Dictionary(harnessOrder.enumerated().map { ($1, $0) },
+                              uniquingKeysWith: { first, _ in first })
+        let orderedHarnesses = seen.enumerated().sorted {
+            ((rank[$0.element] ?? .max), $0.offset) < ((rank[$1.element] ?? .max), $1.offset)
+        }.map(\.element)
+        let series = orderedHarnesses.map { harness in
+            HarnessSeries(harness: harness, colorHex: harnessColors[harness] ?? "",
+                          days: days(in: summaryRows.filter { $0.harness == harness }))
+        }
+
         return WidgetSnapshot(
             schema: currentSchema, generatedAt: now,
             summary: SummarySection(today: figure(from: today, in: summaryRows),
                                     week: figure(from: weekStart, in: summaryRows),
-                                    days: summaryDays),
+                                    days: summaryDays,
+                                    series: series, showsTotal: selection.summaryShowsTotal),
             heatmap: HeatmapSection(days: heatmapDays, activeDays: heatmapDays.count,
                                     activityTokens: heatmapDays.reduce(0) { $0 + $1.tokens }),
             models: OverviewModel.models(modelRows).prefix(modelCount)
                 .map { Model(name: $0.model, tokens: $0.totals.totalTokens,
                              share: $0.share, harnesses: $0.harnesses) },
-            limits: Array(LimitReading.byPressure(selection.limits.filter(limits), now: now).prefix(limitCount)))
+            limits: Array(limitRows))
     }
 
     /// Today's figure, or nothing when the snapshot was written on another day.
@@ -159,6 +224,18 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         let today = calendar.startOfDay(for: now)
         var byDay: [Date: Int] = [:]
         for row in summary.days { byDay[calendar.startOfDay(for: row.day), default: 0] += row.tokens }
+        return (0..<count).reversed().map { back in
+            calendar.date(byAdding: .day, value: -back, to: today).map { byDay[$0] ?? 0 } ?? 0
+        }
+    }
+
+    /// One series' tokens per day for the last `days` days, like
+    /// `sparkline(days:now:calendar:)` for the aggregate.
+    public func sparkline(_ series: HarnessSeries, days count: Int, now: Date,
+                          calendar: Calendar) -> [Int] {
+        let today = calendar.startOfDay(for: now)
+        var byDay: [Date: Int] = [:]
+        for row in series.days { byDay[calendar.startOfDay(for: row.day), default: 0] += row.tokens }
         return (0..<count).reversed().map { back in
             calendar.date(byAdding: .day, value: -back, to: today).map { byDay[$0] ?? 0 } ?? 0
         }

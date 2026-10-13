@@ -80,6 +80,7 @@ every key below is live.
 | `apiKeyCheckSalt` | salt for cached key-check results (not a secret itself) |
 | `widgetHarnesses.summary`, `widgetHarnesses.heatmap`, `widgetHarnesses.models` | per-widget harness picks |
 | `widgetLimitsHiddenSources`, `widgetLimitsHiddenSourceWindows` | per-widget limit filters |
+| `widgetLimitsSourceOrder`, `widgetSummaryShowsTotal` | limits source order; summary widget's total line |
 | `migratedCursorAutoToIncluded` | one-time marker: Cursor `auto` rewritten to `included` |
 
 ## Ledger schema (`cache/ledger/ledger.sqlite`, schema version 1)
