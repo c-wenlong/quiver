@@ -742,6 +742,56 @@ import Testing
         #expect(fake.signalled.sorted() == [10, 11])
     }
 
+    // MARK: Orphan age field
+
+    @Test func splitPicksTheLargestUnitThatDividesEvenly() {
+        #expect(OrphanAgeUnit.split(90 * 60) == (90, .minute))
+        #expect(OrphanAgeUnit.split(120 * 60) == (2, .hour))
+        #expect(OrphanAgeUnit.split(2 * 86400) == (2, .day))
+        #expect(OrphanAgeUnit.split(86400 + 3600) == (25, .hour))
+    }
+
+    private static func defaultsSuite() -> (UserDefaults, String) {
+        let suite = "compute-test-\(UUID().uuidString)"
+        return (UserDefaults(suiteName: suite)!, suite)
+    }
+
+    @Test func theLegacyHoursKeyStillLoads() {
+        let (defaults, suite) = Self.defaultsSuite()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
+        #expect(ComputeLimits(defaults: defaults).orphanAge == 6 * 3600)
+    }
+
+    @Test func theMinutesKeyWinsOverTheLegacyHoursKey() {
+        let (defaults, suite) = Self.defaultsSuite()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(90, forKey: ComputeLimits.orphanAgeKey)
+        defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
+        #expect(ComputeLimits(defaults: defaults).orphanAge == 5400)
+    }
+
+    @Test func savingRemovesTheLegacyHoursKey() {
+        let (defaults, suite) = Self.defaultsSuite()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
+        ComputeLimits(defaults: defaults).save(to: defaults)
+        #expect(defaults.object(forKey: ComputeLimits.legacyOrphanAgeKey) == nil)
+        #expect(defaults.integer(forKey: ComputeLimits.orphanAgeKey) == 360)
+    }
+
+    @Test func theOrphanAgeClampsToAMinuteAndAYear() {
+        let (defaults, suite) = Self.defaultsSuite()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var limits = ComputeLimits()
+        limits.orphanAge = 5
+        limits.save(to: defaults)
+        #expect(defaults.integer(forKey: ComputeLimits.orphanAgeKey) == 1)
+        limits.orphanAge = 800 * 86400
+        limits.save(to: defaults)
+        #expect(defaults.integer(forKey: ComputeLimits.orphanAgeKey) == 365 * 24 * 60)
+    }
+
     // MARK: Sampler smoke test
 
     @Test func theSamplerSeesThisProcess() {

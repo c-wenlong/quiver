@@ -350,12 +350,33 @@ private extension Color {
 /// current sample at once (ComputeModel.limits.didSet republishes).
 private struct CleanupLimitsView: View {
     @Environment(AppModel.self) private var app
+    @State private var ageValue: Int
+    @State private var ageUnit: OrphanAgeUnit
+    /// Lets the field write on focus loss as well as on Return.
+    @FocusState private var ageFocused: Bool
+
+    init() {
+        let (value, unit) = OrphanAgeUnit.split(24 * 3600)
+        _ageValue = State(initialValue: value)
+        _ageUnit = State(initialValue: unit)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingRow(title: "Orphans count as old after",
                        detail: "Orphans and duplicate servers older than this are suggested for clean-up.") {
-                SelectMenu(options: orphanAgeOptions, selection: orphanAge, width: 120)
+                HStack(spacing: 6) {
+                    TextField("", value: $ageValue, format: .number)
+                        .quiverField()
+                        .frame(width: 56)
+                        .multilineTextAlignment(.trailing)
+                        .focused($ageFocused)
+                        .onSubmit(commitAge)
+                        .onChange(of: ageFocused) { _, focused in
+                            if !focused { commitAge() }
+                        }
+                    SelectMenu(options: unitOptions, selection: unit, width: 84)
+                }
             }
             SettingsDivider()
             SettingRow(title: "Flag a process above",
@@ -363,20 +384,40 @@ private struct CleanupLimitsView: View {
                 SelectMenu(options: memoryOptions, selection: memory, width: 120)
             }
         }
+        .onAppear {
+            let (value, unit) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
+            ageValue = value
+            ageUnit = unit
+        }
     }
 
-    private var orphanAge: Binding<TimeInterval> {
-        Binding(get: { app.compute.limits.orphanAge },
-                set: { app.compute.limits.orphanAge = $0 })
+    /// The field only writes on Return or focus loss, never per
+    /// keystroke; a value under a minute snaps back to what is saved.
+    private func commitAge() {
+        let seconds = TimeInterval(ageValue) * ageUnit.seconds
+        guard ageValue > 0, ComputeLimits.orphanAgeRange.contains(seconds) else {
+            let (value, _) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
+            ageValue = value
+            return
+        }
+        app.compute.limits.orphanAge = seconds
+    }
+
+    private var unit: Binding<OrphanAgeUnit> {
+        Binding(get: { ageUnit },
+                set: {
+                    ageUnit = $0
+                    commitAge()
+                })
+    }
+
+    private var unitOptions: [(value: OrphanAgeUnit, title: String)] {
+        OrphanAgeUnit.allCases.map { ($0, $0.title) }
     }
 
     private var memory: Binding<UInt64> {
         Binding(get: { app.compute.limits.memoryBytes },
                 set: { app.compute.limits.memoryBytes = $0 })
-    }
-
-    private var orphanAgeOptions: [(value: TimeInterval, title: String)] {
-        [(3600, "1h"), (6 * 3600, "6h"), (24 * 3600, "24h"), (72 * 3600, "72h"), (7 * 86400, "7 days")]
     }
 
     private var memoryOptions: [(value: UInt64, title: String)] {

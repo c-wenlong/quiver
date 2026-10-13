@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Compute's clean-up moved into the header and finds more leftovers.**
   The limits card left the bottom of the page for a settings popover
-  behind a gear button (with a new 1h orphan-age option), and the
+  behind a gear button, and the
   "Clean up" button is a broom icon with a count badge opening a
   centred sheet. The sheet groups candidates under an Orphaned header
   and one header per harness in registry order, each collapsible with a
@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was deleted after launch (a versioned helper an update replaced) are
   seen again: the sampler falls back to argv[0] when proc_pidpath goes
   empty.
+- **The orphan-age setting takes any number with a unit.** "Orphans
+  count as old after" is now a number field plus a Min/Hour/Day menu
+  instead of a fixed option list, stored as minutes so values between
+  the old hour steps persist, and clamped to a minute through a year.
+  The legacy hours setting still loads.
 
 ## [1.0.0] - 2026-10-13
 

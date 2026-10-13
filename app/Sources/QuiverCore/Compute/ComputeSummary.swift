@@ -8,23 +8,67 @@ public struct ComputeLimits: Sendable, Equatable {
     /// A process (or a whole orphan tree) above this is flagged. Bytes.
     public var memoryBytes: UInt64 = 2 << 30
 
-    public static let orphanAgeKey = "computeOrphanAgeHours"
+    /// Whole minutes under this key; a minute is the field's finest unit.
+    public static let orphanAgeKey = "computeOrphanAgeMinutes"
+    /// The pre-minutes key, read once for upgrade then removed on save.
+    public static let legacyOrphanAgeKey = "computeOrphanAgeHours"
     public static let memoryLimitKey = "computeMemoryLimitGB"
+
+    /// The field's bounds: a minute up to a year.
+    public static let orphanAgeRange: ClosedRange<TimeInterval> = 60...(365 * 86400)
 
     public init() {}
 
     public init(defaults: UserDefaults) {
-        if let hours = defaults.object(forKey: Self.orphanAgeKey) as? Int, hours > 0 {
+        if let minutes = defaults.object(forKey: Self.orphanAgeKey) as? Int, minutes > 0 {
+            orphanAge = TimeInterval(minutes) * 60
+        } else if let hours = defaults.object(forKey: Self.legacyOrphanAgeKey) as? Int, hours > 0 {
             orphanAge = TimeInterval(hours) * 3600
         }
+        orphanAge = min(max(orphanAge, Self.orphanAgeRange.lowerBound),
+                        Self.orphanAgeRange.upperBound)
         if let gb = defaults.object(forKey: Self.memoryLimitKey) as? Int, gb > 0 {
             memoryBytes = UInt64(gb) << 30
         }
     }
 
     public func save(to defaults: UserDefaults) {
-        defaults.set(Int(orphanAge / 3600), forKey: Self.orphanAgeKey)
+        let clamped = min(max(orphanAge, Self.orphanAgeRange.lowerBound),
+                          Self.orphanAgeRange.upperBound)
+        defaults.set(Int(clamped / 60), forKey: Self.orphanAgeKey)
+        defaults.removeObject(forKey: Self.legacyOrphanAgeKey)
         defaults.set(Int(memoryBytes >> 30), forKey: Self.memoryLimitKey)
+    }
+}
+
+/// The unit the orphan-age field shows a duration in.
+public enum OrphanAgeUnit: String, CaseIterable, Sendable {
+    case minute, hour, day
+
+    public var seconds: TimeInterval {
+        switch self {
+        case .minute: 60
+        case .hour: 3600
+        case .day: 86400
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .minute: "Min"
+        case .hour: "Hour"
+        case .day: "Day"
+        }
+    }
+
+    /// The largest unit the duration divides evenly into, so 2880
+    /// minutes shows as "2 Day" not "2880 Min". Rounds to whole
+    /// minutes first, so nothing under a minute survives.
+    public static func split(_ seconds: TimeInterval) -> (value: Int, unit: OrphanAgeUnit) {
+        let minutes = max(1, Int((seconds / 60).rounded()))
+        if minutes % (24 * 60) == 0 { return (minutes / (24 * 60), .day) }
+        if minutes % 60 == 0 { return (minutes / 60, .hour) }
+        return (minutes, .minute)
     }
 }
 
