@@ -30,14 +30,16 @@ public final class UpdatesModel {
     private var preferences: UpdatePreferences
     private let localCheck: LocalBuildCheck
     private let releaseCheck: ReleaseCheck
-    private let swe: SweClient
+    private let swe: @Sendable () -> SweClient
     private let rebuildRunner: any CommandRunning
     private var generation = 0
 
+    /// `swe` is resolved at call time so a changed swe executable in
+    /// Settings applies to the next refresh.
     public init(build: BuildInfo, preferences: UpdatePreferences,
                 localCheck: LocalBuildCheck = LocalBuildCheck(),
                 releaseCheck: ReleaseCheck,
-                swe: SweClient = SweClient(),
+                swe: @escaping @Sendable () -> SweClient = { SweClient() },
                 rebuildRunner: any CommandRunning = ProcessRunner(executable: "bash")) {
         self.build = build
         self.preferences = preferences
@@ -90,7 +92,7 @@ public final class UpdatesModel {
         let path = checkout
         let commit = build.commit
         let check = localCheck
-        let swe = self.swe
+        let swe = self.swe()
         async let localResult: LocalBuildCheck.Result? = {
             guard let path else { return nil }
             if force { _ = await check.fetch(path: path) }

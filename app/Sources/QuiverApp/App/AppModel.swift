@@ -266,7 +266,11 @@ final class AppModel {
             releaseCheck: ReleaseCheck(
                 transport: URLSessionTransport(),
                 cacheURL: quiver.appending(path: "cache/latest-release.json")),
-            swe: client)
+            swe: {
+                let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
+                return SweClient(runner: ProcessRunner(
+                    executable: SweLocation.executable(override: path)))
+            })
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
             transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")),
             store: CustomStatusServices())

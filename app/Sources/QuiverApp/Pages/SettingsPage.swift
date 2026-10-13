@@ -248,9 +248,6 @@ private struct SettingsSectionView: View {
             detail: localDetail(result),
             warning: {
                 if case .failed(let message) = updates.rebuildState { return message }
-                if let upstream = result?.upstreamBehind, upstream > 0 {
-                    return "\(upstream) new commit\(upstream == 1 ? "" : "s") upstream, not pulled"
-                }
                 return nil
             }()) {
                 HStack(spacing: 12) {
@@ -280,6 +277,9 @@ private struct SettingsSectionView: View {
             text = "Built from a commit this checkout doesn't have"
         }
         if result.checkoutDirty { text += " · uncommitted changes not built" }
+        if let upstream = result.upstreamBehind, upstream > 0 {
+            text += "\n\(upstream) new commit\(upstream == 1 ? "" : "s") upstream, not pulled"
+        }
         return text
     }
 
