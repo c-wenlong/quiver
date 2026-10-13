@@ -238,11 +238,13 @@ public struct SummaryView: View {
             Chart {
                 if snapshot.summary.showsTotal {
                     ForEach(Array(points.enumerated()), id: \.offset) { point in
-                        AreaMark(x: .value("Day", point.offset), y: .value("Tokens", point.element))
+                        AreaMark(x: .value("Day", point.offset), y: .value("Tokens", point.element),
+                                 series: .value("Series", "Total"))
                             .interpolationMethod(.monotone)
                             .foregroundStyle(LinearGradient(colors: [Palette.accentFill.opacity(0.35), .clear],
                                                             startPoint: .top, endPoint: .bottom))
-                        LineMark(x: .value("Day", point.offset), y: .value("Tokens", point.element))
+                        LineMark(x: .value("Day", point.offset), y: .value("Tokens", point.element),
+                                 series: .value("Series", "Total"))
                             .interpolationMethod(.monotone)
                             .foregroundStyle(Palette.accentFill)
                             .lineStyle(StrokeStyle(lineWidth: 2))
@@ -251,7 +253,8 @@ public struct SummaryView: View {
                 ForEach(snapshot.summary.series) { series in
                     let points = snapshot.sparkline(series, days: 14, now: now, calendar: .current)
                     ForEach(Array(points.enumerated()), id: \.offset) { point in
-                        LineMark(x: .value("Day", point.offset), y: .value("Tokens", point.element))
+                        LineMark(x: .value("Day", point.offset), y: .value("Tokens", point.element),
+                                 series: .value("Series", series.harness))
                             .interpolationMethod(.monotone)
                             .foregroundStyle(series.colorHex.isEmpty
                                              ? Palette.accent : Color(nsColor: NSColor(hex: series.colorHex)))

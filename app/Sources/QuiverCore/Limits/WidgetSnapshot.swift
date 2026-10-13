@@ -189,7 +189,8 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         // its usage earned.
         var seen: [String] = []
         for row in summaryRows where !seen.contains(row.harness) { seen.append(row.harness) }
-        let rank = Dictionary(uniqueKeysWithValues: harnessOrder.enumerated().map { ($1, $0) })
+        let rank = Dictionary(harnessOrder.enumerated().map { ($1, $0) },
+                              uniquingKeysWith: { first, _ in first })
         let orderedHarnesses = seen.enumerated().sorted {
             ((rank[$0.element] ?? .max), $0.offset) < ((rank[$1.element] ?? .max), $1.offset)
         }.map(\.element)
