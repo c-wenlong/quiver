@@ -173,8 +173,8 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         let renewed = Set(renewer.renewals.map(\.home))
         #expect(renewed == [root.appending(path: ".claude").path, expiredHome])
         #expect(model.renewing.isEmpty)
-        // The reload afterwards is forced.
-        #expect(usage.requests.last?.1 == true)
+        // The reload afterwards isn't forced: healthy readings are reused.
+        #expect(usage.requests.last?.1 == false)
     }
 
     @Test func aFailedRenewalIsMarkedUntilTheAccountIsNoLongerExpired() async throws {
@@ -208,10 +208,22 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         await model.refreshFromButton()
 
         #expect(renewer.renewals.map(\.home) == [home])
-        // It ends on a second load: the card was read twice for the press.
+        // A forced read finds the lapse, then a plain read after renewing.
         let reads = usage.requests[readsBefore...].filter { $0.0.configHome == home }
-        #expect(reads.count == 2)
-        #expect(reads.allSatisfy { $0.1 })
+        #expect(reads.map(\.1) == [true, false])
+    }
+
+    @Test func aPressWithNothingExpiredLoadsOnce() async throws {
+        let renewer = FakeRenewer()
+        let model = renewalModel(renewer: renewer)
+        let home = root.appending(path: ".claude").path
+        usage.byHome[home] = reading
+        await model.load(force: false)
+        let readsBefore = usage.requests.count
+        await model.refreshFromButton()
+        let reads = usage.requests[readsBefore...].filter { $0.0.configHome == home }
+        #expect(reads.map(\.1) == [true])
+        #expect(renewer.renewals.isEmpty)
     }
 
     @Test func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
@@ -307,8 +319,21 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     @Test func aStuckRunIsTerminatedThenKilled() async throws {
         // A child that ignores SIGTERM is SIGKILLed; renew never reports
         // done while it still runs.
-        let (dir, renewer) = try cli("#!/bin/sh\ntrap '' TERM\nsleep 60\n",
-                                     timeout: .milliseconds(300))
+        // exec keeps the ignored TERM, so only SIGKILL can end it. Its
+        // marker file proves the child really started before the timeout.
+        let (dir, renewer) = try cli("#!/bin/sh\ntrap '' TERM\n/usr/bin/touch started\nexec /bin/sleep 60\n",
+                                     timeout: .milliseconds(1500), sigtermGrace: .milliseconds(300))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let start = ContinuousClock.now
+        #expect(await renewer.renew(home: dir.path, isDefault: true) == false)
+        let elapsed = ContinuousClock.now - start
+        #expect(FileManager.default.fileExists(atPath: dir.appending(path: "started").path))
+        #expect(elapsed >= .milliseconds(1750))
+        #expect(elapsed < .seconds(5))
+    }
+
+    @Test func aFailingRunDoesNotRenew() async throws {
+        let (dir, renewer) = try cli("#!/bin/sh\nexit 1\n")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(await renewer.renew(home: dir.path, isDefault: true) == false)
     }

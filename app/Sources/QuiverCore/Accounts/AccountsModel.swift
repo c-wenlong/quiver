@@ -206,7 +206,10 @@ public final class AccountsModel {
         }
         renewing.subtract(targets.map(\.id))
         renewFailed.formUnion(targets.map(\.id).filter { results[$0] == false })
-        await load(force: true)
+        // Not forced: healthy accounts reuse the readings the first load
+        // just took, while a renewed account's new token starts a fresh
+        // cache entry (UsageService keys it by token) and is fetched.
+        await load(force: false)
     }
 
     /// Reload on a timer until the calling task is cancelled, so a page left

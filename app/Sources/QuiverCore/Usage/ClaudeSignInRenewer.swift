@@ -72,21 +72,15 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         path.split(separator: ":").lazy.map { "\($0)/\(command)" }.first(where: isExecutable)
     }
 
-    /// `task`'s result if it finishes inside `timeout`, else nil. The
-    /// task itself keeps running: a timed-out wait here is followed by
-    /// SIGTERM and SIGKILL waits on the same exit.
-    private static func awaiting(_ task: Task<Int32, Never>,
-                                 for timeout: Duration) async -> Int32? {
-        await withTaskGroup(of: Int32?.self) { group in
-            group.addTask { await task.value }
-            group.addTask {
-                try? await Task.sleep(for: timeout)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+    /// Whether `process` exits within `limit`. It polls, so the deadline
+    /// always returns, however stuck the child is.
+    private static func exits(_ process: Process, within limit: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while process.isRunning {
+            if ContinuousClock.now >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(50))
         }
+        return true
     }
 
     public func renew(home: String, isDefault: Bool) async -> Bool {
@@ -108,36 +102,21 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
-        // One exit task for the whole run: the timeout, SIGTERM and
-        // SIGKILL waits all await it, so a late exit can't be missed.
-        // The stream's builder runs right here, so the handler is in place
-        // before run(): even an instant exit is buffered, never missed.
-        let statuses = AsyncStream<Int32> { continuation in
-            process.terminationHandler = {
-                continuation.yield($0.terminationStatus)
-                continuation.finish()
-            }
-        }
-        let exited = Task<Int32, Never> {
-            for await status in statuses { return status }
-            return -1
-        }
         do {
             try process.run()
         } catch {
-            exited.cancel()
             return false
         }
-        if let status = await Self.awaiting(exited, for: timeout) {
-            return status == 0
+        if await Self.exits(process, within: timeout) {
+            return process.terminationStatus == 0
         }
         // Timed out, but the child may still hold the keychain lock:
         // grace it, then kill it. Renewing never reports done while it
         // lives, or a second press would race it.
         process.terminate()
-        if await Self.awaiting(exited, for: sigtermGrace) == nil {
+        if await !Self.exits(process, within: sigtermGrace) {
             kill(process.processIdentifier, SIGKILL)
-            _ = await Self.awaiting(exited, for: .seconds(5))
+            _ = await Self.exits(process, within: .seconds(5))
         }
         return false
     }
