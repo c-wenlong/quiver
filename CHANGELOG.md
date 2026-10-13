@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the choice persists. Hovering the rail floats it open over the page
   after a short delay, a collapse under the pointer stays shut until the
   pointer leaves once, and Reduce Motion applies every change without
-  animating.
+  animating. The pinned sidebar's trailing edge is also draggable now:
+  an 8pt strip resizes it between 160 and 360pt, double-clicking resets
+  it to 196, and the choice persists (`sidebarWidth`).
 
 - **Settings > Updates shows whether the installed app is outdated.**
   `build-app.sh` now stamps the channel (`QUIVER_CHANNEL=dev|prod`, dev

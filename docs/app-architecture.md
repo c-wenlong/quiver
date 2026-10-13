@@ -62,7 +62,10 @@ the layout reserves `sidebarCollapsedWidth` or `sidebarWidth` and the
 `SidebarExpansion` carries the pointer state so a collapsed rail floats
 open under hover and a toggle under the pointer stays shut until the
 pointer leaves once (`hoverSuppressed`). The View menu's Toggle Sidebar
-(⌃⌘S) and the sidebar's own first row flip the same flag.
+(⌃⌘S) and the sidebar's own first row flip the same flag. While pinned
+open, a drag strip on the sidebar's trailing edge resizes it live
+(`AppModel.sidebarWidth`, clamped by `QuiverCore`'s `SidebarWidth` to
+160...360, standard 196; double-click resets, the value persists).
 Reselecting the current sidebar item (or the Plugins > Explore tab) bumps
 `navReselects`, which detail views watch to go back through their own
 unsaved-changes ask. The menu bar and the desktop widgets are separate
