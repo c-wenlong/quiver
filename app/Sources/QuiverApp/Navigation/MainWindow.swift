@@ -57,6 +57,8 @@ private struct Sidebar: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
                 toggleRow
+                    // Same spacing as between groups.
+                    .padding(.bottom, Theme.gutter)
                 VStack(alignment: .leading, spacing: 18) {
                     ForEach(SidebarGroup.allCases) { group in
                         VStack(alignment: .leading, spacing: 2) {
@@ -86,7 +88,8 @@ private struct Sidebar: View {
                     }
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.leading, Theme.sidebarLeadingPadding)
+            .padding(.trailing, Theme.sidebarTrailingPadding)
             // Clear of the traffic lights for the toggle row.
             .padding(.top, 28)
             // Always laid out at full width; the rail clips the right
@@ -112,6 +115,9 @@ private struct Sidebar: View {
             Theme.border.frame(width: 1).opacity(isFloating ? 1 : 0)
         }
         .frame(maxHeight: .infinity)
+        // The sidebar runs to the very top of the window, pinned or
+        // floating; the content's top padding clears the traffic lights.
+        .ignoresSafeArea(.container, edges: .top)
         .animation(animation, value: isExpanded)
         .onHover(perform: hover)
         .onAppear { expansion.collapsed = model.sidebarCollapsed }
@@ -123,9 +129,19 @@ private struct Sidebar: View {
         }
     }
 
-    /// The collapse/expand button: first row, under the traffic lights,
-    /// leading-aligned with the nav icons so it never moves.
+    /// The collapse/expand button: its own row under the traffic lights,
+    /// trailing-aligned. Expanded it hugs the sidebar's trailing edge; in
+    /// the rail the trailing padding parks it right over the icon pill,
+    /// and the animated padding slides it with the width change. It
+    /// follows the pinned state only, so a hover expansion never slides
+    /// it out from under the pointer.
     @State private var hoveringToggle = false
+
+    private var toggleTrailingPadding: CGFloat {
+        !expansion.collapsed ? 0
+            : Theme.sidebarWidth - Theme.sidebarLeadingPadding - Theme.sidebarTrailingPadding
+                - Theme.navIconPillWidth
+    }
 
     private var toggleRow: some View {
         let label = model.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
@@ -143,10 +159,14 @@ private struct Sidebar: View {
                             in: .rect(cornerRadius: Theme.controlRadius))
                 .contentShape(.rect(cornerRadius: Theme.controlRadius))
         }
-        .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
+        // The shared plain button: the app's own focus ring on keyboard
+        // focus, no stuck blue ring after a click.
+        .plainButton(cornerRadius: Theme.controlRadius)
         .onHover { hoveringToggle = $0 }
         .accessibilityLabel(label)
         .help("\(label) ⌃⌘S")
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.trailing, toggleTrailingPadding)
     }
 
     /// Only a collapsed sidebar reacts to the pointer: in after 0.12 s,
@@ -211,7 +231,7 @@ private struct NavItem: View {
             }
             .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textNav)
             .padding(.horizontal, 8)
-            .frame(maxWidth: collapsed ? 34 : .infinity, alignment: .leading)
+            .frame(maxWidth: collapsed ? Theme.navIconPillWidth : .infinity, alignment: .leading)
             .frame(height: Theme.navRowHeight)
             .clipped()
             .background(isSelected ? Theme.navActive : hovering ? Theme.hover : .clear,
