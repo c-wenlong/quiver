@@ -132,11 +132,13 @@ private struct Sidebar: View {
     /// The collapse/expand button: its own row under the traffic lights,
     /// trailing-aligned. Expanded it hugs the sidebar's trailing edge; in
     /// the rail the trailing padding parks it right over the icon pill,
-    /// and the animated padding slides it with the width change.
+    /// and the animated padding slides it with the width change. It
+    /// follows the pinned state only, so a hover expansion never slides
+    /// it out from under the pointer.
     @State private var hoveringToggle = false
 
     private var toggleTrailingPadding: CGFloat {
-        isExpanded ? 0
+        !expansion.collapsed ? 0
             : Theme.sidebarWidth - Theme.sidebarLeadingPadding - Theme.sidebarTrailingPadding
                 - Theme.navIconPillWidth
     }
