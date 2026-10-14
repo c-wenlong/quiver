@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   known figures with an `as_of` timestamp, instead of the row silently
   vanishing for the cache's whole TTL.
 
+- **Refresh re-checks only what failed, and nothing disappears when a
+  reading does.** A new Settings field, "Refresh only what failed for"
+  (minutes, default 5), sets how long a good reading counts as fresh:
+  inside it, the Refresh buttons force only accounts whose reading is
+  missing, failed or stale, and pass `--cache-ttl` / `--refresh-failed`
+  to swe so other harnesses refetch only their failed entries (an swe
+  too old for the flags is asked without them). Windows swe marks
+  `unavailable` keep their last known values, greyed with a red label
+  and an "as of" age on the Accounts cards and the menu bar, instead of
+  vanishing — and a kept stale reading after a failed account fetch
+  gets the same row treatment. Usage state (readings plus the last
+  failure and its timestamp) persists under `~/.quiver/cache/`, so
+  cards render on launch without a keychain prompt or a network call.
+
 - **Collapsible sidebar.** A toggle row under the traffic lights (or
   View > Toggle Sidebar, ⌃⌘S) pins the sidebar to a 72pt icon rail;
   the choice persists. Hovering the rail floats it open over the page

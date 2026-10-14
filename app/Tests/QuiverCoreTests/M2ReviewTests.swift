@@ -87,7 +87,7 @@ import Testing
             (.zero, CommandResult(status: 1, stdout: Data(), stderr: "\u{1B}[31mUnknown flag: --exclude=claude,codex\u{1B}[0m")),
             (.zero, CommandResult(status: 0, stdout: ok, stderr: "")),
         ])
-        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
         await model.load()
         #expect(model.rows.map(\.name) == ["devin"])
         #expect(model.note == nil)
@@ -174,6 +174,18 @@ import Testing
         // A different login does not inherit it.
         UsageCacheStore(url: url).save(StoredAccount(fingerprint: "new", reading: reading, cooldownUntil: nil), for: key)
         #expect(other.entry(for: key)?.cooldownUntil == nil)
+    }
+
+    @Test func anOlderIncomingCooldownDoesNotShortenTheStoredOne() {
+        let url = FileManager.default.temporaryDirectory.appending(path: "cool2-\(UUID().uuidString)/app-usage.json")
+        let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)
+        let later = Date().addingTimeInterval(600)
+        let earlier = Date().addingTimeInterval(60)
+        let other = UsageCacheStore(url: url)
+        other.save(StoredAccount(fingerprint: "same", reading: nil, cooldownUntil: later), for: key)
+        UsageCacheStore(url: url).save(
+            StoredAccount(fingerprint: "same", reading: nil, cooldownUntil: earlier), for: key)
+        #expect(other.entry(for: key)?.cooldownUntil == later)
     }
 
     @Test func theCooldownCheckUsesTheServiceClock() {

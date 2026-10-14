@@ -39,10 +39,19 @@ public struct SweClient: Sendable {
     }
 
     /// `excludingUsage` lists those harnesses without polling their usage.
-    public func harnesses(withUsage usage: Bool, excludingUsage excluded: [String] = []) async throws -> [Harness] {
+    /// `cacheTTL` overrides swe's five-minute freshness for the run and
+    /// `refreshFailed` asks it to refetch only the readings that failed;
+    /// both need an swe new enough to know the flags.
+    public func harnesses(withUsage usage: Bool, excludingUsage excluded: [String] = [],
+                          cacheTTL: TimeInterval? = nil,
+                          refreshFailed: Bool = false) async throws -> [Harness] {
         var args = usage ? ["list", "--usage", "--json"] : ["list", "--json"]
-        if usage && !excluded.isEmpty {
-            args.append("--exclude=" + excluded.joined(separator: ","))
+        if usage {
+            if let cacheTTL { args.append("--cache-ttl=\(Int(cacheTTL))") }
+            if refreshFailed { args.append("--refresh-failed") }
+            if !excluded.isEmpty {
+                args.append("--exclude=" + excluded.joined(separator: ","))
+            }
         }
         let data: HarnessList = try await call(args)
         return data.harnesses

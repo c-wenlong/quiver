@@ -18,7 +18,7 @@ import Testing
 
     @Test func harnessesWithoutAQuiverAccountComeFromSwe() async {
         let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
         await model.load()
         // Claude and Codex have accounts of their own; unpolled harnesses have nothing to show.
         #expect(model.rows.map(\.name) == ["devin", "cursor"])
@@ -28,7 +28,7 @@ import Testing
         #expect(model.rows[0].limit.planType == "teams")
         #expect(model.rows[1].limit.planType == nil)
         // Claude and Codex are fetched per account by the app; swe must not poll them too.
-        #expect(runner.calls == [["list", "--usage", "--json", "--exclude=claude,codex"]])
+        #expect(runner.calls == [["list", "--usage", "--json", "--cache-ttl=300", "--exclude=claude,codex"]])
     }
 
     @Test func rowsCarryTheirCommandAndWhetherItIsOnPath() async {
@@ -36,7 +36,8 @@ import Testing
             .replacingOccurrences(of: #""name": "devin", "command": "devin","#, with: #""name": "devin", "command": "devin", "installed": true,"#)
             .replacingOccurrences(of: #""name": "cursor", "command": "cursor-agent","#, with: #""name": "cursor", "display_name": "Cursor", "command": "cursor-agent", "installed": false,"#)
             .replacingOccurrences(of: #""name": "claude", "command": "claude","#, with: #""name": "claude", "command": "claude", "installed": true,"#)
-        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
+                  snapshotFile: tempSnapshotFile())
         await model.load()
         #expect(model.rows.map(\.command) == ["devin", "cursor-agent"])
         #expect(model.rows.map(\.cliInstalled) == [true, false])
@@ -60,7 +61,8 @@ import Testing
           {"name": "kilo", "command": "kilo", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 2, "rate_limit": null}
         ]}}
         """#
-        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
+                  snapshotFile: tempSnapshotFile())
         await model.load()
         #expect(model.cards.map(\.name) == ["devin"])
         #expect(model.cards[0].title == "Devin Teams")
@@ -83,7 +85,8 @@ import Testing
            "rate_limit": {"status": "ok", "used_percent": 10, "remaining_percent": 90, "limit_reached": false, "reset_at": null, "window": "7d", "window_seconds": null, "plan_type": "teams", "remaining_units": null, "total_units": null, "fetched_at": 1791700000}}
         ]}}
         """#
-        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))))
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
+                  snapshotFile: tempSnapshotFile())
         await model.load()
         #expect(model.cards.map(\.name) == ["devin"])
         // The menu bar, notifications and widgets read rows: starred only too.
@@ -93,7 +96,7 @@ import Testing
     @Test func aFailedLoadKeepsTheLastStarredSet() async {
         // Before swe has answered once, nothing is hidden: unknown means show.
         let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
         #expect(model.starred == nil)
         #expect(model.isStarred("codex"))
         await model.load()
@@ -133,7 +136,7 @@ import Testing
         let runner = GatedRunner(
             first: .init(status: 0, stdout: Data(json.utf8), stderr: ""),
             later: .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
         var outdated: Task<Void, Never>!
         await withCheckedContinuation { continuation in
             runner.onFirstCall = { continuation.resume() }
@@ -149,7 +152,7 @@ import Testing
 
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
         await model.load()
         #expect(model.rows.isEmpty)
         #expect(model.note?.contains("older") == true)
@@ -197,5 +200,111 @@ private final class GatedRunner: CommandRunning, @unchecked Sendable {
             return waiting
         }
         parked?.resume()
+    }
+}
+
+
+/// Answers each run from a queue, then repeats the last reply.
+final class QueueRunner: CommandRunning, @unchecked Sendable {
+    private var replies: [CommandResult]
+    private(set) var calls: [[String]] = []
+    init(_ replies: [CommandResult]) { self.replies = replies }
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        calls.append(arguments)
+        return replies.count > 1 ? replies.removeFirst() : replies[0]
+    }
+}
+
+@MainActor
+@Suite struct OtherLimitsCacheTests {
+    let okBody = Data(#"""
+    {"schema": 1, "data": {"harnesses": [
+      {"name": "devin", "command": "devin", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 3,
+       "rate_limit": {"status": "ok", "used_percent": 40, "remaining_percent": 60, "limit_reached": false, "reset_at": null, "window": "7d", "window_seconds": 604800, "plan_type": "teams", "remaining_units": null, "total_units": null, "fetched_at": 1791700000}}
+    ]}}
+    """#.utf8)
+
+    @Test func aRefreshLoadAsksSweToRefetchOnlyTheFailed() async {
+        let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        await model.load(refreshFailed: true)
+        #expect(runner.calls == [["list", "--usage", "--json", "--cache-ttl=300",
+                                 "--refresh-failed", "--exclude=claude,codex"]])
+    }
+
+    @Test func anSweWithoutTheNewFlagsIsRetriedPlainAndRemembered() async {
+        let runner = QueueRunner([
+            .init(status: 2, stdout: Data(), stderr: "Unknown flag: --cache-ttl"),
+            .init(status: 0, stdout: okBody, stderr: ""),
+        ])
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        await model.load()
+        #expect(model.rows.map(\.name) == ["devin"])
+        #expect(runner.calls == [
+            ["list", "--usage", "--json", "--cache-ttl=300", "--exclude=claude,codex"],
+            ["list", "--usage", "--json", "--exclude=claude,codex"],
+        ])
+
+        // The session remembers: even a refresh press never sends them again.
+        await model.load(refreshFailed: true)
+        #expect(runner.calls.last == ["list", "--usage", "--json", "--exclude=claude,codex"])
+        // swe keeps its own five minutes, so staleness must not use the
+        // longer window the flag would have asked for.
+        model.cacheTTL = 7200
+        #expect(model.acceptedCacheTTL == 0)
+    }
+
+    @Test func anSweThatTookTheFlagsHonoursTheWindow() async {
+        let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        model.cacheTTL = 7200
+        await model.load()
+        #expect(model.acceptedCacheTTL == 7200)
+    }
+
+    @Test func anSweRejectingBothFlagSetsEndsAtThePlainCall() async {
+        let runner = QueueRunner([
+            .init(status: 2, stdout: Data(), stderr: "Unknown flag: --cache-ttl"),
+            .init(status: 2, stdout: Data(), stderr: "Unknown flag: --exclude"),
+            .init(status: 0, stdout: okBody, stderr: ""),
+        ])
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        await model.load()
+        #expect(model.rows.map(\.name) == ["devin"])
+        #expect(runner.calls == [
+            ["list", "--usage", "--json", "--cache-ttl=300", "--exclude=claude,codex"],
+            ["list", "--usage", "--json", "--exclude=claude,codex"],
+            ["list", "--usage", "--json"],
+        ])
+
+        // Both "doesn't know" facts persist for the session.
+        await model.load(refreshFailed: true)
+        #expect(runner.calls.last == ["list", "--usage", "--json"])
+    }
+
+    @Test func theLastSuccessfulListRoundTripsThroughTheSnapshotFile() async {
+        let file = tempSnapshotFile()
+        let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: file)
+        await model.load()
+        #expect(FileManager.default.fileExists(atPath: file.path))
+
+        // A new model on the same file shows the saved rows before swe answers.
+        let revived = OtherLimitsModel(swe: SweClient(runner: FakeRunner(
+            .init(status: 2, stdout: Data(), stderr: "down"))), snapshotFile: file)
+        #expect(revived.rows.map(\.name) == ["devin"])
+        #expect(revived.cards.map(\.name) == ["devin"])
+        #expect(revived.starred == ["devin"])
+        #expect(revived.rows[0].limit.usedPercent == 40)
+    }
+
+    @Test func aMissingOrCorruptSnapshotStartsCold() async throws {
+        let file = tempSnapshotFile()
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "not json".write(to: file, atomically: true, encoding: .utf8)
+        let revived = OtherLimitsModel(swe: SweClient(runner: FakeRunner(
+            .init(status: 0, stdout: okBody, stderr: ""))), snapshotFile: file)
+        #expect(revived.rows.isEmpty && revived.starred == nil)
     }
 }
