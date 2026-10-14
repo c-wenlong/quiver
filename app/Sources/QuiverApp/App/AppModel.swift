@@ -522,7 +522,7 @@ final class AppModel {
 
     private func refreshLimits() {
         limits.update(LimitReading.all(cards: starredAccountCards, others: others.rows, now: .now,
-                                     sweFreshFor: limits.refreshFreshSeconds))
+                                     sweFreshFor: others.acceptedCacheTTL))
     }
 
     /// Keeps the Service status page and the menu bar line current.

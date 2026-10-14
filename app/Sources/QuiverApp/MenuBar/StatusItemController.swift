@@ -462,7 +462,7 @@ private struct PanelOtherRow: View {
         // provider fails; dim one that old.
         let old = row.limit.fetchedAt.map {
             Date.now.timeIntervalSince($0)
-                > LimitReading.sweStaleLimit(freshFor: app.limits.refreshFreshSeconds) } ?? true
+                > LimitReading.sweStaleLimit(freshFor: app.others.acceptedCacheTTL) } ?? true
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 HarnessIcon(harness: row.name, size: 14)

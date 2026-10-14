@@ -86,7 +86,12 @@ public final class OtherLimitsModel {
     public var cacheTTL: TimeInterval = 300
     /// Set when swe rejected the usage flags, so they're never sent again
     /// this session.
-    private var sweKnowsUsageFlags = true
+    private(set) var sweKnowsUsageFlags = true
+    /// The freshness window swe actually honours: `cacheTTL` once it took
+    /// --cache-ttl, else 0 (its own five minutes). Staleness checks use
+    /// this, so an swe too old for the flag never has its outage
+    /// fallback read as current.
+    public var acceptedCacheTTL: TimeInterval { sweKnowsUsageFlags ? cacheTTL : 0 }
     /// Same for --exclude: an swe that old polls Claude and Codex too.
     private var sweKnowsExclude = true
     /// Where the last successful list persists between launches.

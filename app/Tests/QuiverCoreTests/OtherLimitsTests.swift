@@ -248,6 +248,18 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
         // The session remembers: even a refresh press never sends them again.
         await model.load(refreshFailed: true)
         #expect(runner.calls.last == ["list", "--usage", "--json", "--exclude=claude,codex"])
+        // swe keeps its own five minutes, so staleness must not use the
+        // longer window the flag would have asked for.
+        model.cacheTTL = 7200
+        #expect(model.acceptedCacheTTL == 0)
+    }
+
+    @Test func anSweThatTookTheFlagsHonoursTheWindow() async {
+        let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        model.cacheTTL = 7200
+        await model.load()
+        #expect(model.acceptedCacheTTL == 7200)
     }
 
     @Test func anSweRejectingBothFlagSetsEndsAtThePlainCall() async {
