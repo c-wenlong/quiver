@@ -255,7 +255,9 @@ private struct LogoLaunchButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!target.canLaunch)
-        .help(target.appPath != nil
+        .help(!target.canLaunch
+              ? "\(target.title) isn't installed"
+              : target.appPath != nil
               ? "Open \(target.title) app"
               : "Open \(target.title) in Terminal")
     }
