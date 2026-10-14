@@ -628,7 +628,7 @@ def cmd_list(args):
     # ~15ms for everything else combined. Asking for them explicitly keeps
     # the default listing instant. Refreshing implies wanting to see them.
     usage_flags = {"--usage", "-u"}
-    usage_view = refresh or any(arg in usage_flags for arg in args)
+    usage_view = refresh or refresh_failed or any(arg in usage_flags for arg in args)
     args = [arg for arg in args if arg not in usage_flags]
 
     # --links swaps in quiver link status. It is a different question about

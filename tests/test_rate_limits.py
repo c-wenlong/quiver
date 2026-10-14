@@ -1081,6 +1081,22 @@ class UnavailableWindowCarryTest(unittest.TestCase):
 
         self.assertEqual(info.windows[1]["as_of"], 1200.0)
 
+    def test_an_undated_unavailable_window_is_not_a_last_value(self):
+        """Two failures with no good Grok reading: the first writes 0 with
+        no as_of; the second must keep that, not date the 0 by fetched_at."""
+        previous = {
+            "fetched_at": 9999.0,
+            "windows": [{"window": "grok_bot", "used_percent": 0,
+                         "limit_reached": False, "reset_at": 0,
+                         "window_seconds": 604800, "unavailable": True}],
+        }
+        info = self._info()
+        _fill_unavailable_windows(info, previous)
+
+        grok = info.windows[1]
+        self.assertEqual(grok["used_percent"], 0)
+        self.assertNotIn("as_of", grok)
+
     def test_no_previous_reading_reads_zero_without_as_of(self):
         info = self._info()
         _fill_unavailable_windows(info, None)
@@ -1180,6 +1196,85 @@ class RefreshFailedTest(unittest.TestCase):
         )
         timed_out.assert_not_called()
         self.assertEqual(result["timed"].plan_type, "timeout")
+
+    def test_a_kept_reading_is_never_saved_as_no_data(self):
+        """Press 1: the refresh of an unavailable reading fails, the old
+        entry stays in limits and no no_data marker is written. Press 2
+        must retry, not return early with the row missing."""
+        import json as _json
+
+        unavailable = self._raw("cursor", 10, windows=[
+            {"window": "grok_bot", "used_percent": 42,
+             "limit_reached": False, "reset_at": 900,
+             "window_seconds": 604800, "unavailable": True, "as_of": 1}])
+        failing = MagicMock(return_value=None)
+
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+        register("cursor", failing)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import (
+                    RATE_LIMITS_CACHE_FILE, _save_cached)
+                _save_cached({"cursor": unavailable})
+
+                first = get_all_rate_limits(
+                    use_cache=True, tool_names={"cursor"}, refresh_failed=True)
+                failing.assert_called_once_with()
+                # The kept reading, not an empty marker.
+                self.assertEqual(first["cursor"].windows[0]["used_percent"], 42)
+                on_disk = _json.loads(RATE_LIMITS_CACHE_FILE.read_text())
+                self.assertNotIn("cursor", on_disk.get("no_data", {}))
+                self.assertIn("cursor", on_disk["limits"])
+
+                # Press 2: the retry actually runs.
+                result = get_all_rate_limits(
+                    use_cache=True, tool_names={"cursor"}, refresh_failed=True)
+                self.assertEqual(failing.call_count, 2)
+                self.assertIn("cursor", result)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+    def test_a_stale_no_data_marker_does_not_block_a_retry(self):
+        """A cache written by an older swe holds the tool in both limits
+        and no_data: refresh_failed must still set the entry aside and
+        refetch it."""
+        import json as _json
+
+        now = time.time()
+        unavailable = self._raw("cursor", 10, windows=[
+            {"window": "grok_bot", "used_percent": 42,
+             "limit_reached": False, "reset_at": 900,
+             "window_seconds": 604800, "unavailable": True, "as_of": 1}])
+        fetcher = self._fetcher("cursor", 55)
+
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+        register("cursor", fetcher)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import RATE_LIMITS_CACHE_FILE
+                RATE_LIMITS_CACHE_FILE.write_text(_json.dumps({
+                    "cached_at": now,
+                    "limits": {"cursor": unavailable},
+                    "updated_at": {"cursor": now},
+                    "no_data": {"cursor": now},
+                }))
+                result = get_all_rate_limits(
+                    use_cache=True, tool_names={"cursor"}, refresh_failed=True)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        fetcher.assert_called_once_with()
+        self.assertEqual(result["cursor"].used_percent, 55)
 
     def test_cache_ttl_replaces_the_default_freshness(self):
         fetcher = self._fetcher("tool", 30)

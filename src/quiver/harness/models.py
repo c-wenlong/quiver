@@ -282,6 +282,10 @@ class RateLimitInfo:
                     "limit_reached": w["limit_reached"],
                     "reset_at": w["reset_at"] or None,
                     "window_seconds": w["window_seconds"] or None,
+                    # Unavailable/carried keys appear only when set, same
+                    # as in the cache dict; the app reads both as optional.
+                    **({"unavailable": True} if w.get("unavailable") else {}),
+                    **({"as_of": w["as_of"]} if w.get("as_of") else {}),
                 }
                 for w in self.windows
             ] if status == "ok" else [],

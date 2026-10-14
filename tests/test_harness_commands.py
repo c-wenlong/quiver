@@ -556,6 +556,20 @@ class CmdListRefreshFailedFlagTest(unittest.TestCase):
             refresh_failed=True, cache_ttl=300.0,
         )
 
+    def test_refresh_failed_alone_turns_on_the_usage_view(self):
+        _setup_patches(self)
+        with patch(
+            "quiver.harness.rate_limits.get_all_rate_limits",
+            return_value={},
+        ) as fetch_rates, redirect_stdout(io.StringIO()):
+            code = cmd_list(["--refresh-failed"])
+
+        self.assertEqual(code, None)
+        fetch_rates.assert_called_once_with(
+            use_cache=True, tool_names=set(),
+            refresh_failed=True, cache_ttl=None,
+        )
+
     def test_cache_ttl_rejects_a_non_positive_or_non_numeric_value(self):
         _setup_patches(self)
         for bad in ("abc", "0", "-5", ""):

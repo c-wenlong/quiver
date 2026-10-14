@@ -2414,6 +2414,12 @@ def _fill_unavailable_windows(info: RateLimitInfo, previous: dict | None) -> Non
                 if isinstance(saved, dict) and saved.get("window") == window.get("window"):
                     match = saved
                     break
+        # An unavailable saved window carries a figure only with its own
+        # age: one never successfully read (no ``as_of``) counts as no
+        # previous value at all, so a chain of failures can't echo a 0 as
+        # if it were a real reading.
+        if match is not None and match.get("unavailable") and not match.get("as_of"):
+            match = None
         if match is None:
             window["used_percent"] = 0
             window.pop("as_of", None)
@@ -2421,6 +2427,8 @@ def _fill_unavailable_windows(info: RateLimitInfo, previous: dict | None) -> Non
         for key in ("used_percent", "limit_reached", "reset_at", "window_seconds"):
             if key in match:
                 window[key] = match[key]
+        # The reading's fetch date dates the carry only when the saved
+        # window was itself a real reading; a carried copy keeps its own.
         as_of = match.get("as_of") or previous.get("fetched_at")
         if as_of:
             window["as_of"] = as_of
@@ -2533,7 +2541,9 @@ def get_all_rate_limits(
             # A provider that answered "nothing to report" last time is
             # covered for this window too, otherwise it is refetched forever.
             known_empty = _load_cached_no_data(cache_ttl) & fetcher_names
-            missing = fetcher_names - result.keys() - known_empty
+            # An entry set aside for a refetch is not "nothing to report":
+            # a leftover no_data marker must not stop its retry.
+            missing = fetcher_names - result.keys() - (known_empty - set(upgrade_fallback))
             if not missing:
                 return result
             fetchers = [item for item in fetchers if item[0] in missing]
@@ -2595,10 +2605,12 @@ def get_all_rate_limits(
             result[tool_name] = info
             raw_cache[tool_name] = asdict(info)
             cache_updated_at[tool_name] = info.fetched_at
-        elif tool_name in completed:
+        elif tool_name in completed and tool_name not in result:
             # Ran to completion and produced nothing. Distinct from a worker
             # that hit the deadline, which is absent from ``completed`` and
-            # gets a timeout marker below rather than an empty record.
+            # gets a timeout marker below rather than an empty record. A kept
+            # previous reading is data: it must never gain a no_data marker,
+            # or the next call would serve "nothing to report" over it.
             empty_fetchers.add(tool_name)
         elif tool_name not in result:
             # Missed the deadline: remember a marker so the cell reads …
