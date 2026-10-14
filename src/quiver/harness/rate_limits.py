@@ -1996,9 +1996,17 @@ def _fetch_cursor() -> RateLimitInfo | None:
     info.on_demand = _cursor_on_demand(data.get("spendLimitUsage"), hard)
     # Listed with the rest but never the headline: running out of Grok Bot
     # leaves Cursor's own allowance as it is.
-    grok_bot = _cursor_grok_bot_window(extras.get(_CURSOR_GROK_BOT_URL))
-    if grok_bot is not None:
-        info.windows.append(grok_bot)
+    grok_reply = extras.get(_CURSOR_GROK_BOT_URL)
+    if grok_reply is None:
+        # The worker missed its budget or the call failed: the meter exists
+        # but went unread, so the window stays listed, marked unavailable,
+        # rather than silently vanishing until the cache expires.
+        info.windows.append(
+            _window("grok_bot", 0.0, 0.0, _WEEK_SECONDS, unavailable=True))
+    else:
+        grok_bot = _cursor_grok_bot_window(grok_reply)
+        if grok_bot is not None:
+            info.windows.append(grok_bot)
     return info
 
 
@@ -2235,7 +2243,9 @@ _register_devin()
 # Cache
 # ---------------------------------------------------------------------------
 
-def _load_cached() -> tuple[dict[str, dict], dict[str, float]] | None:
+def _load_cached(
+    ttl: float | None = None,
+) -> tuple[dict[str, dict], dict[str, float]] | None:
     """Load per-provider readings that are individually fresh.
 
     Freshness is judged on each provider's ``updated_at`` (the envelope
@@ -2251,8 +2261,9 @@ def _load_cached() -> tuple[dict[str, dict], dict[str, float]] | None:
             return None
         with open(RATE_LIMITS_CACHE_FILE) as f:
             data = json.load(f)
+        ttl = _CACHE_TTL if ttl is None else ttl
         cached_at = data.get("cached_at", 0)
-        if time.time() - cached_at > _CACHE_TTL:
+        if time.time() - cached_at > ttl:
             return None
         limits = data.get("limits", {})
         updated_at = data.get("updated_at", {})
@@ -2268,7 +2279,7 @@ def _load_cached() -> tuple[dict[str, dict], dict[str, float]] | None:
                 ts = float(updated_at.get(name, cached_at))
             except (TypeError, ValueError):
                 continue
-            if now - ts <= _CACHE_TTL:
+            if now - ts <= ttl:
                 fresh_limits[name] = raw
                 fresh_at[name] = ts
         return fresh_limits, fresh_at
@@ -2276,7 +2287,7 @@ def _load_cached() -> tuple[dict[str, dict], dict[str, float]] | None:
         return None
 
 
-def _load_cached_no_data() -> set[str]:
+def _load_cached_no_data(ttl: float | None = None) -> set[str]:
     """Names whose fetcher recently returned nothing.
 
     Without this a provider that never reports usage counts as a permanent
@@ -2293,14 +2304,15 @@ def _load_cached_no_data() -> set[str]:
             return set()
         with open(RATE_LIMITS_CACHE_FILE) as f:
             data = json.load(f)
-        if time.time() - data.get("cached_at", 0) > _CACHE_TTL:
+        ttl = _CACHE_TTL if ttl is None else ttl
+        if time.time() - data.get("cached_at", 0) > ttl:
             return set()
         names = data.get("no_data", [])
         if isinstance(names, dict):
             now = time.time()
             return {
                 name for name, ts in names.items()
-                if isinstance(ts, (int, float)) and now - ts <= _CACHE_TTL
+                if isinstance(ts, (int, float)) and now - ts <= ttl
             }
         return set(names) if isinstance(names, list) else set()
     except Exception:
@@ -2384,10 +2396,50 @@ def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
         return {}, {}
 
 
+def _fill_unavailable_windows(info: RateLimitInfo, previous: dict | None) -> None:
+    """Give a window the provider left unread its last known figures.
+
+    ``previous`` is this tool's saved entry (fresh cache or 24h snapshot).
+    The matching window's figures carry over, stamped ``as_of``: the saved
+    window's own ``as_of`` when it was already a carried copy, so a chain
+    of failed refetches keeps the original reading's age, else the saved
+    reading's ``fetched_at``. With nothing saved the window reads 0%.
+    """
+    for window in info.windows:
+        if not (isinstance(window, dict) and window.get("unavailable")):
+            continue
+        match = None
+        if isinstance(previous, dict):
+            for saved in previous.get("windows") or []:
+                if isinstance(saved, dict) and saved.get("window") == window.get("window"):
+                    match = saved
+                    break
+        # An unavailable saved window carries a figure only with its own
+        # age: one never successfully read (no ``as_of``) counts as no
+        # previous value at all, so a chain of failures can't echo a 0 as
+        # if it were a real reading.
+        if match is not None and match.get("unavailable") and not match.get("as_of"):
+            match = None
+        if match is None:
+            window["used_percent"] = 0
+            window.pop("as_of", None)
+            continue
+        for key in ("used_percent", "limit_reached", "reset_at", "window_seconds"):
+            if key in match:
+                window[key] = match[key]
+        # The reading's fetch date dates the carry only when the saved
+        # window was itself a real reading; a carried copy keeps its own.
+        as_of = match.get("as_of") or previous.get("fetched_at")
+        if as_of:
+            window["as_of"] = as_of
+
+
 def get_all_rate_limits(
     use_cache: bool = True,
     tool_names: Iterable[str] | None = None,
     deadline: float | None = None,
+    refresh_failed: bool = False,
+    cache_ttl: float | None = None,
 ) -> dict[str, RateLimitInfo]:
     """Fetch rate limits for the selected registered tools.
 
@@ -2398,6 +2450,14 @@ def get_all_rate_limits(
     are omitted. ``deadline`` overrides ``_RATE_LIMIT_FETCH_DEADLINE`` — how
     long the aggregator waits for the workers before marking stragglers
     timed out.
+
+    ``cache_ttl`` replaces ``_CACHE_TTL`` for this call's freshness check —
+    a shorter one lets a caller re-read only readings older than it.
+    ``refresh_failed`` treats a cached failure — a ``timeout`` marker, an
+    ``auth-required`` verdict (always refetched anyway), or a reading with
+    a window marked ``unavailable`` — as a cache miss, so a Refresh press
+    retries the providers that failed while healthy ones are still served
+    from cache.
     """
     result: dict[str, RateLimitInfo] = {}
     requested = None if tool_names is None else set(tool_names)
@@ -2414,10 +2474,20 @@ def get_all_rate_limits(
     # was (no ``windows`` key) so the next call still tries the upgrade.
     upgrade_fallback: dict[str, tuple[RateLimitInfo, dict]] = {}
 
+    # What every provider last saved, for refetch fallbacks and for
+    # filling an unavailable window's last known figures. The 24h stale
+    # snapshot always contributes: a reading older than this call's TTL is
+    # out of the fresh cache but still the best last-known value.
+    previous_raw: dict[str, dict] = {}
+    stale_limits, stale_updated_at = _load_stale_cached()
+    for name, raw in stale_limits.items():
+        previous_raw.setdefault(name, raw)
+
     if use_cache:
-        loaded = _load_cached()
+        loaded = _load_cached(cache_ttl)
         if loaded is not None:
             cached, fresh_at = loaded
+            previous_raw.update(cached)
             for name, raw in cached.items():
                 if name not in fetcher_names:
                     continue
@@ -2429,6 +2499,21 @@ def get_all_rate_limits(
                 # costs the deadline again.
                 if (isinstance(raw, dict)
                         and raw.get("plan_type") == "auth-required"):
+                    continue
+                # A Refresh press retries what failed: a timed-out fetch
+                # and a reading whose provider left a window unread are
+                # treated as misses. The failed entry is kept as the
+                # fallback should the refetch fail again.
+                if (refresh_failed and isinstance(raw, dict)
+                        and (raw.get("plan_type") == "timeout"
+                             or any(isinstance(w, dict) and w.get("unavailable")
+                                    for w in raw.get("windows", [])))):
+                    try:
+                        old = RateLimitInfo(**raw)
+                        old.fetched_at = old.fetched_at or fresh_at[name]
+                        upgrade_fallback[name] = (old, raw)
+                    except (TypeError, ValueError):
+                        pass
                     continue
                 # Saved by an swe from before these tools listed every
                 # window (or by an older swe still running): refetch rather
@@ -2455,15 +2540,16 @@ def get_all_rate_limits(
                     pass
             # A provider that answered "nothing to report" last time is
             # covered for this window too, otherwise it is refetched forever.
-            known_empty = _load_cached_no_data() & fetcher_names
-            missing = fetcher_names - result.keys() - known_empty
+            known_empty = _load_cached_no_data(cache_ttl) & fetcher_names
+            # An entry set aside for a refetch is not "nothing to report":
+            # a leftover no_data marker must not stop its retry.
+            missing = fetcher_names - result.keys() - (known_empty - set(upgrade_fallback))
             if not missing:
                 return result
             fetchers = [item for item in fetchers if item[0] in missing]
             raw_cache = {name: asdict(info) for name, info in result.items()}
 
     if not raw_cache:
-        stale_limits, stale_updated_at = _load_stale_cached()
         for name, raw in stale_limits.items():
             if name not in fetcher_names:
                 continue
@@ -2515,13 +2601,16 @@ def get_all_rate_limits(
             continue
         if info:
             info.fetched_at = info.fetched_at or time.time()
+            _fill_unavailable_windows(info, previous_raw.get(tool_name))
             result[tool_name] = info
             raw_cache[tool_name] = asdict(info)
             cache_updated_at[tool_name] = info.fetched_at
-        elif tool_name in completed:
+        elif tool_name in completed and tool_name not in result:
             # Ran to completion and produced nothing. Distinct from a worker
             # that hit the deadline, which is absent from ``completed`` and
-            # gets a timeout marker below rather than an empty record.
+            # gets a timeout marker below rather than an empty record. A kept
+            # previous reading is data: it must never gain a no_data marker,
+            # or the next call would serve "nothing to report" over it.
             empty_fetchers.add(tool_name)
         elif tool_name not in result:
             # Missed the deadline: remember a marker so the cell reads …

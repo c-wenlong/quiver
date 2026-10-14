@@ -594,6 +594,24 @@ class ListUsageJsonTest(unittest.TestCase):
         self.assertEqual(rows["claude"]["rate_limit"]["status"], "no-sub")
         self.assertIsNone(rows["claude"]["rate_limit"]["plan_type"])
 
+    def test_an_unavailable_window_keeps_its_flag_and_age(self):
+        # The app reads `unavailable` and `as_of` (snake_case, decoded as
+        # `asOf` like reset_at/window_seconds): drop them and the row
+        # silently looks live again.
+        rows = self.usage_rows({"claude": reading(windows=[
+            {"window": "5h", "used_percent": 28, "limit_reached": False,
+             "reset_at": 1_900_000_000.0, "window_seconds": 18000},
+            {"window": "grok_bot", "used_percent": 42, "limit_reached": False,
+             "reset_at": 900, "window_seconds": 604800,
+             "unavailable": True, "as_of": 1700.0},
+        ])})
+        windows = rows["claude"]["rate_limit"]["windows"]
+        self.assertNotIn("unavailable", windows[0])
+        self.assertNotIn("as_of", windows[0])
+        self.assertEqual(windows[1]["unavailable"], True)
+        self.assertEqual(windows[1]["as_of"], 1700.0)
+        self.assertEqual(windows[1]["used_percent"], 42)
+
 
 
 class ExcludeSkipsTheFetcherTest(unittest.TestCase):
@@ -614,7 +632,8 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
         asked = []
         self.deadlines = []
 
-        def fake_get_all(use_cache=True, tool_names=None, deadline=None):
+        def fake_get_all(use_cache=True, tool_names=None, deadline=None,
+                         refresh_failed=False, cache_ttl=None):
             asked.append(set(tool_names))
             self.deadlines.append(deadline)
             return {}
