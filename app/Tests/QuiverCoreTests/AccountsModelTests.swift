@@ -6,15 +6,27 @@ import Testing
 final class FakeUsage: UsageFetching, @unchecked Sendable {
     private let lock = NSLock()
     var byHome: [String: AccountUsage] = [:]
+    /// Readings the no-network cache answers with, keyed the same way.
+    var cached: [String: AccountUsage] = [:]
     private var recorded: [(AccountKey, Bool)] = []
     /// A snapshot taken under the lock: the model's child tasks append concurrently.
     var requests: [(AccountKey, Bool)] { lock.withLock { recorded } }
+    /// Config homes asked of the no-network cache.
+    var cachedRequests: [String] { lock.withLock { recordedCached } }
+    private var recordedCached: [String] = []
 
-    func usage(for key: AccountKey, force: Bool) async -> AccountUsage {
+    func usage(for key: AccountKey, force: Bool, freshFor _: TimeInterval) async -> AccountUsage {
         lock.withLock {
             recorded.append((key, force))
             return byHome[key.configHome]
                 ?? AccountUsage(status: .signedOut, plan: nil, email: nil, windows: [], fetchedAt: nil, isStale: false)
+        }
+    }
+
+    func cachedUsage(for key: AccountKey) async -> AccountUsage? {
+        lock.withLock {
+            recordedCached.append(key.configHome)
+            return cached[key.configHome]
         }
     }
 }
@@ -214,7 +226,9 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         // A forced read finds the lapse, and the renewed account is forced
         // again after renewing, so a failed renewal can't hide.
         let reads = usage.requests[readsBefore...].filter { $0.0.configHome == home }
-        #expect(reads.map(\.1) == [true, true])
+        // The press's load fetches it unforced (the card read ok before),
+        // finds it expired, then the renewal forces the re-read.
+        #expect(reads.map(\.1) == [false, true])
     }
 
     @Test func aPressWithNothingExpiredLoadsOnce() async throws {
@@ -226,8 +240,53 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         let readsBefore = usage.requests.count
         await model.refreshFromButton()
         let reads = usage.requests[readsBefore...].filter { $0.0.configHome == home }
-        #expect(reads.map(\.1) == [true])
+        // Nothing failed: the healthy card is read unforced, and swe's
+        // freshness window decides whether a fetch even happens.
+        #expect(reads.map(\.1) == [false])
         #expect(renewer.renewals.isEmpty)
+    }
+
+    @Test func refreshForcesOnlyTheCardsThatFailed() async throws {
+        let model = renewalModel(renewer: FakeRenewer())
+        let claudeHome = root.appending(path: ".claude").path
+        let codexHome = root.appending(path: ".codex").path
+        usage.byHome[claudeHome] = reading
+        usage.byHome[codexHome] = AccountUsage(status: .error("down"))
+        await model.load(force: false)
+        let readsBefore = usage.requests.count
+
+        await model.refreshFromButton()
+
+        let reads = usage.requests[readsBefore...]
+        let forced = Set(reads.filter { $0.1 }.map(\.0.configHome))
+        // The error card is forced; the healthy one is a cache-eligible read.
+        #expect(forced == [codexHome])
+        #expect(Set(reads.map(\.0.configHome)) == [claudeHome, codexHome])
+    }
+
+    @Test func aStaleReadingCountsAsFailedForRefresh() async throws {
+        let model = renewalModel(renewer: FakeRenewer())
+        let home = root.appending(path: ".claude").path
+        usage.byHome[home] = AccountUsage(status: .ok, windows: [], fetchedAt: .now, isStale: true)
+        await model.load(force: false)
+        let readsBefore = usage.requests.count
+
+        await model.refreshFromButton()
+
+        let reads = usage.requests[readsBefore...].filter { $0.0.configHome == home }
+        #expect(reads.first?.1 == true)
+    }
+
+    @Test func cardsHydrateFromTheNoNetworkCacheBeforeTheFetch() async throws {
+        let model = renewalModel(renewer: FakeRenewer())
+        let home = root.appending(path: ".claude").path
+        // What last launch stored: the reading plus the failure it ended on.
+        usage.cached[home] = AccountUsage(status: .rateLimited(until: .distantFuture),
+                                          windows: reading.windows,
+                                          fetchedAt: .now, isStale: true)
+        await model.load(force: false)
+        // The cache answered without a keychain read and the card saw it.
+        #expect(usage.cachedRequests.contains(home))
     }
 
     @Test func aSecondPressSkipsAccountsAlreadyRenewing() async throws {

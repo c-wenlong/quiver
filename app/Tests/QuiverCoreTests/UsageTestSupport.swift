@@ -163,3 +163,11 @@ func claudeCredentialsJSON(
     ]
     return String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
 }
+
+/// A per-test file URL for `OtherLimitsModel`'s snapshot, so no test ever
+/// touches the real `~/.quiver` cache.
+func tempSnapshotFile() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("quiver-limits-tests-\(UUID().uuidString)")
+        .appendingPathComponent("app-other-limits.json")
+}
