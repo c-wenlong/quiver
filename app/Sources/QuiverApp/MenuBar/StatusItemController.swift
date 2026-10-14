@@ -20,7 +20,9 @@ final class StatusItemController: NSObject {
     init(model: AppModel) {
         self.model = model
         super.init()
-        let content = MenuBarContent(openMain: { [weak self] in self?.openMainWindow() })
+        let content = MenuBarContent(
+            openMain: { [weak self] in self?.openMainWindow() },
+            dismiss: { [weak self] in self?.close() })
         let host = NSHostingController(rootView: content.environment(model))
         host.sizingOptions = [.preferredContentSize]
         panel = MenuBarPanel(contentViewController: host)
@@ -178,6 +180,8 @@ final class MenuBarPanel: NSPanel {
 struct MenuBarContent: View {
     @Environment(AppModel.self) private var app
     var openMain: () -> Void
+    /// Closes the panel without opening anything: what a launched row does.
+    var dismiss: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -199,8 +203,8 @@ struct MenuBarContent: View {
             // Everything else stays put; the limits scroll once there are
             // more than the screen can hold.
             ViewThatFits(in: .vertical) {
-                PanelLimits()
-                ScrollView { PanelLimits() }.scrollIndicators(.automatic)
+                PanelLimits(dismiss: dismiss)
+                ScrollView { PanelLimits(dismiss: dismiss) }.scrollIndicators(.automatic)
             }
             .frame(maxHeight: Self.limitsMaxHeight)
             if app.popup.showStats, let spend = app.overview?.spend {
@@ -222,6 +226,47 @@ struct MenuBarContent: View {
     /// The screen's height less the header, status line and spend donut.
     static var limitsMaxHeight: CGFloat {
         max(220, (NSScreen.main?.visibleFrame.height ?? 800) - 430)
+    }
+}
+
+/// A row's logo as the launch affordance: the desktop app when there is
+/// one, else the CLI in a terminal — the same LaunchTarget the Accounts
+/// page's buttons resolve. Disabled, and not rendered as a button, when
+/// neither is available; a launch closes the panel like Quit's neighbours.
+private struct LogoLaunchButton: View {
+    var target: LaunchTarget
+    var dismiss: () -> Void
+    var size: CGFloat = 14
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            Task {
+                do {
+                    if try await target.openPreferred() != .none { dismiss() }
+                } catch {
+                    // The panel has no error area; the system sound is it.
+                    NSSound.beep()
+                }
+            }
+        } label: {
+            HarnessIcon(harness: target.harness, size: size)
+                .opacity(hovering && target.canLaunch ? 1 : 0.8)
+        }
+        .buttonStyle(.plain)
+        .disabled(!target.canLaunch)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    /// One phrasing for the tooltip and the VoiceOver label.
+    private var help: String {
+        !target.canLaunch
+            ? "\(target.title) isn't installed"
+            : target.appPath != nil
+            ? "Open \(target.title) app"
+            : "Open \(target.title) in Terminal"
     }
 }
 
@@ -250,6 +295,8 @@ private struct PanelIconButton: View {
 /// Menu bar page, less whatever the page hides.
 private struct PanelLimits: View {
     @Environment(AppModel.self) private var app
+    /// Closes the panel after a logo launches something.
+    var dismiss: () -> Void = {}
 
     /// One shown account or harness row, as the popup lists them.
     private enum PanelEntry: Identifiable {
@@ -312,8 +359,8 @@ private struct PanelLimits: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(entries) { entry in
                 switch entry {
-                case .account(let card): PanelAccountRow(card: card)
-                case .harness(let row): PanelOtherRow(row: row)
+                case .account(let card): PanelAccountRow(card: card, dismiss: dismiss)
+                case .harness(let row): PanelOtherRow(row: row, dismiss: dismiss)
                 }
             }
             // Limits exist but every one is hidden: say where to bring them
@@ -422,11 +469,17 @@ private struct SpendDonut: View {
 private struct PanelAccountRow: View {
     @Environment(AppModel.self) private var app
     var card: AccountsModel.Card
+    var dismiss: () -> Void = {}
 
     var body: some View {
+        let profile = card.profile
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                HarnessIcon(harness: card.profile.vendor.rawValue, size: 14)
+                LogoLaunchButton(
+                    target: LaunchTarget(kind: .account(profile), model: app.accounts,
+                        installedApp: { app.apps.installedApp(for: $0) },
+                        cliInstalled: { app.others.cliInstalled[$0] ?? app.accounts.cliOnPath[profile.vendor] }),
+                    dismiss: dismiss)
                 Text("\(card.profile.vendor.title): \(card.profile.name)").font(Theme.rowTitle)
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
             }
@@ -456,6 +509,7 @@ private struct PanelAccountRow: View {
 private struct PanelOtherRow: View {
     @Environment(AppModel.self) private var app
     var row: OtherLimitsModel.Row
+    var dismiss: () -> Void = {}
 
     var body: some View {
         // swe hands back its last reading, status ok, for up to a day when a
@@ -465,7 +519,12 @@ private struct PanelOtherRow: View {
                 > LimitReading.sweStaleLimit(freshFor: app.others.acceptedCacheTTL) } ?? true
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                HarnessIcon(harness: row.name, size: 14)
+                LogoLaunchButton(
+                    target: LaunchTarget(kind: .harness(name: row.name, command: row.command),
+                        model: app.accounts,
+                        installedApp: { app.apps.installedApp(for: $0) },
+                        cliInstalled: { _ in row.cliInstalled }),
+                    dismiss: dismiss)
                 Text(row.accountTitle).font(Theme.rowTitle)
                 if let plan = row.limit.planType { Badge(planTitle(plan)) }
             }

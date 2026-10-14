@@ -135,11 +135,11 @@ private struct AccountCard: View {
                 StatusLine(usage: card.usage, card: card)
                 Spacer()
                 LaunchButtons(
-                    appPath: app.apps.installedApp(for: profile.vendor.rawValue),
-                    // swe's answer when its registry lists the CLI, else a direct PATH check.
-                    cliInstalled: app.others.cliInstalled[profile.vendor.rawValue] ?? model.cliOnPath[profile.vendor],
-                    openApp: { path in perform { try await model.openApp(profile, at: path) } },
-                    openTerminal: { perform { try await model.openTerminal(profile) } })
+                    target: LaunchTarget(kind: .account(profile), model: model,
+                        installedApp: { app.apps.installedApp(for: $0) },
+                        // swe's answer when its registry lists the CLI, else a direct PATH check.
+                        cliInstalled: { app.others.cliInstalled[$0] ?? model.cliOnPath[profile.vendor] }),
+                    perform: perform)
             }
         }
         .alert("Rename account", isPresented: $renaming) {
@@ -334,23 +334,21 @@ func planTitle(_ plan: String) -> String {
 /// /Applications or ~/Applications, the CLI on PATH (as swe reports). Before
 /// swe has answered, Terminal is offered rather than hidden.
 private struct LaunchButtons: View {
-    var appPath: String?
-    var cliInstalled: Bool?
-    var openApp: (String) -> Void
-    var openTerminal: () -> Void
+    var target: LaunchTarget
+    var perform: (@escaping () async throws -> Void) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            if let appPath {
-                Button("Open app") { openApp(appPath) }
+            if let appPath = target.appPath {
+                Button("Open app") { perform { try await target.openApp(at: appPath) } }
                     .secondaryButton()
                     .help(appPath)
             }
-            if cliInstalled != false {
-                Button("Terminal") { openTerminal() }
+            if target.cliInstalled != false {
+                Button("Terminal") { perform { try await target.openTerminal() } }
                     .secondaryButton()
             }
-            if appPath == nil && cliInstalled == false {
+            if !target.canLaunch {
                 Text("Not installed").font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
@@ -419,10 +417,11 @@ private struct HarnessAccountCard: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 LaunchButtons(
-                    appPath: app.apps.installedApp(for: row.name),
-                    cliInstalled: row.cliInstalled,
-                    openApp: { path in perform { try await model.openApp(at: path) } },
-                    openTerminal: { perform { try await model.openTerminal(command: row.command) } })
+                    target: LaunchTarget(kind: .harness(name: row.name, command: row.command),
+                        model: model,
+                        installedApp: { app.apps.installedApp(for: $0) },
+                        cliInstalled: { _ in row.cliInstalled }),
+                    perform: perform)
             }
         }
         .alert("Rename \(ownName)", isPresented: $renaming) {
