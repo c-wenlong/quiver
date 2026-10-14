@@ -263,6 +263,78 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     }
 }
 
+@MainActor
+@Suite struct LaunchTargetTests {
+    let root = FileManager.default.temporaryDirectory.appending(path: "launch-\(UUID().uuidString)")
+    let launcher = FakeLauncher()
+
+    func harnessTarget(appPath: String?, cliInstalled: Bool?,
+                       name: String = "cursor", command: String = "cursor-agent") -> LaunchTarget {
+        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        return LaunchTarget(kind: .harness(name: name, command: command),
+                            model: AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
+                                                 terminal: { .terminal }, loginPath: { "" }),
+                            installedApp: { _ in appPath }, cliInstalled: { _ in cliInstalled })
+    }
+
+    @Test func theAppIsPreferredOverTheTerminal() async throws {
+        let target = harnessTarget(appPath: "/Applications/Cursor.app", cliInstalled: true)
+        #expect(target.appPath == "/Applications/Cursor.app")
+        #expect(try await target.openPreferred() == .app)
+        #expect(launcher.launched == [LaunchCommand(executable: "/usr/bin/open",
+                                                  arguments: ["-a", "/Applications/Cursor.app"])])
+    }
+
+    @Test func withNoAppTheTerminalOpensTheCLI() async throws {
+        let target = harnessTarget(appPath: nil, cliInstalled: true)
+        #expect(try await target.openPreferred() == .terminal)
+        // The harness's command goes out as one word, not the account's line.
+        #expect(launcher.launched.count == 1)
+        #expect(launcher.launched[0].executable == "/usr/bin/osascript")
+        #expect(launcher.launched[0].arguments.contains { $0.contains("cursor-agent") })
+    }
+
+    @Test func aCliNotCheckedYetStillOffersTheTerminal() async throws {
+        let target = harnessTarget(appPath: nil, cliInstalled: nil)
+        #expect(target.canLaunch)
+        #expect(try await target.openPreferred() == .terminal)
+    }
+
+    @Test func neitherAvailableLaunchesNothing() async throws {
+        let target = harnessTarget(appPath: nil, cliInstalled: false)
+        #expect(!target.canLaunch)
+        #expect(try await target.openPreferred() == .none)
+        #expect(launcher.launched.isEmpty)
+    }
+
+    @Test func anAccountLaunchesTheAppWithItsFolders() async throws {
+        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let work = try store.add(vendor: .claude, name: "Work")
+        let model = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
+                                  terminal: { .terminal }, loginPath: { "" })
+        let target = LaunchTarget(kind: .account(work), model: model,
+                                  installedApp: { _ in "/Applications/Claude.app" },
+                                  cliInstalled: { _ in true })
+        #expect(try await target.openPreferred() == .app)
+        // The account form exports the profile home into the app launch.
+        #expect(launcher.launched[0].arguments.contains("CLAUDE_CONFIG_DIR=\(store.paths(for: work).home.path)"))
+    }
+
+    @Test func anAccountTerminalRunsAsThatAccount() async throws {
+        let store = ProfileStore(root: root.appending(path: ".quiver/accounts2"), userHome: root)
+        let work = try store.add(vendor: .claude, name: "Work")
+        let model = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
+                                  terminal: { .terminal }, loginPath: { "" })
+        let target = LaunchTarget(kind: .account(work), model: model,
+                                  installedApp: { _ in nil }, cliInstalled: { _ in true })
+        #expect(try await target.openPreferred() == .terminal)
+        // Not the bare harness command: the profile's export line.
+        #expect(launcher.launched[0].arguments.contains {
+            $0.contains(store.paths(for: work).home.path) && $0.contains("claude")
+        })
+    }
+}
+
 @Suite struct ClaudeSignInRenewerTests {
     let base: [String: String] = [
         "PATH": "/usr/bin:/opt/homebrew/bin",

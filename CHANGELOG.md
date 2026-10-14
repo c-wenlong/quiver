@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The menu bar's harness logos launch the harness.** The logo on each
+  account and harness row is now a button: it opens the harness's desktop
+  app when installed, else its CLI in a terminal, and closes the panel.
+  With neither present the logo is inert. Accounts and harness rows
+  resolve the launch through one shared `LaunchTarget`, the same one the
+  Accounts page's Open app/Terminal buttons now use.
+
+
+### Added
+
 - **Collapsible sidebar.** A toggle row under the traffic lights (or
   View > Toggle Sidebar, ⌃⌘S) pins the sidebar to a 72pt icon rail;
   the choice persists. Hovering the rail floats it open over the page
