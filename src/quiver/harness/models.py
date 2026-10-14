@@ -188,15 +188,31 @@ def _pie(remaining_percent: int) -> str:
     return f"\033[38;5;{code}m{glyph}\033[0m"
 
 
-def _window(label: str, used: float, reset_at: float, window_seconds: int) -> dict:
-    """One quota window, as ``RateLimitInfo.windows`` holds it."""
-    return {
+def _window(
+    label: str,
+    used: float,
+    reset_at: float,
+    window_seconds: int,
+    unavailable: bool = False,
+) -> dict:
+    """One quota window, as ``RateLimitInfo.windows`` holds it.
+
+    ``unavailable`` marks a window the provider should report but did not
+    answer this time (the call failed or missed its budget), distinct from
+    a window the provider legitimately has none of. The caller fills the
+    figures in from the last saved reading; ``as_of`` is that reading's
+    date. Normal windows carry neither key.
+    """
+    window = {
         "window": label,
         "used_percent": int(round(min(100.0, max(0.0, used)))),
         "limit_reached": used >= 100,
         "reset_at": reset_at,
         "window_seconds": window_seconds,
     }
+    if unavailable:
+        window["unavailable"] = True
+    return window
 
 
 @dataclass
@@ -266,6 +282,10 @@ class RateLimitInfo:
                     "limit_reached": w["limit_reached"],
                     "reset_at": w["reset_at"] or None,
                     "window_seconds": w["window_seconds"] or None,
+                    # Unavailable/carried keys appear only when set, same
+                    # as in the cache dict; the app reads both as optional.
+                    **({"unavailable": True} if w.get("unavailable") else {}),
+                    **({"as_of": w["as_of"]} if w.get("as_of") else {}),
                 }
                 for w in self.windows
             ] if status == "ok" else [],
