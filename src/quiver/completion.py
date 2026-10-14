@@ -59,6 +59,8 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--refresh", "Fetch new data"),
         ("-r", "Short for --refresh"),
         ("-n", "Fetch new data"),
+        ("--refresh-failed", "Refetch only providers whose cached reading failed"),
+        ("--cache-ttl=", "Override the rate-limit cache TTL (seconds)"),
     ],
     "list edit": [
         ("--reset", "Restore default columns and window"),
