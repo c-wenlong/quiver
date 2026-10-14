@@ -87,6 +87,8 @@ public final class OtherLimitsModel {
     /// Set when swe rejected the usage flags, so they're never sent again
     /// this session.
     private var sweKnowsUsageFlags = true
+    /// Same for --exclude: an swe that old polls Claude and Codex too.
+    private var sweKnowsExclude = true
     /// Where the last successful list persists between launches.
     private let snapshotFile: URL
 
@@ -141,28 +143,45 @@ public final class OtherLimitsModel {
         request += 1
         let mine = request
         do {
-            let harnesses: [Harness]
-            do {
-                if sweKnowsUsageFlags {
-                    harnesses = try await swe.harnesses(
-                        withUsage: true, excludingUsage: Self.ownAccounts,
-                        cacheTTL: cacheTTL, refreshFailed: refreshFailed)
-                } else {
-                    harnesses = try await swe.harnesses(
-                        withUsage: true, excludingUsage: Self.ownAccounts)
+            // An swe too old for a flag fails the whole call, so each
+            // attempt drops what the last error named: the new usage
+            // flags first, then --exclude, then the plain call. Both
+            // "doesn't know" facts are remembered for the session.
+            var harnesses: [Harness]?
+            let attempts: [(flags: Bool, exclude: Bool)] = [
+                (true, true), (false, true), (false, false),
+            ]
+            for (sendFlags, sendExclude) in attempts {
+                if sendFlags && !sweKnowsUsageFlags { continue }
+                if sendExclude && !sweKnowsExclude { continue }
+                do {
+                    if sendFlags {
+                        harnesses = try await swe.harnesses(
+                            withUsage: true, excludingUsage: Self.ownAccounts,
+                            cacheTTL: cacheTTL, refreshFailed: refreshFailed)
+                    } else if sendExclude {
+                        harnesses = try await swe.harnesses(
+                            withUsage: true, excludingUsage: Self.ownAccounts)
+                    } else {
+                        harnesses = try await swe.harnesses(withUsage: true)
+                    }
+                    break
+                } catch SweError.commandFailed(let status, let message) {
+                    let newFlags = message.contains("--cache-ttl")
+                        || message.contains("--refresh-failed")
+                    if sendFlags && newFlags {
+                        sweKnowsUsageFlags = false
+                        continue
+                    }
+                    if sendExclude && message.contains("--exclude") {
+                        sweKnowsExclude = false
+                        continue
+                    }
+                    throw SweError.commandFailed(status: status, message: message)
                 }
-            } catch SweError.commandFailed(_, let message)
-                        where sweKnowsUsageFlags
-                        && (message.contains("--cache-ttl")
-                            || message.contains("--refresh-failed")) {
-                // An swe from before these flags: never send them again.
-                sweKnowsUsageFlags = false
-                harnesses = try await swe.harnesses(
-                    withUsage: true, excludingUsage: Self.ownAccounts)
-            } catch SweError.commandFailed(_, let message) where message.contains("--exclude") {
-                // An swe from before --exclude: ask again and accept that it
-                // polls Claude and Codex too.
-                harnesses = try await swe.harnesses(withUsage: true)
+            }
+            guard let harnesses else {
+                throw SweError.commandFailed(status: 2, message: "swe could not answer")
             }
             // A newer load already answered; this one's state is older.
             guard mine == request else { return }

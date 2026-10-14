@@ -61,14 +61,22 @@ public actor UsageService {
     /// and carries the last failure, if one was recorded. For hydrating a
     /// card while the real fetch runs.
     public func cachedUsage(for key: AccountKey) -> AccountUsage? {
-        guard let entry = store.entry(for: key), let reading = entry.reading,
-              now().timeIntervalSince(reading.fetchedAt) <= Self.keptFor
-        else { return nil }
-        return AccountUsage(
-            status: entry.lastFailure?.status ?? .ok,
-            plan: reading.plan, email: reading.email,
-            windows: reading.windows, fetchedAt: reading.fetchedAt,
-            isStale: true)
+        guard let entry = store.entry(for: key) else { return nil }
+        if let reading = entry.reading,
+           now().timeIntervalSince(reading.fetchedAt) <= Self.keptFor {
+            return AccountUsage(
+                status: entry.lastFailure?.status ?? .ok,
+                plan: reading.plan, email: reading.email,
+                windows: reading.windows, fetchedAt: reading.fetchedAt,
+                isStale: true)
+        }
+        // No reading worth showing, but the last failure is still what
+        // the card should wear.
+        if let failure = entry.lastFailure {
+            return AccountUsage(status: failure.status, windows: [],
+                                fetchedAt: nil, isStale: true)
+        }
+        return nil
     }
 
     private func resolve(_ key: AccountKey, force: Bool, freshFor: TimeInterval) async -> AccountUsage {
@@ -91,7 +99,11 @@ public actor UsageService {
         if let until = entry?.cooldownUntil, until > started {
             return result(.rateLimited(until: until), reading: reading, credential: credential)
         }
-        if !force, let reading {
+        // A recorded failure means the last attempt failed: the entry's
+        // reading may be within the freshness window, but it is stale
+        // data on a red card, so the refresh must fetch rather than
+        // serve it as a good one.
+        if !force, entry?.lastFailure == nil, let reading {
             let age = started.timeIntervalSince(reading.fetchedAt)
             if age >= 0 && age < freshFor {
                 return result(.ok, reading: reading, credential: credential, isStale: false)

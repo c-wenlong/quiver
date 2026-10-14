@@ -250,6 +250,26 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
         #expect(runner.calls.last == ["list", "--usage", "--json", "--exclude=claude,codex"])
     }
 
+    @Test func anSweRejectingBothFlagSetsEndsAtThePlainCall() async {
+        let runner = QueueRunner([
+            .init(status: 2, stdout: Data(), stderr: "Unknown flag: --cache-ttl"),
+            .init(status: 2, stdout: Data(), stderr: "Unknown flag: --exclude"),
+            .init(status: 0, stdout: okBody, stderr: ""),
+        ])
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        await model.load()
+        #expect(model.rows.map(\.name) == ["devin"])
+        #expect(runner.calls == [
+            ["list", "--usage", "--json", "--cache-ttl=300", "--exclude=claude,codex"],
+            ["list", "--usage", "--json", "--exclude=claude,codex"],
+            ["list", "--usage", "--json"],
+        ])
+
+        // Both "doesn't know" facts persist for the session.
+        await model.load(refreshFailed: true)
+        #expect(runner.calls.last == ["list", "--usage", "--json"])
+    }
+
     @Test func theLastSuccessfulListRoundTripsThroughTheSnapshotFile() async {
         let file = tempSnapshotFile()
         let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))

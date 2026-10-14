@@ -355,6 +355,43 @@ import Testing
         #expect(cached?.status == .expired)
         #expect(h.secrets.lookups.isEmpty)
     }
+
+    @Test func aRecordedFailureMeansTheFreshWindowDoesNotServeTheReading() async throws {
+        let (h, _) = try await harnessWithReading()
+        h.clock.advance(120)  // inside any reasonable refresh window
+        h.transport.fail()
+        _ = await h.makeService().usage(for: codexKey, force: true)
+
+        // The next plain read fetches: lastFailure says the card is red.
+        h.transport.reply(200, body: try fixture("codex-usage"))
+        let usage = await h.makeService().usage(for: codexKey, force: false, freshFor: 300)
+        #expect(usage.status == .ok)
+        #expect(h.transport.requests.count == 3)
+    }
+
+    @Test func aCooldownStillAppliesWithARecordedFailure() async throws {
+        let (h, _) = try await harnessWithReading()
+        h.clock.advance(120)
+        h.transport.reply(429, headers: ["Retry-After": "600"])
+        _ = await h.makeService().usage(for: codexKey, force: true)
+        // In cooldown: no request even though the entry carries a failure.
+        let usage = await h.makeService().usage(for: codexKey, force: false)
+        #expect(usage.status == .rateLimited(until: usageEpoch.addingTimeInterval(720)))
+        #expect(h.transport.requests.count == 2)
+    }
+
+    @Test func cachedUsageShowsAFailureThatNeverProducedAReading() async {
+        let h = UsageHarness()
+        h.files.set("\(codexHome)/auth.json", codexAuthJSON())
+        h.transport.fail()
+        _ = await h.makeService().usage(for: codexKey, force: true)
+
+        let cached = await h.makeService().cachedUsage(for: codexKey)
+        #expect(cached?.status == .error("could not reach the usage API"))
+        #expect(cached?.windows.isEmpty == true)
+        #expect(cached?.isStale == true)
+        #expect(h.secrets.lookups.isEmpty)
+    }
 }
 
 /// Answers every request with the same body after a short wait, counting them.
