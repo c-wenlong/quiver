@@ -356,6 +356,24 @@ import Testing
         #expect(h.secrets.lookups.isEmpty)
     }
 
+    @Test func anExpiredTokenOutranksAFreshCachedReading() async throws {
+        let h = UsageHarness()
+        let user = ClaudeKeychain.currentAccount
+        h.secrets.set(service: "Claude Code-credentials", account: user,
+                      claudeCredentialsJSON(expiresAt: usageEpoch.addingTimeInterval(600)))
+        h.transport.reply(200, body: try fixture("claude-usage"))
+        _ = await h.makeService().usage(for: claudeKey, force: true)
+
+        // The token lapsed since; the reading is minutes old and would
+        // serve as fresh, but the expired sign-in must win so a refresh
+        // can renew it.
+        h.clock.advance(700)
+        let usage = await h.makeService().usage(for: claudeKey, force: false,
+                                                freshFor: 8 * 3600)
+        #expect(usage.status == .expired)
+        #expect(h.transport.requests.count == 1)
+    }
+
     @Test func aRecordedFailureMeansTheFreshWindowDoesNotServeTheReading() async throws {
         let (h, _) = try await harnessWithReading()
         h.clock.advance(120)  // inside any reasonable refresh window

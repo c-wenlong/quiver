@@ -176,6 +176,18 @@ import Testing
         #expect(other.entry(for: key)?.cooldownUntil == nil)
     }
 
+    @Test func anOlderIncomingCooldownDoesNotShortenTheStoredOne() {
+        let url = FileManager.default.temporaryDirectory.appending(path: "cool2-\(UUID().uuidString)/app-usage.json")
+        let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)
+        let later = Date().addingTimeInterval(600)
+        let earlier = Date().addingTimeInterval(60)
+        let other = UsageCacheStore(url: url)
+        other.save(StoredAccount(fingerprint: "same", reading: nil, cooldownUntil: later), for: key)
+        UsageCacheStore(url: url).save(
+            StoredAccount(fingerprint: "same", reading: nil, cooldownUntil: earlier), for: key)
+        #expect(other.entry(for: key)?.cooldownUntil == later)
+    }
+
     @Test func theCooldownCheckUsesTheServiceClock() {
         let url = FileManager.default.temporaryDirectory.appending(path: "clock-\(UUID().uuidString)/app-usage.json")
         let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)

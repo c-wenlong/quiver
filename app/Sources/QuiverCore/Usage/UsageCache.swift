@@ -67,9 +67,12 @@ struct UsageCacheStore {
         // Another running copy may have saved a cooldown for this same login
         // after this one started its request. A success saved now must not
         // erase it, or the next refresh would ignore Retry-After.
-        if var next = entry, next.cooldownUntil == nil,
+        if var next = entry,
            let current = accounts[Self.id(key)], current.fingerprint == next.fingerprint,
-           let until = current.cooldownUntil, until > now() {
+           let until = current.cooldownUntil, until > now(),
+           until > (next.cooldownUntil ?? .distantPast) {
+            // Keep the later of the two: a copy that saved an older (or no)
+            // cooldown must not shorten one another copy just recorded.
             next.cooldownUntil = until
             entry = next
         }

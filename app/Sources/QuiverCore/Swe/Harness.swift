@@ -178,7 +178,7 @@ public struct RateLimit: Codable, Sendable, Equatable {
 
     /// For tests and previews; the app only ever decodes these from swe.
     init(status: Status, usedPercent: Int, window: String? = nil, resetAt: Date? = nil,
-         planType: String? = nil, fetchedAt: Date? = nil) {
+         planType: String? = nil, fetchedAt: Date? = nil, windows: [Window]? = nil) {
         self.status = status
         self.usedPercent = usedPercent
         remainingPercent = 100 - usedPercent
@@ -190,7 +190,7 @@ public struct RateLimit: Codable, Sendable, Equatable {
         remainingUnits = nil
         totalUnits = nil
         self.fetchedAt = fetchedAt
-        windows = nil
+        self.windows = windows
         extraUsageUSD = nil
         onDemand = nil
     }

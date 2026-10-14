@@ -99,6 +99,16 @@ public actor UsageService {
         if let until = entry?.cooldownUntil, until > started {
             return result(.rateLimited(until: until), reading: reading, credential: credential)
         }
+        // An expired sign-in outranks a fresh reading: Claude's OAuth
+        // token lapses eight hours after issue, often inside the refresh
+        // window, and only this check lets a refresh notice and renew it.
+        if let expiresAt = credential.expiresAt, expiresAt <= started {
+            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: reading,
+                                     cooldownUntil: entry?.cooldownUntil,
+                                     lastFailure: StoredFailure(at: started, status: .expired)),
+                       for: key)
+            return result(.expired, reading: reading, credential: credential)
+        }
         // A recorded failure means the last attempt failed: the entry's
         // reading may be within the freshness window, but it is stale
         // data on a red card, so the refresh must fetch rather than
@@ -108,13 +118,6 @@ public actor UsageService {
             if age >= 0 && age < freshFor {
                 return result(.ok, reading: reading, credential: credential, isStale: false)
             }
-        }
-        if let expiresAt = credential.expiresAt, expiresAt <= started {
-            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: reading,
-                                     cooldownUntil: entry?.cooldownUntil,
-                                     lastFailure: StoredFailure(at: started, status: .expired)),
-                       for: key)
-            return result(.expired, reading: reading, credential: credential)
         }
 
         let request = key.provider == .claude ? ClaudeUsageAPI.request(credential) : CodexUsageAPI.request(credential)

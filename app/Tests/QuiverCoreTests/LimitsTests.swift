@@ -73,6 +73,25 @@ func reading(
         #expect(LimitReading.tightest(readings, now: now)?.source == "cursor")
     }
 
+    @Test func aLongerRefreshWindowAcceptsOlderSweReadings() {
+        let others = [OtherLimitsModel.Row(name: "devin", limit: RateLimit(
+            status: .ok, usedPercent: 40, window: "7d", fetchedAt: now - 3_600))]
+        // Default window: an hour-old reading is swe's outage fallback.
+        #expect(LimitReading.all(cards: [], others: others, now: now).first?.isStale == true)
+        // A 120-minute "refresh only what failed" window makes it
+        // legitimately fresh, so it still feeds the menu bar and alerts.
+        #expect(LimitReading.all(cards: [], others: others, now: now,
+                                 sweFreshFor: 120 * 60).first?.isStale == false)
+
+        // An unavailable window counts as stale at any window size.
+        let unavailable = OtherLimitsModel.Row(name: "cursor", limit: RateLimit(
+            status: .ok, usedPercent: 40, window: "7d", fetchedAt: now,
+            windows: [.init(window: "grok_bot", usedPercent: 10, resetAt: nil,
+                            unavailable: true, asOf: now - 3_600)]))
+        #expect(LimitReading.all(cards: [], others: [unavailable], now: now,
+                                 sweFreshFor: 120 * 60).first?.isStale == true)
+    }
+
     @Test func aStaleWindowIsNotAResetOne() {
         // The widget says "reset" only for a window whose reset time passed.
         #expect(reading("a", used: 80, resetsAt: now + 600, stale: true).hasReset(now: now) == false)

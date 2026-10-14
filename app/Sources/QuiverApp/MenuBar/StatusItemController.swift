@@ -460,7 +460,9 @@ private struct PanelOtherRow: View {
     var body: some View {
         // swe hands back its last reading, status ok, for up to a day when a
         // provider fails; dim one that old.
-        let old = row.limit.fetchedAt.map { Date.now.timeIntervalSince($0) > LimitReading.sweStaleAfter } ?? true
+        let old = row.limit.fetchedAt.map {
+            Date.now.timeIntervalSince($0)
+                > LimitReading.sweStaleLimit(freshFor: app.limits.refreshFreshSeconds) } ?? true
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 HarnessIcon(harness: row.name, size: 14)
