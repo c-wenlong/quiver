@@ -255,11 +255,18 @@ private struct LogoLaunchButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!target.canLaunch)
-        .help(!target.canLaunch
-              ? "\(target.title) isn't installed"
-              : target.appPath != nil
-              ? "Open \(target.title) app"
-              : "Open \(target.title) in Terminal")
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    /// One phrasing for the tooltip and the VoiceOver label.
+    private var help: String {
+        !target.canLaunch
+            ? "\(target.title) isn't installed"
+            : target.appPath != nil
+            ? "Open \(target.title) app"
+            : "Open \(target.title) in Terminal"
     }
 }
 
