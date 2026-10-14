@@ -1189,6 +1189,49 @@ class RefreshFailedTest(unittest.TestCase):
         fetcher.assert_called_once_with()
         self.assertEqual(result["tool"].used_percent, 30)
 
+    def test_a_short_ttl_still_carries_last_known_values(self):
+        """A reading past cache_ttl but under 24h still fills an
+        unavailable window, so a Refresh press does not blank the row."""
+        import json as _json
+
+        ago = time.time() - 7200  # past any app TTL, inside the 24h bound
+        previous = self._raw("cursor", 10, windows=[
+            {"window": "grok_bot", "used_percent": 42,
+             "limit_reached": False, "reset_at": 900,
+             "window_seconds": 604800}])
+        previous["fetched_at"] = ago
+        fetcher = MagicMock(return_value=RateLimitInfo(
+            tool_name="cursor", used_percent=10, limit_reached=False,
+            reset_at=0, plan_type="team", window_seconds=0,
+            windows=[_window("grok_bot", 0, 0, 604800, unavailable=True)],
+        ))
+
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+        register("cursor", fetcher)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import RATE_LIMITS_CACHE_FILE
+                RATE_LIMITS_CACHE_FILE.write_text(_json.dumps({
+                    "cached_at": ago,
+                    "limits": {"cursor": previous},
+                    "updated_at": {"cursor": ago},
+                    "no_data": {},
+                }))
+                result = get_all_rate_limits(
+                    use_cache=True, tool_names={"cursor"}, cache_ttl=60)
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+        grok = result["cursor"].windows[0]
+        self.assertEqual(grok["used_percent"], 42)
+        self.assertEqual(grok["reset_at"], 900)
+        self.assertEqual(grok["as_of"], ago)
+
 
 class CodexFetcherTest(unittest.TestCase):
     """Test the Codex wham/usage fetcher with mocked HTTP."""

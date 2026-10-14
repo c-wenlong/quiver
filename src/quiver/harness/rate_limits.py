@@ -2467,8 +2467,13 @@ def get_all_rate_limits(
     upgrade_fallback: dict[str, tuple[RateLimitInfo, dict]] = {}
 
     # What every provider last saved, for refetch fallbacks and for
-    # filling an unavailable window's last known figures.
+    # filling an unavailable window's last known figures. The 24h stale
+    # snapshot always contributes: a reading older than this call's TTL is
+    # out of the fresh cache but still the best last-known value.
     previous_raw: dict[str, dict] = {}
+    stale_limits, stale_updated_at = _load_stale_cached()
+    for name, raw in stale_limits.items():
+        previous_raw.setdefault(name, raw)
 
     if use_cache:
         loaded = _load_cached(cache_ttl)
@@ -2535,9 +2540,7 @@ def get_all_rate_limits(
             raw_cache = {name: asdict(info) for name, info in result.items()}
 
     if not raw_cache:
-        stale_limits, stale_updated_at = _load_stale_cached()
         for name, raw in stale_limits.items():
-            previous_raw.setdefault(name, raw)
             if name not in fetcher_names:
                 continue
             try:
