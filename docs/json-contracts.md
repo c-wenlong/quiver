@@ -37,7 +37,10 @@ and the fixture that pins the shape. Fixtures live under
   `remaining_units`, `total_units`, `fetched_at`, `windows`,
   `extra_usage_usd` (`extraUsageUsd`), `on_demand`. Providers differ:
   Claude reports one `7d` window, Cursor several windows plus `on_demand`,
-  Devin `1d`/`7d` plus `extra_usage_usd`.
+  Devin `1d`/`7d` plus `extra_usage_usd`. A `windows` entry can carry
+  `unavailable: true` when the provider left that meter unread — the
+  figures are the last known values, and `as_of` (epoch seconds) is when
+  they were read; absent keys mean a normal, current window.
 - `McpInventory`: `harnesses` lists every config read; `servers` carry
   `args`, `command`, `conflict`, `detail`, `env_keys`, `harnesses`,
   `header_keys`, `health` (a string, not an object), `name`, `transport`,

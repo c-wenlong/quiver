@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe list --refresh-failed` and `--cache-ttl=<seconds>`.** The first
+  refetches only providers whose cached reading failed — a timeout
+  marker, an auth-required verdict, or a reading with a window left
+  unread — while healthy cached readings still serve; a failed retry
+  keeps the previous entry. The second overrides the 5-minute cache TTL
+  for that run. Cursor's Grok Bot meter now stays listed when its call
+  fails or misses its budget, marked `unavailable` and carrying the last
+  known figures with an `as_of` timestamp, instead of the row silently
+  vanishing for the cache's whole TTL.
+
 - **Collapsible sidebar.** A toggle row under the traffic lights (or
   View > Toggle Sidebar, ⌃⌘S) pins the sidebar to a 72pt icon rail;
   the choice persists. Hovering the rail floats it open over the page

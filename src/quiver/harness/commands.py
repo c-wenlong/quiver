@@ -508,7 +508,9 @@ _SPINNER_DELAY = 0.2
 _SPINNER_FRAME_SECONDS = 0.08
 
 
-def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False) -> dict:
+def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
+                       refresh_failed: bool = False,
+                       cache_ttl: float | None = None) -> dict:
     """Rate limits for the REMAINING column.
 
     On a terminal the fetch runs behind a spinner and workers get a longer
@@ -530,10 +532,12 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False) 
         return get_all_rate_limits(
             use_cache=not refresh, tool_names=tool_names,
             deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
+            refresh_failed=refresh_failed, cache_ttl=cache_ttl,
         )
     if not sys.stdout.isatty():
         return get_all_rate_limits(
             use_cache=not refresh, tool_names=tool_names,
+            refresh_failed=refresh_failed, cache_ttl=cache_ttl,
         )
 
     holder: dict = {}
@@ -544,6 +548,7 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False) 
                 use_cache=not refresh,
                 tool_names=tool_names,
                 deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
+                refresh_failed=refresh_failed, cache_ttl=cache_ttl,
             )
         except Exception as exc:
             # Surface the failure exactly as the non-TTY path would instead
@@ -593,7 +598,7 @@ def cmd_list(args):
     # Under --json a refusal must leave stdout empty: the app decodes it whole.
     err = error_stream(json_view)
     try:
-        args = expand_value_flags(args, {"--scope", "--exclude"})
+        args = expand_value_flags(args, {"--scope", "--exclude", "--cache-ttl"})
     except ValueError as exc:
         print(c("red", str(exc)), file=err)
         return 1
@@ -611,6 +616,12 @@ def cmd_list(args):
     refresh_flags = {"--refresh", "-r", "-n"}
     refresh = any(arg in refresh_flags for arg in args)
     args = [arg for arg in args if arg not in refresh_flags]
+
+    # --refresh-failed refetches only the providers whose cached reading
+    # failed (timeout, auth-required, a window left unread); healthy ones
+    # are still served from cache. --refresh overrides it.
+    refresh_failed = "--refresh-failed" in args
+    args = [arg for arg in args if arg != "--refresh-failed"]
 
     # Usage is opt-in. Rate limits are the only part of `swe list` that
     # touches the network, and on a cold cache they cost ~850ms against
@@ -637,6 +648,7 @@ def cmd_list(args):
         # too or the flag would silently do nothing for that column.
         invalidate_counts_cache()
 
+    cache_ttl: float | None = None
     # --scope mirrors swe find: active (default) hides what you shelved,
     # archived shows only that, all shows everything with a marker.
     scope = "active"
@@ -648,6 +660,16 @@ def cmd_list(args):
     while i < len(args):
         if args[i] == "--scope":
             scope = args[i + 1]
+            del args[i : i + 2]
+        elif args[i] == "--cache-ttl":
+            try:
+                cache_ttl = float(args[i + 1])
+            except ValueError:
+                cache_ttl = 0.0
+            if not cache_ttl > 0:
+                print(c("red", f"  Bad --cache-ttl: {args[i + 1] or '(empty)'}. "
+                               "Give a positive number of seconds."), file=err)
+                return 1
             del args[i : i + 2]
         elif args[i] == "--exclude":
             excluded |= {name.strip() for name in args[i + 1].split(",") if name.strip()}
@@ -711,6 +733,7 @@ def cmd_list(args):
                 tool_names={name for name in starred_set
                             if name in tools and name not in excluded},
                 wait=True,
+                refresh_failed=refresh_failed, cache_ttl=cache_ttl,
             )
             if usage_view
             else {}
@@ -743,6 +766,7 @@ def cmd_list(args):
             refresh=refresh,
             tool_names={name for name in starred_set
                             if name in tools and name not in excluded},
+            refresh_failed=refresh_failed, cache_ttl=cache_ttl,
         )
         if "rate" in wanted
         else {}

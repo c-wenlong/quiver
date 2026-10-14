@@ -614,7 +614,8 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
         asked = []
         self.deadlines = []
 
-        def fake_get_all(use_cache=True, tool_names=None, deadline=None):
+        def fake_get_all(use_cache=True, tool_names=None, deadline=None,
+                         refresh_failed=False, cache_ttl=None):
             asked.append(set(tool_names))
             self.deadlines.append(deadline)
             return {}

@@ -19,7 +19,9 @@ from quiver.harness.rate_limits import (
     invalidate_cache,
     register,
     _FETCHERS,
+    _fill_unavailable_windows,
 )
+from quiver.harness.models import _window
 
 
 class RateLimitInfoTest(unittest.TestCase):
@@ -1037,6 +1039,155 @@ class RateLimitRegistryTest(unittest.TestCase):
 
         self.assertEqual(result["codex"].used_percent, 42)
         self.assertEqual(result["codex"].plan_type, "plus")
+
+
+class UnavailableWindowCarryTest(unittest.TestCase):
+    """_fill_unavailable_windows gives an unread meter its last values."""
+
+    def _info(self) -> "RateLimitInfo":
+        return RateLimitInfo(
+            tool_name="cursor", used_percent=10, limit_reached=False,
+            reset_at=0, plan_type="team", window_seconds=0,
+            windows=[_window("auto", 10, 100, 604800),
+                     _window("grok_bot", 0, 0, 604800, unavailable=True)],
+        )
+
+    def test_last_known_values_carry_over_with_as_of(self):
+        previous = {
+            "fetched_at": 1700.0,
+            "windows": [{"window": "grok_bot", "used_percent": 42,
+                         "limit_reached": False, "reset_at": 900,
+                         "window_seconds": 604800}],
+        }
+        info = self._info()
+        _fill_unavailable_windows(info, previous)
+
+        grok = info.windows[1]
+        self.assertEqual(grok["used_percent"], 42)
+        self.assertEqual(grok["reset_at"], 900)
+        self.assertEqual(grok["as_of"], 1700.0)
+        # The healthy window is untouched.
+        self.assertNotIn("as_of", info.windows[0])
+
+    def test_a_carried_as_of_never_resets(self):
+        previous = {
+            "fetched_at": 9999.0,
+            "windows": [{"window": "grok_bot", "used_percent": 42,
+                         "limit_reached": False, "reset_at": 900,
+                         "window_seconds": 604800, "as_of": 1200.0}],
+        }
+        info = self._info()
+        _fill_unavailable_windows(info, previous)
+
+        self.assertEqual(info.windows[1]["as_of"], 1200.0)
+
+    def test_no_previous_reading_reads_zero_without_as_of(self):
+        info = self._info()
+        _fill_unavailable_windows(info, None)
+        _fill_unavailable_windows(info, {"fetched_at": 1, "windows": [
+            {"window": "other", "used_percent": 9}]})
+
+        grok = info.windows[1]
+        self.assertEqual(grok["used_percent"], 0)
+        self.assertNotIn("as_of", grok)
+
+
+class RefreshFailedTest(unittest.TestCase):
+    """refresh_failed refetches only cached failures; cache_ttl re-times freshness."""
+
+    def _fetcher(self, name: str, percent: int) -> MagicMock:
+        return MagicMock(return_value=RateLimitInfo(
+            tool_name=name, used_percent=percent, limit_reached=False,
+            reset_at=0, plan_type="free", window_seconds=0, window="",
+            windows=[{"window": "w", "used_percent": percent,
+                      "limit_reached": False, "reset_at": 0,
+                      "window_seconds": 0}],
+        ))
+
+    def _run(self, fetchers, cached, ttl=None, refresh_failed=False):
+        """One get_all_rate_limits call over a seeded throwaway cache."""
+        saved = _FETCHERS.copy()
+        _FETCHERS.clear()
+        for name, fetcher in fetchers.items():
+            register(name, fetcher)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp) / "rate_limits_cache.json",
+            ):
+                from quiver.harness.rate_limits import _save_cached
+
+                _save_cached(cached)
+                return get_all_rate_limits(
+                    use_cache=True, tool_names=set(fetchers),
+                    refresh_failed=refresh_failed, cache_ttl=ttl,
+                )
+        finally:
+            _FETCHERS.clear()
+            _FETCHERS.update(saved)
+
+    @staticmethod
+    def _raw(name, percent=10, plan_type="free", windows=None):
+        return {
+            "tool_name": name, "used_percent": percent,
+            "limit_reached": False, "reset_at": 0, "plan_type": plan_type,
+            "window_seconds": 0, "window": "",
+            "windows": windows if windows is not None else [],
+        }
+
+    def test_refresh_failed_refetches_only_the_failed_entries(self):
+        healthy = MagicMock()
+        timed_out = self._fetcher("timed", 60)
+        partial = self._fetcher("partial", 70)
+        cached = {
+            "healthy": self._raw("healthy", 5),
+            "timed": self._raw("timed", plan_type="timeout"),
+            "partial": self._raw("partial", 20, windows=[
+                {"window": "grok_bot", "used_percent": 20,
+                 "limit_reached": False, "reset_at": 0,
+                 "window_seconds": 0, "unavailable": True, "as_of": 1}]),
+        }
+        result = self._run(
+            {"healthy": healthy, "timed": timed_out, "partial": partial},
+            cached, refresh_failed=True,
+        )
+
+        healthy.assert_not_called()
+        timed_out.assert_called_once_with()
+        partial.assert_called_once_with()
+        self.assertEqual(result["timed"].used_percent, 60)
+        self.assertEqual(result["partial"].used_percent, 70)
+
+    def test_a_failed_refetch_keeps_the_previous_entry(self):
+        partial = MagicMock(return_value=None)
+        cached = {
+            "partial": self._raw("partial", 20, windows=[
+                {"window": "grok_bot", "used_percent": 20,
+                 "limit_reached": False, "reset_at": 0,
+                 "window_seconds": 0, "unavailable": True, "as_of": 1}]),
+        }
+        result = self._run({"partial": partial}, cached, refresh_failed=True)
+
+        partial.assert_called_once_with()
+        self.assertEqual(result["partial"].used_percent, 20)
+        self.assertEqual(result["partial"].windows[0]["as_of"], 1)
+
+    def test_without_refresh_failed_the_cached_failures_serve(self):
+        timed_out = MagicMock()
+        result = self._run(
+            {"timed": timed_out},
+            {"timed": self._raw("timed", plan_type="timeout")},
+        )
+        timed_out.assert_not_called()
+        self.assertEqual(result["timed"].plan_type, "timeout")
+
+    def test_cache_ttl_replaces_the_default_freshness(self):
+        fetcher = self._fetcher("tool", 30)
+        result = self._run({"tool": fetcher},
+                           {"tool": self._raw("tool", 10)},
+                           ttl=0.000_001)
+        fetcher.assert_called_once_with()
+        self.assertEqual(result["tool"].used_percent, 30)
 
 
 class CodexFetcherTest(unittest.TestCase):
@@ -3686,7 +3837,7 @@ class CursorFetcherTest(unittest.TestCase):
         # The headline stays Cursor's own allowance.
         self.assertEqual(info.window, "api")
 
-    def test_a_failed_grok_bot_call_leaves_the_reading_alone(self):
+    def test_a_failed_grok_bot_call_marks_the_window_unavailable(self):
         from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
 
         def reply(request, **_):
@@ -3700,6 +3851,45 @@ class CursorFetcherTest(unittest.TestCase):
             info = _fetch_cursor()
 
         self.assertEqual(info.used_percent, 100)
+        grok = next(w for w in info.windows if w["window"] == "grok_bot")
+        self.assertTrue(grok["unavailable"])
+        self.assertEqual(grok["used_percent"], 0)
+
+    def test_a_grok_bot_call_past_its_budget_marks_the_window_unavailable(self):
+        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+
+        def reply(request, **_):
+            if request.full_url == _CURSOR_GROK_BOT_URL:
+                time.sleep(0.2)
+                return {"usagePercent": 5}
+            return copy.deepcopy(self._SAMPLE_RESPONSE) if request.full_url == _CURSOR_USAGE_URL else None
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch(
+            "quiver.harness.rate_limits._CURSOR_EXTRAS_BUDGET", 0.01,
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+            info = _fetch_cursor()
+
+        grok = next(w for w in info.windows if w["window"] == "grok_bot")
+        self.assertTrue(grok["unavailable"])
+
+    def test_a_grok_bot_reply_with_no_meter_adds_no_window(self):
+        """A dict reply that means "no personal meter" stays absent."""
+        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+
+        replies = {
+            _CURSOR_USAGE_URL: copy.deepcopy(self._SAMPLE_RESPONSE),
+            _CURSOR_GROK_BOT_URL: {"usesPooledEnterpriseAllowance": True},
+        }
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            side_effect=lambda request, **_: replies.get(request.full_url),
+        ):
+            info = _fetch_cursor()
+
         self.assertNotIn("grok_bot", [w["window"] for w in info.windows])
 
     def test_on_demand_and_plan_calls_are_optional(self):
