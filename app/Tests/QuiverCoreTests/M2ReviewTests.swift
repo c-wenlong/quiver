@@ -87,7 +87,7 @@ import Testing
             (.zero, CommandResult(status: 1, stdout: Data(), stderr: "\u{1B}[31mUnknown flag: --exclude=claude,codex\u{1B}[0m")),
             (.zero, CommandResult(status: 0, stdout: ok, stderr: "")),
         ])
-        let model = OtherLimitsModel(swe: SweClient(runner: runner))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
         await model.load()
         #expect(model.rows.map(\.name) == ["devin"])
         #expect(model.note == nil)

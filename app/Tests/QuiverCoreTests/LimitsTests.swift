@@ -255,3 +255,18 @@ func reading(
         #expect(UsageFormat.ago(now + 10, now: now) == "just now")
     }
 }
+
+@Suite struct RefreshFreshWindowTests {
+    @Test func theFieldClampsIntoTheAcceptedRange() {
+        #expect(RefreshFreshWindow.minutes(0) == 1)
+        #expect(RefreshFreshWindow.minutes(-4) == 1)
+        #expect(RefreshFreshWindow.minutes(5) == 5)
+        #expect(RefreshFreshWindow.minutes(999) == 120)
+    }
+
+    @Test func theDefaultIsFiveMinutesAndSecondsConverts() {
+        #expect(RefreshFreshWindow.defaultMinutes == 5)
+        #expect(RefreshFreshWindow.seconds(5) == 300)
+        #expect(RefreshFreshWindow.seconds(0) == 60)
+    }
+}

@@ -41,18 +41,37 @@ public actor UsageService {
         self.now = now
     }
 
-    /// The account's usage. `force` skips the 5-minute reuse, never a cooldown.
+    /// The account's usage. `force` skips the cached reuse, never a cooldown;
+    /// `freshFor` says how long a good reading counts as fresh this call (the
+    /// Settings refresh window); the default is the service's five minutes.
     /// Calls for an account already being fetched wait for that fetch.
-    public func usage(for key: AccountKey, force: Bool) async -> AccountUsage {
+    public func usage(for key: AccountKey, force: Bool,
+                      freshFor: TimeInterval = 300) async -> AccountUsage {
         if let running = inFlight[key] { return await running.value }
-        let task = Task { await self.resolve(key, force: force) }
+        let task = Task { await self.resolve(key, force: force, freshFor: freshFor) }
         inFlight[key] = task
         let result = await task.value
         inFlight[key] = nil
         return result
     }
 
-    private func resolve(_ key: AccountKey, force: Bool) async -> AccountUsage {
+    /// The last stored reading without a network call, or nil when none is
+    /// kept. The credential is never looked up — a launch must not prompt —
+    /// so the stored fingerprint goes unchecked; the reading is marked stale
+    /// and carries the last failure, if one was recorded. For hydrating a
+    /// card while the real fetch runs.
+    public func cachedUsage(for key: AccountKey) -> AccountUsage? {
+        guard let entry = store.entry(for: key), let reading = entry.reading,
+              now().timeIntervalSince(reading.fetchedAt) <= Self.keptFor
+        else { return nil }
+        return AccountUsage(
+            status: entry.lastFailure?.status ?? .ok,
+            plan: reading.plan, email: reading.email,
+            windows: reading.windows, fetchedAt: reading.fetchedAt,
+            isStale: true)
+    }
+
+    private func resolve(_ key: AccountKey, force: Bool, freshFor: TimeInterval) async -> AccountUsage {
         let credential: UsageCredential
         switch await lookUpCredential(key) {
         case .found(let found): credential = found
@@ -74,11 +93,15 @@ public actor UsageService {
         }
         if !force, let reading {
             let age = started.timeIntervalSince(reading.fetchedAt)
-            if age >= 0 && age < Self.freshFor {
+            if age >= 0 && age < freshFor {
                 return result(.ok, reading: reading, credential: credential, isStale: false)
             }
         }
         if let expiresAt = credential.expiresAt, expiresAt <= started {
+            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: reading,
+                                     cooldownUntil: entry?.cooldownUntil,
+                                     lastFailure: StoredFailure(at: started, status: .expired)),
+                       for: key)
             return result(.expired, reading: reading, credential: credential)
         }
 
@@ -88,10 +111,25 @@ public actor UsageService {
             response = try await transport.send(request)
         } catch {
             // The error is not quoted: some carry the request, header and all.
-            return result(.error("could not reach the usage API"), reading: reading, credential: credential)
+            let status = UsageStatus.error("could not reach the usage API")
+            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: reading,
+                                     cooldownUntil: entry?.cooldownUntil,
+                                     lastFailure: StoredFailure(at: started, status: status)),
+                       for: key)
+            return result(status, reading: reading, credential: credential)
         }
         let (data, http) = response
         let answered = now()
+
+        /// The account's entry after a failed fetch: the kept reading and
+        /// any cooldown untouched, the failure stamped for `cachedUsage`.
+        func failed(_ status: UsageStatus, entry: StoredAccount?,
+                    reading: StoredReading?, credential: UsageCredential,
+                    at: Date) -> StoredAccount {
+            StoredAccount(fingerprint: credential.fingerprint, reading: reading,
+                          cooldownUntil: entry?.cooldownUntil,
+                          lastFailure: StoredFailure(at: at, status: status))
+        }
 
         switch http.statusCode {
         case 200..<300:
@@ -99,18 +137,28 @@ public actor UsageService {
                 return result(.error("unexpected response from the usage API"), reading: reading, credential: credential)
             }
             let fresh = StoredReading(plan: parsed.plan, email: parsed.email, windows: parsed.windows, fetchedAt: answered)
-            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: fresh, cooldownUntil: nil), for: key)
+            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: fresh,
+                                     cooldownUntil: nil, lastFailure: nil), for: key)
             return result(.ok, reading: fresh, credential: credential, isStale: false)
         case 401:
+            store.save(failed(.expired, entry: entry, reading: reading,
+                              credential: credential, at: answered), for: key)
             return result(.expired, reading: reading, credential: credential)
         case 429:
             let asked = RetryAfter.date(http.value(forHTTPHeaderField: "Retry-After"), now: answered)
             let wait = asked.map { $0.timeIntervalSince(answered) } ?? Self.defaultCooldown
             let until = answered.addingTimeInterval(min(max(wait, Self.cooldownRange.lowerBound), Self.cooldownRange.upperBound))
-            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: reading, cooldownUntil: until), for: key)
+            store.save(StoredAccount(fingerprint: credential.fingerprint, reading: reading,
+                                     cooldownUntil: until,
+                                     lastFailure: StoredFailure(at: answered,
+                                                                status: .rateLimited(until: until))),
+                       for: key)
             return result(.rateLimited(until: until), reading: reading, credential: credential)
         default:
-            return result(.error("usage API returned HTTP \(http.statusCode)"), reading: reading, credential: credential)
+            let status = UsageStatus.error("usage API returned HTTP \(http.statusCode)")
+            store.save(failed(status, entry: entry, reading: reading,
+                              credential: credential, at: answered), for: key)
+            return result(status, reading: reading, credential: credential)
         }
     }
 

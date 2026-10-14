@@ -8,7 +8,7 @@ import Observation
 @MainActor
 @Observable
 public final class OtherLimitsModel {
-    public struct Row: Identifiable, Equatable, Sendable {
+    public struct Row: Identifiable, Codable, Equatable, Sendable {
         public var id: String { name }
         public var name: String
         public var limit: RateLimit
@@ -50,7 +50,7 @@ public final class OtherLimitsModel {
     /// One per harness starred in swe's registry that has no Quiver
     /// account, in swe's order, with its limit when swe read one. The
     /// Accounts page's harness cards.
-    public struct Card: Identifiable, Equatable, Sendable {
+    public struct Card: Identifiable, Codable, Equatable, Sendable {
         public var id: String { name }
         public var name: String
         public var displayName: String?
@@ -80,9 +80,53 @@ public final class OtherLimitsModel {
     /// change reloading ahead of the five-minute background load) drops
     /// its answer rather than write back older state.
     private var request = 0
+    /// How fresh swe's cached reading must be to serve it, in seconds: the
+    /// Settings "Refresh only what failed for" window, passed to swe as
+    /// `--cache-ttl`. An swe too old for the flag is asked without it.
+    public var cacheTTL: TimeInterval = 300
+    /// Set when swe rejected the usage flags, so they're never sent again
+    /// this session.
+    private var sweKnowsUsageFlags = true
+    /// Where the last successful list persists between launches.
+    private let snapshotFile: URL
 
-    public init(swe: SweClient) {
+    public init(swe: SweClient,
+                snapshotFile: URL? = nil) {
         self.swe = swe
+        self.snapshotFile = snapshotFile ?? FileManager.default
+            .homeDirectoryForCurrentUser
+            .appending(path: ".quiver/cache/app-other-limits.json")
+        hydrate()
+    }
+
+    /// One saved copy of what the last load showed, so the cards render
+    /// before swe answers. Missing or corrupt files mean a cold start.
+    private struct Snapshot: Codable {
+        var savedAt: Date
+        var rows: [Row]
+        var cards: [Card]
+        var starred: [String]
+        var cliInstalled: [String: Bool]
+    }
+
+    private func hydrate() {
+        guard let data = try? Data(contentsOf: snapshotFile),
+              let saved = try? JSONDecoder().decode(Snapshot.self, from: data)
+        else { return }
+        rows = saved.rows
+        cards = saved.cards
+        starred = Set(saved.starred)
+        cliInstalled = saved.cliInstalled
+    }
+
+    private func persist() {
+        let snapshot = Snapshot(savedAt: .now, rows: rows, cards: cards,
+                                starred: starred.map { Array($0) } ?? [],
+                                cliInstalled: cliInstalled)
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? FileManager.default.createDirectory(
+            at: snapshotFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: snapshotFile, options: .atomic)
     }
 
     /// Whether swe's registry stars a harness. Before the first successful
@@ -91,13 +135,30 @@ public final class OtherLimitsModel {
         starred?.contains(harness) ?? true
     }
 
-    public func load() async {
+    /// `refreshFailed` is a Refresh-press load: swe re-checks only the
+    /// readings that failed, inside the `cacheTTL` freshness window.
+    public func load(refreshFailed: Bool = false) async {
         request += 1
         let mine = request
         do {
             let harnesses: [Harness]
             do {
-                harnesses = try await swe.harnesses(withUsage: true, excludingUsage: Self.ownAccounts)
+                if sweKnowsUsageFlags {
+                    harnesses = try await swe.harnesses(
+                        withUsage: true, excludingUsage: Self.ownAccounts,
+                        cacheTTL: cacheTTL, refreshFailed: refreshFailed)
+                } else {
+                    harnesses = try await swe.harnesses(
+                        withUsage: true, excludingUsage: Self.ownAccounts)
+                }
+            } catch SweError.commandFailed(_, let message)
+                        where sweKnowsUsageFlags
+                        && (message.contains("--cache-ttl")
+                            || message.contains("--refresh-failed")) {
+                // An swe from before these flags: never send them again.
+                sweKnowsUsageFlags = false
+                harnesses = try await swe.harnesses(
+                    withUsage: true, excludingUsage: Self.ownAccounts)
             } catch SweError.commandFailed(_, let message) where message.contains("--exclude") {
                 // An swe from before --exclude: ask again and accept that it
                 // polls Claude and Codex too.
@@ -124,6 +185,7 @@ public final class OtherLimitsModel {
                 if let installed = harness.installed { map[harness.name] = installed }
             }
             note = nil
+            persist()
         } catch is CancellationError {
             return
         } catch {

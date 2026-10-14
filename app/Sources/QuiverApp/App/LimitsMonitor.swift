@@ -20,6 +20,20 @@ final class LimitsMonitor {
         didSet { UserDefaults.standard.set(notifyEnabled, forKey: "limitNotifications") }
     }
 
+    /// The "Refresh only what failed for" window, in minutes: inside it a
+    /// Refresh press re-checks only the usage that failed.
+    var refreshFreshMinutes: Int {
+        didSet {
+            let clamped = RefreshFreshWindow.minutes(refreshFreshMinutes)
+            if clamped != refreshFreshMinutes { refreshFreshMinutes = clamped }
+            UserDefaults.standard.set(clamped, forKey: "refreshFreshMinutes")
+        }
+    }
+    /// The same window in seconds, for `UsageService` and swe's `--cache-ttl`.
+    var refreshFreshSeconds: TimeInterval {
+        RefreshFreshWindow.seconds(refreshFreshMinutes)
+    }
+
     @ObservationIgnored private var alerter: LimitAlerter
     @ObservationIgnored private let alertStateFile: URL
     @ObservationIgnored private let widgets: WidgetSnapshotStore
@@ -27,6 +41,9 @@ final class LimitsMonitor {
 
     init(quiver: URL) {
         notifyEnabled = UserDefaults.standard.object(forKey: "limitNotifications") as? Bool ?? true
+        refreshFreshMinutes = RefreshFreshWindow.minutes(
+            UserDefaults.standard.object(forKey: "refreshFreshMinutes") as? Int
+                ?? RefreshFreshWindow.defaultMinutes)
         alertStateFile = quiver.appending(path: "cache/app-limit-alerts.json")
         widgets = WidgetSnapshotStore(file: WidgetSnapshotStore.defaultFile(home: quiver.deletingLastPathComponent()))
         let saved = (try? Data(contentsOf: alertStateFile))

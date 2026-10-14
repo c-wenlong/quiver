@@ -294,6 +294,55 @@ import Testing
         #expect(slow.count == 1)
         #expect(first == second)
     }
+
+    // MARK: The refresh window and the launch cache
+
+    @Test func freshForDecidesWhetherAGoodReadingIsReused() async throws {
+        let (h, first) = try await harnessWithReading()
+        h.clock.advance(120)
+        // Inside the window, no request is sent.
+        #expect(await h.makeService().usage(for: codexKey, force: false, freshFor: 300) == first)
+        #expect(h.transport.requests.count == 1)
+
+        // Past it, the same call fetches.
+        h.transport.reply(200, body: try fixture("codex-usage"))
+        _ = await h.makeService().usage(for: codexKey, force: false, freshFor: 60)
+        #expect(h.transport.requests.count == 2)
+    }
+
+    @Test func aFailedFetchIsRememberedWithItsStatusAndClearedByASuccess() async throws {
+        let (h, _) = try await harnessWithReading()
+        h.clock.advance(120)
+        h.transport.fail()
+        let failed = await h.makeService().usage(for: codexKey, force: true)
+        #expect(failed.status == .error("could not reach the usage API"))
+
+        // The file remembers the failure: a new service (a fresh launch)
+        // sees it without any network or keychain.
+        let service = h.makeService()
+        let cached = await service.cachedUsage(for: codexKey)
+        #expect(cached?.status == .error("could not reach the usage API"))
+        #expect(cached?.fetchedAt == usageEpoch)
+        #expect(cached?.isStale == true)
+        #expect(h.secrets.lookups.isEmpty)
+        #expect(h.transport.requests.count == 2)
+
+        // And the next good fetch clears it.
+        h.transport.reply(200, body: try fixture("codex-usage"))
+        _ = await service.usage(for: codexKey, force: true)
+        #expect(await service.cachedUsage(for: codexKey)?.status == .ok)
+        #expect(h.cacheText.contains("lastFailure") == false)
+    }
+
+    @Test func cachedUsageCarriesARecordedExpiry() async throws {
+        let (h, _) = try await harnessWithReading()
+        h.clock.advance(120)
+        h.transport.reply(401)
+        _ = await h.makeService().usage(for: codexKey, force: true)
+        let cached = await h.makeService().cachedUsage(for: codexKey)
+        #expect(cached?.status == .expired)
+        #expect(h.secrets.lookups.isEmpty)
+    }
 }
 
 /// Answers every request with the same body after a short wait, counting them.

@@ -126,6 +126,9 @@ private struct SettingsSectionView: View {
     var section: SettingsSection
     @Binding var drafts: PathDrafts
     @Binding var loginFailure: String?
+    /// The draft "Refresh only what failed for" value, in minutes.
+    @State private var refreshMinutes = 0
+    @FocusState private var refreshFocused: Bool
     @Environment(AppModel.self) private var app
 
     var body: some View {
@@ -193,6 +196,34 @@ private struct SettingsSectionView: View {
                            ? "Notifications for Quiver are off in System Settings > Notifications." : nil) {
                 SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
             }
+            SettingsDivider()
+            SettingRow(title: "Refresh only what failed for",
+                       detail: "Within this many minutes of a good reading, Refresh re-checks only the usage that failed.") {
+                HStack(spacing: 6) {
+                    TextField("", value: $refreshMinutes, format: .number)
+                        .quiverField()
+                        .frame(width: 56)
+                        .multilineTextAlignment(.trailing)
+                        .focused($refreshFocused)
+                        .onSubmit(commitRefreshMinutes)
+                        .onChange(of: refreshFocused) { _, focused in
+                            if !focused { commitRefreshMinutes() }
+                        }
+                    Text("min").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .onAppear { refreshMinutes = app.limits.refreshFreshMinutes }
+        .onDisappear(perform: commitRefreshMinutes)
+    }
+
+    /// The field writes only on Return, focus loss or the popover closing;
+    /// an entry outside the range clamps on commit.
+    private func commitRefreshMinutes() {
+        let minutes = RefreshFreshWindow.minutes(refreshMinutes)
+        refreshMinutes = minutes
+        if minutes != app.limits.refreshFreshMinutes {
+            app.limits.refreshFreshMinutes = minutes
         }
     }
 

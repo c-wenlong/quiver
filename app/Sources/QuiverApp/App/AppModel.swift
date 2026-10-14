@@ -420,6 +420,10 @@ final class AppModel {
         watchers.append(watchSessions())
         watchers += watchLimits()
         watchers.append(watchActivation())
+
+        // The refresh window feeds the account reads and swe's cache TTL.
+        accounts.freshFor = limits.refreshFreshSeconds
+        others.cacheTTL = limits.refreshFreshSeconds
     }
 
     /// Skills and Plugins > Explore place one inventory against one
@@ -472,6 +476,17 @@ final class AppModel {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(60))
                     self?.refreshLimits()
+                }
+            },
+            Task { [weak self] in
+                // The refresh window changing re-times both readers.
+                let changes = Observations { [weak self] in
+                    self?.limits.refreshFreshMinutes ?? 0
+                }
+                for await _ in changes {
+                    guard let self else { continue }
+                    accounts.freshFor = limits.refreshFreshSeconds
+                    others.cacheTTL = limits.refreshFreshSeconds
                 }
             },
             Task { [weak self] in

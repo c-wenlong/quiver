@@ -3,7 +3,11 @@ import Observation
 
 /// Anything that can report an account's usage. `UsageService` in the app.
 public protocol UsageFetching: Sendable {
-    func usage(for key: AccountKey, force: Bool) async -> AccountUsage
+    /// `freshFor`: how old a good reading may be before this call refetches.
+    func usage(for key: AccountKey, force: Bool, freshFor: TimeInterval) async -> AccountUsage
+    /// The stored reading and last failure without touching the network or
+    /// the keychain, for filling a card before the first fetch lands.
+    func cachedUsage(for key: AccountKey) async -> AccountUsage?
 }
 
 extension UsageService: UsageFetching {}
@@ -103,6 +107,10 @@ public final class AccountsModel {
     public private(set) var isLoading = false
     public private(set) var error: String?
 
+    /// How long a good reading counts as fresh for a refresh pass: the
+    /// Settings "Refresh only what failed for" window, in seconds.
+    public var freshFor: TimeInterval = 300
+
     private let store: ProfileStore
     private let usage: UsageFetching
     private let launcher: Launching
@@ -156,9 +164,21 @@ public final class AccountsModel {
                                     isDefault: profile.isDefault))
         }
         let usage = self.usage
+        // While the network runs, cards show what the last launches stored:
+        // the reading and the last failure, no keychain read, no prompt.
+        for (id, key) in keys where cards.first(where: { $0.id == id })?.usage == nil {
+            if let cached = await usage.cachedUsage(for: key) {
+                guard mine == generation else { return }
+                cards = cards.map { $0.id == id ? Card(profile: $0.profile, usage: cached) : $0 }
+            }
+        }
+        let freshFor = self.freshFor
         let results = await withTaskGroup(of: (String, AccountUsage).self) { group in
             for (id, key) in keys {
-                group.addTask { (id, await usage.usage(for: key, force: force || forcing.contains(id))) }
+                group.addTask {
+                    (id, await usage.usage(for: key, force: force || forcing.contains(id),
+                                           freshFor: freshFor))
+                }
             }
             var out: [String: AccountUsage] = [:]
             for await (id, reading) in group { out[id] = reading }
@@ -173,15 +193,21 @@ public final class AccountsModel {
         }
     }
 
-    /// What the Refresh buttons do, and only them: load fresh, renew each
-    /// expired Claude sign-in (Claude Code renews its own keychain
-    /// credential; Quiver never touches the token), then load again so
-    /// the renewed accounts read ok. Nothing else — launch, timers, page
-    /// appear, plain `load` — runs a renewal.
+    /// What the Refresh buttons do, and only them: re-check what failed
+    /// (a healthy reading inside the `freshFor` window comes back from the
+    /// cache untouched), renew each expired Claude sign-in (Claude Code
+    /// renews its own keychain credential; Quiver never touches the
+    /// token), then load again so the renewed accounts read ok. Nothing
+    /// else — launch, timers, page appear, plain `load` — runs a renewal.
     public func refreshFromButton() async {
         // The first load is what may show a sign-in expired since the
         // last reading; renewals are picked from that, not stale cards.
-        await load(force: true)
+        // Only the failures are forced: a card that read fine a minute ago
+        // keeps its reading rather than spend a network call on it.
+        let failed = Set(cards.filter {
+            $0.usage == nil || $0.usage?.status != .ok || $0.usage?.isStale == true
+        }.map(\.id))
+        await load(force: false, forcing: failed)
         // Cards already renewing skip this press: two `claude` runs in
         // one account race on refresh-token rotation and can sign it out.
         let expired = cards.filter {

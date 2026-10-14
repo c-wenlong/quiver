@@ -52,8 +52,8 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
 
 /// A harness's quota reading. `fetchedAt` is when it was actually taken,
 /// which can be minutes old when swe served it from its cache.
-public struct RateLimit: Decodable, Sendable, Equatable {
-    public enum Status: String, Decodable, Sendable {
+public struct RateLimit: Codable, Sendable, Equatable {
+    public enum Status: String, Codable, Sendable {
         case ok
         case noSubscription = "no-sub"
         case authRequired = "auth-required"
@@ -81,7 +81,7 @@ public struct RateLimit: Decodable, Sendable, Equatable {
 
     /// On-demand usage as swe reports it, worded the way `cursor-agent
     /// usage` words it: a value and a one-line detail.
-    public struct OnDemand: Decodable, Sendable, Equatable {
+    public struct OnDemand: Codable, Sendable, Equatable {
         /// "fixed", "unlimited", "disabled" or "unavailable".
         public let state: String
         /// "team-member" or "personal".
@@ -129,17 +129,36 @@ public struct RateLimit: Decodable, Sendable, Equatable {
     }
 
     /// One quota window.
-    public struct Window: Decodable, Sendable, Equatable {
+    public struct Window: Codable, Sendable, Equatable {
         public let window: String
         public let usedPercent: Int
         public let resetAt: Date?
         public let windowSeconds: Int?
+        /// The provider should have this meter but left it unread; the
+        /// figures are the last known values, dated `asOf`.
+        public let unavailable: Bool
+        /// When the carried figures were actually read; nil for a current
+        /// window or one with no saved value.
+        public let asOf: Date?
 
-        public init(window: String, usedPercent: Int, resetAt: Date?, windowSeconds: Int? = nil) {
+        public init(window: String, usedPercent: Int, resetAt: Date?, windowSeconds: Int? = nil,
+                    unavailable: Bool = false, asOf: Date? = nil) {
             self.window = window
             self.usedPercent = usedPercent
             self.resetAt = resetAt
             self.windowSeconds = windowSeconds
+            self.unavailable = unavailable
+            self.asOf = asOf
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            window = try c.decode(String.self, forKey: .window)
+            usedPercent = try c.decode(Int.self, forKey: .usedPercent)
+            resetAt = try c.decodeIfPresent(Date.self, forKey: .resetAt)
+            windowSeconds = try c.decodeIfPresent(Int.self, forKey: .windowSeconds)
+            unavailable = try c.decodeIfPresent(Bool.self, forKey: .unavailable) ?? false
+            asOf = try c.decodeIfPresent(Date.self, forKey: .asOf)
         }
     }
 
