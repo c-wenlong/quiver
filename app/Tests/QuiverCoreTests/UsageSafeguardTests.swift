@@ -87,6 +87,18 @@ import Testing
         #expect(usage.status == .error("unexpected response from the usage API"))
     }
 
+    @Test func anUnparseableReplyIsRememberedAsTheLastFailure() async throws {
+        let (h, _) = try await harnessWithReading()
+        h.clock.advance(120)
+        h.transport.reply(200, body: Data("not the usage json".utf8))
+        let usage = await h.makeService().usage(for: codexKey, force: true)
+        #expect(usage.status == .error("unexpected response from the usage API"))
+
+        let cached = await h.makeService().cachedUsage(for: codexKey)
+        #expect(cached?.status == .error("unexpected response from the usage API"))
+        #expect(cached?.fetchedAt == usageEpoch)
+    }
+
     // MARK: Cooldown
 
     @Test func aCooldownIsHonouredEvenWhenForced() async throws {

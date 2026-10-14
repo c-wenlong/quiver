@@ -134,7 +134,10 @@ public actor UsageService {
         switch http.statusCode {
         case 200..<300:
             guard let parsed = parse(data, key: key, credential: credential, now: answered) else {
-                return result(.error("unexpected response from the usage API"), reading: reading, credential: credential)
+                let status = UsageStatus.error("unexpected response from the usage API")
+                store.save(failed(status, entry: entry, reading: reading,
+                                  credential: credential, at: answered), for: key)
+                return result(status, reading: reading, credential: credential)
             }
             let fresh = StoredReading(plan: parsed.plan, email: parsed.email, windows: parsed.windows, fetchedAt: answered)
             store.save(StoredAccount(fingerprint: credential.fingerprint, reading: fresh,
