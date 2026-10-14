@@ -9,6 +9,15 @@ struct StoredReading: Codable, Equatable {
     var fetchedAt: Date
 }
 
+/// The last failed fetch, kept so a launch can show "couldn't refresh" and
+/// its status without asking the network or the keychain.
+struct StoredFailure: Codable, Equatable {
+    /// When the provider (or the credential check) last said no.
+    var at: Date
+    /// `expired`, `rateLimited` or `error`: the status the card should wear.
+    var status: UsageStatus
+}
+
 /// What is remembered about one account between calls and launches.
 struct StoredAccount: Codable, Equatable {
     /// The `UsageCredential.fingerprint` the reading and cooldown belong to.
@@ -17,6 +26,9 @@ struct StoredAccount: Codable, Equatable {
     var reading: StoredReading?
     /// No request is sent for this account before this time.
     var cooldownUntil: Date?
+    /// The last failed fetch; cleared by the next success. Missing in files
+    /// written before this field existed.
+    var lastFailure: StoredFailure?
 }
 
 /// The usage state file. Belongs under ~/.quiver/cache/ (gitignored there), for
@@ -55,9 +67,12 @@ struct UsageCacheStore {
         // Another running copy may have saved a cooldown for this same login
         // after this one started its request. A success saved now must not
         // erase it, or the next refresh would ignore Retry-After.
-        if var next = entry, next.cooldownUntil == nil,
+        if var next = entry,
            let current = accounts[Self.id(key)], current.fingerprint == next.fingerprint,
-           let until = current.cooldownUntil, until > now() {
+           let until = current.cooldownUntil, until > now(),
+           until > (next.cooldownUntil ?? .distantPast) {
+            // Keep the later of the two: a copy that saved an older (or no)
+            // cooldown must not shorten one another copy just recorded.
             next.cooldownUntil = until
             entry = next
         }

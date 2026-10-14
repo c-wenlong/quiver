@@ -192,7 +192,7 @@ struct MenuBarContent: View {
                 Spacer()
                 PanelIconButton(title: "Refresh", symbol: "arrow.clockwise") {
                     Task { await app.accounts.refreshFromButton() }
-                    Task { await app.others.load() }
+                    Task { await app.others.load(refreshFailed: true) }
                     Task { await app.overview?.load(scan: true) }
                 }
                 .disabled(app.accounts.isLoading)
@@ -484,14 +484,18 @@ private struct PanelAccountRow: View {
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
             }
             if let usage = card.usage, !usage.windows.isEmpty {
+                // A kept reading after a failed fetch gets the unavailable
+                // treatment row by row; a stale ok reading merely dims.
+                let failed = usage.isStale && usage.status != .ok
                 ForEach(usage.windows.filter {
                             app.popup.shows(window: $0.label, source: card.profile.id,
                                             harness: card.profile.vendor.rawValue,
                                             allWindows: usage.windows.map(\.label))
                         }, id: \.label) { window in
-                    PanelLimitRow(label: window.label, percent: window.usedPercent, resetsAt: window.resetsAt)
+                    PanelLimitRow(label: window.label, percent: window.usedPercent, resetsAt: window.resetsAt,
+                                  unavailable: failed, asOf: usage.fetchedAt)
                 }
-                .opacity(usage.isStale ? 0.55 : 1)
+                .opacity(usage.isStale && !failed ? 0.55 : 1)
                 if usage.isStale { StatusLine(usage: usage, card: card) }
             } else {
                 StatusLine(usage: card.usage, card: card)
@@ -510,7 +514,9 @@ private struct PanelOtherRow: View {
     var body: some View {
         // swe hands back its last reading, status ok, for up to a day when a
         // provider fails; dim one that old.
-        let old = row.limit.fetchedAt.map { Date.now.timeIntervalSince($0) > LimitReading.sweStaleAfter } ?? true
+        let old = row.limit.fetchedAt.map {
+            Date.now.timeIntervalSince($0)
+                > LimitReading.sweStaleLimit(freshFor: app.others.acceptedCacheTTL) } ?? true
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 LogoLaunchButton(
@@ -527,7 +533,8 @@ private struct PanelOtherRow: View {
                                         allWindows: row.limit.allWindows.map(\.window))
                     }, id: \.window) { window in
                 PanelLimitRow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),
-                              percent: Double(window.usedPercent), resetsAt: window.resetAt)
+                              percent: Double(window.usedPercent), resetsAt: window.resetAt,
+                              unavailable: window.unavailable, asOf: window.asOf)
             }
             .opacity(old ? 0.55 : 1)
             if let onDemand = row.limit.onDemand {
@@ -561,20 +568,31 @@ private struct PanelLimitRow: View {
     var percent: Double
     var resetsAt: Date?
 
+    /// The reading is a kept older one after a failed or unread fetch:
+    /// red label, greyed bar and value, the real age for the reset time.
+    var unavailable: Bool = false
+    var asOf: Date? = nil
+
     var body: some View {
         let whole = Int(percent.rounded())
         HStack(spacing: 8) {
             HStack(spacing: 4) {
                 if let harness { HarnessIcon(harness: harness, size: 12) }
-                Text(label).font(Theme.caption).foregroundStyle(Theme.textPrimary)
+                Text(label).font(Theme.caption)
+                    .foregroundStyle(unavailable ? Theme.dangerText : Theme.textPrimary)
                 if let window { Text(window).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
             }
             .lineLimit(1)
             .frame(width: 86, alignment: .leading)
             UsageTrack(fraction: percent / 100, color: Theme.usage(whole))
-            Text("\(whole)%").font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                .opacity(unavailable ? 0.45 : 1)
+            Text(unavailable && asOf == nil ? "—" : "\(whole)%")
+                .font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                .opacity(unavailable ? 0.45 : 1)
                 .frame(width: 34, alignment: .trailing)
-            Text(resetsAt.map { $0 > .now ? UsageFormat.resetIn($0, now: .now) : "" } ?? "")
+            Text(unavailable
+                    ? (asOf.map { "as of \(UsageFormat.ago($0, now: .now))" } ?? "")
+                    : (resetsAt.map { $0 > .now ? UsageFormat.resetIn($0, now: .now) : "" } ?? ""))
             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
             .frame(width: 64, alignment: .trailing)

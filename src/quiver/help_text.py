@@ -35,6 +35,11 @@ HELP = {
                           cache. Implied by --refresh.
   {c('cyan', '--links')} / {c('cyan', '-L')}            Show quiver link status instead of usage.
   {c('cyan', '--refresh')} / {c('cyan', '-r')} / {c('cyan', '-n')}   Bypass caches and fetch new data.
+  {c('cyan', '--refresh-failed')}            Refetch only providers whose cached reading
+                          failed (timeout, sign-in needed, a window unread);
+                          healthy cached readings still serve.
+  {c('cyan', '--cache-ttl')}=<seconds>       How fresh a cached reading must be to serve,
+                          overriding the 5-minute default for this run.
   {c('cyan', '--scope')}=active|archived|all  Which harnesses show. Default active (archived
                           hidden); archived shows only shelved tools; all shows both.
   {c('dim', 'Collision: swe find also has a --scope, but it means something else there')}

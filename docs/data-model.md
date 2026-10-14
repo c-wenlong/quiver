@@ -42,7 +42,8 @@ under those names.
 | `cache/rate_limits_cache.json` | swe | JSON per provider | last limit reading per provider | 300s, `SWE_RATE_LIMITS_TTL`; stale fallback up to 24h; per-provider `updated_at` |
 | `cache/claude_usage_cache.json` | swe | JSON `{info, retry_at, credential_fingerprint, fetched_at}` | Claude usage endpoint's last reading + 429 cooldown | reading kept up to 24h; cooldown from `Retry-After` |
 | `cache/ledger/ledger.sqlite` | app | SQLite (WAL) | deduplicated token events, dimension rows, scan cursors | **only partly rebuildable:** rows can outlive their source logs (harnesses prune old transcripts), so this may hold the only copy of old history. Don't delete it to "reset" usage; a schema change archives it first (see below) |
-| `cache/app-usage.json` (+ `.lock`) | app | JSON `{version: 1, accounts}` | Claude/Codex usage readings, cooldowns, credential fingerprints (no secrets) | 60s poll; flock-shared read-modify-write |
+| `cache/app-usage.json` (+ `.lock`) | app | JSON `{version: 1, accounts}` | Claude/Codex usage readings, cooldowns, credential fingerprints, last failure per account (`lastFailure: {at, status}`) (no secrets) | 60s poll; flock-shared read-modify-write |
+| `cache/app-other-limits.json` | app | JSON `{savedAt, rows, cards, starred, cliInstalled}` | the last `swe list --usage` cards OtherLimitsModel showed | written after each successful load; hydrate at init; corrupt or missing files are ignored |
 | `cache/app-limit-alerts.json` | app | JSON | `LimitAlerter` dedupe state (alerted ids, reset timestamps) | pruned per evaluation |
 | `cache/api-key-checks.json` (+ `.lock`) | app | JSON `{version: 2, files}` | per-key validity results salted by `apiKeyCheckSalt` | no expiry: kept until the next check, shown only while the key's salted fingerprint still matches; flock-shared |
 | `cache/service-status.json` (+ `.lock`) | app | JSON `{version: 1}` | status-page readings per service | per-service refresh intervals in `ServiceStatusService` |
@@ -76,6 +77,7 @@ every key below is live.
 | `mcpHiddenHarnesses` | harness columns hidden on the MCP page |
 | `providerOrder`, `providerDisabled` | provider list order and switches |
 | `computeTrendInterval`, `computeTrendTab`, `computeMemoryLimitGB`, `computeOrphanAgeMinutes` | Compute page preferences |
+| `refreshFreshMinutes` | the "Refresh only what failed for" window (default 5, clamped to 1..120) |
 | `customStatusServices` | user-added status services |
 | `apiKeyCheckSalt` | salt for cached key-check results (not a secret itself) |
 | `widgetHarnesses.summary`, `widgetHarnesses.heatmap`, `widgetHarnesses.models` | per-widget harness picks |
@@ -136,7 +138,8 @@ MAX(ts)           SEARCH events USING COVERING INDEX events_ts
 | file | envelope | notes |
 |---|---|---|
 | Snapshot stores (`skills.json`, `mcp-servers.json`, `plugins.json`, `plugin-catalog.json`, `sessions.json`, `widgets/snapshot.json`) | `{version, savedAt, ...}` via `SnapshotFile` | decoded only when `version` equals the type's `snapshotVersion`; missing, malformed or mismatched files read as absent; atomic private writes |
-| `app-usage.json` | `{version: 1, accounts: {id: {reading, cooldownUntil, fingerprint}}}` | fingerprints are SHA-256 of credentials; no secret values |
+| `app-usage.json` | `{version: 1, accounts: {id: {reading, cooldownUntil, fingerprint, lastFailure?}}}` | fingerprints are SHA-256 of credentials; `lastFailure` is `{at, status}` and absent on success and in files from before it existed; no secret values |
+| `app-other-limits.json` | `{savedAt, rows, cards, starred, cliInstalled}` | no version; decode failure reads as absent |
 | `api-key-checks.json` | `{version: 2, files: {path: {salt, entries}}}` | version 1 reads as empty |
 | `service-status.json` | `{version: 1, ...}` | readings and incident state per service |
 | `session_cache.json` | `{cached_at, sessions}` | 60s |

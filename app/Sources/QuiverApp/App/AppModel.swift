@@ -420,6 +420,10 @@ final class AppModel {
         watchers.append(watchSessions())
         watchers += watchLimits()
         watchers.append(watchActivation())
+
+        // The refresh window feeds the account reads and swe's cache TTL.
+        accounts.freshFor = limits.refreshFreshSeconds
+        others.cacheTTL = limits.refreshFreshSeconds
     }
 
     /// Skills and Plugins > Explore place one inventory against one
@@ -475,6 +479,17 @@ final class AppModel {
                 }
             },
             Task { [weak self] in
+                // The refresh window changing re-times both readers.
+                let changes = Observations { [weak self] in
+                    self?.limits.refreshFreshMinutes ?? 0
+                }
+                for await _ in changes {
+                    guard let self else { continue }
+                    accounts.freshFor = limits.refreshFreshSeconds
+                    others.cacheTTL = limits.refreshFreshSeconds
+                }
+            },
+            Task { [weak self] in
                 let changes = Observations { [weak self] in
                     // The series order and colours also feed the file:
                     // a provider reorder or a newly loaded primary colour
@@ -506,7 +521,8 @@ final class AppModel {
     }
 
     private func refreshLimits() {
-        limits.update(LimitReading.all(cards: starredAccountCards, others: others.rows, now: .now))
+        limits.update(LimitReading.all(cards: starredAccountCards, others: others.rows, now: .now,
+                                     sweFreshFor: others.acceptedCacheTTL))
     }
 
     /// Keeps the Service status page and the menu bar line current.

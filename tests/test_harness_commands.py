@@ -38,7 +38,7 @@ import io
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -516,6 +516,7 @@ class CmdListRefreshFlagTest(unittest.TestCase):
         fetch_rates.assert_called_once_with(
             use_cache=True,
             tool_names={"claude", "droid"},
+            refresh_failed=False, cache_ttl=None,
         )
 
     def test_new_short_flag_refetches_sessions_and_rate_limits(self):
@@ -532,7 +533,59 @@ class CmdListRefreshFlagTest(unittest.TestCase):
 
         invalidate_sessions.assert_called_once_with()
         invalidate_rates.assert_not_called()
-        fetch_rates.assert_called_once_with(use_cache=False, tool_names=set())
+        fetch_rates.assert_called_once_with(
+            use_cache=False, tool_names=set(),
+            refresh_failed=False, cache_ttl=None,
+        )
+
+
+class CmdListRefreshFailedFlagTest(unittest.TestCase):
+    """--refresh-failed and --cache-ttl reach the rate-limit fetch."""
+
+    def test_refresh_failed_and_cache_ttl_are_passed_through(self):
+        _setup_patches(self)
+        with patch(
+            "quiver.harness.rate_limits.get_all_rate_limits",
+            return_value={},
+        ) as fetch_rates, redirect_stdout(io.StringIO()):
+            code = cmd_list(["--usage", "--refresh-failed", "--cache-ttl=300"])
+
+        self.assertEqual(code, None)
+        fetch_rates.assert_called_once_with(
+            use_cache=True, tool_names=set(),
+            refresh_failed=True, cache_ttl=300.0,
+        )
+
+    def test_refresh_failed_alone_turns_on_the_usage_view(self):
+        _setup_patches(self)
+        with patch(
+            "quiver.harness.rate_limits.get_all_rate_limits",
+            return_value={},
+        ) as fetch_rates, redirect_stdout(io.StringIO()):
+            code = cmd_list(["--refresh-failed"])
+
+        self.assertEqual(code, None)
+        fetch_rates.assert_called_once_with(
+            use_cache=True, tool_names=set(),
+            refresh_failed=True, cache_ttl=None,
+        )
+
+    def test_cache_ttl_rejects_a_non_positive_or_non_numeric_value(self):
+        _setup_patches(self)
+        for bad in ("abc", "0", "-5", ""):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cmd_list(["--usage", "--cache-ttl=" + bad])
+            self.assertEqual(code, 1, bad)
+            self.assertIn("--cache-ttl", buf.getvalue())
+
+    def test_cache_ttl_bare_flag_is_an_error(self):
+        _setup_patches(self)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = cmd_list(["--usage", "--cache-ttl"])
+        self.assertEqual(code, 1)
+        self.assertIn("--cache-ttl", buf.getvalue())
 
 
 # ---------------------------------------------------------------------------
@@ -1422,7 +1475,10 @@ class FetchRateLimitsTtyTest(unittest.TestCase):
         ) as fetch:
             result = _fetch_rate_limits(refresh=True, tool_names={"fake"})
         self.assertIs(result, sentinel)
-        fetch.assert_called_once_with(use_cache=False, tool_names={"fake"})
+        fetch.assert_called_once_with(
+            use_cache=False, tool_names={"fake"},
+            refresh_failed=False, cache_ttl=None,
+        )
         self.assertEqual(err.getvalue(), "")
 
 

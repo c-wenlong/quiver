@@ -48,6 +48,34 @@ private let older = #"""
         #expect(readings.last?.resetsAt == Date(timeIntervalSince1970: 1789286400))
     }
 
+    @Test func anUnavailableWindowDecodesWithItsCarriedAge() throws {
+        let raw = #"""
+        {"status":"ok","used_percent":40,"remaining_percent":60,"limit_reached":false,
+         "reset_at":null,"window":"7d","window_seconds":604800,"plan_type":"teams",
+         "remaining_units":null,"total_units":null,"fetched_at":1791700000,
+         "windows":[{"window":"grok_bot","used_percent":12,"reset_at":1791760000,
+                     "window_seconds":604800,"unavailable":true,"as_of":1791600000}]}
+        """#
+        let limit = try decode(raw)
+        let window = try #require(limit.windows?.first)
+        #expect(window.unavailable)
+        #expect(window.asOf == Date(timeIntervalSince1970: 1791600000))
+        #expect(window.usedPercent == 12)
+
+        // A reading from an unavailable window counts as stale, so the
+        // widget and menu bar dim it like swe's day-old fallback.
+        let row = OtherLimitsModel.Row(
+            name: "cursor",
+            limit: try decode(raw.replacingOccurrences(of: "1791700000", with: "1791800000")))
+        let readings = LimitReading.all(cards: [], others: [row],
+                                        now: Date(timeIntervalSince1970: 1791800000))
+        #expect(readings.first?.isStale == true)
+
+        // And a window without the flag defaults to available.
+        let plain = try #require(try decode(devin).windows?.first)
+        #expect(!plain.unavailable && plain.asOf == nil)
+    }
+
     @Test func aMalformedWindowListOrBalanceLeavesTheReadingIntact() throws {
         let bad = older.replacingOccurrences(of: #""fetched_at""#,
             with: #""windows":[{"window":7}],"extra_usage_usd":"lots","fetched_at""#)

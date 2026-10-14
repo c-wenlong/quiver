@@ -64,9 +64,17 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
     /// older is swe's outage fallback (up to a day old), not a fresh fetch.
     public static let sweStaleAfter: TimeInterval = 20 * 60
 
+    /// The cutoff for "stale": the floor above, or the refresh window plus
+    /// five minutes when the user widened it. With a 120-minute window swe
+    /// legitimately serves hour-old healthy readings; that is not outage.
+    public static func sweStaleLimit(freshFor: TimeInterval = 0) -> TimeInterval {
+        max(sweStaleAfter, freshFor + 300)
+    }
+
     /// Every account's windows, then every other harness swe reported a
     /// usable limit for.
-    public static func all(cards: [AccountsModel.Card], others: [OtherLimitsModel.Row], now: Date) -> [LimitReading] {
+    public static func all(cards: [AccountsModel.Card], others: [OtherLimitsModel.Row], now: Date,
+                           sweFreshFor: TimeInterval = 0) -> [LimitReading] {
         let accounts = cards.flatMap { card -> [LimitReading] in
             guard let usage = card.usage else { return [] }
             let profile = card.profile
@@ -79,11 +87,15 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
         }
         let harnesses = others.flatMap { row -> [LimitReading] in
             guard row.limit.status == .ok else { return [] }
-            let isStale = row.limit.fetchedAt.map { now.timeIntervalSince($0) > sweStaleAfter } ?? true
+            let isStale = row.limit.fetchedAt.map {
+                now.timeIntervalSince($0) > sweStaleLimit(freshFor: sweFreshFor) } ?? true
             return row.limit.allWindows.map { window in
+                // An unavailable window holds last-known values: as stale
+                // as the outage reading swe falls back to.
                 LimitReading(source: row.name, harness: row.name, title: row.accountTitle,
                              window: window.window, usedPercent: Double(window.usedPercent),
-                             resetsAt: window.resetAt, fetchedAt: row.limit.fetchedAt, isStale: isStale)
+                             resetsAt: window.resetAt, fetchedAt: row.limit.fetchedAt,
+                             isStale: isStale || window.unavailable)
             }
         }
         return accounts + harnesses

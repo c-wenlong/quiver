@@ -66,13 +66,15 @@ struct AccountsPage: View {
     }
 
     private func reloadAll(force: Bool, renewExpired: Bool = false) async {
-        // Only the Refresh button renews; every other caller just loads.
+        // Only the Refresh button renews and asks swe to refetch failures;
+        // every other caller just loads.
         if renewExpired {
             await app.accounts.refreshFromButton()
+            await app.others.load(refreshFailed: true)
         } else {
             await app.accounts.load(force: force)
+            await app.others.load()
         }
-        await app.others.load()
     }
 
     /// Runs an account action and shows its failure on the page.
@@ -162,34 +164,50 @@ struct UsageBars: View {
     var usage: AccountUsage?
 
     var body: some View {
-        if let windows = usage?.windows, !windows.isEmpty {
+        if let usage, !usage.windows.isEmpty {
+            // A failed fetch keeps the last reading: every row goes red and
+            // greyed, rather than merely dimmed, so it never reads as live.
+            let failed = usage.isStale && usage.status != .ok
             VStack(spacing: 8) {
-                ForEach(windows, id: \.label) { window in
-                    UsageBar(window: window)
+                ForEach(usage.windows, id: \.label) { window in
+                    UsageBar(window: window, failed: failed, asOf: usage.fetchedAt)
                 }
             }
-            .opacity(usage?.isStale == true ? 0.55 : 1)
+            .opacity(usage.isStale && !failed ? 0.55 : 1)
         }
     }
 }
 
 struct UsageBar: View {
     var window: UsageWindow
+    /// The reading is a kept older one after a failed fetch: red label,
+    /// greyed bar, and the real age in place of the reset time.
+    var failed: Bool = false
+    var asOf: Date? = nil
 
     var body: some View {
         let percent = Int(window.usedPercent.rounded())
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(window.label).font(Theme.control).foregroundStyle(Theme.textPrimary)
+                Text(window.label).font(Theme.control)
+                    .foregroundStyle(failed ? Theme.dangerText : Theme.textPrimary)
                 Spacer()
-                if let reset = window.resetsAt, reset > .now {
+                if failed {
+                    if let asOf {
+                        Text("as of \(UsageFormat.ago(asOf, now: .now))")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                } else if let reset = window.resetsAt, reset > .now {
                     Text("Resets \(reset, format: .relative(presentation: .named))")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
-                Text("\(percent)%").font(Theme.control.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                Text(failed && asOf == nil ? "—" : "\(percent)%")
+                    .font(Theme.control.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                    .opacity(failed ? 0.45 : 1)
                     .frame(width: 40, alignment: .trailing)
             }
             UsageTrack(fraction: window.usedPercent / 100, color: Theme.usage(percent))
+                .opacity(failed ? 0.45 : 1)
         }
     }
 }
@@ -421,7 +439,8 @@ private struct HarnessAccountCard: View {
         ForEach(limit.allWindows, id: \.window) { window in
             UsageBar(window: UsageWindow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),
                                          usedPercent: Double(min(max(window.usedPercent, 0), 100)),
-                                         resetsAt: window.resetAt))
+                                         resetsAt: window.resetAt),
+                     failed: window.unavailable, asOf: window.asOf)
         }
         if let onDemand = limit.onDemand {
             HStack {
