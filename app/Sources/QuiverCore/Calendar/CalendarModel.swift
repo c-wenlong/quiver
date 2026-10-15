@@ -103,6 +103,9 @@ public final class CalendarModel {
         let range = visibleRange
         var all: [ActivityBlock] = []
         var failed: String?
+        // Saved only once this load is known to be the latest: an overtaken
+        // load must not overwrite the newer one's last good blocks.
+        var good: [Int: [ActivityBlock]] = [:]
         await withTaskGroup(of: (Int, Result<[ActivityBlock], Error>).self) { group in
             for (i, provider) in providers.enumerated() {
                 group.addTask {
@@ -116,7 +119,7 @@ public final class CalendarModel {
             for await (i, result) in group {
                 switch result {
                 case .success(let batch):
-                    lastGood[i] = batch
+                    good[i] = batch
                     all += batch
                 case .failure(let error):
                     all += (lastGood[i] ?? []).filter {
@@ -127,6 +130,7 @@ public final class CalendarModel {
             }
         }
         guard mine == generation else { return }
+        lastGood.merge(good) { _, new in new }
         blocks = all.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
         loadError = failed
     }
