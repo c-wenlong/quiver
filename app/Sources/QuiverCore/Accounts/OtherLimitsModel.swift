@@ -161,11 +161,12 @@ public final class OtherLimitsModel {
     /// An empty name clears it. Updates rows, cards and the snapshot.
     public func rename(_ harness: String, to name: String) throws {
         try names.setName(name, for: harness)
+        let stored = names.load()[harness]
         for index in rows.indices where rows[index].name == harness {
-            rows[index].accountName = name.isEmpty ? nil : name
+            rows[index].accountName = stored
         }
         for index in cards.indices where cards[index].name == harness {
-            cards[index].accountName = name.isEmpty ? nil : name
+            cards[index].accountName = stored
         }
         persist()
     }
