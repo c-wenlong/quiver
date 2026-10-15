@@ -23,6 +23,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe find plugins --fix=<id> --json` | `FixedDrift` | `swe-find-plugins-fix.json` |
 | `swe plugins catalog --json` | `PluginCatalog` | `swe-plugins-catalog.json` |
 | `swe plugins install|uninstall|enable|disable <ref> --harness=<id> --json` | `PluginActionResult` | `swe-plugins-action.json` |
+| `swe install --json` | `InstallList` → `[InstallableHarness]` | `swe-install.json` |
 | `swe doctor --json` | `DoctorReport` (`allowFailure`) | `swe-doctor.json` |
 | `swe session <limit> [--days=N] --json` | `SessionListPayload` | `swe-session.json` |
 

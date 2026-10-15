@@ -249,4 +249,16 @@ import Testing
         #expect(result.harness.notes == "fixture-edit")
         #expect(result.harness.displayName == "Codex")
     }
+
+    /// Captured from `swe install --json` against a throwaway HOME.
+    @Test func installCatalogDecodesMethodsAndRegistration() async throws {
+        let (swe, runner) = try client("swe-install")
+        let all = try await swe.installCatalog()
+        #expect(runner.calls.last == ["install", "--json"])
+        let aider = try #require(all.first { $0.name == "aider" })
+        #expect(aider.installed == false)
+        #expect(aider.registered == false)
+        #expect(aider.description == "Git-native pair programmer, commits every edit as it goes")
+        #expect(aider.methods.map(\.via) == ["brew", "uv", "nix", "script"])
+    }
 }
