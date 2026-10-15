@@ -384,9 +384,9 @@ private struct CalendarContent: View {
                   title: { self.title(for: $0) },
                   hover: { self.hoverCard(key: $0, inside: $1) },
                   card: { self.cardBinding(for: $0) },
-                  cardRows: { self.cardRows(for: $0) }) { block in
-            open(block)
-        }
+                  cardRows: { self.cardRows(for: $0) },
+                  open: { self.open($0) },
+                  showCard: { self.openCard(key: $0) })
         .frame(width: width)
     }
 
@@ -593,6 +593,13 @@ private struct CalendarContent: View {
         cardKey = nil
     }
 
+    /// Tapping a "+N" chip opens its card at once; the hover delay only
+    /// exists so a passing pointer never pops a card.
+    private func openCard(key: String) {
+        cardTask?.cancel()
+        withAnimation(reduceMotion ? nil : .default) { cardKey = key }
+    }
+
     /// Popover binding keyed on the segment's or entry's id: only the
     /// hovered instance's card is up, and a click outside drops it.
     private func cardBinding(for key: String) -> Binding<Bool> {
@@ -639,15 +646,25 @@ private struct DayColumn: View {
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
+    /// Opens a card immediately, skipping the hover delay (chip taps).
+    var showCard: (String) -> Void
 
     private static let clock: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
     }()
+    /// A lane narrower than this is unreadable; extras fold into "+N".
+    static let minimumLaneWidth: CGFloat = 56
     private let hourHeight: CGFloat = 48
     private var gridHeight: CGFloat { 24 * hourHeight }
 
     var body: some View {
         GeometryReader { geo in
+            // 18pt of minimum height at 48pt per hour is 22.5 minutes:
+            // short blocks get a lane and a readable sliver of height.
+            let layout = CalendarLayout.layout(
+                model.visibleBlocks, day: day,
+                minimumDuration: 18 / 48 * 3600,
+                maxLanes: Swift.max(2, Int(geo.size.width / Self.minimumLaneWidth)))
             ZStack(alignment: .topLeading) {
                 // Hour lines.
                 VStack(spacing: 0) {
@@ -659,13 +676,13 @@ private struct DayColumn: View {
                         .frame(height: hourHeight)
                     }
                 }
-                ForEach(segments) { segment in
+                ForEach(layout.segments) { segment in
                     let lane = geo.size.width / CGFloat(segment.laneCount)
                     BlockView(segment: segment, color: color(segment.block),
                               title: title(segment.block),
                               account: model.accountName(for: segment.block.accountHome),
                               multiAccount: model.accounts(for: segment.block.harness).count > 1)
-                        .frame(width: lane - 2, height: blockHeight(segment))
+                        .frame(width: lane - 2, height: height(from: segment.start, to: segment.end))
                         .offset(x: CGFloat(segment.lane) * lane + 1, y: y(segment.start))
                         .onTapGesture { open(segment.block) }
                         .onHover { inside in hover(segment.id, inside) }
@@ -677,6 +694,24 @@ private struct DayColumn: View {
                             BlockCard(block: block, model: model,
                                       active: block.end.timeIntervalSince(block.start),
                                       shown: rows.shown, more: rows.more)
+                        }
+                }
+                ForEach(layout.overflows) { overflow in
+                    let lane = geo.size.width / CGFloat(overflow.laneCount)
+                    OverflowChip(overflow: overflow, clock: Self.clock)
+                        .frame(width: lane - 2,
+                               height: height(from: overflow.start, to: overflow.end))
+                        .offset(x: CGFloat(overflow.lane) * lane + 1,
+                                y: y(overflow.start))
+                        .contentShape(.rect)
+                        .onTapGesture { showCard(overflow.id) }
+                        .onHover { inside in hover(overflow.id, inside) }
+                        .popover(isPresented: card(overflow.id),
+                                 attachmentAnchor: .rect(.bounds),
+                                 arrowEdge: .leading) {
+                            OverflowCard(overflow: overflow, model: model,
+                                         cardRows: cardRows, open: open)
+                                .onHover { inside in hover(overflow.id, inside) }
                         }
                 }
                 if day.contains(now) {
@@ -691,16 +726,9 @@ private struct DayColumn: View {
         }
     }
 
-    private var segments: [CalendarLayout.Segment] {
-        // 18pt of minimum height at 48pt per hour is 22.5 minutes: short
-        // blocks get a lane and a readable sliver of height.
-        CalendarLayout.segments(model.visibleBlocks, day: day,
-                                minimumDuration: 18 / 48 * 3600)
-    }
-
-    private func blockHeight(_ segment: CalendarLayout.Segment) -> CGFloat {
-        max(18, CGFloat(CalendarLayout.clockOffset(segment.end, in: day, calendar: model.calendar)
-                        - CalendarLayout.clockOffset(segment.start, in: day, calendar: model.calendar))
+    private func height(from start: Date, to end: Date) -> CGFloat {
+        max(18, CGFloat(CalendarLayout.clockOffset(end, in: day, calendar: model.calendar)
+                        - CalendarLayout.clockOffset(start, in: day, calendar: model.calendar))
             * hourHeight)
     }
 
@@ -1194,6 +1222,129 @@ private struct BlockCard: View {
         }
         .padding(12)
         .frame(width: 300, alignment: .leading)
+    }
+}
+
+/// The "+N" chip in a crowded column's last lane: a subtle fill, a
+/// dashed border and the hidden count centred at its top.
+private struct OverflowChip: View {
+    var overflow: CalendarLayout.Overflow
+    var clock: DateFormatter
+
+    var body: some View {
+        Text("+\(overflow.hidden.count)")
+            .font(.system(size: 11, weight: .semibold))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.top, 4)
+            .background(Theme.rowHover, in: RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Theme.textSecondary,
+                                  style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+            .accessibilityElement()
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(
+                "\(overflow.hidden.count) more blocks, "
+                + clock.string(from: overflow.start)
+                + " to \(clock.string(from: overflow.end))")
+    }
+}
+
+/// The chip's card: a list of the hidden blocks on the left, the hovered
+/// one's full `BlockCard` on the right. Clicking a row opens the same
+/// detail or project sheet a block click would.
+private struct OverflowCard: View {
+    var overflow: CalendarLayout.Overflow
+    var model: CalendarModel
+    var cardRows: (ActivityBlock)
+        -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
+    var open: (ActivityBlock) -> Void
+
+    /// The row under the pointer; stays put when the pointer moves to
+    /// the right pane, so the detail never flickers.
+    @State private var selected: ActivityBlock?
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+
+    private var shown: ActivityBlock? {
+        // A refresh can swap the hidden list under an open card; fall
+        // back to its first row when the pick is gone.
+        if let selected,
+           let current = overflow.hidden.first(where: { $0.block.id == selected.id }) {
+            return current.block
+        }
+        return overflow.hidden.first?.block
+    }
+
+    private static func duration(of block: ActivityBlock) -> String {
+        let minutes = Int(block.end.timeIntervalSince(block.start) / 60)
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+
+    private static func range(of block: ActivityBlock) -> String {
+        "\(clock.string(from: block.start))–\(clock.string(from: block.end))"
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\(overflow.hidden.count) more · "
+                     + "\(Self.clock.string(from: overflow.start))"
+                     + "–\(Self.clock.string(from: overflow.end))")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 12).padding(.bottom, 8)
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(overflow.hidden) { segment in
+                            row(segment.block)
+                        }
+                    }
+                }
+                .frame(maxHeight: 420)
+            }
+            .frame(width: 250, alignment: .leading)
+            .padding(.vertical, 10)
+            Divider()
+            if let block = shown {
+                let rows = cardRows(block)
+                BlockCard(block: block, model: model,
+                          active: block.end.timeIntervalSince(block.start),
+                          shown: rows.shown, more: rows.more)
+            }
+        }
+    }
+
+    private func row(_ block: ActivityBlock) -> some View {
+        let isOn = block.id == shown?.id
+        return HStack(spacing: 8) {
+            HarnessIcon(harness: HarnessMark(block.harness).icon ?? block.harness,
+                        size: 14)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(block.project).font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                Text(rowDetail(block))
+                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isOn ? Theme.rowHover : Color.clear)
+        .contentShape(.rect)
+        .onHover { inside in if inside { selected = block } }
+        .onTapGesture { open(block) }
+    }
+
+    private func rowDetail(_ block: ActivityBlock) -> String {
+        var line = ""
+        if model.accounts(for: block.harness).count > 1 {
+            line += "\(model.accountName(for: block.accountHome)) · "
+        }
+        return line + "\(Self.range(of: block)) · \(Self.duration(of: block)) · "
+            + "\(block.responses) response\(block.responses == 1 ? "" : "s")"
     }
 }
 

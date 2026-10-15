@@ -101,6 +101,147 @@ import Testing
         #expect(segments.map(\.laneCount) == [2, 2, 1])
     }
 
+    @Test func aClusterInsideTheLaneCapMatchesTheUncappedLayout() {
+        let blocks = [
+            block("2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z", session: "a"),
+            block("2026-10-05T09:30:00Z", "2026-10-05T10:30:00Z", session: "b"),
+            block("2026-10-05T10:00:00Z", "2026-10-05T12:00:00Z", session: "c"),
+        ]
+        let layout = CalendarLayout.layout(blocks, day: day, maxLanes: 4)
+        #expect(layout.overflows.isEmpty)
+        #expect(layout.segments
+            == CalendarLayout.segments(blocks, day: day))
+    }
+
+    @Test func fourOverThreeLanesFoldTwoIntoOneChip() throws {
+        // A–D all overlap; the two longest keep lanes 0 and 1, the rest
+        // land in one chip on lane 2 spanning their union.
+        let layout = CalendarLayout.layout([
+            block("2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z", session: "a"),
+            block("2026-10-05T09:15:00Z", "2026-10-05T10:45:00Z", session: "b"),
+            block("2026-10-05T09:30:00Z", "2026-10-05T10:00:00Z", session: "c"),
+            block("2026-10-05T09:45:00Z", "2026-10-05T10:15:00Z", session: "d"),
+        ], day: day, maxLanes: 3)
+        #expect(layout.segments.compactMap(\.block.sessions.first?.sessionId).sorted() == ["a", "b"])
+        #expect(layout.segments.map(\.lane).sorted() == [0, 1])
+        #expect(layout.segments.allSatisfy { $0.laneCount == 3 })
+        try #require(layout.overflows.count == 1)
+        let chip = layout.overflows[0]
+        #expect(chip.hidden.compactMap(\.block.sessions.first?.sessionId).sorted() == ["c", "d"])
+        #expect(chip.start == utc("2026-10-05T09:30:00Z"))
+        #expect(chip.end == utc("2026-10-05T10:15:00Z"))
+        #expect(chip.lane == 2 && chip.laneCount == 3)
+    }
+
+    @Test func theLongestBlockKeepsItsLane() {
+        // The early short block loses to the later long one: priority is
+        // real span, not start order.
+        let layout = CalendarLayout.layout([
+            block("2026-10-05T09:00:00Z", "2026-10-05T09:15:00Z", session: "short"),
+            block("2026-10-05T09:05:00Z", "2026-10-05T11:00:00Z", session: "long"),
+            block("2026-10-05T09:10:00Z", "2026-10-05T10:30:00Z", session: "mid"),
+        ], day: day, maxLanes: 2)
+        #expect(layout.segments.compactMap(\.block.sessions.first?.sessionId) == ["long"])
+        #expect(layout.overflows.flatMap(\.hidden).compactMap(\.block.sessions.first?.sessionId)
+            == ["short", "mid"])
+    }
+
+    @Test func aClusterThatExactlyFitsKeepsEveryLane() {
+        // Three blocks, three lanes, maxLanes 3: nothing folds, so no
+        // "+1" chip ever sits as wide as the block it would hide.
+        let layout = CalendarLayout.layout([
+            block("2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z", session: "a"),
+            block("2026-10-05T09:30:00Z", "2026-10-05T10:30:00Z", session: "b"),
+            block("2026-10-05T10:00:00Z", "2026-10-05T12:00:00Z", session: "c"),
+        ], day: day, maxLanes: 3)
+        #expect(layout.overflows.isEmpty)
+        #expect(layout.segments.map(\.lane).sorted() == [0, 1, 2])
+        #expect(layout.segments.allSatisfy { $0.laneCount == 3 })
+    }
+
+    @Test func twoDisjointHiddenRunsMakeTwoChips() throws {
+        // Five pieces needing four lanes: the two longest (A and D)
+        // keep lanes 0 and 1; B, C and G hide, and the gap between B
+        // and the C/G run makes two chips.
+        let layout = CalendarLayout.layout([
+            block("2026-10-05T10:00:00Z", "2026-10-05T12:00:00Z", session: "a"),
+            block("2026-10-05T10:00:00Z", "2026-10-05T12:00:00Z", session: "d"),
+            block("2026-10-05T10:00:00Z", "2026-10-05T10:30:00Z", session: "b"),
+            block("2026-10-05T11:00:00Z", "2026-10-05T11:30:00Z", session: "c"),
+            block("2026-10-05T11:10:00Z", "2026-10-05T11:20:00Z", session: "g"),
+        ], day: day, maxLanes: 3)
+        #expect(layout.segments.compactMap(\.block.sessions.first?.sessionId).sorted() == ["a", "d"])
+        #expect(layout.segments.map(\.lane).sorted() == [0, 1])
+        #expect(layout.segments.allSatisfy { $0.laneCount == 3 })
+        try #require(layout.overflows.count == 2)
+        #expect(layout.overflows[0].hidden.compactMap(\.block.sessions.first?.sessionId) == ["b"])
+        #expect(layout.overflows[0].start == utc("2026-10-05T10:00:00Z"))
+        #expect(layout.overflows[0].end == utc("2026-10-05T10:30:00Z"))
+        #expect(layout.overflows[1].hidden.compactMap(\.block.sessions.first?.sessionId) == ["c", "g"])
+        #expect(layout.overflows[1].start == utc("2026-10-05T11:00:00Z"))
+        #expect(layout.overflows[1].end == utc("2026-10-05T11:30:00Z"))
+        #expect(layout.overflows.map(\.lane) == [2, 2])
+    }
+
+    @Test func aLaterLoneBlockKeepsItsOwnClusterLaneCount() {
+        let layout = CalendarLayout.layout([
+            block("2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z", session: "a"),
+            block("2026-10-05T09:15:00Z", "2026-10-05T10:45:00Z", session: "b"),
+            block("2026-10-05T09:30:00Z", "2026-10-05T10:30:00Z", session: "c"),
+            block("2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z", session: "alone"),
+        ], day: day, maxLanes: 2)
+        let alone = layout.segments.first { $0.block.sessions.first?.sessionId == "alone" }
+        #expect(alone?.laneCount == 1)
+        #expect(alone?.lane == 0)
+    }
+
+    @Test func maxLanesOneBehavesLikeTwo() throws {
+        let layout = CalendarLayout.layout([
+            block("2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z", session: "a"),
+            block("2026-10-05T09:30:00Z", "2026-10-05T10:30:00Z", session: "b"),
+            block("2026-10-05T10:00:00Z", "2026-10-05T11:30:00Z", session: "c"),
+        ], day: day, maxLanes: 1)
+        try #require(layout.segments.count == 1)
+        #expect(layout.segments[0].lane == 0)
+        #expect(layout.segments[0].laneCount == 2)
+        try #require(layout.overflows.count == 1)
+        #expect(layout.overflows[0].lane == 1)
+    }
+
+    @Test func aZeroLengthBlockOverlapsByItsStretchButRanksByItsRealSpan() throws {
+        // The single-response block is stretched for overlap, so it joins
+        // the cluster, but its real span of zero loses to any real block.
+        let layout = CalendarLayout.layout([
+            block("2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z", session: "a"),
+            block("2026-10-05T09:15:00Z", "2026-10-05T10:45:00Z", session: "b"),
+            block("2026-10-05T09:30:00Z", "2026-10-05T09:30:00Z", session: "z"),
+        ], day: day, minimumDuration: 22.5 * 60, maxLanes: 2)
+        #expect(layout.segments.compactMap(\.block.sessions.first?.sessionId) == ["a"])
+        try #require(layout.overflows.count == 1)
+        #expect(layout.overflows[0].hidden.compactMap(\.block.sessions.first?.sessionId) == ["b", "z"])
+    }
+
+    @Test func overflowIdsDifferAcrossDays() throws {
+        let blocks = [
+            block("2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z", session: "a"),
+            block("2026-10-05T09:30:00Z", "2026-10-05T10:30:00Z", session: "b"),
+            block("2026-10-05T10:00:00Z", "2026-10-05T11:30:00Z", session: "c"),
+        ]
+        let first = CalendarLayout.layout(blocks, day: day, maxLanes: 2)
+        let next = DateInterval(start: day.end, duration: 86_400)
+        var shifted: [ActivityBlock] = []
+        for b in blocks {
+            var copy = b
+            copy.start = b.start.addingTimeInterval(86_400)
+            copy.end = b.end.addingTimeInterval(86_400)
+            shifted.append(copy)
+        }
+        let second = CalendarLayout.layout(shifted, day: next, maxLanes: 2)
+        try #require(first.overflows.count == 1)
+        try #require(second.overflows.count == 1)
+        #expect(first.overflows[0].id != second.overflows[0].id)
+    }
+
     @Test func clockOffsetReadsClockTimeThroughDST() {
         // 8 March 2026: America/New_York springs forward; a 10:00 event
         // sits at clock hour 10 even though midnight is 9 hours away.
