@@ -336,6 +336,7 @@ final class AppModel {
             ]
             calendar = CalendarModel(providers: [ledger] + fileProviders,
                                      accountLabel: { directory().label(for: $0) },
+                                     knownAccounts: { directory().homes(for: $0) },
                                      snapshots: calendarSnapshots,
                                      restored: calendarSnapshots.load())
         } catch {

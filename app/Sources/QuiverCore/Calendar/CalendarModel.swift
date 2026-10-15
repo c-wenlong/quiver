@@ -28,6 +28,12 @@ public final class CalendarModel {
             return n <= 1 ? .day : .days(min(n, 9))
         }
 
+        /// Month mode shows no range highlight on the mini month.
+        public var isMonth: Bool {
+            if case .month = self { return true }
+            return false
+        }
+
         /// Its plain-key shortcut, shown in the mode menu's labels.
         public var keyHint: String {
             switch self {
@@ -113,6 +119,9 @@ public final class CalendarModel {
     public private(set) var hiddenHarnesses: Set<String>
     /// "harness|accountHome" pairs hidden on their own.
     public private(set) var hiddenAccounts: Set<String>
+    /// Harnesses whose account rows the legend user collapsed; accounts
+    /// expand by default once a harness has more than one.
+    public private(set) var collapsedAccounts: Set<String>
     /// The mini-month-and-legend panel pinned away on the page's right.
     /// Collapsing still lets the pointer float it over the grid.
     public var panelCollapsed: Bool {
@@ -122,6 +131,21 @@ public final class CalendarModel {
     private let providers: [any ActivityProviding]
     private let projects: ProjectResolver
     private let accountLabel: (String) -> String
+    /// Quiver's known accounts per harness: profile homes so a quiet
+    /// account still lists in the legend like Notion lists calendars.
+    /// The closure reads the accounts store, so results are memoised per
+    /// harness for the life of a load rather than per call.
+    private let knownAccounts: (String) -> [String]
+    /// Filled lazily while views read accounts, so it must not be
+    /// observed: a write during a render would invalidate that render.
+    @ObservationIgnored private var knownHomes: [String: [String]] = [:]
+
+    private func knownHomes(for harness: String) -> [String] {
+        if let cached = knownHomes[harness] { return cached }
+        let homes = knownAccounts(harness)
+        knownHomes[harness] = homes
+        return homes
+    }
     private let defaults: UserDefaults
     private let now: () -> Date
     public let calendar: Calendar
@@ -144,12 +168,14 @@ public final class CalendarModel {
 
     static let hiddenHarnessesKey = "calendar.hiddenHarnesses"
     static let hiddenAccountsKey = "calendar.hiddenAccounts"
+    static let collapsedAccountsKey = "calendar.collapsedAccounts"
     static let modeKey = "calendar.mode"
     static let panelCollapsedKey = "calendar.panelCollapsed"
 
     public init(providers: [any ActivityProviding],
                 projects: ProjectResolver = ProjectResolver(),
                 accountLabel: @escaping (String) -> String = { $0 },
+                knownAccounts: @escaping (String) -> [String] = { _ in [] },
                 defaults: UserDefaults = .standard,
                 now: @escaping () -> Date = Date.init,
                 calendar: Calendar = .current,
@@ -158,12 +184,14 @@ public final class CalendarModel {
         self.providers = providers
         self.projects = projects
         self.accountLabel = accountLabel
+        self.knownAccounts = knownAccounts
         self.defaults = defaults
         self.now = now
         self.calendar = calendar
         anchor = now()
         hiddenHarnesses = Set(defaults.stringArray(forKey: Self.hiddenHarnessesKey) ?? [])
         hiddenAccounts = Set(defaults.stringArray(forKey: Self.hiddenAccountsKey) ?? [])
+        collapsedAccounts = Set(defaults.stringArray(forKey: Self.collapsedAccountsKey) ?? [])
         mode = Self.decodedMode(defaults.string(forKey: Self.modeKey))
         panelCollapsed = defaults.bool(forKey: Self.panelCollapsedKey)
         self.snapshots = snapshots
@@ -295,6 +323,8 @@ public final class CalendarModel {
     func load(range: DateInterval, force: Bool) async {
         generation += 1
         let mine = generation
+        // Profile edits land here: fresh homes get picked up next load.
+        knownHomes.removeAll()
         let range = range
         if let cached = cache[range] {
             blocks = Self.flatten(cached)
@@ -432,9 +462,24 @@ public final class CalendarModel {
         Array(Set(blocks.map(\.harness))).sorted()
     }
 
-    /// An account id only appears when it has a block in the range.
+    /// Every account the harness has: the union of homes with a block in
+    /// the range and Quiver's known accounts for it, so a quiet account
+    /// still lists (like Notion's per-calendar rows) at "0m".
     public func accounts(for harness: String) -> [String] {
-        Array(Set(blocks.filter { $0.harness == harness }.map(\.accountHome))).sorted()
+        var homes = Set(blocks.filter { $0.harness == harness }.map(\.accountHome))
+        homes.formUnion(knownHomes(for: harness))
+        return homes.sorted()
+    }
+
+    /// The account rows show whenever the harness has more than one
+    /// account, expanded until the user collapses them.
+    public func accountsExpanded(_ harness: String) -> Bool {
+        accounts(for: harness).count > 1 && !collapsedAccounts.contains(harness)
+    }
+
+    public func toggleAccountsExpanded(_ harness: String) {
+        if collapsedAccounts.remove(harness) == nil { collapsedAccounts.insert(harness) }
+        persist()
     }
 
     /// The legend's label for an account home: the profile's name when
@@ -538,6 +583,7 @@ public final class CalendarModel {
     private func persist() {
         defaults.set(Array(hiddenHarnesses), forKey: Self.hiddenHarnessesKey)
         defaults.set(Array(hiddenAccounts), forKey: Self.hiddenAccountsKey)
+        defaults.set(Array(collapsedAccounts), forKey: Self.collapsedAccountsKey)
         defaults.set(Self.encodedMode(mode), forKey: Self.modeKey)
         defaults.set(panelCollapsed, forKey: Self.panelCollapsedKey)
     }

@@ -38,10 +38,12 @@ private struct TogglingActivity: ActivityProviding {
     private func model(blocks: [ActivityBlock] = [],
                        firstWeekday: Int = 2,
                        now: Date = utc("2026-10-14T12:00:00Z"),
+                       knownAccounts: [String: [String]] = [:],
                        defaults: UserDefaults? = nil) -> CalendarModel {
         var cal = calendar
         cal.firstWeekday = firstWeekday
         return CalendarModel(providers: [FakeActivity(blocks: blocks)],
+                             knownAccounts: { knownAccounts[$0] ?? [] },
                              defaults: defaults ?? freshDefaults(),
                              now: { now }, calendar: cal)
     }
@@ -152,6 +154,64 @@ private struct TogglingActivity: ActivityProviding {
         await model.load()
         #expect(model.accounts(for: "claude").sorted() == ["/h", "/work"])
         #expect(model.accountName(for: "/h") == "/h")
+    }
+
+    @Test func knownAccountsJoinTheSplitEvenWhenIdleInRange() async {
+        // Cortex ran Oct 14–15 only; an Oct 8–13 week still lists it.
+        let model = model(
+            blocks: [block("2026-10-14T09:00:00Z", home: "/h")],
+            knownAccounts: ["claude": ["/h", "/profiles/cortex"]])
+        await model.load()
+        #expect(model.accounts(for: "claude") == ["/h", "/profiles/cortex"])
+        #expect(model.accountsExpanded("claude"))
+        // The idle account lists but contributes nothing.
+        #expect(model.accountTotals(for: "claude")["/profiles/cortex"] == nil)
+        #expect(model.accountTotals(for: "claude")["/h"] == 3600)
+        // A known account hidden while idle stays hidden for its harness.
+        model.toggle(harness: "claude", accountHome: "/profiles/cortex")
+        #expect(model.isHidden(harness: "claude", accountHome: "/profiles/cortex"))
+    }
+
+    @Test func accountExpansionCollapsesAndPersistsPerHarness() async {
+        let defaults = freshDefaults()
+        let known = ["claude": ["/h", "/w"], "codex": ["/c", "/c2"]]
+        let first = model(blocks: [block("2026-10-14T09:00:00Z", home: "/h")],
+                          knownAccounts: known, defaults: defaults)
+        await first.load()
+        #expect(first.accountsExpanded("claude"))
+        #expect(first.accountsExpanded("codex")) // no blocks needed at all
+        first.toggleAccountsExpanded("claude")
+        #expect(!first.accountsExpanded("claude"))
+        #expect(first.accountsExpanded("codex"))
+
+        // A fresh model over the same defaults keeps the collapse.
+        let restored = model(blocks: [block("2026-10-14T09:00:00Z", home: "/h")],
+                             knownAccounts: known, defaults: defaults)
+        await restored.load()
+        #expect(!restored.accountsExpanded("claude"))
+        #expect(restored.accountsExpanded("codex"))
+
+        // One-account harnesses never expand or persist a row split.
+        #expect(!restored.accountsExpanded("devin"))
+    }
+
+    @Test func knownAccountsAreReadOncePerHarnessPerLoad() async {
+        // The profile store is hit lazily and memoised: a redraw calling
+        // accounts(for:) per block never re-reads the disk mid-render,
+        // and a load refreshes it exactly once more.
+        var counts: [String: Int] = [:]
+        let counted = CalendarModel(
+            providers: [FakeActivity(blocks: [block("2026-10-14T09:00:00Z", home: "/h")])],
+            knownAccounts: { counts[$0, default: 0] += 1; return ["/h", "/w"] },
+            defaults: freshDefaults(),
+            now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await counted.load()
+        for _ in 0..<50 { _ = counted.accounts(for: "claude") }
+        #expect(counts["claude"] == 1)
+        // The next load re-reads the store once, not per call.
+        await counted.load()
+        _ = counted.accounts(for: "claude")
+        #expect(counts["claude"] == 2)
     }
 
     @Test func theAccountLabelMapsHomesToProfileNames() async {
@@ -280,6 +340,34 @@ private struct TogglingActivity: ActivityProviding {
         #expect(rows[0].row.session.title == "Session /h")
         #expect(rows[1].row.session.title == nil)
         #expect(rows[1].row.session.id == "late")
+    }
+
+    @Test func theCardCapsItsSessionListAtEightAndCountsTheRest() {
+        let index = CalendarSessionIndex(rows: [row(home: "/h")])
+        let refs = (0..<11).map { i in
+            ActivityBlock.SessionRef(sessionId: "s\(i)",
+                                     start: utc("2026-10-14T09:00:00Z")
+                                        .addingTimeInterval(TimeInterval(i * 60)),
+                                     end: utc("2026-10-14T09:00:00Z")
+                                        .addingTimeInterval(TimeInterval(i * 60 + 30)),
+                                     responses: 1)
+        }
+        let block = ActivityBlock(harness: "claude", accountHome: "/h", project: "p",
+                                  sessions: refs,
+                                  start: refs[0].start, end: refs[10].end,
+                                  responses: 11)
+        let (shown, more) = index.rows(for: block, limit: 8)
+        #expect(shown.count == 8)
+        #expect(more == 3)
+        #expect(shown.map(\.ref.sessionId) == (0..<8).map { "s\($0)" })
+        // Fewer than the limit reports no overflow.
+        let small = ActivityBlock(harness: "claude", accountHome: "/h", project: "p",
+                                  sessions: Array(refs.prefix(3)),
+                                  start: refs[0].start, end: refs[2].end,
+                                  responses: 3)
+        let few = index.rows(for: small, limit: 8)
+        #expect(few.shown.count == 3)
+        #expect(few.more == 0)
     }
 
     @Test func anUnlistedSessionGetsAStandInRow() {

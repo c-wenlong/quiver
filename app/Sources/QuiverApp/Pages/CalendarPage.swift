@@ -41,6 +41,16 @@ private struct CalendarContent: View {
     /// The side panel's pointer state; `collapsed` mirrors the model's
     /// persisted choice. Same hover machinery as the window sidebar.
     @State private var panelHover = HoverExpansion()
+    /// The hovered segment or month entry whose card is up, one at a
+    /// time: keyed on the segment/entry id so a block split across two
+    /// day columns opens its card only where the pointer is.
+    @State private var cardKey: String?
+    @State private var cardTask: Task<Void, Never>?
+
+    /// 350 ms before a card opens; 150 ms of grace before it closes so
+    /// the pointer crossing to a neighbour swaps rather than flickers.
+    private static let cardShowDelay: Duration = .milliseconds(350)
+    private static let cardHideDelay: Duration = .milliseconds(150)
 
     private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
 
@@ -345,7 +355,10 @@ private struct CalendarContent: View {
                         MonthCell(model: model, day: day,
                                   entries: monthEntries(on: day),
                                   color: { self.color(for: $0) },
-                                  title: { self.title(for: $0) }) { block in
+                                  title: { self.title(for: $0) },
+                                  hover: { self.hoverCard(key: $0, inside: $1) },
+                                  card: { self.cardBinding(for: $0) },
+                                  cardRows: { self.cardRows(for: $0) }) { block in
                             open(block)
                         } more: {
                             model.go(to: day)
@@ -402,7 +415,10 @@ private struct CalendarContent: View {
             ForEach(days, id: \.start) { day in
                 DayColumn(model: model, day: day, now: now,
                           color: { self.color(for: $0) },
-                          title: { self.title(for: $0) }) { block in
+                          title: { self.title(for: $0) },
+                          hover: { self.hoverCard(key: $0, inside: $1) },
+                          card: { self.cardBinding(for: $0) },
+                          cardRows: { self.cardRows(for: $0) }) { block in
                     open(block)
                 }
                 .frame(maxWidth: .infinity)
@@ -441,9 +457,49 @@ private struct CalendarContent: View {
         block.project
     }
 
+    /// Pointer entered or left a block: the card opens after a beat and
+    /// closes after a shorter grace, so it never pops under a passing
+    /// pointer and never flickers between adjacent blocks.
+    private func hoverCard(key: String, inside: Bool) {
+        cardTask?.cancel()
+        if inside {
+            if cardKey != nil { cardKey = key; return }
+            cardTask = Task { @MainActor in
+                try? await Task.sleep(for: Self.cardShowDelay)
+                guard !Task.isCancelled else { return }
+                withAnimation(reduceMotion ? nil : .default) { cardKey = key }
+            }
+        } else {
+            cardTask = Task { @MainActor in
+                try? await Task.sleep(for: Self.cardHideDelay)
+                guard !Task.isCancelled else { return }
+                withAnimation(reduceMotion ? nil : .default) { cardKey = nil }
+            }
+        }
+    }
+
+    private func dismissCard() {
+        cardTask?.cancel()
+        cardKey = nil
+    }
+
+    /// Popover binding keyed on the segment's or entry's id: only the
+    /// hovered instance's card is up, and a click outside drops it.
+    private func cardBinding(for key: String) -> Binding<Bool> {
+        Binding(get: { cardKey == key },
+                set: { if !$0 { dismissCard() } })
+    }
+
+    /// The card's session list: earliest first, capped at eight rows.
+    private func cardRows(for block: ActivityBlock)
+        -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int) {
+        sessionIndex.rows(for: block, limit: 8)
+    }
+
     /// One session opens its detail straight away; several open the
-    /// project's session list first.
+    /// project's session list first. Either way the hover card goes.
     private func open(_ block: ActivityBlock) {
+        dismissCard()
         if block.sessions.count == 1, let ref = block.sessions.first {
             detail = session(for: ref, in: block)
         } else {
@@ -466,6 +522,12 @@ private struct DayColumn: View {
     var now: Date
     var color: (ActivityBlock) -> Color
     var title: (ActivityBlock) -> String
+    /// The page-level hover card: block + inside/outside on hover, the
+    /// popover binding and the capped session list to show.
+    var hover: (String, Bool) -> Void
+    var card: (String) -> Binding<Bool>
+    var cardRows: (ActivityBlock)
+        -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
 
     private static let clock: DateFormatter = {
@@ -491,10 +553,21 @@ private struct DayColumn: View {
                     let lane = geo.size.width / CGFloat(segment.laneCount)
                     BlockView(segment: segment, color: color(segment.block),
                               title: title(segment.block),
-                              account: model.accountName(for: segment.block.accountHome))
+                              account: model.accountName(for: segment.block.accountHome),
+                              multiAccount: model.accounts(for: segment.block.harness).count > 1)
                         .frame(width: lane - 2, height: blockHeight(segment))
                         .offset(x: CGFloat(segment.lane) * lane + 1, y: y(segment.start))
                         .onTapGesture { open(segment.block) }
+                        .onHover { inside in hover(segment.id, inside) }
+                        .popover(isPresented: card(segment.id),
+                                 attachmentAnchor: .rect(.bounds),
+                                 arrowEdge: .leading) {
+                            let block = segment.block
+                            let rows = cardRows(block)
+                            BlockCard(block: block, model: model,
+                                      active: block.end.timeIntervalSince(block.start),
+                                      shown: rows.shown, more: rows.more)
+                        }
                 }
                 if day.contains(now) {
                     Rectangle().fill(.red).frame(height: 1.5)
@@ -536,6 +609,9 @@ private struct BlockView: View {
     var color: Color
     var title: String
     var account: String
+    /// True when the harness has more than one account in range: the
+    /// account name rides the second line and the tooltip.
+    var multiAccount: Bool = false
 
     private static let clock: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
@@ -547,11 +623,6 @@ private struct BlockView: View {
         "\(Self.clock.string(from: segment.block.start))–\(Self.clock.string(from: segment.block.end))"
     }
 
-    private var duration: String {
-        let minutes = Int(segment.block.end.timeIntervalSince(segment.block.start) / 60)
-        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
-    }
-
     var body: some View {
         HStack(spacing: 0) {
             RoundedRectangle(cornerRadius: 1.5).fill(color)
@@ -561,8 +632,10 @@ private struct BlockView: View {
                 Text(title).font(.system(size: 10, weight: .medium))
                     .lineLimit(1)
                 if segment.end.timeIntervalSince(segment.start) >= 30 * 60 {
-                    Text(timeRange).font(.system(size: 9))
+                    Text(timeRange + (multiAccount ? " · \(account)" : ""))
+                        .font(.system(size: 9))
                         .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
                 }
             }
             .padding(.horizontal, 5).padding(.vertical, 3)
@@ -570,7 +643,6 @@ private struct BlockView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-        .help("\(segment.block.harness.capitalized) · \(account)\n\(title)\n\(timeRange) · \(duration) · \(segment.block.sessions.count) session\(segment.block.sessions.count == 1 ? "" : "s") · \(segment.block.responses) responses")
         .accessibilityElement()
         .accessibilityLabel("\(segment.block.harness), \(title), \(timeRange)")
     }
@@ -612,9 +684,15 @@ private struct MiniMonth: View {
         return rows
     }
 
+    /// In-range day-cell runs for the highlight; month mode lights none.
+    private var segments: [(row: Int, firstColumn: Int, lastColumn: Int)] {
+        guard !model.mode.isMonth else { return [] }
+        return MiniMonthHighlight.segments(weeks: weeks, range: model.visibleRange,
+                                           calendar: model.calendar)
+    }
+
     var body: some View {
         let cal = model.calendar
-        let shown = model.visibleRange
         VStack(spacing: 4) {
             HStack {
                 Text(Self.monthTitle.string(from: month))
@@ -634,8 +712,7 @@ private struct MiniMonth: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            ForEach(weeks, id: \.self) { week in
-                let isShown = week.contains { shown.contains($0) }
+            ForEach(Array(weeks.enumerated()), id: \.offset) { row, week in
                 HStack(spacing: 0) {
                     Text("\(iso.component(.weekOfYear, from: week[0]))")
                         .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
@@ -654,8 +731,19 @@ private struct MiniMonth: View {
                     }
                 }
                 .padding(.vertical, 1)
-                .background(isShown ? Theme.border.opacity(0.5) : .clear,
-                            in: RoundedRectangle(cornerRadius: 4))
+                .background(alignment: .leading) {
+                    // A pill behind just the in-range day cells; the
+                    // 16pt week column is never lit.
+                    GeometryReader { geo in
+                        if let segment = segments.first(where: { $0.row == row }) {
+                            let cellWidth = (geo.size.width - 16) / 7
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Theme.border.opacity(0.5))
+                                .frame(width: cellWidth * CGFloat(segment.lastColumn - segment.firstColumn + 1))
+                                .offset(x: 16 + cellWidth * CGFloat(segment.firstColumn))
+                        }
+                    }
+                }
             }
         }
         .onChange(of: model.anchor) { month = model.anchor }
@@ -667,13 +755,13 @@ private struct MiniMonth: View {
 }
 
 /// One legend row: a colour checkbox, the harness mark and title, and its
-/// total time in the range. Expands into per-account rows when more than
-/// one account has activity.
+/// total time in the range, the whole row toggling visibility like
+/// Notion's calendar list. Account rows sit under it, expanded by
+/// default once the harness has more than one account.
 private struct HarnessLegend: View {
     var model: CalendarModel
     var harness: String
     var colors: [String: String]
-    @State private var expanded = false
 
     private var color: Color {
         let hex = colors[harness] ?? HarnessColor.resolve(id: harness, primaryColor: nil).hex
@@ -681,56 +769,94 @@ private struct HarnessLegend: View {
     }
 
     private var accounts: [String] { model.accounts(for: harness) }
+    private var expanded: Bool { model.accountsExpanded(harness) }
+
+    /// The Notion-style checkbox: filled square with a white check when
+    /// shown, an outlined square when hidden.
+    private func checkbox(shown: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(shown ? color : .clear)
+            .overlay {
+                if shown {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 3)
+                .stroke(color, lineWidth: shown ? 0 : 1.5))
+            .frame(width: 14, height: 14)
+    }
+
+    /// A full-width toggle row: the content shape and hover wash cover
+    /// the name and time too, not just the checkbox.
+    private func toggleRow<Label: View>(action: @escaping () -> Void,
+                                      shown: Bool,
+                                      @ViewBuilder label: () -> Label) -> some View {
+        Button(action: action) {
+            label()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(LegendRowStyle())
+    }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             if accounts.count > 1 {
-                Button { expanded.toggle() } label: {
+                Button { model.toggleAccountsExpanded(harness) } label: {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 10)
+                        .frame(width: 20, height: 20)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .help(expanded ? "Collapse accounts" : "Expand accounts")
+                .accessibilityLabel(expanded ? "Collapse \(harness) accounts"
+                                           : "Expand \(harness) accounts")
             } else {
                 Spacer().frame(width: 10)
             }
-            Button { model.toggle(harness) } label: {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(model.isHidden(harness) ? .clear : color)
-                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1.5))
-                    .frame(width: 12, height: 12)
+            toggleRow(action: { model.toggle(harness) }, shown: !model.isHidden(harness)) {
+                HStack(spacing: 6) {
+                    checkbox(shown: !model.isHidden(harness))
+                    HarnessIcon(harness: harness, size: 13)
+                    Text(harness.capitalized).font(.system(size: 11))
+                        .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
+                    Spacer()
+                    Text(Self.time(model.totals[harness] ?? 0))
+                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                }
             }
-            .buttonStyle(.plain)
             .help(model.isHidden(harness) ? "Show \(harness)" : "Hide \(harness)")
-            HarnessIcon(harness: harness, size: 13)
-            Text(harness.capitalized).font(.system(size: 11))
-                .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
-            Spacer()
-            Text(Self.time(model.totals[harness] ?? 0))
-                .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+            .accessibilityLabel("\(harness.capitalized), \(model.isHidden(harness) ? "hidden" : "shown")")
+            .accessibilityAddTraits(.isToggle)
+            .accessibilityValue(model.isHidden(harness) ? "0" : "1")
         }
-        .frame(height: 20)
+        .frame(height: 22)
         if expanded {
             ForEach(accounts, id: \.self) { home in
-                HStack(spacing: 6) {
-                    Spacer().frame(width: 10)
-                    Button { model.toggle(harness: harness, accountHome: home) } label: {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(model.isHidden(harness: harness, accountHome: home) ? .clear : color)
-                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1.5))
-                            .frame(width: 12, height: 12)
+                let shown = !model.isHidden(harness: harness, accountHome: home)
+                toggleRow(action: { model.toggle(harness: harness, accountHome: home) },
+                          shown: shown) {
+                    HStack(spacing: 6) {
+                        checkbox(shown: shown)
+                        Text(model.accountName(for: home))
+                            .font(.system(size: 10))
+                            .foregroundStyle(shown ? .primary : .secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(Self.time(model.accountTotals(for: harness)[home] ?? 0))
+                            .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
                     }
-                    .buttonStyle(.plain)
-                    Text(model.accountName(for: home))
-                        .font(.system(size: 10))
-                        .foregroundStyle(model.isHidden(harness: harness, accountHome: home) ? .secondary : .primary)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(Self.time(model.accountTotals(for: harness)[home] ?? 0))
-                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                    .padding(.leading, 18)
                 }
-                .frame(height: 18)
-                .padding(.leading, 8)
+                .help(shown ? "Hide \(model.accountName(for: home))"
+                            : "Show \(model.accountName(for: home))")
+                .accessibilityLabel("\(model.accountName(for: home)), \(shown ? "shown" : "hidden")")
+                .accessibilityAddTraits(.isToggle)
+                .accessibilityValue(shown ? "1" : "0")
+                .frame(height: 20)
             }
         }
     }
@@ -752,6 +878,10 @@ private struct MonthCell: View {
     var entries: [MonthLayout.Entry]
     var color: (ActivityBlock) -> Color
     var title: (ActivityBlock) -> String
+    var hover: (String, Bool) -> Void
+    var card: (String) -> Binding<Bool>
+    var cardRows: (ActivityBlock)
+        -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
     var more: () -> Void
 
@@ -791,6 +921,15 @@ private struct MonthCell: View {
                     MonthEntry(entry: entry, model: model,
                                color: color(entry.block), title: title(entry.block))
                         .onTapGesture { open(entry.block) }
+                        .onHover { inside in hover(entry.id, inside) }
+                        .popover(isPresented: card(entry.id),
+                                 attachmentAnchor: .rect(.bounds),
+                                 arrowEdge: .leading) {
+                            let rows = cardRows(entry.block)
+                            BlockCard(block: entry.block, model: model,
+                                      active: entry.active,
+                                      shown: rows.shown, more: rows.more)
+                        }
                 }
                 if split.more > 0 {
                     Button { more() } label: {
@@ -843,12 +982,108 @@ private struct MonthEntry: View {
         .padding(.horizontal, 6)
         .frame(height: 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help("\(UsageFormat.harness(entry.block.harness)) · "
-              + "\(model.accountName(for: entry.block.accountHome))\n\(title)\n"
-              + "\(active) active · \(entry.block.sessions.count) session\(entry.block.sessions.count == 1 ? "" : "s")"
-              + " · \(entry.blockCount) block\(entry.blockCount == 1 ? "" : "s")")
         .accessibilityElement()
         .accessibilityLabel("\(UsageFormat.harness(entry.block.harness)), \(title), \(active)")
+    }
+}
+
+/// One session in a block's list: title (or short id), its time span
+/// inside the block and its responses. The project sheet and the hover
+/// card render identical rows; only the sheet's carry a chevron.
+private struct SessionRow: View {
+    var ref: ActivityBlock.SessionRef
+    var row: SessionsModel.Row
+    var last: Bool
+    /// nil on the read-only hover card.
+    var open: (() -> Void)? = nil
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.session.title ?? String(ref.sessionId.prefix(8)))
+                    .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                Text("\(Self.clock.string(from: ref.start))–\(Self.clock.string(from: ref.end)) · "
+                     + "\(ref.responses) response\(ref.responses == 1 ? "" : "s")")
+                    .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            if let open {
+                Button { open() } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open session")
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.border).frame(height: 1).opacity(last ? 0 : 1)
+        }
+    }
+}
+
+/// The hover card over a squeezed block: the same information as the
+/// project sheet — icon, project, account when the harness has several,
+/// range, active time, responses, and the sessions — read-only, capped
+/// at eight rows so a long block never fills the screen.
+private struct BlockCard: View {
+    var block: ActivityBlock
+    var model: CalendarModel
+    /// The duration line's seconds: the block's span on the week grid,
+    /// the day's summed active time on a month entry.
+    var active: TimeInterval
+    var shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)]
+    var more: Int
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+
+    private var range: String {
+        "\(Self.clock.string(from: block.start))–\(Self.clock.string(from: block.end))"
+    }
+    private var duration: String {
+        let minutes = Int(active / 60)
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                HarnessIcon(harness: HarnessMark(block.harness).icon ?? block.harness, size: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(block.project).font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    if model.accounts(for: block.harness).count > 1 {
+                        Text(model.accountName(for: block.accountHome))
+                            .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            Text("\(range) · \(duration) · \(block.responses) response\(block.responses == 1 ? "" : "s")")
+                .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+            VStack(spacing: 0) {
+                ForEach(shown, id: \.ref.sessionId) { item in
+                    SessionRow(ref: item.ref, row: item.row,
+                               last: item.ref.sessionId == shown.last?.ref.sessionId)
+                }
+                if more > 0 {
+                    Text("+\(more) more")
+                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 300, alignment: .leading)
     }
 }
 
@@ -883,26 +1118,9 @@ private struct ProjectSessionsSheet: View {
             ScrollView {
                 VStack(spacing: 0) {
                 ForEach(rows, id: \.ref.sessionId) { item in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.row.session.title ?? String(item.ref.sessionId.prefix(8)))
-                                .font(.system(size: 11, weight: .medium)).lineLimit(1)
-                            Text("\(Self.clock.string(from: item.ref.start))–\(Self.clock.string(from: item.ref.end)) · "
-                                 + "\(item.ref.responses) response\(item.ref.responses == 1 ? "" : "s")")
-                                .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
-                        }
-                        Spacer()
-                        Button { detail = item.row } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open session")
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(Theme.border).frame(height: 1)
-                            .opacity(item.ref.sessionId == rows.last?.ref.sessionId ? 0 : 1)
+                    SessionRow(ref: item.ref, row: item.row,
+                               last: item.ref.sessionId == rows.last?.ref.sessionId) {
+                        detail = item.row
                     }
                 }
                 }
