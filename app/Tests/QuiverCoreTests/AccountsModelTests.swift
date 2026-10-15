@@ -101,9 +101,10 @@ final class FakeRunningInstances: RunningInstances {
         store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
     }
 
-    func model(terminal: TerminalApp = .terminal) -> AccountsModel {
+    func model(terminal: TerminalApp = .terminal,
+               installedApp: @escaping (String) -> String? = { _ in nil }) -> AccountsModel {
         AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal },
-                      loginPath: { "" }, running: running)
+                      loginPath: { "" }, running: running, installedApp: installedApp)
     }
 
     let reading = AccountUsage(
@@ -204,6 +205,97 @@ final class FakeRunningInstances: RunningInstances {
             executable: "/usr/bin/open", arguments: ["-a", "/Applications/Claude.app"])])
     }
 
+    // A harness's own card open (the default Cursor or Devin) is the
+    // default-profile rule too: an extra account's instance must not
+    // swallow it.
+    private let cursorExe = "/Applications/Cursor.app/Contents/MacOS/Cursor"
+
+    @Test func aHarnessOpenFocusesThePlainInstance() async throws {
+        running.instances = [RunningInstance(pid: 9, arguments: [cursorExe])]
+        try await model().openApp(at: "/Applications/Cursor.app")
+
+        #expect(running.activated == [9])
+        #expect(launcher.launched.isEmpty)
+    }
+
+    @Test func aHarnessOpenStartsANewInstanceWhenOnlyExtrasRun() async throws {
+        running.instances = [RunningInstance(pid: 9, arguments: [
+            cursorExe, "--user-data-dir=/Users/me/.quiver/accounts/cursor/cursor-side/desktop"])]
+        try await model().openApp(at: "/Applications/Cursor.app")
+
+        #expect(running.activated.isEmpty)
+        #expect(launcher.launched == [LaunchCommand(
+            executable: "/usr/bin/open",
+            arguments: ["-n", "-a", "/Applications/Cursor.app"])])
+    }
+
+    @Test func aHarnessOpenWithNothingRunningOpensPlainly() async throws {
+        running.instances = []
+        try await model().openApp(at: "/Applications/Cursor.app")
+
+        #expect(launcher.launched == [LaunchCommand(
+            executable: "/usr/bin/open", arguments: ["-a", "/Applications/Cursor.app"])])
+    }
+
+    @Test func devinAndCursorAccountsAreNeverAskedOfTheUsageService() async throws {
+        _ = try store.add(vendor: .devin, name: "Work")
+        _ = try store.add(vendor: .cursor, name: "Side")
+        let model = model()
+        await model.load(force: true)
+
+        // Their cards exist, but the usage service only ever sees Claude
+        // and Codex homes: an extra's limit comes from `swe harness usage`.
+        #expect(model.cards.count == 4)
+        #expect(Set(usage.requests.map(\.0.provider)) == [.claude, .codex])
+        #expect(model.cards.filter { !$0.profile.isDefault }.allSatisfy { $0.usage == nil })
+    }
+
+    @Test func signingInACursorAccountOpensItsApp() async throws {
+        let side = try store.add(vendor: .cursor, name: "Side")
+        running.instances = []
+        try await model().signIn(side)
+
+        // cursor-agent has no per-account sign-in: the app with the
+        // account's own user-data dir is where Cursor signs in.
+        let paths = store.paths(for: side)
+        #expect(launcher.launched == [LaunchCommand(executable: "/usr/bin/open", arguments: [
+            "-n", "-a", "/Applications/Cursor.app",
+            "--args", "--user-data-dir=\(paths.desktopData!.path)",
+        ])])
+    }
+
+    @Test func signingInACursorAccountUsesTheInstalledApp() async throws {
+        // A Cursor.app kept in ~/Applications is where sign-in goes, the
+        // same lookup the Open-app buttons use — not /Applications.
+        let side = try store.add(vendor: .cursor, name: "Side")
+        running.instances = []
+        let custom = root.appending(path: "Applications/Cursor.app").path
+        try await model(installedApp: { _ in custom }).signIn(side)
+
+        let paths = store.paths(for: side)
+        #expect(launcher.launched == [LaunchCommand(executable: "/usr/bin/open", arguments: [
+            "-n", "-a", custom,
+            "--args", "--user-data-dir=\(paths.desktopData!.path)",
+        ])])
+    }
+
+    @Test func openAppFallsBackToTheApplicationsPath() async throws {
+        // No locator hit: the vendor's default /Applications path stands.
+        let side = try store.add(vendor: .cursor, name: "Side")
+        running.instances = []
+        try await model(installedApp: { _ in nil }).openApp(side)
+        #expect(launcher.launched.first?.arguments.contains("/Applications/Cursor.app") == true)
+    }
+
+    @Test func signingInADevinAccountTypesTheLoginLine() async throws {
+        let work = try store.add(vendor: .devin, name: "Work")
+        try await model(terminal: .terminal).signIn(work)
+
+        let paths = store.paths(for: work)
+        let line = "export XDG_DATA_HOME=\(LaunchPlanner.shellQuote(paths.home.path)); devin auth login"
+        #expect(launcher.launched == [LaunchPlanner.terminal(.terminal, running: line)])
+    }
+
     @Test func signingInRunsTheLoginInTheChosenTerminal() async throws {
         let work = try store.add(vendor: .codex, name: "Work")
         let model = model(terminal: .iterm)
@@ -211,7 +303,7 @@ final class FakeRunningInstances: RunningInstances {
         try await model.signIn(work)
 
         let paths = store.paths(for: work)
-        let line = LaunchPlanner.cliLoginCommand(for: work, paths: paths)
+        let line = try #require(LaunchPlanner.cliLoginCommand(for: work, paths: paths))
         #expect(launcher.launched == [LaunchPlanner.terminal(.iterm, running: line)])
     }
 
@@ -412,13 +504,16 @@ final class FakeRunningInstances: RunningInstances {
 @Suite struct LaunchTargetTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "launch-\(UUID().uuidString)")
     let launcher = FakeLauncher()
+    /// Empty: never let a launch test see (or focus) the user's real apps.
+    let running = FakeRunningInstances()
 
     func harnessTarget(appPath: String?, cliInstalled: Bool?,
                        name: String = "cursor", command: String = "cursor-agent") -> LaunchTarget {
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         return LaunchTarget(kind: .harness(name: name, command: command),
                             model: AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
-                                                 terminal: { .terminal }, loginPath: { "" }),
+                                                 terminal: { .terminal }, loginPath: { "" },
+                                                 running: running),
                             installedApp: { _ in appPath }, cliInstalled: { _ in cliInstalled })
     }
 
@@ -456,7 +551,7 @@ final class FakeRunningInstances: RunningInstances {
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         let work = try store.add(vendor: .claude, name: "Work")
         let model = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
-                                  terminal: { .terminal }, loginPath: { "" })
+                                  terminal: { .terminal }, loginPath: { "" }, running: running)
         let target = LaunchTarget(kind: .account(work), model: model,
                                   installedApp: { _ in "/Applications/Claude.app" },
                                   cliInstalled: { _ in true })
@@ -469,7 +564,7 @@ final class FakeRunningInstances: RunningInstances {
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts2"), userHome: root)
         let work = try store.add(vendor: .claude, name: "Work")
         let model = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
-                                  terminal: { .terminal }, loginPath: { "" })
+                                  terminal: { .terminal }, loginPath: { "" }, running: running)
         let target = LaunchTarget(kind: .account(work), model: model,
                                   installedApp: { _ in nil }, cliInstalled: { _ in true })
         #expect(try await target.openPreferred() == .terminal)

@@ -35,19 +35,26 @@ public enum LaunchPlanner {
         switch vendor {
         case .claude: "/Applications/Claude.app"
         case .codex: "/Applications/ChatGPT.app"
+        case .devin: "/Applications/Devin.app"
+        case .cursor: "/Applications/Cursor.app"
         }
     }
 
     /// The command-line tool for a vendor.
     public static func cliName(for vendor: Vendor) -> String {
-        vendor.rawValue
+        vendor.cliCommand
     }
 
-    /// The environment variable that points a vendor's CLI and agent at their home.
-    static func homeVariable(for vendor: Vendor) -> String {
+    /// The environment variable that points a vendor's CLI and agent at
+    /// their home. nil for Cursor: `cursor-agent` keeps one sign-in per
+    /// Mac (its token lives in the keychain and answers to no variable),
+    /// so an extra Cursor account's terminal runs the default account.
+    static func homeVariable(for vendor: Vendor) -> String? {
         switch vendor {
         case .claude: "CLAUDE_CONFIG_DIR"
         case .codex: "CODEX_HOME"
+        case .devin: "XDG_DATA_HOME"
+        case .cursor: nil
         }
     }
 
@@ -65,7 +72,11 @@ public enum LaunchPlanner {
             let arguments = otherInstanceRunning ? ["-n", "-a", app] : ["-a", app]
             return LaunchCommand(executable: "/usr/bin/open", arguments: arguments)
         }
-        var arguments = ["-n", "--env", "\(homeVariable(for: profile.vendor))=\(paths.home.path)", "-a", app]
+        var arguments = ["-n"]
+        if let variable = homeVariable(for: profile.vendor) {
+            arguments += ["--env", "\(variable)=\(paths.home.path)"]
+        }
+        arguments += ["-a", app]
         if let desktop = paths.desktopData {
             arguments += ["--args", "--user-data-dir=\(desktop.path)"]
         }
@@ -110,17 +121,27 @@ public enum LaunchPlanner {
     /// `command` is the whole invocation (`claude`, `codex login`) and is used
     /// as given, so it must come from the app, never from user text.
     public static func shellLine(for profile: Profile, paths: ProfilePaths, command: String) -> String {
+        // A vendor with no home variable (cursor-agent's one sign-in per
+        // Mac) runs the command as given: there is nothing to export, and
+        // XDG_DATA_HOME must never be unset — it isn't Cursor's.
+        guard let variable = homeVariable(for: profile.vendor) else { return command }
         // The default account clears an override the user's shell may export,
         // or the command would run as whichever account that points at.
-        guard !profile.isDefault else { return "unset \(homeVariable(for: profile.vendor)); \(command)" }
-        return "export \(homeVariable(for: profile.vendor))=\(shellQuote(paths.home.path)); \(command)"
+        guard !profile.isDefault else { return "unset \(variable); \(command)" }
+        return "export \(variable)=\(shellQuote(paths.home.path)); \(command)"
     }
 
-    /// The line that signs this profile's CLI in.
-    public static func cliLoginCommand(for profile: Profile, paths: ProfilePaths) -> String {
+    /// The line that signs this profile's CLI in, or nil when the vendor
+    /// signs in inside its desktop app (Cursor: the sign-in is the app's
+    /// state.vscdb, which the CLI shares).
+    public static func cliLoginCommand(for profile: Profile, paths: ProfilePaths) -> String? {
         let cli = cliName(for: profile.vendor)
-        let login = profile.vendor == .claude ? "\(cli) auth login" : "\(cli) login"
-        return shellLine(for: profile, paths: paths, command: login)
+        let login: String? = switch profile.vendor {
+        case .claude, .devin: "\(cli) auth login"
+        case .codex: "\(cli) login"
+        case .cursor: nil
+        }
+        return login.map { shellLine(for: profile, paths: paths, command: $0) }
     }
 
     /// Opens `shellLine` in a new window of the chosen terminal.

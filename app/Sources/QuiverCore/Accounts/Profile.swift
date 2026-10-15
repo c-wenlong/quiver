@@ -2,12 +2,33 @@ import Foundation
 
 /// A vendor with both a CLI and a desktop app that can run under a profile.
 public enum Vendor: String, Codable, Sendable, CaseIterable {
-    case claude, codex
+    case claude, codex, devin, cursor
 
     public var title: String {
         switch self {
         case .claude: "Claude"
         case .codex: "Codex"
+        case .devin: "Devin"
+        case .cursor: "Cursor"
+        }
+    }
+
+    /// Whether the vendor owns an account of its own (its `~/.claude`,
+    /// `~/.codex`): only those synthesise a default profile and appear as
+    /// Quiver account cards. Devin and Cursor only ever exist as extra
+    /// profiles; their default sign-in is the harness's own card.
+    public var hasDefaultProfile: Bool {
+        switch self {
+        case .claude, .codex: true
+        case .devin, .cursor: false
+        }
+    }
+
+    /// The CLI command on PATH (`cursor`'s CLI is `cursor-agent`).
+    public var cliCommand: String {
+        switch self {
+        case .cursor: "cursor-agent"
+        default: rawValue
         }
     }
 }

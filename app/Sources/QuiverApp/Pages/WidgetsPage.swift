@@ -236,7 +236,7 @@ private struct WidgetCard: View {
         app.starredAccountCards.map {
             (source: $0.profile.id, harness: $0.profile.vendor.rawValue,
              title: "\($0.profile.vendor.title): \($0.profile.name)")
-        } + app.others.rows.map { (source: $0.name, harness: $0.name, title: $0.accountTitle) }
+        } + app.others.rows.map { (source: $0.id, harness: $0.name, title: $0.accountTitle) }
     }
 
     /// Every harness the widget's switch list offers: ones with usage in

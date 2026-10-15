@@ -29,6 +29,16 @@ private let claudeWorkPaths = paths(
 private let codexSidePaths = paths(
     "/Users/me/.quiver/accounts/codex/codex-side/home",
     desktop: "/Users/me/.quiver/accounts/codex/codex-side/desktop")
+private let devinWork = Profile(
+    id: "devin-work", vendor: .devin, name: "Work", isDefault: false, color: "#3b82f6")
+private let cursorSide = Profile(
+    id: "cursor-side", vendor: .cursor, name: "Side", isDefault: false, color: "#a855f7")
+private let devinWorkPaths = paths(
+    "/Users/me/.quiver/accounts/devin/devin-work/home",
+    desktop: "/Users/me/.quiver/accounts/devin/devin-work/desktop")
+private let cursorSidePaths = paths(
+    "/Users/me/.quiver/accounts/cursor/cursor-side/home",
+    desktop: "/Users/me/.quiver/accounts/cursor/cursor-side/desktop")
 /// A home with a space and a single quote in it.
 private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/me/it's a dir/desktop")
 
@@ -91,9 +101,32 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
         #expect(command.arguments == ["-a", "/Applications/Claude.app"])
     }
 
+    @Test func aDevinProfileExportsXDGDataHome() {
+        let command = LaunchPlanner.desktopApp(for: devinWork, paths: devinWorkPaths)
+        #expect(command == LaunchCommand(executable: "/usr/bin/open", arguments: [
+            "-n",
+            "--env", "XDG_DATA_HOME=/Users/me/.quiver/accounts/devin/devin-work/home",
+            "-a", "/Applications/Devin.app",
+            "--args", "--user-data-dir=/Users/me/.quiver/accounts/devin/devin-work/desktop",
+        ]))
+    }
+
+    @Test func aCursorProfileCarriesNoHomeVariable() {
+        // cursor-agent answers to no environment variable: its sign-in is
+        // the one keychain entry, so nothing is exported.
+        let command = LaunchPlanner.desktopApp(for: cursorSide, paths: cursorSidePaths)
+        #expect(command == LaunchCommand(executable: "/usr/bin/open", arguments: [
+            "-n",
+            "-a", "/Applications/Cursor.app",
+            "--args", "--user-data-dir=/Users/me/.quiver/accounts/cursor/cursor-side/desktop",
+        ]))
+    }
+
     @Test func theAppPathsAreExposedForAnInstalledCheck() {
         #expect(LaunchPlanner.desktopAppPath(for: .claude) == "/Applications/Claude.app")
         #expect(LaunchPlanner.desktopAppPath(for: .codex) == "/Applications/ChatGPT.app")
+        #expect(LaunchPlanner.desktopAppPath(for: .devin) == "/Applications/Devin.app")
+        #expect(LaunchPlanner.desktopAppPath(for: .cursor) == "/Applications/Cursor.app")
     }
 }
 
@@ -180,9 +213,26 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
         #expect(LaunchPlanner.cliLoginCommand(for: codexDefault, paths: codexDefaultPaths) == "unset CODEX_HOME; codex login")
     }
 
+    @Test func aDevinProfileExportsXDGDataHomeToItsHome() {
+        #expect(LaunchPlanner.shellLine(for: devinWork, paths: devinWorkPaths, command: "devin")
+            == "export XDG_DATA_HOME='/Users/me/.quiver/accounts/devin/devin-work/home'; devin")
+        #expect(LaunchPlanner.cliLoginCommand(for: devinWork, paths: devinWorkPaths)
+            == "export XDG_DATA_HOME='/Users/me/.quiver/accounts/devin/devin-work/home'; devin auth login")
+    }
+
+    @Test func aCursorProfileExportsAndUnsetsNothing() {
+        // cursor-agent keeps one sign-in per Mac, and XDG_DATA_HOME is not
+        // Cursor's to clear: the line is the bare command either way.
+        #expect(LaunchPlanner.shellLine(for: cursorSide, paths: cursorSidePaths, command: "cursor-agent")
+            == "cursor-agent")
+        #expect(LaunchPlanner.cliLoginCommand(for: cursorSide, paths: cursorSidePaths) == nil)
+    }
+
     @Test func eachVendorNamesItsCLI() {
         #expect(LaunchPlanner.cliName(for: .claude) == "claude")
         #expect(LaunchPlanner.cliName(for: .codex) == "codex")
+        #expect(LaunchPlanner.cliName(for: .devin) == "devin")
+        #expect(LaunchPlanner.cliName(for: .cursor) == "cursor-agent")
     }
 }
 

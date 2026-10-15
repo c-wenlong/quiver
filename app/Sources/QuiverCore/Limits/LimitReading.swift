@@ -92,7 +92,7 @@ public struct LimitReading: Sendable, Equatable, Identifiable, Codable {
             return row.limit.allWindows.map { window in
                 // An unavailable window holds last-known values: as stale
                 // as the outage reading swe falls back to.
-                LimitReading(source: row.name, harness: row.name, title: row.accountTitle,
+                LimitReading(source: row.id, harness: row.name, title: row.accountTitle,
                              window: window.window, usedPercent: Double(window.usedPercent),
                              resetsAt: window.resetAt, fetchedAt: row.limit.fetchedAt,
                              isStale: isStale || window.unavailable)
