@@ -121,13 +121,17 @@ public final class AccountsModel {
     private let terminal: () -> TerminalApp
     private let loginPath: @Sendable () async -> String
     private let renewer: ClaudeSignInRenewing
+    /// Where a vendor's desktop app is installed (the same AppLocator the
+    /// Open-app buttons use); nil means the default /Applications path.
+    private let installedApp: (String) -> String?
     private var generation = 0
 
     public init(store: ProfileStore, usage: UsageFetching, launcher: Launching,
                 terminal: @escaping () -> TerminalApp,
                 loginPath: @escaping @Sendable () async -> String = { await CLIPath.terminalShellPath() },
                 renewer: ClaudeSignInRenewing = ClaudeSignInRenewer(),
-                running: RunningInstances = AppRunningInstances()) {
+                running: RunningInstances = AppRunningInstances(),
+                installedApp: @escaping (String) -> String? = { _ in nil }) {
         self.store = store
         self.usage = usage
         self.launcher = launcher
@@ -135,6 +139,7 @@ public final class AccountsModel {
         self.terminal = terminal
         self.loginPath = loginPath
         self.renewer = renewer
+        self.installedApp = installedApp
     }
 
     /// Reload profiles, then every account's usage at once. `force` skips the
@@ -278,9 +283,12 @@ public final class AccountsModel {
         await load(force: false)
     }
 
-    /// The desktop app, signed in as this account.
+    /// The desktop app, signed in as this account. Resolves where the app
+    /// is installed the same way the Open-app buttons do — a Cursor.app in
+    /// ~/Applications counts — and falls back to the /Applications path.
     public func openApp(_ profile: Profile) async throws {
-        try await openApp(profile, at: LaunchPlanner.desktopAppPath(for: profile.vendor))
+        try await openApp(profile, at: installedApp(profile.vendor.rawValue)
+                            ?? LaunchPlanner.desktopAppPath(for: profile.vendor))
     }
 
     /// The desktop app found at `path`, for an account whose app isn't in

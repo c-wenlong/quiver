@@ -314,7 +314,10 @@ public final class OtherLimitsModel {
             // A newer load already answered; this one's state is older.
             guard mine == request else { return }
             let accountNames = names.load()
-            rows = harnesses.compactMap { harness in
+            // Base rows stay local until the extras are merged below:
+            // publishing harness-only lists mid-load would flash every
+            // extra account off the page for the length of its fetch.
+            let baseRows = harnesses.compactMap { harness -> Row? in
                 // Starred only: swe polls just those, but can still return a
                 // cached reading for one since unstarred.
                 guard !Self.ownAccounts.contains(harness.name), harness.state == .starred,
@@ -331,7 +334,7 @@ public final class OtherLimitsModel {
                          accountName: accountNames[harness.name], command: harness.command,
                          cliInstalled: harness.installed, limit: harness.rateLimit)
                 }
-            var rowList = rows
+            var rowList = baseRows
             let installed = harnesses.reduce(into: [String: Bool]()) { map, harness in
                 if let value = harness.installed { map[harness.name] = value }
             }

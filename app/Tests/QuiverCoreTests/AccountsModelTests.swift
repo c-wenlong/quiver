@@ -101,9 +101,10 @@ final class FakeRunningInstances: RunningInstances {
         store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
     }
 
-    func model(terminal: TerminalApp = .terminal) -> AccountsModel {
+    func model(terminal: TerminalApp = .terminal,
+               installedApp: @escaping (String) -> String? = { _ in nil }) -> AccountsModel {
         AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal },
-                      loginPath: { "" }, running: running)
+                      loginPath: { "" }, running: running, installedApp: installedApp)
     }
 
     let reading = AccountUsage(
@@ -261,6 +262,29 @@ final class FakeRunningInstances: RunningInstances {
             "-n", "-a", "/Applications/Cursor.app",
             "--args", "--user-data-dir=\(paths.desktopData!.path)",
         ])])
+    }
+
+    @Test func signingInACursorAccountUsesTheInstalledApp() async throws {
+        // A Cursor.app kept in ~/Applications is where sign-in goes, the
+        // same lookup the Open-app buttons use — not /Applications.
+        let side = try store.add(vendor: .cursor, name: "Side")
+        running.instances = []
+        let custom = root.appending(path: "Applications/Cursor.app").path
+        try await model(installedApp: { _ in custom }).signIn(side)
+
+        let paths = store.paths(for: side)
+        #expect(launcher.launched == [LaunchCommand(executable: "/usr/bin/open", arguments: [
+            "-n", "-a", custom,
+            "--args", "--user-data-dir=\(paths.desktopData!.path)",
+        ])])
+    }
+
+    @Test func openAppFallsBackToTheApplicationsPath() async throws {
+        // No locator hit: the vendor's default /Applications path stands.
+        let side = try store.add(vendor: .cursor, name: "Side")
+        running.instances = []
+        try await model(installedApp: { _ in nil }).openApp(side)
+        #expect(launcher.launched.first?.arguments.contains("/Applications/Cursor.app") == true)
     }
 
     @Test func signingInADevinAccountTypesTheLoginLine() async throws {

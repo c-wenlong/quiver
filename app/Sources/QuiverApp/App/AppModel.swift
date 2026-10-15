@@ -294,7 +294,8 @@ final class AppModel {
         others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider)
         var terminalChoice: () -> TerminalApp = { .terminal }
         accounts = AccountsModel(store: store, usage: usage, launcher: ProcessLauncher(),
-                                 terminal: { terminalChoice() })
+                                 terminal: { terminalChoice() },
+                                 installedApp: { [apps] in apps.installedApp(for: $0) })
 
         let directory: @Sendable () -> AccountDirectory = {
             AccountDirectory(profiles: (try? store.load()) ?? [], paths: store.paths(for:), home: home)

@@ -27,6 +27,45 @@ final class LockedRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
+/// A LockedRunner that can hold `harness usage` calls open until released,
+/// so a test can look at the published lists mid-fetch.
+final class HeldRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String]] = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var holding = false
+    var rules: [(prefix: [String], reply: CommandResult)] = []
+
+    var calls: [[String]] { lock.withLock { recorded } }
+    func count(_ prefix: [String]) -> Int {
+        calls.filter { $0.starts(with: prefix) }.count
+    }
+
+    /// Every `harness usage` call from here suspends until `release()`.
+    func holdUsageCalls() { lock.withLock { holding = true } }
+    func release() {
+        let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            holding = false
+            defer { waiters = [] }
+            return waiters
+        }
+        pending.forEach { $0.resume() }
+    }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        lock.withLock { recorded.append(arguments) }
+        if lock.withLock({ holding }), arguments.starts(with: ["harness", "usage"]) {
+            await withCheckedContinuation { cont in
+                lock.withLock { waiters.append(cont) }
+            }
+        }
+        return lock.withLock {
+            rules.first { arguments.starts(with: $0.prefix) }?.reply
+                ?? CommandResult(status: 1, stdout: Data(), stderr: "unscripted: \(arguments.joined(separator: " "))")
+        }
+    }
+}
+
 @MainActor
 @Suite struct ExtraAccountLimitTests {
     let listBody = Data(#"""
@@ -58,7 +97,7 @@ final class LockedRunner: CommandRunning, @unchecked Sendable {
                      desktopData: URL(fileURLWithPath: "/t/\(id)/desktop", isDirectory: true))
     }
 
-    func model(_ runner: LockedRunner,
+    func model(_ runner: any CommandRunning,
                extras: @escaping @MainActor () -> [(Profile, ProfilePaths)])
         -> OtherLimitsModel {
         OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(),
@@ -322,6 +361,31 @@ final class LockedRunner: CommandRunning, @unchecked Sendable {
         await model.load(refreshFailed: true)
         #expect(model.rows.first { $0.profile?.id == devin.id }?.limit.allWindows
             .allSatisfy { !$0.unavailable } == true)
+    }
+
+    @Test func extrasStayVisibleWhileARefreshRuns() async {
+        // The lists publish once, after the extra fetches land: while an
+        // account fetch is mid-flight the previous extra row and card stay.
+        let devin = profile(.devin, "devin-work")
+        let runner = HeldRunner()
+        runner.rules = [
+            (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+            (["harness", "usage"], devinUsage),
+        ]
+        let model = model(runner) { [(devin, self.paths("devin-work"))] }
+        await model.load()
+        #expect(model.rows.contains { $0.id == devin.id })
+        #expect(model.cards.contains { $0.id == devin.id })
+
+        runner.holdUsageCalls()
+        let task = Task { await model.load(force: true) }
+        // Spin until the account fetch is actually in flight.
+        while runner.count(["harness", "usage"]) < 2 { await Task.yield() }
+        #expect(model.rows.contains { $0.id == devin.id })
+        #expect(model.cards.contains { $0.id == devin.id })
+        runner.release()
+        await task.value
+        #expect(model.rows.contains { $0.id == devin.id })
     }
 
     @Test func anUnstampedReadingIsStampedWithTheFetchTime() async {
