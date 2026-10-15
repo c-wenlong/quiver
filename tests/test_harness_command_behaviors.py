@@ -108,7 +108,7 @@ class HarnessProcessCommandTest(unittest.TestCase):
         ), patch(
             "quiver.harness.commands.load_registry", return_value=tools or {}
         ), patch(
-            "quiver.harness.commands.load_registry_if_present", return_value=tools or {}
+            "quiver.harness.commands.load_registry_readonly", return_value=tools or {}
         ), patch(
             "quiver.harness.commands.shutil.which", side_effect=which
         ), patch(
@@ -303,6 +303,33 @@ class HarnessProcessCommandTest(unittest.TestCase):
                 self.assertFalse(missing.exists())
                 run.assert_not_called()
                 save.assert_not_called()
+
+    def test_install_lookup_reads_a_legacy_tools_json_without_migrating(self):
+        # An upgraded machine with only tools.json keeps its alias and its
+        # custom command, and a dry run still writes nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "config" / "harness.json"
+            legacy = Path(tmp) / "config" / "tools.json"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text(json.dumps(
+                {"claude": {"command": "claude-custom", "aliases": ["cc"]}}))
+            with patch("quiver.harness.registry.HARNESS_FILE", missing), patch(
+                "quiver.harness.registry.TOOLS_FILE", legacy
+            ), patch(
+                "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
+            ), patch("quiver.harness.commands.subprocess.run") as run, patch(
+                "quiver.harness.commands.save_registry") as save:
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = cmd_install(["cc", "--via=npm", "--dry-run"])
+                self.assertFalse(missing.exists())
+                self.assertTrue(legacy.exists())
+
+        self.assertEqual(code, 0)
+        self.assertIn("@anthropic-ai/claude-code", out.getvalue())
+        self.assertIn("claude-custom", out.getvalue())
+        run.assert_not_called()
+        save.assert_not_called()
 
     def test_install_json_unknown_name_errors(self):
         err = io.StringIO()

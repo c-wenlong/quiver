@@ -30,7 +30,7 @@ from quiver.harness.models import (
     display_name,
     primary_color,
 )
-from quiver.harness.registry import load_registry, load_registry_if_present, resolve, save_registry
+from quiver.harness.registry import load_registry, load_registry_readonly, resolve, save_registry
 from quiver.init.layout import link_states
 from quiver.harness.stars import (
     is_starred,
@@ -1742,7 +1742,7 @@ def cmd_install(args):
 
     if name is None:
         if json_view:
-            return emit(_install_json(sorted(INSTALLERS), load_registry_if_present()))
+            return emit(_install_json(sorted(INSTALLERS), load_registry_readonly()))
         print(c("red", "Usage: swe install <name> [--via=<method>] [--package=<pkg>] "
                        "[--command=<cmd>] [--dry-run|-n] [--json]"))
         print(c("dim", "  Example: swe install gemini            # list its installers"))
@@ -1751,7 +1751,7 @@ def cmd_install(args):
         return 1
 
     # Read-only: only the path that actually installs may create harness.json.
-    tools = load_registry_if_present()
+    tools = load_registry_readonly()
     # Allow installing by alias
     resolved = resolve(tools, name)
     reg_name = resolved or name

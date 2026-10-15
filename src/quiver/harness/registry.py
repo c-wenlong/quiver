@@ -60,6 +60,20 @@ def load_registry_if_present() -> dict:
     return load_registry() if HARNESS_FILE.exists() else {}
 
 
+def load_registry_readonly() -> dict:
+    """The registry for a lookup that must not write, legacy installs included.
+
+    Like ``load_registry_if_present()``, but a machine that still has only
+    tools.json gets its entries read as-is rather than {}: its aliases and
+    custom commands are what a later migration would carry over, so a
+    lookup that ignored them would resolve names differently from the
+    write that follows.
+    """
+    if HARNESS_FILE.exists():
+        return load_registry()
+    return read_json_object(TOOLS_FILE) if TOOLS_FILE.exists() else {}
+
+
 def save_registry(tools: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     # Atomic: a crash mid-write used to leave a truncated harness.json that
