@@ -168,30 +168,41 @@ import Testing
     }
 
     @Test func neighbourPrefetchLandsOnTheNextMonthAndNextNdaySpan() async throws {
-        final class Calls: ActivityProviding, @unchecked Sendable {
-            var ranges: [DateInterval] = []
+        actor Calls: ActivityProviding {
+            private(set) var ranges: [DateInterval] = []
             func activityBlocks(in range: DateInterval, gap: TimeInterval,
-                                force: Bool) async throws -> [ActivityBlock] {
+                                force: Bool) throws -> [ActivityBlock] {
                 ranges.append(range)
                 return []
             }
+            /// The recorded ranges once at least `count` calls have run,
+            /// polling briefly so prefetch tasks have time to land.
+            func wait(for count: Int) async -> [DateInterval] {
+                for _ in 0..<500 {
+                    if ranges.count >= count { return ranges }
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                return ranges
+            }
+            func reset() { ranges = [] }
         }
         let provider = Calls()
         let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         model.mode = .month
         await model.load()
-        try await Task.sleep(for: .milliseconds(300))
+        // The load plus both neighbour prefetches make three calls.
+        var ranges = await provider.wait(for: 3)
         let expectedNext = model.range(for: model.shiftedAnchor(1, mode: .month), mode: .month)
-        #expect(provider.ranges.contains(expectedNext))
+        #expect(ranges.contains(expectedNext))
         #expect(expectedNext == DateInterval(start: utc("2026-10-26T00:00:00Z"),
                                            end: utc("2026-12-07T00:00:00Z")))
         // The same for a 3-day span.
-        provider.ranges.removeAll()
+        await provider.reset()
         model.mode = .days(3)
         await model.load()
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(provider.ranges.contains(
+        ranges = await provider.wait(for: 3)
+        #expect(ranges.contains(
             model.range(for: model.shiftedAnchor(1, mode: .days(3)), mode: .days(3))))
     }
 

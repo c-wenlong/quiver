@@ -170,27 +170,31 @@ private struct CalendarContent: View {
             if let error = model.loadError ?? actionError {
                 ErrorCard(message: error).padding(8)
             }
-            if model.visibleBlocks.isEmpty {
-                Spacer()
-                Text("No harness activity in this \(model.mode.title.lowercased())")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Spacer()
-            } else if model.mode == .month {
-                monthGrid
-            } else {
-                TimelineView(.everyMinute) { context in
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            hourGrid(now: context.date)
-                                .id("grid")
-                        }
-                        .onAppear {
-                            // Open at the earliest block of the range, or 08:00.
-                            let earliest = model.visibleBlocks.map(\.start).min()
-                            let hour = earliest.map { model.calendar.component(.hour, from: $0) } ?? 8
-                            proxy.scrollTo("h\(max(0, min(23, hour)))", anchor: .top)
+            ZStack {
+                if model.mode == .month {
+                    monthGrid
+                } else {
+                    TimelineView(.everyMinute) { context in
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                hourGrid(now: context.date)
+                                    .id("grid")
+                            }
+                            .onAppear {
+                                // Open at the earliest block of the range, or 08:00.
+                                let earliest = model.visibleBlocks.map(\.start).min()
+                                let hour = earliest.map { model.calendar.component(.hour, from: $0) } ?? 8
+                                proxy.scrollTo("h\(max(0, min(23, hour)))", anchor: .top)
+                            }
                         }
                     }
+                }
+                // The grid renders even when empty; the notice floats
+                // over it without swallowing clicks on the cells.
+                if model.visibleBlocks.isEmpty {
+                    Text("No harness activity \(model.emptyRangeNoun)")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        .allowsHitTesting(false)
                 }
             }
         }

@@ -374,6 +374,17 @@ public final class CalendarModel {
         Task { await snapshots.save(CalendarSnapshot(ranges: entries)) }
     }
 
+    /// The empty-state noun phrase: "today", "this week", "this month"
+    /// or "in these N days".
+    public var emptyRangeNoun: String {
+        switch mode {
+        case .day: "today"
+        case .week: "this week"
+        case .month: "this month"
+        case .days(let n): "in these \(n) days"
+        }
+    }
+
     /// The grid's input: blocks whose harness and account are both shown.
     public var visibleBlocks: [ActivityBlock] {
         blocks.filter {
