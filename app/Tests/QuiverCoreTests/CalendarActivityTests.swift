@@ -121,9 +121,20 @@ import Testing
     @Test func theLedgerAnswersThroughTheProtocol() async throws {
         let temp = try TempDir()
         let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
-        #expect(await ledger.activityBlocks(in: day, gap: 60).isEmpty)
+        #expect(try await ledger.activityBlocks(in: day, gap: 60).isEmpty)
         // The existential the CalendarModel holds works the same way.
         let provider: any ActivityProviding = ledger
-        #expect(await provider.activityBlocks(in: day, gap: 60).isEmpty)
+        #expect(try await provider.activityBlocks(in: day, gap: 60).isEmpty)
+    }
+
+    @Test func aBlockCarriesTheSessionsWorkingDirectory() throws {
+        let fixture = try store([
+            UsageEvent(harness: "claude", accountHome: "/h", sessionId: "s",
+                       cwd: "/work/project", model: "m",
+                       timestamp: utc("2026-10-05T10:00:00Z"), outputTokens: 1),
+        ])
+        let store = fixture.1
+        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        #expect(blocks[0].cwd == "/work/project")
     }
 }

@@ -38,6 +38,9 @@ public enum CalendarLayout {
             var end: Date
         }
         var pieces = blocks.compactMap { block -> Piece? in
+            // Real overlap first: the minimum-duration stretch must not
+            // pull a block onto a day it never touched.
+            guard block.start < day.end, block.end >= day.start else { return nil }
             let start = max(block.start, day.start)
             let end = min(max(block.end, block.start + minimumDuration), day.end)
             guard end > start else { return nil }
@@ -75,5 +78,18 @@ public enum CalendarLayout {
         }
         if !cluster.isEmpty { flush() }
         return segments
+    }
+
+    /// Clock hours into `day`: the mapping the grid uses for a block's top
+    /// and bottom, the now-line and its pill, so a DST shift never moves a
+    /// block (a 10:00 response sits at 10.0 on a 23- or 25-hour day too).
+    /// A time at or past the day's end reads as 24, before it as 0.
+    public static func clockOffset(_ date: Date, in day: DateInterval,
+                                   calendar: Calendar) -> TimeInterval {
+        if date >= day.end { return 24 }
+        if date < day.start { return 0 }
+        let c = calendar.dateComponents([.hour, .minute, .second], from: date)
+        return TimeInterval(c.hour ?? 0) + TimeInterval(c.minute ?? 0) / 60
+            + TimeInterval(c.second ?? 0) / 3600
     }
 }

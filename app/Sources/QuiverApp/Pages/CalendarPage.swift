@@ -26,9 +26,9 @@ private struct CalendarContent: View {
     /// session.
     @State private var detail: SessionsModel.Row?
     @State private var actionError: String?
-    /// Session rows by "harness|sessionId", rebuilt when the list reloads
-    /// so block titles and clicks are an O(1) lookup each render.
-    @State private var sessionIndex: [String: SessionsModel.Row] = [:]
+    /// Session rows indexed by account, rebuilt when the list reloads so
+    /// block titles and clicks are an O(1) lookup each render.
+    @State private var sessionIndex = CalendarSessionIndex(rows: [])
 
     private static let monthTitle: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
@@ -50,13 +50,13 @@ private struct CalendarContent: View {
         .task {
             await app.sessions?.restore()
             await app.sessions?.loadIfStale(for: app.swePath)
-            sessionIndex = index(app.sessions?.rows ?? [])
+            sessionIndex = CalendarSessionIndex(rows: app.sessions?.rows ?? [])
             await model.load()
         }
         .onChange(of: app.sessions?.rows ?? []) {
-            sessionIndex = index(app.sessions?.rows ?? [])
+            sessionIndex = CalendarSessionIndex(rows: app.sessions?.rows ?? [])
         }
-        .onChange(of: model.visibleRange.start) {
+        .onChange(of: model.visibleRange) {
             Task { await model.load() }
         }
         .onChange(of: app.overview?.completedScans ?? 0) {
@@ -134,8 +134,8 @@ private struct CalendarContent: View {
     private var grid: some View {
         VStack(spacing: 0) {
             dayHeaders
-            if let actionError {
-                ErrorCard(message: actionError).padding(8)
+            if let error = model.loadError ?? actionError {
+                ErrorCard(message: error).padding(8)
             }
             if model.visibleBlocks.isEmpty {
                 Spacer()
@@ -235,23 +235,19 @@ private struct CalendarContent: View {
         return Self.hourLabel.string(from: date)
     }
 
-    private func index(_ rows: [SessionsModel.Row]) -> [String: SessionsModel.Row] {
-        Dictionary(rows.map { ("\($0.session.harness)|\($0.session.id)", $0) },
-                   uniquingKeysWith: { first, _ in first })
+    /// The block's session row, or the index's stand-in when the session
+    /// is gone from the listing: its detail sheet still opens.
+    private func session(for block: ActivityBlock) -> SessionsModel.Row {
+        sessionIndex.row(for: block)
     }
 
     /// A block's title: its session's title, else the folder it ran in,
     /// else a short session id.
-    private func session(for block: ActivityBlock) -> SessionsModel.Row? {
-        sessionIndex["\(block.harness)|\(block.sessionId)"]
-    }
-
     private func title(for block: ActivityBlock) -> String {
-        if let row = session(for: block) {
-            if let title = row.session.title, !title.isEmpty { return title }
-            if let cwd = row.session.cwd, let last = cwd.split(separator: "/").last {
-                return String(last)
-            }
+        let row = session(for: block)
+        if let title = row.session.title, !title.isEmpty { return title }
+        if let cwd = row.session.cwd, let last = cwd.split(separator: "/").last {
+            return String(last)
         }
         return String(block.sessionId.prefix(8))
     }
@@ -325,11 +321,15 @@ private struct DayColumn: View {
     }
 
     private func blockHeight(_ segment: CalendarLayout.Segment) -> CGFloat {
-        max(18, CGFloat(segment.end.timeIntervalSince(segment.start) / 3600) * hourHeight)
+        max(18, CGFloat(CalendarLayout.clockOffset(segment.end, in: day, calendar: model.calendar)
+                        - CalendarLayout.clockOffset(segment.start, in: day, calendar: model.calendar))
+            * hourHeight)
     }
 
+    /// Clock hours into the day, not elapsed seconds: on a DST day the
+    /// hour a response happened still decides where its block sits.
     private func y(_ date: Date) -> CGFloat {
-        CGFloat(date.timeIntervalSince(day.start) / 3600) * hourHeight
+        CGFloat(CalendarLayout.clockOffset(date, in: day, calendar: model.calendar)) * hourHeight
     }
 }
 

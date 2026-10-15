@@ -515,6 +515,9 @@ struct SessionDetail: View {
                     .keyboardShortcut(.defaultAction)
                     .primaryButton()
                     .disabled(s.resume == nil)
+                    .help(s.resume == nil
+                          ? "This session is no longer in \(s.agent)'s history"
+                          : "Resume in terminal")
             }
         }
         .padding(24)

@@ -17,19 +17,23 @@ public struct ActivityBlock: Sendable, Equatable, Identifiable {
     public var end: Date
     /// How many responses the block holds.
     public var responses: Int
+    /// The session's working directory, when the ledger knows one: the
+    /// folder a block with no session title gets named by.
+    public var cwd: String?
 
     public var id: String {
         "\(harness)|\(accountHome)|\(sessionId)|\(start.timeIntervalSince1970)"
     }
 
     public init(harness: String, accountHome: String, sessionId: String,
-                start: Date, end: Date, responses: Int) {
+                start: Date, end: Date, responses: Int, cwd: String? = nil) {
         self.harness = harness
         self.accountHome = accountHome
         self.sessionId = sessionId
         self.start = start
         self.end = end
         self.responses = responses
+        self.cwd = cwd
     }
 }
 
@@ -40,15 +44,17 @@ public protocol ActivityProviding: Sendable {
     /// Every block overlapping `range`, whole: a block that straddles an
     /// edge keeps its real start and end. `gap` is the silence, in seconds,
     /// that splits one session's responses into separate blocks.
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) async -> [ActivityBlock]
+    /// Throws on a read failure; the model keeps the provider's last
+    /// good blocks and surfaces the error instead of an empty week.
+    func activityBlocks(in range: DateInterval, gap: TimeInterval) async throws -> [ActivityBlock]
 }
 
 extension Ledger: ActivityProviding {
     /// Blocks over the ledger's response rows. `events` only reaches back
     /// for logs the app still has, but rows the scanner already committed
     /// answer for as long as they persist.
-    public func activityBlocks(in range: DateInterval, gap: TimeInterval) -> [ActivityBlock] {
-        (try? store.activityBlocks(in: range, gap: gap)) ?? []
+    public func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+        try store.activityBlocks(in: range, gap: gap)
     }
 }
 
@@ -66,7 +72,7 @@ extension LedgerStore {
         let hi = range.end.timeIntervalSince1970 + Self.edgeLookout
         let statement = try db.prepare("""
             WITH ordered AS (
-                SELECT d.harness, d.account, d.session, e.ts,
+                SELECT d.harness, d.account, d.session, d.cwd, e.ts,
                        LAG(e.ts) OVER (
                            PARTITION BY d.harness, d.account, d.session
                            ORDER BY e.ts, e.key
@@ -74,13 +80,13 @@ extension LedgerStore {
                 FROM events e JOIN dims d ON d.id = e.dim
                 WHERE e.ts >= ? AND e.ts < ?
             ), numbered AS (
-                SELECT harness, account, session, ts,
+                SELECT harness, account, session, cwd, ts,
                        SUM(CASE WHEN prev IS NULL OR ts - prev > ? THEN 1 ELSE 0 END)
                            OVER (PARTITION BY harness, account, session
                                  ORDER BY ts) AS block
                 FROM ordered
             )
-            SELECT harness, account, session, MIN(ts), MAX(ts), COUNT(*)
+            SELECT harness, account, session, MIN(ts), MAX(ts), COUNT(*), MAX(cwd)
             FROM numbered
             GROUP BY harness, account, session, block
             ORDER BY MIN(ts)
@@ -96,7 +102,8 @@ extension LedgerStore {
                 sessionId: statement.text(2) ?? "",
                 start: Date(timeIntervalSince1970: start),
                 end: Date(timeIntervalSince1970: end),
-                responses: Int(statement.int(5))))
+                responses: Int(statement.int(5)),
+                cwd: statement.text(6)))
         }
         return blocks
     }

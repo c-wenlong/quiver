@@ -81,11 +81,15 @@ import Testing
     }
 
     @Test func aStretchedBlockIsStillClippedToTheDayEnd() {
-        let segments = CalendarLayout.segments(
-            [block("2026-10-05T23:55:00Z", "2026-10-05T23:55:00Z")], day: day,
-            minimumDuration: 22.5 * 60)
+        let block = block("2026-10-05T23:55:00Z", "2026-10-05T23:55:00Z")
+        let segments = CalendarLayout.segments([block], day: day,
+                                               minimumDuration: 22.5 * 60)
         #expect(segments.count == 1)
         #expect(segments[0].end == day.end)
+        // The stretch must not paint it onto the next day too.
+        let next = DateInterval(start: day.end, duration: 86_400)
+        #expect(CalendarLayout.segments([block], day: next,
+                                        minimumDuration: 22.5 * 60).isEmpty)
     }
 
     @Test func twoSeparateClustersKeepTheirOwnLaneCounts() {
@@ -95,5 +99,22 @@ import Testing
             block("2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z", session: "c"),
         ], day: day)
         #expect(segments.map(\.laneCount) == [2, 2, 1])
+    }
+
+    @Test func clockOffsetReadsClockTimeThroughDST() {
+        // 8 March 2026: America/New_York springs forward; a 10:00 event
+        // sits at clock hour 10 even though midnight is 9 hours away.
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York")!
+        let day = DateInterval(start: cal.startOfDay(for: utc("2026-03-08T15:00:00Z")),
+                               duration: 86_400)
+        let ten = cal.date(from: DateComponents(year: 2026, month: 3, day: 8,
+                                                hour: 10))!
+        #expect(CalendarLayout.clockOffset(ten, in: day, calendar: cal) == 10)
+        #expect(CalendarLayout.clockOffset(day.end, in: day, calendar: cal) == 24)
+        #expect(CalendarLayout.clockOffset(day.start, in: day, calendar: cal) == 0)
+        // Half past ten is ten and a half.
+        let half = ten.addingTimeInterval(30 * 60)
+        #expect(CalendarLayout.clockOffset(half, in: day, calendar: cal) == 10.5)
     }
 }

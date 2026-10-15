@@ -5,8 +5,23 @@ import Testing
 private struct FakeActivity: ActivityProviding {
     var blocks: [ActivityBlock]
     /// Like the ledger, only blocks overlapping the range come back.
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) -> [ActivityBlock] {
+    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
         blocks.filter { $0.end >= range.start && $0.start < range.end }
+    }
+}
+
+private final class Flag: @unchecked Sendable { var value = false }
+
+/// A provider the test can flip between a reading and a failure.
+private struct TogglingActivity: ActivityProviding {
+    struct Failure: LocalizedError {
+        var errorDescription: String? { "ledger read failed" }
+    }
+    var blocks: [ActivityBlock]
+    var fails: Flag
+    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+        if fails.value { throw Failure() }
+        return blocks.filter { $0.end >= range.start && $0.start < range.end }
     }
 }
 
@@ -130,6 +145,28 @@ private struct FakeActivity: ActivityProviding {
         #expect(model.accountName(for: "/unknown") == "Default")
     }
 
+    @Test func aFailingProviderKeepsItsLastBlocksAndReportsTheError() async {
+        let fail = Flag()
+        let provider = TogglingActivity(
+            blocks: [block("2026-10-14T09:00:00Z")], fails: fail)
+        var cal = calendar; cal.firstWeekday = 2
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: cal)
+        await model.load()
+        #expect(model.blocks.count == 1)
+        #expect(model.loadError == nil)
+
+        fail.value = true
+        await model.load()
+        // The last good blocks stay; the error is on the model.
+        #expect(model.blocks.count == 1)
+        #expect(model.loadError == "ledger read failed")
+
+        fail.value = false
+        await model.load()
+        #expect(model.loadError == nil)
+    }
+
     @Test func hiddenSetsPersistAcrossModels() async {
         let defaults = freshDefaults()
         let first = model(defaults: defaults)
@@ -139,5 +176,60 @@ private struct FakeActivity: ActivityProviding {
         let second = model(defaults: defaults)
         #expect(second.hiddenHarnesses == ["codex"])
         #expect(second.hiddenAccounts == ["claude|/work"])
+    }
+}
+
+/// `CalendarSessionIndex`: one session id in two accounts resolves each
+/// block to its own account's row.
+@Suite struct CalendarSessionIndexTests {
+    private func row(home: String?, session: String = "s") -> SessionsModel.Row {
+        let usage = home.map {
+            SessionUsage(sessionId: session, harness: "claude", accountHome: $0,
+                         cwd: nil, models: [], totals: UsageTotals(),
+                         firstTimestamp: utc("2026-10-14T09:00:00Z"),
+                         lastTimestamp: utc("2026-10-14T09:30:00Z"))
+        }
+        return SessionsModel.Row(
+            session: SessionInfo(id: session, harness: "claude", agent: "claude",
+                                 cwd: home, title: "Session \(home ?? "default")",
+                                 titleSource: nil, lastActiveAt: utc("2026-10-14T09:30:00Z"),
+                                 status: nil, resume: nil),
+            usage: usage,
+            id: "\(home ?? "")|\(session)")
+    }
+
+    private func block(home: String) -> ActivityBlock {
+        ActivityBlock(harness: "claude", accountHome: home, sessionId: "s",
+                      start: utc("2026-10-14T09:00:00Z"),
+                      end: utc("2026-10-14T09:05:00Z"), responses: 1)
+    }
+
+    @Test func theSameSessionIdInTwoAccountsResolvesEachBlock() {
+        let index = CalendarSessionIndex(rows: [row(home: "/h"), row(home: "/work")])
+        #expect(index.row(for: block(home: "/h")).usage?.accountHome == "/h")
+        #expect(index.row(for: block(home: "/work")).usage?.accountHome == "/work")
+    }
+
+    @Test func aRowWithoutUsageIsTheFallbackOnly() {
+        let index = CalendarSessionIndex(rows: [row(home: nil)])
+        // No account-specific row: the fallback answers.
+        #expect(index.row(for: block(home: "/h")).session.title == "Session default")
+        // An account-specific row wins over the fallback.
+        let both = CalendarSessionIndex(rows: [row(home: nil), row(home: "/work")])
+        #expect(both.row(for: block(home: "/work")).usage?.accountHome == "/work")
+        #expect(both.row(for: block(home: "/h")).session.title == "Session default")
+    }
+
+    @Test func anUnlistedSessionGetsAStandInRow() {
+        let index = CalendarSessionIndex(rows: [])
+        let row = index.row(for: ActivityBlock(
+            harness: "claude", accountHome: "/h", sessionId: "gone",
+            start: utc("2026-10-14T09:00:00Z"), end: utc("2026-10-14T09:10:00Z"),
+            responses: 2, cwd: "/work/project"))
+        #expect(row.session.id == "gone")
+        #expect(row.session.cwd == "/work/project")
+        #expect(row.session.resume == nil)
+        #expect(row.usage == nil)
+        #expect(row.id.contains("gone"))
     }
 }

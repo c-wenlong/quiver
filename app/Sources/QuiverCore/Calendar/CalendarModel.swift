@@ -19,6 +19,9 @@ public final class CalendarModel {
     /// Every block the providers reported for the visible range, before
     /// the legend's hidden toggles apply. `visibleBlocks` is the grid's.
     public private(set) var blocks: [ActivityBlock] = []
+    /// The last provider read that failed; nil once every provider read
+    /// cleanly. Failed providers keep their last good blocks meanwhile.
+    public private(set) var loadError: String?
     /// Harnesses hidden in the legend: every account of one goes with it.
     public private(set) var hiddenHarnesses: Set<String>
     /// "harness|accountHome" pairs hidden on their own.
@@ -30,6 +33,9 @@ public final class CalendarModel {
     private let now: () -> Date
     public let calendar: Calendar
     private var generation = 0
+    /// Each provider's last successful read, so one bad fetch does not
+    /// blank its blocks for the range.
+    private var lastGood: [Int: [ActivityBlock]] = [:]
 
     static let hiddenHarnessesKey = "calendar.hiddenHarnesses"
     static let hiddenAccountsKey = "calendar.hiddenAccounts"
@@ -88,21 +94,41 @@ public final class CalendarModel {
     }
 
     /// Fetch every provider's blocks for the visible range concurrently. A
+    /// provider that fails keeps its last good blocks (the ones overlapping
+    /// this range) and sets `loadError`; a fully clean pass clears it. A
     /// load that lands while a newer one is running is dropped.
     public func load() async {
         generation += 1
         let mine = generation
         let range = visibleRange
-        let all = await withTaskGroup(of: [ActivityBlock].self) { group -> [ActivityBlock] in
-            for provider in providers {
-                group.addTask { await provider.activityBlocks(in: range, gap: Self.gap) }
+        var all: [ActivityBlock] = []
+        var failed: String?
+        await withTaskGroup(of: (Int, Result<[ActivityBlock], Error>).self) { group in
+            for (i, provider) in providers.enumerated() {
+                group.addTask {
+                    do {
+                        return (i, .success(try await provider.activityBlocks(in: range, gap: Self.gap)))
+                    } catch {
+                        return (i, .failure(error))
+                    }
+                }
             }
-            var blocks: [ActivityBlock] = []
-            for await batch in group { blocks += batch }
-            return blocks
+            for await (i, result) in group {
+                switch result {
+                case .success(let batch):
+                    lastGood[i] = batch
+                    all += batch
+                case .failure(let error):
+                    all += (lastGood[i] ?? []).filter {
+                        $0.end >= range.start && $0.start < range.end
+                    }
+                    failed = error.localizedDescription
+                }
+            }
         }
         guard mine == generation else { return }
         blocks = all.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
+        loadError = failed
     }
 
     /// The grid's input: blocks whose harness and account are both shown.
