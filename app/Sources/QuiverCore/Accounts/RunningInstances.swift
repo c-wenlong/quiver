@@ -21,7 +21,8 @@ public struct RunningInstance: Equatable, Sendable {
 public protocol RunningInstances {
     /// Every running process that belongs to the app bundle at `path`.
     func instances(ofAppAt path: String) -> [RunningInstance]
-    /// Focuses one already-running instance; a dead pid is ignored.
+    /// Focuses one already-running instance and asks it to reopen a window
+    /// (the same reopen event `open -a` sends); a dead pid is ignored.
     func activate(pid: Int32)
 }
 
@@ -50,5 +51,18 @@ public struct AppRunningInstances: RunningInstances {
         guard let app = NSRunningApplication(processIdentifier: pid) else { return }
         NSApp.yieldActivation(to: app)
         app.activate()
+        // Activation alone leaves a windowless instance showing nothing;
+        // `open -a` also sends a reopen ('aevt'/'rapp'), so do the same. The
+        // result is ignored: core events don't need Automation consent, and
+        // the no-prompt flag is a guard, not a request.
+        let event = NSAppleEventDescriptor(
+            eventClass: AEEventClass(kCoreEventClass),
+            eventID: AEEventID(kAEReopenApplication),
+            targetDescriptor: NSAppleEventDescriptor(processIdentifier: pid),
+            returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID))
+        AESendMessage(event.aeDesc, nil,
+                      AESendMode(kAENoReply | kAEDoNotPromptForUserConsent),
+                      kAEDefaultTimeout)
     }
 }
