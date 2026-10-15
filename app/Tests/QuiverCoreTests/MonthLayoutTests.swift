@@ -12,11 +12,14 @@ import Testing
 
     private func block(_ start: String, minutes: Int = 60,
                        harness: String = "claude", home: String = "/h",
-                       session: String = "s") -> ActivityBlock {
+                       session: String = "s", project: String? = nil) -> ActivityBlock {
         let start = utc(start)
-        return ActivityBlock(harness: harness, accountHome: home, sessionId: session,
-                             start: start, end: start.addingTimeInterval(TimeInterval(minutes * 60)),
-                             responses: 1)
+        var block = ActivityBlock(harness: harness, accountHome: home, sessionId: session,
+                                  start: start,
+                                  end: start.addingTimeInterval(TimeInterval(minutes * 60)),
+                                  responses: 1)
+        block.project = project ?? session
+        return block
     }
 
     @Test func octoberOnAMondayFirstCalendarStartsSeptember28() {
@@ -34,7 +37,7 @@ import Testing
         #expect(weeks[0][0] == utc("2026-09-27T00:00:00Z"))
     }
 
-    @Test func twoBlocksOfOneSessionJoinOneEntry() {
+    @Test func twoBlocksOfOneProjectJoinOneEntry() {
         let day = DateInterval(start: utc("2026-10-14T00:00:00Z"),
                                end: utc("2026-10-15T00:00:00Z"))
         let entries = MonthLayout.entries(
@@ -58,13 +61,13 @@ import Testing
         #expect(second[0].start == day2.start)
     }
 
-    @Test func sessionsSortByStartAndStayApart() {
+    @Test func projectsSortByStartAndStayApart() {
         let day = DateInterval(start: utc("2026-10-14T00:00:00Z"),
                                end: utc("2026-10-15T00:00:00Z"))
         let entries = MonthLayout.entries(
             [block("2026-10-14T14:00:00Z", session: "b"),
              block("2026-10-14T09:00:00Z", session: "a")], day: day)
-        #expect(entries.map(\.block.sessionId) == ["a", "b"])
+        #expect(entries.map(\.block.project) == ["a", "b"])
     }
 
     @Test func splitReservesALineForMore() {

@@ -55,11 +55,15 @@ private struct TogglingActivity: ActivityProviding {
 
     private func block(_ start: String, minutes: Int = 60,
                        harness: String = "claude", home: String = "/h",
-                       session: String = "s") -> ActivityBlock {
+                       session: String = "s", project: String? = nil,
+                       cwd: String? = nil) -> ActivityBlock {
         let start = utc(start)
-        return ActivityBlock(harness: harness, accountHome: home, sessionId: session,
-                             start: start, end: start.addingTimeInterval(TimeInterval(minutes * 60)),
-                             responses: 1)
+        var block = ActivityBlock(harness: harness, accountHome: home, sessionId: session,
+                                  start: start,
+                                  end: start.addingTimeInterval(TimeInterval(minutes * 60)),
+                                  responses: 1, cwd: cwd)
+        block.project = project ?? session
+        return block
     }
 
     @Test func theWeekRangeStartsOnTheUsersFirstWeekday() async {
@@ -123,6 +127,20 @@ private struct TogglingActivity: ActivityProviding {
         await model.load()
         #expect((model.totals["claude"] ?? 0) == 14_400)
         #expect(model.totals["codex"] == 3_600)
+    }
+
+    @Test func totalsAreWallClockUnionAcrossProjects() async {
+        let model = model(blocks: [
+            // Two projects of the same harness overlapping in time:
+            // the hour they share counts once.
+            block("2026-10-14T09:00:00Z", minutes: 120, project: "one"),
+            block("2026-10-14T09:30:00Z", minutes: 120, session: "p2", project: "two"),
+            block("2026-10-14T13:00:00Z", harness: "codex", session: "c"),
+        ])
+        await model.load()
+        #expect((model.totals["claude"] ?? 0) == 9_000)  // 09:00–11:30
+        #expect(model.totals["codex"] == 3_600)
+        #expect(model.accountTotals(for: "claude")["/h"] == 9_000)
     }
 
     @Test func accountsListOnlyHomesWithActivityInTheRange() async {
@@ -206,28 +224,52 @@ private struct TogglingActivity: ActivityProviding {
                       end: utc("2026-10-14T09:05:00Z"), responses: 1)
     }
 
+    private func found(_ index: CalendarSessionIndex, home: String) -> SessionsModel.Row {
+        index.row(for: block(home: home).sessions[0], harness: "claude", accountHome: home)
+    }
+
     @Test func theSameSessionIdInTwoAccountsResolvesEachBlock() {
         let index = CalendarSessionIndex(rows: [row(home: "/h"), row(home: "/work")])
-        #expect(index.row(for: block(home: "/h")).usage?.accountHome == "/h")
-        #expect(index.row(for: block(home: "/work")).usage?.accountHome == "/work")
+        #expect(found(index, home: "/h").usage?.accountHome == "/h")
+        #expect(found(index, home: "/work").usage?.accountHome == "/work")
     }
 
     @Test func aRowWithoutUsageIsTheFallbackOnly() {
         let index = CalendarSessionIndex(rows: [row(home: nil)])
         // No account-specific row: the fallback answers.
-        #expect(index.row(for: block(home: "/h")).session.title == "Session default")
+        #expect(found(index, home: "/h").session.title == "Session default")
         // An account-specific row wins over the fallback.
         let both = CalendarSessionIndex(rows: [row(home: nil), row(home: "/work")])
-        #expect(both.row(for: block(home: "/work")).usage?.accountHome == "/work")
-        #expect(both.row(for: block(home: "/h")).session.title == "Session default")
+        #expect(found(both, home: "/work").usage?.accountHome == "/work")
+        #expect(found(both, home: "/h").session.title == "Session default")
+    }
+
+    @Test func rowsForAMultiSessionBlockComeBackSorted() {
+        let index = CalendarSessionIndex(rows: [row(home: "/h")])
+        let block = ActivityBlock(
+            harness: "claude", accountHome: "/h", project: "p",
+            sessions: [
+                .init(sessionId: "late", start: utc("2026-10-14T10:00:00Z"),
+                      end: utc("2026-10-14T10:30:00Z"), responses: 2),
+                .init(sessionId: "s", cwd: "/work",
+                      start: utc("2026-10-14T09:00:00Z"),
+                      end: utc("2026-10-14T09:30:00Z"), responses: 1),
+            ],
+            start: utc("2026-10-14T09:00:00Z"), end: utc("2026-10-14T10:30:00Z"),
+            responses: 3)
+        let rows = index.rows(for: block)
+        #expect(rows.map(\.ref.sessionId) == ["s", "late"])
+        #expect(rows[0].row.session.title == "Session /h")
+        #expect(rows[1].row.session.title == nil)
+        #expect(rows[1].row.session.id == "late")
     }
 
     @Test func anUnlistedSessionGetsAStandInRow() {
         let index = CalendarSessionIndex(rows: [])
-        let row = index.row(for: ActivityBlock(
-            harness: "claude", accountHome: "/h", sessionId: "gone",
-            start: utc("2026-10-14T09:00:00Z"), end: utc("2026-10-14T09:10:00Z"),
-            responses: 2, cwd: "/work/project"))
+        let ref = ActivityBlock.SessionRef(sessionId: "gone", cwd: "/work/project",
+                                           start: utc("2026-10-14T09:00:00Z"),
+                                           end: utc("2026-10-14T09:10:00Z"), responses: 2)
+        let row = index.row(for: ref, harness: "claude", accountHome: "/h")
         #expect(row.session.id == "gone")
         #expect(row.session.cwd == "/work/project")
         #expect(row.session.resume == nil)
@@ -315,10 +357,14 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         return defaults
     }
 
-    private func block(_ start: String, session: String = "s") -> ActivityBlock {
+    private func block(_ start: String, session: String = "s",
+                       project: String? = nil, cwd: String? = nil) -> ActivityBlock {
         let start = utc(start)
-        return ActivityBlock(harness: "claude", accountHome: "/h", sessionId: session,
-                             start: start, end: start.addingTimeInterval(3600), responses: 1)
+        var block = ActivityBlock(harness: "claude", accountHome: "/h", sessionId: session,
+                                  start: start, end: start.addingTimeInterval(3600),
+                                  responses: 1, cwd: cwd)
+        block.project = project ?? session
+        return block
     }
 
     @Test func aRestoredSnapshotPaintsBeforeTheLoadLands() async {
@@ -346,13 +392,13 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         await model.load()
-        #expect(model.blocks.map(\.sessionId) == ["now"])
+        #expect(model.blocks.map(\.project) == ["now"])
         // Give the utility-priority prefetch tasks a moment.
         try await Task.sleep(for: .milliseconds(300))
         // Moving back a week publishes from the cache: the blocks appear
         // before the provider's load could run again.
         model.previous()
-        #expect(model.blocks.map(\.sessionId) == ["prev"])
+        #expect(model.blocks.map(\.project) == ["prev"])
     }
 
     @Test func aCompletedScanKeepsStaleBlocksUntilTheRefetchLands() async {
@@ -404,7 +450,7 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         let month = DateInterval(start: utc("2026-10-05T00:00:00Z"),
                                  end: utc("2026-11-02T00:00:00Z"))
         await model.load(range: month, force: false)
-        #expect(model.blocks.map(\.sessionId) == ["a", "b"])
+        #expect(model.blocks.map(\.project) == ["a", "b"])
         // The long range is cached like any other: a reload paints it
         // synchronously even with a provider that never answers.
         let held = HeldActivity(blocks: [])
@@ -462,13 +508,13 @@ extension CalendarCacheTests {
         model.next()
         #expect(model.visibleRange == nextWeek)
         await model.load(force: true)
-        #expect(model.blocks.map(\.sessionId) == ["fresh"])
+        #expect(model.blocks.map(\.project) == ["fresh"])
         // Let the prefetch land: the fresh write wins.
         provider.holdPrefetch = false
         provider.release()
         try await Task.sleep(for: .milliseconds(200))
         await model.load(force: true)
-        #expect(model.blocks.map(\.sessionId) == ["fresh"])
+        #expect(model.blocks.map(\.project) == ["fresh"])
     }
 }
 
@@ -494,7 +540,26 @@ extension CalendarCacheTests {
         model.previous()
         // The stale cache paints synchronously and must still hold both
         // providers' blocks.
-        #expect(model.blocks.map(\.sessionId).sorted() == ["a", "b"])
+        #expect(model.blocks.map(\.project).sorted() == ["a", "b"])
+    }
+
+    @Test func aSnapshotFromAnOlderVersionIsDiscarded() throws {
+        let temp = FileManager.default.temporaryDirectory
+            .appending(path: "calendar-snap-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        // The version-1 shape: per-session blocks, no project/sessions.
+        let old = """
+            {"version":1,"savedAt":778000000,
+             "ranges":[{"start":778000000,"end":778600000,
+              "providers":{"0":[{"harness":"claude","accountHome":"/h",
+                "sessionId":"s","start":778000000,"end":778003600,
+                "responses":2,"cwd":"/w"}]}}]}
+            """
+        let url = temp.appending(path: "app-calendar.json")
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        try old.write(to: url, atomically: true, encoding: .utf8)
+        #expect(SnapshotFile<CalendarSnapshot>(url: url).load() == nil)
+        #expect(CalendarSnapshot.currentVersion == 2)
     }
 
     @Test func aRestoredSnapshotFillsBlocksBeforeAnyLoad() {

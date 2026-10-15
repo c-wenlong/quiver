@@ -101,46 +101,53 @@ struct HoverExpansionTests {
                        exitDelay: .milliseconds(40))
     }
 
+    /// Polls until the delayed hover task lands; the main actor can be
+    /// busy under a full parallel run, so fixed sleeps are not enough.
+    private func wait(until condition: () -> Bool,
+                      timeout: Duration = .seconds(2)) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return condition()
+    }
+
     @Test func enteringACollapsedRailExpandsAfterTheDelay() async {
         let hover = rail()
         hover.hover(true, collapsed: true)
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
-        try? await Task.sleep(for: .milliseconds(60))
+        #expect(await wait { hover.isFloating })
         #expect(hover.isExpanded)
-        #expect(hover.isFloating)
     }
 
     @Test func leavingBeforeTheEntryDelayNeverExpands() async {
         let hover = rail()
         hover.hover(true, collapsed: true)
         hover.hover(false, collapsed: true)
-        try? await Task.sleep(for: .milliseconds(60))
-        #expect(!hover.isExpanded)
+        #expect(await !wait(until: { hover.isExpanded },
+                            timeout: .milliseconds(200)))
         #expect(!hover.isFloating)
     }
 
     @Test func leavingAFloatHidesItAndAReturnKeepsIt() async {
         let hover = rail()
         hover.hover(true, collapsed: true)
-        try? await Task.sleep(for: .milliseconds(60))
-        #expect(hover.isFloating)
+        #expect(await wait { hover.isFloating })
 
         // Out for the full exit delay: hidden.
         hover.hover(false, collapsed: true)
         #expect(hover.isExpanded) // still shown during the delay
-        try? await Task.sleep(for: .milliseconds(80))
-        #expect(!hover.isExpanded)
+        #expect(await wait { !hover.isExpanded })
 
         // A return inside the exit delay cancels the hide.
         hover.hover(true, collapsed: true)
-        try? await Task.sleep(for: .milliseconds(60))
-        #expect(hover.isFloating)
+        #expect(await wait { hover.isFloating })
         hover.hover(false, collapsed: true)
-        try? await Task.sleep(for: .milliseconds(20))
+        try? await Task.sleep(for: .milliseconds(10))
         hover.hover(true, collapsed: true)
-        try? await Task.sleep(for: .milliseconds(60))
-        #expect(hover.isExpanded)
+        #expect(await wait { hover.isExpanded })
         #expect(hover.isFloating)
     }
 
@@ -155,7 +162,7 @@ struct HoverExpansionTests {
         hover.toggle()
         #expect(hover.expansion.collapsed)
         #expect(!hover.isExpanded)
-        try? await Task.sleep(for: .milliseconds(80))
+        try? await Task.sleep(for: .milliseconds(200))
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }
@@ -171,7 +178,7 @@ struct HoverExpansionTests {
         hover.toggle()
         #expect(hover.expansion.collapsed)
         #expect(!hover.isExpanded)
-        try? await Task.sleep(for: .milliseconds(80))
+        try? await Task.sleep(for: .milliseconds(200))
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }

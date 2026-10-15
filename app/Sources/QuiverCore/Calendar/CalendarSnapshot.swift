@@ -6,7 +6,7 @@ import os
 /// `~/.quiver/cache/app-calendar.json`; an out-of-date shape is ignored
 /// like every other snapshot.
 public struct CalendarSnapshot: SnapshotContent, Equatable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
     public var version = Self.currentVersion
     public var savedAt = Date()
 

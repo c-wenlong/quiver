@@ -30,10 +30,10 @@ public enum MonthLayout {
         return DateInterval(start: start, end: end)
     }
 
-    /// One session's activity inside a day: the row a month cell shows.
+    /// One project's activity inside a day: the row a month cell shows.
     public struct Entry: Equatable, Sendable, Identifiable {
-        /// The session's earliest block overlapping the day: carries the
-        /// harness, account and session id the row opens and colours by.
+        /// The project's earliest block overlapping the day: carries the
+        /// harness, account and sessions the row opens and colours by.
         public let block: ActivityBlock
         /// Its first block's start that day, clipped to the day.
         public let start: Date
@@ -43,18 +43,18 @@ public enum MonthLayout {
         public let blockCount: Int
 
         public var id: String {
-            "\(block.harness)|\(block.accountHome)|\(block.sessionId)|\(start.timeIntervalSince1970)"
+            "\(block.harness)|\(block.accountHome)|\(block.project)|\(start.timeIntervalSince1970)"
         }
     }
 
-    /// One entry per harness+account+session with blocks overlapping the
+    /// One entry per harness+account+project with blocks overlapping the
     /// day, sorted by the first block's start. A block running across
     /// midnight contributes its clipped share to both days' sums.
     public static func entries(_ blocks: [ActivityBlock], day: DateInterval) -> [Entry] {
         var grouped: [String: (earliest: ActivityBlock, start: Date,
                                active: TimeInterval, count: Int)] = [:]
         for block in blocks where block.start < day.end && block.end >= day.start {
-            let key = "\(block.harness)|\(block.accountHome)|\(block.sessionId)"
+            let key = "\(block.harness)|\(block.accountHome)|\(block.project)"
             let clippedStart = max(block.start, day.start)
             let clipped = min(block.end, day.end).timeIntervalSince(clippedStart)
             if var group = grouped[key] {

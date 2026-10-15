@@ -26,6 +26,8 @@ private struct CalendarContent: View {
     /// The session detail sheet's row, when a block resolves to a listed
     /// session.
     @State private var detail: SessionsModel.Row?
+    /// A project block holding several sessions: its sheet lists them.
+    @State private var projectDetail: ActivityBlock?
     @State private var actionError: String?
     /// Session rows indexed by account, rebuilt when the list reloads so
     /// block titles and clicks are an O(1) lookup each render.
@@ -127,6 +129,11 @@ private struct CalendarContent: View {
             SessionDetail(row: row,
                           resume: { resume(row) },
                           close: { detail = nil })
+        }
+        .sheet(item: $projectDetail) { block in
+            ProjectSessionsSheet(block: block, model: model,
+                                 rows: sessionIndex.rows(for: block),
+                                 resume: resume)
         }
         .onChange(of: detail == nil) {
             // The sheet takes key focus; take it back when it closes.
@@ -422,25 +429,26 @@ private struct CalendarContent: View {
         return Self.hourLabel.string(from: date)
     }
 
-    /// The block's session row, or the index's stand-in when the session
-    /// is gone from the listing: its detail sheet still opens.
-    private func session(for block: ActivityBlock) -> SessionsModel.Row {
-        sessionIndex.row(for: block)
+    /// The session's row, or the index's stand-in when the session is
+    /// gone from the listing: its detail sheet still opens.
+    private func session(for ref: ActivityBlock.SessionRef,
+                         in block: ActivityBlock) -> SessionsModel.Row {
+        sessionIndex.row(for: ref, harness: block.harness, accountHome: block.accountHome)
     }
 
-    /// A block's title: its session's title, else the folder it ran in,
-    /// else a short session id.
+    /// A block's title is its project; sessions show inside its sheet.
     private func title(for block: ActivityBlock) -> String {
-        let row = session(for: block)
-        if let title = row.session.title, !title.isEmpty { return title }
-        if let cwd = row.session.cwd, let last = cwd.split(separator: "/").last {
-            return String(last)
-        }
-        return String(block.sessionId.prefix(8))
+        block.project
     }
 
+    /// One session opens its detail straight away; several open the
+    /// project's session list first.
     private func open(_ block: ActivityBlock) {
-        detail = session(for: block)
+        if block.sessions.count == 1, let ref = block.sessions.first {
+            detail = session(for: ref, in: block)
+        } else {
+            projectDetail = block
+        }
     }
 
     private func color(for block: ActivityBlock) -> Color {
@@ -521,7 +529,7 @@ private struct DayColumn: View {
 }
 
 /// One activity block: rounded fill in the harness colour at low opacity,
-/// a full-colour left bar, the session title and its time range when it is
+/// a full-colour left bar, the project name and its time range when it is
 /// tall enough.
 private struct BlockView: View {
     var segment: CalendarLayout.Segment
@@ -562,7 +570,7 @@ private struct BlockView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-        .help("\(segment.block.harness.capitalized) · \(account)\n\(title)\n\(timeRange) · \(duration) · \(segment.block.responses) responses")
+        .help("\(segment.block.harness.capitalized) · \(account)\n\(title)\n\(timeRange) · \(duration) · \(segment.block.sessions.count) session\(segment.block.sessions.count == 1 ? "" : "s") · \(segment.block.responses) responses")
         .accessibilityElement()
         .accessibilityLabel("\(segment.block.harness), \(title), \(timeRange)")
     }
@@ -807,8 +815,8 @@ private struct MonthCell: View {
     }
 }
 
-/// One session row in a month cell: a harness-coloured bar, the first
-/// block's start, and the session title on one line.
+/// One project row in a month cell: a harness-coloured bar, the first
+/// block's start, and the project name on one line.
 private struct MonthEntry: View {
     var entry: MonthLayout.Entry
     var model: CalendarModel
@@ -837,8 +845,77 @@ private struct MonthEntry: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .help("\(UsageFormat.harness(entry.block.harness)) · "
               + "\(model.accountName(for: entry.block.accountHome))\n\(title)\n"
-              + "\(active) active · \(entry.blockCount) block\(entry.blockCount == 1 ? "" : "s")")
+              + "\(active) active · \(entry.block.sessions.count) session\(entry.block.sessions.count == 1 ? "" : "s")"
+              + " · \(entry.blockCount) block\(entry.blockCount == 1 ? "" : "s")")
         .accessibilityElement()
         .accessibilityLabel("\(UsageFormat.harness(entry.block.harness)), \(title), \(active)")
+    }
+}
+
+/// The sheet a multi-session block opens: the project's sessions, each
+/// with its title (or short id), its time inside the block and its
+/// response count; a row's chevron opens the session's own detail.
+private struct ProjectSessionsSheet: View {
+    var block: ActivityBlock
+    var model: CalendarModel
+    var rows: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)]
+    var resume: (SessionsModel.Row) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var detail: SessionsModel.Row?
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                HarnessIcon(harness: HarnessMark(block.harness).icon ?? block.harness, size: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(block.project).font(Theme.sectionTitle).tracking(-0.5)
+                    Text("\(Self.clock.string(from: block.start))–\(Self.clock.string(from: block.end)) · "
+                         + "\(block.sessions.count) session\(block.sessions.count == 1 ? "" : "s")")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+            }
+            VStack(spacing: 0) {
+                ForEach(rows, id: \.ref.sessionId) { item in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.row.session.title ?? String(item.ref.sessionId.prefix(8)))
+                                .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            Text("\(Self.clock.string(from: item.ref.start))–\(Self.clock.string(from: item.ref.end)) · "
+                                 + "\(item.ref.responses) response\(item.ref.responses == 1 ? "" : "s")")
+                                .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer()
+                        Button { detail = item.row } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open session")
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Theme.border).frame(height: 1)
+                            .opacity(item.ref.sessionId == rows.last?.ref.sessionId ? 0 : 1)
+                    }
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .sheet(item: $detail) { row in
+            SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
+        }
     }
 }
