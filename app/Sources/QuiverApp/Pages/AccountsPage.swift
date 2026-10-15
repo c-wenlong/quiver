@@ -59,6 +59,8 @@ struct AccountsPage: View {
                     do {
                         let profile = try await model.add(vendor: vendor, name: name, color: color)
                         perform { try await model.signIn(profile) }
+                        // Extra Devin/Cursor accounts are harness cards, built by `others`.
+                        if !vendor.hasDefaultProfile { await app.others.load() }
                     } catch {
                         actionError = error.localizedDescription
                     }
