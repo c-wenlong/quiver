@@ -184,6 +184,8 @@ private struct CalendarContent: View {
                                     .id("grid")
                             }
                             .onAppear { scrollToFirstBlock(proxy) }
+                            // Month view replaces this grid; coming back must scroll again.
+                            .onDisappear { scrolledRange = nil }
                             .onChange(of: model.visibleBlocks.isEmpty) {
                                 scrollToFirstBlock(proxy)
                             }
