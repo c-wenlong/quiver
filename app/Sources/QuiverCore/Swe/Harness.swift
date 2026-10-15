@@ -75,7 +75,8 @@ public struct RateLimit: Codable, Sendable, Equatable {
     public var fetchedAt: Date?
     /// Every window the provider reported (Devin's 1d and 7d, Cursor's
     /// included, auto and api); nil from an older swe, or a tool with one.
-    public let windows: [Window]?
+    /// Var so an outage fallback can mark the kept values unread.
+    public var windows: [Window]?
     /// Prepaid usage left beyond the plan, in USD (Devin's extra usage balance).
     public let extraUsageUSD: Double?
     /// Usage billed beyond the plan (Cursor's on-demand), nil when not reported.
@@ -169,6 +170,20 @@ public struct RateLimit: Codable, Sendable, Equatable {
     public var allWindows: [Window] {
         if let windows, !windows.isEmpty { return windows }
         return [Window(window: window ?? "", usedPercent: usedPercent, resetAt: resetAt, windowSeconds: windowSeconds)]
+    }
+
+    /// The reading as swe reports one kept after a failed fetch: same
+    /// status and last-known figures, every window flagged `unavailable`
+    /// with the original read time as `as_of`. Readers (LimitReading, the
+    /// cards) then treat it exactly like swe's own outage fallback.
+    public func markedUnavailable() -> RateLimit {
+        var copy = self
+        copy.windows = allWindows.map { window in
+            Window(window: window.window, usedPercent: window.usedPercent,
+                   resetAt: window.resetAt, windowSeconds: window.windowSeconds,
+                   unavailable: true, asOf: window.asOf ?? fetchedAt)
+        }
+        return copy
     }
 
     enum CodingKeys: String, CodingKey {

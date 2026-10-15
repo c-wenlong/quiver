@@ -398,7 +398,8 @@ public final class OtherLimitsModel {
     private func needsFetch(_ reading: ExtraReading?, force: Bool, refreshFailed: Bool) -> Bool {
         if force { return true }
         guard let reading else { return true }
-        if refreshFailed { return reading.failed }
+        // Inside the refresh window a Refresh-press re-checks only the
+        // failures; anything older than the window is re-read anyway.
         return reading.failed || Date().timeIntervalSince(reading.fetchedAt) > acceptedCacheTTL
     }
 
@@ -443,8 +444,10 @@ public final class OtherLimitsModel {
                             || message.localizedCaseInsensitiveContains("unknown argument") {
                         return (profile.id, nil)
                     } catch {
-                        // Keep the last good reading if there was one, just marked failed.
-                        return (profile.id, ExtraReading(limit: reading?.limit,
+                        // Keep the last good reading if there was one, marked
+                        // failed and published as unavailable so LimitReading
+                        // and the cards treat it like swe's outage fallback.
+                        return (profile.id, ExtraReading(limit: reading?.limit?.markedUnavailable(),
                                                          fetchedAt: reading?.fetchedAt ?? .now,
                                                          failed: true))
                     }

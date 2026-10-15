@@ -266,6 +266,64 @@ final class LockedRunner: CommandRunning, @unchecked Sendable {
         #expect(runner.count(["harness", "usage"]) == 2)
     }
 
+    @Test func refreshFailedReReadsAnExpiredReadingAndSkipsAFreshOne() async {
+        // Inside the refresh window only failures are re-checked; a
+        // reading older than the window is re-read even when it succeeded.
+        let devin = profile(.devin, "devin-work")
+        let runner = LockedRunner([
+            (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+            (["harness", "usage"], devinUsage),
+        ])
+        let model = model(runner) { [(devin, self.paths("devin-work"))] }
+        model.cacheTTL = 0
+        await model.load()
+        // cacheTTL zero means the just-taken reading is already expired.
+        await model.load(refreshFailed: true)
+        #expect(runner.count(["harness", "usage"]) == 2)
+        // The re-read is fresh again, so another Refresh-press skips it.
+        model.cacheTTL = 3600
+        await model.load(refreshFailed: true)
+        #expect(runner.count(["harness", "usage"]) == 2)
+    }
+
+    @Test func aFailedFetchPublishesTheKeptReadingAsUnavailable() async {
+        // A fetch error after a good read keeps the old figures but marks
+        // every window unavailable, the way swe's outage fallback does:
+        // LimitReadings come out stale and the cards grey them.
+        let devin = profile(.devin, "devin-work")
+        let runner = LockedRunner([
+            (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+            (["harness", "usage"], devinUsage),
+        ])
+        let model = model(runner) { [(devin, self.paths("devin-work"))] }
+        await model.load()
+        #expect(model.rows.first { $0.profile?.id == devin.id }?.limit.allWindows
+            .allSatisfy { !$0.unavailable } == true)
+
+        runner.rules = [
+            (["list"], .init(status: 0, stdout: self.listBody, stderr: "")),
+            (["harness", "usage"], .init(status: 1, stdout: Data(),
+                                          stderr: "couldn't read devin usage for this account")),
+        ]
+        await model.load(force: true)
+        let kept = model.cards.first { $0.profile?.id == devin.id }?.limit
+        #expect(kept?.status == .ok)
+        #expect(kept?.allWindows.allSatisfy { $0.unavailable } == true)
+        // The figures are the last-known ones, dated to the original read.
+        #expect(kept?.allWindows.first?.usedPercent == 20)
+        let readings = LimitReading.all(cards: [], others: model.rows, now: Date(), sweFreshFor: 300)
+        #expect(readings.filter { $0.source == devin.id }.allSatisfy { $0.isStale })
+
+        // A successful refetch clears the unavailable marks.
+        runner.rules = [
+            (["list"], .init(status: 0, stdout: self.listBody, stderr: "")),
+            (["harness", "usage"], self.devinUsage),
+        ]
+        await model.load(refreshFailed: true)
+        #expect(model.rows.first { $0.profile?.id == devin.id }?.limit.allWindows
+            .allSatisfy { !$0.unavailable } == true)
+    }
+
     @Test func anUnstampedReadingIsStampedWithTheFetchTime() async {
         // swe older than the fetched_at field returns no timestamp; the
         // row keeps the real fetch time so it does not read as stale.
