@@ -245,7 +245,10 @@ import Testing
         model.mode = .days(3)
         await model.load()
         ranges = await provider.wait(for: 3)
-        let next = model.range(for: model.shiftedAnchor(1, mode: .days(3)), mode: .days(3))
+        // Neighbours are keyed by render range: the 3-day window with a
+        // further 3 days of buffer on each side.
+        let next = model.renderRange(for: model.shiftedAnchor(1, mode: .days(3)),
+                                     mode: .days(3))
         #expect(ranges.contains(DateInterval(
             start: next.start.addingTimeInterval(-CalendarModel.edgeLookout),
             end: next.end.addingTimeInterval(CalendarModel.edgeLookout))))
