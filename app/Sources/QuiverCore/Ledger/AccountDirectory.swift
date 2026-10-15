@@ -4,6 +4,10 @@ import Foundation
 public struct AccountDirectory: Sendable {
     public let roots: LedgerRoots
     private let names: [String: String]
+    /// The account homes each harness can carry, for the calendar
+    /// legend's always-on account split: default homes plus every extra
+    /// profile's, keyed the way activity names the account.
+    private let harnessHomes: [String: [String]]
     private let home: URL
 
     public init(profiles: [Profile], paths: (Profile) -> ProfilePaths,
@@ -11,10 +15,24 @@ public struct AccountDirectory: Sendable {
         self.home = home
         var names: [String: String] = [:]
         var extra: [Vendor: [URL]] = [:]
+        var harnessHomes: [String: [String]] = [
+            "claude": [home.appendingPathComponent(".claude").path],
+            "codex": [home.appendingPathComponent(".codex").path],
+            "devin": [home.appendingPathComponent(".local/share/devin/cli").path],
+            "cursor": [home.appendingPathComponent("Library/Application Support/Cursor").path],
+        ]
         for profile in profiles {
             let profileHome = paths(profile).home
             names[profileHome.standardizedFileURL.path] = "\(profile.vendor.title): \(profile.name)"
-            if !profile.isDefault { extra[profile.vendor, default: []].append(profileHome) }
+            if !profile.isDefault {
+                extra[profile.vendor, default: []].append(profileHome)
+                // Cursor blocks name the user-data dir, added below;
+                // the CLI home never appears as a Cursor account.
+                if profile.vendor != .cursor {
+                    harnessHomes[profile.vendor.rawValue, default: []]
+                        .append(profileHome.standardizedFileURL.path)
+                }
+            }
             // Cursor activity is keyed on the app's user-data directory,
             // not the profile home, so the legend labels it too.
             if profile.vendor == .cursor {
@@ -23,11 +41,23 @@ public struct AccountDirectory: Sendable {
                     : paths(profile).desktopData
                 if let dir {
                     names[dir.standardizedFileURL.path] = "Cursor: \(profile.name)"
+                    if !profile.isDefault {
+                        harnessHomes["cursor", default: []]
+                            .append(dir.standardizedFileURL.path)
+                    }
                 }
             }
         }
         self.names = names
+        self.harnessHomes = harnessHomes
         roots = .standard(home: home, claudeProfiles: extra[.claude] ?? [], codexProfiles: extra[.codex] ?? [])
+    }
+
+    /// Every account home a harness can have: its default plus the extra
+    /// profiles' homes (Cursor's user-data dirs for Cursor), so the
+    /// legend can list accounts that were idle in the range.
+    public func homes(for harness: String) -> [String] {
+        harnessHomes[harness] ?? []
     }
 
     /// The profile's name, or a short form of the path for homes no profile owns.

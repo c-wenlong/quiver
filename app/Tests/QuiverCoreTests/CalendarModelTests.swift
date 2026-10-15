@@ -38,10 +38,12 @@ private struct TogglingActivity: ActivityProviding {
     private func model(blocks: [ActivityBlock] = [],
                        firstWeekday: Int = 2,
                        now: Date = utc("2026-10-14T12:00:00Z"),
+                       knownAccounts: [String: [String]] = [:],
                        defaults: UserDefaults? = nil) -> CalendarModel {
         var cal = calendar
         cal.firstWeekday = firstWeekday
         return CalendarModel(providers: [FakeActivity(blocks: blocks)],
+                             knownAccounts: { knownAccounts[$0] ?? [] },
                              defaults: defaults ?? freshDefaults(),
                              now: { now }, calendar: cal)
     }
@@ -152,6 +154,45 @@ private struct TogglingActivity: ActivityProviding {
         await model.load()
         #expect(model.accounts(for: "claude").sorted() == ["/h", "/work"])
         #expect(model.accountName(for: "/h") == "/h")
+    }
+
+    @Test func knownAccountsJoinTheSplitEvenWhenIdleInRange() async {
+        // Cortex ran Oct 14–15 only; an Oct 8–13 week still lists it.
+        let model = model(
+            blocks: [block("2026-10-14T09:00:00Z", home: "/h")],
+            knownAccounts: ["claude": ["/h", "/profiles/cortex"]])
+        await model.load()
+        #expect(model.accounts(for: "claude") == ["/h", "/profiles/cortex"])
+        #expect(model.accountsExpanded("claude"))
+        // The idle account lists but contributes nothing.
+        #expect(model.accountTotals(for: "claude")["/profiles/cortex"] == nil)
+        #expect(model.accountTotals(for: "claude")["/h"] == 3600)
+        // A known account hidden while idle stays hidden for its harness.
+        model.toggle(harness: "claude", accountHome: "/profiles/cortex")
+        #expect(model.isHidden(harness: "claude", accountHome: "/profiles/cortex"))
+    }
+
+    @Test func accountExpansionCollapsesAndPersistsPerHarness() async {
+        let defaults = freshDefaults()
+        let known = ["claude": ["/h", "/w"], "codex": ["/c", "/c2"]]
+        let first = model(blocks: [block("2026-10-14T09:00:00Z", home: "/h")],
+                          knownAccounts: known, defaults: defaults)
+        await first.load()
+        #expect(first.accountsExpanded("claude"))
+        #expect(first.accountsExpanded("codex")) // no blocks needed at all
+        first.toggleAccountsExpanded("claude")
+        #expect(!first.accountsExpanded("claude"))
+        #expect(first.accountsExpanded("codex"))
+
+        // A fresh model over the same defaults keeps the collapse.
+        let restored = model(blocks: [block("2026-10-14T09:00:00Z", home: "/h")],
+                             knownAccounts: known, defaults: defaults)
+        await restored.load()
+        #expect(!restored.accountsExpanded("claude"))
+        #expect(restored.accountsExpanded("codex"))
+
+        // One-account harnesses never expand or persist a row split.
+        #expect(!restored.accountsExpanded("devin"))
     }
 
     @Test func theAccountLabelMapsHomesToProfileNames() async {

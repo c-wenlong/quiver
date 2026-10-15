@@ -491,7 +491,8 @@ private struct DayColumn: View {
                     let lane = geo.size.width / CGFloat(segment.laneCount)
                     BlockView(segment: segment, color: color(segment.block),
                               title: title(segment.block),
-                              account: model.accountName(for: segment.block.accountHome))
+                              account: model.accountName(for: segment.block.accountHome),
+                              multiAccount: model.accounts(for: segment.block.harness).count > 1)
                         .frame(width: lane - 2, height: blockHeight(segment))
                         .offset(x: CGFloat(segment.lane) * lane + 1, y: y(segment.start))
                         .onTapGesture { open(segment.block) }
@@ -536,6 +537,9 @@ private struct BlockView: View {
     var color: Color
     var title: String
     var account: String
+    /// True when the harness has more than one account in range: the
+    /// account name rides the second line and the tooltip.
+    var multiAccount: Bool = false
 
     private static let clock: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
@@ -561,8 +565,10 @@ private struct BlockView: View {
                 Text(title).font(.system(size: 10, weight: .medium))
                     .lineLimit(1)
                 if segment.end.timeIntervalSince(segment.start) >= 30 * 60 {
-                    Text(timeRange).font(.system(size: 9))
+                    Text(timeRange + (multiAccount ? " · \(account)" : ""))
+                        .font(.system(size: 9))
                         .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
                 }
             }
             .padding(.horizontal, 5).padding(.vertical, 3)
@@ -612,9 +618,15 @@ private struct MiniMonth: View {
         return rows
     }
 
+    /// In-range day-cell runs for the highlight; month mode lights none.
+    private var segments: [(row: Int, firstColumn: Int, lastColumn: Int)] {
+        guard !model.mode.isMonth else { return [] }
+        return MiniMonthHighlight.segments(weeks: weeks, range: model.visibleRange,
+                                           calendar: model.calendar)
+    }
+
     var body: some View {
         let cal = model.calendar
-        let shown = model.visibleRange
         VStack(spacing: 4) {
             HStack {
                 Text(Self.monthTitle.string(from: month))
@@ -634,8 +646,7 @@ private struct MiniMonth: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            ForEach(weeks, id: \.self) { week in
-                let isShown = week.contains { shown.contains($0) }
+            ForEach(Array(weeks.enumerated()), id: \.offset) { row, week in
                 HStack(spacing: 0) {
                     Text("\(iso.component(.weekOfYear, from: week[0]))")
                         .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
@@ -654,8 +665,19 @@ private struct MiniMonth: View {
                     }
                 }
                 .padding(.vertical, 1)
-                .background(isShown ? Theme.border.opacity(0.5) : .clear,
-                            in: RoundedRectangle(cornerRadius: 4))
+                .background(alignment: .leading) {
+                    // A pill behind just the in-range day cells; the
+                    // 16pt week column is never lit.
+                    GeometryReader { geo in
+                        if let segment = segments.first(where: { $0.row == row }) {
+                            let cellWidth = (geo.size.width - 16) / 7
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Theme.border.opacity(0.5))
+                                .frame(width: cellWidth * CGFloat(segment.lastColumn - segment.firstColumn + 1))
+                                .offset(x: 16 + cellWidth * CGFloat(segment.firstColumn))
+                        }
+                    }
+                }
             }
         }
         .onChange(of: model.anchor) { month = model.anchor }
@@ -667,13 +689,13 @@ private struct MiniMonth: View {
 }
 
 /// One legend row: a colour checkbox, the harness mark and title, and its
-/// total time in the range. Expands into per-account rows when more than
-/// one account has activity.
+/// total time in the range, the whole row toggling visibility like
+/// Notion's calendar list. Account rows sit under it, expanded by
+/// default once the harness has more than one account.
 private struct HarnessLegend: View {
     var model: CalendarModel
     var harness: String
     var colors: [String: String]
-    @State private var expanded = false
 
     private var color: Color {
         let hex = colors[harness] ?? HarnessColor.resolve(id: harness, primaryColor: nil).hex
@@ -681,56 +703,94 @@ private struct HarnessLegend: View {
     }
 
     private var accounts: [String] { model.accounts(for: harness) }
+    private var expanded: Bool { model.accountsExpanded(harness) }
+
+    /// The Notion-style checkbox: filled square with a white check when
+    /// shown, an outlined square when hidden.
+    private func checkbox(shown: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(shown ? color : .clear)
+            .overlay {
+                if shown {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 3)
+                .stroke(color, lineWidth: shown ? 0 : 1.5))
+            .frame(width: 14, height: 14)
+    }
+
+    /// A full-width toggle row: the content shape and hover wash cover
+    /// the name and time too, not just the checkbox.
+    private func toggleRow<Label: View>(action: @escaping () -> Void,
+                                      shown: Bool,
+                                      @ViewBuilder label: () -> Label) -> some View {
+        Button(action: action) {
+            label()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(LegendRowStyle())
+    }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             if accounts.count > 1 {
-                Button { expanded.toggle() } label: {
+                Button { model.toggleAccountsExpanded(harness) } label: {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 10)
+                        .frame(width: 20, height: 20)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .help(expanded ? "Collapse accounts" : "Expand accounts")
+                .accessibilityLabel(expanded ? "Collapse \(harness) accounts"
+                                           : "Expand \(harness) accounts")
             } else {
                 Spacer().frame(width: 10)
             }
-            Button { model.toggle(harness) } label: {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(model.isHidden(harness) ? .clear : color)
-                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1.5))
-                    .frame(width: 12, height: 12)
+            toggleRow(action: { model.toggle(harness) }, shown: !model.isHidden(harness)) {
+                HStack(spacing: 6) {
+                    checkbox(shown: !model.isHidden(harness))
+                    HarnessIcon(harness: harness, size: 13)
+                    Text(harness.capitalized).font(.system(size: 11))
+                        .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
+                    Spacer()
+                    Text(Self.time(model.totals[harness] ?? 0))
+                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                }
             }
-            .buttonStyle(.plain)
             .help(model.isHidden(harness) ? "Show \(harness)" : "Hide \(harness)")
-            HarnessIcon(harness: harness, size: 13)
-            Text(harness.capitalized).font(.system(size: 11))
-                .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
-            Spacer()
-            Text(Self.time(model.totals[harness] ?? 0))
-                .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+            .accessibilityLabel("\(harness.capitalized), \(model.isHidden(harness) ? "hidden" : "shown")")
+            .accessibilityAddTraits(.isToggle)
+            .accessibilityValue(model.isHidden(harness) ? "0" : "1")
         }
-        .frame(height: 20)
+        .frame(height: 22)
         if expanded {
             ForEach(accounts, id: \.self) { home in
-                HStack(spacing: 6) {
-                    Spacer().frame(width: 10)
-                    Button { model.toggle(harness: harness, accountHome: home) } label: {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(model.isHidden(harness: harness, accountHome: home) ? .clear : color)
-                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1.5))
-                            .frame(width: 12, height: 12)
+                let shown = !model.isHidden(harness: harness, accountHome: home)
+                toggleRow(action: { model.toggle(harness: harness, accountHome: home) },
+                          shown: shown) {
+                    HStack(spacing: 6) {
+                        checkbox(shown: shown)
+                        Text(model.accountName(for: home))
+                            .font(.system(size: 10))
+                            .foregroundStyle(shown ? .primary : .secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(Self.time(model.accountTotals(for: harness)[home] ?? 0))
+                            .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
                     }
-                    .buttonStyle(.plain)
-                    Text(model.accountName(for: home))
-                        .font(.system(size: 10))
-                        .foregroundStyle(model.isHidden(harness: harness, accountHome: home) ? .secondary : .primary)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(Self.time(model.accountTotals(for: harness)[home] ?? 0))
-                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                    .padding(.leading, 18)
                 }
-                .frame(height: 18)
-                .padding(.leading, 8)
+                .help(shown ? "Hide \(model.accountName(for: home))"
+                            : "Show \(model.accountName(for: home))")
+                .accessibilityLabel("\(model.accountName(for: home)), \(shown ? "shown" : "hidden")")
+                .accessibilityAddTraits(.isToggle)
+                .accessibilityValue(shown ? "1" : "0")
+                .frame(height: 20)
             }
         }
     }
