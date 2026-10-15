@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe harness usage <devin|cursor> --account-dir=<dir>` reads an extra
+  account's rate limit from its own files.** Devin resolves to
+  `<dir>/devin/credentials.toml` (the CLI's `XDG_DATA_HOME`), Cursor to
+  `<dir>/User/globalStorage/state.vscdb` (the app's `--user-data-dir`),
+  and never touches the default account's keychain entry or the shared
+  rate-limit cache. `--json` emits `{"name", "account_dir", "limit"}` where
+  `limit` is the same object `swe list --usage --json` gives a row's
+  `rate_limit` (null when the account is signed out); human output lists
+  each window like the list's usage cells.
+
 - **An "Add harness" sheet on the Harnesses page.** The plus button opens
   swe's installer catalog minus what's already registered: harnesses on
   PATH get a "Register" button (`swe add`), the rest expand to show every
