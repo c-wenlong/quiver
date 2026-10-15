@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rate_limit` (null when the account is signed out); human output lists
   each window like the list's usage cells.
 
+- **Calendar page in Quiver.** A week (or day) view of when each harness
+  was actually working, built from the usage ledger's response
+  timestamps: a session's responses join into a block until 15 quiet
+  minutes pass, and blocks sit side-by-side when they overlap. The left
+  pane's mini month jumps the grid and its legend toggles whole
+  harnesses or single accounts, each with its total time for the days on
+  show; a block opens the session's detail sheet.
+
 - **Extra Devin and Cursor accounts in Quiver.** The Add account sheet
   now offers Devin and Cursor: each gets its own folders under
   `~/.quiver/accounts`, opens its app isolated (`open -n` with the

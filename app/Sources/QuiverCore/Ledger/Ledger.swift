@@ -122,7 +122,7 @@ public struct ScanReport: Sendable, Equatable {
 /// - `totals`, `daily`, `bySession` and `byAccount` price events at query time
 ///   with the current `PricingCatalog`.
 public actor Ledger {
-    private let store: LedgerStore
+    let store: LedgerStore
     private var pricing: PricingCatalog
     private let reader: JSONLReader
 

@@ -236,6 +236,8 @@ final class AppModel {
     let compute: ComputeModel
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
+    /// The Calendar page's activity blocks; nil with `sessions`.
+    let calendar: CalendarModel?
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
     let skills: SkillsModel
     let mcp: McpModel
@@ -311,9 +313,12 @@ final class AppModel {
             sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
                                      defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
                                      snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")))
+            calendar = CalendarModel(providers: [ledger],
+                                     accountLabel: { directory().label(for: $0) })
         } catch {
             overview = nil
             sessions = nil
+            calendar = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
         skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))
