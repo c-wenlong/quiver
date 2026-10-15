@@ -47,6 +47,23 @@ import Testing
         #expect(try Data(contentsOf: file) == garbage)
     }
 
+    @Test func anUnreadableFileThrowsInsteadOfBeingFlattened() throws {
+        let file = tempFile()
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"schema": 1, "names": {"cursor": "Cortex"}}"#.utf8).write(to: file)
+        let bytes = try Data(contentsOf: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        }
+        let store = HarnessAccountNameStore(file: file)
+        // A read error that isn't "missing" must not become an empty write.
+        #expect(throws: (any Error).self) { try store.setName("New", for: "cursor") }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        #expect(try Data(contentsOf: file) == bytes)
+    }
+
     @Test func anUnknownSchemaReadsEmptyAndRefusesToWrite() throws {
         let file = tempFile()
         try FileManager.default.createDirectory(

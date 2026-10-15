@@ -38,8 +38,15 @@ public final class HarnessAccountNameStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var names: [String: String] = [:]
-        if let data = try? Data(contentsOf: file) {
-            guard let doc = try? JSONDecoder().decode(Document.self, from: data),
+        let existing: Data?
+        do {
+            existing = try Data(contentsOf: file)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile
+                || error.code == .fileNoSuchFile {
+            existing = nil
+        }
+        if let existing {
+            guard let doc = try? JSONDecoder().decode(Document.self, from: existing),
                   doc.schema == 1
             else { throw CocoaError(.coderReadCorrupt) }
             names = doc.names

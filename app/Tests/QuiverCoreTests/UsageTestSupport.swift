@@ -171,3 +171,11 @@ func tempSnapshotFile() -> URL {
         .appendingPathComponent("quiver-limits-tests-\(UUID().uuidString)")
         .appendingPathComponent("app-other-limits.json")
 }
+
+/// Same for `HarnessAccountNameStore`: a per-test file URL, so the real
+/// `~/.quiver/accounts/harness-names.json` is never read or written.
+func tempNamesStore() -> HarnessAccountNameStore {
+    HarnessAccountNameStore(file: FileManager.default.temporaryDirectory
+        .appendingPathComponent("quiver-names-tests-\(UUID().uuidString)")
+        .appendingPathComponent("harness-names.json"))
+}

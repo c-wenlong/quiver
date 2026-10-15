@@ -18,7 +18,7 @@ import Testing
 
     @Test func harnessesWithoutAQuiverAccountComeFromSwe() async {
         let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         // Claude and Codex have accounts of their own; unpolled harnesses have nothing to show.
         #expect(model.rows.map(\.name) == ["devin", "cursor"])
@@ -37,7 +37,7 @@ import Testing
             .replacingOccurrences(of: #""name": "cursor", "command": "cursor-agent","#, with: #""name": "cursor", "display_name": "Cursor", "command": "cursor-agent", "installed": false,"#)
             .replacingOccurrences(of: #""name": "claude", "command": "claude","#, with: #""name": "claude", "command": "claude", "installed": true,"#)
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
-                  snapshotFile: tempSnapshotFile())
+                  snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.map(\.command) == ["devin", "cursor-agent"])
         #expect(model.rows.map(\.cliInstalled) == [true, false])
@@ -62,7 +62,7 @@ import Testing
         ]}}
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
-                  snapshotFile: tempSnapshotFile())
+                  snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.cards.map(\.name) == ["devin"])
         #expect(model.cards[0].title == "Devin Teams")
@@ -86,7 +86,7 @@ import Testing
         ]}}
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
-                  snapshotFile: tempSnapshotFile())
+                  snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.cards.map(\.name) == ["devin"])
         // The menu bar, notifications and widgets read rows: starred only too.
@@ -96,7 +96,7 @@ import Testing
     @Test func aFailedLoadKeepsTheLastStarredSet() async {
         // Before swe has answered once, nothing is hidden: unknown means show.
         let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         #expect(model.starred == nil)
         #expect(model.isStarred("codex"))
         await model.load()
@@ -136,7 +136,7 @@ import Testing
         let runner = GatedRunner(
             first: .init(status: 0, stdout: Data(json.utf8), stderr: ""),
             later: .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         var outdated: Task<Void, Never>!
         await withCheckedContinuation { continuation in
             runner.onFirstCall = { continuation.resume() }
@@ -152,7 +152,7 @@ import Testing
 
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.isEmpty)
         #expect(model.note?.contains("older") == true)
@@ -226,7 +226,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
 
     @Test func aRefreshLoadAsksSweToRefetchOnlyTheFailed() async {
         let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load(refreshFailed: true)
         #expect(runner.calls == [["list", "--usage", "--json", "--cache-ttl=300",
                                  "--refresh-failed", "--exclude=claude,codex"]])
@@ -237,7 +237,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
             .init(status: 2, stdout: Data(), stderr: "Unknown flag: --cache-ttl"),
             .init(status: 0, stdout: okBody, stderr: ""),
         ])
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.map(\.name) == ["devin"])
         #expect(runner.calls == [
@@ -256,7 +256,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
 
     @Test func anSweThatTookTheFlagsHonoursTheWindow() async {
         let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         model.cacheTTL = 7200
         await model.load()
         #expect(model.acceptedCacheTTL == 7200)
@@ -268,7 +268,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
             .init(status: 2, stdout: Data(), stderr: "Unknown flag: --exclude"),
             .init(status: 0, stdout: okBody, stderr: ""),
         ])
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.map(\.name) == ["devin"])
         #expect(runner.calls == [
@@ -285,13 +285,13 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
     @Test func theLastSuccessfulListRoundTripsThroughTheSnapshotFile() async {
         let file = tempSnapshotFile()
         let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: file)
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: file, names: tempNamesStore())
         await model.load()
         #expect(FileManager.default.fileExists(atPath: file.path))
 
         // A new model on the same file shows the saved rows before swe answers.
         let revived = OtherLimitsModel(swe: SweClient(runner: FakeRunner(
-            .init(status: 2, stdout: Data(), stderr: "down"))), snapshotFile: file)
+            .init(status: 2, stdout: Data(), stderr: "down"))), snapshotFile: file, names: tempNamesStore())
         #expect(revived.rows.map(\.name) == ["devin"])
         #expect(revived.cards.map(\.name) == ["devin"])
         #expect(revived.starred == ["devin"])
@@ -304,7 +304,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "not json".write(to: file, atomically: true, encoding: .utf8)
         let revived = OtherLimitsModel(swe: SweClient(runner: FakeRunner(
-            .init(status: 0, stdout: okBody, stderr: ""))), snapshotFile: file)
+            .init(status: 0, stdout: okBody, stderr: ""))), snapshotFile: file, names: tempNamesStore())
         #expect(revived.rows.isEmpty && revived.starred == nil)
     }
 }
