@@ -7,18 +7,11 @@ from unittest.mock import patch
 from quiver.harness.path_health import (
     find_off_path_tools,
     is_dir_on_path,
-    resolve_npm_package,
     search_dirs_for_command,
 )
 
 
 class PathHealthTest(unittest.TestCase):
-    def test_resolve_npm_package_map(self):
-        self.assertEqual(resolve_npm_package("jules"), "@google/jules")
-        self.assertEqual(resolve_npm_package("mastracode"), "mastracode")
-        self.assertEqual(resolve_npm_package("jules", package="@other/jules"), "@other/jules")
-        self.assertEqual(resolve_npm_package("customtool"), "customtool")
-
     def test_search_dirs_finds_nvm_binary(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
