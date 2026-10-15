@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An "Add harness" sheet on the Harnesses page.** The plus button opens
+  swe's installer catalog minus what's already registered: harnesses on
+  PATH get a "Register" button (`swe add`), the rest expand to show every
+  package manager's install command (brew, cask, npm, uv, nix, script) to
+  copy or run in the terminal. Quiver never picks a manager for you. To
+  feed it, `swe install --json` entries now carry `description` and
+  `registered`; the sheet degrades cleanly against an older swe.
+
 ### Fixed
 
 - **"Open app" on the Accounts page now focuses the account's own running

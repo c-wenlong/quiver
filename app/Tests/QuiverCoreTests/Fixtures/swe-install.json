@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "data": {
+    "harnesses": [
+      {
+        "name": "aider",
+        "command": "aider",
+        "installed": false,
+        "path": null,
+        "description": "Git-native pair programmer, commits every edit as it goes",
+        "registered": false,
+        "methods": [
+          {
+            "via": "brew",
+            "package": "aider",
+            "command": "brew install aider",
+            "available": true
+          },
+          {
+            "via": "uv",
+            "package": "aider-chat",
+            "command": "uv tool install aider-chat",
+            "available": true
+          },
+          {
+            "via": "nix",
+            "package": "aider-chat",
+            "command": "nix profile install nixpkgs#aider-chat",
+            "available": true
+          },
+          {
+            "via": "script",
+            "package": "https://aider.chat/install.sh",
+            "command": "curl -fsSL https://aider.chat/install.sh | sh",
+            "available": true
+          }
+        ]
+      },
+      {
+        "name": "augment",
+        "command": "auggie",
+        "installed": false,
+        "path": null,
+        "description": "Indexes up to 500k files across repos, retrieval is the whole pitch",
+        "registered": false,
+        "methods": [
+          {
+            "via": "npm",
+            "package": "@augmentcode/auggie",
+            "command": "npm install -g @augmentcode/auggie",
+            "available": true
+          }
+        ]
+      },
+      {
+        "name": "blackbox",
+        "command": "blackbox",
+        "installed": false,
+        "path": null,
+        "description": "Fans one task to four models, a judge picks the winner",
+        "registered": false,
+        "methods": [
+          {
+            "via": "npm",
+            "package": "@blackbox_ai/blackbox-cli",
+            "command": "npm install -g @blackbox_ai/blackbox-cli",
+            "available": true
+          }
+        ]
+      }
+    ]
+  }
+}

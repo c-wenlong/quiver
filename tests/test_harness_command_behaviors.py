@@ -246,6 +246,9 @@ class HarnessProcessCommandTest(unittest.TestCase):
         self.assertEqual(harness["command"], "gemini")
         self.assertFalse(harness["installed"])
         self.assertIsNone(harness["path"])
+        self.assertEqual(harness["description"],
+                         "Google's first, 1M token context, 1,000 free requests a day")
+        self.assertFalse(harness["registered"])
         self.assertEqual(
             [m["via"] for m in harness["methods"]], ["brew", "npm", "nix"])
         self.assertEqual(harness["methods"][0]["command"], "brew install gemini-cli")
@@ -253,6 +256,23 @@ class HarnessProcessCommandTest(unittest.TestCase):
                          [True, False, False])
         run.assert_not_called()
         save.assert_not_called()
+
+    def test_install_json_marks_registered_and_descriptionless_entries(self):
+        tools = {"claude": {"command": "claude"}}
+        code, out, run, save = self._run_install(
+            ["claude", "--json"], tools=tools)
+
+        self.assertEqual(code, 0)
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertTrue(harness["registered"])
+        self.assertTrue(harness["description"])
+
+        # A name with no catalog entry decodes with an empty description.
+        code, out, run, save = self._run_install(
+            ["mastracode", "--json"], tools=tools)
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertFalse(harness["registered"])
+        self.assertEqual(harness["description"], "")
 
     def test_install_json_for_every_name(self):
         code, out, run, save = self._run_install(["--json"])
