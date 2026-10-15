@@ -1272,8 +1272,8 @@ private struct OverflowCard: View {
         // A refresh can swap the hidden list under an open card; fall
         // back to its first row when the pick is gone.
         if let selected,
-           overflow.hidden.contains(where: { $0.block.id == selected.id }) {
-            return selected
+           let current = overflow.hidden.first(where: { $0.block.id == selected.id }) {
+            return current.block
         }
         return overflow.hidden.first?.block
     }
