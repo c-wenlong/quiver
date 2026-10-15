@@ -195,6 +195,25 @@ private struct TogglingActivity: ActivityProviding {
         #expect(!restored.accountsExpanded("devin"))
     }
 
+    @Test func knownAccountsAreReadOncePerHarnessPerLoad() async {
+        // The profile store is hit lazily and memoised: a redraw calling
+        // accounts(for:) per block never re-reads the disk mid-render,
+        // and a load refreshes it exactly once more.
+        var counts: [String: Int] = [:]
+        let counted = CalendarModel(
+            providers: [FakeActivity(blocks: [block("2026-10-14T09:00:00Z", home: "/h")])],
+            knownAccounts: { counts[$0, default: 0] += 1; return ["/h", "/w"] },
+            defaults: freshDefaults(),
+            now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await counted.load()
+        for _ in 0..<50 { _ = counted.accounts(for: "claude") }
+        #expect(counts["claude"] == 1)
+        // The next load re-reads the store once, not per call.
+        await counted.load()
+        _ = counted.accounts(for: "claude")
+        #expect(counts["claude"] == 2)
+    }
+
     @Test func theAccountLabelMapsHomesToProfileNames() async {
         var cal = calendar; cal.firstWeekday = 2
         let model = CalendarModel(providers: [FakeActivity(blocks: [

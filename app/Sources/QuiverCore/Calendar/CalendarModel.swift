@@ -133,7 +133,17 @@ public final class CalendarModel {
     private let accountLabel: (String) -> String
     /// Quiver's known accounts per harness: profile homes so a quiet
     /// account still lists in the legend like Notion lists calendars.
+    /// The closure reads the accounts store, so results are memoised per
+    /// harness for the life of a load rather than per call.
     private let knownAccounts: (String) -> [String]
+    private var knownHomes: [String: [String]] = [:]
+
+    private func knownHomes(for harness: String) -> [String] {
+        if let cached = knownHomes[harness] { return cached }
+        let homes = knownAccounts(harness)
+        knownHomes[harness] = homes
+        return homes
+    }
     private let defaults: UserDefaults
     private let now: () -> Date
     public let calendar: Calendar
@@ -311,6 +321,8 @@ public final class CalendarModel {
     func load(range: DateInterval, force: Bool) async {
         generation += 1
         let mine = generation
+        // Profile edits land here: fresh homes get picked up next load.
+        knownHomes.removeAll()
         let range = range
         if let cached = cache[range] {
             blocks = Self.flatten(cached)
@@ -453,7 +465,7 @@ public final class CalendarModel {
     /// still lists (like Notion's per-calendar rows) at "0m".
     public func accounts(for harness: String) -> [String] {
         var homes = Set(blocks.filter { $0.harness == harness }.map(\.accountHome))
-        homes.formUnion(knownAccounts(harness))
+        homes.formUnion(knownHomes(for: harness))
         return homes.sorted()
     }
 

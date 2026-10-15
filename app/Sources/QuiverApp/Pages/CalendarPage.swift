@@ -41,9 +41,10 @@ private struct CalendarContent: View {
     /// The side panel's pointer state; `collapsed` mirrors the model's
     /// persisted choice. Same hover machinery as the window sidebar.
     @State private var panelHover = HoverExpansion()
-    /// The block whose hover card is open, one at a time; nil while a
-    /// show or hide delay is still pending.
-    @State private var cardBlock: ActivityBlock?
+    /// The hovered segment or month entry whose card is up, one at a
+    /// time: keyed on the segment/entry id so a block split across two
+    /// day columns opens its card only where the pointer is.
+    @State private var cardKey: String?
     @State private var cardTask: Task<Void, Never>?
 
     /// 350 ms before a card opens; 150 ms of grace before it closes so
@@ -355,7 +356,7 @@ private struct CalendarContent: View {
                                   entries: monthEntries(on: day),
                                   color: { self.color(for: $0) },
                                   title: { self.title(for: $0) },
-                                  hover: { self.hoverCard($0, inside: $1) },
+                                  hover: { self.hoverCard(key: $0, inside: $1) },
                                   card: { self.cardBinding(for: $0) },
                                   cardRows: { self.cardRows(for: $0) }) { block in
                             open(block)
@@ -415,7 +416,7 @@ private struct CalendarContent: View {
                 DayColumn(model: model, day: day, now: now,
                           color: { self.color(for: $0) },
                           title: { self.title(for: $0) },
-                          hover: { self.hoverCard($0, inside: $1) },
+                          hover: { self.hoverCard(key: $0, inside: $1) },
                           card: { self.cardBinding(for: $0) },
                           cardRows: { self.cardRows(for: $0) }) { block in
                     open(block)
@@ -459,33 +460,33 @@ private struct CalendarContent: View {
     /// Pointer entered or left a block: the card opens after a beat and
     /// closes after a shorter grace, so it never pops under a passing
     /// pointer and never flickers between adjacent blocks.
-    private func hoverCard(_ block: ActivityBlock, inside: Bool) {
+    private func hoverCard(key: String, inside: Bool) {
         cardTask?.cancel()
         if inside {
-            if cardBlock != nil { cardBlock = block; return }
+            if cardKey != nil { cardKey = key; return }
             cardTask = Task { @MainActor in
                 try? await Task.sleep(for: Self.cardShowDelay)
                 guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? nil : .default) { cardBlock = block }
+                withAnimation(reduceMotion ? nil : .default) { cardKey = key }
             }
         } else {
             cardTask = Task { @MainActor in
                 try? await Task.sleep(for: Self.cardHideDelay)
                 guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? nil : .default) { cardBlock = nil }
+                withAnimation(reduceMotion ? nil : .default) { cardKey = nil }
             }
         }
     }
 
     private func dismissCard() {
         cardTask?.cancel()
-        cardBlock = nil
+        cardKey = nil
     }
 
-    /// Popover binding keyed on the block's id: only the hovered block's
-    /// card is up, and a click outside drops it.
-    private func cardBinding(for block: ActivityBlock) -> Binding<Bool> {
-        Binding(get: { cardBlock?.id == block.id },
+    /// Popover binding keyed on the segment's or entry's id: only the
+    /// hovered instance's card is up, and a click outside drops it.
+    private func cardBinding(for key: String) -> Binding<Bool> {
+        Binding(get: { cardKey == key },
                 set: { if !$0 { dismissCard() } })
     }
 
@@ -523,8 +524,8 @@ private struct DayColumn: View {
     var title: (ActivityBlock) -> String
     /// The page-level hover card: block + inside/outside on hover, the
     /// popover binding and the capped session list to show.
-    var hover: (ActivityBlock, Bool) -> Void
-    var card: (ActivityBlock) -> Binding<Bool>
+    var hover: (String, Bool) -> Void
+    var card: (String) -> Binding<Bool>
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
@@ -557,12 +558,14 @@ private struct DayColumn: View {
                         .frame(width: lane - 2, height: blockHeight(segment))
                         .offset(x: CGFloat(segment.lane) * lane + 1, y: y(segment.start))
                         .onTapGesture { open(segment.block) }
-                        .onHover { inside in hover(segment.block, inside) }
-                        .popover(isPresented: card(segment.block),
+                        .onHover { inside in hover(segment.id, inside) }
+                        .popover(isPresented: card(segment.id),
                                  attachmentAnchor: .rect(.bounds),
                                  arrowEdge: .leading) {
-                            let rows = cardRows(segment.block)
-                            BlockCard(block: segment.block, model: model,
+                            let block = segment.block
+                            let rows = cardRows(block)
+                            BlockCard(block: block, model: model,
+                                      active: block.end.timeIntervalSince(block.start),
                                       shown: rows.shown, more: rows.more)
                         }
                 }
@@ -875,8 +878,8 @@ private struct MonthCell: View {
     var entries: [MonthLayout.Entry]
     var color: (ActivityBlock) -> Color
     var title: (ActivityBlock) -> String
-    var hover: (ActivityBlock, Bool) -> Void
-    var card: (ActivityBlock) -> Binding<Bool>
+    var hover: (String, Bool) -> Void
+    var card: (String) -> Binding<Bool>
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
@@ -918,12 +921,13 @@ private struct MonthCell: View {
                     MonthEntry(entry: entry, model: model,
                                color: color(entry.block), title: title(entry.block))
                         .onTapGesture { open(entry.block) }
-                        .onHover { inside in hover(entry.block, inside) }
-                        .popover(isPresented: card(entry.block),
+                        .onHover { inside in hover(entry.id, inside) }
+                        .popover(isPresented: card(entry.id),
                                  attachmentAnchor: .rect(.bounds),
                                  arrowEdge: .leading) {
                             let rows = cardRows(entry.block)
                             BlockCard(block: entry.block, model: model,
+                                      active: entry.active,
                                       shown: rows.shown, more: rows.more)
                         }
                 }
@@ -1030,6 +1034,9 @@ private struct SessionRow: View {
 private struct BlockCard: View {
     var block: ActivityBlock
     var model: CalendarModel
+    /// The duration line's seconds: the block's span on the week grid,
+    /// the day's summed active time on a month entry.
+    var active: TimeInterval
     var shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)]
     var more: Int
 
@@ -1041,7 +1048,7 @@ private struct BlockCard: View {
         "\(Self.clock.string(from: block.start))–\(Self.clock.string(from: block.end))"
     }
     private var duration: String {
-        let minutes = Int(block.end.timeIntervalSince(block.start) / 60)
+        let minutes = Int(active / 60)
         return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
     }
 
