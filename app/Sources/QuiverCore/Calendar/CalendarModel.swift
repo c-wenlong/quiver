@@ -5,16 +5,90 @@ import os
 /// on them, and which harnesses or accounts the legend has turned off.
 @MainActor @Observable
 public final class CalendarModel {
-    public enum Mode: String, CaseIterable, Sendable {
-        case day, week
-        public var title: String { self == .day ? "Day" : "Week" }
+    /// How much the grid shows. `.week` starts on the user's first
+    /// weekday; `.days(n)` starts on the anchor day itself, so `.days(7)`
+    /// is a rolling seven days, not the week. `.days(1)` is `.day`.
+    public enum Mode: Sendable, Hashable {
+        case day, week, month
+        case days(Int)
+
+        public var title: String {
+            switch self {
+            case .day: "Day"
+            case .week: "Week"
+            case .month: "Month"
+            case .days(let n): "\(n) days"
+            }
+        }
+
+        /// `.days(1)` reads as `.day`; the menu never shows an N-day
+        /// option under 2 or over 9.
+        public var normalized: Mode {
+            guard case .days(let n) = self else { return self }
+            return n <= 1 ? .day : .days(min(n, 9))
+        }
+
+        /// Its plain-key shortcut, shown in the mode menu's labels.
+        public var keyHint: String {
+            switch self {
+            case .day: "D"
+            case .week: "W"
+            case .month: "M"
+            case .days(let n): "\(n)"
+            }
+        }
+
+        /// The menu's rows: the three named modes plus the current N-day
+        /// selection when one is active.
+        public static func menu(for current: Mode) -> [Mode] {
+            var modes: [Mode] = [.day, .week, .month]
+            if case .days = current { modes.append(current) }
+            return modes
+        }
+    }
+
+    /// What a plain key on the Calendar page does: pick a mode, step
+    /// sideways, or jump to today. Pure so it can be tested without a
+    /// view; arrows are handled by the view since they are not
+    /// characters.
+    public enum KeyCommand: Sendable, Equatable {
+        case mode(Mode)
+        case previous, next, today
+
+        /// Arrow keys step the anchor, like the header chevrons.
+        public enum Arrow: Sendable {
+            case left, right
+        }
+
+        public init(arrow: Arrow) {
+            self = arrow == .left ? .previous : .next
+        }
+
+        /// `d` Day, `w` Week, `m` Month, `t` Today, `1`...`9` N days.
+        public init?(character: Character) {
+            switch character.lowercased().first {
+            case "d": self = .mode(.day)
+            case "w": self = .mode(.week)
+            case "m": self = .mode(.month)
+            case "t": self = .today
+            case let digit? where ("1"..."9").contains(digit):
+                self = .mode(.days(Int(String(digit)) ?? 1))
+            default: return nil
+            }
+        }
     }
 
     /// A session's responses read as one block until this much silence
     /// passes between two of them.
     public nonisolated static let gap: TimeInterval = 15 * 60
 
-    public var mode: Mode = .week
+    public var mode: Mode = .week {
+        didSet {
+            if mode != mode.normalized { mode = mode.normalized }
+            applyCached()
+            persist()
+        }
+    }
     /// The day the visible range is built around.
     public private(set) var anchor: Date
     /// Every block the providers reported for the visible range, before
@@ -23,6 +97,9 @@ public final class CalendarModel {
     /// The last provider read that failed; nil once every provider read
     /// cleanly. Failed providers keep their last good blocks meanwhile.
     public private(set) var loadError: String?
+    /// The range the newest finished load covered; the page scrolls to
+    /// its first block once this catches up with `visibleRange`.
+    public private(set) var loadedRange: DateInterval?
     /// Harnesses hidden in the legend: every account of one goes with it.
     public private(set) var hiddenHarnesses: Set<String>
     /// "harness|accountHome" pairs hidden on their own.
@@ -52,6 +129,7 @@ public final class CalendarModel {
 
     static let hiddenHarnessesKey = "calendar.hiddenHarnesses"
     static let hiddenAccountsKey = "calendar.hiddenAccounts"
+    static let modeKey = "calendar.mode"
 
     public init(providers: [any ActivityProviding],
                 accountLabel: @escaping (String) -> String = { $0 },
@@ -68,6 +146,7 @@ public final class CalendarModel {
         anchor = now()
         hiddenHarnesses = Set(defaults.stringArray(forKey: Self.hiddenHarnessesKey) ?? [])
         hiddenAccounts = Set(defaults.stringArray(forKey: Self.hiddenAccountsKey) ?? [])
+        mode = Self.decodedMode(defaults.string(forKey: Self.modeKey))
         self.snapshots = snapshots
         // Hydrate the block cache from the last run's snapshot so the
         // first paint does not wait on a provider read.
@@ -102,13 +181,36 @@ public final class CalendarModel {
             let start = calendar.date(from: week) ?? calendar.startOfDay(for: anchor)
             return DateInterval(start: start,
                                 end: calendar.date(byAdding: .day, value: 7, to: start) ?? start)
+        case .month:
+            // Always six week rows: the first weekday on or before the
+            // 1st, so adjacent-month days fill the grid like Notion's.
+            if let weeks = MonthLayout.weekRange(for: anchor, calendar: calendar) {
+                return weeks
+            }
+            // A pathological calendar falls back to the anchor's day.
+            let start = calendar.startOfDay(for: anchor)
+            return DateInterval(start: start,
+                                end: calendar.date(byAdding: .day, value: 1, to: start) ?? start)
+        case .days(let n):
+            let start = calendar.startOfDay(for: anchor)
+            return DateInterval(start: start,
+                                end: calendar.date(byAdding: .day, value: max(1, n), to: start) ?? start)
         }
     }
 
-    /// The anchor shifted by this many mode steps (days, weeks or months).
+    /// The anchor shifted by this many mode steps (a day, a week, a
+    /// month, or an N-day span).
     public func shiftedAnchor(_ count: Int, mode: Mode) -> Date {
-        let unit: Calendar.Component = mode == .day ? .day : .weekOfYear
-        return calendar.date(byAdding: unit, value: count, to: anchor) ?? anchor
+        switch mode {
+        case .day:
+            return calendar.date(byAdding: .day, value: count, to: anchor) ?? anchor
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: count, to: anchor) ?? anchor
+        case .month:
+            return calendar.date(byAdding: .month, value: count, to: anchor) ?? anchor
+        case .days(let n):
+            return calendar.date(byAdding: .day, value: count * max(1, n), to: anchor) ?? anchor
+        }
     }
 
     /// One interval per day column, clipped to the range.
@@ -122,6 +224,17 @@ public final class CalendarModel {
             day = next
         }
         return days
+    }
+
+    /// One key command as the page maps it: a mode pick, a step, or
+    /// Today.
+    public func apply(_ command: KeyCommand) {
+        switch command {
+        case .mode(let mode): self.mode = mode
+        case .previous: previous()
+        case .next: next()
+        case .today: today()
+        }
     }
 
     public func today() { anchor = now(); applyCached() }
@@ -204,6 +317,7 @@ public final class CalendarModel {
         stale.remove(range)
         blocks = all.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
         loadError = failed
+        loadedRange = range
         persistSnapshot(of: range)
         prefetchNeighbours()
     }
@@ -264,6 +378,17 @@ public final class CalendarModel {
         Task { await snapshots.save(CalendarSnapshot(ranges: entries)) }
     }
 
+    /// The empty-state noun phrase: "today", "this week", "this month"
+    /// or "in these N days".
+    public var emptyRangeNoun: String {
+        switch mode {
+        case .day: "today"
+        case .week: "this week"
+        case .month: "this month"
+        case .days(let n): "in these \(n) days"
+        }
+    }
+
     /// The grid's input: blocks whose harness and account are both shown.
     public var visibleBlocks: [ActivityBlock] {
         blocks.filter {
@@ -302,8 +427,18 @@ public final class CalendarModel {
         totalTime { $0.harness == harness ? $0.accountHome : nil }
     }
 
+    /// Legend totals clip to this range: in month mode the anchor's own
+    /// month, so adjacent-month grid days do not count.
+    private var totalsRange: DateInterval {
+        guard case .month = mode,
+              let first = calendar.date(from: calendar.dateComponents([.year, .month], from: anchor)),
+              let next = calendar.date(byAdding: .month, value: 1, to: first)
+        else { return visibleRange }
+        return DateInterval(start: first, end: next)
+    }
+
     private func totalTime(key: (ActivityBlock) -> String?) -> [String: TimeInterval] {
-        let range = visibleRange
+        let range = totalsRange
         var totals: [String: TimeInterval] = [:]
         for block in blocks {
             guard let name = key(block) else { continue }
@@ -330,8 +465,31 @@ public final class CalendarModel {
         persist()
     }
 
+    /// The mode's UserDefaults spelling: "day", "week", "month" or
+    /// "days:N". Unknown values restore as the week.
+    static func encodedMode(_ mode: Mode) -> String {
+        switch mode {
+        case .day: "day"
+        case .week: "week"
+        case .month: "month"
+        case .days(let n): "days:\(n)"
+        }
+    }
+
+    static func decodedMode(_ text: String?) -> Mode {
+        switch text {
+        case "day": .day
+        case "week": .week
+        case "month": .month
+        case let days? where days.hasPrefix("days:"):
+            if let n = Int(days.dropFirst(5)), n >= 1 { .days(n).normalized } else { .week }
+        default: .week
+        }
+    }
+
     private func persist() {
         defaults.set(Array(hiddenHarnesses), forKey: Self.hiddenHarnessesKey)
         defaults.set(Array(hiddenAccounts), forKey: Self.hiddenAccountsKey)
+        defaults.set(Self.encodedMode(mode), forKey: Self.modeKey)
     }
 }
