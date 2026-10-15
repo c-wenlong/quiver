@@ -251,6 +251,20 @@ private struct TogglingActivity: ActivityProviding {
         #expect(model.visibleRange == month)
     }
 
+    @Test func aSingleResponseBlockExactlyAtTheWindowStartCounts() async {
+        // start == end == window.start: start < end fails, so a zero-length
+        // block at the boundary needs its own clause or the day reads empty.
+        var single = ActivityBlock(harness: "claude", accountHome: "/h",
+                                   sessionId: "s",
+                                   start: utc("2026-10-14T00:00:00Z"),
+                                   end: utc("2026-10-14T00:00:00Z"), responses: 1)
+        single.project = "s"
+        let model = model(blocks: [single])
+        model.mode = .day
+        await model.load()
+        #expect(model.windowBlocks.count == 1)
+    }
+
     @Test func anAnchorMoveKeepsTheOldBlocksUntilTheLoadLands() async {
         let held = HeldActivity(blocks: [block("2026-10-14T09:00:00Z")])
         held.held = false

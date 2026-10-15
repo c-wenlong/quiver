@@ -100,10 +100,14 @@ private struct CalendarContent: View {
             .onAppear { focused = true }
             .onKeyPress { press in
                 if press.key == .leftArrow {
-                    model.apply(CalendarModel.KeyCommand(arrow: .left)); return .handled
+                    model.apply(CalendarModel.KeyCommand(arrow: .left))
+                    scrolledRange = model.visibleRange // a step is a swipe: keep the hour
+                    return .handled
                 }
                 if press.key == .rightArrow {
-                    model.apply(CalendarModel.KeyCommand(arrow: .right)); return .handled
+                    model.apply(CalendarModel.KeyCommand(arrow: .right))
+                    scrolledRange = model.visibleRange
+                    return .handled
                 }
                 guard press.modifiers.isEmpty,
                       let key = press.characters.first,
@@ -177,12 +181,14 @@ private struct CalendarContent: View {
                 .help("Today (T)")
             Button("Previous \(model.mode.title.lowercased())", systemImage: "chevron.left") {
                 model.previous()
+                scrolledRange = model.visibleRange // like a swipe: keep the hour
             }
             .iconButton()
             .keyboardShortcut(.leftArrow, modifiers: .command)
             .help("Previous \(model.mode.title.lowercased()) (←)")
             Button("Next \(model.mode.title.lowercased())", systemImage: "chevron.right") {
                 model.next()
+                scrolledRange = model.visibleRange
             }
             .iconButton()
             .keyboardShortcut(.rightArrow, modifiers: .command)
@@ -289,9 +295,10 @@ private struct CalendarContent: View {
     /// boundaries in week mode).
     private var slidingGrid: some View {
         GeometryReader { geo in
-            let columnWidth = max(0, geo.size.width - Self.axisWidth) / CGFloat(span)
+            let gridWidth = max(0, geo.size.width - Self.axisWidth)
+            let columnWidth = gridWidth / CGFloat(span)
             VStack(spacing: 0) {
-                dayHeaders(columnWidth: columnWidth)
+                dayHeaders(columnWidth: columnWidth, gridWidth: gridWidth)
                 TimelineView(.everyMinute) { context in
                     ScrollViewReader { proxy in
                         ScrollView {
@@ -330,8 +337,13 @@ private struct CalendarContent: View {
         .onAppear { landed = model.visibleRange.start }
         .onChange(of: landed) { _, day in
             // The scroll settled on a target: it becomes the anchor, and
-            // every header/total/cache decision follows.
-            if let day { model.land(on: day) }
+            // every header/total/cache decision follows. A swipe never
+            // moves the vertical hour, so the new range counts as
+            // scrolled already.
+            if let day {
+                model.land(on: day)
+                scrolledRange = model.visibleRange
+            }
         }
         .onChange(of: model.visibleRange) { _, range in
             // Keyboard, chevrons and mini-month clicks still move the
@@ -379,8 +391,10 @@ private struct CalendarContent: View {
     }
 
     /// The header row sits outside the scroll view so it stays pinned
-    /// vertically; the columns' scroll offset slides it in lockstep.
-    private func dayHeaders(columnWidth: CGFloat) -> some View {
+    /// vertically; the columns' scroll offset slides it in lockstep. The
+    /// strip inside is the full render width, so the container gets the
+    /// grid's width explicitly and clips what hangs past it.
+    private func dayHeaders(columnWidth: CGFloat, gridWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: Self.axisWidth, height: 0)
             ZStack(alignment: .leading) {
@@ -403,6 +417,7 @@ private struct CalendarContent: View {
                 }
                 .offset(x: -scrollX)
             }
+            .frame(width: gridWidth, alignment: .leading)
             .clipped()
         }
         .padding(.vertical, 8)
@@ -504,7 +519,9 @@ private struct CalendarContent: View {
                         .id("h\(hour)")
                 }
             }
-            if let today = model.renderDays.first(where: { $0.contains(now) }) {
+            // Only the visible window's "today" gets the pill, not a
+            // buffer day's.
+            if let today = model.days.first(where: { $0.contains(now) }) {
                 Text(now, format: .dateTime.hour().minute())
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.white)
@@ -520,8 +537,11 @@ private struct CalendarContent: View {
     /// once per visible range. Until the load finishes an empty range
     /// stays at the top, since later blocks may still arrive.
     private func scrollToFirstBlock(_ proxy: ScrollViewProxy) {
+        // Kept blocks from outside the window must not mark it scrolled:
+        // only the window's own blocks or a finished load of this exact
+        // render range settle it.
         guard scrolledRange != model.visibleRange,
-              !model.visibleBlocks.isEmpty || model.loadedRange == model.renderRange
+              !model.visibleWindowBlocks.isEmpty || model.loadedRange == model.renderRange
         else { return }
         let earliest = model.visibleWindowBlocks.map(\.start).min()
         let hour = earliest.map { model.calendar.component(.hour, from: $0) } ?? 8

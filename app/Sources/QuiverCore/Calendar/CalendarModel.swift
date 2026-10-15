@@ -514,7 +514,12 @@ public final class CalendarModel {
     /// columns stay on the grid but out of the legend and empty state.
     public var windowBlocks: [ActivityBlock] {
         let range = visibleRange
-        return blocks.filter { $0.end > range.start && $0.start < range.end }
+        return blocks.filter {
+            // A zero-length block (one response) exactly at the window
+            // start still counts as inside.
+            $0.start < range.end
+                && ($0.end > range.start || ($0.start == $0.end && $0.start >= range.start))
+        }
     }
 
     /// Same, with the legend's hidden toggles applied.
