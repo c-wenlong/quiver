@@ -451,7 +451,7 @@ private struct StatusBadge: View {
 
 // MARK: - Detail
 
-private struct SessionDetail: View {
+struct SessionDetail: View {
     var row: SessionsModel.Row
     var resume: () -> Void
     var close: () -> Void
