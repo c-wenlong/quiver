@@ -187,6 +187,9 @@ private struct CalendarContent: View {
                             .onChange(of: model.visibleBlocks.isEmpty) {
                                 scrollToFirstBlock(proxy)
                             }
+                            .onChange(of: model.loadedRange) {
+                                scrollToFirstBlock(proxy)
+                            }
                             .onChange(of: model.visibleRange) {
                                 scrollToFirstBlock(proxy)
                             }
