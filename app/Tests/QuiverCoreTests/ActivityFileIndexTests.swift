@@ -28,8 +28,8 @@ import Testing
         }
         let index = ActivityFileIndex(url: dir.url.appending(path: "cache/source.json"))
         let stamp = ActivityFileIndex.stamp(URL(fileURLWithPath: path))!
-        _ = try await index.sessions(files: [path: stamp], force: true, parse: parse)
-        _ = try await index.sessions(files: [path: stamp], force: true, parse: parse)
+        _ = try await index.sessions(files: { [path: stamp] }, force: true, parse: parse)
+        _ = try await index.sessions(files: { [path: stamp] }, force: true, parse: parse)
         #expect(parses.value == 1)
     }
 
@@ -38,17 +38,17 @@ import Testing
         let path = try file(dir, "a.jsonl", "one")
         let index = ActivityFileIndex(url: dir.url.appending(path: "cache/source.json"))
         _ = try await index.sessions(
-            files: [path: ActivityFileIndex.stamp(URL(fileURLWithPath: path))!],
+            files: { [path: ActivityFileIndex.stamp(URL(fileURLWithPath: path))!] },
             force: true, parse: session("a"))
         // Same path, new content: the stamp differs, so re-parse.
         try "a much longer line".write(toFile: path, atomically: true, encoding: .utf8)
         let reparsed = try await index.sessions(
-            files: [path: ActivityFileIndex.stamp(URL(fileURLWithPath: path))!],
+            files: { [path: ActivityFileIndex.stamp(URL(fileURLWithPath: path))!] },
             force: true, parse: session("a2"))
         #expect(reparsed.map(\.sessionId) == ["a2"])
         // Removed: the session drops out.
         try FileManager.default.removeItem(atPath: path)
-        let after = try await index.sessions(files: [:], force: true, parse: session("x"))
+        let after = try await index.sessions(files: { [:] }, force: true, parse: session("x"))
         #expect(after.isEmpty)
     }
 
@@ -58,10 +58,10 @@ import Testing
         let url = dir.url.appending(path: "cache/source.json")
         let stamp = ActivityFileIndex.stamp(URL(fileURLWithPath: path))!
         let first = ActivityFileIndex(url: url)
-        _ = try await first.sessions(files: [path: stamp], force: true, parse: session("s1"))
+        _ = try await first.sessions(files: { [path: stamp] }, force: true, parse: session("s1"))
         let parses = Count()
         let second = ActivityFileIndex(url: url)
-        let sessions = try await second.sessions(files: [path: stamp], force: true) { @Sendable _ in
+        let sessions = try await second.sessions(files: { [path: stamp] }, force: true) { @Sendable _ in
             parses.value += 1
             return [ActivityFileIndex.IndexedSession]()
         }
@@ -82,21 +82,21 @@ import Testing
             parseCalls.value += 1
             return [.init(sessionId: "s", accountHome: "/h", cwd: nil, timestamps: [2])]
         }
-        _ = try await index.sessions(files: [path: stamp], force: true, parse: parse)
+        _ = try await index.sessions(files: { [path: stamp] }, force: true, parse: parse)
         // First refresh done; drop the file and re-query inside the
         // window: cached sessions still answer, no re-parse.
         try FileManager.default.removeItem(atPath: path)
         now.value += 10
-        let cached = try await index.sessions(files: [:], parse: parse)
+        let cached = try await index.sessions(files: { [:] }, parse: parse)
         #expect(cached.count == 1)
         #expect(parseCalls.value == 1)
         // force ignores the throttle and drops the vanished file.
-        let forced = try await index.sessions(files: [:], force: true, parse: parse)
+        let forced = try await index.sessions(files: { [:] }, force: true, parse: parse)
         #expect(forced.isEmpty)
         #expect(parseCalls.value == 1)
         // Past the window a plain query refreshes too.
         now.value += 31
-        let later = try await index.sessions(files: [:], parse: parse)
+        let later = try await index.sessions(files: { [:] }, parse: parse)
         #expect(later.isEmpty)
     }
 }
@@ -124,12 +124,38 @@ extension ActivityFileIndexTests {
         var files: [String: ActivityFileIndex.FileStamp] = [:]
         for p in [good, bad] { files[p] = ActivityFileIndex.stamp(URL(fileURLWithPath: p)) }
         // The corrupt file fails alone; the good one still answers.
-        let sessions = try await index.sessions(files: files, force: true, parse: parse)
+        let sessions = try await index.sessions(files: { files }, force: true, parse: parse)
         #expect(sessions.map(\.sessionId) == [good])
         #expect(attempts.value == 1)
         // After the throttle the bad file is parsed again.
         clock.value += 31
-        _ = try await index.sessions(files: files, parse: parse)
+        _ = try await index.sessions(files: { files }, parse: parse)
         #expect(attempts.value == 2)
+    }
+}
+
+extension ActivityFileIndexTests {
+    @Test func theThrottleSkipsFileDiscoveryToo() async throws {
+        let dir = try TempDir()
+        final class Count: @unchecked Sendable { var value = 0 }
+        let discoveries = Count()
+        final class Now: @unchecked Sendable { var value = Date(timeIntervalSince1970: 1_000) }
+        let clock = Now()
+        let index = ActivityFileIndex(url: dir.url.appending(path: "cache/s.json"),
+                                      now: { clock.value })
+        let parse: @Sendable (String) throws -> [ActivityFileIndex.IndexedSession] = { _ in [] }
+        let files: @Sendable () -> [String: ActivityFileIndex.FileStamp] = {
+            discoveries.value += 1
+            return [:]
+        }
+        _ = try await index.sessions(files: files, force: true, parse: parse)
+        _ = try await index.sessions(files: files, parse: parse)
+        // Inside the window the directory walk never runs.
+        #expect(discoveries.value == 1)
+        _ = try await index.sessions(files: files, force: true, parse: parse)
+        #expect(discoveries.value == 2)
+        clock.value += 31
+        _ = try await index.sessions(files: files, parse: parse)
+        #expect(discoveries.value == 3)
     }
 }

@@ -471,3 +471,39 @@ extension CalendarCacheTests {
         #expect(model.blocks.map(\.sessionId) == ["fresh"])
     }
 }
+
+extension CalendarCacheTests {
+    @Test func aFailingPrefetchKeepsTheProvidersCachedBlocks() async throws {
+        let flag = Flag()
+        let good = FakeActivity(blocks: [block("2026-10-14T09:00:00Z", session: "a")])
+        let flaky = TogglingActivity(blocks: [block("2026-10-14T10:00:00Z",
+                                                    session: "b")], fails: flag)
+        let model = CalendarModel(providers: [good, flaky], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await model.load()
+        try await Task.sleep(for: .milliseconds(300))  // let prefetches land
+        #expect(model.blocks.count == 2)
+        // Every cached range goes stale; the flaky provider now fails.
+        flag.value = true
+        model.noteScanCompleted()
+        model.next()
+        await model.load(force: true)
+        // Give the stale-range prefetch (back on the October 12 week) a
+        // moment to finish with the flaky provider failing.
+        try await Task.sleep(for: .milliseconds(300))
+        model.previous()
+        // The stale cache paints synchronously and must still hold both
+        // providers' blocks.
+        #expect(model.blocks.map(\.sessionId).sorted() == ["a", "b"])
+    }
+
+    @Test func aRestoredSnapshotFillsBlocksBeforeAnyLoad() {
+        let snap = CalendarSnapshot(ranges: [
+            .init(start: utc("2026-10-12T00:00:00Z"), end: utc("2026-10-19T00:00:00Z"),
+                  providers: [0: [block("2026-10-14T09:00:00Z")]])])
+        let model = CalendarModel(providers: [], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") },
+                                  calendar: calendar, restored: snap)
+        #expect(model.blocks.count == 1)
+    }
+}

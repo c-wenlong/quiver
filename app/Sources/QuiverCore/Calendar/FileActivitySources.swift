@@ -21,7 +21,7 @@ public struct FileActivitySource: ActivityProviding {
 
     public func activityBlocks(in range: DateInterval, gap: TimeInterval,
                                force: Bool) async throws -> [ActivityBlock] {
-        let sessions = try await index.sessions(files: files(), force: force, parse: parse)
+        let sessions = try await index.sessions(files: files, force: force, parse: parse)
         return sessions.flatMap {
             ActivityBlocks.make(harness: harness, accountHome: $0.accountHome,
                                 sessionId: $0.sessionId, cwd: $0.cwd,

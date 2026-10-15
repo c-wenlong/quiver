@@ -48,10 +48,13 @@ private struct CalendarContent: View {
             }
         }
         .task {
+            // Blocks load concurrently with the session list: cached
+            // ranges paint immediately and titles fill in when rows land.
+            async let loadBlocks: () = model.load()
             await app.sessions?.restore()
             await app.sessions?.loadIfStale(for: app.swePath)
             sessionIndex = CalendarSessionIndex(rows: app.sessions?.rows ?? [])
-            await model.load()
+            await loadBlocks
         }
         .onChange(of: app.sessions?.rows ?? []) {
             sessionIndex = CalendarSessionIndex(rows: app.sessions?.rows ?? [])

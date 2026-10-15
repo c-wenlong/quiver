@@ -71,14 +71,16 @@ public actor ActivityFileIndex {
     /// Every session every file holds, re-parsing only files whose stamp
     /// changed since the index last saw them and dropping vanished ones.
     /// Within `refreshInterval` of the last refresh, `force: false` just
-    /// returns the cached sessions. Persists only when something changed.
-    /// `files` is path -> stamp; `parse` reads one file.
-    public func sessions(files: [String: FileStamp],
+    /// returns the cached sessions, and `files` is never invoked, so the
+    /// source's directory walk only runs on a real refresh. Persists only
+    /// when something changed. `parse` reads one file.
+    public func sessions(files: () throws -> [String: FileStamp],
                          force: Bool = false,
                          parse: @Sendable (String) throws -> [IndexedSession]) throws -> [IndexedSession] {
         if !force, now().timeIntervalSince(lastRefresh) < Self.refreshInterval {
             return entries.values.flatMap(\.sessions)
         }
+        let files = try files()
         lastRefresh = now()
         var changed = false
         // Drop vanished files.

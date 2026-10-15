@@ -76,6 +76,11 @@ public final class CalendarModel {
             cache[range] = entry.providers
             recent.append(range)
         }
+        // First paint off the snapshot: the cached blocks for the range
+        // on screen show before the session list or any provider answers.
+        if let cached = cache[visibleRange] {
+            blocks = Self.flatten(cached)
+        }
     }
 
     /// The days on show. `.week` starts on the user's first weekday, so a
@@ -233,7 +238,10 @@ public final class CalendarModel {
                 }
                 guard let self else { return }
                 if cache[neighbour] == nil || stale.contains(neighbour) {
-                    cache[neighbour] = fetched
+                    // Merge into what is cached: a provider that failed
+                    // this prefetch keeps its stale blocks, like load().
+                    cache[neighbour] = cache[neighbour]?.merging(fetched) { _, new in new }
+                        ?? fetched
                     stale.remove(neighbour)
                 }
             }
