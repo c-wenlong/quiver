@@ -15,20 +15,29 @@ public struct CalendarSessionIndex: Sendable {
         }
     }
 
-    /// The listed row for the block, or a stand-in when the session is no
-    /// longer in the harness's history (logs gone, ledger kept): the
-    /// stand-in has no resume command and no usage, and the detail sheet
-    /// says so.
-    public func row(for block: ActivityBlock) -> SessionsModel.Row {
-        if let row = rows["\(block.harness)|\(block.accountHome)|\(block.sessionId)"]
-            ?? rows["\(block.harness)||\(block.sessionId)"] {
+    /// The listed row for one session of a block, or a stand-in when the
+    /// session is no longer in the harness's history (logs gone, ledger
+    /// kept): the stand-in has no resume command and no usage, and the
+    /// detail sheet says so.
+    public func row(for ref: ActivityBlock.SessionRef, harness: String,
+                    accountHome: String) -> SessionsModel.Row {
+        if let row = rows["\(harness)|\(accountHome)|\(ref.sessionId)"]
+            ?? rows["\(harness)||\(ref.sessionId)"] {
             return row
         }
         return SessionsModel.Row(
-            session: SessionInfo(id: block.sessionId, harness: block.harness,
-                                 agent: UsageFormat.harness(block.harness),
-                                 cwd: block.cwd, title: nil, titleSource: nil,
-                                 lastActiveAt: block.end, status: nil, resume: nil),
-            usage: nil, id: block.id)
+            session: SessionInfo(id: ref.sessionId, harness: harness,
+                                 agent: UsageFormat.harness(harness),
+                                 cwd: ref.cwd, title: nil, titleSource: nil,
+                                 lastActiveAt: ref.end, status: nil, resume: nil),
+            usage: nil, id: "\(harness)|\(accountHome)|\(ref.sessionId)")
+    }
+
+    /// Every session of a block as a row, earliest first: the project
+    /// sheet's list, ready to render.
+    public func rows(for block: ActivityBlock)
+        -> [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)] {
+        block.sessions.sorted { $0.start != $1.start ? $0.start < $1.start : $0.sessionId < $1.sessionId }
+            .map { ($0, row(for: $0, harness: block.harness, accountHome: block.accountHome)) }
     }
 }

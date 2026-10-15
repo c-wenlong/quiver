@@ -30,26 +30,26 @@ import Testing
     @Test func responsesInsideTheGapJoinIntoOneBlock() throws {
         let fixture = try store([
             event("2026-10-05T10:00:00Z"),
-            // Exactly 15 minutes later still belongs to the same block.
-            event("2026-10-05T10:15:00Z"),
-            event("2026-10-05T10:20:00Z"),
+            // Exactly 30 minutes later still belongs to the same block.
+            event("2026-10-05T10:30:00Z"),
+            event("2026-10-05T10:35:00Z"),
         ])
         let store = fixture.1
-        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
         #expect(blocks.count == 1)
         #expect(blocks[0].start == utc("2026-10-05T10:00:00Z"))
-        #expect(blocks[0].end == utc("2026-10-05T10:20:00Z"))
+        #expect(blocks[0].end == utc("2026-10-05T10:35:00Z"))
         #expect(blocks[0].responses == 3)
     }
 
     @Test func aGapLongerThanTheLimitStartsANewBlock() throws {
         let fixture = try store([
             event("2026-10-05T10:00:00Z"),
-            // 15 minutes and a second: a new block.
-            event("2026-10-05T10:15:01Z"),
+            // 30 minutes and a second: a new block.
+            event("2026-10-05T10:30:01Z"),
         ])
         let store = fixture.1
-        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
         #expect(blocks.count == 2)
         #expect(blocks.map(\.responses) == [1, 1])
     }
@@ -61,9 +61,9 @@ import Testing
             event("2026-10-05T10:08:00Z", home: "/other", session: "a"),
         ])
         let store = fixture.1
-        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
         #expect(blocks.count == 3)
-        #expect(Set(blocks.map { "\($0.accountHome)|\($0.sessionId)" })
+        #expect(Set(blocks.map { "\($0.accountHome)|\($0.sessions[0].sessionId)" })
             == ["/h|a", "/h|b", "/other|a"])
     }
 
@@ -78,14 +78,14 @@ import Testing
             event("2026-10-04T23:20:00Z", session: "out"),
         ])
         let store = fixture.1
-        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
         #expect(blocks.count == 1)
         #expect(blocks[0].start == utc("2026-10-04T23:55:00Z"))
         #expect(blocks[0].end == utc("2026-10-05T00:05:00Z"))
     }
 
     @Test func aBlockThatBeganHoursBeforeTheRangeKeepsItsTrueStart() throws {
-        // Responses every 14 minutes from two hours before the day into
+        // Responses every 29 minutes from two hours before the day into
         // it: one long block the `gap`-sized look-back would have cut at
         // the range edge.
         var events: [UsageEvent] = []
@@ -95,14 +95,14 @@ import Testing
             events.append(UsageEvent(harness: "claude", accountHome: "/h",
                                      sessionId: "s", model: "m",
                                      timestamp: ts, outputTokens: 1))
-            t = ts.addingTimeInterval(14 * 60)
+            t = ts.addingTimeInterval(29 * 60)
         }
         let fixture = try store(events)
         let store = fixture.1
-        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
         #expect(blocks.count == 1)
         #expect(blocks[0].start == utc("2026-10-04T22:00:00Z"))
-        #expect(blocks[0].end == utc("2026-10-05T00:20:00Z"))
+        #expect(blocks[0].end == utc("2026-10-05T00:25:00Z"))
     }
 
     @Test func sidechainResponsesCount() throws {
@@ -113,7 +113,7 @@ import Testing
         try store.upsert(LedgerRecord(key: "k1", isSidechain: true,
                                       event: event("2026-10-05T10:05:00Z")))
         try store.db.execute("COMMIT")
-        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
         #expect(blocks.count == 1)
         #expect(blocks[0].responses == 2)
     }
@@ -134,8 +134,8 @@ import Testing
                        timestamp: utc("2026-10-05T10:00:00Z"), outputTokens: 1),
         ])
         let store = fixture.1
-        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
-        #expect(blocks[0].cwd == "/work/project")
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
+        #expect(blocks[0].sessions[0].cwd == "/work/project")
     }
 }
 

@@ -81,9 +81,15 @@ public final class CalendarModel {
         }
     }
 
-    /// A session's responses read as one block until this much silence
+    /// A project's responses read as one block until this much silence
     /// passes between two of them.
-    public nonisolated static let gap: TimeInterval = 15 * 60
+    public nonisolated static let gap: TimeInterval = 30 * 60
+
+    /// How far past the visible range providers are asked for: a project
+    /// block straddling the edge joins sessions on both sides of it, so
+    /// the query widens a day each way and the grouped result clips back
+    /// to the range. Matches the ledger's own lookout.
+    static let edgeLookout: TimeInterval = 24 * 3600
 
     public var mode: Mode = .week {
         didSet {
@@ -114,6 +120,7 @@ public final class CalendarModel {
     }
 
     private let providers: [any ActivityProviding]
+    private let projects: ProjectResolver
     private let accountLabel: (String) -> String
     private let defaults: UserDefaults
     private let now: () -> Date
@@ -141,6 +148,7 @@ public final class CalendarModel {
     static let panelCollapsedKey = "calendar.panelCollapsed"
 
     public init(providers: [any ActivityProviding],
+                projects: ProjectResolver = ProjectResolver(),
                 accountLabel: @escaping (String) -> String = { $0 },
                 defaults: UserDefaults = .standard,
                 now: @escaping () -> Date = Date.init,
@@ -148,6 +156,7 @@ public final class CalendarModel {
                 snapshots: (any SnapshotStoring<CalendarSnapshot>)? = nil,
                 restored: CalendarSnapshot? = nil) {
         self.providers = providers
+        self.projects = projects
         self.accountLabel = accountLabel
         self.defaults = defaults
         self.now = now
@@ -295,14 +304,18 @@ public final class CalendarModel {
         // Saved only once this load is known to be the latest: an overtaken
         // load must not overwrite the newer one's last good blocks.
         var good: [Int: [ActivityBlock]] = [:]
+        let widened = DateInterval(start: range.start.addingTimeInterval(-Self.edgeLookout),
+                                   end: range.end.addingTimeInterval(Self.edgeLookout))
         await withTaskGroup(of: (Int, Result<[ActivityBlock], Error>, TimeInterval).self) { group in
             for (i, provider) in providers.enumerated() {
                 group.addTask {
                     let start = Date()
                     do {
-                        let batch = try await provider.activityBlocks(in: range, gap: Self.gap,
+                        let batch = try await provider.activityBlocks(in: widened, gap: Self.gap,
                                                                       force: force)
-                        return (i, .success(batch), Date().timeIntervalSince(start))
+                        return (i, .success(self.projects.group(batch, gap: Self.gap)
+                            .filter { $0.end >= range.start && $0.start < range.end }),
+                            Date().timeIntervalSince(start))
                     } catch {
                         return (i, .failure(error), 0)
                     }
@@ -348,13 +361,17 @@ public final class CalendarModel {
         for neighbour in [range(for: shiftedAnchor(-1, mode: mode), mode: mode),
                           range(for: shiftedAnchor(1, mode: mode), mode: mode)] {
             guard cache[neighbour] == nil || stale.contains(neighbour) else { continue }
-            Task(priority: .utility) { [providers, weak self] in
+            let widened = DateInterval(start: neighbour.start.addingTimeInterval(-Self.edgeLookout),
+                                       end: neighbour.end.addingTimeInterval(Self.edgeLookout))
+            Task(priority: .utility) { [providers, projects, weak self] in
                 var fetched: [Int: [ActivityBlock]] = [:]
                 await withTaskGroup(of: (Int, [ActivityBlock]?).self) { group in
                     for (i, provider) in providers.enumerated() {
                         group.addTask {
-                            (i, try? await provider.activityBlocks(in: neighbour,
-                                                                   gap: Self.gap, force: false))
+                            (i, (try? await provider.activityBlocks(in: widened,
+                                                                    gap: Self.gap, force: false))
+                                .map { projects.group($0, gap: Self.gap)
+                                    .filter { $0.end >= neighbour.start && $0.start < neighbour.end } })
                         }
                     }
                     for await (i, batch) in group {
@@ -450,11 +467,31 @@ public final class CalendarModel {
 
     private func totalTime(key: (ActivityBlock) -> String?) -> [String: TimeInterval] {
         let range = totalsRange
-        var totals: [String: TimeInterval] = [:]
+        // Wall-clock union: parallel sessions and overlapping projects
+        // count once, so clipped spans merge before they sum.
+        var spans: [String: [DateInterval]] = [:]
         for block in blocks {
-            guard let name = key(block) else { continue }
-            let clipped = min(block.end, range.end).timeIntervalSince(max(block.start, range.start))
-            totals[name, default: 0] += max(0, clipped)
+            guard let name = key(block),
+                  block.end > range.start, block.start < range.end
+            else { continue }
+            let span = DateInterval(start: max(block.start, range.start),
+                                    end: min(block.end, range.end))
+            spans[name, default: []].append(span)
+        }
+        var totals: [String: TimeInterval] = [:]
+        for (name, list) in spans {
+            var total: TimeInterval = 0
+            var current: DateInterval?
+            for span in list.sorted(by: { $0.start < $1.start }) {
+                if let held = current, span.start <= held.end {
+                    current = DateInterval(start: held.start, end: max(held.end, span.end))
+                } else {
+                    if let held = current { total += held.duration }
+                    current = span
+                }
+            }
+            if let held = current { total += held.duration }
+            totals[name] = total
         }
         return totals
     }

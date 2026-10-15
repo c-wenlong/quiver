@@ -1,39 +1,77 @@
 import Foundation
 
-/// One stretch of consecutive work in a session: the first to the last
+/// One stretch of consecutive work in a project: the first to the last
 /// response where no two consecutive responses are more than `gap` apart.
-/// It is the Calendar page's event; the session it came from is what a
+/// It is the Calendar page's event; the sessions it came from are what a
 /// click opens.
 public struct ActivityBlock: Sendable, Equatable, Identifiable, Codable {
+    /// One session's share of a project block: its own first and last
+    /// response inside the block and how many it added.
+    public struct SessionRef: Sendable, Equatable, Codable {
+        public var sessionId: String
+        /// The session's working directory, when the source knows one.
+        public var cwd: String?
+        public var start: Date
+        public var end: Date
+        public var responses: Int
+
+        public init(sessionId: String, cwd: String? = nil, start: Date,
+                    end: Date, responses: Int) {
+            self.sessionId = sessionId
+            self.cwd = cwd
+            self.start = start
+            self.end = end
+            self.responses = responses
+        }
+    }
+
     /// "claude", "codex", "opencode" or "devin".
     public var harness: String
     /// The config root the responses were read from, so two accounts of
     /// the same harness make two blocks.
     public var accountHome: String
-    public var sessionId: String
+    /// What the block groups and identifies by: the repository's root
+    /// path, so same-named folders of different repos stay apart. "" for
+    /// no folder and for providers' ungrouped blocks.
+    public var projectKey: String
+    /// The project the sessions ran in, for display. Providers leave it
+    /// empty and the grouping step resolves it from each session's
+    /// folder.
+    public var project: String
+    /// The sessions inside the block, earliest first.
+    public var sessions: [SessionRef]
     /// The first response of the block.
     public var start: Date
     /// The last response of the block.
     public var end: Date
     /// How many responses the block holds.
     public var responses: Int
-    /// The session's working directory, when the ledger knows one: the
-    /// folder a block with no session title gets named by.
-    public var cwd: String?
 
     public var id: String {
-        "\(harness)|\(accountHome)|\(sessionId)|\(start.timeIntervalSince1970)"
+        "\(harness)|\(accountHome)|\(projectKey.isEmpty ? project : projectKey)|\(start.timeIntervalSince1970)"
     }
 
-    public init(harness: String, accountHome: String, sessionId: String,
-                start: Date, end: Date, responses: Int, cwd: String? = nil) {
+    public init(harness: String, accountHome: String, project: String,
+                sessions: [SessionRef], start: Date, end: Date, responses: Int,
+                projectKey: String = "") {
         self.harness = harness
         self.accountHome = accountHome
-        self.sessionId = sessionId
+        self.projectKey = projectKey
+        self.project = project
+        self.sessions = sessions
         self.start = start
         self.end = end
         self.responses = responses
-        self.cwd = cwd
+    }
+
+    /// The one-session form every provider emits; the grouping step
+    /// resolves `project` and merges these into project blocks.
+    public init(harness: String, accountHome: String, sessionId: String,
+                start: Date, end: Date, responses: Int, cwd: String? = nil) {
+        self.init(harness: harness, accountHome: accountHome, project: "",
+                  sessions: [.init(sessionId: sessionId, cwd: cwd,
+                                   start: start, end: end, responses: responses)],
+                  start: start, end: end, responses: responses)
     }
 }
 
@@ -139,16 +177,16 @@ extension SQLiteDatabase {
             if let previous = current,
                previous.harness == piece.harness,
                previous.accountHome == piece.accountHome,
-               previous.sessionId == piece.sessionId,
+               previous.sessions.first?.sessionId == piece.sessions.first?.sessionId,
                piece.start.timeIntervalSince(previous.end) <= gap {
                 // Same session, close enough to touch: fold in.
                 piece = ActivityBlock(
                     harness: piece.harness, accountHome: piece.accountHome,
-                    sessionId: piece.sessionId,
+                    sessionId: piece.sessions.first?.sessionId ?? "",
                     start: min(previous.start, piece.start),
                     end: max(previous.end, piece.end),
                     responses: previous.responses + piece.responses,
-                    cwd: piece.cwd ?? previous.cwd)
+                    cwd: piece.sessions.first?.cwd ?? previous.sessions.first?.cwd)
             } else {
                 flush()
             }

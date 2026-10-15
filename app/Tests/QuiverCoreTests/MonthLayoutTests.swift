@@ -12,11 +12,14 @@ import Testing
 
     private func block(_ start: String, minutes: Int = 60,
                        harness: String = "claude", home: String = "/h",
-                       session: String = "s") -> ActivityBlock {
+                       session: String = "s", project: String? = nil) -> ActivityBlock {
         let start = utc(start)
-        return ActivityBlock(harness: harness, accountHome: home, sessionId: session,
-                             start: start, end: start.addingTimeInterval(TimeInterval(minutes * 60)),
-                             responses: 1)
+        var block = ActivityBlock(harness: harness, accountHome: home, sessionId: session,
+                                  start: start,
+                                  end: start.addingTimeInterval(TimeInterval(minutes * 60)),
+                                  responses: 1)
+        block.project = project ?? session
+        return block
     }
 
     @Test func octoberOnAMondayFirstCalendarStartsSeptember28() {
@@ -34,7 +37,7 @@ import Testing
         #expect(weeks[0][0] == utc("2026-09-27T00:00:00Z"))
     }
 
-    @Test func twoBlocksOfOneSessionJoinOneEntry() {
+    @Test func twoBlocksOfOneProjectJoinOneEntry() {
         let day = DateInterval(start: utc("2026-10-14T00:00:00Z"),
                                end: utc("2026-10-15T00:00:00Z"))
         let entries = MonthLayout.entries(
@@ -43,6 +46,43 @@ import Testing
         #expect(entries[0].blockCount == 2)
         #expect(entries[0].active == 7200)
         #expect(entries[0].start == utc("2026-10-14T09:00:00Z"))
+    }
+
+    @Test func anEntryKeepsEverySessionOfTheDay() {
+        // Two blocks of one project from different sessions: the entry's
+        // block carries both refs so its click opens the project sheet,
+        // and a session with two blocks keeps one clipped ref.
+        let day = DateInterval(start: utc("2026-10-14T00:00:00Z"),
+                               end: utc("2026-10-15T00:00:00Z"))
+        let entries = MonthLayout.entries(
+            [block("2026-10-14T09:00:00Z", session: "a", project: "repo"),
+             block("2026-10-14T14:00:00Z", session: "b", project: "repo"),
+             block("2026-10-14T16:00:00Z", session: "a", project: "repo")],
+            day: day)
+        #expect(entries.count == 1)
+        #expect(entries[0].block.sessions.map(\.sessionId) == ["a", "b"])
+        #expect(entries[0].block.sessions[0].start == utc("2026-10-14T09:00:00Z"))
+        #expect(entries[0].block.sessions[0].end == utc("2026-10-14T17:00:00Z"))
+        #expect(entries[0].block.sessions[0].responses == 2)
+    }
+
+    @Test func aSessionFromTheOtherDayStaysOutOfTheEntry() {
+        // One block spanning midnight holds a Sunday-only session and a
+        // Monday-only one: Monday's entry must not list Sunday's.
+        let day = DateInterval(start: utc("2026-10-19T00:00:00Z"),
+                               end: utc("2026-10-20T00:00:00Z"))
+        var spanning = block("2026-10-18T23:50:00Z", minutes: 20, session: "a",
+                             project: "repo")
+        spanning.sessions = [
+            .init(sessionId: "sun", start: utc("2026-10-18T23:50:00Z"),
+                  end: utc("2026-10-18T23:55:00Z"), responses: 1),
+            .init(sessionId: "mon", start: utc("2026-10-19T00:05:00Z"),
+                  end: utc("2026-10-19T00:10:00Z"), responses: 1),
+        ]
+        let entries = MonthLayout.entries([spanning], day: day)
+        #expect(entries.count == 1)
+        #expect(entries[0].block.sessions.map(\.sessionId) == ["mon"])
+        #expect(entries[0].block.sessions[0].start <= entries[0].block.sessions[0].end)
     }
 
     @Test func aBlockAcrossMidnightContributesToBothDaysClipped() {
@@ -58,13 +98,13 @@ import Testing
         #expect(second[0].start == day2.start)
     }
 
-    @Test func sessionsSortByStartAndStayApart() {
+    @Test func projectsSortByStartAndStayApart() {
         let day = DateInterval(start: utc("2026-10-14T00:00:00Z"),
                                end: utc("2026-10-15T00:00:00Z"))
         let entries = MonthLayout.entries(
             [block("2026-10-14T14:00:00Z", session: "b"),
              block("2026-10-14T09:00:00Z", session: "a")], day: day)
-        #expect(entries.map(\.block.sessionId) == ["a", "b"])
+        #expect(entries.map(\.block.project) == ["a", "b"])
     }
 
     @Test func splitReservesALineForMore() {
@@ -194,7 +234,10 @@ import Testing
         // The load plus both neighbour prefetches make three calls.
         var ranges = await provider.wait(for: 3)
         let expectedNext = model.range(for: model.shiftedAnchor(1, mode: .month), mode: .month)
-        #expect(ranges.contains(expectedNext))
+        // The query widens by a day each side for edge-spanning blocks.
+        #expect(ranges.contains(DateInterval(
+            start: expectedNext.start.addingTimeInterval(-CalendarModel.edgeLookout),
+            end: expectedNext.end.addingTimeInterval(CalendarModel.edgeLookout))))
         #expect(expectedNext == DateInterval(start: utc("2026-10-26T00:00:00Z"),
                                            end: utc("2026-12-07T00:00:00Z")))
         // The same for a 3-day span.
@@ -202,8 +245,10 @@ import Testing
         model.mode = .days(3)
         await model.load()
         ranges = await provider.wait(for: 3)
-        #expect(ranges.contains(
-            model.range(for: model.shiftedAnchor(1, mode: .days(3)), mode: .days(3))))
+        let next = model.range(for: model.shiftedAnchor(1, mode: .days(3)), mode: .days(3))
+        #expect(ranges.contains(DateInterval(
+            start: next.start.addingTimeInterval(-CalendarModel.edgeLookout),
+            end: next.end.addingTimeInterval(CalendarModel.edgeLookout))))
     }
 
     @Test func keyCommandsMapLettersDigitsAndArrows() {
