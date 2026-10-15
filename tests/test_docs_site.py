@@ -1,22 +1,28 @@
 """Tests for scripts/docs_site.py (the Zensical staging script)."""
 
 import importlib.util
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-_SPEC = importlib.util.spec_from_file_location(
-    "docs_site", ROOT / "scripts" / "docs_site.py")
-docs_site = importlib.util.module_from_spec(_SPEC)
-sys.modules.setdefault("docs_site", docs_site)
-_SPEC.loader.exec_module(docs_site)
+SCRIPT = ROOT / "scripts" / "docs_site.py"
+docs_site = None
+if SCRIPT.exists():
+    _SPEC = importlib.util.spec_from_file_location("docs_site", SCRIPT)
+    docs_site = importlib.util.module_from_spec(_SPEC)
+    sys.modules.setdefault("docs_site", docs_site)
+    _SPEC.loader.exec_module(docs_site)
+
+SCRIPT_MISSING = "scripts/ is not part of this source tree (Nix package build)"
 
 
-def _repo(files: dict) -> Path:
+def _repo(test: unittest.TestCase, files: dict) -> Path:
     """Write ``files`` (repo-relative path -> text) into a fake repo root."""
     root = Path(tempfile.mkdtemp(prefix="quiver-docs-test-"))
+    test.addCleanup(shutil.rmtree, root, True)
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -24,6 +30,7 @@ def _repo(files: dict) -> Path:
     return root
 
 
+@unittest.skipUnless(SCRIPT.exists(), SCRIPT_MISSING)
 class RewriteLinksTests(unittest.TestCase):
     def setUp(self):
         self.staged = {"README.md": "index.md", "docs/data-model.md": "architecture/data-model.md"}
@@ -53,20 +60,20 @@ class RewriteLinksTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_repo_file_links_to_github_blob(self):
-        root = _repo({"src/quiver/cli.py": "x"})
+        root = _repo(self, {"src/quiver/cli.py": "x"})
         out = self.rewrite("See [the CLI](src/quiver/cli.py).", root=root)
         self.assertIn(
             "(https://github.com/c-wenlong/quiver/blob/main/src/quiver/cli.py)", out)
         self.assertEqual(self.missing, [])
 
     def test_repo_directory_links_to_github_tree(self):
-        root = _repo({"src/quiver/cli.py": "x"})
+        root = _repo(self, {"src/quiver/cli.py": "x"})
         out = self.rewrite("Browse [src](src/quiver).", root=root)
         self.assertIn(
             "(https://github.com/c-wenlong/quiver/tree/main/src/quiver)", out)
 
     def test_local_asset_is_copied_and_rewritten(self):
-        root = _repo({"assets/banner.png": "png-bytes"})
+        root = _repo(self, {"assets/banner.png": "png-bytes"})
         out = self.rewrite("![mascot](assets/banner.png)", root=root)
         self.assertIn("![mascot](assets/banner.png)", out)
         self.assertIn("assets/banner.png", self.assets)
@@ -97,9 +104,10 @@ class RewriteLinksTests(unittest.TestCase):
         self.assertIn("[m]: architecture/data-model.md", out)
 
 
+@unittest.skipUnless(SCRIPT.exists(), SCRIPT_MISSING)
 class StageTests(unittest.TestCase):
     def test_stage_copies_pages_assets_and_rewrites(self):
-        root = _repo({
+        root = _repo(self, {
             "README.md": "hi [arch](ARCHITECTURE.md) ![b](assets/b.png)",
             "ARCHITECTURE.md": "# arch\nlink to [cli](src/x.py)",
             "src/x.py": "x",
@@ -123,7 +131,7 @@ class StageTests(unittest.TestCase):
         self.assertIn("(https://github.com/c-wenlong/quiver/blob/main/src/x.py)", arch)
 
     def test_stage_fails_on_missing_target(self):
-        root = _repo({"README.md": "[gone](NOPE.md)", "ARCHITECTURE.md": "x"})
+        root = _repo(self, {"README.md": "[gone](NOPE.md)", "ARCHITECTURE.md": "x"})
         orig = (docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page)
         try:
             docs_site.PAGES = [("README.md", "index.md"),
@@ -136,6 +144,7 @@ class StageTests(unittest.TestCase):
         self.assertEqual(code, 1)
 
 
+@unittest.skipUnless(SCRIPT.exists(), SCRIPT_MISSING)
 class CliPageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
