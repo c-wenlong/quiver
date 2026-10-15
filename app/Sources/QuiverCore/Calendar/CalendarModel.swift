@@ -136,7 +136,9 @@ public final class CalendarModel {
     /// The closure reads the accounts store, so results are memoised per
     /// harness for the life of a load rather than per call.
     private let knownAccounts: (String) -> [String]
-    private var knownHomes: [String: [String]] = [:]
+    /// Filled lazily while views read accounts, so it must not be
+    /// observed: a write during a render would invalidate that render.
+    @ObservationIgnored private var knownHomes: [String: [String]] = [:]
 
     private func knownHomes(for harness: String) -> [String] {
         if let cached = knownHomes[harness] { return cached }
