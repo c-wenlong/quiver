@@ -15,6 +15,16 @@ public struct AccountDirectory: Sendable {
             let profileHome = paths(profile).home
             names[profileHome.standardizedFileURL.path] = "\(profile.vendor.title): \(profile.name)"
             if !profile.isDefault { extra[profile.vendor, default: []].append(profileHome) }
+            // Cursor activity is keyed on the app's user-data directory,
+            // not the profile home, so the legend labels it too.
+            if profile.vendor == .cursor {
+                let dir = profile.isDefault
+                    ? home.appendingPathComponent("Library/Application Support/Cursor")
+                    : paths(profile).desktopData
+                if let dir {
+                    names[dir.standardizedFileURL.path] = "Cursor: \(profile.name)"
+                }
+            }
         }
         self.names = names
         roots = .standard(home: home, claudeProfiles: extra[.claude] ?? [], codexProfiles: extra[.codex] ?? [])

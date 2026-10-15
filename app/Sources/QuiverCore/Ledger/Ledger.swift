@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Where to look for usage. Each list can name several homes because Quiver
 /// keeps extra accounts under `~/.quiver/accounts/<vendor>/<id>/home`.
@@ -125,6 +126,11 @@ public actor Ledger {
     let store: LedgerStore
     private var pricing: PricingCatalog
     private let reader: JSONLReader
+    /// The ledger file's path and a lazily opened read-only connection to
+    /// it, so the calendar's block query never queues behind a scan on
+    /// the write connection or this actor.
+    let activityURL: URL
+    let activityConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
 
     /// - Parameters:
     ///   - cacheDirectory: where the ledger database lives; production uses
@@ -134,7 +140,8 @@ public actor Ledger {
     public init(
         cacheDirectory: URL, pricing: PricingCatalog = (try? .bundled()) ?? .empty, maxLineBytes: Int = 64 << 20
     ) throws {
-        store = try LedgerStore(url: cacheDirectory.appendingPathComponent("ledger.sqlite"))
+        activityURL = cacheDirectory.appendingPathComponent("ledger.sqlite")
+        store = try LedgerStore(url: activityURL)
         self.pricing = pricing
         reader = JSONLReader(maxLineBytes: maxLineBytes)
     }

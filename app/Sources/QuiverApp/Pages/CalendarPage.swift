@@ -48,10 +48,13 @@ private struct CalendarContent: View {
             }
         }
         .task {
+            // Blocks load concurrently with the session list: cached
+            // ranges paint immediately and titles fill in when rows land.
+            async let loadBlocks: () = model.load()
             await app.sessions?.restore()
             await app.sessions?.loadIfStale(for: app.swePath)
             sessionIndex = CalendarSessionIndex(rows: app.sessions?.rows ?? [])
-            await model.load()
+            await loadBlocks
         }
         .onChange(of: app.sessions?.rows ?? []) {
             sessionIndex = CalendarSessionIndex(rows: app.sessions?.rows ?? [])
@@ -60,8 +63,11 @@ private struct CalendarContent: View {
             Task { await model.load() }
         }
         .onChange(of: app.overview?.completedScans ?? 0) {
-            // A finished scan may have logged new responses for the days on show.
-            Task { await model.load() }
+            // A finished scan may have logged new responses for the days
+            // on show; stale ranges keep painting until their refetch
+            // lands.
+            model.noteScanCompleted()
+            Task { await model.load(force: true) }
         }
         .sheet(item: $detail) { row in
             SessionDetail(row: row,
