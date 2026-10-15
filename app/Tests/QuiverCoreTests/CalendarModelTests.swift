@@ -240,6 +240,10 @@ private struct TogglingActivity: ActivityProviding {
 /// A provider whose reads the test holds open until it lets them through.
 private final class HeldActivity: ActivityProviding, @unchecked Sendable {
     var blocks: [ActivityBlock]
+    /// What non-forced (prefetch) reads answer; nil means the same blocks.
+    var prefetchBlocks: [ActivityBlock]?
+    /// Hold non-forced reads too, so prefetches can be ordered after loads.
+    var holdPrefetch = false
     private var state = State()
     init(blocks: [ActivityBlock]) { self.blocks = blocks }
     var calls: Int { state.withLock { $0.calls } }
@@ -259,14 +263,21 @@ private final class HeldActivity: ActivityProviding, @unchecked Sendable {
     func activityBlocks(in range: DateInterval, gap: TimeInterval,
                         force: Bool) async throws -> [ActivityBlock] {
         state.withLock { $0.calls += 1 }
-        await withCheckedContinuation { continuation in
-            let wait = state.withLock { s -> Bool in
-                if s.held { s.waiting.append(continuation); return true }
-                return false
+        let waitFirst = !force && holdPrefetch ? true : state.withLock { $0.held }
+        if waitFirst {
+            await withCheckedContinuation { continuation in
+                let wait = state.withLock { s -> Bool in
+                    if s.held || (!force && holdPrefetch) {
+                        s.waiting.append(continuation)
+                        return true
+                    }
+                    return false
+                }
+                if !wait { continuation.resume() }
             }
-            if !wait { continuation.resume() }
         }
-        return blocks.filter { $0.end >= range.start && $0.start < range.end }
+        let source = !force ? (prefetchBlocks ?? blocks) : blocks
+        return source.filter { $0.end >= range.start && $0.start < range.end }
     }
     private final class State: @unchecked Sendable {
         var calls = 0
@@ -407,5 +418,56 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         #expect(cached.blocks.count == 1)
         held.release()
         await load
+    }
+}
+
+extension CalendarCacheTests {
+    @Test func neighboursUseCalendarArithmeticAcrossDST() async {
+        // New York's 2026 spring-forward week is 167 hours long; only
+        // calendar arithmetic lands the neighbour on next()'s range.
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        newYork.firstWeekday = 1
+        let anchor = utc("2026-03-06T12:00:00Z")  // Friday of the DST week
+        let model = CalendarModel(providers: [], defaults: freshDefaults(),
+                                  now: { anchor }, calendar: newYork)
+        model.mode = .week
+        let expected = model.range(for: model.shiftedAnchor(1, mode: .week), mode: .week)
+        model.next()
+        #expect(model.visibleRange == expected)
+        #expect(expected.duration == 7 * 86400 - 3600)  // 167 hours
+
+        model.mode = .day
+        model.go(to: utc("2026-03-07T12:00:00Z"))
+        let dayAfter = model.range(for: model.shiftedAnchor(1, mode: .day), mode: .day)
+        model.next()
+        #expect(model.visibleRange == dayAfter)
+        #expect(dayAfter.duration == 23 * 3600)  // DST day
+    }
+
+    @Test func aLatePrefetchDoesNotOverwriteFresherBlocks() async throws {
+        let week = DateInterval(start: utc("2026-10-12T00:00:00Z"),
+                                end: utc("2026-10-19T00:00:00Z"))
+        let nextWeek = DateInterval(start: week.end, end: utc("2026-10-26T00:00:00Z"))
+        let stale = [block("2026-10-20T09:00:00Z", session: "prefetch")]
+        let fresh = [block("2026-10-20T10:00:00Z", session: "fresh")]
+        let provider = HeldActivity(blocks: fresh)
+        provider.prefetchBlocks = stale
+        provider.held = false
+        provider.holdPrefetch = true
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await model.load(force: true)
+        // The neighbour prefetch into next week is still suspended.
+        model.next()
+        #expect(model.visibleRange == nextWeek)
+        await model.load(force: true)
+        #expect(model.blocks.map(\.sessionId) == ["fresh"])
+        // Let the prefetch land: the fresh write wins.
+        provider.holdPrefetch = false
+        provider.release()
+        try await Task.sleep(for: .milliseconds(200))
+        await model.load(force: true)
+        #expect(model.blocks.map(\.sessionId) == ["fresh"])
     }
 }

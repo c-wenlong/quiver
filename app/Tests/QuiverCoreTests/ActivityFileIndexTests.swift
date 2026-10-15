@@ -100,3 +100,36 @@ import Testing
         #expect(later.isEmpty)
     }
 }
+
+extension ActivityFileIndexTests {
+    @Test func aCorruptFileIsSkippedAndRetriedAfterTheThrottle() async throws {
+        let dir = try TempDir()
+        let good = try file(dir, "good.jsonl", "one")
+        let bad = try file(dir, "bad.jsonl", "corrupt")
+        var now = Date(timeIntervalSince1970: 1_000)
+        final class Now: @unchecked Sendable { var value: Date
+            init(_ d: Date) { value = d } }
+        let clock = Now(now)
+        let index = ActivityFileIndex(url: dir.url.appending(path: "cache/s.json"),
+                                      now: { clock.value })
+        let attempts = Count()
+        let parse: @Sendable (String) throws -> [ActivityFileIndex.IndexedSession] = { path in
+            if path.hasSuffix("bad.jsonl") {
+                attempts.value += 1
+                struct Corrupt: Error {}
+                throw Corrupt()
+            }
+            return [.init(sessionId: path, accountHome: "/h", cwd: nil, timestamps: [1])]
+        }
+        var files: [String: ActivityFileIndex.FileStamp] = [:]
+        for p in [good, bad] { files[p] = ActivityFileIndex.stamp(URL(fileURLWithPath: p)) }
+        // The corrupt file fails alone; the good one still answers.
+        let sessions = try await index.sessions(files: files, force: true, parse: parse)
+        #expect(sessions.map(\.sessionId) == [good])
+        #expect(attempts.value == 1)
+        // After the throttle the bad file is parsed again.
+        clock.value += 31
+        _ = try await index.sessions(files: files, parse: parse)
+        #expect(attempts.value == 2)
+    }
+}

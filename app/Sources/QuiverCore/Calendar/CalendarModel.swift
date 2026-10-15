@@ -80,7 +80,13 @@ public final class CalendarModel {
 
     /// The days on show. `.week` starts on the user's first weekday, so a
     /// Monday-first calendar never shows a Sunday-first grid.
-    public var visibleRange: DateInterval {
+    public var visibleRange: DateInterval { range(for: anchor, mode: mode) }
+
+    /// One mode step of the calendar around an anchor: how `visibleRange`
+    /// and the ranges next()/previous() and the prefetch land on are
+    /// computed. Calendar arithmetic throughout, so a 25-hour DST day or
+    /// a month never drifts off a day boundary.
+    public func range(for anchor: Date, mode: Mode) -> DateInterval {
         switch mode {
         case .day:
             let start = calendar.startOfDay(for: anchor)
@@ -92,6 +98,12 @@ public final class CalendarModel {
             return DateInterval(start: start,
                                 end: calendar.date(byAdding: .day, value: 7, to: start) ?? start)
         }
+    }
+
+    /// The anchor shifted by this many mode steps (days, weeks or months).
+    public func shiftedAnchor(_ count: Int, mode: Mode) -> Date {
+        let unit: Calendar.Component = mode == .day ? .day : .weekOfYear
+        return calendar.date(byAdding: unit, value: count, to: anchor) ?? anchor
     }
 
     /// One interval per day column, clipped to the range.
@@ -112,8 +124,7 @@ public final class CalendarModel {
     public func previous() { shift(-1) }
     public func go(to date: Date) { anchor = date; applyCached() }
     private func shift(_ count: Int) {
-        let unit: Calendar.Component = mode == .day ? .day : .weekOfYear
-        anchor = calendar.date(byAdding: unit, value: count, to: anchor) ?? anchor
+        anchor = shiftedAnchor(count, mode: mode)
         applyCached()
     }
 
@@ -189,7 +200,7 @@ public final class CalendarModel {
         blocks = all.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
         loadError = failed
         persistSnapshot(of: range)
-        prefetchNeighbours(of: range)
+        prefetchNeighbours()
     }
 
     /// A range's per-provider blocks as one sorted list.
@@ -198,12 +209,14 @@ public final class CalendarModel {
             .sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
     }
 
-    /// The same-length ranges before and after this one, fetched quietly
-    /// so stepping sideways paints from cache. Results land in the cache
-    /// only; navigating there publishes them through `load`.
-    private func prefetchNeighbours(of range: DateInterval) {
-        for neighbour in [DateInterval(start: range.start - range.duration, end: range.start),
-                          DateInterval(start: range.end, duration: range.duration)] {
+    /// The ranges one mode step either side of the anchor, fetched
+    /// quietly so stepping sideways paints from cache. Results land in
+    /// the cache only; navigating there publishes them. A result that
+    /// arrives after a load already wrote fresher blocks for its range
+    /// is dropped rather than overwritten with an older read.
+    private func prefetchNeighbours() {
+        for neighbour in [range(for: shiftedAnchor(-1, mode: mode), mode: mode),
+                          range(for: shiftedAnchor(1, mode: mode), mode: mode)] {
             guard cache[neighbour] == nil || stale.contains(neighbour) else { continue }
             Task(priority: .utility) { [providers, weak self] in
                 var fetched: [Int: [ActivityBlock]] = [:]
@@ -218,7 +231,11 @@ public final class CalendarModel {
                         if let batch { fetched[i] = batch }
                     }
                 }
-                self?.cache[neighbour] = fetched
+                guard let self else { return }
+                if cache[neighbour] == nil || stale.contains(neighbour) {
+                    cache[neighbour] = fetched
+                    stale.remove(neighbour)
+                }
             }
         }
     }

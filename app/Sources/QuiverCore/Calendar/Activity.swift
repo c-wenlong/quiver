@@ -56,60 +56,105 @@ extension Ledger: ActivityProviding {
     /// Blocks over the ledger's response rows. `events` only reaches back
     /// for logs the app still has, but rows the scanner already committed
     /// answer for as long as they persist.
-    public func activityBlocks(in range: DateInterval, gap: TimeInterval,
-                               force: Bool) throws -> [ActivityBlock] {
-        // The ledger answers live from its store; `force` is a no-op.
-        try store.activityBlocks(in: range, gap: gap)
+    ///
+    /// Nonisolated on its own read-only connection: a WAL reader never
+    /// waits behind a scan running on the actor's write connection.
+    /// `force` is a no-op; the ledger answers live.
+    public nonisolated func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                                           force: Bool) throws -> [ActivityBlock] {
+        try activityConnection.withLock { connection throws -> [ActivityBlock] in
+            if connection == nil {
+                let path = activityURL.path
+                    .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                    ?? activityURL.path
+                connection = try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
+            }
+            return try connection!.activityBlocks(in: range, gap: gap)
+        }
     }
 }
 
 extension LedgerStore {
+    /// Blocks over this store's write connection; the calendar reads
+    /// through Ledger's own read-only one. Kept for tests that build a
+    /// store directly.
+    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+        try db.activityBlocks(in: range, gap: gap)
+    }
+}
+
+extension SQLiteDatabase {
     /// SQL-side, so a week's worth of responses never leaves the database:
-    /// LAG marks each response against the one before it in its session, a
-    /// running SUM numbers the blocks, and the aggregate keeps first, last
-    /// and the response count. Events are pulled a day past each edge so a
-    /// block straddling the range keeps its real ends (a block whose last
-    /// response sits more than a day out is too old to be live anyway); the
-    /// overlap check below then drops the ones that never touch it.
+    /// LAG marks each response against the one before it in its dim (an
+    /// integer key, much cheaper to partition than the joined text), a
+    /// running SUM numbers the blocks, and the aggregate joins `dims`
+    /// only once per block. Per-dim blocks are then merged in Swift:
+    /// consecutive blocks of one session join while the next starts
+    /// within `gap` of the previous end, matching the old rule that
+    /// split only on a quiet stretch longer than `gap`. Events are
+    /// pulled a day past each edge so a block straddling the range keeps
+    /// its real ends; the overlap check then drops the rest.
     static let edgeLookout: TimeInterval = 24 * 3600
     func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
         let lo = range.start.timeIntervalSince1970 - Self.edgeLookout
         let hi = range.end.timeIntervalSince1970 + Self.edgeLookout
-        let statement = try db.prepare("""
+        let statement = try prepare("""
             WITH ordered AS (
-                SELECT d.harness, d.account, d.session, d.cwd, e.ts,
+                SELECT e.dim, e.ts,
                        LAG(e.ts) OVER (
-                           PARTITION BY d.harness, d.account, d.session
-                           ORDER BY e.ts, e.key
+                           PARTITION BY e.dim ORDER BY e.ts, e.key
                        ) AS prev
-                FROM events e JOIN dims d ON d.id = e.dim
+                FROM events e
                 WHERE e.ts >= ? AND e.ts < ?
             ), numbered AS (
-                SELECT harness, account, session, cwd, ts,
+                SELECT dim, ts,
                        SUM(CASE WHEN prev IS NULL OR ts - prev > ? THEN 1 ELSE 0 END)
-                           OVER (PARTITION BY harness, account, session
-                                 ORDER BY ts) AS block
+                           OVER (PARTITION BY dim ORDER BY ts) AS block
                 FROM ordered
+            ), blocks AS (
+                SELECT dim, MIN(ts) AS start, MAX(ts) AS end, COUNT(*) AS n
+                FROM numbered GROUP BY dim, block
             )
-            SELECT harness, account, session, MIN(ts), MAX(ts), COUNT(*), MAX(cwd)
-            FROM numbered
-            GROUP BY harness, account, session, block
-            ORDER BY MIN(ts)
+            SELECT d.harness, d.account, d.session, b.start, b.end, b.n, d.cwd
+            FROM blocks b JOIN dims d ON d.id = b.dim
+            ORDER BY d.harness, d.account, d.session, b.start
             """)
         statement.bind([.double(lo), .double(hi), .double(gap)])
-        var blocks: [ActivityBlock] = []
+        var merged: [ActivityBlock] = []
+        var current: ActivityBlock?
+        func flush() {
+            guard let block = current else { return }
+            current = nil
+            guard block.end >= range.start, block.start < range.end else { return }
+            merged.append(block)
+        }
         while try statement.step() {
-            let start = statement.double(3), end = statement.double(4)
-            guard end >= range.start.timeIntervalSince1970,
-                  start < range.end.timeIntervalSince1970 else { continue }
-            blocks.append(ActivityBlock(
+            var piece = ActivityBlock(
                 harness: statement.text(0) ?? "", accountHome: statement.text(1) ?? "",
                 sessionId: statement.text(2) ?? "",
-                start: Date(timeIntervalSince1970: start),
-                end: Date(timeIntervalSince1970: end),
+                start: Date(timeIntervalSince1970: statement.double(3)),
+                end: Date(timeIntervalSince1970: statement.double(4)),
                 responses: Int(statement.int(5)),
-                cwd: statement.text(6)))
+                cwd: statement.text(6))
+            if let previous = current,
+               previous.harness == piece.harness,
+               previous.accountHome == piece.accountHome,
+               previous.sessionId == piece.sessionId,
+               piece.start.timeIntervalSince(previous.end) <= gap {
+                // Same session, close enough to touch: fold in.
+                piece = ActivityBlock(
+                    harness: piece.harness, accountHome: piece.accountHome,
+                    sessionId: piece.sessionId,
+                    start: min(previous.start, piece.start),
+                    end: max(previous.end, piece.end),
+                    responses: previous.responses + piece.responses,
+                    cwd: piece.cwd ?? previous.cwd)
+            } else {
+                flush()
+            }
+            current = piece
         }
-        return blocks
+        flush()
+        return merged
     }
 }

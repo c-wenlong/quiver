@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// A per-source cache of what each file produced: path -> stamp and the
 /// sessions parsed out of it. Sources stat their files on every query but
@@ -88,9 +89,16 @@ public actor ActivityFileIndex {
         for (path, stamp) in files {
             if let entry = entries[path],
                entry.mtime == stamp.mtime, entry.size == stamp.size { continue }
-            let parsed = try parse(path)
-            entries[path] = FileEntry(mtime: stamp.mtime, size: stamp.size,
-                                      sessions: parsed)
+            // One bad file must not sink the rest of the source: it stays
+            // out of the index, so the next refresh tries it again.
+            do {
+                let parsed = try parse(path)
+                entries[path] = FileEntry(mtime: stamp.mtime, size: stamp.size,
+                                          sessions: parsed)
+            } catch {
+                Logger.calendar.debug("\(path, privacy: .public): parse failed: \(error.localizedDescription, privacy: .public)")
+                entries[path] = nil
+            }
             changed = true
         }
         if changed { persist() }

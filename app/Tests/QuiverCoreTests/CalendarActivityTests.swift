@@ -138,3 +138,24 @@ import Testing
         #expect(blocks[0].cwd == "/work/project")
     }
 }
+
+extension CalendarActivityTests {
+    @Test func oneSessionAcrossTwoDimsIsOneBlock() throws {
+        // Alternating models every 10 minutes: two dims interleave, and
+        // the merged block spans the hour like the old query's would.
+        let (temp, store) = try store((0..<6).map { i in
+            UsageEvent(harness: "claude", accountHome: "/h", sessionId: "s",
+                       model: i.isMultiple(of: 2) ? "a" : "b",
+                       timestamp: utc("2026-10-14T09:\(i)0:00Z"), outputTokens: 1)
+        })
+        _ = temp
+        let blocks = try store.activityBlocks(
+            in: DateInterval(start: utc("2026-10-14T00:00:00Z"),
+                             end: utc("2026-10-15T00:00:00Z")),
+            gap: CalendarModel.gap)
+        #expect(blocks.count == 1)
+        #expect(blocks[0].responses == 6)
+        #expect(blocks[0].start == utc("2026-10-14T09:00:00Z"))
+        #expect(blocks[0].end == utc("2026-10-14T09:50:00Z"))
+    }
+}
