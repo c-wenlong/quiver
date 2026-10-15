@@ -205,6 +205,10 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "harness star": [
         ("--json", "Print the new state as JSON"),
     ],
+    "harness usage": [
+        ("--json", "Machine-readable output"),
+        ("--account-dir=", "The extra account's data dir"),
+    ],
     "harness archive": [
         ("--json", "Print the result as JSON"),
         ("--usage=none", "Mark the harness as unused"),
@@ -270,12 +274,12 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "harness": {
         "list": "list", "ls": "list",
         "discover": "discover", "archive": "harness archive",
-        "star": "harness star",
+        "star": "harness star", "usage": "harness usage",
     },
     "hs": {
         "list": "list", "ls": "list",
         "discover": "discover", "archive": "harness archive",
-        "star": "harness star",
+        "star": "harness star", "usage": "harness usage",
     },
     "mcp": {
         "discover": "mcp discover", "sync": "mcp sync", "doctor": "mcp doctor",
@@ -373,6 +377,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("star", "Toggle a favourite"),
         ("archive", "Shelve a harness you have ruled out"),
         ("discover", "Scan PATH for AI coding CLIs"),
+        ("usage", "An extra account's rate limit"),
     ],
     "hs": [
         ("list", "List every harness (swe list is the shortcut)"),
@@ -381,6 +386,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("star", "Toggle a favourite"),
         ("archive", "Shelve a harness you have ruled out"),
         ("discover", "Scan PATH for AI coding CLIs"),
+        ("usage", "An extra account's rate limit"),
     ],
     "session": [
         ("use", "Resume a session by index"),

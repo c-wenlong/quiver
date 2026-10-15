@@ -1645,9 +1645,18 @@ _CURSOR_BUCKETS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _read_cursor_state_token() -> str | None:
-    """Return the editor's session token from its ``state.vscdb`` store."""
-    for candidate in _CURSOR_STATE_DB_CANDIDATES:
+def _read_cursor_state_token(
+    candidates: tuple[str, ...] | None = None,
+) -> str | None:
+    """Return the editor's session token from its ``state.vscdb`` store.
+
+    ``candidates`` overrides the default search list — an extra account's
+    ``--user-data-dir`` db is passed as the sole candidate so an empty
+    account can never fall through to the default account's token.
+    """
+    for candidate in (
+        candidates if candidates is not None else _CURSOR_STATE_DB_CANDIDATES
+    ):
         path = os.path.expanduser(candidate)
         if not os.path.isfile(path):
             continue
@@ -1887,9 +1896,18 @@ def _warn_cursor_401() -> None:
     )
 
 
-def _fetch_cursor() -> RateLimitInfo | None:
-    """Read the current billing period's included usage for Cursor."""
-    token = _get_cursor_access_token()
+def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
+    """Read the current billing period's included usage for Cursor.
+
+    ``state_db`` points at an extra account's ``state.vscdb``: the token
+    then comes from that file alone, never the keychain, so a signed-out
+    account reports nothing rather than the default account's usage.
+    """
+    token = (
+        _read_cursor_state_token((state_db,))
+        if state_db is not None
+        else _get_cursor_access_token()
+    )
     if not token:
         return None
     claims = _cursor_token_claims(token)
@@ -2038,14 +2056,16 @@ _DEVIN_WINDOWS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _read_devin_credentials() -> tuple[str, str] | None:
+def _read_devin_credentials(path: str | None = None) -> tuple[str, str] | None:
     """Return ``(api_key, api_server_url)`` from Devin's credentials file.
 
     The CLI is Cognition's Windsurf-backed agent, so the key is named
     ``windsurf_api_key`` and the server is Windsurf's. The file is TOML,
-    read with stdlib ``tomllib``.
+    read with stdlib ``tomllib``. ``path`` overrides the default
+    ``~/.local/share/devin/credentials.toml`` for an extra account's
+    ``XDG_DATA_HOME``.
     """
-    path = os.path.expanduser(_DEVIN_CREDENTIALS_PATH)
+    path = os.path.expanduser(path or _DEVIN_CREDENTIALS_PATH)
     try:
         with open(path, "rb") as file:
             raw = file.read()
@@ -2185,9 +2205,14 @@ def _warn_devin_401() -> None:
     )
 
 
-def _fetch_devin() -> RateLimitInfo | None:
-    """Read Devin's quota through Windsurf's seat-management RPC."""
-    credentials = _read_devin_credentials()
+def _fetch_devin(credentials_path: str | None = None) -> RateLimitInfo | None:
+    """Read Devin's quota through Windsurf's seat-management RPC.
+
+    ``credentials_path`` points at an extra account's credentials.toml (its
+    ``XDG_DATA_HOME``/devin dir); the default ``None`` reads the standard
+    path exactly as before.
+    """
+    credentials = _read_devin_credentials(credentials_path)
     if credentials is None:
         return None
     api_key, server = credentials
@@ -2647,3 +2672,63 @@ def get_rate_limit(tool_name: str, use_cache: bool = True) -> RateLimitInfo | No
         use_cache=use_cache,
         tool_names={tool_name},
     ).get(tool_name)
+
+
+# An extra account's credential file, relative to its data dir: for Devin
+# the CLI's XDG_DATA_HOME (``<dir>/devin/credentials.toml``), for Cursor
+# the desktop app's ``--user-data-dir`` (``<dir>/User/globalStorage``).
+_ACCOUNT_CREDENTIALS = {
+    "devin": ("devin", "credentials.toml"),
+    "cursor": ("User", "globalStorage", "state.vscdb"),
+}
+
+
+def get_account_rate_limit(
+    tool_name: str, account_dir: str,
+) -> RateLimitInfo | None:
+    """Fetch one extra account's rate limit from its own files.
+
+    ``account_dir`` is the account's data dir, never the shared one. The
+    account's credentials are read from there only — an empty account must
+    not fall back to the default account's token — and the shared
+    rate-limit cache is untouched, since its keys name harnesses, not
+    accounts. The fetch runs on a daemon thread under the same deadline
+    the aggregator gives its workers; missing it yields the same
+    ``timeout`` marker a straggler gets there.
+    """
+    if tool_name not in _ACCOUNT_CREDENTIALS:
+        raise ValueError(
+            f"No per-account usage for '{tool_name}'. "
+            f"Known: {', '.join(sorted(_ACCOUNT_CREDENTIALS))}."
+        )
+    path = os.path.join(account_dir, *_ACCOUNT_CREDENTIALS[tool_name])
+    if tool_name == "devin":
+        def fetcher() -> RateLimitInfo | None:
+            return _fetch_devin(path)
+    else:
+        def fetcher() -> RateLimitInfo | None:
+            return _fetch_cursor(path)
+
+    cutoff = time.monotonic() + _RATE_LIMIT_FETCH_DEADLINE
+    box: list[RateLimitInfo | None] = []
+
+    def work() -> None:
+        _fetch_cutoff.at = cutoff
+        try:
+            box.append(fetcher())
+        except Exception:
+            box.append(None)
+
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    worker.join(max(0.0, cutoff - time.monotonic()))
+    if not box:
+        return RateLimitInfo(
+            tool_name=tool_name,
+            used_percent=0,
+            limit_reached=False,
+            reset_at=0.0,
+            plan_type="timeout",
+            window_seconds=0,
+        )
+    return box[0]

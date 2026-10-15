@@ -2338,3 +2338,71 @@ def _edit(args, json_view):
         print(c("dim", f"    · {line}"))
     print()
     return 0
+
+
+def cmd_harness_usage(args):
+    """``swe harness usage <name> --account-dir=<dir>``: one extra account's
+    rate limit, read from that account's own files — never the default
+    account's credentials or the shared rate-limit cache. Only Devin and
+    Cursor have per-account files swe knows."""
+    args, json_view = take_json_flag(list(args or []))
+    err = error_stream(json_view)
+    try:
+        args = expand_value_flags(args, {"--account-dir"})
+    except ValueError as exc:
+        print(c("red", str(exc)), file=err)
+        return 1
+    name = None
+    account_dir = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--account-dir":
+            account_dir = args[i + 1]
+            i += 2
+        elif args[i].startswith("-"):
+            print(c("red", f"Unknown argument: {args[i]}"), file=err)
+            return 1
+        elif name is None:
+            name = args[i]
+            i += 1
+        else:
+            print(c("red", f"Unexpected argument: {args[i]}"), file=err)
+            return 1
+    usage = "Usage: swe harness usage <devin|cursor> --account-dir=<dir> [--json]"
+    if name is None or account_dir is None:
+        print(c("red", f"  {usage}"), file=err)
+        return 1
+    if not os.path.isdir(account_dir):
+        print(c("red", f"  No such directory: {account_dir}"), file=err)
+        return 1
+
+    from quiver.harness.rate_limits import get_account_rate_limit
+
+    try:
+        limit = get_account_rate_limit(name, account_dir)
+    except ValueError as exc:
+        print(c("red", f"  {exc}"), file=err)
+        return 1
+    if json_view:
+        return emit({
+            "name": name,
+            "account_dir": account_dir,
+            "limit": limit.to_json() if limit is not None else None,
+        })
+    if limit is None:
+        print(f"  {name}: not signed in")
+        return 0
+    print(f"  {c('bold', name)}  {limit.format_column()}")
+    from quiver.harness.models import RateLimitInfo
+    for w in limit.windows:
+        cell = RateLimitInfo(
+            tool_name=name,
+            used_percent=w["used_percent"],
+            limit_reached=w["limit_reached"],
+            reset_at=w["reset_at"],
+            plan_type=limit.plan_type,
+            window_seconds=w["window_seconds"],
+            window=w["window"],
+        ).format_column()
+        print(f"    {w['window']:>8}  {cell}")
+    return 0

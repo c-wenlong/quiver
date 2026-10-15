@@ -4567,3 +4567,104 @@ class DroidHTTPDiagnosticTest(unittest.TestCase):
             sys.stderr = original_stderr
         self.assertEqual(fired_401, [1])
         self.assertEqual(fired_http, [])
+
+
+class AccountRateLimitTest(unittest.TestCase):
+    """get_account_rate_limit: an extra account's own files, no cache."""
+
+    _DEVIN_RESPONSE = DevinFetcherTest._SAMPLE_RESPONSE
+    _CURSOR_RESPONSE = CursorFetcherTest._SAMPLE_RESPONSE
+
+    def _devin_dir(self, root: str) -> str:
+        path = Path(root) / "devin"
+        path.mkdir(parents=True)
+        (path / "credentials.toml").write_text(
+            'windsurf_api_key = "sk-extra"\n'
+            'api_server_url = "https://server.example.com"\n'
+        )
+        return root
+
+    def _cursor_dir(self, root: str, token: str | None) -> str:
+        path = Path(root) / "User" / "globalStorage"
+        path.mkdir(parents=True)
+        db = CursorFetcherTest()._state_db(str(path), token)
+        return root if db else root
+
+    def test_devin_reads_the_account_credentials(self):
+        from quiver.harness.rate_limits import get_account_rate_limit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=self._DEVIN_RESPONSE,
+            ) as fetch:
+                info = get_account_rate_limit("devin", tmp)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.tool_name, "devin")
+        body = json.loads(fetch.call_args[0][0].data.decode())
+        self.assertEqual(body["metadata"]["api_key"], "sk-extra")
+
+    def test_cursor_reads_only_the_account_state_db(self):
+        from quiver.harness.rate_limits import get_account_rate_limit
+
+        token = CursorFetcherTest()._token()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._cursor_dir(tmp, token)
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=self._CURSOR_RESPONSE,
+            ), patch(
+                "quiver.harness.rate_limits._read_cursor_keychain_token",
+            ) as keychain, patch(
+                "quiver.harness.rate_limits._cursor_session_cookie",
+                return_value="cookie",
+            ):
+                info = get_account_rate_limit("cursor", tmp)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.tool_name, "cursor")
+        keychain.assert_not_called()
+
+    def test_empty_account_dir_reports_nothing(self):
+        from quiver.harness.rate_limits import get_account_rate_limit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("devin", "cursor"):
+                with patch(
+                    "quiver.harness.rate_limits._read_cursor_keychain_token",
+                ) as keychain, patch(
+                    "quiver.harness.rate_limits._fetch_json",
+                ) as fetch:
+                    self.assertIsNone(get_account_rate_limit(name, tmp))
+                keychain.assert_not_called()
+                fetch.assert_not_called()
+
+    def test_unsupported_name_raises(self):
+        from quiver.harness.rate_limits import get_account_rate_limit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                get_account_rate_limit("gemini", tmp)
+
+    def test_shared_cache_is_never_touched(self):
+        from quiver.harness.rate_limits import get_account_rate_limit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            with patch(
+                "quiver.harness.rate_limits._load_cached",
+            ) as load, patch(
+                "quiver.harness.rate_limits._save_cached",
+            ) as save, patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=self._DEVIN_RESPONSE,
+            ):
+                get_account_rate_limit("devin", tmp)
+            load.assert_not_called()
+            save.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

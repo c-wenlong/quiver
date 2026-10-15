@@ -24,6 +24,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe plugins catalog --json` | `PluginCatalog` | `swe-plugins-catalog.json` |
 | `swe plugins install|uninstall|enable|disable <ref> --harness=<id> --json` | `PluginActionResult` | `swe-plugins-action.json` |
 | `swe install --json` | `InstallList` → `[InstallableHarness]` | `swe-install.json` |
+| `swe harness usage <devin|cursor> --account-dir=<dir> --json` | `{"name", "account_dir", "limit"}` where `limit` is a row's `rate_limit` object or null | |
 | `swe doctor --json` | `DoctorReport` (`allowFailure`) | `swe-doctor.json` |
 | `swe session <limit> [--days=N] --json` | `SessionListPayload` | `swe-session.json` |
 

@@ -394,6 +394,8 @@ to use their own login state and environment."""
   {c('cyan', 'swe harness discover --apply-all')}  Add every match, including low-confidence finds
   {c('cyan', 'swe harness discover --json')}       Machine-readable output
   {c('cyan', 'swe harness discover --all')}        Include already-registered and missing tools too
+  {c('cyan', 'swe harness usage <devin|cursor> --account-dir=<dir>')}  An extra account's rate
+                                                   limit, from its own credentials (add --json)
 
 {c('bold', 'Alias')}  {c('cyan', 'swe discover')} is the same as {c('cyan', 'swe harness discover')}"""
     ),

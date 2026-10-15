@@ -220,7 +220,8 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe add <name> <cmd> …` | | Register or update a tool |
 | `swe edit <name> [--field=val …] [--json]` | | Edit registry fields: command, display name, description, aliases, tags, version, notes (flags or interactive); `--json` applies the flags and prints the updated harness, never prompts |
 | `swe remove <name\|alias>` | `rm` | Remove from registry (does not uninstall) |
-| `swe harness <subcommand> …` | `hs` | Every harness verb: `list`, `edit`, `star`, `archive`, `discover` |
+| `swe harness <subcommand> …` | `hs` | Every harness verb: `list`, `edit`, `star`, `archive`, `discover`, `usage` |
+| `swe harness usage <devin\|cursor> --account-dir=<dir> [--json]` | `hs usage` | An extra account's rate limit from its own credential files |
 | `swe harness star <name\|alias>` | `hs star` | Toggle a harness favourite (pins it to top of `swe list`) |
 | `swe harness archive <name\|alias> [why]` | `hs archive` | Shelve a harness you've ruled out |
 | `swe check` | | Probe live versions and refresh registry |

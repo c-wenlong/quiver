@@ -416,3 +416,87 @@ class HarnessDoctorCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarnessUsageCommandTest(unittest.TestCase):
+    """``swe harness usage <devin|cursor> --account-dir=<dir>``."""
+
+    def _run(self, args):
+        from quiver.harness.commands import cmd_harness_usage
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cmd_harness_usage(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_missing_arguments_fail_with_nothing_on_stdout(self):
+        code, out, err = self._run(["devin", "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("account-dir", err)
+
+    def test_unsupported_name_fails_with_empty_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, err = self._run(
+                ["gemini", f"--account-dir={tmp}", "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("devin", err)
+
+    def test_missing_dir_fails_with_empty_stdout(self):
+        code, out, _ = self._run(
+            ["devin", "--account-dir=/nonexistent/quiver-dir", "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+
+    def test_json_emits_null_limit_when_signed_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_rate_limit",
+                return_value=None,
+            ):
+                code, out, _ = self._run(
+                    ["devin", f"--account-dir={tmp}", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["name"], "devin")
+        self.assertEqual(data["account_dir"], tmp)
+        self.assertIsNone(data["limit"])
+
+    def test_json_emits_the_list_row_limit_shape(self):
+        from quiver.harness.models import RateLimitInfo
+
+        limit = RateLimitInfo(
+            tool_name="cursor", used_percent=42, limit_reached=False,
+            reset_at=1_789_190_193.0, plan_type="pro", window_seconds=2678400,
+            window="included",
+            windows=[{"window": "included", "used_percent": 42,
+                      "limit_reached": False, "reset_at": 1_789_190_193.0,
+                      "window_seconds": 2678400}],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_rate_limit",
+                return_value=limit,
+            ):
+                code, out, _ = self._run(
+                    ["cursor", f"--account-dir={tmp}", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)["data"]["limit"]
+        self.assertEqual(payload["used_percent"], 42)
+        self.assertEqual(payload["plan_type"], "pro")
+        self.assertEqual(payload["windows"][0]["window"], "included")
+
+    def test_human_output_says_not_signed_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_rate_limit",
+                return_value=None,
+            ):
+                code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
+        self.assertEqual(code, 0)
+        self.assertIn("not signed in", out)
+
+
+if __name__ == "__main__":
+    unittest.main()
