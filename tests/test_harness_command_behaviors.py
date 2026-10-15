@@ -105,7 +105,11 @@ class HarnessProcessCommandTest(unittest.TestCase):
         out = io.StringIO()
         with patch(
             "quiver.harness.path_health.preferred_npm_bin", return_value=npm
-        ), patch("quiver.harness.commands.load_registry", return_value=tools or {}), patch(
+        ), patch(
+            "quiver.harness.commands.load_registry", return_value=tools or {}
+        ), patch(
+            "quiver.harness.commands.load_registry_if_present", return_value=tools or {}
+        ), patch(
             "quiver.harness.commands.shutil.which", side_effect=which
         ), patch(
             "quiver.harness.commands.subprocess.run",
@@ -268,6 +272,37 @@ class HarnessProcessCommandTest(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("--json", err.getvalue())
+
+    def test_install_via_npm_with_package_overrides_the_table(self):
+        # cursor has no npm entry, but --package already says what to install.
+        code, out, run, save = self._run_install(
+            ["cursor", "--via=npm", "--package=curzr"])
+
+        self.assertEqual(code, 0)
+        run.assert_called_once_with(
+            ["/usr/bin/npm", "install", "-g", "curzr"],
+            capture_output=False, text=True, timeout=300,
+        )
+        self.assertIn("cursor", save.call_args.args[0])
+
+    def test_install_listing_and_json_leave_no_registry_behind(self):
+        # Read-only paths must not create harness.json on a fresh machine.
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "config" / "harness.json"
+            legacy = Path(tmp) / "config" / "tools.json"
+            with patch("quiver.harness.registry.HARNESS_FILE", missing), patch(
+                "quiver.harness.registry.TOOLS_FILE", legacy
+            ), patch(
+                "quiver.harness.commands.shutil.which", return_value=None
+            ), patch("quiver.harness.commands.subprocess.run") as run, patch(
+                "quiver.harness.commands.save_registry") as save:
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    self.assertEqual(cmd_install(["gemini"]), 0)
+                    self.assertEqual(cmd_install(["--json"]), 0)
+                self.assertFalse(missing.exists())
+                run.assert_not_called()
+                save.assert_not_called()
 
     def test_install_json_unknown_name_errors(self):
         err = io.StringIO()

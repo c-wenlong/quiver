@@ -30,7 +30,7 @@ from quiver.harness.models import (
     display_name,
     primary_color,
 )
-from quiver.harness.registry import load_registry, resolve, save_registry
+from quiver.harness.registry import load_registry, load_registry_if_present, resolve, save_registry
 from quiver.init.layout import link_states
 from quiver.harness.stars import (
     is_starred,
@@ -1742,7 +1742,7 @@ def cmd_install(args):
 
     if name is None:
         if json_view:
-            return emit(_install_json(sorted(INSTALLERS), load_registry()))
+            return emit(_install_json(sorted(INSTALLERS), load_registry_if_present()))
         print(c("red", "Usage: swe install <name> [--via=<method>] [--package=<pkg>] "
                        "[--command=<cmd>] [--dry-run|-n] [--json]"))
         print(c("dim", "  Example: swe install gemini            # list its installers"))
@@ -1750,7 +1750,8 @@ def cmd_install(args):
         print(c("dim", "           swe install mastracode --package=mastracode"))
         return 1
 
-    tools = load_registry()
+    # Read-only: only the path that actually installs may create harness.json.
+    tools = load_registry_if_present()
     # Allow installing by alias
     resolved = resolve(tools, name)
     reg_name = resolved or name
@@ -1763,6 +1764,10 @@ def cmd_install(args):
         reg_name = name.split("/")[-1]
 
     catalog = HARNESS_CATALOG.get(reg_name, {})
+    # The registry wins over the catalog. An entry already on disk has been
+    # through discovery and possibly hand-editing on this machine, so the
+    # catalog's generic line is the fallback for names never seen here, not
+    # an upgrade over what is already recorded.
     entry = tools.get(reg_name) or {}
     cmd_name = command or entry.get("command") or catalog.get("command") or reg_name
     installers = installers_for(reg_name)
@@ -1784,19 +1789,21 @@ def cmd_install(args):
             print(c("red", f"  --package only applies to npm installs (--via=npm)."),
                   file=err)
             return 1
-        known = {inst.via: inst for inst in installers}
-        if via not in known:
-            if installers:
-                have = ", ".join(inst.via for inst in installers)
-                print(c("red", f"  '{reg_name}' has no {via} installer. "
-                               f"Try: {have}."), file=err)
-            else:
-                print(c("red", f"  No known installer for '{reg_name}'. "
-                               "If it is on npm, pass --package=<npm-name>."), file=err)
-            return 1
-        installer = known[via]
         if package:
+            # --package already names the npm package; the table entry is moot.
             installer = Installer("npm", package)
+        else:
+            known = {inst.via: inst for inst in installers}
+            if via not in known:
+                if installers:
+                    have = ", ".join(inst.via for inst in installers)
+                    print(c("red", f"  '{reg_name}' has no {via} installer. "
+                                   f"Try: {have}."), file=err)
+                else:
+                    print(c("red", f"  No known installer for '{reg_name}'. "
+                                   "If it is on npm, pass --package=<npm-name>."), file=err)
+                return 1
+            installer = known[via]
     elif package:
         installer = Installer("npm", package)
     else:
@@ -1848,6 +1855,12 @@ def cmd_install(args):
         print(c("dim", f"  dry-run: would run  {shown}"))
         return 0
 
+    # Installing writes the registry afterwards, so this is where the
+    # creating load belongs: listing and --json never reach it.
+    tools = load_registry()
+    catalog = HARNESS_CATALOG.get(reg_name, {})
+    entry = tools.get(reg_name) or {}
+
     print(c("dim", f"  → {shown}\n"))
     try:
         result = subprocess.run(
@@ -1865,7 +1878,8 @@ def cmd_install(args):
 
     if result.returncode != 0:
         print(c("red", f"  {installer.via} install exited with code {result.returncode}"))
-        print(c("dim", "  Tip: if the package name differs, try --package=<npm-name>"))
+        if installer.via == "npm":
+            print(c("dim", "  Tip: if the package name differs, try --package=<npm-name>"))
         return result.returncode
 
     # Re-hash PATH resolution
