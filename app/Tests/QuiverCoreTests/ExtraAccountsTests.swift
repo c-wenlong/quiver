@@ -173,12 +173,114 @@ final class LockedRunner: CommandRunning, @unchecked Sendable {
         await model.load()
 
         #expect(model.cards.map(\.id) == ["devin", devin.id])
-        // First load starred cursor is still unknown, so it is asked once;
-        // afterwards its unstarred state is known and it is never polled,
-        // even when the devin extra is forced to refetch.
+        // The extra fetch runs after the list call, on the starred set it
+        // just learned: cursor's account is never polled, not even once.
+        #expect(runner.count(["harness", "usage", "cursor"]) == 0)
         await model.load(force: true)
-        #expect(runner.count(["harness", "usage", "cursor"]) == 1)
+        #expect(runner.count(["harness", "usage", "cursor"]) == 0)
         #expect(runner.count(["harness", "usage", "devin"]) == 2)
+    }
+
+    @Test func aNewlyStarredVendorFetchesItsExtrasInTheSameLoad() async {
+        // Devin starts active; once the list reports it starred, that same
+        // load already fetches the account's usage.
+        let active = Data(#"""
+        {"schema": 1, "data": {"harnesses": [
+          {"name": "devin", "command": "devin", "description": "", "version": null, "aliases": [], "tags": [], "state": "active", "sessions_100d": 3, "rate_limit": null}
+        ]}}
+        """#.utf8)
+        let devin = profile(.devin, "devin-work")
+        let runner = LockedRunner([
+            (["list"], .init(status: 0, stdout: active, stderr: "")),
+            (["harness", "usage"], devinUsage),
+        ])
+        let model = model(runner) { [(devin, self.paths("devin-work"))] }
+        await model.load()
+        #expect(runner.count(["harness", "usage", "devin"]) == 0)
+        #expect(model.cards.isEmpty)
+
+        runner.rules = [
+            (["list"], .init(status: 0, stdout: self.listBody, stderr: "")),
+            (["harness", "usage"], self.devinUsage),
+        ]
+        await model.load()
+        #expect(runner.count(["harness", "usage", "devin"]) == 1)
+        #expect(model.cards.contains { $0.profile?.id == devin.id })
+    }
+
+    @Test func aReplyReportingAFailedReadingIsRefetched() async {
+        // status "timeout" arrives inside a successful reply; it counts as
+        // failed so a Refresh-press load refetches it.
+        let timeout = CommandResult(status: 0, stdout: Data(#"""
+        {"schema": 1, "data": {"name": "devin", "account_dir": "/t/devin-work/home",
+         "limit": {"status": "timeout", "used_percent": 0, "remaining_percent": 0, "limit_reached": false, "window": "timeout", "window_seconds": null}}}
+        """#.utf8), stderr: "")
+        let auth = CommandResult(status: 0, stdout: Data(#"""
+        {"schema": 1, "data": {"name": "devin", "account_dir": "/t/devin-work/home",
+         "limit": {"status": "auth-required", "used_percent": 0, "remaining_percent": 0, "limit_reached": false, "window": "re-login", "window_seconds": null}}}
+        """#.utf8), stderr: "")
+        let unavailable = CommandResult(status: 0, stdout: Data(#"""
+        {"schema": 1, "data": {"name": "devin", "account_dir": "/t/devin-work/home",
+         "limit": {"status": "ok", "used_percent": 45, "remaining_percent": 55, "limit_reached": false, "window": "1d", "window_seconds": 86400,
+                   "windows": [{"window": "1d", "used_percent": 45}, {"window": "7d", "used_percent": 31, "unavailable": true, "as_of": 1791700000}]}}}
+        """#.utf8), stderr: "")
+        for reply in [timeout, auth, unavailable] {
+            let devin = profile(.devin, "devin-work")
+            let runner = LockedRunner([
+                (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+                (["harness", "usage"], reply),
+            ])
+            let model = model(runner) { [(devin, self.paths("devin-work"))] }
+            await model.load()
+            // The reading is kept (last-known or the marker itself) but
+            // flagged failed, so a plain load within the TTL leaves it
+            // alone while refreshFailed asks again.
+            await model.load()
+            #expect(runner.count(["harness", "usage"]) == 2)
+            await model.load(refreshFailed: true)
+            #expect(runner.count(["harness", "usage"]) == 3)
+            runner.rules = [
+                (["list"], .init(status: 0, stdout: self.listBody, stderr: "")),
+                (["harness", "usage"], self.devinUsage),
+            ]
+            await model.load(refreshFailed: true)
+            #expect(runner.count(["harness", "usage"]) == 4)
+        }
+    }
+
+    @Test func anAccountUsageErrorIsNotReadAsOldSwe() async {
+        // "couldn't read devin usage for this account" is an outage in the
+        // account, not a swe that lacks the subcommand: the reading is
+        // failed and the feature keeps being asked.
+        let devin = profile(.devin, "devin-work")
+        let runner = LockedRunner([
+            (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+            (["harness", "usage"], .init(status: 1, stdout: Data(),
+                                          stderr: "couldn't read devin usage for this account")),
+        ])
+        let model = model(runner) { [(devin, self.paths("devin-work"))] }
+        await model.load()
+        #expect(model.sweKnowsAccountUsage)
+        #expect(model.cards.first { $0.profile?.id == devin.id }?.usageNote == nil)
+        await model.load()
+        #expect(runner.count(["harness", "usage"]) == 2)
+    }
+
+    @Test func anUnstampedReadingIsStampedWithTheFetchTime() async {
+        // swe older than the fetched_at field returns no timestamp; the
+        // row keeps the real fetch time so it does not read as stale.
+        let old = CommandResult(status: 0, stdout: Data(#"""
+        {"schema": 1, "data": {"name": "devin", "account_dir": "/t/devin-work/home",
+         "limit": {"status": "ok", "used_percent": 20, "remaining_percent": 80, "limit_reached": false, "reset_at": 1791760000, "window": "7d", "window_seconds": 604800}}}
+        """#.utf8), stderr: "")
+        let devin = profile(.devin, "devin-work")
+        let runner = LockedRunner([
+            (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+            (["harness", "usage"], old),
+        ])
+        let model = model(runner) { [(devin, self.paths("devin-work"))] }
+        await model.load()
+        #expect(model.cards.first { $0.profile?.id == devin.id }?.limit?.fetchedAt != nil)
     }
 
     @Test func aRemovedProfileDropsItsCardAndSavedReading() async {

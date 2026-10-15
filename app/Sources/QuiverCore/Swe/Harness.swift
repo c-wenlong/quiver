@@ -70,7 +70,9 @@ public struct RateLimit: Codable, Sendable, Equatable {
     public let planType: String?
     public let remainingUnits: Double?
     public let totalUnits: Double?
-    public let fetchedAt: Date?
+    /// Var so a caller whose swe predates the field can stamp the fetch
+    /// time after decoding.
+    public var fetchedAt: Date?
     /// Every window the provider reported (Devin's 1d and 7d, Cursor's
     /// included, auto and api); nil from an older swe, or a tool with one.
     public let windows: [Window]?

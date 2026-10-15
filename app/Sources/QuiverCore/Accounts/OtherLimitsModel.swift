@@ -262,15 +262,14 @@ public final class OtherLimitsModel {
     public func load(force: Bool = false, refreshFailed: Bool = false) async {
         request += 1
         let mine = request
-        // Extra accounts poll beside the main list call: `swe harness
-        // usage` reads the account's own files, never the shared cache.
+        // Extra accounts are polled with `swe harness usage` against the
+        // account's own files, never the shared cache. The fetch waits for
+        // the list call so the starred set is current: a vendor just
+        // starred gets its extras read, one just unstarred is skipped.
         let extras = extraAccounts().filter { !$0.0.isDefault && !$0.0.vendor.hasDefaultProfile }
         // A removed profile's reading is never asked for again.
         let live = Set(extras.map { $0.0.id })
         extraReadings = extraReadings.filter { live.contains($0.key) }
-        let fetching = Task<[String: ExtraReading], Never> {
-            await fetchExtras(extras, force: force, refreshFailed: refreshFailed)
-        }
         do {
             // An swe too old for a flag fails the whole call, so each
             // attempt drops what the last error named: the new usage
@@ -338,7 +337,8 @@ public final class OtherLimitsModel {
             }
             // An extra account's card sits right after its harness's own;
             // one for an unstarred vendor is hidden with the harness.
-            let readings = await fetching.value
+            let readings = await fetchExtras(
+                extras, force: force, refreshFailed: refreshFailed)
             guard mine == request else { return }
             extraReadings.merge(readings) { _, new in new }
             for (profile, paths) in extras {
@@ -411,19 +411,36 @@ public final class OtherLimitsModel {
         var results: [String: ExtraReading] = [:]
         await withTaskGroup(of: (String, ExtraReading?).self) { group in
             for (profile, paths) in extras {
-                // A vendor known unstarred hides its extras, so it is
-                // never polled; unknown (first load) counts as starred.
-                guard starred?.contains(profile.vendor.rawValue) ?? true else { continue }
+                // Only extras of a starred vendor are polled, on the set
+                // this load just learned — a just-starred vendor's extras
+                // are fetched, a just-unstarred one's are not.
+                guard let starredNow = starred,
+                      starredNow.contains(profile.vendor.rawValue) else { continue }
                 let reading = extraReadings[profile.id]
                 guard let dir = Self.accountDir(for: profile, paths: paths),
                       needsFetch(reading, force: force, refreshFailed: refreshFailed) else { continue }
                 let vendor = profile.vendor.rawValue
                 group.addTask { [swe] in
                     do {
-                        let limit = try await swe.accountUsage(name: vendor, accountDir: dir)
-                        return (profile.id, ExtraReading(limit: limit, fetchedAt: .now, failed: false))
+                        var limit = try await swe.accountUsage(name: vendor, accountDir: dir)
+                        // An older swe may not stamp the read; the row's
+                        // age is the fetch time, or it reads as stale.
+                        if limit?.fetchedAt == nil { limit?.fetchedAt = .now }
+                        // A reply that reports a failure — a timed-out or
+                        // re-login reading, or a window the provider left
+                        // unread — counts as failed so Refresh retries it.
+                        let failed = limit.map {
+                            $0.status == .timeout || $0.status == .authRequired
+                                || $0.allWindows.contains { $0.unavailable }
+                        } ?? false
+                        return (profile.id, ExtraReading(limit: limit, fetchedAt: .now,
+                                                         failed: failed))
                     } catch SweError.commandFailed(_, let message)
-                        where message.localizedCaseInsensitiveContains("unknown") {
+                        // "Unknown harness subcommand"/"Unknown argument"
+                        // specifically: an AccountUsageError's own message
+                        // must not retire the feature for the session.
+                        where message.localizedCaseInsensitiveContains("unknown harness subcommand")
+                            || message.localizedCaseInsensitiveContains("unknown argument") {
                         return (profile.id, nil)
                     } catch {
                         // Keep the last good reading if there was one, just marked failed.
