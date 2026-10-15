@@ -291,7 +291,9 @@ struct PageHeader<Actions: View>: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title).font(Theme.pageTitle).tracking(-0.9).foregroundStyle(Theme.textPrimary)
-                Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
+                if !subtitle.isEmpty {
+                    Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
+                }
             }
             .textSelection(.enabled)
             Spacer(minLength: 16)

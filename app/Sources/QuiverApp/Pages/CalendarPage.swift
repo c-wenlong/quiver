@@ -29,6 +29,9 @@ private struct CalendarContent: View {
     /// Session rows indexed by account, rebuilt when the list reloads so
     /// block titles and clicks are an O(1) lookup each render.
     @State private var sessionIndex = CalendarSessionIndex(rows: [])
+    /// The page holds key focus so the plain-key mode/arrow shortcuts
+    /// work without a click; a focused text field keeps its keys.
+    @FocusState private var focused: Bool
 
     private static let monthTitle: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
@@ -38,13 +41,31 @@ private struct CalendarContent: View {
     }()
 
     var body: some View {
-        Page(title: Self.monthTitle.string(from: model.visibleRange.start),
-             subtitle: "Week \(model.calendar.component(.weekOfYear, from: model.visibleRange.start))",
+        let inMonth = model.mode == .month
+        return Page(title: Self.monthTitle.string(from: model.anchor),
+             subtitle: inMonth ? "" : "Week \(model.calendar.component(.weekOfYear, from: model.visibleRange.start))",
              scrolls: false,
              actions: { controls }) {
             HStack(spacing: 0) {
                 side
                 grid
+            }
+            .focusable()
+            .focused($focused)
+            .onAppear { focused = true }
+            .onKeyPress { press in
+                if press.key == .leftArrow {
+                    model.apply(CalendarModel.KeyCommand(arrow: .left)); return .handled
+                }
+                if press.key == .rightArrow {
+                    model.apply(CalendarModel.KeyCommand(arrow: .right)); return .handled
+                }
+                guard press.modifiers.isEmpty,
+                      let key = press.characters.first,
+                      let command = CalendarModel.KeyCommand(character: key)
+                else { return .ignored }
+                model.apply(command)
+                return .handled
             }
         }
         .task {
@@ -89,24 +110,25 @@ private struct CalendarContent: View {
 
     private var controls: some View {
         HStack(spacing: 6) {
-            SelectMenu(options: CalendarModel.Mode.allCases.map { ($0, $0.title) },
-                       selection: Bindable(model).mode, width: 76)
+            SelectMenu(options: CalendarModel.Mode.menu(for: model.mode)
+                           .map { ($0, "\($0.title) (\($0.keyHint))") },
+                       selection: Bindable(model).mode, width: 92)
             Button("Today") { model.today() }
                 .secondaryButton()
                 .keyboardShortcut("t", modifiers: .command)
-                .help("Today (⌘T)")
+                .help("Today (T)")
             Button("Previous \(model.mode.title.lowercased())", systemImage: "chevron.left") {
                 model.previous()
             }
             .iconButton()
             .keyboardShortcut(.leftArrow, modifiers: .command)
-            .help("Previous \(model.mode.title.lowercased()) (⌘←)")
+            .help("Previous \(model.mode.title.lowercased()) (←)")
             Button("Next \(model.mode.title.lowercased())", systemImage: "chevron.right") {
                 model.next()
             }
             .iconButton()
             .keyboardShortcut(.rightArrow, modifiers: .command)
-            .help("Next \(model.mode.title.lowercased()) (⌘→)")
+            .help("Next \(model.mode.title.lowercased()) (→)")
         }
     }
 
@@ -145,9 +167,11 @@ private struct CalendarContent: View {
             }
             if model.visibleBlocks.isEmpty {
                 Spacer()
-                Text(model.mode == .week ? "No harness activity this week" : "No harness activity today")
+                Text("No harness activity in this \(model.mode.title.lowercased())")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Spacer()
+            } else if model.mode == .month {
+                monthGrid
             } else {
                 TimelineView(.everyMinute) { context in
                     ScrollViewReader { proxy in
@@ -169,6 +193,11 @@ private struct CalendarContent: View {
     }
 
     private var dayHeaders: some View {
+        if model.mode == .month { return AnyView(monthWeekdayHeader) }
+        return AnyView(weekDayHeaders)
+    }
+
+    private var weekDayHeaders: some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: Self.axisWidth, height: 0)
             ForEach(model.days, id: \.start) { day in
@@ -195,8 +224,78 @@ private struct CalendarContent: View {
 
     private static let axisWidth: CGFloat = 52
     private static let hourHeight: CGFloat = 48
+    private static let weekNumberWidth: CGFloat = 22
 
     private var now: Date { Date() }
+
+    /// ISO week numbers down the month's leading edge.
+    private var iso: Calendar {
+        var c = Calendar(identifier: .iso8601); c.timeZone = model.calendar.timeZone; return c
+    }
+
+    // MARK: - Month grid
+
+    /// The weekday row above the month cells; order follows the user's
+    /// first weekday, like the mini month.
+    private var monthWeekdayHeader: some View {
+        let week = MonthLayout.weeks(for: model.anchor, calendar: model.calendar).first ?? []
+        return HStack(spacing: 0) {
+            Color.clear.frame(width: Self.weekNumberWidth, height: 0)
+            ForEach(week, id: \.self) { day in
+                Text(day.formatted(.dateTime.weekday(.abbreviated)))
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.border).frame(height: 1)
+        }
+    }
+
+    /// Six week rows of session entries, always the anchor's month plus
+    /// the adjacent days the fixed grid pulls in.
+    private var monthGrid: some View {
+        let cal = model.calendar
+        let weeks = MonthLayout.weeks(for: model.anchor, calendar: cal)
+        return VStack(spacing: 0) {
+            ForEach(weeks.indices, id: \.self) { row in
+                HStack(alignment: .top, spacing: 0) {
+                    Text("\(iso.component(.weekOfYear, from: weeks[row].first ?? model.anchor))")
+                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .frame(width: Self.weekNumberWidth, alignment: .leading)
+                        .padding(.top, 4)
+                    ForEach(weeks[row], id: \.self) { day in
+                        MonthCell(model: model, day: day,
+                                  entries: monthEntries(on: day),
+                                  color: { self.color(for: $0) },
+                                  title: { self.title(for: $0) }) { block in
+                            open(block)
+                        } more: {
+                            model.go(to: day)
+                            model.mode = .day
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .overlay(alignment: .bottom) {
+                    if row < weeks.count - 1 {
+                        Rectangle().fill(Theme.border).frame(height: 1)
+                    }
+                }
+            }
+        }
+        .padding(.leading, 4)
+    }
+
+    /// The day's session rows after the legend's hidden toggles apply.
+    private func monthEntries(on day: Date) -> [MonthLayout.Entry] {
+        let interval = DateInterval(
+            start: day,
+            end: model.calendar.date(byAdding: .day, value: 1, to: day) ?? day)
+        return MonthLayout.entries(model.visibleBlocks, day: interval)
+    }
 
     private func hourGrid(now: Date) -> some View {
         let days = model.days
@@ -550,5 +649,114 @@ private struct HarnessLegend: View {
         let minutes = Int(seconds / 60)
         if minutes >= 60 { return "\(minutes / 60)h \(minutes % 60)m" }
         return "\(minutes)m"
+    }
+}
+
+/// One month cell: the day number top-right ("October 1" on a 1st,
+/// muted for adjacent-month days, red badge for today), then as many
+/// session entries as fit, the rest under a "N more" button that opens
+/// the day.
+private struct MonthCell: View {
+    var model: CalendarModel
+    var day: Date
+    var entries: [MonthLayout.Entry]
+    var color: (ActivityBlock) -> Color
+    var title: (ActivityBlock) -> String
+    var open: (ActivityBlock) -> Void
+    var more: () -> Void
+
+    /// An entry row's height; the split reserves the same room for the
+    /// "N more" row.
+    private static let rowHeight: CGFloat = 16
+
+    var body: some View {
+        let cal = model.calendar
+        let inMonth = cal.isDate(day, equalTo: model.anchor, toGranularity: .month)
+        let isFirst = cal.component(.day, from: day) == 1
+        let isToday = cal.isDateInToday(day)
+        GeometryReader { geo in
+            let fitting = max(0, Int((geo.size.height - 18) / Self.rowHeight))
+            let split = MonthLayout.split(entries, fitting: fitting)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack {
+                    Spacer(minLength: 0)
+                    if isFirst {
+                        Text(day, format: .dateTime.month(.wide).day())
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(isToday ? Color.red : .clear,
+                                        in: RoundedRectangle(cornerRadius: 4))
+                    } else {
+                        Text(day, format: .dateTime.day())
+                            .font(.system(size: 9))
+                            .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(isToday ? Color.red : .clear,
+                                        in: RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+                .padding(.horizontal, 3).padding(.top, 2)
+                ForEach(split.shown) { entry in
+                    MonthEntry(entry: entry, model: model,
+                               color: color(entry.block), title: title(entry.block))
+                        .onTapGesture { open(entry.block) }
+                }
+                if split.more > 0 {
+                    Button { more() } label: {
+                        Text("\(split.more) more")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .frame(height: Self.rowHeight)
+                    .help("Show \(day, format: .dateTime.day().month(.wide)) in the day view")
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture { more() }
+        }
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Theme.border).frame(width: 1)
+        }
+    }
+}
+
+/// One session row in a month cell: a harness-coloured bar, the first
+/// block's start, and the session title on one line.
+private struct MonthEntry: View {
+    var entry: MonthLayout.Entry
+    var model: CalendarModel
+    var color: Color
+    var title: String
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+
+    private var active: String {
+        let minutes = Int(entry.active / 60)
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 1.5).fill(color)
+                .frame(width: 3, height: 10)
+            Text(Self.clock.string(from: entry.start))
+                .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
+            Text(title).font(.system(size: 9)).lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help("\(UsageFormat.harness(entry.block.harness)) · "
+              + "\(model.accountName(for: entry.block.accountHome))\n\(title)\n"
+              + "\(active) active · \(entry.blockCount) block\(entry.blockCount == 1 ? "" : "s")")
+        .accessibilityElement()
+        .accessibilityLabel("\(UsageFormat.harness(entry.block.harness)), \(title), \(active)")
     }
 }

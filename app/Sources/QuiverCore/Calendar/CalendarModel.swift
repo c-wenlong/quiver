@@ -5,16 +5,89 @@ import os
 /// on them, and which harnesses or accounts the legend has turned off.
 @MainActor @Observable
 public final class CalendarModel {
-    public enum Mode: String, CaseIterable, Sendable {
-        case day, week
-        public var title: String { self == .day ? "Day" : "Week" }
+    /// How much the grid shows. `.week` starts on the user's first
+    /// weekday; `.days(n)` starts on the anchor day itself, so `.days(7)`
+    /// is a rolling seven days, not the week. `.days(1)` is `.day`.
+    public enum Mode: Sendable, Hashable {
+        case day, week, month
+        case days(Int)
+
+        public var title: String {
+            switch self {
+            case .day: "Day"
+            case .week: "Week"
+            case .month: "Month"
+            case .days(let n): "\(n) days"
+            }
+        }
+
+        /// `.days(1)` reads as `.day`; the menu never shows an N-day
+        /// option under 2 or over 9.
+        public var normalized: Mode {
+            guard case .days(let n) = self else { return self }
+            return n <= 1 ? .day : .days(min(n, 9))
+        }
+
+        /// Its plain-key shortcut, shown in the mode menu's labels.
+        public var keyHint: String {
+            switch self {
+            case .day: "D"
+            case .week: "W"
+            case .month: "M"
+            case .days(let n): "\(n)"
+            }
+        }
+
+        /// The menu's rows: the three named modes plus the current N-day
+        /// selection when one is active.
+        public static func menu(for current: Mode) -> [Mode] {
+            var modes: [Mode] = [.day, .week, .month]
+            if case .days = current { modes.append(current) }
+            return modes
+        }
+    }
+
+    /// What a plain key on the Calendar page does: pick a mode, step
+    /// sideways, or jump to today. Pure so it can be tested without a
+    /// view; arrows are handled by the view since they are not
+    /// characters.
+    public enum KeyCommand: Sendable, Equatable {
+        case mode(Mode)
+        case previous, next, today
+
+        /// Arrow keys step the anchor, like the header chevrons.
+        public enum Arrow: Sendable {
+            case left, right
+        }
+
+        public init(arrow: Arrow) {
+            self = arrow == .left ? .previous : .next
+        }
+
+        /// `d` Day, `w` Week, `m` Month, `t` Today, `1`...`9` N days.
+        public init?(character: Character) {
+            switch character.lowercased().first {
+            case "d": self = .mode(.day)
+            case "w": self = .mode(.week)
+            case "m": self = .mode(.month)
+            case "t": self = .today
+            case let digit? where digit.isNumber:
+                self = .mode(.days(Int(String(digit)) ?? 1))
+            default: return nil
+            }
+        }
     }
 
     /// A session's responses read as one block until this much silence
     /// passes between two of them.
     public nonisolated static let gap: TimeInterval = 15 * 60
 
-    public var mode: Mode = .week
+    public var mode: Mode = .week {
+        didSet {
+            if mode != mode.normalized { mode = mode.normalized }
+            applyCached()
+        }
+    }
     /// The day the visible range is built around.
     public private(set) var anchor: Date
     /// Every block the providers reported for the visible range, before
@@ -102,13 +175,36 @@ public final class CalendarModel {
             let start = calendar.date(from: week) ?? calendar.startOfDay(for: anchor)
             return DateInterval(start: start,
                                 end: calendar.date(byAdding: .day, value: 7, to: start) ?? start)
+        case .month:
+            // Always six week rows: the first weekday on or before the
+            // 1st, so adjacent-month days fill the grid like Notion's.
+            if let weeks = MonthLayout.weekRange(for: anchor, calendar: calendar) {
+                return weeks
+            }
+            // A pathological calendar falls back to the anchor's day.
+            let start = calendar.startOfDay(for: anchor)
+            return DateInterval(start: start,
+                                end: calendar.date(byAdding: .day, value: 1, to: start) ?? start)
+        case .days(let n):
+            let start = calendar.startOfDay(for: anchor)
+            return DateInterval(start: start,
+                                end: calendar.date(byAdding: .day, value: max(1, n), to: start) ?? start)
         }
     }
 
-    /// The anchor shifted by this many mode steps (days, weeks or months).
+    /// The anchor shifted by this many mode steps (a day, a week, a
+    /// month, or an N-day span).
     public func shiftedAnchor(_ count: Int, mode: Mode) -> Date {
-        let unit: Calendar.Component = mode == .day ? .day : .weekOfYear
-        return calendar.date(byAdding: unit, value: count, to: anchor) ?? anchor
+        switch mode {
+        case .day:
+            return calendar.date(byAdding: .day, value: count, to: anchor) ?? anchor
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: count, to: anchor) ?? anchor
+        case .month:
+            return calendar.date(byAdding: .month, value: count, to: anchor) ?? anchor
+        case .days(let n):
+            return calendar.date(byAdding: .day, value: count * max(1, n), to: anchor) ?? anchor
+        }
     }
 
     /// One interval per day column, clipped to the range.
@@ -122,6 +218,17 @@ public final class CalendarModel {
             day = next
         }
         return days
+    }
+
+    /// One key command as the page maps it: a mode pick, a step, or
+    /// Today.
+    public func apply(_ command: KeyCommand) {
+        switch command {
+        case .mode(let mode): self.mode = mode
+        case .previous: previous()
+        case .next: next()
+        case .today: today()
+        }
     }
 
     public func today() { anchor = now(); applyCached() }
@@ -302,8 +409,18 @@ public final class CalendarModel {
         totalTime { $0.harness == harness ? $0.accountHome : nil }
     }
 
+    /// Legend totals clip to this range: in month mode the anchor's own
+    /// month, so adjacent-month grid days do not count.
+    private var totalsRange: DateInterval {
+        guard case .month = mode,
+              let first = calendar.date(from: calendar.dateComponents([.year, .month], from: anchor)),
+              let next = calendar.date(byAdding: .month, value: 1, to: first)
+        else { return visibleRange }
+        return DateInterval(start: first, end: next)
+    }
+
     private func totalTime(key: (ActivityBlock) -> String?) -> [String: TimeInterval] {
-        let range = visibleRange
+        let range = totalsRange
         var totals: [String: TimeInterval] = [:]
         for block in blocks {
             guard let name = key(block) else { continue }
