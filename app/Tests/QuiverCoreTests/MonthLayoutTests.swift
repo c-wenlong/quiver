@@ -211,6 +211,8 @@ import Testing
         #expect(CalendarModel.KeyCommand(character: "w") == .mode(.week))
         #expect(CalendarModel.KeyCommand(character: "m") == .mode(.month))
         #expect(CalendarModel.KeyCommand(character: "t") == .today)
+        #expect(CalendarModel.KeyCommand(character: "s") == .togglePanel)
+        #expect(CalendarModel.KeyCommand(character: "S") == .togglePanel)
         #expect(CalendarModel.KeyCommand(character: "3") == .mode(.days(3)))
         #expect(CalendarModel.KeyCommand(character: "9") == .mode(.days(9)))
         #expect(CalendarModel.KeyCommand(character: "x") == nil)
@@ -224,6 +226,15 @@ import Testing
         #expect(model.anchor == utc("2026-10-15T12:00:00Z"))
         model.apply(.today)
         #expect(model.anchor == utc("2026-10-14T12:00:00Z"))
+    }
+
+    @Test func theSKeyTogglesTheSidePanel() {
+        let model = self.model()
+        #expect(!model.panelCollapsed)
+        model.apply(CalendarModel.KeyCommand(character: "s")!)
+        #expect(model.panelCollapsed)
+        model.apply(.togglePanel)
+        #expect(!model.panelCollapsed)
     }
 }
 
@@ -258,6 +269,20 @@ extension CalendarMonthModelTests {
         for mode in [CalendarModel.Mode.day, .week, .month, .days(4)] {
             #expect(CalendarModel.decodedMode(CalendarModel.encodedMode(mode)) == mode)
         }
+    }
+
+    @Test func thePanelCollapsePersistsAcrossModels() {
+        let name = "CalendarPanelPersist.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        var model = CalendarModel(providers: [], defaults: defaults,
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        #expect(!model.panelCollapsed)
+        model.panelCollapsed = true
+        model = CalendarModel(providers: [], defaults: defaults,
+                              now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        #expect(model.panelCollapsed)
+        #expect(defaults.bool(forKey: "calendar.panelCollapsed"))
     }
 
     @Test func onlyAsciiDigitsPickADaySpan() {

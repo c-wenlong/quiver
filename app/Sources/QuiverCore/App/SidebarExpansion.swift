@@ -1,3 +1,5 @@
+import Foundation
+
 /// Whether the main window's sidebar shows in full. `collapsed` is the
 /// user's persisted choice; the rest is transient pointer state, so the
 /// whole thing stays a small testable value.
@@ -51,5 +53,58 @@ public struct SidebarExpansion: Equatable, Sendable {
             hoverSuppressed = false
             leftSinceSuppressed = false
         }
+    }
+}
+
+/// The delayed hover-expand the window sidebar and the calendar's side
+/// panel share: a collapsed rail floats open 0.12 s after the pointer
+/// enters, hides 0.2 s after it leaves, and a toggle settles a pending
+/// hover change first so a collapse right after entering still
+/// suppresses the expansion and a late entry can't reopen it.
+@MainActor @Observable
+public final class HoverExpansion {
+    public var expansion: SidebarExpansion
+    /// The delayed hover change; a new pointer event replaces it.
+    private var pending: Task<Void, Never>?
+    /// Where the pointer is right now, ahead of the delayed hover change.
+    private var pointerInside = false
+    /// How long the pointer must stay before expanding or hiding.
+    /// Injected only so tests can run against short delays.
+    private let enterDelay: Duration
+    private let exitDelay: Duration
+
+    public init(collapsed: Bool = false,
+                enterDelay: Duration = .milliseconds(120),
+                exitDelay: Duration = .milliseconds(200)) {
+        expansion = SidebarExpansion(collapsed: collapsed)
+        self.enterDelay = enterDelay
+        self.exitDelay = exitDelay
+    }
+
+    public var isExpanded: Bool { expansion.isExpanded }
+    public var isFloating: Bool { expansion.isFloating }
+
+    /// `collapsed` is the persisted choice the pointer logic keys off:
+    /// a pinned-open sidebar tracks the pointer for suppression but only
+    /// a collapsed one schedules the delayed expand and hide.
+    public func hover(_ inside: Bool, collapsed: Bool) {
+        pending?.cancel()
+        pointerInside = inside
+        if !inside { expansion.pointerLeft() }
+        guard collapsed else {
+            expansion.pointer(inside: inside)
+            return
+        }
+        pending = Task { @MainActor in
+            try? await Task.sleep(for: inside ? enterDelay : exitDelay)
+            guard !Task.isCancelled else { return }
+            expansion.pointer(inside: inside)
+        }
+    }
+
+    public func toggle() {
+        pending?.cancel()
+        expansion.pointer(inside: pointerInside)
+        expansion.toggle()
     }
 }

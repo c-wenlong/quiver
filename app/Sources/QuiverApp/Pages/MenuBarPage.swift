@@ -14,8 +14,7 @@ struct MenuBarPage: View {
 
     var body: some View {
         Page(title: "Menu bar",
-             subtitle: "What Quiver shows at the top of your screen.",
-             maxWidth: 1024) {
+             subtitle: "What Quiver shows at the top of your screen.") {
             VStack(alignment: .leading, spacing: 24) {
                 Tabs(options: [(Tab.menuBar, "Menu bar"), (.popup, "Menu bar popup")],
                      selection: $tab, style: .underline)

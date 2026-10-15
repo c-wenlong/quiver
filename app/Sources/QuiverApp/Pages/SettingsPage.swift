@@ -21,8 +21,7 @@ struct SettingsPage: View {
     }
 
     var body: some View {
-        Page(title: "Settings", subtitle: "How Quiver starts, what it shows, and where it finds things.",
-             maxWidth: 1024) {
+        Page(title: "Settings", subtitle: "How Quiver starts, what it shows, and where it finds things.") {
             Group {
                 if width == 0 || width >= 720 {
                     HStack(alignment: .top, spacing: 40) {
