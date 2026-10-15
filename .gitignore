@@ -39,3 +39,8 @@ completions/
 # Nix build output
 result
 result-*
+
+# Docs site (Zensical)
+build/docs-site/
+site/
+.venv-docs/
