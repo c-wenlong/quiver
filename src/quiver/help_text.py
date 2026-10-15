@@ -174,20 +174,26 @@ HELP = {
      notices) is printed but does not fail the exit code."""
     ),
     "install": (
-        "Install a harness via PATH-visible npm and register it",
+        "Show or run a harness's install command per package manager",
         f"""\
-  {c('cyan', 'swe install <name>')}                    npm install -g + register in harness.json
-  {c('cyan', 'swe install <name> --package=<pkg>')}    Override npm package name
-  {c('cyan', 'swe install <name> --command=<cmd>')}    Override CLI binary name
-  {c('cyan', 'swe install <name> --dry-run')}          Show what would run (alias: -n)
+  {c('cyan', 'swe install <name>')}                    List its install commands (runs nothing)
+  {c('cyan', 'swe install <name> --via=<method>')}     Run one: brew, cask, npm, uv, nix or script
+  {c('cyan', 'swe install <name> --package=<pkg>')}    Explicit npm package (works for unknown names)
+  {c('cyan', 'swe install <name> --command=<cmd>')}    Override CLI binary name to register
+  {c('cyan', 'swe install <name> --dry-run')}          Print the command, run nothing (alias: -n)
+  {c('cyan', 'swe install [--json]')}                  Known installers as JSON (never runs)
 
-  Uses a PATH-visible npm (prefers Homebrew over nvm) so the binary lands where
-  {c('cyan', 'swe list')} / {c('cyan', 'swe check')} can see it.
+  Methods are the package managers a harness is published through; npm uses a
+  PATH-visible npm (prefers Homebrew over nvm) so the binary lands where
+  {c('cyan', 'swe list')} / {c('cyan', 'swe check')} can see it. A name with no known
+  installer is refused — swe never guesses package names.
 
 {c('bold', 'Examples')}
-  swe install mastracode
-  swe install jules --package=@google/jules
-  swe install claude --package=@anthropic-ai/claude-code"""
+  swe install gemini
+  swe install gemini --via=npm
+  swe install claude --via=cask --dry-run
+  swe install mastracode --package=mastracode
+  swe install --json"""
     ),
     "session": (
         "Show recent AI sessions across all agents",
