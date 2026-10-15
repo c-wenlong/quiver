@@ -323,6 +323,34 @@ private struct TogglingActivity: ActivityProviding {
         #expect(rows[1].row.session.id == "late")
     }
 
+    @Test func theCardCapsItsSessionListAtEightAndCountsTheRest() {
+        let index = CalendarSessionIndex(rows: [row(home: "/h")])
+        let refs = (0..<11).map { i in
+            ActivityBlock.SessionRef(sessionId: "s\(i)",
+                                     start: utc("2026-10-14T09:00:00Z")
+                                        .addingTimeInterval(TimeInterval(i * 60)),
+                                     end: utc("2026-10-14T09:00:00Z")
+                                        .addingTimeInterval(TimeInterval(i * 60 + 30)),
+                                     responses: 1)
+        }
+        let block = ActivityBlock(harness: "claude", accountHome: "/h", project: "p",
+                                  sessions: refs,
+                                  start: refs[0].start, end: refs[10].end,
+                                  responses: 11)
+        let (shown, more) = index.rows(for: block, limit: 8)
+        #expect(shown.count == 8)
+        #expect(more == 3)
+        #expect(shown.map(\.ref.sessionId) == (0..<8).map { "s\($0)" })
+        // Fewer than the limit reports no overflow.
+        let small = ActivityBlock(harness: "claude", accountHome: "/h", project: "p",
+                                  sessions: Array(refs.prefix(3)),
+                                  start: refs[0].start, end: refs[2].end,
+                                  responses: 3)
+        let few = index.rows(for: small, limit: 8)
+        #expect(few.shown.count == 3)
+        #expect(few.more == 0)
+    }
+
     @Test func anUnlistedSessionGetsAStandInRow() {
         let index = CalendarSessionIndex(rows: [])
         let ref = ActivityBlock.SessionRef(sessionId: "gone", cwd: "/work/project",
