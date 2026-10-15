@@ -105,10 +105,20 @@ public final class InstallCatalogModel {
     public private(set) var registering: Set<String> = []
 
     private let swe: SweClient
+    /// Names the registry already knows, supplied by the page's harness
+    /// list. An older swe has no `registered` field, so without this the
+    /// sheet would offer Register for harnesses that are already in.
+    private let registeredNames: @MainActor () -> Set<String>
     private var generation = 0
 
-    public init(swe: SweClient) {
+    public init(swe: SweClient,
+                registeredNames: @escaping @MainActor () -> Set<String> = { [] }) {
         self.swe = swe
+        self.registeredNames = registeredNames
+    }
+
+    private func isRegistered(_ harness: InstallableHarness) -> Bool {
+        harness.registered || registeredNames().contains(harness.name)
     }
 
     public func load() async {
@@ -131,7 +141,7 @@ public final class InstallCatalogModel {
         guard case .loaded(let all) = state else { return [] }
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         return all
-            .filter { !$0.registered }
+            .filter { !isRegistered($0) }
             .filter {
                 needle.isEmpty
                     || $0.name.lowercased().contains(needle)
@@ -142,6 +152,19 @@ public final class InstallCatalogModel {
     /// Installed-but-unregistered first, then the ones swe can't find on PATH.
     public var groups: (installed: [InstallableHarness], missing: [InstallableHarness]) {
         (rows.filter(\.installed), rows.filter { !$0.installed })
+    }
+
+    /// True when nothing swe knows about is still unregistered, so the sheet
+    /// can tell "all registered" apart from "the query hid everything".
+    public var everythingRegistered: Bool {
+        guard case .loaded(let all) = state else { return false }
+        return !all.contains { !isRegistered($0) }
+    }
+
+    /// Report an action that failed outside a swe call (like opening the
+    /// terminal), shown by the sheet's ErrorCard.
+    public func report(_ error: Error) {
+        actionError = error.localizedDescription
     }
 
     /// `swe add` the harness, then reload so it leaves the list. Returns the

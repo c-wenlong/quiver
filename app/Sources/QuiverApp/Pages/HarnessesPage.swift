@@ -30,7 +30,12 @@ struct HarnessesPage: View {
         // Closing the sheet reloads the list so anything just installed or
         // registered shows up.
         .sheet(isPresented: $adding, onDismiss: { Task { await model?.load() } }) {
-            AddHarnessSheet(model: InstallCatalogModel(swe: app.swe)) {
+            AddHarnessSheet(model: InstallCatalogModel(swe: app.swe) {
+                // Registered under any state (archived included); older swe
+                // builds have no `registered` field to say so themselves.
+                guard case .loaded(let all) = model?.state else { return [] }
+                return Set(all.map(\.name))
+            }) {
                 await model?.load()
             }
         }

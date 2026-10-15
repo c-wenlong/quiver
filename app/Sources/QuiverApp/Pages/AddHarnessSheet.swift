@@ -48,13 +48,13 @@ struct AddHarnessSheet: View {
             LoadingCard(text: "Asking swe what it can install…")
         case .failed(let message):
             ErrorCard(message: message)
-        case .loaded(let all):
+        case .loaded:
             let groups = model.groups
             if groups.installed.isEmpty && groups.missing.isEmpty {
                 Card {
-                    Text(all.contains(where: { !$0.registered }) || !model.query.isEmpty
-                            ? "No harnesses match."
-                            : "Every harness swe knows is already registered.")
+                    Text(model.everythingRegistered
+                            ? "Every harness swe knows is already registered."
+                            : "No harnesses match.")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }
             } else {
@@ -120,7 +120,7 @@ struct AddHarnessSheet: View {
             }
             .secondaryButton()
             .disabled(model.registering.contains(harness.name))
-            .help("swe add \(harness.name) — register it without reinstalling")
+            .help("Register it with swe add, no reinstall")
         }
         .padding(.horizontal, Theme.cardPadding)
         .padding(.vertical, 12)
@@ -191,9 +191,13 @@ struct AddHarnessSheet: View {
             .accessibilityLabel("Copy \(method.managerTitle) install command")
             Button("Run in Terminal", systemImage: "terminal") {
                 Task {
-                    try? await app.accounts.openTerminal(command:
-                        InstallCatalogModel.installLine(harness.name, via: method.via,
-                                                        swe: sweExecutable))
+                    do {
+                        try await app.accounts.openTerminal(command:
+                            InstallCatalogModel.installLine(harness.name, via: method.via,
+                                                            swe: sweExecutable))
+                    } catch {
+                        model.report(error)
+                    }
                 }
             }
             .iconButton()

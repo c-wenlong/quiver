@@ -95,6 +95,22 @@ private let oldInstallJSON = #"""
         #expect(model.rows.isEmpty)
     }
 
+    /// An older swe has no `registered` key; the page's harness list still
+    /// tells the model which names are taken, so claude stays hidden.
+    @Test func registeredNamesHideWhatAnOlderSweCannotFlag() async throws {
+        let runner = ScriptedRunner([(["install"], ok(#"""
+            {"harnesses":[{"name":"claude","command":"claude","installed":true,
+             "path":"/usr/local/bin/claude",
+             "methods":[{"via":"npm","package":"@anthropic-ai/claude-code",
+              "command":"npm install -g @anthropic-ai/claude-code","available":true}]}]}
+            """#))])
+        let model = InstallCatalogModel(swe: SweClient(runner: runner),
+                                        registeredNames: { ["claude"] })
+        await model.load()
+        #expect(model.rows.isEmpty)
+        #expect(model.everythingRegistered)
+    }
+
     @Test func registerRunsSweAddThenReloads() async throws {
         let (model, runner) = model([
             (["add"], CommandResult(status: 0, stdout: Data("  ✓ Added 'jules'".utf8), stderr: "")),
