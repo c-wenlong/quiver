@@ -238,7 +238,7 @@ extension Card where Accessory == EmptyView {
 }
 
 /// Page scaffold inside the content panel: 36/40 title, 16/24 subtitle,
-/// actions top right, content up to 1152pt wide and centred.
+/// actions top right, content up to 1280pt wide and centred.
 ///
 /// `scrolls: false` is for a page whose content scrolls itself (an
 /// editor): the content gets the panel's remaining height to fill, so
@@ -246,7 +246,7 @@ extension Card where Accessory == EmptyView {
 struct Page<Content: View, Actions: View>: View {
     var title: String
     var subtitle: String
-    var maxWidth: CGFloat = 1152
+    var maxWidth: CGFloat = 1280
     var scrolls = true
     @ViewBuilder var actions: Actions
     @ViewBuilder var content: Content
@@ -275,7 +275,7 @@ struct Page<Content: View, Actions: View>: View {
 }
 
 extension Page where Actions == EmptyView {
-    init(title: String, subtitle: String, maxWidth: CGFloat = 1152, scrolls: Bool = true,
+    init(title: String, subtitle: String, maxWidth: CGFloat = 1280, scrolls: Bool = true,
          @ViewBuilder content: () -> Content) {
         self.init(title: title, subtitle: subtitle, maxWidth: maxWidth, scrolls: scrolls,
                   actions: { EmptyView() }, content: content)

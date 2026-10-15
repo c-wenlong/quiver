@@ -29,8 +29,7 @@ struct WidgetsPage: View {
 
     var body: some View {
         Page(title: "Widgets",
-             subtitle: "What Quiver's desktop widgets show. Right-click the desktop, choose Edit widgets, and search for Quiver.",
-             maxWidth: 1024) {
+             subtitle: "What Quiver's desktop widgets show. Right-click the desktop, choose Edit widgets, and search for Quiver.") {
             Button("Refresh widgets", systemImage: "arrow.clockwise") {
                 WidgetCenter.shared.reloadAllTimelines()
                 Task { await loadPlaced() }

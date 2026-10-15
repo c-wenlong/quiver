@@ -21,6 +21,7 @@ struct CalendarPage: View {
 
 private struct CalendarContent: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var model: CalendarModel
     /// The session detail sheet's row, when a block resolves to a listed
     /// session.
@@ -35,6 +36,11 @@ private struct CalendarContent: View {
     /// The range whose initial scroll already ran, so each new range
     /// opens at its first block once.
     @State private var scrolledRange: DateInterval?
+    /// The side panel's pointer state; `collapsed` mirrors the model's
+    /// persisted choice. Same hover machinery as the window sidebar.
+    @State private var panelHover = HoverExpansion()
+
+    private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
 
     private static let monthTitle: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
@@ -50,8 +56,31 @@ private struct CalendarContent: View {
              scrolls: false,
              actions: { controls }) {
             HStack(spacing: 0) {
-                side
                 grid
+                // Pinned open the panel takes layout space; collapsed it
+                // hides and only hovers back in over the grid.
+                if !model.panelCollapsed { panel }
+            }
+            .overlay(alignment: .trailing) {
+                if panelHover.isFloating {
+                    panel
+                } else if model.panelCollapsed {
+                    // The collapsed rail's stand-in: a thin strip on the
+                    // grid's right edge that the delayed hover reads.
+                    Color.clear
+                        .frame(width: 10)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(.rect)
+                        .onHover { panelHover.hover($0, collapsed: model.panelCollapsed) }
+                }
+            }
+            .animation(animation, value: model.panelCollapsed)
+            .animation(animation, value: panelHover.isExpanded)
+            .onAppear { panelHover.expansion.collapsed = model.panelCollapsed }
+            .onChange(of: model.panelCollapsed) { _, new in
+                // Route every collapse source through the toggle so a
+                // pending hover settles first, like the app sidebar.
+                if new != panelHover.expansion.collapsed { panelHover.toggle() }
             }
             .focusable()
             .focusEffectDisabled()
@@ -118,9 +147,13 @@ private struct CalendarContent: View {
 
     private var controls: some View {
         HStack(spacing: 6) {
+            // The closed button reads just the mode name; the key hints
+            // stay on the menu items. Sizing to the text keeps "N days"
+            // and "Month" from truncating.
             SelectMenu(options: CalendarModel.Mode.menu(for: model.mode)
                            .map { ($0, "\($0.title) (\($0.keyHint))") },
-                       selection: Bindable(model).mode, width: 92)
+                       selection: Bindable(model).mode,
+                       width: nil, title: model.mode.title)
             Button("Today") { model.today() }
                 .secondaryButton()
                 .keyboardShortcut("t", modifiers: .command)
@@ -137,12 +170,23 @@ private struct CalendarContent: View {
             .iconButton()
             .keyboardShortcut(.rightArrow, modifiers: .command)
             .help("Next \(model.mode.title.lowercased()) (→)")
+            Button(model.panelCollapsed ? "Expand calendar panel" : "Collapse calendar panel",
+                   systemImage: "sidebar.right") {
+                model.apply(.togglePanel)
+            }
+            .iconButton()
+            .help("\(model.panelCollapsed ? "Expand" : "Collapse") calendar panel (S)")
+            .accessibilityLabel(model.panelCollapsed ? "Expand calendar panel"
+                                                     : "Collapse calendar panel")
         }
     }
 
-    // MARK: - Left pane
+    // MARK: - Side panel
 
-    private var side: some View {
+    /// The mini month and legend on the grid's right. Pinned it sits in
+    /// the layout; collapsed and hovered it floats over the grid with
+    /// the window surface and shadow, like the app sidebar.
+    private var panel: some View {
         VStack(alignment: .leading, spacing: 0) {
             MiniMonth(model: model)
                 .padding(.bottom, 10)
@@ -160,9 +204,16 @@ private struct CalendarContent: View {
         }
         .frame(width: 220)
         .padding(12)
-        .overlay(alignment: .trailing) {
+        .frame(maxHeight: .infinity)
+        .background {
+            Theme.wash
+                .shadow(color: .black.opacity(0.12), radius: 8)
+                .opacity(panelHover.isFloating ? 1 : 0)
+        }
+        .overlay(alignment: .leading) {
             Rectangle().fill(Theme.border).frame(width: 1)
         }
+        .onHover { panelHover.hover($0, collapsed: model.panelCollapsed) }
     }
 
     // MARK: - Week grid
