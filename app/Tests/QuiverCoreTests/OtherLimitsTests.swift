@@ -18,7 +18,7 @@ import Testing
 
     @Test func harnessesWithoutAQuiverAccountComeFromSwe() async {
         let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         // Claude and Codex have accounts of their own; unpolled harnesses have nothing to show.
         #expect(model.rows.map(\.name) == ["devin", "cursor"])
@@ -37,7 +37,7 @@ import Testing
             .replacingOccurrences(of: #""name": "cursor", "command": "cursor-agent","#, with: #""name": "cursor", "display_name": "Cursor", "command": "cursor-agent", "installed": false,"#)
             .replacingOccurrences(of: #""name": "claude", "command": "claude","#, with: #""name": "claude", "command": "claude", "installed": true,"#)
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
-                  snapshotFile: tempSnapshotFile())
+                  snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.map(\.command) == ["devin", "cursor-agent"])
         #expect(model.rows.map(\.cliInstalled) == [true, false])
@@ -62,7 +62,7 @@ import Testing
         ]}}
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
-                  snapshotFile: tempSnapshotFile())
+                  snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.cards.map(\.name) == ["devin"])
         #expect(model.cards[0].title == "Devin Teams")
@@ -86,7 +86,7 @@ import Testing
         ]}}
         """#
         let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
-                  snapshotFile: tempSnapshotFile())
+                  snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.cards.map(\.name) == ["devin"])
         // The menu bar, notifications and widgets read rows: starred only too.
@@ -96,7 +96,7 @@ import Testing
     @Test func aFailedLoadKeepsTheLastStarredSet() async {
         // Before swe has answered once, nothing is hidden: unknown means show.
         let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         #expect(model.starred == nil)
         #expect(model.isStarred("codex"))
         await model.load()
@@ -136,7 +136,7 @@ import Testing
         let runner = GatedRunner(
             first: .init(status: 0, stdout: Data(json.utf8), stderr: ""),
             later: .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         var outdated: Task<Void, Never>!
         await withCheckedContinuation { continuation in
             runner.onFirstCall = { continuation.resume() }
@@ -152,7 +152,7 @@ import Testing
 
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.isEmpty)
         #expect(model.note?.contains("older") == true)
@@ -226,7 +226,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
 
     @Test func aRefreshLoadAsksSweToRefetchOnlyTheFailed() async {
         let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load(refreshFailed: true)
         #expect(runner.calls == [["list", "--usage", "--json", "--cache-ttl=300",
                                  "--refresh-failed", "--exclude=claude,codex"]])
@@ -237,7 +237,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
             .init(status: 2, stdout: Data(), stderr: "Unknown flag: --cache-ttl"),
             .init(status: 0, stdout: okBody, stderr: ""),
         ])
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.map(\.name) == ["devin"])
         #expect(runner.calls == [
@@ -256,7 +256,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
 
     @Test func anSweThatTookTheFlagsHonoursTheWindow() async {
         let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         model.cacheTTL = 7200
         await model.load()
         #expect(model.acceptedCacheTTL == 7200)
@@ -268,7 +268,7 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
             .init(status: 2, stdout: Data(), stderr: "Unknown flag: --exclude"),
             .init(status: 0, stdout: okBody, stderr: ""),
         ])
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile())
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         await model.load()
         #expect(model.rows.map(\.name) == ["devin"])
         #expect(runner.calls == [
@@ -285,13 +285,13 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
     @Test func theLastSuccessfulListRoundTripsThroughTheSnapshotFile() async {
         let file = tempSnapshotFile()
         let runner = FakeRunner(.init(status: 0, stdout: okBody, stderr: ""))
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: file)
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: file, names: tempNamesStore())
         await model.load()
         #expect(FileManager.default.fileExists(atPath: file.path))
 
         // A new model on the same file shows the saved rows before swe answers.
         let revived = OtherLimitsModel(swe: SweClient(runner: FakeRunner(
-            .init(status: 2, stdout: Data(), stderr: "down"))), snapshotFile: file)
+            .init(status: 2, stdout: Data(), stderr: "down"))), snapshotFile: file, names: tempNamesStore())
         #expect(revived.rows.map(\.name) == ["devin"])
         #expect(revived.cards.map(\.name) == ["devin"])
         #expect(revived.starred == ["devin"])
@@ -304,7 +304,115 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "not json".write(to: file, atomically: true, encoding: .utf8)
         let revived = OtherLimitsModel(swe: SweClient(runner: FakeRunner(
-            .init(status: 0, stdout: okBody, stderr: ""))), snapshotFile: file)
+            .init(status: 0, stdout: okBody, stderr: ""))), snapshotFile: file, names: tempNamesStore())
         #expect(revived.rows.isEmpty && revived.starred == nil)
+    }
+}
+
+@MainActor
+@Suite struct HarnessAccountNameModelTests {
+    func tempNamesFile() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("quiver-names-\(UUID().uuidString)")
+            .appendingPathComponent("harness-names.json")
+    }
+
+    let body = Data(#"""
+    {"schema": 1, "data": {"harnesses": [
+      {"name": "cursor", "display_name": "Cursor IDE", "command": "cursor-agent", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1,
+       "rate_limit": {"status": "ok", "used_percent": 40, "remaining_percent": 60, "limit_reached": false, "reset_at": null, "window": "7d", "window_seconds": 604800, "plan_type": null, "remaining_units": null, "total_units": null, "fetched_at": 1791700000}}
+    ]}}
+    """#.utf8)
+
+    @Test func accountNameWinsOverDisplayNameAndBrand() async {
+        let names = HarnessAccountNameStore(file: tempNamesFile())
+        try? names.setName("Cortex", for: "cursor")
+        let model = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))),
+            snapshotFile: tempSnapshotFile(), names: names)
+        await model.load()
+        // accountName > displayName > brand, on rows and cards alike.
+        #expect(model.rows[0].title == "Cortex")
+        #expect(model.rows[0].accountTitle == "Cursor: Cortex")
+        #expect(model.cards[0].title == "Cortex")
+        // The harness's own name ignores the account name.
+        #expect(model.cards[0].harnessTitle == "Cursor IDE")
+    }
+
+    @Test func aCardWithoutAnAccountNameFallsBackToDisplayNameThenBrand() async {
+        let model = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))),
+            snapshotFile: tempSnapshotFile(),
+            names: HarnessAccountNameStore(file: tempNamesFile()))
+        await model.load()
+        #expect(model.cards[0].title == "Cursor IDE")
+        #expect(model.cards[0].harnessTitle == "Cursor IDE")
+        #expect(OtherLimitsModel.Card(name: "cursor", displayName: nil, command: "cursor-agent",
+                                    cliInstalled: nil, limit: nil).harnessTitle == "Cursor")
+    }
+
+    @Test func renameWritesTheNamesFileAndNeverCallsSwe() async throws {
+        let file = tempSnapshotFile()
+        let names = HarnessAccountNameStore(file: tempNamesFile())
+        let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner),
+                                     snapshotFile: file, names: names)
+        await model.load()
+        let calls = runner.calls
+
+        try model.rename("cursor", to: "Cortex")
+
+        #expect(runner.calls == calls)  // no swe run: harness.json untouched
+        #expect(model.cards[0].accountName == "Cortex")
+        #expect(model.rows[0].accountName == "Cortex")
+        #expect(model.rows[0].accountTitle == "Cursor: Cortex")
+        #expect(names.load()["cursor"] == "Cortex")
+        // The snapshot carries it, so the next launch shows it too.
+        let revived = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 2, stdout: Data(), stderr: "down"))),
+            snapshotFile: file, names: names)
+        #expect(revived.cards[0].accountName == "Cortex")
+
+        try model.rename("cursor", to: "")
+        #expect(model.cards[0].accountName == nil)
+        #expect(names.load()["cursor"] == nil)
+    }
+
+    @Test func aSnapshotWithoutAccountNameStillDecodes() async throws {
+        // Snapshots written before account names exist carry no such key.
+        let file = tempSnapshotFile()
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let json = #"""
+        {"savedAt": 800000000, "rows": [
+          {"name": "devin", "limit": {"status": "ok", "usedPercent": 40, "remainingPercent": 60,
+            "limitReached": false}, "displayName": "Devin Teams", "command": "devin"}],
+         "cards": [{"name": "devin", "displayName": "Devin Teams", "command": "devin",
+                    "cliInstalled": true, "limit": null}],
+         "starred": ["devin"], "cliInstalled": {"devin": true}}
+        """#
+        try json.write(to: file, atomically: true, encoding: .utf8)
+        let revived = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 2, stdout: Data(), stderr: "down"))),
+            snapshotFile: file, names: HarnessAccountNameStore(file: tempNamesFile()))
+        #expect(revived.rows.map(\.name) == ["devin"])
+        #expect(revived.rows[0].accountName == nil)
+        #expect(revived.rows[0].title == "Devin Teams")
+    }
+
+    @Test func hydrateStampsARenameMadeAfterTheSnapshot() async throws {
+        let file = tempSnapshotFile()
+        let names = HarnessAccountNameStore(file: tempNamesFile())
+        let model = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))),
+            snapshotFile: file, names: names)
+        await model.load()
+        // The name changed after the snapshot was written.
+        try names.setName("Cortex", for: "cursor")
+        let revived = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 2, stdout: Data(), stderr: "down"))),
+            snapshotFile: file, names: names)
+        #expect(revived.cards[0].accountName == "Cortex")
+        #expect(revived.rows[0].accountTitle == "Cursor: Cortex")
     }
 }

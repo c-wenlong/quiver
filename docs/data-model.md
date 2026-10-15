@@ -23,6 +23,7 @@ be rebuilt; deleting them loses user state.
 | `config/skill_links.json` | swe | JSON `{links, updated}` | recorded harness skill symlinks | `skills` link ops | `swe skills`, `init --check` |
 | `config/plugin-display-names.json` | app | JSON object | marketplace display-name overrides | `PluginDisplayNames` (QuiverCore) | plugin explorer, skill detail |
 | `accounts/profiles.json` (+ `profiles.lock`, `<vendor>/<id>/home/`) | app | JSON + per-profile home dirs | extra harness accounts the app manages | `ProfileStore` | accounts page, ledger roots, session listing |
+| `accounts/harness-names.json` | app | JSON `{schema, names}` | account names for harness cards, app-owned (renaming in Accounts never writes harness.json) | `HarnessAccountNameStore` | accounts cards, menu bar, widgets |
 | `secrets/.api_keys` | swe | plain text, mode 600 | MCP credential values | `swe mcp` | MCP format writers |
 | `~/.api_keys/` | swe + app | directory of per-provider key files, or one shell-style file | LLM API keys | `swe providers`, app's key editor | provider key lookup, app key checks |
 | `skills/`, `hooks/`, `plugins/`, `AGENTS.md`, `.linkignore` | swe | files and symlinks | shared instruction/skill/hook/plugin trees | `swe init`, `swe skills`, `swe plugins` | the harnesses that link them |

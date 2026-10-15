@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--json` emits the whole table without running. Names with no known
   installer are refused instead of guessed.
 
+- **Renaming a harness account on the Accounts page no longer rewrites
+  harness.json.** The name (say "Cortex" for your Cursor account) now lives
+  in the app's own `~/.quiver/accounts/harness-names.json` and shows in
+  Accounts, the menu bar and widgets only, so the Harnesses page keeps the
+  harness's display name. The card's Open app/Terminal buttons are icons now.
+
 ### Added
 
 - **The menu bar's harness logos launch the harness.** The logo on each
