@@ -311,6 +311,14 @@ public final class AccountsModel {
         try await launcher.launch(LaunchPlanner.terminal(terminal(), running: LaunchPlanner.shellQuote(command)))
     }
 
+    /// An already-built shell line in a terminal. For callers like the Add
+    /// harness sheet that compose a command of several words; unlike
+    /// `openTerminal(command:)` the line is trusted as shell text, so the
+    /// caller must quote its tokens.
+    public func runInTerminal(line: String) async throws {
+        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+    }
+
     /// A harness's own sign-in in a terminal, where its CLI has one.
     public func signIn(harness: String) async throws {
         guard let login = HarnessAccess.loginCommand(for: harness) else {

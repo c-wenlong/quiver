@@ -1669,6 +1669,7 @@ def _install_method_available(via: str) -> bool:
 
 def _install_json(names: list[str], tools: dict) -> dict:
     """The ``swe install --json`` document for the given registry names."""
+    from quiver.harness.catalog import HARNESS_CATALOG
     from quiver.harness.installers import installers_for
 
     harnesses = []
@@ -1680,6 +1681,8 @@ def _install_json(names: list[str], tools: dict) -> dict:
             "command": command,
             "installed": path is not None,
             "path": path,
+            "description": HARNESS_CATALOG.get(name, {}).get("description", ""),
+            "registered": name in tools,
             "methods": [{
                 "via": inst.via,
                 "package": inst.package,
