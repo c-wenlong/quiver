@@ -25,9 +25,11 @@ gemini	color	TokenTracker dashboard/public/brand-logos/gemini.svg	MIT (TokenTrac
 goose	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/goose.svg	MIT (LobeHub icons); Block/goose Apache-2.0 repo	goose silhouette matches block/goose docs logo; mono
 grok	mono	TokenTracker dashboard/public/brand-logos/grok.svg	MIT (TokenTracker)	xAI Grok mark
 groq	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/groq.svg	MIT (LobeHub icons); Groq trademark	Groq mark
+jules	mono	https://jules.google/docs/_astro/logo.CRRa4vtC.svg	trademark, no licence stated	Google Jules squid mark; shown in #B2A3FF on the docs site, kept mono; Illustrator export reduced to the mark, viewBox squared to 26
 kilo	mono	TokenTracker dashboard/public/brand-logos/kilo.svg	MIT (TokenTracker)	Kilo Code mark, glyph only
 kimi	mono	TokenTracker dashboard/public/brand-logos/kimi.svg	MIT (TokenTracker)	Moonshot Kimi mark (LobeHub icons)
 kiro	mono	TokenTracker dashboard/public/brand-logos/kiro.svg	MIT (TokenTracker)	Kiro mark
+mastracode	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mastra.svg	MIT (LobeHub icons); Mastra trademark	Mastra's orbit mark; id is mastracode (the npm name), mark is Mastra's own
 minimax	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/minimax-color.svg	MIT (LobeHub icons); MiniMax trademark	MiniMax colour mark
 mistral-vibe	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mistral-color.svg	MIT (LobeHub icons); Mistral AI trademark	Mistral colour mark
 nebius	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nebius.svg	MIT (LobeHub icons); Nebius trademark	Nebius mark
