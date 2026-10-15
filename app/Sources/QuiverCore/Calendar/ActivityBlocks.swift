@@ -34,4 +34,75 @@ public enum ActivityBlocks {
         close()
         return blocks
     }
+
+    /// Re-keys a provider's per-session blocks into project blocks and
+    /// merges with the same `gap` rule, over the union of each
+    /// harness+account+project key's sessions. Equivalent to merging the
+    /// response streams first: consecutive blocks of one key join while
+    /// the next starts within `gap` of the running end. Responses sum;
+    /// sessions keep their own first and last response inside the block.
+    /// `resolve` answers a working folder's project; a block that
+    /// already names one keeps it, and a session with no folder groups
+    /// under `ProjectResolver.noFolder`.
+    /// `resolve` answers a folder's project identity: `key` groups (the
+    /// repository root path), `name` displays.
+    public static func groupByProject(_ blocks: [ActivityBlock], gap: TimeInterval,
+                                      project resolve: (String?) -> (key: String, name: String))
+        -> [ActivityBlock] {
+        var grouped: [String: (harness: String, account: String, project: String,
+                              key: String, blocks: [ActivityBlock])] = [:]
+        for block in blocks {
+            let identity = block.project.isEmpty
+                ? resolve(block.sessions.first?.cwd)
+                : (key: block.projectKey.isEmpty ? block.project : block.projectKey,
+                   name: block.project)
+            let key = "\(block.harness)|\(block.accountHome)|\(identity.key)"
+            grouped[key, default: (block.harness, block.accountHome, identity.name,
+                                   identity.key, [])]
+                .blocks.append(block)
+        }
+        var result: [ActivityBlock] = []
+        for (_, group) in grouped {
+            var merged: [ActivityBlock] = []
+            for block in group.blocks.sorted(by: { $0.start < $1.start }) {
+                if let last = merged.last,
+                   block.start.timeIntervalSince(last.end) <= gap {
+                    merged[merged.count - 1] = ActivityBlock(
+                        harness: group.harness, accountHome: group.account,
+                        project: group.project,
+                        sessions: merge(last.sessions, block.sessions),
+                        start: last.start, end: max(last.end, block.end),
+                        responses: last.responses + block.responses,
+                        projectKey: group.key)
+                } else {
+                    merged.append(ActivityBlock(
+                        harness: group.harness, accountHome: group.account,
+                        project: group.project, sessions: block.sessions,
+                        start: block.start, end: block.end,
+                        responses: block.responses, projectKey: group.key))
+                }
+            }
+            result += merged
+        }
+        return result.sorted { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
+    }
+
+    /// Union two blocks' session refs by session id: a session spanning
+    /// both keeps its earliest first response and latest last response,
+    /// and its response count sums.
+    private static func merge(_ a: [ActivityBlock.SessionRef],
+                              _ b: [ActivityBlock.SessionRef]) -> [ActivityBlock.SessionRef] {
+        var out = a
+        for ref in b {
+            if let index = out.firstIndex(where: { $0.sessionId == ref.sessionId }) {
+                out[index].start = min(out[index].start, ref.start)
+                out[index].end = max(out[index].end, ref.end)
+                out[index].responses += ref.responses
+                if out[index].cwd == nil { out[index].cwd = ref.cwd }
+            } else {
+                out.append(ref)
+            }
+        }
+        return out.sorted { $0.start != $1.start ? $0.start < $1.start : $0.sessionId < $1.sessionId }
+    }
 }

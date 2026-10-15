@@ -38,8 +38,8 @@ import Testing
         let block = try #require(blocks.first)
         #expect(blocks.count == 1)
         #expect(block.harness == "droid")
-        #expect(block.sessionId == "11111111-2222-3333-4444-555555555555")
-        #expect(block.cwd == "/work/app")
+        #expect(block.sessions[0].sessionId == "11111111-2222-3333-4444-555555555555")
+        #expect(block.sessions[0].cwd == "/work/app")
         #expect(block.responses == 2)
         #expect(abs(block.start.timeIntervalSince(utc("2026-08-10T08:37:00Z")) - 16.298) < 0.001)
     }
@@ -63,9 +63,9 @@ import Testing
         #expect(block.responses == 2)
         // swe's Pi session id is the full path; temp dirs resolve through
         // /var -> /private/var, so compare resolved.
-        #expect(URL(fileURLWithPath: block.sessionId).resolvingSymlinksInPath()
+        #expect(URL(fileURLWithPath: block.sessions[0].sessionId).resolvingSymlinksInPath()
                 == URL(fileURLWithPath: path).resolvingSymlinksInPath())
-        #expect(block.cwd == "/work/pi")
+        #expect(block.sessions[0].cwd == "/work/pi")
     }
 
     @Test func freebuffReadsMillisecondTimestampsAndTheChatDirId() async throws {
@@ -88,8 +88,8 @@ import Testing
                                                        force: true)
         let block = try #require(blocks.first)
         #expect(blocks.count == 1)
-        #expect(block.sessionId == "2026-07-25T08-51-14.778Z")
-        #expect(block.cwd == "/work/fb")
+        #expect(block.sessions[0].sessionId == "2026-07-25T08-51-14.778Z")
+        #expect(block.sessions[0].cwd == "/work/fb")
         #expect(block.responses == 2)
         #expect(abs(block.start.timeIntervalSince1970 - 1784969499.622) < 0.001)
     }
@@ -127,13 +127,13 @@ import Testing
         // composer-1's two bubbles join one block; composer-2's numeric
         // createdAt is another; task- keys and colon-less keys are out.
         #expect(blocks.count == 2)
-        let one = try #require(blocks.first { $0.sessionId == "composer-1" })
+        let one = try #require(blocks.first { $0.sessions[0].sessionId == "composer-1" })
         #expect(one.responses == 2)
         #expect(one.accountHome == dir.url.path)
         #expect(abs(one.start.timeIntervalSince(utc("2026-08-10T08:37:00Z")) - 16.298) < 0.001)
-        let two = try #require(blocks.first { $0.sessionId == "composer-2" })
+        let two = try #require(blocks.first { $0.sessions[0].sessionId == "composer-2" })
         #expect(two.responses == 1)
         #expect(two.start.timeIntervalSince1970 == 1_786_352_400)
-        #expect(blocks.contains { $0.sessionId.hasPrefix("task-") } == false)
+        #expect(blocks.contains { $0.sessions[0].sessionId.hasPrefix("task-") } == false)
     }
 }

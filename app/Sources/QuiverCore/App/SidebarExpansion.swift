@@ -66,19 +66,28 @@ public final class HoverExpansion {
     public var expansion: SidebarExpansion
     /// The delayed hover change; a new pointer event replaces it.
     private var pending: Task<Void, Never>?
+
+    /// The in-flight delayed hover change, for tests that await it.
+    var pendingTaskForTesting: Task<Void, Never>? { pending }
     /// Where the pointer is right now, ahead of the delayed hover change.
     private var pointerInside = false
     /// How long the pointer must stay before expanding or hiding.
     /// Injected only so tests can run against short delays.
     private let enterDelay: Duration
     private let exitDelay: Duration
+    /// Injected so tests drive the delays with a manual clock instead of
+    /// wall time. Production sleeps on the task clock.
+    private let sleep: @Sendable (Duration) async throws -> Void
 
     public init(collapsed: Bool = false,
                 enterDelay: Duration = .milliseconds(120),
-                exitDelay: Duration = .milliseconds(200)) {
+                exitDelay: Duration = .milliseconds(200),
+                sleep: @escaping @Sendable (Duration) async throws -> Void
+                    = { try await Task.sleep(for: $0) }) {
         expansion = SidebarExpansion(collapsed: collapsed)
         self.enterDelay = enterDelay
         self.exitDelay = exitDelay
+        self.sleep = sleep
     }
 
     public var isExpanded: Bool { expansion.isExpanded }
@@ -95,8 +104,8 @@ public final class HoverExpansion {
             expansion.pointer(inside: inside)
             return
         }
-        pending = Task { @MainActor in
-            try? await Task.sleep(for: inside ? enterDelay : exitDelay)
+        pending = Task { @MainActor [sleep] in
+            try? await sleep(inside ? enterDelay : exitDelay)
             guard !Task.isCancelled else { return }
             expansion.pointer(inside: inside)
         }
