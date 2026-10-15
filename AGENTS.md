@@ -46,6 +46,9 @@ PYTHONPATH=src python -m quiver.cli list
 
 # Run the MCP sync subsystem directly
 python -m quiver.mcp list
+
+# Docs site: stage into build/docs-site/, then build or preview
+python3 scripts/docs_site.py && zensical build --clean  # or: zensical serve
 ```
 
 There is no linter or formatter configured. No pytest is installed; `tests/conftest.py` is a pytest fixture that pins terminal width to 200 columns, so it only fires if someone runs pytest. Under unittest, tests that assert on rendered width must patch `quiver.console.terminal_width` themselves.

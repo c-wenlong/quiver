@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A docs site** at <https://c-wenlong.github.io/quiver/>, built with
+  Zensical from the existing Markdown (README, architecture and
+  contributing docs, the app docs) plus a generated `swe help` reference
+  page. `scripts/docs_site.py` stages it into `build/docs-site/` and a
+  GitHub Actions workflow deploys it to Pages.
+
 - **The menu bar's harness logos launch the harness.** The logo on each
   account and harness row is now a button: it opens the harness's desktop
   app when installed, else its CLI in a terminal, and closes the panel.
