@@ -89,6 +89,9 @@ private struct FakeActivity: ActivityProviding {
         #expect(model.visibleBlocks.map(\.harness) == ["codex"])
         // Hiding the harness hides its remaining account too.
         #expect(model.isHidden(harness: "claude", accountHome: "/h"))
+        // But its legend row keeps its time, shown dimmed.
+        #expect(model.totals["claude"] == 7_200)
+        #expect(model.accountTotals(for: "claude")["/work"] == 3_600)
     }
 
     @Test func totalsSumVisibleBlocksClippedToTheRange() async {

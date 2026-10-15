@@ -56,12 +56,14 @@ extension LedgerStore {
     /// SQL-side, so a week's worth of responses never leaves the database:
     /// LAG marks each response against the one before it in its session, a
     /// running SUM numbers the blocks, and the aggregate keeps first, last
-    /// and the response count. Events are pulled `gap` past each edge so a
-    /// block straddling the range keeps its real ends; the overlap check
-    /// below then drops the ones that never touch it.
+    /// and the response count. Events are pulled a day past each edge so a
+    /// block straddling the range keeps its real ends (a block whose last
+    /// response sits more than a day out is too old to be live anyway); the
+    /// overlap check below then drops the ones that never touch it.
+    static let edgeLookout: TimeInterval = 24 * 3600
     func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
-        let lo = range.start.timeIntervalSince1970 - gap
-        let hi = range.end.timeIntervalSince1970 + gap
+        let lo = range.start.timeIntervalSince1970 - Self.edgeLookout
+        let hi = range.end.timeIntervalSince1970 + Self.edgeLookout
         let statement = try db.prepare("""
             WITH ordered AS (
                 SELECT d.harness, d.account, d.session, e.ts,

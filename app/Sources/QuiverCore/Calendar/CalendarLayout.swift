@@ -17,20 +17,29 @@ public enum CalendarLayout {
         /// How many lanes the cluster needs; a lone block gets 1.
         public var laneCount: Int
 
+        /// The block's own span; `start`/`end` are the display times, which
+        /// `minimumDuration` can stretch past the real end.
+        public var realStart: Date { block.start }
+        public var realEnd: Date { block.end }
+
         public var id: String { "\(block.id)|\(start.timeIntervalSince1970)" }
     }
 
     /// The day's segments, sorted by start. Two pieces count as overlapping
     /// only when one starts strictly before the other ends, so a block that
-    /// ends on the hour sits above one that starts then.
-    public static func segments(_ blocks: [ActivityBlock], day: DateInterval) -> [Segment] {
+    /// ends on the hour sits above one that starts then. `minimumDuration`
+    /// stretches a piece's display end (`block` keeps the real times), so a
+    /// one-response block still gets a lane and some height.
+    public static func segments(_ blocks: [ActivityBlock], day: DateInterval,
+                                minimumDuration: TimeInterval = 0) -> [Segment] {
         struct Piece {
             var block: ActivityBlock
             var start: Date
             var end: Date
         }
         var pieces = blocks.compactMap { block -> Piece? in
-            let start = max(block.start, day.start), end = min(block.end, day.end)
+            let start = max(block.start, day.start)
+            let end = min(max(block.end, block.start + minimumDuration), day.end)
             guard end > start else { return nil }
             return Piece(block: block, start: start, end: end)
         }

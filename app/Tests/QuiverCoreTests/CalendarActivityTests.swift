@@ -84,6 +84,27 @@ import Testing
         #expect(blocks[0].end == utc("2026-10-05T00:05:00Z"))
     }
 
+    @Test func aBlockThatBeganHoursBeforeTheRangeKeepsItsTrueStart() throws {
+        // Responses every 14 minutes from two hours before the day into
+        // it: one long block the `gap`-sized look-back would have cut at
+        // the range edge.
+        var events: [UsageEvent] = []
+        var t = utc("2026-10-04T22:00:00Z")
+        while t <= utc("2026-10-05T00:30:00Z") {
+            let ts = t
+            events.append(UsageEvent(harness: "claude", accountHome: "/h",
+                                     sessionId: "s", model: "m",
+                                     timestamp: ts, outputTokens: 1))
+            t = ts.addingTimeInterval(14 * 60)
+        }
+        let fixture = try store(events)
+        let store = fixture.1
+        let blocks = try store.activityBlocks(in: day, gap: 15 * 60)
+        #expect(blocks.count == 1)
+        #expect(blocks[0].start == utc("2026-10-04T22:00:00Z"))
+        #expect(blocks[0].end == utc("2026-10-05T00:20:00Z"))
+    }
+
     @Test func sidechainResponsesCount() throws {
         let temp = try TempDir()
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))

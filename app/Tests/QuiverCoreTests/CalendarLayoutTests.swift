@@ -61,6 +61,33 @@ import Testing
         #expect(segments.allSatisfy { $0.laneCount == 2 })
     }
 
+    @Test func aSingleResponseBlockStillGetsASegment() {
+        let segments = CalendarLayout.segments(
+            [block("2026-10-05T09:00:00Z", "2026-10-05T09:00:00Z")], day: day,
+            minimumDuration: 22.5 * 60)
+        #expect(segments.count == 1)
+        // The real times stay on the block; the display end is stretched.
+        #expect(segments[0].block.end == segments[0].block.start)
+        #expect(segments[0].end == segments[0].start.addingTimeInterval(22.5 * 60))
+    }
+
+    @Test func twoCloseSingleResponseBlocksGetSeparateLanes() {
+        let segments = CalendarLayout.segments([
+            block("2026-10-05T09:00:00Z", "2026-10-05T09:00:00Z", session: "a"),
+            block("2026-10-05T09:10:00Z", "2026-10-05T09:10:00Z", session: "b"),
+        ], day: day, minimumDuration: 22.5 * 60)
+        #expect(segments.map(\.lane) == [0, 1])
+        #expect(segments.allSatisfy { $0.laneCount == 2 })
+    }
+
+    @Test func aStretchedBlockIsStillClippedToTheDayEnd() {
+        let segments = CalendarLayout.segments(
+            [block("2026-10-05T23:55:00Z", "2026-10-05T23:55:00Z")], day: day,
+            minimumDuration: 22.5 * 60)
+        #expect(segments.count == 1)
+        #expect(segments[0].end == day.end)
+    }
+
     @Test func twoSeparateClustersKeepTheirOwnLaneCounts() {
         let segments = CalendarLayout.segments([
             block("2026-10-05T09:00:00Z", "2026-10-05T10:00:00Z", session: "a"),

@@ -131,8 +131,9 @@ public final class CalendarModel {
         accountLabel(accountHome)
     }
 
-    /// Seconds of visible blocks in the range per harness, each block
-    /// counted only for its part inside the range.
+    /// Seconds in the range per harness, each block counted only for its
+    /// part inside the range. Legend totals deliberately read all blocks,
+    /// not `visibleBlocks`: a hidden row keeps its time, shown dimmed.
     public var totals: [String: TimeInterval] {
         totalTime { $0.harness }
     }
@@ -145,7 +146,7 @@ public final class CalendarModel {
     private func totalTime(key: (ActivityBlock) -> String?) -> [String: TimeInterval] {
         let range = visibleRange
         var totals: [String: TimeInterval] = [:]
-        for block in visibleBlocks {
+        for block in blocks {
             guard let name = key(block) else { continue }
             let clipped = min(block.end, range.end).timeIntervalSince(max(block.start, range.start))
             totals[name, default: 0] += max(0, clipped)

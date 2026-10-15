@@ -26,6 +26,9 @@ private struct CalendarContent: View {
     /// session.
     @State private var detail: SessionsModel.Row?
     @State private var actionError: String?
+    /// Session rows by "harness|sessionId", rebuilt when the list reloads
+    /// so block titles and clicks are an O(1) lookup each render.
+    @State private var sessionIndex: [String: SessionsModel.Row] = [:]
 
     private static let monthTitle: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
@@ -47,7 +50,11 @@ private struct CalendarContent: View {
         .task {
             await app.sessions?.restore()
             await app.sessions?.loadIfStale(for: app.swePath)
+            sessionIndex = index(app.sessions?.rows ?? [])
             await model.load()
+        }
+        .onChange(of: app.sessions?.rows ?? []) {
+            sessionIndex = index(app.sessions?.rows ?? [])
         }
         .onChange(of: model.visibleRange.start) {
             Task { await model.load() }
@@ -79,18 +86,21 @@ private struct CalendarContent: View {
             SelectMenu(options: CalendarModel.Mode.allCases.map { ($0, $0.title) },
                        selection: Bindable(model).mode, width: 76)
             Button("Today") { model.today() }
-                .buttonStyle(SecondaryButtonStyle())
+                .secondaryButton()
                 .keyboardShortcut("t", modifiers: .command)
+                .help("Today (⌘T)")
             Button("Previous \(model.mode.title.lowercased())", systemImage: "chevron.left") {
                 model.previous()
             }
-            .buttonStyle(IconButtonStyle())
+            .iconButton()
             .keyboardShortcut(.leftArrow, modifiers: .command)
+            .help("Previous \(model.mode.title.lowercased()) (⌘←)")
             Button("Next \(model.mode.title.lowercased())", systemImage: "chevron.right") {
                 model.next()
             }
-            .buttonStyle(IconButtonStyle())
+            .iconButton()
             .keyboardShortcut(.rightArrow, modifiers: .command)
+            .help("Next \(model.mode.title.lowercased()) (⌘→)")
         }
     }
 
@@ -100,8 +110,8 @@ private struct CalendarContent: View {
         VStack(alignment: .leading, spacing: 0) {
             MiniMonth(model: model)
                 .padding(.bottom, 10)
-            Text("Harnesses").font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary).textCase(.uppercase)
+            Text("Harnesses").font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary).textCase(.uppercase)
                 .padding(.bottom, 4)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
@@ -115,7 +125,7 @@ private struct CalendarContent: View {
         .frame(width: 220)
         .padding(12)
         .overlay(alignment: .trailing) {
-            Rectangle().fill(Color.primary.opacity(0.07)).frame(width: 1)
+            Rectangle().fill(Theme.border).frame(width: 1)
         }
     }
 
@@ -130,7 +140,7 @@ private struct CalendarContent: View {
             if model.visibleBlocks.isEmpty {
                 Spacer()
                 Text(model.mode == .week ? "No harness activity this week" : "No harness activity today")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Spacer()
             } else {
                 TimelineView(.everyMinute) { context in
@@ -166,14 +176,14 @@ private struct CalendarContent: View {
                         .background(isToday ? Color.red : .clear,
                                     in: RoundedRectangle(cornerRadius: 5))
                 }
-                .font(.system(size: 12))
+                .font(Theme.caption)
                 .padding(.leading, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, 8)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+            Rectangle().fill(Theme.border).frame(height: 1)
         }
     }
 
@@ -191,7 +201,7 @@ private struct CalendarContent: View {
                 VStack(spacing: 0) {
                     ForEach(0..<24, id: \.self) { hour in
                         Text(hourLabel(hour))
-                            .font(.system(size: 9)).foregroundStyle(.secondary)
+                            .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
                             .frame(width: Self.axisWidth - 8, height: Self.hourHeight,
                                    alignment: .topTrailing)
                             .id("h\(hour)")
@@ -225,12 +235,15 @@ private struct CalendarContent: View {
         return Self.hourLabel.string(from: date)
     }
 
+    private func index(_ rows: [SessionsModel.Row]) -> [String: SessionsModel.Row] {
+        Dictionary(rows.map { ("\($0.session.harness)|\($0.session.id)", $0) },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
     /// A block's title: its session's title, else the folder it ran in,
     /// else a short session id.
     private func session(for block: ActivityBlock) -> SessionsModel.Row? {
-        app.sessions?.rows.first {
-            $0.session.id == block.sessionId && $0.session.harness == block.harness
-        }
+        sessionIndex["\(block.harness)|\(block.sessionId)"]
     }
 
     private func title(for block: ActivityBlock) -> String {
@@ -277,7 +290,7 @@ private struct DayColumn: View {
                 VStack(spacing: 0) {
                     ForEach(0..<24, id: \.self) { _ in
                         VStack(spacing: 0) {
-                            Rectangle().fill(Color.primary.opacity(0.06)).frame(height: 1)
+                            Rectangle().fill(Theme.border.opacity(0.5)).frame(height: 1)
                             Spacer()
                         }
                         .frame(height: hourHeight)
@@ -300,12 +313,15 @@ private struct DayColumn: View {
         }
         .frame(height: gridHeight)
         .overlay(alignment: .leading) {
-            Rectangle().fill(Color.primary.opacity(0.07)).frame(width: 1)
+            Rectangle().fill(Theme.border).frame(width: 1)
         }
     }
 
     private var segments: [CalendarLayout.Segment] {
-        CalendarLayout.segments(model.visibleBlocks, day: day)
+        // 18pt of minimum height at 48pt per hour is 22.5 minutes: short
+        // blocks get a lane and a readable sliver of height.
+        CalendarLayout.segments(model.visibleBlocks, day: day,
+                                minimumDuration: 18 / 48 * 3600)
     }
 
     private func blockHeight(_ segment: CalendarLayout.Segment) -> CGFloat {
@@ -330,12 +346,14 @@ private struct BlockView: View {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
     }()
 
+    /// The block's real times: `start`/`end` on the segment are display
+    /// times stretched by the minimum duration.
     private var timeRange: String {
-        "\(Self.clock.string(from: segment.start))–\(Self.clock.string(from: segment.end))"
+        "\(Self.clock.string(from: segment.block.start))–\(Self.clock.string(from: segment.block.end))"
     }
 
     private var duration: String {
-        let minutes = Int(segment.end.timeIntervalSince(segment.start) / 60)
+        let minutes = Int(segment.block.end.timeIntervalSince(segment.block.start) / 60)
         return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
     }
 
@@ -349,7 +367,7 @@ private struct BlockView: View {
                     .lineLimit(1)
                 if segment.end.timeIntervalSince(segment.start) >= 30 * 60 {
                     Text(timeRange).font(.system(size: 9))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.textSecondary)
                 }
             }
             .padding(.horizontal, 5).padding(.vertical, 3)
@@ -408,16 +426,16 @@ private struct MiniMonth: View {
                     .font(.system(size: 11, weight: .semibold))
                 Spacer()
                 Button { shiftMonth(-1) } label: { Image(systemName: "chevron.up") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
                 Button { shiftMonth(1) } label: { Image(systemName: "chevron.down") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
             }
             // Weekday initials above a muted ISO-week column.
             HStack(spacing: 0) {
                 Text("").frame(width: 16)
                 ForEach(weeks.first ?? [], id: \.self) { day in
                     Text(day.formatted(.dateTime.weekday(.narrow)))
-                        .font(.system(size: 8)).foregroundStyle(.secondary)
+                        .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -425,7 +443,7 @@ private struct MiniMonth: View {
                 let isShown = week.contains { shown.contains($0) }
                 HStack(spacing: 0) {
                     Text("\(iso.component(.weekOfYear, from: week[0]))")
-                        .font(.system(size: 8)).foregroundStyle(.secondary)
+                        .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
                         .frame(width: 16, alignment: .leading)
                     ForEach(week, id: \.self) { day in
                         let inMonth = cal.isDate(day, equalTo: month, toGranularity: .month)
@@ -433,7 +451,7 @@ private struct MiniMonth: View {
                         Button { model.go(to: day) } label: {
                             Text(day.formatted(.dateTime.day()))
                                 .font(.system(size: 9))
-                                .foregroundStyle(isToday ? .white : (inMonth ? .primary : .secondary.opacity(0.6)))
+                                .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
                                 .frame(maxWidth: .infinity).frame(height: 16)
                                 .background(isToday ? Color.red : .clear, in: Circle())
                         }
@@ -441,7 +459,7 @@ private struct MiniMonth: View {
                     }
                 }
                 .padding(.vertical, 1)
-                .background(isShown ? Color.primary.opacity(0.06) : .clear,
+                .background(isShown ? Theme.border.opacity(0.5) : .clear,
                             in: RoundedRectangle(cornerRadius: 4))
             }
         }
@@ -474,7 +492,7 @@ private struct HarnessLegend: View {
             if accounts.count > 1 {
                 Button { expanded.toggle() } label: {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8)).foregroundStyle(.secondary)
+                        .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
                         .frame(width: 10)
                 }
                 .buttonStyle(.plain)
@@ -494,7 +512,7 @@ private struct HarnessLegend: View {
                 .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
             Spacer()
             Text(Self.time(model.totals[harness] ?? 0))
-                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
         }
         .frame(height: 20)
         if expanded {
@@ -514,7 +532,7 @@ private struct HarnessLegend: View {
                         .lineLimit(1)
                     Spacer()
                     Text(Self.time(model.accountTotals(for: harness)[home] ?? 0))
-                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
                 }
                 .frame(height: 18)
                 .padding(.leading, 8)
