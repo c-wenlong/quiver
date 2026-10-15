@@ -51,6 +51,7 @@ private struct CalendarContent: View {
                 grid
             }
             .focusable()
+            .focusEffectDisabled()
             .focused($focused)
             .onAppear { focused = true }
             .onKeyPress { press in
@@ -94,6 +95,10 @@ private struct CalendarContent: View {
             SessionDetail(row: row,
                           resume: { resume(row) },
                           close: { detail = nil })
+        }
+        .onChange(of: detail == nil) {
+            // The sheet takes key focus; take it back when it closes.
+            if detail == nil { focused = true }
         }
     }
 

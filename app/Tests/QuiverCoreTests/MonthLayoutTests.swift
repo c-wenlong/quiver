@@ -224,3 +224,34 @@ private struct CalendarMonthFake: ActivityProviding {
         blocks.filter { $0.end >= range.start && $0.start < range.end }
     }
 }
+
+extension CalendarMonthModelTests {
+    @Test func theModePersistsAcrossModels() {
+        let name = "CalendarModePersist.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        var model = CalendarModel(providers: [], defaults: defaults,
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .days(3)
+        model = CalendarModel(providers: [], defaults: defaults,
+                              now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        #expect(model.mode == .days(3))
+        model.mode = .month
+        #expect(CalendarModel.decodedMode(defaults.string(forKey: "calendar.mode")) == .month)
+        // An unreadable value falls back to the week.
+        #expect(CalendarModel.decodedMode("fortnight") == .week)
+        #expect(CalendarModel.decodedMode("days:x") == .week)
+        #expect(CalendarModel.decodedMode("days:0") == .week)
+        #expect(CalendarModel.decodedMode(nil) == .week)
+        // Round-trips.
+        for mode in [CalendarModel.Mode.day, .week, .month, .days(4)] {
+            #expect(CalendarModel.decodedMode(CalendarModel.encodedMode(mode)) == mode)
+        }
+    }
+
+    @Test func onlyAsciiDigitsPickADaySpan() {
+        #expect(CalendarModel.KeyCommand(character: "0") == nil)
+        #expect(CalendarModel.KeyCommand(character: "٣") == nil)
+        #expect(CalendarModel.KeyCommand(character: "4") == .mode(.days(4)))
+    }
+}

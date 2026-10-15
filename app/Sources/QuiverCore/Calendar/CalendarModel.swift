@@ -71,7 +71,7 @@ public final class CalendarModel {
             case "w": self = .mode(.week)
             case "m": self = .mode(.month)
             case "t": self = .today
-            case let digit? where digit.isNumber:
+            case let digit? where ("1"..."9").contains(digit):
                 self = .mode(.days(Int(String(digit)) ?? 1))
             default: return nil
             }
@@ -86,6 +86,7 @@ public final class CalendarModel {
         didSet {
             if mode != mode.normalized { mode = mode.normalized }
             applyCached()
+            persist()
         }
     }
     /// The day the visible range is built around.
@@ -125,6 +126,7 @@ public final class CalendarModel {
 
     static let hiddenHarnessesKey = "calendar.hiddenHarnesses"
     static let hiddenAccountsKey = "calendar.hiddenAccounts"
+    static let modeKey = "calendar.mode"
 
     public init(providers: [any ActivityProviding],
                 accountLabel: @escaping (String) -> String = { $0 },
@@ -141,6 +143,7 @@ public final class CalendarModel {
         anchor = now()
         hiddenHarnesses = Set(defaults.stringArray(forKey: Self.hiddenHarnessesKey) ?? [])
         hiddenAccounts = Set(defaults.stringArray(forKey: Self.hiddenAccountsKey) ?? [])
+        mode = Self.decodedMode(defaults.string(forKey: Self.modeKey))
         self.snapshots = snapshots
         // Hydrate the block cache from the last run's snapshot so the
         // first paint does not wait on a provider read.
@@ -447,8 +450,31 @@ public final class CalendarModel {
         persist()
     }
 
+    /// The mode's UserDefaults spelling: "day", "week", "month" or
+    /// "days:N". Unknown values restore as the week.
+    static func encodedMode(_ mode: Mode) -> String {
+        switch mode {
+        case .day: "day"
+        case .week: "week"
+        case .month: "month"
+        case .days(let n): "days:\(n)"
+        }
+    }
+
+    static func decodedMode(_ text: String?) -> Mode {
+        switch text {
+        case "day": .day
+        case "week": .week
+        case "month": .month
+        case let days? where days.hasPrefix("days:"):
+            if let n = Int(days.dropFirst(5)), n >= 1 { .days(n).normalized } else { .week }
+        default: .week
+        }
+    }
+
     private func persist() {
         defaults.set(Array(hiddenHarnesses), forKey: Self.hiddenHarnessesKey)
         defaults.set(Array(hiddenAccounts), forKey: Self.hiddenAccountsKey)
+        defaults.set(Self.encodedMode(mode), forKey: Self.modeKey)
     }
 }
