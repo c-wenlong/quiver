@@ -38,7 +38,7 @@ public struct ProcessSampler: ProcessSampling, Sendable {
         let threads = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, taskSize) == taskSize
             ? Int(task.pti_threadnum) : 0
         let fp = footprint(of: pid)
-        let args = arguments(of: pid)
+        let args = ProcessArguments.of(pid: pid)
         let path = Self.resolvedPath(native: path(of: pid), arguments: args)
         return ProcessSample(
             pid: pid,
@@ -111,27 +111,5 @@ public struct ProcessSampler: ProcessSampling, Sendable {
             String(decoding: buffer.prefix { $0 != 0 }, as: UTF8.self)
         }
         return cwd.isEmpty ? nil : cwd
-    }
-
-    /// KERN_PROCARGS2: an int32 argc, the exec path, NUL padding, then argc
-    /// NUL-separated argv strings (followed by the environment, which this
-    /// does not read).
-    private func arguments(of pid: Int32) -> [String] {
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
-        var buffer = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return [] }
-        let argc = Int(buffer.withUnsafeBytes { $0.load(as: Int32.self) })
-        var i = MemoryLayout<Int32>.size
-        while i < size && buffer[i] != 0 { i += 1 }   // exec path
-        while i < size && buffer[i] == 0 { i += 1 }   // padding
-        var arguments: [String] = []
-        for _ in 0..<min(argc, 256) where i < size {
-            let end = buffer[i...].firstIndex(of: 0) ?? size
-            arguments.append(String(decoding: buffer[i..<end], as: UTF8.self))
-            i = end + 1
-        }
-        return arguments
     }
 }

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Open app" on the Accounts page now focuses the account's own running
+  instance.** Quiver tells desktop-app instances apart by their
+  `--user-data-dir` argument, so opening the default account while another
+  account's instance is running starts a new default instance (instead of
+  bringing that account forward), and opening an account that is already
+  running focuses it (instead of starting a second copy on the same data
+  directory).
+
 - **`swe install` no longer guesses npm package names.** It used to run
   `npm install -g <name>` with a small lookup table, which installed
   strangers' packages (`gemini`, `crush`, `kiro-cli` are unrelated on

@@ -77,9 +77,68 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
         ])
     }
 
+    @Test func theDefaultProfileGetsANewInstanceWhenAnotherIsRunning() {
+        let command = LaunchPlanner.desktopApp(
+            for: claudeDefault, paths: claudeDefaultPaths, otherInstanceRunning: true)
+        #expect(command == LaunchCommand(
+            executable: "/usr/bin/open",
+            arguments: ["-n", "-a", "/Applications/Claude.app"]))
+    }
+
+    @Test func theDefaultProfileOpensPlainlyWhenNothingElseRuns() {
+        let command = LaunchPlanner.desktopApp(
+            for: claudeDefault, paths: claudeDefaultPaths, otherInstanceRunning: false)
+        #expect(command.arguments == ["-a", "/Applications/Claude.app"])
+    }
+
     @Test func theAppPathsAreExposedForAnInstalledCheck() {
         #expect(LaunchPlanner.desktopAppPath(for: .claude) == "/Applications/Claude.app")
         #expect(LaunchPlanner.desktopAppPath(for: .codex) == "/Applications/ChatGPT.app")
+    }
+}
+
+@Suite struct InstanceMatchingTests {
+    private let exe = "/Applications/Claude.app/Contents/MacOS/Claude"
+    private let workDir = "/Users/me/.quiver/accounts/claude/claude-work/desktop"
+
+    @Test func anInstanceWithNoUserDataDirIsTheDefaultProfile() {
+        #expect(LaunchPlanner.instance([exe], belongsTo: claudeDefault, paths: claudeDefaultPaths))
+        #expect(LaunchPlanner.instance([exe, "--showWindow"], belongsTo: claudeDefault,
+                                       paths: claudeDefaultPaths))
+    }
+
+    @Test func anInstanceWithTheProfilesDirIsItsOwn() {
+        #expect(LaunchPlanner.instance([exe, "--user-data-dir=\(workDir)"],
+                                       belongsTo: claudeWork, paths: claudeWorkPaths))
+        // The two-token form (a hand-started instance may split it).
+        #expect(LaunchPlanner.instance([exe, "--user-data-dir", workDir],
+                                       belongsTo: claudeWork, paths: claudeWorkPaths))
+    }
+
+    @Test func theDirMatchesThroughPathStandardization() {
+        #expect(LaunchPlanner.instance([exe, "--user-data-dir=\(workDir)/"],
+                                       belongsTo: claudeWork, paths: claudeWorkPaths))
+        #expect(LaunchPlanner.instance([exe, "--user-data-dir=/Users/me/.quiver/./accounts/claude/claude-work/desktop"],
+                                       belongsTo: claudeWork, paths: claudeWorkPaths))
+    }
+
+    @Test func aDifferentProfilesDirDoesNotMatch() {
+        let other = paths("/Users/me/.quiver/accounts/claude/claude-other/home",
+                          desktop: "/Users/me/.quiver/accounts/claude/claude-other/desktop")
+        #expect(!LaunchPlanner.instance([exe, "--user-data-dir=\(workDir)"],
+                                       belongsTo: claudeWork, paths: other))
+        // A different profile's instance is not the default profile's either.
+        #expect(!LaunchPlanner.instance([exe, "--user-data-dir=\(workDir)"],
+                                       belongsTo: claudeDefault, paths: claudeDefaultPaths))
+    }
+
+    @Test func unreadableArgumentsMatchNoProfile() {
+        #expect(!LaunchPlanner.instance([], belongsTo: claudeDefault, paths: claudeDefaultPaths))
+        #expect(!LaunchPlanner.instance([], belongsTo: claudeWork, paths: claudeWorkPaths))
+    }
+
+    @Test func aNonDefaultProfileMatchesNoPlainInstance() {
+        #expect(!LaunchPlanner.instance([exe], belongsTo: claudeWork, paths: claudeWorkPaths))
     }
 }
 

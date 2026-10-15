@@ -53,18 +53,56 @@ public enum LaunchPlanner {
 
     /// Opens the desktop app. A non-default profile starts a second instance
     /// (`-n`) with its own home and Chromium data directory; the default just
-    /// opens or focuses the app as the user would.
+    /// opens or focuses the app as the user would — except when another
+    /// instance of that app is already running (`otherInstanceRunning`), where
+    /// plain `open -a` would activate that account's instance instead of
+    /// starting the default one.
     public static func desktopApp(for profile: Profile, paths: ProfilePaths,
-                                  appPath: String? = nil) -> LaunchCommand {
+                                  appPath: String? = nil,
+                                  otherInstanceRunning: Bool = false) -> LaunchCommand {
         let app = appPath ?? desktopAppPath(for: profile.vendor)
         guard !profile.isDefault else {
-            return LaunchCommand(executable: "/usr/bin/open", arguments: ["-a", app])
+            let arguments = otherInstanceRunning ? ["-n", "-a", app] : ["-a", app]
+            return LaunchCommand(executable: "/usr/bin/open", arguments: arguments)
         }
         var arguments = ["-n", "--env", "\(homeVariable(for: profile.vendor))=\(paths.home.path)", "-a", app]
         if let desktop = paths.desktopData {
             arguments += ["--args", "--user-data-dir=\(desktop.path)"]
         }
         return LaunchCommand(executable: "/usr/bin/open", arguments: arguments)
+    }
+
+    /// Whether a running instance's argv belongs to this profile: a
+    /// non-default profile's instance carries its `--user-data-dir`, the
+    /// default profile's instance carries none at all.
+    public static func instance(_ arguments: [String], belongsTo profile: Profile,
+                                paths: ProfilePaths) -> Bool {
+        guard !arguments.isEmpty else { return false }
+        let dataDir = userDataDir(in: arguments)
+        guard !profile.isDefault else { return dataDir == nil }
+        guard let dataDir, let mine = paths.desktopData else { return false }
+        return standardized(dataDir) == standardized(mine.path)
+    }
+
+    /// The `--user-data-dir` value in an argv, accepting both the `--flag=X`
+    /// and `--flag X` forms.
+    static func userDataDir(in arguments: [String]) -> String? {
+        var i = arguments.startIndex
+        while i < arguments.endIndex {
+            let argument = arguments[i]
+            if argument.hasPrefix("--user-data-dir=") {
+                return String(argument.dropFirst("--user-data-dir=".count))
+            }
+            if argument == "--user-data-dir", i + 1 < arguments.endIndex {
+                return arguments[i + 1]
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    private static func standardized(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     /// A line for `sh`/`zsh` that runs `command` as this profile: a non-default
