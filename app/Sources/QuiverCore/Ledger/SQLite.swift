@@ -25,6 +25,13 @@ final class SQLiteDatabase {
         sqlite3_busy_timeout(handle, 2_000)
     }
 
+    /// A `file:` URI form of `readOnly`, for paths that need URI params
+    /// (for example `?mode=ro` on a live WAL database).
+    init(readOnlyURI uri: String) throws {
+        try open(uri, flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX)
+        sqlite3_busy_timeout(handle, 2_000)
+    }
+
     private func open(_ path: String, flags: Int32) throws {
         var db: OpaquePointer?
         let code = sqlite3_open_v2(path, &db, flags, nil)

@@ -4,7 +4,7 @@ import Foundation
 /// response where no two consecutive responses are more than `gap` apart.
 /// It is the Calendar page's event; the session it came from is what a
 /// click opens.
-public struct ActivityBlock: Sendable, Equatable, Identifiable {
+public struct ActivityBlock: Sendable, Equatable, Identifiable, Codable {
     /// "claude", "codex", "opencode" or "devin".
     public var harness: String
     /// The config root the responses were read from, so two accounts of
@@ -46,14 +46,19 @@ public protocol ActivityProviding: Sendable {
     /// that splits one session's responses into separate blocks.
     /// Throws on a read failure; the model keeps the provider's last
     /// good blocks and surfaces the error instead of an empty week.
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) async throws -> [ActivityBlock]
+    /// `force` asks a cached source to refresh instead of serving its
+    /// throttle window.
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        force: Bool) async throws -> [ActivityBlock]
 }
 
 extension Ledger: ActivityProviding {
     /// Blocks over the ledger's response rows. `events` only reaches back
     /// for logs the app still has, but rows the scanner already committed
     /// answer for as long as they persist.
-    public func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+    public func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                               force: Bool) throws -> [ActivityBlock] {
+        // The ledger answers live from its store; `force` is a no-op.
         try store.activityBlocks(in: range, gap: gap)
     }
 }

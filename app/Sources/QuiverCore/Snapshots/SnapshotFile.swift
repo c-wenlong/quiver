@@ -46,7 +46,8 @@ public actor SnapshotFile<Content: SnapshotContent>: SnapshotStoring {
     }
 
     /// Nil when the file is missing, damaged or from another version.
-    public func load() -> Content? {
+    /// Nonisolated so a model can hydrate synchronously on init.
+    public nonisolated func load() -> Content? {
         guard let data = try? Data(contentsOf: url),
               let content = try? JSONDecoder().decode(Content.self, from: data),
               content.version == Content.currentVersion

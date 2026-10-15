@@ -60,8 +60,11 @@ private struct CalendarContent: View {
             Task { await model.load() }
         }
         .onChange(of: app.overview?.completedScans ?? 0) {
-            // A finished scan may have logged new responses for the days on show.
-            Task { await model.load() }
+            // A finished scan may have logged new responses for the days
+            // on show; stale ranges keep painting until their refetch
+            // lands.
+            model.noteScanCompleted()
+            Task { await model.load(force: true) }
         }
         .sheet(item: $detail) { row in
             SessionDetail(row: row,

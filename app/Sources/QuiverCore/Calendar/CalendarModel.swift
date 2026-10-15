@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// The Calendar page's model: which days are on show, the activity blocks
 /// on them, and which harnesses or accounts the legend has turned off.
@@ -11,7 +12,7 @@ public final class CalendarModel {
 
     /// A session's responses read as one block until this much silence
     /// passes between two of them.
-    public static let gap: TimeInterval = 15 * 60
+    public nonisolated static let gap: TimeInterval = 15 * 60
 
     public var mode: Mode = .week
     /// The day the visible range is built around.
@@ -36,6 +37,18 @@ public final class CalendarModel {
     /// Each provider's last successful read, so one bad fetch does not
     /// blank its blocks for the range.
     private var lastGood: [Int: [ActivityBlock]] = [:]
+    /// Per-provider blocks by range: the stale-while-revalidate cache.
+    /// A range's blocks paint the moment the user lands on it, then the
+    /// load replaces them.
+    private var cache: [DateInterval: [Int: [ActivityBlock]]] = [:]
+    /// Cache ranges a completed ledger scan invalidated: kept on screen
+    /// until their refetch lands.
+    private var stale: Set<DateInterval> = []
+    /// Most recently used ranges, for the persisted snapshot's cap.
+    private var recent: [DateInterval] = []
+    private let snapshots: (any SnapshotStoring<CalendarSnapshot>)?
+    /// How many ranges the snapshot keeps.
+    static let snapshotRangeCount = 8
 
     static let hiddenHarnessesKey = "calendar.hiddenHarnesses"
     static let hiddenAccountsKey = "calendar.hiddenAccounts"
@@ -44,7 +57,9 @@ public final class CalendarModel {
                 accountLabel: @escaping (String) -> String = { $0 },
                 defaults: UserDefaults = .standard,
                 now: @escaping () -> Date = Date.init,
-                calendar: Calendar = .current) {
+                calendar: Calendar = .current,
+                snapshots: (any SnapshotStoring<CalendarSnapshot>)? = nil,
+                restored: CalendarSnapshot? = nil) {
         self.providers = providers
         self.accountLabel = accountLabel
         self.defaults = defaults
@@ -53,6 +68,14 @@ public final class CalendarModel {
         anchor = now()
         hiddenHarnesses = Set(defaults.stringArray(forKey: Self.hiddenHarnessesKey) ?? [])
         hiddenAccounts = Set(defaults.stringArray(forKey: Self.hiddenAccountsKey) ?? [])
+        self.snapshots = snapshots
+        // Hydrate the block cache from the last run's snapshot so the
+        // first paint does not wait on a provider read.
+        for entry in restored?.ranges ?? [] {
+            let range = DateInterval(start: entry.start, end: entry.end)
+            cache[range] = entry.providers
+            recent.append(range)
+        }
     }
 
     /// The days on show. `.week` starts on the user's first weekday, so a
@@ -84,55 +107,136 @@ public final class CalendarModel {
         return days
     }
 
-    public func today() { anchor = now() }
+    public func today() { anchor = now(); applyCached() }
     public func next() { shift(1) }
     public func previous() { shift(-1) }
-    public func go(to date: Date) { anchor = date }
+    public func go(to date: Date) { anchor = date; applyCached() }
     private func shift(_ count: Int) {
         let unit: Calendar.Component = mode == .day ? .day : .weekOfYear
         anchor = calendar.date(byAdding: unit, value: count, to: anchor) ?? anchor
+        applyCached()
     }
 
-    /// Fetch every provider's blocks for the visible range concurrently. A
-    /// provider that fails keeps its last good blocks (the ones overlapping
-    /// this range) and sets `loadError`; a fully clean pass clears it. A
-    /// load that lands while a newer one is running is dropped.
-    public func load() async {
+    /// Whatever the cache holds for the new visible range, right away;
+    /// the load the page then starts replaces it.
+    private func applyCached() {
+        if let cached = cache[visibleRange] {
+            blocks = Self.flatten(cached)
+        }
+    }
+
+    /// A finished ledger scan: every cached range is stale but stays on
+    /// screen; the page follows with `load(force:)` for the visible one.
+    public func noteScanCompleted() {
+        stale.formUnion(cache.keys)
+    }
+
+    /// Fetch every provider's blocks for the visible range concurrently.
+    /// A cached range paints synchronously before the fetch starts. A
+    /// provider that fails keeps its cached or last good blocks (the ones
+    /// overlapping this range) and sets `loadError`; a fully clean pass
+    /// clears it. A load that lands while a newer one is running is
+    /// dropped. `force` asks cached sources to skip their throttle.
+    public func load(force: Bool = false) async {
+        await load(range: visibleRange, force: force)
+    }
+
+    /// The range-explicit form, so tests (and a future Month mode) can
+    /// load a range the mode does not produce.
+    func load(range: DateInterval, force: Bool) async {
         generation += 1
         let mine = generation
-        let range = visibleRange
+        let range = range
+        if let cached = cache[range] {
+            blocks = Self.flatten(cached)
+        }
         var all: [ActivityBlock] = []
         var failed: String?
         // Saved only once this load is known to be the latest: an overtaken
         // load must not overwrite the newer one's last good blocks.
         var good: [Int: [ActivityBlock]] = [:]
-        await withTaskGroup(of: (Int, Result<[ActivityBlock], Error>).self) { group in
+        await withTaskGroup(of: (Int, Result<[ActivityBlock], Error>, TimeInterval).self) { group in
             for (i, provider) in providers.enumerated() {
                 group.addTask {
+                    let start = Date()
                     do {
-                        return (i, .success(try await provider.activityBlocks(in: range, gap: Self.gap)))
+                        let batch = try await provider.activityBlocks(in: range, gap: Self.gap,
+                                                                      force: force)
+                        return (i, .success(batch), Date().timeIntervalSince(start))
                     } catch {
-                        return (i, .failure(error))
+                        return (i, .failure(error), 0)
                     }
                 }
             }
-            for await (i, result) in group {
+            for await (i, result, seconds) in group {
                 switch result {
                 case .success(let batch):
                     good[i] = batch
                     all += batch
+                    Logger.calendar.debug("\(i) \(String(describing: type(of: self.providers[i])), privacy: .public) loaded \(batch.count) blocks in \(seconds, format: .fixed(precision: 1), privacy: .public)s")
                 case .failure(let error):
-                    all += (lastGood[i] ?? []).filter {
+                    all += (cache[range]?[i] ?? (lastGood[i] ?? []).filter {
                         $0.end >= range.start && $0.start < range.end
-                    }
+                    })
                     failed = error.localizedDescription
                 }
             }
         }
         guard mine == generation else { return }
         lastGood.merge(good) { _, new in new }
+        cache[range] = cache[range]?.merging(good) { _, new in new } ?? good
+        stale.remove(range)
         blocks = all.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
         loadError = failed
+        persistSnapshot(of: range)
+        prefetchNeighbours(of: range)
+    }
+
+    /// A range's per-provider blocks as one sorted list.
+    private static func flatten(_ providers: [Int: [ActivityBlock]]) -> [ActivityBlock] {
+        providers.values.flatMap { $0 }
+            .sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
+    }
+
+    /// The same-length ranges before and after this one, fetched quietly
+    /// so stepping sideways paints from cache. Results land in the cache
+    /// only; navigating there publishes them through `load`.
+    private func prefetchNeighbours(of range: DateInterval) {
+        for neighbour in [DateInterval(start: range.start - range.duration, end: range.start),
+                          DateInterval(start: range.end, duration: range.duration)] {
+            guard cache[neighbour] == nil || stale.contains(neighbour) else { continue }
+            Task(priority: .utility) { [providers, weak self] in
+                var fetched: [Int: [ActivityBlock]] = [:]
+                await withTaskGroup(of: (Int, [ActivityBlock]?).self) { group in
+                    for (i, provider) in providers.enumerated() {
+                        group.addTask {
+                            (i, try? await provider.activityBlocks(in: neighbour,
+                                                                   gap: Self.gap, force: false))
+                        }
+                    }
+                    for await (i, batch) in group {
+                        if let batch { fetched[i] = batch }
+                    }
+                }
+                self?.cache[neighbour] = fetched
+            }
+        }
+    }
+
+    /// The recent ranges' blocks, capped and written; the next launch
+    /// paints from them.
+    private func persistSnapshot(of range: DateInterval) {
+        guard let snapshots else { return }
+        recent.removeAll { $0 == range }
+        recent.insert(range, at: 0)
+        if recent.count > Self.snapshotRangeCount {
+            recent = Array(recent.prefix(Self.snapshotRangeCount))
+        }
+        let entries = recent.compactMap { key -> CalendarSnapshot.Entry? in
+            cache[key].map { CalendarSnapshot.Entry(start: key.start, end: key.end,
+                                                    providers: $0) }
+        }
+        Task { await snapshots.save(CalendarSnapshot(ranges: entries)) }
     }
 
     /// The grid's input: blocks whose harness and account are both shown.
