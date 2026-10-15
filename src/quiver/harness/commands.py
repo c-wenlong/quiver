@@ -1,5 +1,6 @@
 """Harness registry commands: list, info, add, remove, use, check, tags, aliases, star."""
 
+import contextlib
 import os
 import re
 import shutil
@@ -2376,11 +2377,20 @@ def cmd_harness_usage(args):
         print(c("red", f"  No such directory: {account_dir}"), file=err)
         return 1
 
-    from quiver.harness.rate_limits import get_account_rate_limit
+    from quiver.harness.rate_limits import AccountUsageError, get_account_rate_limit
 
     try:
-        limit = get_account_rate_limit(name, account_dir)
+        # Fetch helpers may warn to stdout; under --json stdout is the
+        # document, so their noise goes to stderr there.
+        with (contextlib.redirect_stdout(sys.stderr) if json_view
+              else contextlib.nullcontext()):
+            limit = get_account_rate_limit(name, account_dir)
     except ValueError as exc:
+        print(c("red", f"  {exc}"), file=err)
+        return 1
+    except AccountUsageError as exc:
+        # Credentials exist but the read failed: an outage, not a
+        # signed-out account, and never a successful-looking null.
         print(c("red", f"  {exc}"), file=err)
         return 1
     if json_view:
@@ -2395,6 +2405,11 @@ def cmd_harness_usage(args):
     print(f"  {c('bold', name)}  {limit.format_column()}")
     from quiver.harness.models import RateLimitInfo
     for w in limit.windows:
+        # A window the provider left unread is unknown, not 0%: render it
+        # the way the list renders a missing reading.
+        if w.get("unavailable"):
+            print(f"    {w['window']:>8}  {c('dim', '—')}")
+            continue
         cell = RateLimitInfo(
             tool_name=name,
             used_percent=w["used_percent"],

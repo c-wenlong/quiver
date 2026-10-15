@@ -4665,6 +4665,60 @@ class AccountRateLimitTest(unittest.TestCase):
             load.assert_not_called()
             save.assert_not_called()
 
+    def test_credentials_but_failed_fetch_is_an_outage_not_signed_out(self):
+        from quiver.harness.rate_limits import (
+            AccountUsageError,
+            get_account_rate_limit,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            # Fetcher returns None (an unreadable reply) and raises alike.
+            with patch(
+                "quiver.harness.rate_limits._fetch_json", return_value=None
+            ):
+                with self.assertRaises(AccountUsageError):
+                    get_account_rate_limit("devin", tmp)
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+                side_effect=OSError("connection refused"),
+            ):
+                with self.assertRaises(AccountUsageError):
+                    get_account_rate_limit("devin", tmp)
+
+    def test_successful_reading_is_stamped_with_the_fetch_time(self):
+        from quiver.harness.rate_limits import get_account_rate_limit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            before = time.time()
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=self._DEVIN_RESPONSE,
+            ):
+                info = get_account_rate_limit("devin", tmp)
+        self.assertIsNotNone(info)
+        self.assertGreaterEqual(info.fetched_at, before)
+        self.assertLessEqual(info.fetched_at, time.time())
+
+    def test_a_reading_already_dated_keeps_its_stamp(self):
+        from quiver.harness.rate_limits import get_account_rate_limit
+        from quiver.harness.models import RateLimitInfo
+
+        carried = RateLimitInfo(
+            tool_name="devin", used_percent=10, limit_reached=False,
+            reset_at=0.0, plan_type="teams", window_seconds=0,
+            fetched_at=1_700_000_000.0,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            with patch(
+                "quiver.harness.rate_limits._fetch_devin",
+                return_value=carried,
+            ):
+                info = get_account_rate_limit("devin", tmp)
+        self.assertEqual(info.fetched_at, 1_700_000_000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

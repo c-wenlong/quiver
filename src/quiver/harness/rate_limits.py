@@ -2683,6 +2683,11 @@ _ACCOUNT_CREDENTIALS = {
 }
 
 
+class AccountUsageError(Exception):
+    """An extra account's credentials exist but its usage could not be
+    read: an outage, not a signed-out account (which returns None)."""
+
+
 def get_account_rate_limit(
     tool_name: str, account_dir: str,
 ) -> RateLimitInfo | None:
@@ -2695,6 +2700,12 @@ def get_account_rate_limit(
     accounts. The fetch runs on a daemon thread under the same deadline
     the aggregator gives its workers; missing it yields the same
     ``timeout`` marker a straggler gets there.
+
+    Returns None only for a signed-out account (no usable credential in
+    its own files). When credentials exist but the fetch fails or comes
+    back empty, ``AccountUsageError`` is raised so the caller can tell an
+    outage from a signed-out account rather than silently misreading one
+    as the other.
     """
     if tool_name not in _ACCOUNT_CREDENTIALS:
         raise ValueError(
@@ -2703,26 +2714,33 @@ def get_account_rate_limit(
         )
     path = os.path.join(account_dir, *_ACCOUNT_CREDENTIALS[tool_name])
     if tool_name == "devin":
+        if _read_devin_credentials(path) is None:
+            return None
+
         def fetcher() -> RateLimitInfo | None:
             return _fetch_devin(path)
     else:
+        if _read_cursor_state_token((path,)) is None:
+            return None
+
         def fetcher() -> RateLimitInfo | None:
             return _fetch_cursor(path)
 
     cutoff = time.monotonic() + _RATE_LIMIT_FETCH_DEADLINE
     box: list[RateLimitInfo | None] = []
+    failures: list[Exception] = []
 
     def work() -> None:
         _fetch_cutoff.at = cutoff
         try:
             box.append(fetcher())
-        except Exception:
-            box.append(None)
+        except Exception as exc:
+            failures.append(exc)
 
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
     worker.join(max(0.0, cutoff - time.monotonic()))
-    if not box:
+    if not box and not failures:
         return RateLimitInfo(
             tool_name=tool_name,
             used_percent=0,
@@ -2731,4 +2749,13 @@ def get_account_rate_limit(
             plan_type="timeout",
             window_seconds=0,
         )
-    return box[0]
+    info = box[0] if box else None
+    if info is None:
+        detail = f": {failures[0]}" if failures else ""
+        raise AccountUsageError(
+            f"couldn't read {tool_name} usage for this account{detail}")
+    # Stamp the read time so the JSON carries when it was taken; a reading
+    # that arrives already dated (a carried snapshot) keeps its own.
+    if info.fetched_at <= 0:
+        info.fetched_at = time.time()
+    return info

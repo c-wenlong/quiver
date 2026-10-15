@@ -414,10 +414,6 @@ class HarnessDoctorCommandTest(unittest.TestCase):
         self.assertIn("Off-PATH installs", output)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HarnessUsageCommandTest(unittest.TestCase):
     """``swe harness usage <devin|cursor> --account-dir=<dir>``."""
 
@@ -496,6 +492,74 @@ class HarnessUsageCommandTest(unittest.TestCase):
                 code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
         self.assertEqual(code, 0)
         self.assertIn("not signed in", out)
+
+    def test_an_outage_is_an_error_not_a_signed_out_reading(self):
+        from quiver.harness.rate_limits import AccountUsageError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_rate_limit",
+                side_effect=AccountUsageError(
+                    "couldn't read devin usage for this account"),
+            ):
+                code, out, err = self._run(
+                    ["devin", f"--account-dir={tmp}", "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("couldn't read devin usage", err)
+
+    def test_stdout_stays_pure_json_when_a_fetch_helper_warns(self):
+        from quiver.harness.models import RateLimitInfo
+
+        limit = RateLimitInfo(
+            tool_name="devin", used_percent=10, limit_reached=False,
+            reset_at=0.0, plan_type="teams", window_seconds=0,
+        )
+
+        def noisy(name, account_dir):
+            print("warning: something chatty on stdout")
+            return limit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_rate_limit",
+                side_effect=noisy,
+            ):
+                code, out, _ = self._run(
+                    ["devin", f"--account-dir={tmp}", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["limit"]["used_percent"], 10)
+        self.assertNotIn("chatty", out)
+
+    def test_human_output_lists_windows_and_marks_unavailable(self):
+        from quiver.harness.models import RateLimitInfo
+
+        limit = RateLimitInfo(
+            tool_name="devin", used_percent=40, limit_reached=False,
+            reset_at=1_789_190_193.0, plan_type="teams",
+            window_seconds=86400, window="daily",
+            windows=[
+                {"window": "daily", "used_percent": 40,
+                 "limit_reached": False, "reset_at": 1_789_190_193.0,
+                 "window_seconds": 86400},
+                {"window": "weekly", "used_percent": 0,
+                 "limit_reached": False, "reset_at": 0.0,
+                 "window_seconds": 604800, "unavailable": True},
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_rate_limit",
+                return_value=limit,
+            ):
+                code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        weekly = next(l for l in lines if "weekly" in l)
+        # Unavailable renders as unknown, never as a real 0% figure.
+        self.assertIn("—", weekly)
+        self.assertNotIn("100%", weekly)
 
 
 if __name__ == "__main__":
