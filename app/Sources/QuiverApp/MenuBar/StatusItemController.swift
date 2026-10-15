@@ -330,9 +330,9 @@ private struct PanelLimits: View {
     private var others: [OtherLimitsModel.Row] {
         app.others.rows.filter { row in
             let windows = row.limit.allWindows.map(\.window)
-            return row.limit.status == .ok && app.popup.shows(source: row.name, harness: row.name)
+            return row.limit.status == .ok && app.popup.shows(source: row.id, harness: row.name)
                 && row.limit.allWindows.contains {
-                    app.popup.shows(window: $0.window, source: row.name, harness: row.name,
+                    app.popup.shows(window: $0.window, source: row.id, harness: row.name,
                                     allWindows: windows)
                 }
         }
@@ -342,12 +342,12 @@ private struct PanelLimits: View {
     /// harnesses interleaved where the user put them.
     private var entries: [PanelEntry] {
         let sources = cards.map { (source: $0.profile.id, harness: $0.profile.vendor.rawValue) }
-            + others.map { (source: $0.name, harness: $0.name) }
+            + others.map { (source: $0.id, harness: $0.name) }
         return app.popup.ordered(sources).compactMap { source in
             if let card = cards.first(where: { $0.profile.id == source }) {
                 return .account(card)
             }
-            if let row = others.first(where: { $0.name == source }) {
+            if let row = others.first(where: { $0.id == source }) {
                 return .harness(row)
             }
             return nil
@@ -520,7 +520,8 @@ private struct PanelOtherRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 LogoLaunchButton(
-                    target: LaunchTarget(kind: .harness(name: row.name, command: row.command),
+                    target: LaunchTarget(kind: row.profile.map { .account($0) }
+                                             ?? .harness(name: row.name, command: row.command),
                         model: app.accounts,
                         installedApp: { app.apps.installedApp(for: $0) },
                         cliInstalled: { _ in row.cliInstalled }),
@@ -529,7 +530,7 @@ private struct PanelOtherRow: View {
                 if let plan = row.limit.planType { Badge(planTitle(plan)) }
             }
             ForEach(row.limit.allWindows.filter {
-                        app.popup.shows(window: $0.window, source: row.name, harness: row.name,
+                        app.popup.shows(window: $0.window, source: row.id, harness: row.name,
                                         allWindows: row.limit.allWindows.map(\.window))
                     }, id: \.window) { window in
                 PanelLimitRow(label: window.window.isEmpty ? "Usage" : UsageFormat.window(window.window),

@@ -73,7 +73,7 @@ public final class ProfileStore: @unchecked Sendable {
         // everything else after in file order.
         var defaults: [Profile] = []
         var used = Set<Int>()
-        for vendor in Vendor.allCases {
+        for vendor in Vendor.allCases where vendor.hasDefaultProfile {
             if let index = stored.firstIndex(where: { $0.isDefault && $0.vendor == vendor }) {
                 defaults.append(stored[index])
                 used.insert(index)
@@ -217,7 +217,7 @@ public final class ProfileStore: @unchecked Sendable {
     /// home and desktop location.
     public func paths(for profile: Profile) -> ProfilePaths {
         if profile.isDefault {
-            let name = profile.vendor == .claude ? ".claude" : ".codex"
+            let name = profile.vendor == .codex ? ".codex" : ".claude"
             return ProfilePaths(home: userHome.appendingPathComponent(name, isDirectory: true), desktopData: nil)
         }
         let base = root.appendingPathComponent(profile.vendor.rawValue, isDirectory: true)

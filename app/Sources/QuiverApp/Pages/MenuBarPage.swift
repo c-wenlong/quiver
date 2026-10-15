@@ -165,7 +165,7 @@ private struct PopupSection: View {
         let sources = app.starredAccountCards.map {
             (source: $0.profile.id, harness: $0.profile.vendor.rawValue,
              title: "\($0.profile.vendor.title): \($0.profile.name)")
-        } + app.others.rows.map { (source: $0.name, harness: $0.name, title: $0.accountTitle) }
+        } + app.others.rows.map { (source: $0.id, harness: $0.name, title: $0.accountTitle) }
         return app.popup.orderedRows(in: app.limits.readings, sources: sources)
     }
 

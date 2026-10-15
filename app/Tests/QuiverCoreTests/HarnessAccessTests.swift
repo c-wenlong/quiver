@@ -39,11 +39,15 @@ import Testing
 @MainActor
 @Suite struct HarnessLaunchTests {
     let launcher = FakeLauncher()
+    /// Empty: a real scan would find the user's actual apps running and
+    /// these tests must never activate them.
+    let running = FakeRunningInstances()
 
     func model() throws -> AccountsModel {
         let root = FileManager.default.temporaryDirectory.appending(path: "access-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
-        return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher, terminal: { .ghostty }, loginPath: { "" })
+        return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher, terminal: { .ghostty },
+                             loginPath: { "" }, running: running)
     }
 
     @Test func openingAHarnessAppOpensThatBundle() async throws {
@@ -106,6 +110,6 @@ import Testing
                                   loginPath: { "/nonexistent:\(bin.path)" })
         #expect(model.cliOnPath.isEmpty)
         await model.load(force: false)
-        #expect(model.cliOnPath == [.claude: true, .codex: false])
+        #expect(model.cliOnPath == [.claude: true, .codex: false, .devin: false, .cursor: false])
     }
 }
