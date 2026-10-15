@@ -114,6 +114,7 @@ public final class AccountsModel {
     private let store: ProfileStore
     private let usage: UsageFetching
     private let launcher: Launching
+    private let running: RunningInstances
     private let terminal: () -> TerminalApp
     private let loginPath: @Sendable () async -> String
     private let renewer: ClaudeSignInRenewing
@@ -122,10 +123,12 @@ public final class AccountsModel {
     public init(store: ProfileStore, usage: UsageFetching, launcher: Launching,
                 terminal: @escaping () -> TerminalApp,
                 loginPath: @escaping @Sendable () async -> String = { await CLIPath.terminalShellPath() },
-                renewer: ClaudeSignInRenewing = ClaudeSignInRenewer()) {
+                renewer: ClaudeSignInRenewing = ClaudeSignInRenewer(),
+                running: RunningInstances = AppRunningInstances()) {
         self.store = store
         self.usage = usage
         self.launcher = launcher
+        self.running = running
         self.terminal = terminal
         self.loginPath = loginPath
         self.renewer = renewer
@@ -273,13 +276,28 @@ public final class AccountsModel {
 
     /// The desktop app, signed in as this account.
     public func openApp(_ profile: Profile) async throws {
-        try await launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile)))
+        try await openApp(profile, at: LaunchPlanner.desktopAppPath(for: profile.vendor))
     }
 
     /// The desktop app found at `path`, for an account whose app isn't in
-    /// the usual place.
+    /// the usual place. If an instance already running under this account's
+    /// `--user-data-dir` (or none, for the default) answers, it is focused
+    /// instead of launching a second process — the two Cortex processes from
+    /// double-clicking came from skipping that check. When no instance of
+    /// this account runs but another account's does, the default profile is
+    /// launched with `-n` or `open` would just activate that account.
     public func openApp(_ profile: Profile, at path: String) async throws {
-        try await launcher.launch(LaunchPlanner.desktopApp(for: profile, paths: store.paths(for: profile), appPath: path))
+        let paths = store.paths(for: profile)
+        let instances = running.instances(ofAppAt: path)
+        if let mine = instances
+            .filter({ LaunchPlanner.instance($0.arguments, belongsTo: profile, paths: paths) })
+            .min(by: { $0.pid < $1.pid }) {
+            running.activate(pid: mine.pid)
+            return
+        }
+        try await launcher.launch(LaunchPlanner.desktopApp(
+            for: profile, paths: paths, appPath: path,
+            otherInstanceRunning: !instances.isEmpty))
     }
 
     /// A harness's desktop app, as the user would open it.

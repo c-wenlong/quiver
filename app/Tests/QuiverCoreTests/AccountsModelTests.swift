@@ -78,12 +78,22 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     }
 }
 
+/// Pretends apps are running with a given argv, and records activations.
+@MainActor
+final class FakeRunningInstances: RunningInstances {
+    var instances: [RunningInstance] = []
+    private(set) var activated: [Int32] = []
+    func instances(ofAppAt _: String) -> [RunningInstance] { instances }
+    func activate(pid: Int32) { activated.append(pid) }
+}
+
 @MainActor
 @Suite struct AccountsModelTests {
     let root: URL
     let store: ProfileStore
     let usage = FakeUsage()
     let launcher = FakeLauncher()
+    let running = FakeRunningInstances()
 
     init() throws {
         root = FileManager.default.temporaryDirectory.appending(path: "accounts-\(UUID().uuidString)")
@@ -92,7 +102,8 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     }
 
     func model(terminal: TerminalApp = .terminal) -> AccountsModel {
-        AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal }, loginPath: { "" })
+        AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal },
+                      loginPath: { "" }, running: running)
     }
 
     let reading = AccountUsage(
@@ -134,6 +145,63 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
         let paths = store.paths(for: work)
         #expect(launcher.launched == [LaunchPlanner.desktopApp(for: work, paths: paths)])
         #expect(launcher.launched[0].arguments.contains("--user-data-dir=\(paths.desktopData!.path)"))
+    }
+
+    private let claudeExe = "/Applications/Claude.app/Contents/MacOS/Claude"
+    private let personal = Profile(
+        id: "claude-default", vendor: .claude, name: "Default", isDefault: true, color: "#d97757")
+
+    private func cortexInstance(pid: Int32, for profile: Profile) -> RunningInstance {
+        RunningInstance(pid: pid, arguments: [
+            claudeExe, "--user-data-dir=\(store.paths(for: profile).desktopData!.path)"])
+    }
+
+    @Test func openingAnAlreadyRunningAccountFocusesItsInstanceInstead() async throws {
+        let cortex = try store.add(vendor: .claude, name: "Cortex")
+        running.instances = [cortexInstance(pid: 42, for: cortex),
+                             RunningInstance(pid: 7, arguments: [claudeExe])]
+        try await model().openApp(cortex)
+
+        #expect(running.activated == [42])
+        #expect(launcher.launched.isEmpty)
+    }
+
+    @Test func twoRunningCopiesOfAnAccountFocusTheFirst() async throws {
+        let cortex = try store.add(vendor: .claude, name: "Cortex")
+        running.instances = [cortexInstance(pid: 48138, for: cortex),
+                             cortexInstance(pid: 32848, for: cortex)]
+        try await model().openApp(cortex)
+
+        #expect(running.activated == [32848])
+        #expect(launcher.launched.isEmpty)
+    }
+
+    @Test func openingTheDefaultWhileAnotherAccountRunsLaunchesANewInstance() async throws {
+        let cortex = try store.add(vendor: .claude, name: "Cortex")
+        running.instances = [cortexInstance(pid: 42, for: cortex)]
+        try await model().openApp(personal)
+
+        #expect(running.activated.isEmpty)
+        #expect(launcher.launched == [LaunchCommand(
+            executable: "/usr/bin/open",
+            arguments: ["-n", "-a", "/Applications/Claude.app"])])
+    }
+
+    @Test func openingTheDefaultFocusesItsRunningPlainInstance() async throws {
+        running.instances = [RunningInstance(pid: 7, arguments: [claudeExe])]
+        try await model().openApp(personal)
+
+        #expect(running.activated == [7])
+        #expect(launcher.launched.isEmpty)
+    }
+
+    @Test func openingTheDefaultWithNothingRunningOpensPlainly() async throws {
+        running.instances = []
+        try await model().openApp(personal)
+
+        #expect(running.activated.isEmpty)
+        #expect(launcher.launched == [LaunchCommand(
+            executable: "/usr/bin/open", arguments: ["-a", "/Applications/Claude.app"])])
     }
 
     @Test func signingInRunsTheLoginInTheChosenTerminal() async throws {
