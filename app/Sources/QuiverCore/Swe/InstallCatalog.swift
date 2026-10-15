@@ -167,12 +167,22 @@ public final class InstallCatalogModel {
         actionError = error.localizedDescription
     }
 
-    /// `swe add` the harness, then reload so it leaves the list. Returns the
-    /// error text for inline display, or nil on success.
+    /// Clears the sheet's error line; a new action starts clean.
+    public func clearError() {
+        actionError = nil
+    }
+
+    /// `swe add` the harness, then reload so it leaves the list. The write
+    /// takes the same gate as the page's edits so two registrations never
+    /// touch harness.json at once. Returns the error text for inline
+    /// display, or nil on success.
     @discardableResult
     public func register(_ harness: InstallableHarness) async -> String? {
+        actionError = nil
         registering.insert(harness.name)
         defer { registering.remove(harness.name) }
+        await HarnessesModel.registryWrites.acquire()
+        defer { HarnessesModel.registryWrites.release() }
         do {
             try await swe.addHarness(harness.name, command: harness.command,
                                      description: harness.description)
@@ -187,15 +197,14 @@ public final class InstallCatalogModel {
         return nil
     }
 
-    /// The line Run hands to the terminal. Installs through swe so it also
-    /// registers the harness; the terminal is needed because casks and
-    /// scripts can prompt for a password.
+    /// The line Run hands to `runInTerminal(line:)`, typed into a login
+    /// shell as-is. Installs through swe so it also registers the harness;
+    /// the terminal is needed because casks and scripts can prompt for a
+    /// password. Every token is quoted on its own: quoting the whole line
+    /// would make it one command name.
     public static func installLine(_ name: String, via: String, swe: String) -> String {
-        // openTerminal wraps the whole line as one -c argument, so only a
-        // path with spaces or quotes needs quoting inside it.
-        let executable = swe.range(of: "[\\s']", options: .regularExpression) != nil
-            ? LaunchPlanner.shellQuote(swe)
-            : swe
-        return "\(executable) install \(name) --via=\(via)"
+        [swe, "install", name, "--via=\(via)"]
+            .map(LaunchPlanner.shellQuote)
+            .joined(separator: " ")
     }
 }

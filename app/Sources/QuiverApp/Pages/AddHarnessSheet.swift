@@ -119,7 +119,7 @@ struct AddHarnessSheet: View {
                 Task { if await model.register(harness) == nil { await onRegister() } }
             }
             .secondaryButton()
-            .disabled(model.registering.contains(harness.name))
+            .disabled(!model.registering.isEmpty)
             .help("Register it with swe add, no reinstall")
         }
         .padding(.horizontal, Theme.cardPadding)
@@ -191,8 +191,9 @@ struct AddHarnessSheet: View {
             .accessibilityLabel("Copy \(method.managerTitle) install command")
             Button("Run in Terminal", systemImage: "terminal") {
                 Task {
+                    model.clearError()
                     do {
-                        try await app.accounts.openTerminal(command:
+                        try await app.accounts.runInTerminal(line:
                             InstallCatalogModel.installLine(harness.name, via: method.via,
                                                             swe: sweExecutable))
                     } catch {

@@ -215,6 +215,24 @@ final class FakeRunningInstances: RunningInstances {
         #expect(launcher.launched == [LaunchPlanner.terminal(.iterm, running: line)])
     }
 
+    /// The Add harness sheet builds a shell line (several words, each
+    /// quoted); it must reach the terminal untouched, not quoted again into
+    /// one command name.
+    @Test func runInTerminalTypesTheLineAsIs() async throws {
+        let model = model()
+        let line = "'swe' 'install' 'gemini' '--via=npm'"
+        try await model.runInTerminal(line: line)
+        #expect(launcher.launched == [LaunchPlanner.terminal(.terminal, running: line)])
+    }
+
+    /// A bare command name from harness.json is quoted as one word.
+    @Test func openTerminalQuotesTheCommandAsOneWord() async throws {
+        let model = model()
+        try await model.openTerminal(command: "claude --resume chat")
+        #expect(launcher.launched == [LaunchPlanner.terminal(
+            .terminal, running: LaunchPlanner.shellQuote("claude --resume chat"))])
+    }
+
     @Test func addingAnAccountShowsItAfterReload() async throws {
         let model = model()
         await model.load(force: false)

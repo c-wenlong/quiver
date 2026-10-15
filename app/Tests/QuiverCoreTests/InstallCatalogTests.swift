@@ -151,14 +151,48 @@ private let oldInstallJSON = #"""
         #expect(model.actionError != nil)
     }
 
-    @Test func installLineIsSweInstallVia() {
+    /// The line is typed into a login shell as-is, so every token is quoted
+    /// on its own rather than the whole line as one word.
+    @Test func installLineQuotesEveryToken() {
         #expect(InstallCatalogModel.installLine("gemini", via: "npm", swe: "swe")
-            == "swe install gemini --via=npm")
+            == "'swe' 'install' 'gemini' '--via=npm'")
     }
 
     @Test func installLineQuotesACustomSwePath() {
         let line = InstallCatalogModel.installLine("gemini", via: "nix",
                                                  swe: "/opt/my tools/swe")
-        #expect(line == "'/opt/my tools/swe' install gemini --via=nix")
+        #expect(line == "'/opt/my tools/swe' 'install' 'gemini' '--via=nix'")
+    }
+
+    /// Two concurrent registrations share the registry gate with the page's
+    /// edits, so their `swe add` calls run one after another, never at once.
+    @Test func registrationsRunThroughTheRegistryGate() async throws {
+        let runner = OrderedRunner()
+        let model = InstallCatalogModel(swe: SweClient(runner: runner))
+        await model.load()
+        async let first = model.register(.init(name: "one", command: "one", installed: true))
+        async let second = model.register(.init(name: "two", command: "two", installed: true))
+        _ = await (first, second)
+        let adds = runner.events.filter { $0 != "list" }
+        #expect(adds == ["start:one", "end:one", "start:two", "end:two"]
+                || adds == ["start:two", "end:two", "start:one", "end:one"])
+    }
+
+    /// Records when each `swe add` starts and ends, so a test can see the
+    /// calls never overlap; other commands answer an empty catalog.
+    private final class OrderedRunner: CommandRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var events: [String] = []
+
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            guard arguments.first == "add" else {
+                lock.withLock { events.append("list") }
+                return ok(#"{"harnesses":[]}"#)
+            }
+            lock.withLock { events.append("start:\(arguments[1])") }
+            try? await Task.sleep(for: .milliseconds(50))
+            lock.withLock { events.append("end:\(arguments[1])") }
+            return CommandResult(status: 0, stdout: Data(), stderr: "")
+        }
     }
 }
