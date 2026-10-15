@@ -451,7 +451,7 @@ private struct StatusBadge: View {
 
 // MARK: - Detail
 
-private struct SessionDetail: View {
+struct SessionDetail: View {
     var row: SessionsModel.Row
     var resume: () -> Void
     var close: () -> Void
@@ -515,6 +515,9 @@ private struct SessionDetail: View {
                     .keyboardShortcut(.defaultAction)
                     .primaryButton()
                     .disabled(s.resume == nil)
+                    .help(s.resume == nil
+                          ? "This session is no longer in \(s.agent)'s history"
+                          : "Resume in terminal")
             }
         }
         .padding(24)
