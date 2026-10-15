@@ -97,6 +97,9 @@ public final class CalendarModel {
     /// The last provider read that failed; nil once every provider read
     /// cleanly. Failed providers keep their last good blocks meanwhile.
     public private(set) var loadError: String?
+    /// The range the newest finished load covered; the page scrolls to
+    /// its first block once this catches up with `visibleRange`.
+    public private(set) var loadedRange: DateInterval?
     /// Harnesses hidden in the legend: every account of one goes with it.
     public private(set) var hiddenHarnesses: Set<String>
     /// "harness|accountHome" pairs hidden on their own.
@@ -314,6 +317,7 @@ public final class CalendarModel {
         stale.remove(range)
         blocks = all.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
         loadError = failed
+        loadedRange = range
         persistSnapshot(of: range)
         prefetchNeighbours()
     }

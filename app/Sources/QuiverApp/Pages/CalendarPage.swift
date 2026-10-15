@@ -32,6 +32,9 @@ private struct CalendarContent: View {
     /// The page holds key focus so the plain-key mode/arrow shortcuts
     /// work without a click; a focused text field keeps its keys.
     @FocusState private var focused: Bool
+    /// The range whose initial scroll already ran, so each new range
+    /// opens at its first block once.
+    @State private var scrolledRange: DateInterval?
 
     private static let monthTitle: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
@@ -180,11 +183,12 @@ private struct CalendarContent: View {
                                 hourGrid(now: context.date)
                                     .id("grid")
                             }
-                            .onAppear {
-                                // Open at the earliest block of the range, or 08:00.
-                                let earliest = model.visibleBlocks.map(\.start).min()
-                                let hour = earliest.map { model.calendar.component(.hour, from: $0) } ?? 8
-                                proxy.scrollTo("h\(max(0, min(23, hour)))", anchor: .top)
+                            .onAppear { scrollToFirstBlock(proxy) }
+                            .onChange(of: model.visibleBlocks.isEmpty) {
+                                scrollToFirstBlock(proxy)
+                            }
+                            .onChange(of: model.visibleRange) {
+                                scrollToFirstBlock(proxy)
                             }
                         }
                     }
@@ -341,6 +345,19 @@ private struct CalendarContent: View {
                 .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    /// Scroll to the range's earliest block (or 08:00 when it is empty),
+    /// once per visible range. Until the load finishes an empty range
+    /// stays at the top, since later blocks may still arrive.
+    private func scrollToFirstBlock(_ proxy: ScrollViewProxy) {
+        guard scrolledRange != model.visibleRange,
+              !model.visibleBlocks.isEmpty || model.loadedRange == model.visibleRange
+        else { return }
+        let earliest = model.visibleBlocks.map(\.start).min()
+        let hour = earliest.map { model.calendar.component(.hour, from: $0) } ?? 8
+        proxy.scrollTo("h\(max(0, min(23, hour)))", anchor: .top)
+        scrolledRange = model.visibleRange
     }
 
     private func hourLabel(_ hour: Int) -> String {
