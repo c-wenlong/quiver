@@ -49,7 +49,9 @@ public struct AppRunningInstances: RunningInstances {
 
     public func activate(pid: Int32) {
         guard let app = NSRunningApplication(processIdentifier: pid) else { return }
-        NSApp.yieldActivation(to: app)
+        // NSApp is nil in a context with no application (a test runner):
+        // activating still works, only the yield is skipped.
+        if let shared = NSApp { shared.yieldActivation(to: app) }
         app.activate()
         // Activation alone leaves a windowless instance showing nothing;
         // `open -a` also sends a reopen ('aevt'/'rapp'), so do the same. The

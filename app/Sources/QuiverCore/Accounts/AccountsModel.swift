@@ -75,10 +75,13 @@ public struct ProcessLauncher: Launching {
 }
 
 extension Profile {
-    var usageProvider: UsageProvider {
+    /// The usage service only reads Claude and Codex; a Devin or Cursor
+    /// extra account's limit comes from `swe harness usage`, not here.
+    var usageProvider: UsageProvider? {
         switch vendor {
         case .claude: .claude
         case .codex: .codex
+        case .devin, .cursor: nil
         }
     }
 }
@@ -161,10 +164,11 @@ public final class AccountsModel {
         isLoading = true
         defer { if mine == generation { isLoading = false } }
 
-        let keys = profiles.map { profile in
-            (profile.id, AccountKey(provider: profile.usageProvider,
-                                    configHome: store.paths(for: profile).home.path,
-                                    isDefault: profile.isDefault))
+        let keys = profiles.compactMap { profile -> (String, AccountKey)? in
+            guard let provider = profile.usageProvider else { return nil }
+            return (profile.id, AccountKey(provider: provider,
+                                           configHome: store.paths(for: profile).home.path,
+                                           isDefault: profile.isDefault))
         }
         let usage = self.usage
         // While the network runs, cards show what the last launches stored:
@@ -300,9 +304,20 @@ public final class AccountsModel {
             otherInstanceRunning: !instances.isEmpty))
     }
 
-    /// A harness's desktop app, as the user would open it.
+    /// A harness's desktop app, as the user would open it. Its "instance"
+    /// is the one with no `--user-data-dir`: extra profiles of the same
+    /// app carry one, so a running extra must not swallow this open —
+    /// when only extras run, `open -n` starts the default beside them.
     public func openApp(at path: String) async throws {
-        try await launcher.launch(LaunchCommand(executable: "/usr/bin/open", arguments: ["-a", path]))
+        let instances = running.instances(ofAppAt: path)
+        if let plain = instances
+            .filter({ LaunchPlanner.userDataDir(in: $0.arguments) == nil })
+            .min(by: { $0.pid < $1.pid }) {
+            running.activate(pid: plain.pid)
+            return
+        }
+        let arguments = instances.isEmpty ? ["-a", path] : ["-n", "-a", path]
+        try await launcher.launch(LaunchCommand(executable: "/usr/bin/open", arguments: arguments))
     }
 
     /// A harness's CLI in a terminal. The command comes from harness.json,
@@ -331,13 +346,19 @@ public final class AccountsModel {
     public func openTerminal(_ profile: Profile) async throws {
         let paths = store.paths(for: profile)
         let line = LaunchPlanner.shellLine(for: profile, paths: paths,
-                                           command: profile.vendor.rawValue)
+                                           command: LaunchPlanner.cliName(for: profile.vendor))
         try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
     }
 
     /// The CLI's sign-in flow in a terminal, for this account's folder.
+    /// Cursor has no CLI sign-in of its own (`cursor-agent` keeps the one
+    /// account): its profiles sign in inside their isolated Cursor app.
     public func signIn(_ profile: Profile) async throws {
-        let line = LaunchPlanner.cliLoginCommand(for: profile, paths: store.paths(for: profile))
+        let paths = store.paths(for: profile)
+        guard let line = LaunchPlanner.cliLoginCommand(for: profile, paths: paths) else {
+            try await openApp(profile)
+            return
+        }
         try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
     }
 
