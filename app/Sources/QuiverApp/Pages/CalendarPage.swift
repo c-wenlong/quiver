@@ -523,7 +523,7 @@ private struct CalendarContent: View {
         guard scrolledRange != model.visibleRange,
               !model.visibleBlocks.isEmpty || model.loadedRange == model.renderRange
         else { return }
-        let earliest = model.visibleBlocks.map(\.start).min()
+        let earliest = model.visibleWindowBlocks.map(\.start).min()
         let hour = earliest.map { model.calendar.component(.hour, from: $0) } ?? 8
         proxy.scrollTo("h\(max(0, min(23, hour)))", anchor: .top)
         scrolledRange = model.visibleRange
