@@ -214,6 +214,93 @@ private struct TogglingActivity: ActivityProviding {
         #expect(counts["claude"] == 2)
     }
 
+    @Test func theRenderRangeBuffersOneWindowOnEachSide() {
+        let model = model() // anchor 2026-10-14, a Wednesday
+        model.mode = .day
+        #expect(model.renderRange == DateInterval(start: utc("2026-10-13T00:00:00Z"),
+                                                  end: utc("2026-10-16T00:00:00Z")))
+        model.mode = .days(4)
+        #expect(model.renderRange == DateInterval(start: utc("2026-10-10T00:00:00Z"),
+                                                  end: utc("2026-10-22T00:00:00Z")))
+        model.mode = .week // Monday-first week Oct 12–19, ±7 days
+        #expect(model.renderRange == DateInterval(start: utc("2026-10-05T00:00:00Z"),
+                                                  end: utc("2026-10-26T00:00:00Z")))
+        model.mode = .month // never slides: render == visible
+        #expect(model.renderRange == model.visibleRange)
+    }
+
+    @Test func aLandedLeadingDayBecomesTheAnchorPerMode() {
+        let model = model()
+        model.mode = .day
+        model.land(on: utc("2026-10-20T00:00:00Z"))
+        #expect(model.visibleRange == DateInterval(start: utc("2026-10-20T00:00:00Z"),
+                                                   end: utc("2026-10-21T00:00:00Z")))
+        model.mode = .days(4)
+        model.land(on: utc("2026-10-21T15:00:00Z"))
+        #expect(model.visibleRange == DateInterval(start: utc("2026-10-21T00:00:00Z"),
+                                                   end: utc("2026-10-25T00:00:00Z")))
+        // Week mode snaps a mid-week landing to the week start.
+        model.mode = .week
+        model.land(on: utc("2026-10-21T00:00:00Z"))
+        #expect(model.visibleRange == DateInterval(start: utc("2026-10-19T00:00:00Z"),
+                                                   end: utc("2026-10-26T00:00:00Z")))
+        // Month mode does not slide at all.
+        model.mode = .month
+        let month = model.visibleRange
+        model.land(on: utc("2026-11-15T00:00:00Z"))
+        #expect(model.visibleRange == month)
+    }
+
+    @Test func aSingleResponseBlockExactlyAtTheWindowStartCounts() async {
+        // start == end == window.start: start < end fails, so a zero-length
+        // block at the boundary needs its own clause or the day reads empty.
+        var single = ActivityBlock(harness: "claude", accountHome: "/h",
+                                   sessionId: "s",
+                                   start: utc("2026-10-14T00:00:00Z"),
+                                   end: utc("2026-10-14T00:00:00Z"), responses: 1)
+        single.project = "s"
+        let model = model(blocks: [single])
+        model.mode = .day
+        await model.load()
+        #expect(model.windowBlocks.count == 1)
+    }
+
+    @Test func anAnchorMoveKeepsTheOldBlocksUntilTheLoadLands() async {
+        let held = HeldActivity(blocks: [block("2026-10-14T09:00:00Z")])
+        held.held = false
+        let model = CalendarModel(providers: [held], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .day
+        await model.load()
+        #expect(model.blocks.count == 1)
+        // The next day's render range is a cache miss; the provider read
+        // hangs, and the old blocks stay up rather than flashing empty.
+        held.held = true
+        model.land(on: utc("2026-10-15T00:00:00Z"))
+        async let load: () = model.load()
+        await Task.yield()
+        await Task.yield()
+        #expect(model.blocks.count == 1)
+        held.release()
+        await load
+    }
+
+    @Test func theCacheIsKeyedByRenderRange() async {
+        let provider = FakeActivity(blocks: [block("2026-10-14T09:00:00Z")])
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .day // render range Oct 13–15
+        await model.load()
+        // A day two weeks away is a different render range entirely.
+        model.go(to: utc("2026-10-28T12:00:00Z"))
+        await model.load()
+        #expect(model.blocks.isEmpty)
+        // Landing back hits the Oct 13–15 render range exactly: its
+        // blocks repaint synchronously, before any provider read lands.
+        model.land(on: utc("2026-10-14T00:00:00Z"))
+        #expect(model.blocks.map(\.project) == ["s"])
+    }
+
     @Test func theAccountLabelMapsHomesToProfileNames() async {
         var cal = calendar; cal.firstWeekday = 2
         let model = CalendarModel(providers: [FakeActivity(blocks: [
@@ -474,8 +561,10 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
     }
 
     @Test func aRestoredSnapshotPaintsBeforeTheLoadLands() async {
+        // Snapshot entries are keyed by render range: the visible week
+        // Oct 12–19 plus one window of buffer on each side.
         let snap = CalendarSnapshot(ranges: [
-            .init(start: utc("2026-10-12T00:00:00Z"), end: utc("2026-10-19T00:00:00Z"),
+            .init(start: utc("2026-10-05T00:00:00Z"), end: utc("2026-10-26T00:00:00Z"),
                   providers: [0: [block("2026-10-14T09:00:00Z")]])])
         let held = HeldActivity(blocks: [])
         let model = CalendarModel(providers: [held], defaults: freshDefaults(),
@@ -498,13 +587,17 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         await model.load()
-        #expect(model.blocks.map(\.project) == ["now"])
+        // The render range buffers a window either side, so the buffer
+        // days' blocks are published too; the window clip is separate.
+        #expect(model.blocks.map(\.project) == ["prev", "now", "next"])
+        #expect(model.windowBlocks.map(\.project) == ["now"])
         // Give the utility-priority prefetch tasks a moment.
         try await Task.sleep(for: .milliseconds(300))
         // Moving back a week publishes from the cache: the blocks appear
         // before the provider's load could run again.
         model.previous()
-        #expect(model.blocks.map(\.project) == ["prev"])
+        #expect(model.windowBlocks.map(\.project) == ["prev"])
+        #expect(model.blocks.map(\.project) == ["prev", "now"])
     }
 
     @Test func aCompletedScanKeepsStaleBlocksUntilTheRefetchLands() async {
@@ -535,8 +628,9 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         await model.load()
         try await Task.sleep(for: .milliseconds(200))
         let saved = try #require(spy.saved.last)
+        // The saved range is the render range, not the visible one.
         #expect(saved.ranges.contains {
-            $0.start == utc("2026-10-12T00:00:00Z") && $0.end == utc("2026-10-19T00:00:00Z")
+            $0.start == utc("2026-10-05T00:00:00Z") && $0.end == utc("2026-10-26T00:00:00Z")
         })
         // A new model hydrates from it.
         let restored = CalendarModel(providers: [provider], defaults: freshDefaults(),
@@ -670,7 +764,7 @@ extension CalendarCacheTests {
 
     @Test func aRestoredSnapshotFillsBlocksBeforeAnyLoad() {
         let snap = CalendarSnapshot(ranges: [
-            .init(start: utc("2026-10-12T00:00:00Z"), end: utc("2026-10-19T00:00:00Z"),
+            .init(start: utc("2026-10-05T00:00:00Z"), end: utc("2026-10-26T00:00:00Z"),
                   providers: [0: [block("2026-10-14T09:00:00Z")]])])
         let model = CalendarModel(providers: [], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") },

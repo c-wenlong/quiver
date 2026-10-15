@@ -100,10 +100,14 @@ private struct CalendarContent: View {
             .onAppear { focused = true }
             .onKeyPress { press in
                 if press.key == .leftArrow {
-                    model.apply(CalendarModel.KeyCommand(arrow: .left)); return .handled
+                    model.apply(CalendarModel.KeyCommand(arrow: .left))
+                    scrolledRange = model.visibleRange // a step is a swipe: keep the hour
+                    return .handled
                 }
                 if press.key == .rightArrow {
-                    model.apply(CalendarModel.KeyCommand(arrow: .right)); return .handled
+                    model.apply(CalendarModel.KeyCommand(arrow: .right))
+                    scrolledRange = model.visibleRange
+                    return .handled
                 }
                 guard press.modifiers.isEmpty,
                       let key = press.characters.first,
@@ -177,12 +181,14 @@ private struct CalendarContent: View {
                 .help("Today (T)")
             Button("Previous \(model.mode.title.lowercased())", systemImage: "chevron.left") {
                 model.previous()
+                scrolledRange = model.visibleRange // like a swipe: keep the hour
             }
             .iconButton()
             .keyboardShortcut(.leftArrow, modifiers: .command)
             .help("Previous \(model.mode.title.lowercased()) (←)")
             Button("Next \(model.mode.title.lowercased())", systemImage: "chevron.right") {
                 model.next()
+                scrolledRange = model.visibleRange
             }
             .iconButton()
             .keyboardShortcut(.rightArrow, modifiers: .command)
@@ -235,40 +241,44 @@ private struct CalendarContent: View {
 
     // MARK: - Week grid
 
+    /// The landed horizontal scroll target: a leading day, or a week
+    /// start in week mode where the week is the scroll unit.
+    @State private var landed: Date?
+    /// The columns' horizontal scroll offset, mirrored on the header so
+    /// it slides in lockstep while staying pinned above the grid.
+    @State private var scrollX: CGFloat = 0
+
+    /// Days per on-screen window: the columns each take 1/span of the
+    /// grid's width and the render range buffers one span either side.
+    private var span: Int {
+        switch model.mode {
+        case .day: 1
+        case .week: 7
+        case .month: 7
+        case .days(let n): max(1, n)
+        }
+    }
+
+    /// Week mode snaps whole weeks; day and N-day snap per day.
+    private var snapsByWeek: Bool { model.mode == .week }
+
     private var grid: some View {
         VStack(spacing: 0) {
-            dayHeaders
             if let error = model.loadError ?? actionError {
                 ErrorCard(message: error).padding(8)
             }
             ZStack {
                 if model.mode == .month {
-                    monthGrid
-                } else {
-                    TimelineView(.everyMinute) { context in
-                        ScrollViewReader { proxy in
-                            ScrollView {
-                                hourGrid(now: context.date)
-                                    .id("grid")
-                            }
-                            .onAppear { scrollToFirstBlock(proxy) }
-                            // Month view replaces this grid; coming back must scroll again.
-                            .onDisappear { scrolledRange = nil }
-                            .onChange(of: model.visibleBlocks.isEmpty) {
-                                scrollToFirstBlock(proxy)
-                            }
-                            .onChange(of: model.loadedRange) {
-                                scrollToFirstBlock(proxy)
-                            }
-                            .onChange(of: model.visibleRange) {
-                                scrollToFirstBlock(proxy)
-                            }
-                        }
+                    VStack(spacing: 0) {
+                        monthWeekdayHeader
+                        monthGrid
                     }
+                } else {
+                    slidingGrid
                 }
                 // The grid renders even when empty; the notice floats
                 // over it without swallowing clicks on the cells.
-                if model.visibleBlocks.isEmpty {
+                if model.visibleWindowBlocks.isEmpty {
                     Text("No harness activity \(model.emptyRangeNoun)")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                         .allowsHitTesting(false)
@@ -278,29 +288,137 @@ private struct CalendarContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var dayHeaders: some View {
-        if model.mode == .month { return AnyView(monthWeekdayHeader) }
-        return AnyView(weekDayHeaders)
+    /// The sliding window: a pinned header row that tracks the columns'
+    /// horizontal offset, then the hour axis and day columns in one
+    /// vertical scroll so they never drift apart, with the columns
+    /// inside a horizontal scroll that snaps on day boundaries (or week
+    /// boundaries in week mode).
+    private var slidingGrid: some View {
+        GeometryReader { geo in
+            let gridWidth = max(0, geo.size.width - Self.axisWidth)
+            let columnWidth = gridWidth / CGFloat(span)
+            VStack(spacing: 0) {
+                dayHeaders(columnWidth: columnWidth, gridWidth: gridWidth)
+                TimelineView(.everyMinute) { context in
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            HStack(alignment: .top, spacing: 0) {
+                                hourAxis(now: context.date)
+                                ScrollView(.horizontal) {
+                                    columns(now: context.date, width: columnWidth)
+                                }
+                                .scrollTargetBehavior(.viewAligned)
+                                .scrollPosition(id: $landed, anchor: .leading)
+                                .scrollIndicators(.hidden)
+                                .onScrollGeometryChange(for: CGFloat.self) {
+                                    $0.contentOffset.x + $0.contentInsets.leading
+                                } action: { _, offset in
+                                    scrollX = offset
+                                }
+                            }
+                            .id("grid")
+                        }
+                        .onAppear { scrollToFirstBlock(proxy) }
+                        // Month view replaces this grid; coming back must scroll again.
+                        .onDisappear { scrolledRange = nil }
+                        .onChange(of: model.visibleWindowBlocks.isEmpty) {
+                            scrollToFirstBlock(proxy)
+                        }
+                        .onChange(of: model.loadedRange) {
+                            scrollToFirstBlock(proxy)
+                        }
+                        .onChange(of: model.visibleRange) {
+                            scrollToFirstBlock(proxy)
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear { landed = model.visibleRange.start }
+        .onChange(of: landed) { _, day in
+            // The scroll settled on a target: it becomes the anchor, and
+            // every header/total/cache decision follows. A swipe never
+            // moves the vertical hour, so the new range counts as
+            // scrolled already.
+            if let day {
+                model.land(on: day)
+                scrolledRange = model.visibleRange
+            }
+        }
+        .onChange(of: model.visibleRange) { _, range in
+            // Keyboard, chevrons and mini-month clicks still move the
+            // anchor; the scroll animates to the new leading target.
+            guard landed != range.start else { return }
+            withAnimation(reduceMotion ? nil : .snappy) {
+                landed = range.start
+            }
+        }
     }
 
-    private var weekDayHeaders: some View {
+    /// Day columns grouped into snap targets: one view per day for Day
+    /// and N-day, one per week for Week so a swipe lands whole weeks.
+    private func columns(now: Date, width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            if snapsByWeek {
+                ForEach(model.renderDays.chunked(by: span), id: \.first!.start) { week in
+                    HStack(spacing: 0) {
+                        ForEach(week, id: \.start) { day in
+                            dayColumn(day, now: now, width: width)
+                        }
+                    }
+                    .id(week.first!.start)
+                }
+            } else {
+                ForEach(model.renderDays, id: \.start) { day in
+                    dayColumn(day, now: now, width: width)
+                        .id(day.start)
+                }
+            }
+        }
+        .scrollTargetLayout()
+    }
+
+    private func dayColumn(_ day: DateInterval, now: Date, width: CGFloat) -> some View {
+        DayColumn(model: model, day: day, now: now,
+                  color: { self.color(for: $0) },
+                  title: { self.title(for: $0) },
+                  hover: { self.hoverCard(key: $0, inside: $1) },
+                  card: { self.cardBinding(for: $0) },
+                  cardRows: { self.cardRows(for: $0) }) { block in
+            open(block)
+        }
+        .frame(width: width)
+    }
+
+    /// The header row sits outside the scroll view so it stays pinned
+    /// vertically; the columns' scroll offset slides it in lockstep. The
+    /// strip inside is the full render width, so the container gets the
+    /// grid's width explicitly and clips what hangs past it.
+    private func dayHeaders(columnWidth: CGFloat, gridWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: Self.axisWidth, height: 0)
-            ForEach(model.days, id: \.start) { day in
-                let isToday = day.contains(now)
-                HStack(spacing: 5) {
-                    Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
-                    Text(day.start.formatted(.dateTime.day()))
-                        .font(.system(size: 12, weight: isToday ? .semibold : .regular))
-                        .foregroundStyle(isToday ? .white : .primary)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(isToday ? Color.red : .clear,
-                                    in: RoundedRectangle(cornerRadius: 5))
+            ZStack(alignment: .leading) {
+                HStack(spacing: 0) {
+                    ForEach(model.renderDays, id: \.start) { day in
+                        let isToday = day.contains(now)
+                        HStack(spacing: 5) {
+                            Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
+                            Text(day.start.formatted(.dateTime.day()))
+                                .font(.system(size: 12, weight: isToday ? .semibold : .regular))
+                                .foregroundStyle(isToday ? .white : .primary)
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(isToday ? Color.red : .clear,
+                                            in: RoundedRectangle(cornerRadius: 5))
+                        }
+                        .font(Theme.caption)
+                        .padding(.leading, 8)
+                        .frame(width: columnWidth, alignment: .leading)
+                    }
                 }
-                .font(Theme.caption)
-                .padding(.leading, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .offset(x: -scrollX)
             }
+            .frame(width: gridWidth, alignment: .leading)
+            .clipped()
         }
         .padding(.vertical, 8)
         .overlay(alignment: .bottom) {
@@ -386,54 +504,46 @@ private struct CalendarContent: View {
         return MonthLayout.entries(model.visibleBlocks, day: interval)
     }
 
-    private func hourGrid(now: Date) -> some View {
-        let days = model.days
-        return HStack(alignment: .top, spacing: 0) {
-            // Hour labels, with the now-pill replacing the nearest label on
-            // a day that contains it.
-            ZStack(alignment: .topLeading) {
-                VStack(spacing: 0) {
-                    ForEach(0..<24, id: \.self) { hour in
-                        Text(hourLabel(hour))
-                            .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
-                            .frame(width: Self.axisWidth - 8, height: Self.hourHeight,
-                                   alignment: .topTrailing)
-                            .id("h\(hour)")
-                    }
-                }
-                if let today = days.first(where: { $0.contains(now) }) {
-                    Text(now, format: .dateTime.hour().minute())
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(.red, in: Capsule())
-                        .offset(y: Self.hourHeight * CGFloat(now.timeIntervalSince(today.start) / 3600) - 9)
+    /// The fixed hour axis: inside the same vertical scroll as the day
+    /// columns so labels and grid lines can never drift apart, and
+    /// outside the horizontal scroll so it stays pinned while the
+    /// columns slide underneath it.
+    private func hourAxis(now: Date) -> some View {
+        ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                ForEach(0..<24, id: \.self) { hour in
+                    Text(hourLabel(hour))
+                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .frame(width: Self.axisWidth - 8, height: Self.hourHeight,
+                               alignment: .topTrailing)
+                        .id("h\(hour)")
                 }
             }
-            .frame(width: Self.axisWidth)
-
-            ForEach(days, id: \.start) { day in
-                DayColumn(model: model, day: day, now: now,
-                          color: { self.color(for: $0) },
-                          title: { self.title(for: $0) },
-                          hover: { self.hoverCard(key: $0, inside: $1) },
-                          card: { self.cardBinding(for: $0) },
-                          cardRows: { self.cardRows(for: $0) }) { block in
-                    open(block)
-                }
-                .frame(maxWidth: .infinity)
+            // Only the visible window's "today" gets the pill, not a
+            // buffer day's.
+            if let today = model.days.first(where: { $0.contains(now) }) {
+                Text(now, format: .dateTime.hour().minute())
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background(.red, in: Capsule())
+                    .offset(y: Self.hourHeight * CGFloat(now.timeIntervalSince(today.start) / 3600) - 9)
             }
         }
+        .frame(width: Self.axisWidth)
     }
 
     /// Scroll to the range's earliest block (or 08:00 when it is empty),
     /// once per visible range. Until the load finishes an empty range
     /// stays at the top, since later blocks may still arrive.
     private func scrollToFirstBlock(_ proxy: ScrollViewProxy) {
+        // Kept blocks from outside the window must not mark it scrolled:
+        // only the window's own blocks or a finished load of this exact
+        // render range settle it.
         guard scrolledRange != model.visibleRange,
-              !model.visibleBlocks.isEmpty || model.loadedRange == model.visibleRange
+              !model.visibleWindowBlocks.isEmpty || model.loadedRange == model.renderRange
         else { return }
-        let earliest = model.visibleBlocks.map(\.start).min()
+        let earliest = model.visibleWindowBlocks.map(\.start).min()
         let hour = earliest.map { model.calendar.component(.hour, from: $0) } ?? 8
         proxy.scrollTo("h\(max(0, min(23, hour)))", anchor: .top)
         scrolledRange = model.visibleRange
@@ -1138,5 +1248,12 @@ private struct ProjectSessionsSheet: View {
         .sheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
+    }
+}
+
+private extension Array {
+    /// Evenly sized groups, for the week-mode snap targets.
+    func chunked(by size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: Swift.max(1, size)).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }

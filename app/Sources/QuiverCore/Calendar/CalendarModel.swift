@@ -204,7 +204,7 @@ public final class CalendarModel {
         }
         // First paint off the snapshot: the cached blocks for the range
         // on screen show before the session list or any provider answers.
-        if let cached = cache[visibleRange] {
+        if let cached = cache[renderRange] {
             blocks = Self.flatten(cached)
         }
     }
@@ -262,7 +262,16 @@ public final class CalendarModel {
 
     /// One interval per day column, clipped to the range.
     public var days: [DateInterval] {
-        let range = visibleRange
+        days(in: visibleRange)
+    }
+
+    /// The day columns the horizontal sliding window renders: the
+    /// render range's days, one window of buffer on each side.
+    public var renderDays: [DateInterval] {
+        days(in: renderRange)
+    }
+
+    private func days(in range: DateInterval) -> [DateInterval] {
         var days: [DateInterval] = []
         var day = calendar.startOfDay(for: range.start)
         while day < range.end {
@@ -271,6 +280,47 @@ public final class CalendarModel {
             day = next
         }
         return days
+    }
+
+    /// The range the grid renders and the cache keys: the visible range
+    /// plus one window of buffer columns on each side, so swiping shows
+    /// painted content before the next anchor lands. Month mode does not
+    /// slide, so it is just the month.
+    public var renderRange: DateInterval {
+        renderRange(for: anchor, mode: mode)
+    }
+
+    public func renderRange(for anchor: Date, mode: Mode) -> DateInterval {
+        let visible = range(for: anchor, mode: mode)
+        let window: Int
+        switch mode {
+        case .day: window = 1
+        case .week: window = 7
+        case .month: return visible
+        case .days(let n): window = max(1, n)
+        }
+        let start = calendar.date(byAdding: .day, value: -window, to: visible.start) ?? visible.start
+        let end = calendar.date(byAdding: .day, value: window, to: visible.end) ?? visible.end
+        return DateInterval(start: start, end: end)
+    }
+
+    /// A horizontal scroll settled on a leading day: the anchor lands on
+    /// it — on its week's first day in week mode, where the whole week
+    /// is the scroll unit. Month mode never slides.
+    public func land(on leadingDay: Date) {
+        let snapped: Date
+        switch mode {
+        case .month: return
+        case .week:
+            let week = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear],
+                                               from: leadingDay)
+            snapped = calendar.date(from: week) ?? calendar.startOfDay(for: leadingDay)
+        default:
+            snapped = calendar.startOfDay(for: leadingDay)
+        }
+        guard snapped != anchor else { return }
+        anchor = snapped
+        applyCached()
     }
 
     /// One key command as the page maps it: a mode pick, a step, or
@@ -294,10 +344,12 @@ public final class CalendarModel {
         applyCached()
     }
 
-    /// Whatever the cache holds for the new visible range, right away;
-    /// the load the page then starts replaces it.
+    /// Whatever the cache holds for the new render range, right away;
+    /// the load the page then starts replaces it. On a miss the old
+    /// blocks stay up: the ones overlapping the new range still paint
+    /// until the fresh load lands.
     private func applyCached() {
-        if let cached = cache[visibleRange] {
+        if let cached = cache[renderRange] {
             blocks = Self.flatten(cached)
         }
     }
@@ -315,11 +367,12 @@ public final class CalendarModel {
     /// clears it. A load that lands while a newer one is running is
     /// dropped. `force` asks cached sources to skip their throttle.
     public func load(force: Bool = false) async {
-        await load(range: visibleRange, force: force)
+        await load(range: renderRange, force: force)
     }
 
     /// The range-explicit form, so tests (and a future Month mode) can
-    /// load a range the mode does not produce.
+    /// load a range the mode does not produce. The range is the render
+    /// range: the cache key and the clip for the published blocks alike.
     func load(range: DateInterval, force: Bool) async {
         generation += 1
         let mine = generation
@@ -388,8 +441,8 @@ public final class CalendarModel {
     /// arrives after a load already wrote fresher blocks for its range
     /// is dropped rather than overwritten with an older read.
     private func prefetchNeighbours() {
-        for neighbour in [range(for: shiftedAnchor(-1, mode: mode), mode: mode),
-                          range(for: shiftedAnchor(1, mode: mode), mode: mode)] {
+        for neighbour in [renderRange(for: shiftedAnchor(-1, mode: mode), mode: mode),
+                          renderRange(for: shiftedAnchor(1, mode: mode), mode: mode)] {
             guard cache[neighbour] == nil || stale.contains(neighbour) else { continue }
             let widened = DateInterval(start: neighbour.start.addingTimeInterval(-Self.edgeLookout),
                                        end: neighbour.end.addingTimeInterval(Self.edgeLookout))
@@ -457,16 +510,36 @@ public final class CalendarModel {
 
     static func key(harness: String, home: String) -> String { "\(harness)|\(home)" }
 
-    /// Harnesses with any block in the range, hidden or not, sorted.
+    /// Blocks overlapping the visible window — the render range's buffer
+    /// columns stay on the grid but out of the legend and empty state.
+    public var windowBlocks: [ActivityBlock] {
+        let range = visibleRange
+        return blocks.filter {
+            // A zero-length block (one response) exactly at the window
+            // start still counts as inside.
+            $0.start < range.end
+                && ($0.end > range.start || ($0.start == $0.end && $0.start >= range.start))
+        }
+    }
+
+    /// Same, with the legend's hidden toggles applied.
+    public var visibleWindowBlocks: [ActivityBlock] {
+        windowBlocks.filter {
+            !hiddenHarnesses.contains($0.harness)
+                && !hiddenAccounts.contains(Self.key(harness: $0.harness, home: $0.accountHome))
+        }
+    }
+
+    /// Harnesses with any block in the window, hidden or not, sorted.
     public var harnesses: [String] {
-        Array(Set(blocks.map(\.harness))).sorted()
+        Array(Set(windowBlocks.map(\.harness))).sorted()
     }
 
     /// Every account the harness has: the union of homes with a block in
-    /// the range and Quiver's known accounts for it, so a quiet account
+    /// the window and Quiver's known accounts for it, so a quiet account
     /// still lists (like Notion's per-calendar rows) at "0m".
     public func accounts(for harness: String) -> [String] {
-        var homes = Set(blocks.filter { $0.harness == harness }.map(\.accountHome))
+        var homes = Set(windowBlocks.filter { $0.harness == harness }.map(\.accountHome))
         homes.formUnion(knownHomes(for: harness))
         return homes.sorted()
     }
