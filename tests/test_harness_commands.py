@@ -914,8 +914,7 @@ class CmdCheckOffPathFooterTest(unittest.TestCase):
         self.assertIn("found at", plain)
         self.assertIn("/Users/x/.nvm/versions/node/v22/bin/jules", plain)
         # The diagnostic must include the install hint.
-        self.assertIn("npm install -g jules", plain)
-        self.assertIn("swe install jules", plain)
+        self.assertIn("swe install jules   # lists its installers", plain)
         self.assertIn("swe edit jules --command", plain)
         # Yellow `!` marker escape sequence present.
         self.assertIn("\033[33m!", output)

@@ -30,7 +30,7 @@ from quiver.harness.models import (
     display_name,
     primary_color,
 )
-from quiver.harness.registry import load_registry, resolve, save_registry
+from quiver.harness.registry import load_registry, load_registry_readonly, resolve, save_registry
 from quiver.init.layout import link_states
 from quiver.harness.stars import (
     is_starred,
@@ -1451,11 +1451,10 @@ def cmd_check(args):
         # recipe, so they don't fit the grid). Keeping them as
         # plain strings preserves the original output structure.
         print(f"\n{c('yellow', 'Off-PATH installs detected')} {c('dim', '(installed but invisible to swe)')}\n")
-        npm = preferred_npm_bin() or "npm"
         for name, command, hit in orphans:
             print(f"  {c('yellow', '!')}  {name:<16} found at {c('dim', hit.path)}")
             print(c("dim", f"      source: {hit.source}  ·  not on current PATH"))
-            print(c("dim", f"      fix: {npm} install -g {name}   # or: swe install {name}"))
+            print(c("dim", f"      fix: swe install {name}   # lists its installers"))
             print(c("dim", f"      or:  swe edit {name} --command={hit.path}"))
             off_path_notes.append(name)
         print()
@@ -1652,31 +1651,72 @@ def cmd_doctor(args):
     return 1 if failed else 0
 
 
-def cmd_install(args):
-    """Install a harness via PATH-visible npm and register/update it in swe."""
+def _install_command_name(reg_name: str, tools: dict) -> str:
+    """The binary a harness provides: registry entry, else catalog, else name."""
     from quiver.harness.catalog import HARNESS_CATALOG
-    from quiver.harness.path_health import preferred_npm_bin, resolve_npm_package
+
+    entry = tools.get(reg_name) or {}
+    catalog = HARNESS_CATALOG.get(reg_name, {})
+    return entry.get("command") or catalog.get("command") or reg_name
+
+
+def _install_method_available(via: str) -> bool:
+    """Whether the tool a method needs is on PATH right now."""
+    from quiver.harness.installers import METHOD_TOOL
+
+    return shutil.which(METHOD_TOOL[via]) is not None
+
+
+def _install_json(names: list[str], tools: dict) -> dict:
+    """The ``swe install --json`` document for the given registry names."""
+    from quiver.harness.installers import installers_for
+
+    harnesses = []
+    for name in names:
+        command = _install_command_name(name, tools)
+        path = shutil.which(command)
+        harnesses.append({
+            "name": name,
+            "command": command,
+            "installed": path is not None,
+            "path": path,
+            "methods": [{
+                "via": inst.via,
+                "package": inst.package,
+                "command": inst.display(),
+                "available": _install_method_available(inst.via),
+            } for inst in installers_for(name)],
+        })
+    return {"harnesses": harnesses}
+
+
+def cmd_install(args):
+    """Show or run a harness's install command per package manager."""
+    from quiver.harness.catalog import HARNESS_CATALOG
+    from quiver.harness.installers import INSTALLERS, METHODS, METHOD_TOOL, Installer, installers_for
+    from quiver.harness.path_health import preferred_npm_bin
     from quiver.harness.tools import live_version
 
-    if not args:
-        print(c("red", "Usage: swe install <name|npm-package> [--package=<pkg>] [--command=<cmd>]"))
-        print(c("dim", "  Example: swe install mastracode"))
-        print(c("dim", "           swe install jules --package=@google/jules"))
-        return 1
+    args, json_view = take_json_flag(list(args or []))
+    err = error_stream(json_view)
 
     try:
-        args = expand_value_flags(args, {"--package", "--command"})
+        args = expand_value_flags(args, {"--via", "--package", "--command"})
     except ValueError as exc:
-        print(c("red", str(exc)))
+        print(c("red", str(exc)), file=err)
         return 1
 
-    name = args[0]
+    name = None
+    via = None
     package = None
     command = None
     dry_run = False
-    i = 1
+    i = 0
     while i < len(args):
-        if args[i] == "--package":
+        if args[i] == "--via":
+            via = args[i + 1]
+            i += 2
+        elif args[i] == "--package":
             package = args[i + 1]
             i += 2
         elif args[i] == "--command":
@@ -1685,74 +1725,167 @@ def cmd_install(args):
         elif args[i] in ("--dry-run", "-n"):
             dry_run = True
             i += 1
+        elif args[i].startswith("-") and args[i] != "-":
+            print(c("red", f"Unknown argument: {args[i]}"), file=err)
+            return 1
+        elif name is None:
+            name = args[i]
+            i += 1
         else:
-            print(c("red", f"Unknown argument: {args[i]}"))
+            print(c("red", f"Unexpected argument: {args[i]}"), file=err)
             return 1
 
-    npm = preferred_npm_bin()
-    if not npm:
-        print(c("red", "  No npm found on PATH. Install Node or fix PATH first (see swe doctor)."))
+    if json_view and (via or package or command or dry_run):
+        print(c("red", "--json cannot be combined with --via, --package, --command or --dry-run"),
+              file=err)
         return 1
 
-    tools = load_registry()
+    if name is None:
+        if json_view:
+            return emit(_install_json(sorted(INSTALLERS), load_registry_readonly()))
+        print(c("red", "Usage: swe install <name> [--via=<method>] [--package=<pkg>] "
+                       "[--command=<cmd>] [--dry-run|-n] [--json]"))
+        print(c("dim", "  Example: swe install gemini            # list its installers"))
+        print(c("dim", "           swe install gemini --via=npm  # run one"))
+        print(c("dim", "           swe install mastracode --package=mastracode"))
+        return 1
+
+    # Read-only: only the path that actually installs may create harness.json.
+    tools = load_registry_readonly()
     # Allow installing by alias
     resolved = resolve(tools, name)
     reg_name = resolved or name
 
-    catalog = HARNESS_CATALOG.get(reg_name, {})
-    npm_pkg = resolve_npm_package(reg_name, package)
-    # If user passed a scoped package as name
-    if name.startswith("@") and "/" in name and not package:
-        npm_pkg = name
+    # A scoped @owner/pkg name is an explicit npm package; its registry name
+    # is the last segment.
+    scoped = name.startswith("@") and "/" in name
+    if scoped and not package:
+        package = name
         reg_name = name.split("/")[-1]
-        catalog = HARNESS_CATALOG.get(reg_name, {})
 
+    catalog = HARNESS_CATALOG.get(reg_name, {})
     # The registry wins over the catalog. An entry already on disk has been
     # through discovery and possibly hand-editing on this machine, so the
     # catalog's generic line is the fallback for names never seen here, not
     # an upgrade over what is already recorded.
     entry = tools.get(reg_name) or {}
     cmd_name = command or entry.get("command") or catalog.get("command") or reg_name
-    desc = entry.get("description") or catalog.get("description") or ""
-    tags = list(entry.get("tags") or catalog.get("tags") or ["agentic", "coding"])
-    aliases = list(entry.get("aliases") or catalog.get("aliases") or [])
-    colour = entry.get("primary_color") or catalog.get("primary_color")
+    installers = installers_for(reg_name)
+
+    if json_view:
+        if not installers:
+            print(c("red", f"  No known installer for '{name}'. "
+                           "If it is on npm, pass --package=<npm-name>."), file=err)
+            return 1
+        return emit(_install_json([reg_name], tools))
+
+    installer = None
+    if via is not None:
+        if via not in METHODS:
+            print(c("red", f"  Unknown method '{via}'. Methods: {', '.join(METHODS)}."),
+                  file=err)
+            return 1
+        if package and via != "npm":
+            print(c("red", f"  --package only applies to npm installs (--via=npm)."),
+                  file=err)
+            return 1
+        if package:
+            # --package already names the npm package; the table entry is moot.
+            installer = Installer("npm", package)
+        else:
+            known = {inst.via: inst for inst in installers}
+            if via not in known:
+                if installers:
+                    have = ", ".join(inst.via for inst in installers)
+                    print(c("red", f"  '{reg_name}' has no {via} installer. "
+                                   f"Try: {have}."), file=err)
+                else:
+                    print(c("red", f"  No known installer for '{reg_name}'. "
+                                   "If it is on npm, pass --package=<npm-name>."), file=err)
+                return 1
+            installer = known[via]
+    elif package:
+        installer = Installer("npm", package)
+    else:
+        # Listing: print, never run. npm (or any tool) may be absent.
+        if not installers:
+            print(c("red", f"  No known installer for '{name}'. "
+                           "If it is on npm, pass --package=<npm-name>."), file=err)
+            return 1
+        print(f"\n{c('bold', 'swe install')}\n")
+        print(f"  name:     {reg_name}")
+        print(f"  command:  {cmd_name}")
+        found = shutil.which(cmd_name)
+        if found:
+            print(c("green", f"  already installed at {found}"))
+            print(c("dim", "  hint: 'swe discover --apply' registers it"))
+        print()
+        for inst in installers:
+            row = f"  {inst.via:<7} {inst.display()}"
+            if _install_method_available(inst.via):
+                print(row)
+            else:
+                print(c("dim", f"{row}  ({METHOD_TOOL[inst.via]} not on PATH)"))
+        print()
+        print(c("dim", f"  Run one: swe install {reg_name} --via=<method>"))
+        return 0
+
+    npm = preferred_npm_bin() if installer.via == "npm" else None
+    if installer.via == "npm" and not npm:
+        print(c("red", "  No npm found on PATH. Install Node or fix PATH first (see swe doctor)."),
+              file=err)
+        return 1
+    tool = METHOD_TOOL[installer.via]
+    if installer.via != "npm" and not shutil.which(tool):
+        print(c("red", f"  '{tool}' is needed for --via={installer.via} but is not on PATH."),
+              file=err)
+        return 1
+
+    argv = installer.argv(npm or "npm")
+    shown = " ".join(argv) if installer.via == "npm" else installer.display()
 
     print(f"\n{c('bold', 'swe install')}\n")
     print(f"  name:     {reg_name}")
-    print(f"  package:  {npm_pkg}")
+    print(f"  via:      {installer.via}")
+    print(f"  package:  {installer.package}")
     print(f"  command:  {cmd_name}")
-    print(f"  npm:      {npm}")
     print()
 
     if dry_run:
-        print(c("dim", f"  dry-run: would run  {npm} install -g {npm_pkg}"))
+        print(c("dim", f"  dry-run: would run  {shown}"))
         return 0
 
-    print(c("dim", f"  → {npm} install -g {npm_pkg}\n"))
+    # Installing writes the registry afterwards, so this is where the
+    # creating load belongs: listing and --json never reach it.
+    tools = load_registry()
+    catalog = HARNESS_CATALOG.get(reg_name, {})
+    entry = tools.get(reg_name) or {}
+
+    print(c("dim", f"  → {shown}\n"))
     try:
         result = subprocess.run(
-            [npm, "install", "-g", npm_pkg],
+            argv,
             capture_output=False,
             text=True,
-            timeout=300,
+            timeout=300 if installer.via == "npm" else 600,
         )
     except subprocess.TimeoutExpired:
-        print(c("red", "  npm install timed out."))
+        print(c("red", f"  {installer.via} install timed out."))
         return 1
     except Exception as exc:
-        print(c("red", f"  npm install failed: {exc}"))
+        print(c("red", f"  {installer.via} install failed: {exc}"))
         return 1
 
     if result.returncode != 0:
-        print(c("red", f"  npm install exited with code {result.returncode}"))
-        print(c("dim", "  Tip: if the package name differs, try --package=<npm-name>"))
+        print(c("red", f"  {installer.via} install exited with code {result.returncode}"))
+        if installer.via == "npm":
+            print(c("dim", "  Tip: if the package name differs, try --package=<npm-name>"))
         return result.returncode
 
     # Re-hash PATH resolution
     installed_path = shutil.which(cmd_name)
     if not installed_path:
-        print(c("yellow", f"  npm finished, but '{cmd_name}' is still not on PATH."))
+        print(c("yellow", f"  install finished, but '{cmd_name}' is still not on PATH."))
         print(c("dim", "  Run: swe doctor"))
         # Still register so user can fix path later
     else:
@@ -1760,7 +1893,7 @@ def cmd_install(args):
 
     ver = live_version(cmd_name) if installed_path else None
     # Fallback: read package.json next to npm global module
-    if not ver:
+    if not ver and installer.via == "npm":
         try:
             import json as _json
 
@@ -1771,16 +1904,21 @@ def cmd_install(args):
                 timeout=5,
                 stdin=subprocess.DEVNULL,
             ).stdout.strip()
-            if npm_pkg.startswith("@"):
-                scope, pname = npm_pkg.split("/", 1)
+            if installer.package.startswith("@"):
+                scope, pname = installer.package.split("/", 1)
                 pkg_json = Path(prefix) / "lib" / "node_modules" / scope / pname / "package.json"
             else:
-                pkg_json = Path(prefix) / "lib" / "node_modules" / npm_pkg / "package.json"
+                pkg_json = Path(prefix) / "lib" / "node_modules" / installer.package / "package.json"
             if pkg_json.is_file():
                 raw_ver = _json.loads(pkg_json.read_text()).get("version") or ""
                 ver = extract_version_number(raw_ver) or raw_ver or None
         except Exception:
             pass
+
+    desc = entry.get("description") or catalog.get("description") or ""
+    tags = list(entry.get("tags") or catalog.get("tags") or ["agentic", "coding"])
+    aliases = list(entry.get("aliases") or catalog.get("aliases") or [])
+    colour = entry.get("primary_color") or catalog.get("primary_color")
 
     entry = {
         "command": cmd_name,

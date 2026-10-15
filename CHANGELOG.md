@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`swe install` no longer guesses npm package names.** It used to run
+  `npm install -g <name>` with a small lookup table, which installed
+  strangers' packages (`gemini`, `crush`, `kiro-cli` are unrelated on
+  npm) or names that do not exist (`opencode`, `mistral-vibe`,
+  `@cursor/agent`). Now `swe install <name>` lists the harness's verified
+  install command per package manager (brew, cask, npm, uv, nix, vendor
+  script), `swe install <name> --via=<method>` runs one, `--package=<pkg>`
+  installs an explicit npm package, `--dry-run` prints the command, and
+  `--json` emits the whole table without running. Names with no known
+  installer are refused instead of guessed.
+
 ### Added
 
 - **The menu bar's harness logos launch the harness.** The logo on each

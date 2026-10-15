@@ -172,26 +172,3 @@ def find_off_path_tools(registry: dict) -> list[tuple[str, str, OffPathHit]]:
         if off:
             results.append((name, command, off[0]))
     return results
-
-
-# Known npm package names when they differ from the registry/command name.
-NPM_PACKAGE_MAP: dict[str, str] = {
-    "jules": "@google/jules",
-    "claude": "@anthropic-ai/claude-code",
-    "codex": "@openai/codex",
-    "copilot": "@github/copilot",
-    "continue": "@continuedev/cli",
-    "cline": "cline",
-    "qwen-code": "@qwen-code/qwen-code",
-    "mistral-vibe": "mistral-vibe",
-    "augment": "@augmentcode/auggie",
-    "cursor": "@cursor/agent",  # best-effort; may vary
-    "mastracode": "mastracode",
-    "pi": "@earendil-works/pi-coding-agent",
-}
-
-
-def resolve_npm_package(name: str, package: str | None = None) -> str:
-    if package:
-        return package
-    return NPM_PACKAGE_MAP.get(name, name)

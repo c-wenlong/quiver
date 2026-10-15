@@ -224,7 +224,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe harness archive <name\|alias> [why]` | `hs archive` | Shelve a harness you've ruled out |
 | `swe check` | | Probe live versions and refresh registry |
 | `swe doctor` | | Diagnose Node/npm/PATH issues hiding global installs, plus registry/help drift |
-| `swe install <name>` | | Install a harness via npm and register it |
+| `swe install <name>` | | List a harness's install commands per package manager; `--via=<m>` runs one |
 | `swe harness discover [--apply\|--apply-all] [--json] [--all]` | | Scan PATH and home dirs for unregistered AI coding CLIs |
 | `swe discover [--apply]` | | Alias for `swe harness discover` |
 | `swe find [amd\|skills\|plugins\|mcps] [--full] [--scope=global\|local\|all] [--harness=active\|all]` | | Read-only view of shared assets and what links to them |

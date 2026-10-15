@@ -15,7 +15,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("use", "Launch a tool"),
     ("check", "Verify installs + versions"),
     ("doctor", "Diagnose Node/PATH issues"),
-    ("install", "Install a harness"),
+    ("install", "Show or run a harness's install command"),
     ("session", "Show recent sessions"),
     ("models", "Show model usage"),
     ("skills", "List agent skills"),
@@ -238,10 +238,12 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--json", "Apply the flags and print the result as JSON (never prompts)"),
     ],
     "install": [
+        ("--via=", "Install method: brew, cask, npm, uv, nix or script"),
         ("--package=", "Package spec for the installer"),
         ("--command=", "Binary the package provides"),
         ("--dry-run", "Show what would happen"),
         ("-n", "Short for --dry-run"),
+        ("--json", "List known installers as JSON (never runs)"),
     ],
     "init": [
         ("--full", "List every path, not just the counts"),
@@ -520,7 +522,7 @@ def get_completions(words: list[str]) -> list[tuple[str, str]]:
         return _filter_by_prefix(_NESTED_SUBCOMMANDS[(cmd, rest[0])], partial)
 
     # Tool-name completion for commands that take a tool argument.
-    # `install` also offers catalog names for harnesses not yet registered.
+    # `install` also offers installable names not yet registered.
     if cmd in _TOOL_TARGET_COMMANDS and len(rest) == 0:
         if cmd == "install":
             return _install_completions(partial)
@@ -619,16 +621,18 @@ def _provider_completions(partial: str = "") -> list[tuple[str, str]]:
 
 
 def _install_completions(partial: str = "") -> list[tuple[str, str]]:
-    """Registered tools plus catalog names not yet registered."""
+    """Registered tools plus installable names not yet registered."""
     out = _tool_completions(partial)
     have = {name for name, _ in out}
     try:
         from quiver.harness.catalog import HARNESS_CATALOG
+        from quiver.harness.installers import INSTALLERS
     except Exception:
         return out
-    for name, spec in sorted(HARNESS_CATALOG.items()):
+    for name in sorted(INSTALLERS):
         if name in have or (partial and not name.startswith(partial)):
             continue
+        spec = HARNESS_CATALOG.get(name, {})
         out.append((name, str(spec.get("description") or "installable")))
     return out
 
