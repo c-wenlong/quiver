@@ -5,7 +5,8 @@ import Testing
 private struct FakeActivity: ActivityProviding {
     var blocks: [ActivityBlock]
     /// Like the ledger, only blocks overlapping the range come back.
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        force: Bool) throws -> [ActivityBlock] {
         blocks.filter { $0.end >= range.start && $0.start < range.end }
     }
 }
@@ -19,7 +20,8 @@ private struct TogglingActivity: ActivityProviding {
     }
     var blocks: [ActivityBlock]
     var fails: Flag
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        force: Bool) throws -> [ActivityBlock] {
         if fails.value { throw Failure() }
         return blocks.filter { $0.end >= range.start && $0.start < range.end }
     }
@@ -231,5 +233,277 @@ private struct TogglingActivity: ActivityProviding {
         #expect(row.session.resume == nil)
         #expect(row.usage == nil)
         #expect(row.id.contains("gone"))
+    }
+}
+
+
+/// A provider whose reads the test holds open until it lets them through.
+private final class HeldActivity: ActivityProviding, @unchecked Sendable {
+    var blocks: [ActivityBlock]
+    /// What non-forced (prefetch) reads answer; nil means the same blocks.
+    var prefetchBlocks: [ActivityBlock]?
+    /// Hold non-forced reads too, so prefetches can be ordered after loads.
+    var holdPrefetch = false
+    private var state = State()
+    init(blocks: [ActivityBlock]) { self.blocks = blocks }
+    var calls: Int { state.withLock { $0.calls } }
+    var held: Bool {
+        get { state.withLock { $0.held } }
+        set { state.withLock { $0.held = newValue } }
+    }
+    /// Let held reads through; calls after this never wait.
+    func release() {
+        let pending = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.held = false
+            defer { s.waiting.removeAll() }
+            return s.waiting
+        }
+        pending.forEach { $0.resume() }
+    }
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        force: Bool) async throws -> [ActivityBlock] {
+        state.withLock { $0.calls += 1 }
+        let waitFirst = !force && holdPrefetch ? true : state.withLock { $0.held }
+        if waitFirst {
+            await withCheckedContinuation { continuation in
+                let wait = state.withLock { s -> Bool in
+                    if s.held || (!force && holdPrefetch) {
+                        s.waiting.append(continuation)
+                        return true
+                    }
+                    return false
+                }
+                if !wait { continuation.resume() }
+            }
+        }
+        let source = !force ? (prefetchBlocks ?? blocks) : blocks
+        return source.filter { $0.end >= range.start && $0.start < range.end }
+    }
+    private final class State: @unchecked Sendable {
+        var calls = 0
+        var held = true
+        var waiting: [CheckedContinuation<Void, Never>] = []
+        private let lock = NSLock()
+        func withLock<T>(_ body: (State) -> T) -> T {
+            lock.lock()
+            defer { lock.unlock() }
+            return body(self)
+        }
+    }
+}
+
+/// A snapshot store the test fills and reads back.
+private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
+    var saved: [CalendarSnapshot] = []
+    func load() async -> CalendarSnapshot? { saved.last }
+    func save(_ content: CalendarSnapshot) async { saved.append(content) }
+}
+
+@MainActor
+@Suite struct CalendarCacheTests {
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        c.firstWeekday = 2
+        return c
+    }
+
+    private func freshDefaults() -> UserDefaults {
+        let name = "CalendarCacheTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    private func block(_ start: String, session: String = "s") -> ActivityBlock {
+        let start = utc(start)
+        return ActivityBlock(harness: "claude", accountHome: "/h", sessionId: session,
+                             start: start, end: start.addingTimeInterval(3600), responses: 1)
+    }
+
+    @Test func aRestoredSnapshotPaintsBeforeTheLoadLands() async {
+        let snap = CalendarSnapshot(ranges: [
+            .init(start: utc("2026-10-12T00:00:00Z"), end: utc("2026-10-19T00:00:00Z"),
+                  providers: [0: [block("2026-10-14T09:00:00Z")]])])
+        let held = HeldActivity(blocks: [])
+        let model = CalendarModel(providers: [held], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") },
+                                  calendar: calendar, restored: snap)
+        async let load: () = model.load()
+        await Task.yield()
+        // The cached range's blocks are on screen while the provider's
+        // read is still suspended.
+        #expect(model.blocks.count == 1)
+        held.release()
+        await load
+        #expect(model.blocks.isEmpty)
+    }
+
+    @Test func prefetchFillsNeighbouringRangesWithoutPublishing() async throws {
+        let provider = FakeActivity(blocks: [block("2026-10-05T10:00:00Z", session: "prev"),
+                                             block("2026-10-14T10:00:00Z", session: "now"),
+                                             block("2026-10-21T10:00:00Z", session: "next")])
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await model.load()
+        #expect(model.blocks.map(\.sessionId) == ["now"])
+        // Give the utility-priority prefetch tasks a moment.
+        try await Task.sleep(for: .milliseconds(300))
+        // Moving back a week publishes from the cache: the blocks appear
+        // before the provider's load could run again.
+        model.previous()
+        #expect(model.blocks.map(\.sessionId) == ["prev"])
+    }
+
+    @Test func aCompletedScanKeepsStaleBlocksUntilTheRefetchLands() async {
+        let held = HeldActivity(blocks: [block("2026-10-14T09:00:00Z")])
+        held.held = false
+        let model = CalendarModel(providers: [held], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await model.load()
+        #expect(model.blocks.count == 1)
+        // Next load hangs; the stale range stays visible meanwhile.
+        held.held = true
+        model.noteScanCompleted()
+        async let load: () = model.load(force: true)
+        await Task.yield()
+        await Task.yield()
+        #expect(model.blocks.count == 1)
+        held.release()
+        await load
+        #expect(held.calls >= 2)
+    }
+
+    @Test func theSnapshotPersistsTheRecentRanges() async throws {
+        let spy = SnapSpy()
+        let provider = FakeActivity(blocks: [block("2026-10-14T09:00:00Z")])
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") },
+                                  calendar: calendar, snapshots: spy)
+        await model.load()
+        try await Task.sleep(for: .milliseconds(200))
+        let saved = try #require(spy.saved.last)
+        #expect(saved.ranges.contains {
+            $0.start == utc("2026-10-12T00:00:00Z") && $0.end == utc("2026-10-19T00:00:00Z")
+        })
+        // A new model hydrates from it.
+        let restored = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                     now: { utc("2026-10-14T12:00:00Z") },
+                                     calendar: calendar, restored: saved)
+        async let load: () = restored.load()
+        await Task.yield()
+        #expect(restored.blocks.count == 1)
+        await load
+    }
+
+    @Test func aTwentyEightDayRangeCachesAndPublishes() async {
+        let provider = FakeActivity(blocks: [block("2026-10-05T10:00:00Z", session: "a"),
+                                             block("2026-11-01T10:00:00Z", session: "b")])
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        let month = DateInterval(start: utc("2026-10-05T00:00:00Z"),
+                                 end: utc("2026-11-02T00:00:00Z"))
+        await model.load(range: month, force: false)
+        #expect(model.blocks.map(\.sessionId) == ["a", "b"])
+        // The long range is cached like any other: a reload paints it
+        // synchronously even with a provider that never answers.
+        let held = HeldActivity(blocks: [])
+        let cached = CalendarModel(providers: [held], defaults: freshDefaults(),
+                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar,
+                                   restored: CalendarSnapshot(ranges: [
+                                       .init(start: month.start, end: month.end,
+                                             providers: [0: [block("2026-10-05T10:00:00Z")]])]))
+        async let load: () = cached.load(range: month, force: false)
+        await Task.yield()
+        #expect(cached.blocks.count == 1)
+        held.release()
+        await load
+    }
+}
+
+extension CalendarCacheTests {
+    @Test func neighboursUseCalendarArithmeticAcrossDST() async {
+        // New York's 2026 spring-forward week is 167 hours long; only
+        // calendar arithmetic lands the neighbour on next()'s range.
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        newYork.firstWeekday = 1
+        let anchor = utc("2026-03-06T12:00:00Z")  // Friday of the DST week
+        let model = CalendarModel(providers: [], defaults: freshDefaults(),
+                                  now: { anchor }, calendar: newYork)
+        model.mode = .week
+        let expected = model.range(for: model.shiftedAnchor(1, mode: .week), mode: .week)
+        model.next()
+        #expect(model.visibleRange == expected)
+        #expect(expected.duration == 7 * 86400 - 3600)  // 167 hours
+
+        model.mode = .day
+        model.go(to: utc("2026-03-07T12:00:00Z"))
+        let dayAfter = model.range(for: model.shiftedAnchor(1, mode: .day), mode: .day)
+        model.next()
+        #expect(model.visibleRange == dayAfter)
+        #expect(dayAfter.duration == 23 * 3600)  // DST day
+    }
+
+    @Test func aLatePrefetchDoesNotOverwriteFresherBlocks() async throws {
+        let week = DateInterval(start: utc("2026-10-12T00:00:00Z"),
+                                end: utc("2026-10-19T00:00:00Z"))
+        let nextWeek = DateInterval(start: week.end, end: utc("2026-10-26T00:00:00Z"))
+        let stale = [block("2026-10-20T09:00:00Z", session: "prefetch")]
+        let fresh = [block("2026-10-20T10:00:00Z", session: "fresh")]
+        let provider = HeldActivity(blocks: fresh)
+        provider.prefetchBlocks = stale
+        provider.held = false
+        provider.holdPrefetch = true
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await model.load(force: true)
+        // The neighbour prefetch into next week is still suspended.
+        model.next()
+        #expect(model.visibleRange == nextWeek)
+        await model.load(force: true)
+        #expect(model.blocks.map(\.sessionId) == ["fresh"])
+        // Let the prefetch land: the fresh write wins.
+        provider.holdPrefetch = false
+        provider.release()
+        try await Task.sleep(for: .milliseconds(200))
+        await model.load(force: true)
+        #expect(model.blocks.map(\.sessionId) == ["fresh"])
+    }
+}
+
+extension CalendarCacheTests {
+    @Test func aFailingPrefetchKeepsTheProvidersCachedBlocks() async throws {
+        let flag = Flag()
+        let good = FakeActivity(blocks: [block("2026-10-14T09:00:00Z", session: "a")])
+        let flaky = TogglingActivity(blocks: [block("2026-10-14T10:00:00Z",
+                                                    session: "b")], fails: flag)
+        let model = CalendarModel(providers: [good, flaky], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await model.load()
+        try await Task.sleep(for: .milliseconds(300))  // let prefetches land
+        #expect(model.blocks.count == 2)
+        // Every cached range goes stale; the flaky provider now fails.
+        flag.value = true
+        model.noteScanCompleted()
+        model.next()
+        await model.load(force: true)
+        // Give the stale-range prefetch (back on the October 12 week) a
+        // moment to finish with the flaky provider failing.
+        try await Task.sleep(for: .milliseconds(300))
+        model.previous()
+        // The stale cache paints synchronously and must still hold both
+        // providers' blocks.
+        #expect(model.blocks.map(\.sessionId).sorted() == ["a", "b"])
+    }
+
+    @Test func aRestoredSnapshotFillsBlocksBeforeAnyLoad() {
+        let snap = CalendarSnapshot(ranges: [
+            .init(start: utc("2026-10-12T00:00:00Z"), end: utc("2026-10-19T00:00:00Z"),
+                  providers: [0: [block("2026-10-14T09:00:00Z")]])])
+        let model = CalendarModel(providers: [], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") },
+                                  calendar: calendar, restored: snap)
+        #expect(model.blocks.count == 1)
     }
 }

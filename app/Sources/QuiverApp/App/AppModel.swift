@@ -313,8 +313,31 @@ final class AppModel {
             sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
                                      defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
                                      snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")))
-            calendar = CalendarModel(providers: [ledger],
-                                     accountLabel: { directory().label(for: $0) })
+            let calendarCache = quiver.appending(path: "cache/calendar")
+            let calendarSnapshots = SnapshotFile<CalendarSnapshot>(
+                url: quiver.appending(path: "cache/app-calendar.json"))
+            let fileProviders: [any ActivityProviding] = [
+                DroidActivity(sessionsRoot: home.appending(path: ".factory/sessions"),
+                              accountHome: home.appending(path: ".factory").path,
+                              index: ActivityFileIndex(url: calendarCache.appending(path: "droid.json"))),
+                PiActivity(sessionsRoot: home.appending(path: ".pi/agent/sessions"),
+                           accountHome: home.appending(path: ".pi").path,
+                           index: ActivityFileIndex(url: calendarCache.appending(path: "pi.json"))),
+                FreebuffActivity(projectsRoot: home.appending(path: ".config/manicode/projects"),
+                                 accountHome: home.appending(path: ".config/manicode").path,
+                                 index: ActivityFileIndex(url: calendarCache.appending(path: "freebuff.json"))),
+                CursorAppActivity(userDataDirs: {
+                    var dirs = [home.appending(path: "Library/Application Support/Cursor")]
+                    dirs += ((try? store.load()) ?? [])
+                        .filter { $0.vendor == .cursor && !$0.isDefault }
+                        .compactMap { store.paths(for: $0).desktopData }
+                    return dirs
+                }, index: ActivityFileIndex(url: calendarCache.appending(path: "cursor.json"))),
+            ]
+            calendar = CalendarModel(providers: [ledger] + fileProviders,
+                                     accountLabel: { directory().label(for: $0) },
+                                     snapshots: calendarSnapshots,
+                                     restored: calendarSnapshots.load())
         } catch {
             overview = nil
             sessions = nil

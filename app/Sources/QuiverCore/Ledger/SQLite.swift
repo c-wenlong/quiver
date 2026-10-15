@@ -3,7 +3,7 @@ import SQLite3
 
 /// A thin wrapper over the system SQLite C API. Not thread-safe: each
 /// connection belongs to one actor or one call.
-final class SQLiteDatabase {
+final class SQLiteDatabase: @unchecked Sendable {
     struct Failure: Error, CustomStringConvertible, LocalizedError {
         let code: Int32
         let message: String
@@ -22,6 +22,13 @@ final class SQLiteDatabase {
     /// migrated or checkpointed in it.
     init(readOnly url: URL) throws {
         try open(url.path, flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX)
+        sqlite3_busy_timeout(handle, 2_000)
+    }
+
+    /// A `file:` URI form of `readOnly`, for paths that need URI params
+    /// (for example `?mode=ro` on a live WAL database).
+    init(readOnlyURI uri: String) throws {
+        try open(uri, flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX)
         sqlite3_busy_timeout(handle, 2_000)
     }
 
