@@ -255,6 +255,28 @@ private struct IconButtonBody: View {
     }
 }
 
+/// A full-width toggle row like a Notion calendar entry: no chrome, a
+/// `rowHover` wash under the pointer, the whole row clickable.
+struct LegendRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        LegendRowBody(configuration: configuration)
+    }
+}
+
+private struct LegendRowBody: View {
+    let configuration: ButtonStyleConfiguration
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .background(hovering ? Theme.rowHover : .clear,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
+            .onHover { hovering = $0 }
+    }
+}
+
 /// No chrome; dims while disabled, so an unavailable action never looks
 /// ready. Use through `plainButton()` to get the focus ring.
 struct RingedPlainStyle: ButtonStyle {

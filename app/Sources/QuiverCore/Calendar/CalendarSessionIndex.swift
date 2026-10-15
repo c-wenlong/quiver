@@ -40,4 +40,12 @@ public struct CalendarSessionIndex: Sendable {
         block.sessions.sorted { $0.start != $1.start ? $0.start < $1.start : $0.sessionId < $1.sessionId }
             .map { ($0, row(for: $0, harness: block.harness, accountHome: block.accountHome)) }
     }
+
+    /// The first `limit` rows plus how many more there are, for the hover
+    /// card's "at most 8 then +N" list.
+    public func rows(for block: ActivityBlock, limit: Int)
+        -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int) {
+        let all = rows(for: block)
+        return (Array(all.prefix(limit)), max(0, all.count - limit))
+    }
 }
