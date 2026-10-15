@@ -54,9 +54,15 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
 
     func run(_ arguments: [String]) async throws -> CommandResult {
         lock.withLock { recorded.append(arguments) }
-        if lock.withLock({ holding }), arguments.starts(with: ["harness", "usage"]) {
+        if arguments.starts(with: ["harness", "usage"]) {
+            // Check and register under one lock, or a release() landing in
+            // between would leave this continuation waiting forever.
             await withCheckedContinuation { cont in
-                lock.withLock { waiters.append(cont) }
+                let held = lock.withLock { () -> Bool in
+                    if holding { waiters.append(cont) }
+                    return holding
+                }
+                if !held { cont.resume() }
             }
         }
         return lock.withLock {
