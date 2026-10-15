@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rate_limit` (null when the account is signed out); human output lists
   each window like the list's usage cells.
 
+- **Extra Devin and Cursor accounts in Quiver.** The Add account sheet
+  now offers Devin and Cursor: each gets its own folders under
+  `~/.quiver/accounts`, opens its app isolated (`open -n` with the
+  account's `--user-data-dir`; Devin also exports `XDG_DATA_HOME`), and
+  shows up as a card under its starred harness with usage read by
+  `swe harness usage --account-dir`. Cursor's `cursor-agent` keeps one
+  sign-in per Mac, so a Cursor account's Terminal runs the default
+  account and Sign in opens its isolated Cursor app instead.
+
 - **An "Add harness" sheet on the Harnesses page.** The plus button opens
   swe's installer catalog minus what's already registered: harnesses on
   PATH get a "Register" button (`swe add`), the rest expand to show every

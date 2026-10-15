@@ -27,7 +27,10 @@ struct AccountsPage: View {
             // One grid for every account: Quiver's own profiles first, vendors
             // in a fixed order, then the starred harnesses in swe's order.
             // Each card carries its logo, so there are no per-vendor headings.
-            let cards = Vendor.allCases.flatMap { vendor in app.starredAccountCards.filter { $0.profile.vendor == vendor } }
+            // Quiver's own account cards are Claude and Codex only; extra
+            // Devin/Cursor accounts appear as harness cards from `others`.
+            let cards = Vendor.allCases.filter(\.hasDefaultProfile).flatMap { vendor in
+                app.starredAccountCards.filter { $0.profile.vendor == vendor } }
             let harnesses = app.others.cards
             if !cards.isEmpty || !harnesses.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter, alignment: .top)], spacing: Theme.gutter) {
@@ -56,6 +59,8 @@ struct AccountsPage: View {
                     do {
                         let profile = try await model.add(vendor: vendor, name: name, color: color)
                         perform { try await model.signIn(profile) }
+                        // Extra Devin/Cursor accounts are harness cards, built by `others`.
+                        if !vendor.hasDefaultProfile { await app.others.load() }
                     } catch {
                         actionError = error.localizedDescription
                     }
@@ -289,7 +294,7 @@ private struct AddAccountSheet: View {
             Tabs(options: Vendor.allCases.map { ($0, $0.title, $0.rawValue) }, selection: $vendor)
             TextField("Name, like Work or Personal", text: $name)
                 .quiverField()
-            Text("Quiver gives the account its own folders, then opens the CLI's sign-in in your terminal. Open the desktop app once afterwards to sign in there too.")
+            Text(caption(for: vendor))
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -306,6 +311,19 @@ private struct AddAccountSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    /// What this vendor's sign-in looks like; Cursor's is inside the app
+    /// and Devin's folder also holds what its agent runs.
+    private func caption(for vendor: Vendor) -> String {
+        switch vendor {
+        case .cursor:
+            "Signs in through the Cursor app. The cursor-agent CLI stays on your default account."
+        case .devin:
+            "Commands the agent runs in this account keep their data (for example uv and nvim) in its folder."
+        case .claude, .codex:
+            "Quiver gives the account its own folders, then opens the CLI's sign-in in your terminal. Open the desktop app once afterwards to sign in there too."
+        }
     }
 }
 
@@ -335,6 +353,9 @@ func planTitle(_ plan: String) -> String {
 /// swe has answered, Terminal is offered rather than hidden.
 private struct LaunchButtons: View {
     var target: LaunchTarget
+    /// Overrides the Terminal button's help when the CLI cannot run as
+    /// this account (cursor-agent keeps the default sign-in).
+    var terminalHelp: String? = nil
     var perform: (@escaping () async throws -> Void) -> Void
 
     var body: some View {
@@ -356,7 +377,7 @@ private struct LaunchButtons: View {
                 }
                 .iconButton()
                 .labelStyle(.iconOnly)
-                .help("Open \(target.title) in Terminal")
+                .help(terminalHelp ?? "Open \(target.title) in Terminal")
                 .accessibilityLabel("Open \(target.title) in Terminal")
             }
             if !target.canLaunch {
@@ -375,6 +396,7 @@ private struct HarnessAccountCard: View {
     var perform: (@escaping () async throws -> Void) -> Void
     @State private var renaming = false
     @State private var newName = ""
+    @State private var confirmingRemove = false
 
     var body: some View {
         let limit = row.limit
@@ -390,14 +412,28 @@ private struct HarnessAccountCard: View {
                     .accessibilityLabel(name == ownName ? name : "\(name), \(ownName)")
                 if let plan = limit?.planType { Badge(planTitle(plan)) }
                 Spacer()
-                EllipsisMenu {
-                    if HarnessAccess.loginCommand(for: row.name) != nil {
-                        Button("Sign in…") { perform { try await model.signIn(harness: row.name) } }
+                if let profile = row.profile {
+                    // An extra account: its name and folder are the profile's,
+                    // so a rename writes profiles.json and Remove deletes them.
+                    EllipsisMenu {
+                        Button("Sign in…") { perform { try await model.signIn(profile) } }
+                        Button("Show folder in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([model.folder(of: profile)])
+                        }
                         Divider()
+                        Button("Rename…") { newName = profile.name; renaming = true }
+                        Button("Remove…", role: .destructive) { confirmingRemove = true }
                     }
-                    Button("Rename…") { newName = name; renaming = true }
-                    if let accountName = row.accountName, !accountName.isEmpty {
-                        Button("Use the name \(ownName)") { rename(to: "") }
+                } else {
+                    EllipsisMenu {
+                        if HarnessAccess.loginCommand(for: row.name) != nil {
+                            Button("Sign in…") { perform { try await model.signIn(harness: row.name) } }
+                            Divider()
+                        }
+                        Button("Rename…") { newName = name; renaming = true }
+                        if let accountName = row.accountName, !accountName.isEmpty {
+                            Button("Use the name \(ownName)") { rename(to: "") }
+                        }
                     }
                 }
             }
@@ -419,25 +455,60 @@ private struct HarnessAccountCard: View {
                         case .timeout: Text("Didn't answer in time")
                         }
                     } else {
-                        Text(noLimitReason)
+                        switch row.usageNote {
+                        case .signIn?: Text("Sign in to see usage")
+                        case .updateSwe?: Text("Update swe to read this account's usage")
+                        case nil: Text(noLimitReason)
+                        }
                     }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Spacer()
-                LaunchButtons(
-                    target: LaunchTarget(kind: .harness(name: row.name, command: row.command),
-                        model: model,
-                        installedApp: { app.apps.installedApp(for: $0) },
-                        cliInstalled: { _ in row.cliInstalled }),
-                    perform: perform)
+                if let profile = row.profile {
+                    LaunchButtons(
+                        target: LaunchTarget(kind: .account(profile), model: model,
+                            installedApp: { app.apps.installedApp(for: $0) },
+                            cliInstalled: { _ in row.cliInstalled ?? model.cliOnPath[profile.vendor] }),
+                        // cursor-agent keeps one sign-in per Mac; say so
+                        // before the button reads as opening this account.
+                        terminalHelp: profile.vendor == .cursor
+                            ? "Opens cursor-agent on your default Cursor account. The Cursor CLI keeps one sign-in per Mac."
+                            : nil,
+                        perform: perform)
+                } else {
+                    LaunchButtons(
+                        target: LaunchTarget(kind: .harness(name: row.name, command: row.command),
+                            model: model,
+                            installedApp: { app.apps.installedApp(for: $0) },
+                            cliInstalled: { _ in row.cliInstalled }),
+                        perform: perform)
+                }
             }
         }
-        .alert("Rename \(ownName)", isPresented: $renaming) {
+        .alert("Rename \(row.profile?.name ?? ownName)", isPresented: $renaming) {
             TextField("Name", text: $newName)
-            Button("Rename") { rename(to: newName) }
+            if let profile = row.profile {
+                Button("Rename") { perform { try await renameProfile(profile, to: newName) } }
+            } else {
+                Button("Rename") { rename(to: newName) }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Changes its name in Accounts, the menu bar and widgets only. Leave it empty to use \(ownName).")
+            if row.profile == nil {
+                Text("Changes its name in Accounts, the menu bar and widgets only. Leave it empty to use \(ownName).")
+            }
+        }
+        .confirmationDialog("Remove \(row.profile?.name ?? "")?", isPresented: $confirmingRemove) {
+            if let profile = row.profile {
+                Button("Remove account and its folder", role: .destructive) {
+                    perform {
+                        defer { Task { await app.others.load() } }
+                        try await model.remove(profile)
+                    }
+                }
+            }
+        } message: {
+            Text("Deletes the settings and history Quiver kept for this account. The vendor account itself is untouched.")
         }
     }
 
@@ -483,5 +554,12 @@ private struct HarnessAccountCard: View {
         perform {
             try others.rename(harness, to: name)
         }
+    }
+
+    /// A profile rename is a ProfilesStore write, then a reload so the
+    /// card, menu bar and widgets pick the name up.
+    private func renameProfile(_ profile: Profile, to name: String) async throws {
+        try await app.accounts.rename(profile, to: name)
+        await app.others.load()
     }
 }

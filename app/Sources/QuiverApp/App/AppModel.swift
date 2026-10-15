@@ -55,7 +55,7 @@ final class AppModel {
             UserDefaults.standard.set(swePath, forKey: SweLocation.defaultsKey)
             swe = Self.client(for: swePath)
             skills.use(swe, for: swePath)
-            others = OtherLimitsModel(swe: swe)
+            others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider)
             Task { await others.load() }
         }
     }
@@ -185,14 +185,20 @@ final class AppModel {
     private(set) var others: OtherLimitsModel
     /// Account cards whose harness is starred in swe's registry: an
     /// unstarred Claude or Codex hides its card, and its limit with it,
-    /// until it is starred again.
+    /// until it is starred again. Extra Devin/Cursor accounts are harness
+    /// cards instead (`others`), so they never enter this list.
     var starredAccountCards: [AccountsModel.Card] {
-        accounts.cards.filter { others.isStarred($0.profile.vendor.rawValue) }
+        accounts.cards.filter {
+            $0.profile.vendor.hasDefaultProfile && others.isStarred($0.profile.vendor.rawValue)
+        }
     }
     /// Every limit together: the status item, notifications and widgets.
     let limits: LimitsMonitor
     /// Where each harness's desktop app is installed, if anywhere.
     let apps = AppLocator()
+    /// Extra Devin/Cursor profiles with their account dirs, shared by every
+    /// OtherLimitsModel a swe-path change creates.
+    @ObservationIgnored private var extraAccountsProvider: @MainActor () -> [(Profile, ProfilePaths)] = { [] }
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
     let agentsMd = AgentsModel()
     private(set) var apiKeys: APIKeysModel
@@ -254,7 +260,6 @@ final class AppModel {
         swePath = saved
         let client = Self.client(for: saved)
         swe = client
-        others = OtherLimitsModel(swe: client)
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
         appIcon = AppIconStyle(saved: UserDefaults.standard.string(forKey: "appIcon"))
@@ -279,9 +284,18 @@ final class AppModel {
             files: LocalFiles(),
             cacheURL: quiver.appending(path: "cache/app-usage.json"))
         let store = ProfileStore(root: quiver.appending(path: "accounts"), userHome: home)
+        // Non-default Devin/Cursor profiles are accounts of a harness: swe
+        // reads their usage from the account's own directory.
+        extraAccountsProvider = {
+            ((try? store.load()) ?? [])
+                .filter { !$0.isDefault && !$0.vendor.hasDefaultProfile }
+                .map { ($0, store.paths(for: $0)) }
+        }
+        others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider)
         var terminalChoice: () -> TerminalApp = { .terminal }
         accounts = AccountsModel(store: store, usage: usage, launcher: ProcessLauncher(),
-                                 terminal: { terminalChoice() })
+                                 terminal: { terminalChoice() },
+                                 installedApp: { [apps] in apps.installedApp(for: $0) })
 
         let directory: @Sendable () -> AccountDirectory = {
             AccountDirectory(profiles: (try? store.load()) ?? [], paths: store.paths(for:), home: home)

@@ -62,7 +62,9 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         -> (arguments: [String], environment: [String: String]) {
         var env = base
         for key in clearedVariables { env.removeValue(forKey: key) }
-        if !isDefault { env[LaunchPlanner.homeVariable(for: .claude)] = home }
+        if !isDefault, let variable = LaunchPlanner.homeVariable(for: .claude) {
+            env[variable] = home
+        }
         return (arguments, env)
     }
 
