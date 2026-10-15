@@ -48,6 +48,24 @@ import Testing
         #expect(entries[0].start == utc("2026-10-14T09:00:00Z"))
     }
 
+    @Test func anEntryKeepsEverySessionOfTheDay() {
+        // Two blocks of one project from different sessions: the entry's
+        // block carries both refs so its click opens the project sheet,
+        // and a session with two blocks keeps one clipped ref.
+        let day = DateInterval(start: utc("2026-10-14T00:00:00Z"),
+                               end: utc("2026-10-15T00:00:00Z"))
+        let entries = MonthLayout.entries(
+            [block("2026-10-14T09:00:00Z", session: "a", project: "repo"),
+             block("2026-10-14T14:00:00Z", session: "b", project: "repo"),
+             block("2026-10-14T16:00:00Z", session: "a", project: "repo")],
+            day: day)
+        #expect(entries.count == 1)
+        #expect(entries[0].block.sessions.map(\.sessionId) == ["a", "b"])
+        #expect(entries[0].block.sessions[0].start == utc("2026-10-14T09:00:00Z"))
+        #expect(entries[0].block.sessions[0].end == utc("2026-10-14T17:00:00Z"))
+        #expect(entries[0].block.sessions[0].responses == 2)
+    }
+
     @Test func aBlockAcrossMidnightContributesToBothDaysClipped() {
         let overnight = block("2026-10-14T23:00:00Z", minutes: 120)
         let day1 = DateInterval(start: utc("2026-10-14T00:00:00Z"),
@@ -197,7 +215,10 @@ import Testing
         // The load plus both neighbour prefetches make three calls.
         var ranges = await provider.wait(for: 3)
         let expectedNext = model.range(for: model.shiftedAnchor(1, mode: .month), mode: .month)
-        #expect(ranges.contains(expectedNext))
+        // The query widens by a day each side for edge-spanning blocks.
+        #expect(ranges.contains(DateInterval(
+            start: expectedNext.start.addingTimeInterval(-CalendarModel.edgeLookout),
+            end: expectedNext.end.addingTimeInterval(CalendarModel.edgeLookout))))
         #expect(expectedNext == DateInterval(start: utc("2026-10-26T00:00:00Z"),
                                            end: utc("2026-12-07T00:00:00Z")))
         // The same for a 3-day span.
@@ -205,8 +226,10 @@ import Testing
         model.mode = .days(3)
         await model.load()
         ranges = await provider.wait(for: 3)
-        #expect(ranges.contains(
-            model.range(for: model.shiftedAnchor(1, mode: .days(3)), mode: .days(3))))
+        let next = model.range(for: model.shiftedAnchor(1, mode: .days(3)), mode: .days(3))
+        #expect(ranges.contains(DateInterval(
+            start: next.start.addingTimeInterval(-CalendarModel.edgeLookout),
+            end: next.end.addingTimeInterval(CalendarModel.edgeLookout))))
     }
 
     @Test func keyCommandsMapLettersDigitsAndArrows() {

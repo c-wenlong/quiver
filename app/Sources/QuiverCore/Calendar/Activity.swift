@@ -30,8 +30,13 @@ public struct ActivityBlock: Sendable, Equatable, Identifiable, Codable {
     /// The config root the responses were read from, so two accounts of
     /// the same harness make two blocks.
     public var accountHome: String
-    /// The project the sessions ran in. Providers leave it empty and the
-    /// grouping step resolves it from each session's folder.
+    /// What the block groups and identifies by: the repository's root
+    /// path, so same-named folders of different repos stay apart. "" for
+    /// no folder and for providers' ungrouped blocks.
+    public var projectKey: String
+    /// The project the sessions ran in, for display. Providers leave it
+    /// empty and the grouping step resolves it from each session's
+    /// folder.
     public var project: String
     /// The sessions inside the block, earliest first.
     public var sessions: [SessionRef]
@@ -43,13 +48,15 @@ public struct ActivityBlock: Sendable, Equatable, Identifiable, Codable {
     public var responses: Int
 
     public var id: String {
-        "\(harness)|\(accountHome)|\(project)|\(start.timeIntervalSince1970)"
+        "\(harness)|\(accountHome)|\(projectKey.isEmpty ? project : projectKey)|\(start.timeIntervalSince1970)"
     }
 
     public init(harness: String, accountHome: String, project: String,
-                sessions: [SessionRef], start: Date, end: Date, responses: Int) {
+                sessions: [SessionRef], start: Date, end: Date, responses: Int,
+                projectKey: String = "") {
         self.harness = harness
         self.accountHome = accountHome
+        self.projectKey = projectKey
         self.project = project
         self.sessions = sessions
         self.start = start

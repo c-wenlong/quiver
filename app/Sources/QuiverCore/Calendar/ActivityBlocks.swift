@@ -44,16 +44,21 @@ public enum ActivityBlocks {
     /// `resolve` answers a working folder's project; a block that
     /// already names one keeps it, and a session with no folder groups
     /// under `ProjectResolver.noFolder`.
+    /// `resolve` answers a folder's project identity: `key` groups (the
+    /// repository root path), `name` displays.
     public static func groupByProject(_ blocks: [ActivityBlock], gap: TimeInterval,
-                                      project resolve: (String?) -> String) -> [ActivityBlock] {
+                                      project resolve: (String?) -> (key: String, name: String))
+        -> [ActivityBlock] {
         var grouped: [String: (harness: String, account: String, project: String,
-                              blocks: [ActivityBlock])] = [:]
+                              key: String, blocks: [ActivityBlock])] = [:]
         for block in blocks {
-            let project = block.project.isEmpty
+            let identity = block.project.isEmpty
                 ? resolve(block.sessions.first?.cwd)
-                : block.project
-            let key = "\(block.harness)|\(block.accountHome)|\(project)"
-            grouped[key, default: (block.harness, block.accountHome, project, [])]
+                : (key: block.projectKey.isEmpty ? block.project : block.projectKey,
+                   name: block.project)
+            let key = "\(block.harness)|\(block.accountHome)|\(identity.key)"
+            grouped[key, default: (block.harness, block.accountHome, identity.name,
+                                   identity.key, [])]
                 .blocks.append(block)
         }
         var result: [ActivityBlock] = []
@@ -67,13 +72,14 @@ public enum ActivityBlocks {
                         project: group.project,
                         sessions: merge(last.sessions, block.sessions),
                         start: last.start, end: max(last.end, block.end),
-                        responses: last.responses + block.responses)
+                        responses: last.responses + block.responses,
+                        projectKey: group.key)
                 } else {
                     merged.append(ActivityBlock(
                         harness: group.harness, accountHome: group.account,
                         project: group.project, sessions: block.sessions,
                         start: block.start, end: block.end,
-                        responses: block.responses))
+                        responses: block.responses, projectKey: group.key))
                 }
             }
             result += merged

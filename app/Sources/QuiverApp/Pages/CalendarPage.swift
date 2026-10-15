@@ -880,7 +880,8 @@ private struct ProjectSessionsSheet: View {
                 }
                 Spacer()
             }
-            VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 0) {
                 ForEach(rows, id: \.ref.sessionId) { item in
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -904,7 +905,9 @@ private struct ProjectSessionsSheet: View {
                             .opacity(item.ref.sessionId == rows.last?.ref.sessionId ? 0 : 1)
                     }
                 }
+                }
             }
+            .frame(maxHeight: 420)
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
             HStack {
                 Spacer()

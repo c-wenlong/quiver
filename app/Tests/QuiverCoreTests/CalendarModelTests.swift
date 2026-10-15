@@ -197,6 +197,24 @@ private struct TogglingActivity: ActivityProviding {
         #expect(second.hiddenHarnesses == ["codex"])
         #expect(second.hiddenAccounts == ["claude|/work"])
     }
+
+    @Test func aBlockSpanningMidnightKeepsItsSessionsFromBothSides() async {
+        // Sunday 23:50 and Monday 00:05 in one project: Monday's day
+        // view must show the block from 23:50 with both sessions, even
+        // though providers only answer blocks overlapping the range they
+        // were asked for. The model widens the query by a day each side
+        // so the grouping sees the whole story.
+        let model = model(blocks: [
+            block("2026-10-18T23:50:00Z", minutes: 10, session: "a", project: "repo"),
+            block("2026-10-19T00:05:00Z", minutes: 10, session: "b", project: "repo"),
+        ], now: utc("2026-10-19T12:00:00Z"))
+        model.mode = .day
+        await model.load()
+        #expect(model.visibleBlocks.count == 1)
+        #expect(model.visibleBlocks[0].start == utc("2026-10-18T23:50:00Z"))
+        #expect(model.visibleBlocks[0].sessions.map(\.sessionId) == ["a", "b"])
+    }
+
 }
 
 /// `CalendarSessionIndex`: one session id in two accounts resolves each

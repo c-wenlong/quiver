@@ -88,81 +88,146 @@ struct SidebarExpansionTests {
     }
 }
 
-/// The delayed hover both sidebars run through, with short injected
-/// delays so the suite stays fast.
+/// A test clock for `HoverExpansion`: `sleep` suspends until `advance`
+/// carries a sleeper's deadline past, so the delayed hover is decided
+/// by clock time alone, never by whether the main actor got a slot.
+@MainActor
+final class ManualClock {
+    private var now = Duration.zero
+    private var next = 0
+    private var sleepers: [(id: Int, deadline: Duration,
+                           resume: (Result<Void, Error>) -> Void)] = []
+
+    func sleep(_ delay: Duration) async throws {
+        let deadline = now + delay
+        let id = next
+        next += 1
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                sleepers.append((id, deadline, { cont.resume(with: $0) }))
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in self?.cancel(id) }
+        }
+    }
+
+    func advance(by delay: Duration) {
+        now += delay
+        let ready = sleepers.filter { $0.deadline <= now }
+        sleepers.removeAll { $0.deadline <= now }
+        for sleeper in ready { sleeper.resume(.success(())) }
+    }
+
+    private func cancel(_ id: Int) {
+        guard let index = sleepers.firstIndex(where: { $0.id == id }) else { return }
+        sleepers.remove(at: index).resume(.failure(CancellationError()))
+    }
+}
+
+/// The delayed hover both sidebars run through, driven by a manual
+/// clock so nothing in the suite waits on real time.
 @MainActor
 @Suite("Hover expansion")
 struct HoverExpansionTests {
-    /// enter 20 ms, exit 40 ms; sleeps run comfortably past each delay
-    /// while staying well under real timers' jitter.
-    private func rail() -> HoverExpansion {
+    /// enter 20, exit 40 units of clock time.
+    private func rail(_ clock: ManualClock) -> HoverExpansion {
         HoverExpansion(collapsed: true,
                        enterDelay: .milliseconds(20),
-                       exitDelay: .milliseconds(40))
+                       exitDelay: .milliseconds(40),
+                       sleep: { try await clock.sleep($0) })
     }
 
-    /// Polls until the delayed hover task lands; the main actor can be
-    /// busy under a full parallel run, so fixed sleeps are not enough.
-    private func wait(until condition: () -> Bool,
-                      timeout: Duration = .seconds(2)) async -> Bool {
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        return condition()
+    /// Lets a scheduled hover task reach its sleep, or land after the
+    /// clock advanced. Several yields: resuming a continuation only
+    /// makes the sleeper runnable, it does not run it first.
+    private func tick() async {
+        for _ in 0..<10 { await Task.yield() }
     }
 
     @Test func enteringACollapsedRailExpandsAfterTheDelay() async {
-        let hover = rail()
+        let clock = ManualClock()
+        let hover = rail(clock)
         hover.hover(true, collapsed: true)
+        await tick()
         #expect(!hover.isExpanded)
-        #expect(!hover.isFloating)
-        #expect(await wait { hover.isFloating })
+        clock.advance(by: .milliseconds(19))
+        await tick()
+        #expect(!hover.isExpanded)
+        clock.advance(by: .milliseconds(1))
+        await tick()
         #expect(hover.isExpanded)
+        #expect(hover.isFloating)
     }
 
     @Test func leavingBeforeTheEntryDelayNeverExpands() async {
-        let hover = rail()
+        let clock = ManualClock()
+        let hover = rail(clock)
         hover.hover(true, collapsed: true)
+        await tick()
         hover.hover(false, collapsed: true)
-        #expect(await !wait(until: { hover.isExpanded },
-                            timeout: .milliseconds(200)))
+        await tick()
+        clock.advance(by: .milliseconds(200))
+        await tick()
+        #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }
 
     @Test func leavingAFloatHidesItAndAReturnKeepsIt() async {
-        let hover = rail()
+        let clock = ManualClock()
+        let hover = rail(clock)
         hover.hover(true, collapsed: true)
-        #expect(await wait { hover.isFloating })
+        await tick()
+        clock.advance(by: .milliseconds(20))
+        await tick()
+        #expect(hover.isFloating)
 
         // Out for the full exit delay: hidden.
         hover.hover(false, collapsed: true)
+        await tick()
         #expect(hover.isExpanded) // still shown during the delay
-        #expect(await wait { !hover.isExpanded })
+        clock.advance(by: .milliseconds(40))
+        await tick()
+        #expect(!hover.isExpanded)
 
         // A return inside the exit delay cancels the hide.
         hover.hover(true, collapsed: true)
-        #expect(await wait { hover.isFloating })
-        hover.hover(false, collapsed: true)
-        try? await Task.sleep(for: .milliseconds(10))
-        hover.hover(true, collapsed: true)
-        #expect(await wait { hover.isExpanded })
+        await tick()
+        clock.advance(by: .milliseconds(20))
+        await tick()
         #expect(hover.isFloating)
+        hover.hover(false, collapsed: true)
+        await tick()
+        clock.advance(by: .milliseconds(10))
+        hover.hover(true, collapsed: true)
+        await tick()
+        clock.advance(by: .milliseconds(20))
+        await tick()
+        // The exit delay that was pending when the pointer returned can
+        // not hide it; the re-entry's delay has already run too.
+        #expect(hover.isExpanded)
+        #expect(hover.isFloating)
+        // Still expanded after the old exit deadline has passed.
+        clock.advance(by: .milliseconds(30))
+        await tick()
+        #expect(hover.isExpanded)
     }
 
     @Test func togglingWithThePointerInsideCollapsesAndStays() async {
         // Pinned open with the pointer inside: the toggle collapses and
         // suppresses the hover expansion it would otherwise trigger, so
-        // sleeping past the entry delay never re-opens the rail.
+        // advancing past the entry delay never re-opens the rail.
+        let clock = ManualClock()
         let hover = HoverExpansion(collapsed: false,
                                    enterDelay: .milliseconds(20),
-                                   exitDelay: .milliseconds(40))
+                                   exitDelay: .milliseconds(40),
+                                   sleep: { try await clock.sleep($0) })
         hover.hover(true, collapsed: false)
+        await tick()
         hover.toggle()
         #expect(hover.expansion.collapsed)
         #expect(!hover.isExpanded)
-        try? await Task.sleep(for: .milliseconds(200))
+        clock.advance(by: .milliseconds(80))
+        await tick()
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }
@@ -170,28 +235,36 @@ struct HoverExpansionTests {
     @Test func togglingWhileAnEntryIsPendingCancelsIt() async {
         // The rail's collapse landing between an enter and its delay
         // settles the pending hover first; no late expand re-opens it.
-        let hover = rail()
+        let clock = ManualClock()
+        let hover = rail(clock)
         hover.hover(true, collapsed: true)
+        await tick()
         hover.toggle()
         #expect(!hover.expansion.collapsed)
         #expect(hover.isExpanded)
         hover.toggle()
         #expect(hover.expansion.collapsed)
         #expect(!hover.isExpanded)
-        try? await Task.sleep(for: .milliseconds(200))
+        clock.advance(by: .milliseconds(80))
+        await tick()
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }
 
     @Test func hoverOnAPinnedOpenPanelChangesNothing() async {
+        let clock = ManualClock()
         let hover = HoverExpansion(collapsed: false,
                                    enterDelay: .milliseconds(20),
-                                   exitDelay: .milliseconds(20))
+                                   exitDelay: .milliseconds(20),
+                                   sleep: { try await clock.sleep($0) })
         hover.hover(true, collapsed: false)
+        await tick()
         #expect(hover.isExpanded)
         #expect(!hover.isFloating)
         hover.hover(false, collapsed: false)
-        try? await Task.sleep(for: .milliseconds(60))
+        await tick()
+        clock.advance(by: .milliseconds(60))
+        await tick()
         #expect(hover.isExpanded)
         #expect(!hover.isFloating)
     }
