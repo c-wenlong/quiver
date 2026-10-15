@@ -66,6 +66,25 @@ import Testing
         #expect(entries[0].block.sessions[0].responses == 2)
     }
 
+    @Test func aSessionFromTheOtherDayStaysOutOfTheEntry() {
+        // One block spanning midnight holds a Sunday-only session and a
+        // Monday-only one: Monday's entry must not list Sunday's.
+        let day = DateInterval(start: utc("2026-10-19T00:00:00Z"),
+                               end: utc("2026-10-20T00:00:00Z"))
+        var spanning = block("2026-10-18T23:50:00Z", minutes: 20, session: "a",
+                             project: "repo")
+        spanning.sessions = [
+            .init(sessionId: "sun", start: utc("2026-10-18T23:50:00Z"),
+                  end: utc("2026-10-18T23:55:00Z"), responses: 1),
+            .init(sessionId: "mon", start: utc("2026-10-19T00:05:00Z"),
+                  end: utc("2026-10-19T00:10:00Z"), responses: 1),
+        ]
+        let entries = MonthLayout.entries([spanning], day: day)
+        #expect(entries.count == 1)
+        #expect(entries[0].block.sessions.map(\.sessionId) == ["mon"])
+        #expect(entries[0].block.sessions[0].start <= entries[0].block.sessions[0].end)
+    }
+
     @Test func aBlockAcrossMidnightContributesToBothDaysClipped() {
         let overnight = block("2026-10-14T23:00:00Z", minutes: 120)
         let day1 = DateInterval(start: utc("2026-10-14T00:00:00Z"),

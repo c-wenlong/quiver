@@ -116,6 +116,11 @@ public enum SessionProjects {
         let parts = cwd.split(separator: "/").map(String.init)
         for (index, part) in parts.enumerated() where index > 0 {
             switch part {
+            case ".codex" where parts.indices.contains(index + 1) && parts[index + 1] == "worktrees":
+                // `~/.codex/worktrees/<id>/<name>` holds unrelated repos;
+                // the only root visible is ~/.codex itself, which would
+                // merge them all, so there is none.
+                return nil
             case ".claude" where parts.indices.contains(index + 1) && parts[index + 1] == "worktrees",
                  ".worktrees", "worktrees":
                 return "/" + parts[..<index].joined(separator: "/")

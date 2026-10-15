@@ -66,6 +66,9 @@ public final class HoverExpansion {
     public var expansion: SidebarExpansion
     /// The delayed hover change; a new pointer event replaces it.
     private var pending: Task<Void, Never>?
+
+    /// The in-flight delayed hover change, for tests that await it.
+    var pendingTaskForTesting: Task<Void, Never>? { pending }
     /// Where the pointer is right now, ahead of the delayed hover change.
     private var pointerInside = false
     /// How long the pointer must stay before expanding or hiding.

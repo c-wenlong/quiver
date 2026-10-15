@@ -63,12 +63,18 @@ public enum MonthLayout {
             let key = "\(block.harness)|\(block.accountHome)|\(block.projectKey.isEmpty ? block.project : block.projectKey)"
             let clippedStart = max(block.start, day.start)
             let clipped = min(block.end, day.end).timeIntervalSince(clippedStart)
-            let refs = block.sessions.map { ref in
-                ActivityBlock.SessionRef(sessionId: ref.sessionId, cwd: ref.cwd,
-                                         start: max(ref.start, day.start),
-                                         end: min(ref.end, day.end),
-                                         responses: ref.responses)
-            }
+            // Only sessions that worked that day: a block spanning
+            // midnight can hold a session from the other side, and
+            // clipping a ref that never touched the day would invert
+            // its span.
+            let refs = block.sessions
+                .filter { $0.start < day.end && $0.end >= day.start }
+                .map { ref in
+                    ActivityBlock.SessionRef(sessionId: ref.sessionId, cwd: ref.cwd,
+                                             start: max(ref.start, day.start),
+                                             end: min(ref.end, day.end),
+                                             responses: ref.responses)
+                }
             if var group = grouped[key] {
                 group.active += clipped
                 group.count += 1

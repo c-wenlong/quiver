@@ -97,6 +97,12 @@ final class ManualClock {
     private var next = 0
     private var sleepers: [(id: Int, deadline: Duration,
                            resume: (Result<Void, Error>) -> Void)] = []
+    /// How many sleeps have been registered, counting cancelled and
+    /// finished ones: waitForSleepers keys on this so a stale sleeper
+    /// never satisfies a wait meant for a newer task.
+    private var registrations = 0
+    /// Continuations waiting on `waitForSleepers`.
+    private var watchers: [(count: Int, resume: () -> Void)] = []
 
     func sleep(_ delay: Duration) async throws {
         let deadline = now + delay
@@ -105,9 +111,23 @@ final class ManualClock {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 sleepers.append((id, deadline, { cont.resume(with: $0) }))
+                registrations += 1
+                let ready = watchers.filter { registrations >= $0.count }
+                watchers.removeAll { registrations >= $0.count }
+                for watcher in ready { watcher.resume() }
             }
         } onCancel: { [weak self] in
             Task { @MainActor in self?.cancel(id) }
+        }
+    }
+
+    /// Suspends until `count` sleeps have been registered in all, so the
+    /// test knows the delayed hover task reached its sleep before the
+    /// clock advances.
+    func waitForSleepers(_ count: Int) async {
+        if registrations >= count { return }
+        await withCheckedContinuation { cont in
+            watchers.append((count, { cont.resume() }))
         }
     }
 
@@ -125,7 +145,7 @@ final class ManualClock {
 }
 
 /// The delayed hover both sidebars run through, driven by a manual
-/// clock so nothing in the suite waits on real time.
+/// clock and awaited pending tasks, so nothing waits on real time.
 @MainActor
 @Suite("Hover expansion")
 struct HoverExpansionTests {
@@ -137,24 +157,22 @@ struct HoverExpansionTests {
                        sleep: { try await clock.sleep($0) })
     }
 
-    /// Lets a scheduled hover task reach its sleep, or land after the
-    /// clock advanced. Several yields: resuming a continuation only
-    /// makes the sleeper runnable, it does not run it first.
-    private func tick() async {
-        for _ in 0..<10 { await Task.yield() }
+    /// Awaits the hover's pending task once the clock has passed its
+    /// deadline.
+    private func settle(_ hover: HoverExpansion) async {
+        await hover.pendingTaskForTesting?.value
     }
 
     @Test func enteringACollapsedRailExpandsAfterTheDelay() async {
         let clock = ManualClock()
         let hover = rail(clock)
         hover.hover(true, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(1)
         #expect(!hover.isExpanded)
         clock.advance(by: .milliseconds(19))
-        await tick()
         #expect(!hover.isExpanded)
         clock.advance(by: .milliseconds(1))
-        await tick()
+        await settle(hover)
         #expect(hover.isExpanded)
         #expect(hover.isFloating)
     }
@@ -163,11 +181,11 @@ struct HoverExpansionTests {
         let clock = ManualClock()
         let hover = rail(clock)
         hover.hover(true, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(1)
         hover.hover(false, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(2)
         clock.advance(by: .milliseconds(200))
-        await tick()
+        await settle(hover)
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }
@@ -176,39 +194,39 @@ struct HoverExpansionTests {
         let clock = ManualClock()
         let hover = rail(clock)
         hover.hover(true, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(1)
         clock.advance(by: .milliseconds(20))
-        await tick()
+        await settle(hover)
         #expect(hover.isFloating)
 
         // Out for the full exit delay: hidden.
         hover.hover(false, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(2)
         #expect(hover.isExpanded) // still shown during the delay
         clock.advance(by: .milliseconds(40))
-        await tick()
+        await settle(hover)
         #expect(!hover.isExpanded)
 
         // A return inside the exit delay cancels the hide.
         hover.hover(true, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(3)
         clock.advance(by: .milliseconds(20))
-        await tick()
+        await settle(hover)
         #expect(hover.isFloating)
         hover.hover(false, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(4)
         clock.advance(by: .milliseconds(10))
         hover.hover(true, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(5)
         clock.advance(by: .milliseconds(20))
-        await tick()
+        await settle(hover)
         // The exit delay that was pending when the pointer returned can
         // not hide it; the re-entry's delay has already run too.
         #expect(hover.isExpanded)
         #expect(hover.isFloating)
         // Still expanded after the old exit deadline has passed.
         clock.advance(by: .milliseconds(30))
-        await tick()
+        await settle(hover)
         #expect(hover.isExpanded)
     }
 
@@ -222,12 +240,11 @@ struct HoverExpansionTests {
                                    exitDelay: .milliseconds(40),
                                    sleep: { try await clock.sleep($0) })
         hover.hover(true, collapsed: false)
-        await tick()
         hover.toggle()
         #expect(hover.expansion.collapsed)
         #expect(!hover.isExpanded)
         clock.advance(by: .milliseconds(80))
-        await tick()
+        await settle(hover)
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }
@@ -238,7 +255,7 @@ struct HoverExpansionTests {
         let clock = ManualClock()
         let hover = rail(clock)
         hover.hover(true, collapsed: true)
-        await tick()
+        await clock.waitForSleepers(1)
         hover.toggle()
         #expect(!hover.expansion.collapsed)
         #expect(hover.isExpanded)
@@ -246,7 +263,7 @@ struct HoverExpansionTests {
         #expect(hover.expansion.collapsed)
         #expect(!hover.isExpanded)
         clock.advance(by: .milliseconds(80))
-        await tick()
+        await settle(hover)
         #expect(!hover.isExpanded)
         #expect(!hover.isFloating)
     }
@@ -258,13 +275,11 @@ struct HoverExpansionTests {
                                    exitDelay: .milliseconds(20),
                                    sleep: { try await clock.sleep($0) })
         hover.hover(true, collapsed: false)
-        await tick()
         #expect(hover.isExpanded)
         #expect(!hover.isFloating)
         hover.hover(false, collapsed: false)
-        await tick()
         clock.advance(by: .milliseconds(60))
-        await tick()
+        await settle(hover)
         #expect(hover.isExpanded)
         #expect(!hover.isFloating)
     }

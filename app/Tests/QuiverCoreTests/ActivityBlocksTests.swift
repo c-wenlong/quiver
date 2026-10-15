@@ -158,6 +158,24 @@ import Testing
         #expect(blocks[0].sessions.count == 2)
     }
 
+    @Test func codexWorktreesUnderTheSameHomeStayApart() {
+        // Deleted Codex worktrees live under ~/.codex/worktrees/<id>/<name>;
+        // ~/.codex is not a repo root, so each worktree is its own
+        // identity even though they share the home.
+        let resolve = ProjectResolver { _ in nil }
+        let blocks = ActivityBlocks.groupByProject([
+            block("2026-10-14T09:00:00Z", session: "a",
+                  cwd: "/Users/k/.codex/worktrees/aaa/project-a"),
+            block("2026-10-14T09:10:00Z", session: "b",
+                  cwd: "/Users/k/.codex/worktrees/bbb/project-b"),
+        ], gap: gap, project: resolve.identity(of:))
+        #expect(blocks.count == 2)
+        #expect(Set(blocks.map(\.project)) == ["project-a", "project-b"])
+        #expect(Set(blocks.map(\.projectKey))
+            == ["/Users/k/.codex/worktrees/aaa/project-a",
+                "/Users/k/.codex/worktrees/bbb/project-b"])
+    }
+
     @Test func sessionsWithoutAFolderGroupUnderNoFolder() {
         let blocks = ActivityBlocks.groupByProject([
             block("2026-10-14T09:00:00Z", session: "a"),
