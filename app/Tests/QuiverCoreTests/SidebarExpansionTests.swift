@@ -87,3 +87,105 @@ struct SidebarExpansionTests {
         #expect(!e.isFloating)
     }
 }
+
+/// The delayed hover both sidebars run through, with short injected
+/// delays so the suite stays fast.
+@MainActor
+@Suite("Hover expansion")
+struct HoverExpansionTests {
+    /// enter 20 ms, exit 40 ms; sleeps run comfortably past each delay
+    /// while staying well under real timers' jitter.
+    private func rail() -> HoverExpansion {
+        HoverExpansion(collapsed: true,
+                       enterDelay: .milliseconds(20),
+                       exitDelay: .milliseconds(40))
+    }
+
+    @Test func enteringACollapsedRailExpandsAfterTheDelay() async {
+        let hover = rail()
+        hover.hover(true, collapsed: true)
+        #expect(!hover.isExpanded)
+        #expect(!hover.isFloating)
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(hover.isExpanded)
+        #expect(hover.isFloating)
+    }
+
+    @Test func leavingBeforeTheEntryDelayNeverExpands() async {
+        let hover = rail()
+        hover.hover(true, collapsed: true)
+        hover.hover(false, collapsed: true)
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(!hover.isExpanded)
+        #expect(!hover.isFloating)
+    }
+
+    @Test func leavingAFloatHidesItAndAReturnKeepsIt() async {
+        let hover = rail()
+        hover.hover(true, collapsed: true)
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(hover.isFloating)
+
+        // Out for the full exit delay: hidden.
+        hover.hover(false, collapsed: true)
+        #expect(hover.isExpanded) // still shown during the delay
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(!hover.isExpanded)
+
+        // A return inside the exit delay cancels the hide.
+        hover.hover(true, collapsed: true)
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(hover.isFloating)
+        hover.hover(false, collapsed: true)
+        try? await Task.sleep(for: .milliseconds(20))
+        hover.hover(true, collapsed: true)
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(hover.isExpanded)
+        #expect(hover.isFloating)
+    }
+
+    @Test func togglingWithThePointerInsideCollapsesAndStays() async {
+        // Pinned open with the pointer inside: the toggle collapses and
+        // suppresses the hover expansion it would otherwise trigger, so
+        // sleeping past the entry delay never re-opens the rail.
+        let hover = HoverExpansion(collapsed: false,
+                                   enterDelay: .milliseconds(20),
+                                   exitDelay: .milliseconds(40))
+        hover.hover(true, collapsed: false)
+        hover.toggle()
+        #expect(hover.expansion.collapsed)
+        #expect(!hover.isExpanded)
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(!hover.isExpanded)
+        #expect(!hover.isFloating)
+    }
+
+    @Test func togglingWhileAnEntryIsPendingCancelsIt() async {
+        // The rail's collapse landing between an enter and its delay
+        // settles the pending hover first; no late expand re-opens it.
+        let hover = rail()
+        hover.hover(true, collapsed: true)
+        hover.toggle()
+        #expect(!hover.expansion.collapsed)
+        #expect(hover.isExpanded)
+        hover.toggle()
+        #expect(hover.expansion.collapsed)
+        #expect(!hover.isExpanded)
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(!hover.isExpanded)
+        #expect(!hover.isFloating)
+    }
+
+    @Test func hoverOnAPinnedOpenPanelChangesNothing() async {
+        let hover = HoverExpansion(collapsed: false,
+                                   enterDelay: .milliseconds(20),
+                                   exitDelay: .milliseconds(20))
+        hover.hover(true, collapsed: false)
+        #expect(hover.isExpanded)
+        #expect(!hover.isFloating)
+        hover.hover(false, collapsed: false)
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(hover.isExpanded)
+        #expect(!hover.isFloating)
+    }
+}

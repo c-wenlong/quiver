@@ -68,9 +68,17 @@ public final class HoverExpansion {
     private var pending: Task<Void, Never>?
     /// Where the pointer is right now, ahead of the delayed hover change.
     private var pointerInside = false
+    /// How long the pointer must stay before expanding or hiding.
+    /// Injected only so tests can run against short delays.
+    private let enterDelay: Duration
+    private let exitDelay: Duration
 
-    public init(collapsed: Bool = false) {
+    public init(collapsed: Bool = false,
+                enterDelay: Duration = .milliseconds(120),
+                exitDelay: Duration = .milliseconds(200)) {
         expansion = SidebarExpansion(collapsed: collapsed)
+        self.enterDelay = enterDelay
+        self.exitDelay = exitDelay
     }
 
     public var isExpanded: Bool { expansion.isExpanded }
@@ -88,7 +96,7 @@ public final class HoverExpansion {
             return
         }
         pending = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(inside ? 120 : 200))
+            try? await Task.sleep(for: inside ? enterDelay : exitDelay)
             guard !Task.isCancelled else { return }
             expansion.pointer(inside: inside)
         }
