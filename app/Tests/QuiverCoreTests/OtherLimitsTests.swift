@@ -308,3 +308,111 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
         #expect(revived.rows.isEmpty && revived.starred == nil)
     }
 }
+
+@MainActor
+@Suite struct HarnessAccountNameModelTests {
+    func tempNamesFile() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("quiver-names-\(UUID().uuidString)")
+            .appendingPathComponent("harness-names.json")
+    }
+
+    let body = Data(#"""
+    {"schema": 1, "data": {"harnesses": [
+      {"name": "cursor", "display_name": "Cursor IDE", "command": "cursor-agent", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1,
+       "rate_limit": {"status": "ok", "used_percent": 40, "remaining_percent": 60, "limit_reached": false, "reset_at": null, "window": "7d", "window_seconds": 604800, "plan_type": null, "remaining_units": null, "total_units": null, "fetched_at": 1791700000}}
+    ]}}
+    """#.utf8)
+
+    @Test func accountNameWinsOverDisplayNameAndBrand() async {
+        let names = HarnessAccountNameStore(file: tempNamesFile())
+        try? names.setName("Cortex", for: "cursor")
+        let model = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))),
+            snapshotFile: tempSnapshotFile(), names: names)
+        await model.load()
+        // accountName > displayName > brand, on rows and cards alike.
+        #expect(model.rows[0].title == "Cortex")
+        #expect(model.rows[0].accountTitle == "Cursor: Cortex")
+        #expect(model.cards[0].title == "Cortex")
+        // The harness's own name ignores the account name.
+        #expect(model.cards[0].harnessTitle == "Cursor IDE")
+    }
+
+    @Test func aCardWithoutAnAccountNameFallsBackToDisplayNameThenBrand() async {
+        let model = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))),
+            snapshotFile: tempSnapshotFile(),
+            names: HarnessAccountNameStore(file: tempNamesFile()))
+        await model.load()
+        #expect(model.cards[0].title == "Cursor IDE")
+        #expect(model.cards[0].harnessTitle == "Cursor IDE")
+        #expect(OtherLimitsModel.Card(name: "cursor", displayName: nil, command: "cursor-agent",
+                                    cliInstalled: nil, limit: nil).harnessTitle == "Cursor")
+    }
+
+    @Test func renameWritesTheNamesFileAndNeverCallsSwe() async throws {
+        let file = tempSnapshotFile()
+        let names = HarnessAccountNameStore(file: tempNamesFile())
+        let runner = FakeRunner(.init(status: 0, stdout: body, stderr: ""))
+        let model = OtherLimitsModel(swe: SweClient(runner: runner),
+                                     snapshotFile: file, names: names)
+        await model.load()
+        let calls = runner.calls
+
+        try model.rename("cursor", to: "Cortex")
+
+        #expect(runner.calls == calls)  // no swe run: harness.json untouched
+        #expect(model.cards[0].accountName == "Cortex")
+        #expect(model.rows[0].accountName == "Cortex")
+        #expect(model.rows[0].accountTitle == "Cursor: Cortex")
+        #expect(names.load()["cursor"] == "Cortex")
+        // The snapshot carries it, so the next launch shows it too.
+        let revived = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 2, stdout: Data(), stderr: "down"))),
+            snapshotFile: file, names: names)
+        #expect(revived.cards[0].accountName == "Cortex")
+
+        try model.rename("cursor", to: "")
+        #expect(model.cards[0].accountName == nil)
+        #expect(names.load()["cursor"] == nil)
+    }
+
+    @Test func aSnapshotWithoutAccountNameStillDecodes() async throws {
+        // Snapshots written before account names exist carry no such key.
+        let file = tempSnapshotFile()
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let json = #"""
+        {"savedAt": 800000000, "rows": [
+          {"name": "devin", "limit": {"status": "ok", "usedPercent": 40, "remainingPercent": 60,
+            "limitReached": false}, "displayName": "Devin Teams", "command": "devin"}],
+         "cards": [{"name": "devin", "displayName": "Devin Teams", "command": "devin",
+                    "cliInstalled": true, "limit": null}],
+         "starred": ["devin"], "cliInstalled": {"devin": true}}
+        """#
+        try json.write(to: file, atomically: true, encoding: .utf8)
+        let revived = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 2, stdout: Data(), stderr: "down"))),
+            snapshotFile: file, names: HarnessAccountNameStore(file: tempNamesFile()))
+        #expect(revived.rows.map(\.name) == ["devin"])
+        #expect(revived.rows[0].accountName == nil)
+        #expect(revived.rows[0].title == "Devin Teams")
+    }
+
+    @Test func hydrateStampsARenameMadeAfterTheSnapshot() async throws {
+        let file = tempSnapshotFile()
+        let names = HarnessAccountNameStore(file: tempNamesFile())
+        let model = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))),
+            snapshotFile: file, names: names)
+        await model.load()
+        // The name changed after the snapshot was written.
+        try names.setName("Cortex", for: "cursor")
+        let revived = OtherLimitsModel(
+            swe: SweClient(runner: FakeRunner(.init(status: 2, stdout: Data(), stderr: "down"))),
+            snapshotFile: file, names: names)
+        #expect(revived.cards[0].accountName == "Cortex")
+        #expect(revived.rows[0].accountTitle == "Cursor: Cortex")
+    }
+}

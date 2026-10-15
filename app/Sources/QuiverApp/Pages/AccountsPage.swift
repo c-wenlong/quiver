@@ -340,13 +340,24 @@ private struct LaunchButtons: View {
     var body: some View {
         HStack(spacing: 8) {
             if let appPath = target.appPath {
-                Button("Open app") { perform { try await target.openApp(at: appPath) } }
-                    .secondaryButton()
-                    .help(appPath)
+                let appName = URL(fileURLWithPath: appPath)
+                    .deletingPathExtension().lastPathComponent
+                Button("Open app", systemImage: "arrow.up.forward.app") {
+                    perform { try await target.openApp(at: appPath) }
+                }
+                .iconButton()
+                .labelStyle(.iconOnly)
+                .help("Open \(appName)")
+                .accessibilityLabel("Open \(appName)")
             }
             if target.cliInstalled != false {
-                Button("Terminal") { perform { try await target.openTerminal() } }
-                    .secondaryButton()
+                Button("Terminal", systemImage: "terminal") {
+                    perform { try await target.openTerminal() }
+                }
+                .iconButton()
+                .labelStyle(.iconOnly)
+                .help("Open \(target.title) in Terminal")
+                .accessibilityLabel("Open \(target.title) in Terminal")
             }
             if !target.canLaunch {
                 Text("Not installed").font(Theme.caption).foregroundStyle(Theme.textMuted)
@@ -364,12 +375,11 @@ private struct HarnessAccountCard: View {
     var perform: (@escaping () async throws -> Void) -> Void
     @State private var renaming = false
     @State private var newName = ""
-    /// A rename in flight; the menu waits for it.
-    @State private var saving = false
 
     var body: some View {
         let limit = row.limit
-        let ownName = UsageFormat.harness(row.name)
+        // The harness's own name, never the account name given to it here.
+        let ownName = row.harnessTitle
         let name = row.title
         let model = app.accounts
         Card {
@@ -386,10 +396,8 @@ private struct HarnessAccountCard: View {
                         Divider()
                     }
                     Button("Rename…") { newName = name; renaming = true }
-                        .disabled(saving)
-                    if name != ownName {
+                    if let accountName = row.accountName, !accountName.isEmpty {
                         Button("Use the name \(ownName)") { rename(to: "") }
-                            .disabled(saving)
                     }
                 }
             }
@@ -429,7 +437,7 @@ private struct HarnessAccountCard: View {
             Button("Rename") { rename(to: newName) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Sets its name in harness.json, so the Harnesses page shows it too. Leave it empty to go back to \(ownName).")
+            Text("Changes its name in Accounts, the menu bar and widgets only. Leave it empty to use \(ownName).")
         }
     }
 
@@ -467,18 +475,13 @@ private struct HarnessAccountCard: View {
         return "No reading yet"
     }
 
-    /// The harness's display name lives in harness.json, so a rename goes
-    /// through `swe edit` and the cards reload from swe.
+    /// The account name lives in the app's own file, so a rename never
+    /// touches harness.json and stays a no-swe local write.
     private func rename(to name: String) {
-        guard !saving else { return }
-        saving = true
-        let swe = app.swe
         let others = app.others
         let harness = row.name
         perform {
-            defer { saving = false }
-            try await HarnessesModel.rename(harness, to: name, using: swe)
-            await others.load()
+            try others.rename(harness, to: name)
         }
     }
 }

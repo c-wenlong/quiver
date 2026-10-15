@@ -224,15 +224,6 @@ public final class HarnessesModel {
         return nil
     }
 
-    /// Sets a harness's display name from outside the Harnesses page (the
-    /// Accounts cards), through the same queue as every other registry write.
-    /// An empty name clears it.
-    public static func rename(_ harness: String, to name: String, using swe: SweClient) async throws {
-        await registryWrites.acquire()
-        defer { registryWrites.release() }
-        try await swe.editHarness(harness, flags: ["--display-name=\(name.trimmingCharacters(in: .whitespaces))"])
-    }
-
     private func change(_ name: String, _ work: (SweClient) async throws -> HarnessStateChange) async {
         guard !busy.contains(name) else { return }
         busy.insert(name)

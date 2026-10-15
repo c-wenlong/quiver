@@ -14,20 +14,25 @@ public final class OtherLimitsModel {
         public var limit: RateLimit
         /// Its display name from harness.json, if set.
         public var displayName: String? = nil
+        /// Its account name from the app's own names file, if set. Wins over
+        /// `displayName` everywhere the harness is presented as an account.
+        public var accountName: String? = nil
         /// What swe runs for it, from harness.json.
         public var command: String = ""
         /// Whether that command is on PATH; nil from an older swe.
         public var cliInstalled: Bool? = nil
 
-        /// The display name, else the brand name, else the id capitalised.
+        /// The account name, else the display name, else the brand name.
         public var title: String {
-            let set = displayName?.trimmingCharacters(in: .whitespaces) ?? ""
+            let set = (accountName ?? displayName)?.trimmingCharacters(in: .whitespaces) ?? ""
             return set.isEmpty ? UsageFormat.harness(name) : set
         }
 
         /// Titled like an account ("Claude: Work"): the brand, then the name
         /// given to it, unless that name already says the brand.
-        public var accountTitle: String { OtherLimitsModel.accountTitle(name: name, displayName: displayName) }
+        public var accountTitle: String {
+            OtherLimitsModel.accountTitle(name: name, displayName: accountName ?? displayName)
+        }
     }
 
     nonisolated static func accountTitle(name: String, displayName: String?) -> String {
@@ -54,11 +59,21 @@ public final class OtherLimitsModel {
         public var id: String { name }
         public var name: String
         public var displayName: String?
+        /// Its account name from the app's own names file, if set.
+        public var accountName: String? = nil
         public var command: String
         public var cliInstalled: Bool?
         public var limit: RateLimit?
 
+        /// The account name, else the display name, else the brand name.
         public var title: String {
+            let set = (accountName ?? displayName)?.trimmingCharacters(in: .whitespaces) ?? ""
+            return set.isEmpty ? UsageFormat.harness(name) : set
+        }
+
+        /// The harness's own name (display name, else brand), ignoring the
+        /// account name: what "go back to the harness name" means.
+        public var harnessTitle: String {
             let set = displayName?.trimmingCharacters(in: .whitespaces) ?? ""
             return set.isEmpty ? UsageFormat.harness(name) : set
         }
@@ -96,13 +111,18 @@ public final class OtherLimitsModel {
     private var sweKnowsExclude = true
     /// Where the last successful list persists between launches.
     private let snapshotFile: URL
+    /// The app's own account names, separate from harness.json.
+    private let names: HarnessAccountNameStore
 
     public init(swe: SweClient,
-                snapshotFile: URL? = nil) {
+                snapshotFile: URL? = nil,
+                names: HarnessAccountNameStore =
+                    HarnessAccountNameStore(file: HarnessAccountNameStore.defaultFile)) {
         self.swe = swe
         self.snapshotFile = snapshotFile ?? FileManager.default
             .homeDirectoryForCurrentUser
             .appending(path: ".quiver/cache/app-other-limits.json")
+        self.names = names
         hydrate()
     }
 
@@ -120,10 +140,34 @@ public final class OtherLimitsModel {
         guard let data = try? Data(contentsOf: snapshotFile),
               let saved = try? JSONDecoder().decode(Snapshot.self, from: data)
         else { return }
-        rows = saved.rows
-        cards = saved.cards
+        let names = names.load()
+        rows = saved.rows.map { row in
+            var row = row
+            row.accountName = names[row.name]
+            return row
+        }
+        cards = saved.cards.map { card in
+            var card = card
+            card.accountName = names[card.name]
+            return card
+        }
         starred = Set(saved.starred)
         cliInstalled = saved.cliInstalled
+    }
+
+    /// Rename a harness's account card. The name lives in the app's own
+    /// file — a rename in Accounts must never write harness.json, where it
+    /// would double as the harness's display name on the Harnesses page.
+    /// An empty name clears it. Updates rows, cards and the snapshot.
+    public func rename(_ harness: String, to name: String) throws {
+        try names.setName(name, for: harness)
+        for index in rows.indices where rows[index].name == harness {
+            rows[index].accountName = name.isEmpty ? nil : name
+        }
+        for index in cards.indices where cards[index].name == harness {
+            cards[index].accountName = name.isEmpty ? nil : name
+        }
+        persist()
     }
 
     private func persist() {
@@ -190,19 +234,22 @@ public final class OtherLimitsModel {
             }
             // A newer load already answered; this one's state is older.
             guard mine == request else { return }
+            let accountNames = names.load()
             rows = harnesses.compactMap { harness in
                 // Starred only: swe polls just those, but can still return a
                 // cached reading for one since unstarred.
                 guard !Self.ownAccounts.contains(harness.name), harness.state == .starred,
                       let limit = harness.rateLimit else { return nil }
-                return Row(name: harness.name, limit: limit, displayName: harness.displayName, command: harness.command,
+                return Row(name: harness.name, limit: limit, displayName: harness.displayName,
+                           accountName: accountNames[harness.name], command: harness.command,
                            cliInstalled: harness.installed)
             }
             starred = Set(harnesses.lazy.filter { $0.state == .starred }.map(\.name))
             cards = harnesses
                 .filter { !Self.ownAccounts.contains($0.name) && $0.state == .starred }
                 .map { harness in
-                    Card(name: harness.name, displayName: harness.displayName, command: harness.command,
+                    Card(name: harness.name, displayName: harness.displayName,
+                         accountName: accountNames[harness.name], command: harness.command,
                          cliInstalled: harness.installed, limit: harness.rateLimit)
                 }
             cliInstalled = harnesses.reduce(into: [:]) { map, harness in
