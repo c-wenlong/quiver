@@ -31,7 +31,7 @@ private struct OverviewContent: View {
     static let twoColumnWidth: CGFloat = 840
 
     var body: some View {
-        Page(title: "Overview", subtitle: "Tokens and spend across every harness on this Mac.", maxWidth: 1280) {
+        Page(title: "Overview", subtitle: "Tokens and spend across every harness on this Mac.", ) {
             if let updated = model.updatedAt {
                 Text("Updated \(updated, format: .relative(presentation: .named))")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)

@@ -48,12 +48,13 @@ public final class CalendarModel {
     }
 
     /// What a plain key on the Calendar page does: pick a mode, step
-    /// sideways, or jump to today. Pure so it can be tested without a
-    /// view; arrows are handled by the view since they are not
-    /// characters.
+    /// sideways, jump to today, or toggle the side panel. Pure so it can
+    /// be tested without a view; arrows are handled by the view since
+    /// they are not characters.
     public enum KeyCommand: Sendable, Equatable {
         case mode(Mode)
         case previous, next, today
+        case togglePanel
 
         /// Arrow keys step the anchor, like the header chevrons.
         public enum Arrow: Sendable {
@@ -64,13 +65,15 @@ public final class CalendarModel {
             self = arrow == .left ? .previous : .next
         }
 
-        /// `d` Day, `w` Week, `m` Month, `t` Today, `1`...`9` N days.
+        /// `d` Day, `w` Week, `m` Month, `t` Today, `s` side panel,
+        /// `1`...`9` N days.
         public init?(character: Character) {
             switch character.lowercased().first {
             case "d": self = .mode(.day)
             case "w": self = .mode(.week)
             case "m": self = .mode(.month)
             case "t": self = .today
+            case "s": self = .togglePanel
             case let digit? where ("1"..."9").contains(digit):
                 self = .mode(.days(Int(String(digit)) ?? 1))
             default: return nil
@@ -104,6 +107,11 @@ public final class CalendarModel {
     public private(set) var hiddenHarnesses: Set<String>
     /// "harness|accountHome" pairs hidden on their own.
     public private(set) var hiddenAccounts: Set<String>
+    /// The mini-month-and-legend panel pinned away on the page's right.
+    /// Collapsing still lets the pointer float it over the grid.
+    public var panelCollapsed: Bool {
+        didSet { persist() }
+    }
 
     private let providers: [any ActivityProviding]
     private let accountLabel: (String) -> String
@@ -130,6 +138,7 @@ public final class CalendarModel {
     static let hiddenHarnessesKey = "calendar.hiddenHarnesses"
     static let hiddenAccountsKey = "calendar.hiddenAccounts"
     static let modeKey = "calendar.mode"
+    static let panelCollapsedKey = "calendar.panelCollapsed"
 
     public init(providers: [any ActivityProviding],
                 accountLabel: @escaping (String) -> String = { $0 },
@@ -147,6 +156,7 @@ public final class CalendarModel {
         hiddenHarnesses = Set(defaults.stringArray(forKey: Self.hiddenHarnessesKey) ?? [])
         hiddenAccounts = Set(defaults.stringArray(forKey: Self.hiddenAccountsKey) ?? [])
         mode = Self.decodedMode(defaults.string(forKey: Self.modeKey))
+        panelCollapsed = defaults.bool(forKey: Self.panelCollapsedKey)
         self.snapshots = snapshots
         // Hydrate the block cache from the last run's snapshot so the
         // first paint does not wait on a provider read.
@@ -234,6 +244,7 @@ public final class CalendarModel {
         case .previous: previous()
         case .next: next()
         case .today: today()
+        case .togglePanel: panelCollapsed.toggle()
         }
     }
 
@@ -491,5 +502,6 @@ public final class CalendarModel {
         defaults.set(Array(hiddenHarnesses), forKey: Self.hiddenHarnessesKey)
         defaults.set(Array(hiddenAccounts), forKey: Self.hiddenAccountsKey)
         defaults.set(Self.encodedMode(mode), forKey: Self.modeKey)
+        defaults.set(panelCollapsed, forKey: Self.panelCollapsedKey)
     }
 }

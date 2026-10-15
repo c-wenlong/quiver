@@ -137,12 +137,11 @@ private struct Sidebar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focused: AppSection?
     /// Pointer state; `collapsed` mirrors the model's persisted choice.
-    @State private var expansion = SidebarExpansion()
-    /// The delayed hover change; a new pointer event replaces it.
-    @State private var pending: Task<Void, Never>?
-    /// Where the pointer is right now, ahead of the delayed hover change.
-    @State private var pointerInside = false
+    /// The delayed expand/hide and toggle-settles-hover logic is shared
+    /// with the calendar's side panel through HoverExpansion.
+    @State private var hoverExpansion = HoverExpansion()
 
+    private var expansion: SidebarExpansion { hoverExpansion.expansion }
     private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
     private var isExpanded: Bool { expansion.isExpanded }
     private var isFloating: Bool { expansion.isFloating }
@@ -214,7 +213,7 @@ private struct Sidebar: View {
         .ignoresSafeArea(.container, edges: .top)
         .animation(animation, value: isExpanded)
         .onHover(perform: hover)
-        .onAppear { expansion.collapsed = model.sidebarCollapsed }
+        .onAppear { hoverExpansion.expansion.collapsed = model.sidebarCollapsed }
         .onChange(of: model.sidebarCollapsed) { _, new in
             // The button already toggled expansion, so this only fires
             // for outside changes like the menu shortcut: route them
@@ -260,24 +259,11 @@ private struct Sidebar: View {
     /// right after entering still suppresses the hover expansion and a
     /// late entry can't reopen it.
     private func toggleExpansion() {
-        pending?.cancel()
-        expansion.pointer(inside: pointerInside)
-        expansion.toggle()
+        hoverExpansion.toggle()
     }
 
     private func hover(_ inside: Bool) {
-        pending?.cancel()
-        pointerInside = inside
-        if !inside { expansion.pointerLeft() }
-        guard model.sidebarCollapsed else {
-            expansion.pointer(inside: inside)
-            return
-        }
-        pending = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(inside ? 120 : 200))
-            guard !Task.isCancelled else { return }
-            expansion.pointer(inside: inside)
-        }
+        hoverExpansion.hover(inside, collapsed: model.sidebarCollapsed)
     }
 
 
