@@ -86,7 +86,8 @@ Where each came from is in `Resources/harness-icons.tsv`:
 - Claude's colour mark, Qwen, Mistral, goose, Cline and the API key
   provider marks (OpenAI, DeepSeek, Z.ai, Yi, MiniMax, Xiaomi MiMo,
   StepFun, Groq, Upstage, Cerebras, OpenRouter, Together AI, Fireworks
-  AI, Vercel, Nebius, NVIDIA and Cloudflare) come from LobeHub icons
+  AI, Vercel, Nebius, NVIDIA and Cloudflare) and the model-lab marks
+  for Meta and Ant Group come from LobeHub icons
   (`@lobehub/icons-static-svg`).
 - npm comes from Simple Icons (simple-icons, CC0-1.0); Routing.Run's
   planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).

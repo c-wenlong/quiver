@@ -1,5 +1,6 @@
 id	kind	source_url	licence	notes
 aider	mono	https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/assets/icons/safari-pinned-tab.svg	Apache-2.0 repo; aider trademark	pixel 'a' mark, from the site's pinned-tab icon; potrace file: the background-plate subpath it wraps the mark in was removed, the next subpath's relative move made absolute (M 2705 3998) so the mark keeps its place, and the counter merged into the same path with fill-rule evenodd so the a keeps its hole
+antgroup	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/antgroup-color.svg	MIT (LobeHub icons); Ant Group trademark	Ant Group mark, for InclusionAI's Ling and Ring models
 antigravity	color	TokenTracker dashboard/public/brand-logos/antigravity.svg	MIT (TokenTracker)	Google Antigravity mark
 ark	color	TokenTracker dashboard/public/brand-logos/volcano-ark.svg	MIT (TokenTracker)	Volcano Engine Ark mark, used for both Ark plans
 augment	mono	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
@@ -30,6 +31,7 @@ kilo	mono	TokenTracker dashboard/public/brand-logos/kilo.svg	MIT (TokenTracker)	
 kimi	mono	TokenTracker dashboard/public/brand-logos/kimi.svg	MIT (TokenTracker)	Moonshot Kimi mark (LobeHub icons)
 kiro	mono	TokenTracker dashboard/public/brand-logos/kiro.svg	MIT (TokenTracker)	Kiro mark
 mastracode	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mastra.svg	MIT (LobeHub icons); Mastra trademark	Mastra's orbit mark; id is mastracode (the npm name), mark is Mastra's own
+meta	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/meta-color.svg	MIT (LobeHub icons); Meta trademark	Meta mark, for Meta's models (Llama, Muse)
 minimax	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/minimax-color.svg	MIT (LobeHub icons); MiniMax trademark	MiniMax colour mark
 mistral-vibe	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mistral-color.svg	MIT (LobeHub icons); Mistral AI trademark	Mistral colour mark
 nebius	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nebius.svg	MIT (LobeHub icons); Nebius trademark	Nebius mark

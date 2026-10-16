@@ -190,7 +190,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
             ("codex-mini", "openai"), ("gemini-2.5-pro", "google"), ("gemma-3", "google"),
             ("grok-4", "xai"), ("swe-2-max", "cognition"), ("compactor", "cognition"),
             ("glm-5.2", "zai"), ("deepseek-v3", "deepseek"), ("kimi-k2", "moonshot"),
-            ("moonshot-v1", "moonshot"), ("minimax-m2", "minimax"), ("qwen3-coder", "qwen"),
+            ("moonshot-v1", "moonshot"), ("minimax-m2", "minimax"), ("qwen3-coder", "alibaba"),
             ("mistral-large", "mistral"), ("devstral-small", "mistral"),
             ("composer-1", "cursor"), ("cursor-fast", "cursor"), ("something-else", "other"),
         ]
