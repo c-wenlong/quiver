@@ -43,6 +43,27 @@ public final class PricingModel {
         public var isFree: Bool
         /// Tokens with neither a logged cost nor a resolved rate.
         public var unpricedTokens: Int
+        /// The downloaded price under any user override, nil when the
+        /// model has no LiteLLM or Quiver price at all.
+        public var listPrice: ListPrice?
+        /// What deleting this row's saved price does: with a list price
+        /// under it the override resets to the list price, without it the
+        /// price goes away entirely.
+        public var resetKind: ResetKind {
+            guard let listPrice else { return .remove }
+            return .resetToList(listPrice)
+        }
+    }
+
+    /// The price a model would have without the user's overrides.
+    public struct ListPrice: Sendable, Equatable {
+        public var rates: ModelRates
+        public var source: PricingCatalog.Source
+    }
+
+    public enum ResetKind: Sendable, Equatable {
+        case resetToList(ListPrice)
+        case remove
     }
 
     /// A provider's card: its models, largest first.
@@ -122,12 +143,15 @@ public final class PricingModel {
                 case nil:
                     break
                 }
+                let listPrice = catalog.listLookup(slice.model)
+                    .map { ListPrice(rates: $0.rates, source: $0.source) }
                 merged[slice.model] = PricedModel(
                     model: slice.model, totals: slice.totals, harnesses: [slice.harness],
                     harnessBilled: slice.harnessBilled,
                     entry: entry, source: source, rates: rates,
                     tiers: tiers.sorted(), isFree: isFree,
-                    unpricedTokens: slice.totals.unpricedTokens)
+                    unpricedTokens: slice.totals.unpricedTokens,
+                    listPrice: listPrice)
                 order.append(slice.model)
             }
         }

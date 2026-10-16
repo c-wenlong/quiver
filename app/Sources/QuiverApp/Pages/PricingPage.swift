@@ -153,7 +153,7 @@ private struct ProviderCard: View {
             ForEach(shown) { row in
                 Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline)
                 PricingRow(row: row, columns: columns,
-                           clickable: row.unpricedTokens > 0 || row.source == .yours) { edit(row) }
+                           clickable: !row.harnessBilled) { edit(row) }
             }
             if group.models.count > Self.foldLimit {
                 if !shown.isEmpty { Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline) }
@@ -345,6 +345,15 @@ private struct PriceSheet: View {
     /// Editing one of the user's own prices rather than adding a new one.
     private var editing: Bool { row.source == .yours }
 
+    /// With a downloaded price under the override, deleting it restores
+    /// the list price; without one the price goes away entirely.
+    private var resetTitle: String {
+        switch row.resetKind {
+        case .resetToList: "Reset to list price"
+        case .remove: "Remove price"
+        }
+    }
+
     /// The key the row's price is saved under: the entry the lookup
     /// answered, not whatever the "Price applies to" field now says.
     private var originalKey: String {
@@ -356,9 +365,9 @@ private struct PriceSheet: View {
         self.row = row
         _key = State(initialValue: row.source == .yours && row.entry != nil
                      ? row.entry! : PricingCatalog.baseName(for: row.model))
-        // A saved price pre-fills the fields (stored per token, shown
-        // per million).
-        if row.source == .yours, let rates = row.rates {
+        // A priced row pre-fills the fields with its current rates
+        // (stored per token, shown per million).
+        if let rates = row.rates {
             _input = State(initialValue: Self.rate(rates.input))
             _output = State(initialValue: Self.rate(rates.output))
             _cacheRead = State(initialValue: Self.rate(rates.cacheRead))
@@ -393,6 +402,15 @@ private struct PriceSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(row.model).font(Theme.sectionTitle).tracking(-0.5)
                 .lineLimit(1).truncationMode(.middle)
+            if let listPrice = row.listPrice {
+                Text("List price (\(listPrice.source == .quiver ? "Quiver" : "LiteLLM")): "
+                     + "\(perMillion(listPrice.rates.input)) in · "
+                     + "\(perMillion(listPrice.rates.output)) out · "
+                     + "\(perMillion(listPrice.rates.cacheRead)) cache read · "
+                     + "\(perMillion(listPrice.rates.cacheWrite)) cache write per 1M")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Price applies to").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 TextField("Model name", text: $key).quiverField(monospaced: true)
@@ -419,7 +437,7 @@ private struct PriceSheet: View {
             }
             HStack {
                 if editing {
-                    Button("Remove price") { remove() }
+                    Button(resetTitle) { remove() }
                         .secondaryButton()
                         .disabled(saving)
                 }
