@@ -47,14 +47,17 @@ struct CodexCompareSection: View {
             caption("Last 4 weeks")
             HStack(spacing: 8) {
                 CompareChip(value: UsageFormat.tokens(section.chips.account),
-                            label: "Account total (all devices and Codex Cloud)")
+                            label: "Account total",
+                            help: "All devices and Codex Cloud, from OpenAI")
                 CompareChip(value: UsageFormat.tokens(section.chips.mac),
-                            label: "This Mac (local logs)")
+                            label: "This Mac",
+                            help: "This Mac's Codex logs")
                 CompareChip(
                     value: signed(section.chips.difference),
                     label: section.chips.difference >= 0
-                        ? "Not on this Mac (\(percent(section.chips.fraction)))"
-                        : "More on this Mac ⓘ",
+                        ? "Elsewhere (\(percent(section.chips.fraction)))"
+                        : "More on this Mac",
+                    help: "Account total minus this Mac",
                     warn: section.chips.difference < 0)
             }
             HStack {
@@ -119,19 +122,21 @@ struct CodexCompareSection: View {
 private struct CompareChip: View {
     var value: String
     var label: String
+    var help = ""
     var warn = false
 
     var body: some View {
         VStack(spacing: 2) {
             Text(value).font(Theme.rowTitle).monospacedDigit()
-                .foregroundStyle(warn ? Theme.warningText : Theme.textPrimary).lineLimit(1)
+                .foregroundStyle(warn ? Theme.warningText : Theme.textPrimary)
+                .lineLimit(1).minimumScaleFactor(0.85)
             Text(label).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
-                .lineLimit(2).multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1).minimumScaleFactor(0.85)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
         .background(Theme.subtle, in: .rect(cornerRadius: Theme.blockRadius))
+        .help(help)
     }
 }
 
@@ -214,7 +219,7 @@ private struct CompareTable: View {
     var body: some View {
         VStack(spacing: 0) {
             row(period: nil, cells: [weekly ? "Week of" : "Month",
-                                   "Account total", "This Mac", "Not on this Mac"])
+                                   "Account", "This Mac", "Elsewhere"])
                 .font(Theme.tableHeader).foregroundStyle(Theme.tableHeaderText)
                 .padding(.vertical, 4)
             ForEach(periods, id: \.start) { period in
@@ -233,28 +238,28 @@ private struct CompareTable: View {
 
     private func row(period: CodexComparePeriod?, cells: [String]) -> some View {
         HStack(spacing: 10) {
-            Text(cells[0]).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            Text(cells[0]).lineLimit(1)
+                .help(period?.inProgress == true ? "(so far)" : "")
+                .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(1..<cells.count, id: \.self) { index in
                 Text(cells[index])
                     .foregroundStyle(
                         index == 3 && (period?.difference ?? 0) < 0
                             ? AnyShapeStyle(Theme.warningText) : AnyShapeStyle(.foreground))
-                    .lineLimit(1)
-                    .frame(width: 76, alignment: .trailing)
+                    .lineLimit(1).minimumScaleFactor(0.85)
+                    .frame(width: 68, alignment: .trailing)
             }
         }
     }
 
     private func title(_ period: CodexComparePeriod) -> String {
-        let base = weekly
+        weekly
             ? period.start.formatted(.dateTime.month(.abbreviated).day())
             : period.start.formatted(.dateTime.month(.wide))
-        return period.inProgress ? "\(base) (so far)" : base
     }
 
     private func diff(_ period: CodexComparePeriod) -> String {
         let sign = period.difference < 0 ? "−" : "+"
         return sign + UsageFormat.tokens(abs(period.difference))
-            + (period.difference < 0 ? " ⓘ" : "")
     }
 }
