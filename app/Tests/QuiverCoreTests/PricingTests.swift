@@ -78,6 +78,31 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(PricingCatalog.baseName(for: "gpt-5") == "gpt-5")
     }
 
+    @Test func `resolve names the entry, tier and free models`() throws {
+        var supplement = PricingSupplement()
+        supplement.defaultTierMultipliers = ["fast": 2]
+        let catalog = try PricingCatalog(
+            liteLLM: Data("""
+                {"claude-opus-5-5": {"input_cost_per_token": 0.000015, \
+                "output_cost_per_token": 0.000075}}
+                """.utf8),
+            supplement: supplement)
+        // A `-fast` suffix resolves to the base entry with tier "fast".
+        guard case .priced(let rates, let entry, let source, let tier)? =
+                catalog.resolve(model: "claude-opus-5-5-high-fast") else {
+            Issue.record("expected .priced"); return
+        }
+        #expect(entry == "claude-opus-5-5" && source == .liteLLM && tier == "fast")
+        #expect(rates.tierMultipliers["fast"] == 2)
+        // A logged tier arrives as-is; a free model and a miss round out.
+        guard case .priced(_, _, _, "priority")? =
+                catalog.resolve(model: "claude-opus-5-5", tier: "priority") else {
+            Issue.record("expected .priced"); return
+        }
+        #expect(catalog.resolve(model: "openrouter/free") == .free)
+        #expect(catalog.resolve(model: "never-heard-of-it") == nil)
+    }
+
     @Test func `providers come from name prefixes`() {
         let cases: [(String, String)] = [
             ("claude-opus-5-5", "anthropic"), ("gpt-5", "openai"), ("o3", "openai"),
@@ -194,5 +219,36 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         await model.load()
         #expect(model.unpriced.isEmpty)
         #expect(model.groups.flatMap(\.models).first?.source == .yours)
+    }
+
+    @Test func `a fast-suffixed model and a free model are both priced`() async throws {
+        var supplement = PricingSupplement()
+        supplement.defaultTierMultipliers = ["fast": 2]
+        let catalog = try PricingCatalog(
+            liteLLM: Data("""
+                {"claude-opus-5-5": {"input_cost_per_token": 0.000015, \
+                "output_cost_per_token": 0.000075}}
+                """.utf8),
+            supplement: supplement)
+        let (ledger, model, temp) = try makeModel([
+            event("claude-opus-5-5-high-fast", tokens: 100),
+            event("openrouter/free", tokens: 50),
+        ], catalog: catalog)
+        await ledger.setPricing(catalog)
+        await model.load()
+        #expect(model.unpriced.isEmpty)
+        let fast = try #require(model.groups.flatMap(\.models)
+            .first { $0.model == "claude-opus-5-5-high-fast" })
+        #expect(fast.source == .liteLLM && fast.tier == "fast"
+                && fast.entry == "claude-opus-5-5" && !fast.isFree)
+        let free = try #require(model.groups.flatMap(\.models)
+            .first { $0.model == "openrouter/free" })
+        #expect(free.isFree && free.source == nil && free.rates == nil)
+        // The ledger agrees: the fast event costs the 2x fast rate and the
+        // free one costs nothing, so neither reports unpriced tokens.
+        let totals = await ledger.totals(in: allTime)
+        #expect(totals.unpricedTokens == 0)
+        #expect(totals.costUSD == 0.003)  // 100 input @ $15/1M x2
+        _ = temp
     }
 }

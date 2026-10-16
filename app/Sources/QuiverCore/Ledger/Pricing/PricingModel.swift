@@ -22,6 +22,11 @@ public final class PricingModel {
         public var entry: String?
         public var source: PricingCatalog.Source?
         public var rates: ModelRates?
+        /// The tier the name carried (`claude-opus-5-5-high-fast` prices as
+        /// the base model at the "fast" multiplier), nil for the base tier.
+        public var tier: String?
+        /// A free model: priced at zero with no catalog entry.
+        public var isFree: Bool
         /// Tokens with neither a logged cost nor a resolved rate.
         public var unpricedTokens: Int
     }
@@ -82,11 +87,22 @@ public final class PricingModel {
                 if !row.harnesses.contains(slice.harness) { row.harnesses.append(slice.harness) }
                 merged[slice.model] = row
             } else {
-                let lookup = catalog.lookup(slice.model)
+                var entry: String?, source: PricingCatalog.Source?, rates: ModelRates?
+                var tier: String?, isFree = false
+                switch catalog.resolve(model: slice.model) {
+                case .priced(let found, let key, let whereFrom, let resolvedTier):
+                    entry = key; source = whereFrom; rates = found
+                    tier = resolvedTier.isEmpty ? nil : resolvedTier
+                case .free:
+                    isFree = true
+                case nil:
+                    break
+                }
                 merged[slice.model] = PricedModel(
                     model: slice.model, totals: slice.totals, harnesses: [slice.harness],
                     harnessBilled: slice.harnessBilled,
-                    entry: lookup?.entry, source: lookup?.source, rates: lookup?.rates,
+                    entry: entry, source: source, rates: rates,
+                    tier: tier, isFree: isFree,
                     unpricedTokens: slice.totals.unpricedTokens)
                 order.append(slice.model)
             }

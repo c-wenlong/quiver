@@ -164,10 +164,11 @@ private struct ProviderCard: View {
 
 // MARK: - Rows
 
-/// `price` comes in per token; the page shows it per million.
+/// `price` comes in per token; the page shows it per million, in plain
+/// dollars like Overview's spend figures.
 private func perMillion(_ rate: Double?) -> String {
     guard let rate else { return "—" }
-    return (rate * 1_000_000).formatted(.currency(code: "USD").precision(.fractionLength(2)))
+    return String(format: "$%.2f", rate * 1_000_000)
 }
 
 private struct PricingRow: View {
@@ -183,12 +184,22 @@ private struct PricingRow: View {
 
     private var sourceText: String {
         if row.harnessBilled { return "Billed by harness" }
+        if row.isFree { return "Free" }
         return switch row.source {
         case .yours: "Yours"
         case .quiver: "Quiver"
         case .liteLLM: "LiteLLM"
         case nil: "No price"
         }
+    }
+
+    /// A split `-fast`-style name shows the base rates plus what the tier
+    /// applies: "fast ×2" when the catalog knows a multiplier, else just
+    /// the tier name.
+    private var tierNote: String? {
+        guard let tier = row.tier else { return nil }
+        guard let multiplier = row.rates?.tierMultipliers[tier] else { return tier }
+        return "\(tier) ×\(String(format: "%g", multiplier))"
     }
 
     var body: some View {
@@ -213,16 +224,23 @@ private struct PricingRow: View {
             }
             .fixedSize()
             Text(row.model).lineLimit(1).truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let tierNote {
+                Text(tierNote).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .lineLimit(1).fixedSize()
+            }
+            Spacer()
             ForEach(rateColumns, id: \.self) { rate in
                 Text(rate)
-                    .frame(width: 58, alignment: .trailing)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .frame(width: Self.rateColumnWidth, alignment: .trailing)
             }
             Text(sourceText)
-                .foregroundStyle(row.source == nil && !row.harnessBilled
+                .foregroundStyle(row.source == nil && !row.harnessBilled && !row.isFree
                                  ? Theme.warningText : Theme.textSecondary)
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 .frame(width: 96, alignment: .trailing)
             Text(UsageFormat.tokens(row.totals.totalTokens))
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 .frame(width: 68, alignment: .trailing)
         }
         .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).monospacedDigit()
@@ -230,11 +248,16 @@ private struct PricingRow: View {
         .padding(.vertical, 9)
     }
 
+    /// Wide enough for "$50.00" on a value and "Cache write" on the header.
+    static let rateColumnWidth: CGFloat = 76
+
     static var header: some View {
         HStack(spacing: 10) {
             Text("Model").frame(maxWidth: .infinity, alignment: .leading)
             ForEach(["Input", "Output", "Cache read", "Cache write"], id: \.self) { label in
-                Text(label).frame(width: 58, alignment: .trailing)
+                Text(label)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .frame(width: rateColumnWidth, alignment: .trailing)
             }
             Text("Source").frame(width: 96, alignment: .trailing)
             Text("Tokens").frame(width: 68, alignment: .trailing)

@@ -18,6 +18,18 @@ public struct PricingCatalog: Sendable {
         case yours, quiver, liteLLM
     }
 
+    /// What a logged model name resolves to. The ledger and the Pricing
+    /// page both decide through `resolve`, so they can never disagree.
+    public enum Resolution: Sendable, Equatable {
+        /// A catalog entry prices it: the entry's rates, key and source,
+        /// and the tier the model carried (`claude-opus-5-5-high-fast`
+        /// resolves to the base entry with tier "fast", which `cost(tier:)`
+        /// then prices at the tier's explicit rates or multiplier).
+        case priced(rates: ModelRates, entry: String, source: Source, tier: String)
+        /// A free model: priced at zero, no catalog entry needed.
+        case free
+    }
+
     private var entries: [String: ModelRates]
     /// Normalized name to entry key, built once.
     private var index: [String: String]
@@ -130,6 +142,22 @@ public struct PricingCatalog: Sendable {
     public func lookup(_ model: String) -> (rates: ModelRates, entry: String, source: Source)? {
         guard let key = resolvedKey(for: model), let rates = entries[key] else { return nil }
         return (rates, key, sources[key] ?? .liteLLM)
+    }
+
+    /// The whole resolution for a logged model: the literal name first
+    /// (`xai/grok-code-fast` is a real entry), then the `-fast` tier
+    /// suffix, then the free-model check. nil means the model is
+    /// genuinely unpriced.
+    public func resolve(model: String, tier: String = "") -> Resolution? {
+        if let hit = lookup(model) {
+            return .priced(rates: hit.rates, entry: hit.entry, source: hit.source, tier: tier)
+        }
+        let split = Self.splitTierSuffix(model: model, tier: tier)
+        if split.model != model, let hit = lookup(split.model) {
+            return .priced(rates: hit.rates, entry: hit.entry, source: hit.source, tier: split.tier)
+        }
+        if Self.isFree(model) { return .free }
+        return nil
     }
 
     /// The model's default key for a user price: the logged name with any
