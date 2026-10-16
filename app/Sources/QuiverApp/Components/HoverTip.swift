@@ -61,6 +61,7 @@ struct HoverTip: ViewModifier {
                     Text(text)
                         .font(Theme.caption)
                         .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(nil)
                 }
                 .frame(maxWidth: title == nil ? 260 : 320, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)

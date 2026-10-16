@@ -84,6 +84,16 @@ public struct UsageTotals: Sendable, Equatable, Codable {
     }
 }
 
+/// One model's usage for one harness, for the Pricing page.
+public struct ModelUsage: Sendable, Equatable {
+    public var model: String
+    public var harness: String
+    public var totals: UsageTotals
+    /// Every event in the slice carried its own logged cost, so no price
+    /// list was consulted.
+    public var harnessBilled: Bool
+}
+
 /// One harness and model on one calendar day.
 public struct DailyUsage: Sendable, Equatable {
     /// Start of the day in the calendar the query used.
@@ -162,6 +172,10 @@ public actor Ledger {
     public func setPricing(_ catalog: PricingCatalog) {
         pricing = catalog
     }
+
+    /// The catalog currently in force, for views that look models up
+    /// directly (the Pricing page).
+    public func catalog() -> PricingCatalog { pricing }
 
     // MARK: - Scanning
 
@@ -482,6 +496,18 @@ public actor Ledger {
         return sessions.values
             .map { var s = $0; s.models.sort(); return s }
             .sorted { ($0.lastTimestamp, $0.sessionId) > ($1.lastTimestamp, $1.sessionId) }
+    }
+
+    /// Usage per model and harness inside `range`, priced like the other
+    /// queries, for the Pricing page's per-model rows.
+    public func byModelHarness(in range: DateInterval) -> [ModelUsage] {
+        guard let groups = try? store.groups(
+            in: range, by: [.harness, .model], thresholds: pricing.thresholds)
+        else { return [] }
+        return groups.map { group in
+            ModelUsage(model: group.model, harness: group.dimensions[.harness] ?? "",
+                       totals: price(group), harnessBilled: group.hasLoggedCost)
+        }
     }
 
     /// Usage per account home.

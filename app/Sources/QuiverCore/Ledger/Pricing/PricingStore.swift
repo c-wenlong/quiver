@@ -30,26 +30,39 @@ public struct PricingStore: Sendable {
     /// A download with fewer priced models than this is treated as garbage
     /// (an error page, a truncated body).
     public let minimumModels: Int
+    /// The user's own prices (`config/pricing.json`), merged ahead of both
+    /// other sources; nil in callers that want the published lists only.
+    public let overridesFile: URL?
 
     public init(
         cacheFile: URL, transport: any PricingTransport = URLSessionPricingTransport(),
-        maxAge: TimeInterval = 86_400, minimumModels: Int = 50
+        maxAge: TimeInterval = 86_400, minimumModels: Int = 50, overridesFile: URL? = nil
     ) {
         self.cacheFile = cacheFile
         self.transport = transport
         self.maxAge = maxAge
         self.minimumModels = minimumModels
+        self.overridesFile = overridesFile
+    }
+
+    private var overrides: [String: [String: Any]] {
+        overridesFile.map { PricingOverrides(url: $0).entries } ?? [:]
+    }
+
+    private func catalog(from data: Data, supplement: PricingSupplement) throws -> PricingCatalog {
+        try PricingCatalog(liteLLM: data, supplement: supplement, overrides: overrides)
     }
 
     /// The refreshed copy when there is a readable one, else the bundled snapshot.
     public func load() throws -> PricingCatalog {
         let supplement = try PricingSupplement.bundled()
         if let data = try? Data(contentsOf: cacheFile),
-           let catalog = try? PricingCatalog(liteLLM: data, supplement: supplement),
+           let catalog = try? self.catalog(from: data, supplement: supplement),
            catalog.modelCount >= minimumModels {
             return catalog
         }
-        return try PricingCatalog.bundled()
+        return try PricingCatalog(liteLLM: PricingCatalog.bundledLiteLLM(), supplement: supplement,
+                                  overrides: overrides)
     }
 
     /// Downloads a fresh list when the cached one is missing or older than
@@ -63,7 +76,7 @@ public struct PricingStore: Sendable {
         }
         guard let data = try? await transport.fetch(Self.liteLLMURL),
               let supplement = try? PricingSupplement.bundled(),
-              let catalog = try? PricingCatalog(liteLLM: data, supplement: supplement),
+              let catalog = try? self.catalog(from: data, supplement: supplement),
               catalog.modelCount >= minimumModels
         else { return nil }
         do {
