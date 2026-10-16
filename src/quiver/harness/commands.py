@@ -2518,3 +2518,50 @@ def cmd_harness_usage_events(args):
         print(f"    {model:<32} {count:>6} events  {tokens:>14,} tokens  "
               f"${cost:.2f}")
     return 0
+
+
+def cmd_harness_usage_daily(args):
+    """``swe harness usage-daily codex [--account-dir=<dir>] [--json]``:
+    one Codex account's per-day token usage, asked of ``codex
+    app-server`` with ``CODEX_HOME`` at that account's home — never the
+    default account's files. Codex is the only harness whose app-server
+    answers this."""
+    args, json_view = take_json_flag(list(args or []))
+    err = error_stream(json_view)
+    try:
+        args = expand_value_flags(args, {"--account-dir"})
+    except ValueError as exc:
+        print(c("red", str(exc)), file=err)
+        return 1
+    name = None
+    account_dir = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--account-dir":
+            account_dir = args[i + 1]
+            i += 2
+        elif args[i].startswith("-"):
+            print(c("red", f"Unknown argument: {args[i]}"), file=err)
+            return 1
+        elif name is None:
+            name = args[i]
+            i += 1
+        else:
+            print(c("red", f"Unexpected argument: {args[i]}"), file=err)
+            return 1
+    usage = ("Usage: swe harness usage-daily codex "
+             "[--account-dir=<dir>] [--json]")
+    if name != "codex":
+        print(c("red", f"  {usage}"), file=err)
+        return 1
+    if account_dir is not None and not os.path.isdir(account_dir):
+        print(c("red", f"  No such directory: {account_dir}"), file=err)
+        return 1
+
+    from quiver.harness.codex_usage import (
+        fetch_codex_usage_daily, print_codex_usage_daily)
+
+    report = fetch_codex_usage_daily(account_dir)
+    if json_view:
+        return emit(report)
+    return print_codex_usage_daily(report, account_dir)
