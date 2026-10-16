@@ -78,7 +78,10 @@ if [ -e "$src/.git" ] &&
   git -C "$src" checkout --quiet --detach --force "$sha"
   git -C "$src" clean -fdq
 else
+  # Prune again once the path is gone: a registration of ours for it
+  # survived the first prune while another clone's worktree sat there.
   rm -rf "$src"
+  git -C "$repo" worktree prune
   git -C "$repo" worktree add --quiet --detach "$src" "$sha"
 fi
 commit="$(git -C "$src" rev-parse --short HEAD)"
