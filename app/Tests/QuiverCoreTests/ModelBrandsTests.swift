@@ -32,6 +32,14 @@ import Testing
         }
     }
 
+    /// "Other" must never look like a named brand: Cognition once drew in
+    /// exactly Other's grey.
+    @Test func otherHasItsOwnColour() {
+        for brand in ModelBrands.all {
+            #expect(brand.color != ModelBrands.other.color, "\(brand.id) draws in Other's colour")
+        }
+    }
+
     /// Artificial Analysis's creator slugs, as its API sends them.
     @Test func creatorSlugsResolve() {
         let cases = [("anthropic", "anthropic"), ("openai", "openai"), ("google", "google"),

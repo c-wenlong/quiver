@@ -37,7 +37,9 @@ public enum ModelBrands {
 
     public static let all: [ModelBrand] = [
         // Model labs. Anthropic takes the app's Claude harness colour; the
-        // rest are brand picks that stay apart on the chart.
+        // rest are brand picks where the brand has a colour, and a free hue
+        // where it is black or would be a third blue (Z.ai yellow, Moonshot
+        // bronze, InclusionAI magenta), so neighbouring bars stay apart.
         .init(id: "anthropic", name: "Anthropic",
               color: HarnessColor.resolve(id: "claude", primaryColor: nil), icon: "claude",
               keywords: ["anthropic", "claude"], models: ["claude"]),
@@ -52,11 +54,11 @@ public enum ModelBrands {
               keywords: ["grok-bot"], models: ["grok-bot"]),
         .init(id: "meta", name: "Meta", color: rgb("#2f7bf6"), icon: "meta",
               keywords: ["meta", "meta-llama", "llama", "muse"], models: ["llama", "muse"]),
-        .init(id: "zai", name: "Z.ai", color: rgb("#4a7cf0"), icon: "zai",
+        .init(id: "zai", name: "Z.ai", color: rgb("#e3cf4a"), icon: "zai",
               keywords: ["zai", "z-ai", "z.ai", "zhipu"], models: ["glm"]),
         .init(id: "deepseek", name: "DeepSeek", color: rgb("#5b6ef0"), icon: "deepseek",
               keywords: ["deepseek", "deepseek-ai"], models: ["deepseek"]),
-        .init(id: "moonshot", name: "Moonshot", color: rgb("#5b5f6b"), icon: "kimi",
+        .init(id: "moonshot", name: "Moonshot", color: rgb("#b8864b"), icon: "kimi",
               keywords: ["moonshot", "moonshot-ai", "moonshotai", "kimi"], models: ["kimi", "moonshot"]),
         .init(id: "minimax", name: "MiniMax", color: rgb("#e2466e"), icon: "minimax",
               keywords: ["minimax"], models: ["minimax"]),
@@ -69,14 +71,14 @@ public enum ModelBrands {
         .init(id: "stepfun", name: "StepFun", color: rgb("#14c8c8"), icon: "stepfun",
               keywords: ["stepfun"], models: [#"step[- ]?\d"#]),
         // InclusionAI is Ant Group's lab; Ant Group's mark stands for it.
-        .init(id: "inclusionai", name: "InclusionAI", color: rgb("#1f9cf0"), icon: "antgroup",
+        .init(id: "inclusionai", name: "InclusionAI", color: rgb("#c45bdc"), icon: "antgroup",
               keywords: ["inclusionai", "antgroup"], models: ["ling", #"ring-"#]),
         .init(id: "nvidia", name: "NVIDIA", color: rgb("#76b900"), icon: "nvidia",
               keywords: ["nvidia"], models: ["nemotron"]),
         .init(id: "upstage", name: "Upstage", icon: "upstage",
               keywords: ["upstage"], models: ["solar"]),
         .init(id: "yi", name: "01.AI", icon: "yi", keywords: ["01", "yi"], models: ["yi-"]),
-        .init(id: "cognition", name: "Cognition", color: rgb("#6b6b72"), icon: "devin",
+        .init(id: "cognition", name: "Cognition", color: rgb("#9aa0aa"), icon: "devin",
               keywords: ["cognition", "cognition-ai", "cognition_ai"],
               models: ["swe-", "compactor", "summarizer"]),
         .init(id: "cursor", name: "Cursor", icon: "cursor",
@@ -95,8 +97,9 @@ public enum ModelBrands {
               keywords: ["routing", "routingrun"]),
     ]
 
-    /// Anything no brand claims.
-    public static let other = ModelBrand(id: "other", name: "Other", color: HarnessRGB(hex: "#6b6b72")!)
+    /// Anything no brand claims: a dark grey that recedes behind the
+    /// named brands.
+    public static let other = ModelBrand(id: "other", name: "Other", color: HarnessRGB(hex: "#45454b")!)
 
     private static let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     private static let byKeyword: [String: ModelBrand] = {
