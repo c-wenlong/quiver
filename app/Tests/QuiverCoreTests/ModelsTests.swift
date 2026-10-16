@@ -181,25 +181,54 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(!ModelMatcher.parse("gpt-6-astra").fast)
     }
 
-    @Test func matchesBasePlusEffortThenFallsBackByPreference() {
-        let models = [
-            aa("Claude Opus 5.5", slug: "claude-opus-5-5", intelligence: 58),
-            aa("Claude Opus 5.5 (high)", slug: "claude-opus-5-5-high", intelligence: 60),
-            aa("Claude Opus 5.5 (max)", slug: "claude-opus-5-5-max", intelligence: 57),
-        ]
-        // Exact effort wins.
-        #expect(ModelMatcher.match("claude-opus-5-5-high-fast", in: models)?.slug
-                == "claude-opus-5-5-high")
-        // No qualifier on the logged name takes the unqualified entry.
-        #expect(ModelMatcher.match("anthropic/claude-opus-5-5", in: models)?.slug
+    @Test func parsesAAEffortTailsWithANoteAfterTheEffort() {
+        let parsed = ModelMatcher.parse("Claude Opus 5.5 (Max, Default Fallback)")
+        #expect(parsed.base == "claude-opus-5-5")
+        #expect(parsed.effort == "max")
+        #expect(ModelMatcher.parse("Claude Fable 5 (Max, Opus 4.8 Fallback)").base == "claude-fable-5")
+        // A parenthesis that leads with something else is its own model.
+        #expect(ModelMatcher.parse("Claude Sonnet 5 (Non-reasoning, High)").effort == nil)
+    }
+
+    /// AA's real naming: the effort-free slug is the headline run.
+    private var opusFamily: [AALanguageModel] {
+        [aa("Claude Opus 5.5 (Max, Default Fallback)", slug: "claude-opus-5-5", intelligence: 57.6),
+         aa("Claude Opus 5.5 (Xhigh, Default Fallback)", slug: "claude-opus-5-5-xhigh", intelligence: 56),
+         aa("Claude Opus 5.5 (High, Default Fallback)", slug: "claude-opus-5-5-high", intelligence: 53.6)]
+    }
+
+    @Test func harnessVariantsResolveToTheFoundationModel() {
+        // Devin and Cursor log the effort and mode they ran; the card is
+        // the foundation model's, as AA headlines it.
+        for logged in ["claude-opus-5-5-high-fast", "claude-opus-5-5", "anthropic/claude-opus-5-5-xhigh",
+                       "claude-opus-5.5-max@20260922"] {
+            #expect(ModelMatcher.match(logged, in: opusFamily)?.slug == "claude-opus-5-5")
+        }
+    }
+
+    @Test func aLinkToAnEffortEntryLandsOnItsFamilysHeadline() {
+        // The link sheet lists every effort; the leaderboard only headlines.
+        #expect(ModelMatcher.match("my-proxy-model", in: opusFamily,
+                                   links: ["my-proxy-model": "claude-opus-5-5-high"])?.slug
                 == "claude-opus-5-5")
-        // An effort AA doesn't list takes the unqualified entry first…
-        #expect(ModelMatcher.match("claude-opus-5-5-xhigh", in: models)?.slug
-                == "claude-opus-5-5")
-        // …and with none, the closest effort by preference (high over max).
-        let qualified = models.filter { $0.slug != "claude-opus-5-5" }
-        #expect(ModelMatcher.match("claude-opus-5-5-xhigh", in: qualified)?.slug
-                == "claude-opus-5-5-high")
+    }
+
+    @Test func aFamilyWithNoEffortFreeSlugTakesItsHighestEffort() {
+        let models = [aa("Grok 9 (High)", slug: "grok-9-high", creator: "x-ai", intelligence: 40),
+                      aa("Grok 9 (Max)", slug: "grok-9-max", creator: "x-ai", intelligence: 39),
+                      aa("Grok 9 (Low)", slug: "grok-9-low", creator: "x-ai", intelligence: 30)]
+        #expect(ModelMatcher.match("grok-9-low", in: models)?.slug == "grok-9-max")
+    }
+
+    @Test func headlinesListOneEntryPerFoundationModel() {
+        let models = opusFamily + [aa("GPT-6 Astra (Max)", slug: "gpt-6-astra", creator: "openai"),
+                                   aa("GPT-6 Astra (High)", slug: "gpt-6-astra-high", creator: "openai")]
+        #expect(ModelMatcher.headlines(in: models).map(\.slug) == ["claude-opus-5-5", "gpt-6-astra"])
+    }
+
+    @Test func displayNameDropsOnlyTheEffortTail() {
+        #expect(ModelMatcher.displayName(opusFamily[0]) == "Claude Opus 5.5")
+        #expect(ModelMatcher.displayName(aa("GPT-6 Sol (Non-reasoning)", slug: "x")) == "GPT-6 Sol (Non-reasoning)")
     }
 
     @Test func dotsAndDatesNormalizeTheLoggedName() {
