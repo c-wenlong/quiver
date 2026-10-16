@@ -208,6 +208,7 @@ public actor Ledger {
                 try scanSessionFile(file, accountHome: home.path,
                                     parse: { try SessionTotalsFile.droid(settings: $0, accountHome: home.path) },
                                     report: &report)
+                await Task.yield()
             }
         }
         for home in roots.clineHomes {
@@ -219,6 +220,7 @@ public actor Ledger {
                 try scanSessionFile(file, accountHome: home.path,
                                     parse: { try SessionTotalsFile.cline(session: $0, accountHome: home.path) },
                                     report: &report)
+                await Task.yield()
             }
         }
         return report
@@ -345,7 +347,16 @@ public actor Ledger {
             report.filesUnchanged += 1
             return
         }
-        let records = try parse(URL(fileURLWithPath: path))
+        // A bad file (mid-rewrite, corrupt) skips this round without a
+        // cursor, so it is retried on the next scan instead of aborting
+        // every source after it.
+        let records: [LedgerRecord]
+        do {
+            records = try parse(URL(fileURLWithPath: path))
+        } catch {
+            report.notes.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            return
+        }
         try store.db.execute("BEGIN IMMEDIATE")
         do {
             for record in records {

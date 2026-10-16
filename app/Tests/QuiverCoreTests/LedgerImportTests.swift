@@ -177,6 +177,30 @@ import Testing
         #expect(await ledger.events(in: allTime).isEmpty)
     }
 
+    @Test func aMalformedFileSkipsWithoutACursor() async throws {
+        let temp = try TempDir()
+        let home = try droidHome(temp, usage:
+            """
+            "inputTokens":100,"outputTokens":20,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
+            """)
+        // A settings file caught mid-rewrite must not abort the scan.
+        let broken = home.appendingPathComponent("sessions/-Users-x-proj/s2.settings.json")
+        try Data("{\"inclusiveTokenUsage\":".utf8).write(to: broken)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        #expect(await ledger.events(in: allTime).count == 1)
+
+        // No cursor was saved, so once the file is fixed a rescan reads it.
+        try Data("""
+            {"model":"glm-5.2",
+             "inclusiveTokenUsage":{"inputTokens":50,"outputTokens":10,
+             "cacheReadTokens":0,"cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1}}
+            """.utf8).write(to: broken)
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        #expect(await ledger.events(in: allTime).count == 2)
+    }
+
     // MARK: - Cline
 
     @Test func clineReadsTokensInNotUsageInputTokens() async throws {
