@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -46,7 +47,7 @@ import Testing
     private func feed(_ runner: any CommandRunning, ledger: Ledger,
                       accounts: [CursorUsageFeed.Account],
                       progressFile: URL? = nil) -> CursorUsageFeed {
-        CursorUsageFeed(ledger: ledger, swe: SweClient(runner: runner),
+        CursorUsageFeed(ledger: ledger, swe: { SweClient(runner: runner) },
                         accounts: { accounts },
                         progressFile: progressFile
                             ?? FileManager.default.temporaryDirectory
@@ -73,6 +74,119 @@ import Testing
     /// The `--since` argument a recorded call carried.
     private func sinceArg(_ call: [String]) -> Double {
         Double(call.first { $0.hasPrefix("--since=") }!.dropFirst("--since=".count))!
+    }
+
+    /// The first call parks until `finishCall`; later calls answer `good`
+    /// at once. Lets a test hold the old generation's fetch in flight
+    /// while a swe-path change runs a newer poll. `claimed` picks the
+    /// first call, `called` marks it parked — set under the same lock
+    /// section that drains `waiter`, so `waitUntilCalled` can neither
+    /// miss nor hang.
+    private final class FirstHeldRunner: CommandRunning, @unchecked Sendable {
+        let good: CommandResult
+        private let lock = NSLock()
+        private var recorded: [[String]] = []
+        private var held: CheckedContinuation<CommandResult, Never>?
+        private var waiter: CheckedContinuation<Void, Never>?
+        private var called = false
+        private var claimed = false
+
+        init(good: CommandResult) { self.good = good }
+        var calls: [[String]] { lock.withLock { recorded } }
+
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            lock.withLock { recorded.append(arguments) }
+            let isFirst = lock.withLock { () -> Bool in
+                defer { claimed = true }
+                return !claimed
+            }
+            if isFirst {
+                return await withCheckedContinuation {
+                    (c: CheckedContinuation<CommandResult, Never>) in
+                    let pending = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                        held = c
+                        called = true
+                        defer { waiter = nil }
+                        return waiter
+                    }
+                    pending?.resume()
+                }
+            }
+            return good
+        }
+
+        func waitUntilCalled() async {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                let ready = lock.withLock { () -> Bool in
+                    if called { return true }
+                    waiter = c
+                    return false
+                }
+                if ready { c.resume() }
+            }
+        }
+
+        func finishCall(_ result: CommandResult) {
+            let pending = lock.withLock { () -> CheckedContinuation<CommandResult, Never>? in
+                defer { held = nil }
+                return held
+            }
+            pending?.resume(returning: result)
+        }
+    }
+
+    /// Parks call `park` (0-based, counting every call) until
+    /// `finishCall`; every other call answers `good` at once.
+    private final class NthHeldRunner: CommandRunning, @unchecked Sendable {
+        let park: Int
+        let good: CommandResult
+        private let lock = NSLock()
+        private var recorded: [[String]] = []
+        private var held: CheckedContinuation<CommandResult, Never>?
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var heldStarted = false
+
+        init(park: Int, good: CommandResult) { self.park = park; self.good = good }
+        var calls: [[String]] { lock.withLock { recorded } }
+
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            let isHeld = lock.withLock { () -> Bool in
+                recorded.append(arguments)
+                return recorded.count - 1 == park
+            }
+            if isHeld {
+                return await withCheckedContinuation {
+                    (c: CheckedContinuation<CommandResult, Never>) in
+                    let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+                        held = c
+                        heldStarted = true
+                        defer { waiters.removeAll() }
+                        return waiters
+                    }
+                    pending.forEach { $0.resume() }
+                }
+            }
+            return good
+        }
+
+        func waitUntilHeld() async {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                let ready = lock.withLock { () -> Bool in
+                    if heldStarted { return true }
+                    waiters.append(c)
+                    return false
+                }
+                if ready { c.resume() }
+            }
+        }
+
+        func finishCall(_ result: CommandResult) {
+            let pending = lock.withLock { () -> CheckedContinuation<CommandResult, Never>? in
+                defer { held = nil }
+                return held
+            }
+            pending?.resume(returning: result)
+        }
     }
 
     private func accts() -> [CursorUsageFeed.Account] { [CursorUsageFeed.Account(home: account)] }
@@ -212,7 +326,7 @@ import Testing
         try await ledger.ingest([CursorUsageFeed.record(for: CursorUsageEvent(
             timestamp: Date().timeIntervalSince1970 - 60, model: "grok-bot-cua",
             kind: "k", conversationId: "c9", headless: true,
-            inputTokens: 10, outputTokens: 5,
+            inputTokens: 10, outputTokens: 200,
             cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.001),
             accountKey: account, accountHome: account)])
         let range = DateInterval(start: .now.addingTimeInterval(-3600), duration: 3600)
@@ -230,7 +344,7 @@ import Testing
                                      accountLabel: { $0 })
         let before = overview.revision
         let feed = CursorUsageFeed(
-            ledger: ledger, swe: SweClient(runner: runner), accounts: { self.accts() },
+            ledger: ledger, swe: { SweClient(runner: runner) }, accounts: { self.accts() },
             onIngested: { await overview.reloadAfterLedgerWrite() })
         await feed.poll()
         #expect(overview.revision == before + 1)
@@ -334,6 +448,77 @@ import Testing
         // ... and the switch to uid-new re-asked for its full window.
         let before = Date().addingTimeInterval(-180 * 86_400).timeIntervalSince1970
         #expect((before - 1)...before + 60 ~= sinceArg(runner.calls[1]))
+        #expect(await ledger.events(in: allTime).count == 2)
+    }
+
+    @Test func aStaleReplyCannotReinstateTheTooOldVerdict() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        // Call 1 (the old path's poll) parks; the path change's poll
+        // answers "ok" and ingests before the parked reply lands.
+        let runner = FirstHeldRunner(good: reply("ok", twoEvents, accountId: "uid-1"))
+        let feed = feed(runner, ledger: ledger, accounts: accts())
+        let stale = Task { await feed.poll() }
+        await runner.waitUntilCalled()
+        await feed.swePathChanged()
+        #expect(await ledger.events(in: allTime).count == 2)
+        // The old path's fetch fails "unknown subcommand" only now: its
+        // generation is stale, so the verdict must not come back.
+        runner.finishCall(CommandResult(
+            status: 1, stdout: Data(),
+            stderr: "Unknown harness subcommand: usage-events"))
+        await stale.value
+        // sweTooOld stayed off: the next poll still asks swe.
+        await feed.poll()
+        #expect(runner.calls.count == 3)
+        let lastError = await feed.lastError
+        #expect(lastError == nil)
+    }
+
+    @Test func aStaleSuccessCannotClearTheNewerTooOldVerdict() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        // Call 0 parks; the path change's poll hears "unknown subcommand"
+        // and sets the verdict. The parked old reply answering "ok" must
+        // not clear it.
+        let runner = NthHeldRunner(
+            park: 0,
+            good: CommandResult(status: 1, stdout: Data(),
+                                stderr: "Unknown harness subcommand: usage-events"))
+        let feed = feed(runner, ledger: ledger, accounts: accts())
+        let stale = Task { await feed.poll() }
+        await runner.waitUntilHeld()
+        await feed.swePathChanged()
+        runner.finishCall(reply("ok", twoEvents, accountId: "uid-1"))
+        await stale.value
+        // The verdict stuck: the next poll returns without asking swe.
+        await feed.poll()
+        #expect(runner.calls.count == 2)
+    }
+
+    @Test func aSupersededRoundStillReportsItsIngestedRows() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let extra = CursorUsageFeed.Account(home: "/t/cursor-side/desktop",
+                                            accountDir: "/t/cursor-side/desktop")
+        // The old round's first account answers and ingests; its second
+        // parks while a swe-path change supersedes the round.
+        let runner = NthHeldRunner(park: 1, good: reply("ok", twoEvents, accountId: "uid-1"))
+        let ingests = Mutex(0)
+        let feed = CursorUsageFeed(
+            ledger: ledger, swe: { SweClient(runner: runner) },
+            accounts: { self.accts() + [extra] },
+            progressFile: temp.url.appending(path: "cache/cursor-feed.json"),
+            onIngested: { ingests.withLock { $0 += 1 } })
+        let stale = Task { await feed.poll() }
+        await runner.waitUntilHeld()
+        await feed.swePathChanged()
+        runner.finishCall(reply("ok", twoEvents, accountId: "uid-2"))
+        await stale.value
+        // The new round re-ingests the same keys, so its own callback is
+        // a no-op — the one notification is the superseded round's
+        // already-written rows.
+        #expect(ingests.withLock { $0 } == 1)
         #expect(await ledger.events(in: allTime).count == 2)
     }
 

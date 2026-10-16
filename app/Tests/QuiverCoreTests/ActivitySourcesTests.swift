@@ -137,3 +137,156 @@ import Testing
         #expect(blocks.contains { $0.sessions[0].sessionId.hasPrefix("task-") } == false)
     }
 }
+
+/// Pi and Droid sessions reach the calendar through their own log files,
+/// so the ledger's block query never judges them; the file sources take
+/// the same whole-history trivial-session drop as a filter on the index,
+/// under the same "Hide accidental sessions" setting.
+extension ActivitySourcesTests {
+    private func ledger(_ events: [UsageEvent], in dir: TempDir) async throws -> Ledger {
+        let ledger = try Ledger(cacheDirectory: dir.path("cache/ledger"), pricing: .empty)
+        try await ledger.ingest(events.enumerated().map {
+            LedgerRecord(key: "k\($0.offset)", event: $0.element)
+        })
+        return ledger
+    }
+
+    /// Pi's session id is the file path as the index enumerated it, and
+    /// temp dirs resolve /var to /private/var along the way; read it back
+    /// through an unfiltered provider so the ledger key matches exactly.
+    private func piSession(_ dir: TempDir, _ name: String) async throws -> String {
+        _ = try write(dir, "sessions/proj/\(name)", """
+            {"type":"session","id":"\(name)","timestamp":"2026-08-10T08:30:00.000Z","cwd":"/work/pi"}
+            {"type":"message","timestamp":"2026-08-10T08:32:00.000Z"}
+            """)
+        let probe = PiActivity(sessionsRoot: dir.url.appending(path: "sessions"),
+                               accountHome: "/pi", index: index(dir, "pi-probe"))
+        let blocks = try await probe.activityBlocks(in: range, gap: CalendarModel.gap,
+                                                    force: true)
+        return try #require(blocks.first?.sessions.first?.sessionId)
+    }
+
+    private func droidFile(_ dir: TempDir, _ session: String) throws -> String {
+        try write(dir, "sessions/proj/\(session).jsonl", """
+            {"type":"session_start","id":"\(session)","cwd":"/work/app"}
+            {"type":"message","timestamp":"2026-08-10T08:37:16.298Z"}
+            """)
+    }
+
+    private func piProvider(_ dir: TempDir, _ ledger: Ledger) -> PiActivity {
+        PiActivity(sessionsRoot: dir.url.appending(path: "sessions"),
+                   accountHome: "/pi", index: index(dir, "pi"),
+                   filter: { await ledger.filterTrivialActivitySessions($0, harness: "pi") })
+    }
+
+    private func droidProvider(_ dir: TempDir, _ ledger: Ledger) -> DroidActivity {
+        DroidActivity(sessionsRoot: dir.url.appending(path: "sessions"),
+                      accountHome: "/factory", index: index(dir, "droid"),
+                      filter: { await ledger.filterTrivialActivitySessions($0, harness: "droid") })
+    }
+
+    @Test func aTrivialPiSessionDrawsNoCalendarBlock() async throws {
+        let dir = try TempDir()
+        let session = try await piSession(dir, "1786332436_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl")
+        let ledger = try await ledger([
+            UsageEvent(harness: "pi", accountHome: "/pi", sessionId: session,
+                       model: "m", timestamp: utc("2026-08-10T08:32:00Z"),
+                       outputTokens: 10),
+        ], in: dir)
+        let blocks = try await piProvider(dir, ledger)
+            .activityBlocks(in: range, gap: CalendarModel.gap, force: true)
+        #expect(blocks.isEmpty)
+    }
+
+    @Test func realPiHistoryOutsideTheRangeKeepsTheBlock() async throws {
+        // Only the third reply sits in the queried day; the session's
+        // whole history is three replies over days, so it is real work.
+        let dir = try TempDir()
+        let session = try await piSession(dir, "1786332436_bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl")
+        let ledger = try await ledger([
+            UsageEvent(harness: "pi", accountHome: "/pi", sessionId: session,
+                       model: "m", timestamp: utc("2026-08-05T10:00:00Z"),
+                       outputTokens: 10),
+            UsageEvent(harness: "pi", accountHome: "/pi", sessionId: session,
+                       model: "m", timestamp: utc("2026-08-06T10:00:00Z"),
+                       outputTokens: 10),
+            UsageEvent(harness: "pi", accountHome: "/pi", sessionId: session,
+                       model: "m", timestamp: utc("2026-08-10T08:32:00Z"),
+                       outputTokens: 10),
+        ], in: dir)
+        let blocks = try await piProvider(dir, ledger)
+            .activityBlocks(in: range, gap: CalendarModel.gap, force: true)
+        #expect(blocks.count == 1)
+        #expect(blocks[0].responses == 1)
+    }
+
+    @Test func aPositiveDroidReplyStaysAndAZeroTokenSessionDrops() async throws {
+        // Droid events carry no per-reply token detail, so only an empty
+        // session is trivial; a lone reply with tokens is real work.
+        let dir = try TempDir()
+        _ = try droidFile(dir, "11111111-2222-3333-4444-555555555555")
+        _ = try droidFile(dir, "66666666-7777-8888-9999-000000000000")
+        let ledger = try await ledger([
+            UsageEvent(harness: "droid", accountHome: "/factory",
+                       sessionId: "11111111-2222-3333-4444-555555555555",
+                       model: "m", timestamp: utc("2026-08-10T08:37:16Z"),
+                       outputTokens: 5),
+            UsageEvent(harness: "droid", accountHome: "/factory",
+                       sessionId: "66666666-7777-8888-9999-000000000000",
+                       model: "m", timestamp: utc("2026-08-10T08:37:16Z"),
+                       outputTokens: 0),
+        ], in: dir)
+        let blocks = try await droidProvider(dir, ledger)
+            .activityBlocks(in: range, gap: CalendarModel.gap, force: true)
+        #expect(blocks.map { $0.sessions[0].sessionId }
+            == ["11111111-2222-3333-4444-555555555555"])
+    }
+
+    @Test func disablingTheSettingRestoresTheCachedSessions() async throws {
+        let dir = try TempDir()
+        let session = try await piSession(dir, "1786332436_cccccccc-cccc-dddd-eeeeeeeeeeee.jsonl")
+        let ledger = try await ledger([
+            UsageEvent(harness: "pi", accountHome: "/pi", sessionId: session,
+                       model: "m", timestamp: utc("2026-08-10T08:32:00Z"),
+                       outputTokens: 10),
+        ], in: dir)
+        let provider = piProvider(dir, ledger)
+        #expect(try await provider
+            .activityBlocks(in: range, gap: CalendarModel.gap, force: true).isEmpty)
+        ledger.setHidesTrivialSessions(false)
+        // Inside the index's refresh window this is the cached session
+        // list: the filter runs on it, not a re-parse.
+        let blocks = try await provider
+            .activityBlocks(in: range, gap: CalendarModel.gap, force: false)
+        #expect(blocks.count == 1)
+    }
+
+    @Test func aSessionWithoutUsageRowsStaysVisible() async throws {
+        // An unscanned or unledgered session proves nothing; its file
+        // still shows real responses.
+        let dir = try TempDir()
+        _ = try await piSession(dir, "1786332436_dddddddd-dddd-dddd-eeeeeeeeeeee.jsonl")
+        let ledger = try await ledger([
+            UsageEvent(harness: "claude", accountHome: "/claude", sessionId: "other",
+                       model: "m", timestamp: utc("2026-08-10T09:00:00Z"),
+                       outputTokens: 200),
+        ], in: dir)
+        let blocks = try await piProvider(dir, ledger)
+            .activityBlocks(in: range, gap: CalendarModel.gap, force: true)
+        #expect(blocks.count == 1)
+    }
+
+    @Test func usageUnderAnotherAccountDoesNotHideTheSession() async throws {
+        let dir = try TempDir()
+        let session = try await piSession(dir, "1786332436_eeeeeeee-eeee-dddd-eeeeeeeeeeee.jsonl")
+        let ledger = try await ledger([
+            UsageEvent(harness: "pi", accountHome: "/other-account", sessionId: session,
+                       model: "m", timestamp: utc("2026-08-10T08:32:00Z"),
+                       outputTokens: 10),
+        ], in: dir)
+        let blocks = try await piProvider(dir, ledger)
+            .activityBlocks(in: range, gap: CalendarModel.gap, force: true)
+        #expect(blocks.count == 1)
+        #expect(blocks[0].accountHome == "/pi")
+    }
+}

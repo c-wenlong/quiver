@@ -76,6 +76,8 @@ struct AccountsPage: View {
         if renewExpired {
             await app.accounts.refreshFromButton()
             await app.others.load(refreshFailed: true)
+            // The Codex totals are a separate fetch on the same button.
+            await app.codexUsage?.refresh(force: true)
         } else {
             await app.accounts.load(force: force)
             await app.others.load()
@@ -145,6 +147,13 @@ private struct AccountCard: View {
                         // swe's answer when its registry lists the CLI, else a direct PATH check.
                         cliInstalled: { app.others.cliInstalled[$0] ?? model.cliOnPath[profile.vendor] }),
                     perform: perform)
+            }
+            if profile.vendor == .codex, let codexUsage = app.codexUsage,
+               let section = codexUsage.section(for: model.folder(of: profile).path) {
+                Divider().overlay(Theme.border)
+                CodexCompareSection(
+                    section: section,
+                    signIn: { perform { try await model.signIn(profile) } })
             }
         }
         .alert("Rename account", isPresented: $renaming) {

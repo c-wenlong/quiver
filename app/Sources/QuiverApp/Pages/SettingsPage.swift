@@ -184,6 +184,11 @@ private struct SettingsSectionView: View {
             SettingRow(title: "App icon", detail: "The Dock shows this one. Finder keeps the light icon.") {
                 Tabs(options: AppIconStyle.allCases.map { ($0, $0.title) }, selection: $app.appIcon)
             }
+            SettingsDivider()
+            SettingRow(title: "Hide accidental sessions",
+                       detail: "Sessions with no responses, no tokens, or a one-shot probe drop out of Sessions and the calendar.") {
+                SettingSwitch(title: "Hide accidental sessions", isOn: $app.hideTrivialSessions)
+            }
         }
     }
 
