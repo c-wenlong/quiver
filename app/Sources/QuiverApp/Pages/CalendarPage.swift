@@ -1273,6 +1273,9 @@ private struct MonthEntry: View {
 private struct SessionRow: View {
     var ref: ActivityBlock.SessionRef
     var row: SessionsModel.Row
+    /// The block's harness: `grok-bot` resolves session titles through
+    /// the Bot roster instead of the id fallback.
+    var harness: String
     var last: Bool
     /// nil on the read-only hover card.
     var open: (() -> Void)? = nil
@@ -1285,7 +1288,8 @@ private struct SessionRow: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(CalendarFormat.sessionTitle(row.session.title,
-                                                 sessionId: ref.sessionId))
+                                                 sessionId: ref.sessionId,
+                                                 harness: harness))
                     .font(.system(size: 11, weight: .medium)).lineLimit(1)
                 Text("\(CalendarFormat.range(start: ref.start, end: ref.end)) · "
                      + "\(ref.responses) response\(ref.responses == 1 ? "" : "s")")
@@ -1348,7 +1352,7 @@ private struct BlockCard: View {
                 .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
             VStack(spacing: 0) {
                 ForEach(shown, id: \.ref.sessionId) { item in
-                    SessionRow(ref: item.ref, row: item.row,
+                    SessionRow(ref: item.ref, row: item.row, harness: block.harness,
                                last: item.ref.sessionId == shown.last?.ref.sessionId)
                 }
                 if more > 0 {
@@ -1523,7 +1527,7 @@ private struct ProjectSessionsSheet: View {
             ScrollView {
                 VStack(spacing: 0) {
                 ForEach(rows, id: \.ref.sessionId) { item in
-                    SessionRow(ref: item.ref, row: item.row,
+                    SessionRow(ref: item.ref, row: item.row, harness: block.harness,
                                last: item.ref.sessionId == rows.last?.ref.sessionId) {
                         detail = item.row
                     }
