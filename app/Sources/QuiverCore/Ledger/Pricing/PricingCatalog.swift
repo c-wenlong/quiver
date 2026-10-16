@@ -232,8 +232,10 @@ public struct PricingCatalog: Sendable {
         return entries.keys
             .filter { sources[$0] == .yours }
             .filter { key in
+                // A saved key keeps its effort suffix, as in `overrideIndex`:
+                // `swe-2-medium` and `swe-2-high` never price each other.
                 lookup.contains(key.lowercased())
-                    || Self.forms(of: key, stripDates: true, stripEffort: true)
+                    || Self.forms(of: key, stripDates: true)
                         .contains { lookup.contains($0) }
             }
             .sorted()

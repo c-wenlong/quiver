@@ -323,8 +323,11 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(saved.models["swe-2"] == nil)
         #expect(saved.models["swe-2-medium"]?.input == 2)
         // Remove takes every saved key the model resolves to, whatever
-        // the field said.
+        // the field said, but never a sibling's own price: swe-2-medium
+        // doesn't price swe-2-max.
         try await model.remove(matching: "swe-2-max")
+        #expect(PricingOverrides(url: file).models["swe-2-medium"]?.input == 2)
+        try await model.remove(matching: "swe-2-medium")
         #expect(PricingOverrides(url: file).models.isEmpty)
         _ = temp
     }
@@ -383,6 +386,15 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let row = try #require(model.groups.flatMap(\.models).first)
         #expect(row.source == .yours && row.listPrice == nil && row.resetKind == .remove)
         _ = temp
+    }
+
+    @Test func `saved keys keep their effort suffix when matching`() throws {
+        let price: [String: Any] = ["input_cost_per_token": 0.000001, "output_cost_per_token": 0.000001]
+        let catalog = try PricingCatalog(
+            liteLLM: Data("{}".utf8),
+            overrides: ["swe-2-medium": price, "swe-2-high": price, "swe-2": price])
+        #expect(catalog.userKeys(matching: "swe-2-medium") == ["swe-2", "swe-2-medium"])
+        #expect(catalog.userKeys(matching: "swe-2-high") == ["swe-2", "swe-2-high"])
     }
 
     @Test func `reset removes every saved key that matches the model`() async throws {
