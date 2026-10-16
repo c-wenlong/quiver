@@ -240,6 +240,8 @@ final class AppModel {
     let calendar: CalendarModel?
     /// Cursor's per-event usage feed into the ledger; nil with `sessions`.
     let cursorFeed: CursorUsageFeed?
+    /// The Pricing page's per-model rates; nil with `sessions`.
+    let pricingModel: PricingModel?
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
     let skills: SkillsModel
     let mcp: McpModel
@@ -305,7 +307,9 @@ final class AppModel {
             AccountDirectory(profiles: (try? store.load()) ?? [], paths: store.paths(for:), home: home)
         }
         do {
-            let pricing = PricingStore(cacheFile: quiver.appending(path: "cache/pricing/litellm.json"))
+            // User prices (config/pricing.json) win over both published lists.
+            let pricing = PricingStore(cacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
+                                       overridesFile: quiver.appending(path: "config/pricing.json"))
             let ledger = try Ledger(cacheDirectory: quiver.appending(path: "cache/ledger"),
                                     pricing: (try? pricing.load()) ?? .empty)
             overview = OverviewModel(ledger: ledger, roots: { directory().roots },
@@ -361,11 +365,18 @@ final class AppModel {
                 },
                 progressFile: quiver.appending(path: "cache/cursor-feed.json"),
                 onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
+            let overviewModel = overview
+            pricingModel = PricingModel(
+                ledger: ledger,
+                overrides: PricingOverrides(url: quiver.appending(path: "config/pricing.json")),
+                makeCatalog: { try pricing.load() },
+                apply: { catalog in await overviewModel?.pricingUpdated(catalog) })
         } catch {
             overview = nil
             sessions = nil
             calendar = nil
             cursorFeed = nil
+            pricingModel = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
         skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))

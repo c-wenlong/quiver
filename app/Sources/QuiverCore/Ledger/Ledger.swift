@@ -84,6 +84,19 @@ public struct UsageTotals: Sendable, Equatable, Codable {
     }
 }
 
+/// One model's usage for one harness, for the Pricing page.
+public struct ModelUsage: Sendable, Equatable {
+    public var model: String
+    public var harness: String
+    /// The logged tier for this slice ("fast", "priority"), nil for the
+    /// base tier. The price it shows charges the tier's rates.
+    public var tier: String?
+    public var totals: UsageTotals
+    /// Every event in the slice carried its own logged cost, so no price
+    /// list was consulted.
+    public var harnessBilled: Bool
+}
+
 /// One harness and model on one calendar day.
 public struct DailyUsage: Sendable, Equatable {
     /// Start of the day in the calendar the query used.
@@ -162,6 +175,10 @@ public actor Ledger {
     public func setPricing(_ catalog: PricingCatalog) {
         pricing = catalog
     }
+
+    /// The catalog currently in force, for views that look models up
+    /// directly (the Pricing page).
+    public func catalog() -> PricingCatalog { pricing }
 
     // MARK: - Scanning
 
@@ -484,6 +501,19 @@ public actor Ledger {
             .sorted { ($0.lastTimestamp, $0.sessionId) > ($1.lastTimestamp, $1.sessionId) }
     }
 
+    /// Usage per model and harness inside `range`, priced like the other
+    /// queries, for the Pricing page's per-model rows.
+    public func byModelHarness(in range: DateInterval) -> [ModelUsage] {
+        guard let groups = try? store.groups(
+            in: range, by: [.harness, .model], thresholds: pricing.thresholds)
+        else { return [] }
+        return groups.map { group in
+            ModelUsage(model: group.model, harness: group.dimensions[.harness] ?? "",
+                       tier: group.tier,
+                       totals: price(group), harnessBilled: group.hasLoggedCost)
+        }
+    }
+
     /// Usage per account home.
     public func byAccount(in range: DateInterval) -> [String: UsageTotals] {
         Dictionary(uniqueKeysWithValues: aggregate(in: range, by: [.account]).map { ($0.key[0], $0.value) })
@@ -533,33 +563,25 @@ public actor Ledger {
             totals.costUSD = group.loggedCost
             return totals
         }
-        // The literal name wins: `xai/grok-code-fast` is a real catalog
-        // entry. Only when it misses is a `-fast` suffix split off, because
-        // fast mode arrives on the model name with an empty tier.
-        var model = group.model
-        var tier = group.tier ?? ""
-        var rates = pricing.rates(for: model)
-        if rates == nil {
-            let split = PricingCatalog.splitTierSuffix(model: model, tier: tier)
-            if let found = pricing.rates(for: split.model) {
-                model = split.model
-                tier = split.tier
-                rates = found
-            }
-        }
-        if let rates {
+        // One resolution for the ledger and the Pricing page: the literal
+        // name wins (`xai/grok-code-fast` is a real entry), then the
+        // `-fast` tier suffix, then the free-model check.
+        switch pricing.resolve(model: group.model, tier: group.tier ?? "") {
+        case .priced(let rates, _, _, let tier):
             let crosses = rates.longContext.map { long in
                 (pricing.thresholds.firstIndex(of: long.threshold) ?? Int.max) < group.thresholdsCrossed
             } ?? false
             totals.costUSD = rates.cost(
                 input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite,
                 cacheWrite1h: t.cacheWrite1h, reasoning: t.reasoning, tier: tier, crossesLongContext: crosses)
-        } else if PricingCatalog.isFree(model) {
+        case .free:
             // A free model is priced at zero, not reported as unpriced.
             totals.costUSD = 0
-        } else if t.total > 0 {
-            totals.unpricedTokens = t.total
-            totals.unpricedModels = [group.model]
+        case nil:
+            if t.total > 0 {
+                totals.unpricedTokens = t.total
+                totals.unpricedModels = [group.model]
+            }
         }
         return totals
     }

@@ -229,6 +229,7 @@ private struct HarnessTiles: View {
 /// A harness's share: the legend for the bar, with its numbers.
 private struct HarnessTile: View {
     var share: HarnessShare
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -247,8 +248,13 @@ private struct HarnessTile: View {
                 Text("·")
                 Text(UsageFormat.dollars(share.totals.costUSD)).foregroundStyle(Theme.accent)
                 if share.totals.unpricedTokens > 0 {
-                    Image(systemName: "questionmark.circle")
-                        .hoverTip("\(UsageFormat.tokens(share.totals.unpricedTokens)) of these tokens have no list price, so they aren't costed: \(share.totals.unpricedModels.sorted().joined(separator: ", "))")
+                    Button { app.selection = .pricing } label: {
+                        Image(systemName: "questionmark.circle")
+                            .foregroundStyle(Theme.textSecondary)
+                            .hoverTip("\(UsageFormat.tokens(share.totals.unpricedTokens)) of these tokens have no list price, so they aren't costed: \(share.totals.unpricedModels.sorted().joined(separator: ", "))")
+                    }
+                    .buttonStyle(.plain)
+                    .help("See unpriced models on the Pricing page")
                 }
             }
             .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
