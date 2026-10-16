@@ -31,41 +31,62 @@ public struct PricingCatalog: Sendable {
     }
 
     private var entries: [String: ModelRates]
+    /// Every downloaded entry, before user overrides replaced any keys,
+    /// so `listLookup` can still find the price an override shadows.
+    private var listEntries: [String: ModelRates]
     /// Normalized name to entry key, built once.
     private var index: [String: String]
     /// Same index over only the user-priced keys, checked first so a saved
     /// price wins under every equivalent name (`gpt-4-1` beats the
     /// published `gpt-4.1`, an undated key beats a dated published entry).
     private var overrideIndex: [String: String]
+    /// `index` restricted to downloaded entries, so `listLookup` finds the
+    /// price a model would have without the user's overrides.
+    private var listIndex: [String: String]
     /// Which source each entry key came from; absent means LiteLLM.
     private var sources: [String: Source]
+    /// `sources` before user overrides, matching `listEntries`.
+    private var listSources: [String: Source]
     private var supplement: PricingSupplement
 
     public static let empty = PricingCatalog(entries: [:], supplement: PricingSupplement())
 
     init(entries: [String: ModelRates], supplement: PricingSupplement,
-         sources: [String: Source] = [:]) {
+         sources: [String: Source] = [:], listEntries: [String: ModelRates]? = nil,
+         listSources: [String: Source]? = nil) {
         self.entries = entries
+        self.listEntries = listEntries ?? entries.filter { sources[$0.key] != .yours }
         self.supplement = supplement
         self.sources = sources
+        self.listSources = listSources ?? sources.filter { $0.value != .yours }
         self.index = [:]
         self.overrideIndex = [:]
+        self.listIndex = [:]
         // Bare keys win over provider-prefixed ones, then shorter prefixes.
-        let ordered = entries.keys.sorted { lhs, rhs in
-            let l = (Self.prefixRank(lhs), lhs), r = (Self.prefixRank(rhs), rhs)
-            return l < r
+        let ordered = { (keys: Dictionary<String, ModelRates>.Keys) in
+            keys.sorted { lhs, rhs in
+                let l = (Self.prefixRank(lhs), lhs), r = (Self.prefixRank(rhs), rhs)
+                return l < r
+            }
         }
         for pass in 0..<2 {
-            for key in ordered {
+            for key in ordered(entries.keys) {
                 for form in Self.forms(of: key, stripDates: pass == 1) where index[form] == nil {
                     index[form] = key
                 }
             }
         }
         for pass in 0..<2 {
-            for key in ordered where sources[key] == .yours {
+            for key in ordered(entries.keys) where sources[key] == .yours {
                 for form in Self.forms(of: key, stripDates: pass == 1) where overrideIndex[form] == nil {
                     overrideIndex[form] = key
+                }
+            }
+        }
+        for pass in 0..<2 {
+            for key in ordered(self.listEntries.keys) {
+                for form in Self.forms(of: key, stripDates: pass == 1) where listIndex[form] == nil {
+                    listIndex[form] = key
                 }
             }
         }
@@ -92,6 +113,10 @@ public struct PricingCatalog: Sendable {
                 sources[key] = .quiver
             }
         }
+        // Snapshot before the user's prices replace any keys: this is the
+        // price list an override can reset back to.
+        var listEntries = entries
+        let listSources = sources
         for (key, value) in overrides {
             if let rates = Self.rates(from: value) {
                 entries[key] = rates
@@ -106,8 +131,10 @@ public struct PricingCatalog: Sendable {
             var multipliers = supplement.defaultTierMultipliers
             multipliers.merge(specific ?? [:]) { _, specific in specific }
             entries[key]?.tierMultipliers = multipliers
+            listEntries[key]?.tierMultipliers = multipliers
         }
-        self.init(entries: entries, supplement: supplement, sources: sources)
+        self.init(entries: entries, supplement: supplement, sources: sources,
+                  listEntries: listEntries, listSources: listSources)
     }
 
     /// The snapshot and supplement that ship with the app.
@@ -156,6 +183,21 @@ public struct PricingCatalog: Sendable {
         return (rates, key, sources[key] ?? .liteLLM)
     }
 
+    /// The price `model` would have without the user's overrides: the same
+    /// lookup restricted to LiteLLM and Quiver entries (the `-fast` suffix
+    /// splits the same way). The Pricing page shows it as the list price a
+    /// saved price can reset to, and to prefill a listed model's rates.
+    public func listLookup(_ model: String) -> (rates: ModelRates, entry: String, source: Source)? {
+        let split = Self.splitTierSuffix(model: model, tier: "")
+        for candidate in split.model == model ? [model] : [model, split.model] {
+            if let key = resolvedKey(for: candidate, userPrices: false),
+               let rates = listEntries[key] {
+                return (rates, key, listSources[key] ?? .liteLLM)
+            }
+        }
+        return nil
+    }
+
     /// The whole resolution for a logged model: the literal name first
     /// (`xai/grok-code-fast` is a real entry), then the `-fast` tier
     /// suffix, then the free-model check. nil means the model is
@@ -172,6 +214,33 @@ public struct PricingCatalog: Sendable {
         return nil
     }
 
+    /// Every saved user key `model` can resolve to. The literal name, its
+    /// normalized forms and the `-fast` split all apply, and several saved
+    /// keys can match one model (`gpt-4.1` and `gpt-4-1` both price
+    /// `gpt-4.1`, but only one lands in `overrideIndex`), so every `.yours`
+    /// entry's own forms are compared, not just the index's single hit.
+    public func userKeys(matching model: String) -> [String] {
+        let lowered = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var forms = Self.forms(of: lowered, stripDates: true, stripEffort: true)
+        forms.append(lowered)
+        let split = Self.splitTierSuffix(model: lowered, tier: "")
+        if split.model != lowered {
+            forms.append(split.model)
+            forms += Self.forms(of: split.model, stripDates: true, stripEffort: true)
+        }
+        let lookup = Set(forms)
+        return entries.keys
+            .filter { sources[$0] == .yours }
+            .filter { key in
+                // A saved key keeps its effort suffix, as in `overrideIndex`:
+                // `swe-2-medium` and `swe-2-high` never price each other.
+                lookup.contains(key.lowercased())
+                    || Self.forms(of: key, stripDates: true)
+                        .contains { lookup.contains($0) }
+            }
+            .sorted()
+    }
+
     /// The model's default key for a user price: the logged name with any
     /// provider prefix, snapshot date and effort suffix stripped, so a
     /// price saved under it covers every form the lookup generates
@@ -181,21 +250,27 @@ public struct PricingCatalog: Sendable {
     }
 
     /// Which entry key `model` resolves to, through aliases and the
-    /// normalized forms.
-    private func resolvedKey(for model: String) -> String? {
+    /// normalized forms. `userPrices: false` skips the override index and
+    /// every user-saved entry, so the answer is always a downloaded price.
+    private func resolvedKey(for model: String, userPrices: Bool = true) -> String? {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowered = trimmed.lowercased()
         // The user's own prices are consulted before anything else.
-        if sources[trimmed] == .yours { return trimmed }
-        for form in [lowered] + Self.forms(of: lowered, stripDates: true, stripEffort: true) {
-            if let key = overrideIndex[form] { return key }
+        if userPrices {
+            if sources[trimmed] == .yours { return trimmed }
+            for form in [lowered] + Self.forms(of: lowered, stripDates: true, stripEffort: true) {
+                if let key = overrideIndex[form] { return key }
+            }
         }
-        if entries[trimmed] != nil { return trimmed }
+        if (userPrices ? entries : listEntries)[trimmed] != nil { return trimmed }
         if let alias = supplement.aliases[lowered], alias.lowercased() != lowered {
-            return resolvedKey(for: alias)
+            return resolvedKey(for: alias, userPrices: userPrices)
         }
+        let index = userPrices ? self.index : listIndex
         for form in Self.forms(of: lowered, stripDates: true, stripEffort: true) {
-            if let alias = supplement.aliases[form], alias != form { return resolvedKey(for: alias) }
+            if let alias = supplement.aliases[form], alias != form {
+                return resolvedKey(for: alias, userPrices: userPrices)
+            }
             if let key = index[form] { return key }
         }
         return nil

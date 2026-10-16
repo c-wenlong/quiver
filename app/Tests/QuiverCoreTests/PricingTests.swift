@@ -82,6 +82,22 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(prefixed.source == .yours)
     }
 
+    @Test func `listLookup answers the price the model would have without overrides`() throws {
+        var overrides = PricingOverrides(
+            url: FileManager.default.temporaryDirectory
+                .appending(path: "pricing-\(UUID().uuidString).json"))
+        try overrides.set("codex-mini-latest", prices: .init(input: 1, output: 1))
+        let catalog = try catalog(overrides: overrides.entries)
+        // The normal lookup sees the saved price…
+        #expect(catalog.lookup("codex-mini-latest")?.rates.input == 0.000001)
+        // …but the list lookup still finds the LiteLLM price it shadows.
+        let list = try #require(catalog.listLookup("codex-mini-latest"))
+        #expect(list.source == .liteLLM && list.entry == "codex-mini-latest")
+        #expect(list.rates.input == 0.0000015)
+        #expect(catalog.listLookup("gpt-4o")?.source == .liteLLM)
+        #expect(catalog.listLookup("nonexistent-model") == nil)
+    }
+
     @Test func `a failed write leaves the in-memory prices alone`() throws {
         let temp = try TempDir()
         // A regular file where the config directory would go blocks the
@@ -306,9 +322,121 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let saved = PricingOverrides(url: file)
         #expect(saved.models["swe-2"] == nil)
         #expect(saved.models["swe-2-medium"]?.input == 2)
-        // Remove always takes the original key, whatever the field said.
-        try await model.remove(key: "swe-2-medium")
+        // Remove takes every saved key the model resolves to, whatever
+        // the field said, but never a sibling's own price: swe-2-medium
+        // doesn't price swe-2-max.
+        try await model.remove(matching: "swe-2-max")
+        #expect(PricingOverrides(url: file).models["swe-2-medium"]?.input == 2)
+        try await model.remove(matching: "swe-2-medium")
         #expect(PricingOverrides(url: file).models.isEmpty)
+        _ = temp
+    }
+
+    /// A model whose save/remove round-trips through a `pricing.json`,
+    /// like the page does against the real file.
+    private func editableModel(_ records: [UsageEvent]) throws -> (Ledger, PricingModel, TempDir) {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        for (i, event) in records.enumerated() {
+            try store.upsert(LedgerRecord(key: "t:\(i)", event: event))
+        }
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let file = temp.url.appending(path: "config/pricing.json")
+        let model = PricingModel(
+            ledger: ledger, overrides: PricingOverrides(url: file),
+            makeCatalog: { try PricingCatalog(
+                liteLLM: Data("""
+                    {"gpt-4o": {"input_cost_per_token": 0.0000025,
+                    "output_cost_per_token": 0.00001}}
+                    """.utf8),
+                overrides: PricingOverrides(url: file).entries) },
+            apply: { catalog in await ledger.setPricing(catalog) })
+        return (ledger, model, temp)
+    }
+
+    @Test func `a saved price on a listed model offers reset, and reset restores LiteLLM`() async throws {
+        let (ledger, model, temp) = try editableModel([event("gpt-4o", tokens: 1_000_000)])
+        await model.load()
+        var row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.source == .liteLLM)
+        #expect(row.listPrice?.rates.input == 0.0000025)
+
+        try await model.save(key: "gpt-4o", prices: .init(input: 1, output: 2))
+        row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.source == .yours && row.rates?.input == 0.000001)
+        // The shadowed LiteLLM price is still visible for the reset.
+        if case .resetToList(let list) = row.resetKind {
+            #expect(list.source == .liteLLM && list.rates.input == 0.0000025)
+        } else {
+            Issue.record("expected resetToList, got \(row.resetKind)")
+        }
+
+        try await model.remove(matching: "gpt-4o")
+        row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.source == .liteLLM && row.rates?.input == 0.0000025)
+        // The ledger repriced back to the list price.
+        let totals = await ledger.totals(in: allTime)
+        #expect(totals.costUSD == 2.5)  // 1M input @ $2.50/1M
+        _ = temp
+    }
+
+    @Test func `a saved price with no list price under it offers remove`() async throws {
+        let (_, model, temp) = try editableModel([event("swe-2-medium", tokens: 1_000)])
+        try await model.save(key: "swe-2", prices: .init(input: 1, output: 1))
+        let row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.source == .yours && row.listPrice == nil && row.resetKind == .remove)
+        _ = temp
+    }
+
+    @Test func `saved keys keep their effort suffix when matching`() throws {
+        let price: [String: Any] = ["input_cost_per_token": 0.000001, "output_cost_per_token": 0.000001]
+        let catalog = try PricingCatalog(
+            liteLLM: Data("{}".utf8),
+            overrides: ["swe-2-medium": price, "swe-2-high": price, "swe-2": price])
+        #expect(catalog.userKeys(matching: "swe-2-medium") == ["swe-2", "swe-2-medium"])
+        #expect(catalog.userKeys(matching: "swe-2-high") == ["swe-2", "swe-2-high"])
+    }
+
+    @Test func `reset removes every saved key that matches the model`() async throws {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        try store.upsert(LedgerRecord(key: "t:1", event: event("gpt-4.1", tokens: 1_000_000)))
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let file = temp.url.appending(path: "config/pricing.json")
+        let liteLLM = Data("""
+            {"gpt-4.1": {"input_cost_per_token": 0.000002,
+            "output_cost_per_token": 0.000008}}
+            """.utf8)
+        let model = PricingModel(
+            ledger: ledger, overrides: PricingOverrides(url: file),
+            makeCatalog: { try PricingCatalog(
+                liteLLM: liteLLM,
+                overrides: PricingOverrides(url: file).entries) },
+            apply: { catalog in await ledger.setPricing(catalog) })
+        // Two different saved keys both price gpt-4.1; removing just the
+        // row's own key would leave the other one charging.
+        try await model.save(key: "gpt-4.1", prices: .init(input: 1, output: 1))
+        try await model.save(key: "gpt-4-1", prices: .init(input: 2, output: 2))
+        await model.load()
+        let row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.source == .yours)
+
+        try await model.remove(matching: "gpt-4.1")
+        #expect(PricingOverrides(url: file).models.isEmpty)
+        let reset = try #require(model.groups.flatMap(\.models).first)
+        #expect(reset.source == .liteLLM && reset.rates?.input == 0.000002)
+        let totals = await ledger.totals(in: allTime)
+        #expect(totals.costUSD == 2)  // 1M input @ $2.00/1M
+        _ = temp
+    }
+
+    @Test func `remove with no list price leaves the model unpriced`() async throws {
+        let (_, model, temp) = try editableModel([event("swe-2-medium", tokens: 1_000)])
+        try await model.save(key: "swe-2", prices: .init(input: 1, output: 1))
+        try await model.remove(matching: "swe-2-medium")
+        let row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.source == nil && !row.isFree && row.unpricedTokens == 1_000)
+        #expect(model.unpriced.map(\.model) == ["swe-2-medium"])
         _ = temp
     }
 

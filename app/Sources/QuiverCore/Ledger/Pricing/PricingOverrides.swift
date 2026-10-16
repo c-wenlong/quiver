@@ -61,8 +61,17 @@ public struct PricingOverrides: Sendable {
     /// Drop `name`'s saved price (a no-op when it has none) and write the
     /// file atomically. Like `set`, the write lands before `models` does.
     public mutating func remove(_ name: String) throws {
+        try remove([name])
+    }
+
+    /// Drop every key in one write. Several saved keys can price the same
+    /// model (`gpt-4.1` and `gpt-4-1` both cover `gpt-4.1`), so reset and
+    /// remove take them all — taking just the row's own key would leave
+    /// the model user-priced.
+    public mutating func remove(_ keys: [String]) throws {
         var updated = models
-        guard updated.removeValue(forKey: name) != nil else { return }
+        for key in keys { updated.removeValue(forKey: key) }
+        guard updated != models else { return }
         try write(updated)
         models = updated
     }
