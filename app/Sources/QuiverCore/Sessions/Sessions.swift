@@ -144,6 +144,29 @@ public enum SessionResume {
     }
 }
 
+/// Where a session ran. Cursor's usage feed has no field for it, so its
+/// conversation ids decide: `bc-` is a cloud background agent and `sand-`
+/// a cloud sandbox subagent. Grok Bot only runs in Cursor's cloud. Every
+/// other session is one swe read from this Mac.
+public enum SessionLocation: String, Sendable, Equatable {
+    case local, cloud
+
+    public init(harness: String, id: String) {
+        switch harness {
+        case "grok-bot": self = .cloud
+        case "cursor" where id.hasPrefix("bc-") || id.hasPrefix("sand-"): self = .cloud
+        default: self = .local
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .local: "Local"
+        case .cloud: "Cloud"
+        }
+    }
+}
+
 /// The Sessions page: every recent session, its cost from the ledger, and filters.
 @MainActor
 @Observable
@@ -166,6 +189,8 @@ public final class SessionsModel {
         public var duration: TimeInterval? {
             usage.map { $0.lastTimestamp.timeIntervalSince($0.firstTimestamp) }
         }
+
+        public var location: SessionLocation { SessionLocation(harness: session.harness, id: session.id) }
     }
 
     /// What the filters currently match.
@@ -412,18 +437,28 @@ public final class SessionsModel {
         var byKey: [UsageKey: SessionUsage] = [:]
         for row in usage {
             let key = UsageKey(harness: row.harness, account: row.accountHome, session: row.sessionId)
-            if var existing = byKey[key] {
-                existing.totals.add(row.totals)
-                existing.models = Array(Set(existing.models + row.models)).sorted()
-                existing.firstTimestamp = min(existing.firstTimestamp, row.firstTimestamp)
-                existing.lastTimestamp = max(existing.lastTimestamp, row.lastTimestamp)
-                existing.cwd = existing.cwd ?? row.cwd
-                byKey[key] = existing
-            } else {
-                byKey[key] = row
-            }
+            byKey[key] = byKey[key].map { merged($0, row) } ?? row
         }
         return byKey
+    }
+
+    /// One feed conversation's key. A conversation id is the same session
+    /// in every profile home; a day bucket (events Cursor gave no id) is
+    /// only one account's day, so it keeps its home.
+    public nonisolated static func feedKey(harness: String, account: String, session: String) -> String {
+        CursorUsageFeed.isDayBucket(session) ? "\(harness)|\(account)|\(session)" : "\(harness)|\(session)"
+    }
+
+    /// Two usage rows of one session added together. The account is the
+    /// one that recorded the later event.
+    static func merged(_ a: SessionUsage, _ b: SessionUsage) -> SessionUsage {
+        var result = a.lastTimestamp >= b.lastTimestamp ? a : b
+        let other = a.lastTimestamp >= b.lastTimestamp ? b : a
+        result.totals.add(other.totals)
+        result.models = Array(Set(result.models + other.models)).sorted()
+        result.firstTimestamp = min(result.firstTimestamp, other.firstTimestamp)
+        result.cwd = result.cwd ?? other.cwd
+        return result
     }
 
     /// Harnesses Quiver keeps extra accounts for; swe reads only their default home.
@@ -432,11 +467,21 @@ public final class SessionsModel {
     private func join(_ sessions: [SessionInfo], _ usage: [UsageKey: SessionUsage]) -> [Row] {
         var byHarnessAndId: [String: [SessionUsage]] = [:]
         for (key, use) in usage { byHarnessAndId["\(key.harness)|\(key.session)", default: []].append(use) }
+        // A feed conversation is one session whichever profile polled it:
+        // profiles signed in to one account take turns, and each stores
+        // the events it read under its own home.
+        var feed: [String: SessionUsage] = [:]
+        for (key, use) in usage where SessionFilter.feedHarnesses.contains(key.harness) {
+            let id = Self.feedKey(harness: key.harness, account: key.account, session: key.session)
+            feed[id] = feed[id].map { Self.merged($0, use) } ?? use
+        }
 
         // swe's rows: Claude and Codex from their default home only; other
         // harnesses have one store each, whatever its folder.
         var rows = sessions.map { session -> Row in
-            let candidates = byHarnessAndId["\(session.harness)|\(session.id)"] ?? []
+            let id = "\(session.harness)|\(session.id)"
+            if let use = feed[id] { return Row(session: session, usage: use) }
+            let candidates = byHarnessAndId[id] ?? []
             let use = Self.accountHarnesses.contains(session.harness)
                 ? candidates.first { defaultHomes.contains($0.accountHome) }
                 : candidates.max { $0.lastTimestamp < $1.lastTimestamp }
@@ -453,6 +498,16 @@ public final class SessionsModel {
                 title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil,
                 resume: argv.map { .init(argv: $0, cwd: use.cwd) })
             rows.append(Row(session: session, usage: use, id: "\(key.account)|\(key.session)"))
+        }
+        // Feed sessions swe has no transcript for: cloud runs, Grok Bot and
+        // editor chats. Usage is all there is, so they have no title,
+        // folder or resume command.
+        let listedIds = Set(sessions.map { "\($0.harness)|\($0.id)" })
+        for (id, use) in feed where !listedIds.contains(id) {
+            let session = SessionInfo(
+                id: use.sessionId, harness: use.harness, agent: UsageFormat.harness(use.harness), cwd: use.cwd,
+                title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil, resume: nil)
+            rows.append(Row(session: session, usage: use, id: id))
         }
         return rows.sorted { ($0.session.lastActiveAt, $1.id) > ($1.session.lastActiveAt, $0.id) }
     }
@@ -673,7 +728,8 @@ public final class SessionsModel {
         if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
         let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
-            let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
+            let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent, row.location.title]
+                + (row.usage?.models ?? []).map(Optional.some))
                 .compactMap { $0 }.joined(separator: " ").lowercased()
             if !haystack.contains(needle) { return false }
         }
