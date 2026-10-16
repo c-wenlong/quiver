@@ -15,6 +15,8 @@
 # Channel: QUIVER_CHANNEL=dev|prod stamps QuiverChannel in the app's
 # Info.plist (default dev). Dev builds also stamp the checkout's commit,
 # path and dirty state, which Settings > Updates compares against HEAD.
+# QUIVER_SOURCE_PATH stamps another checkout as the path: install-app.sh
+# builds in a worktree of its own but points Updates at the user's.
 #
 # Signing: macOS remembers privacy grants (Desktop and Documents access,
 # Accessibility) against the app's signing identity. An ad-hoc signature
@@ -96,7 +98,7 @@ build="$(git -C "$here" rev-list --count HEAD 2>/dev/null || echo 1)"
 # builds stamp the channel only; GitHub releases carry no source path.
 commit="$(git -C "$here" rev-parse HEAD 2>/dev/null || echo "")"
 if [ "$channel" = "dev" ]; then
-  source_path="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || echo "")"
+  source_path="${QUIVER_SOURCE_PATH:-$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || echo "")}"
 else
   source_path=""
 fi
