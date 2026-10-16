@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -77,7 +78,10 @@ import Testing
 
     /// The first call parks until `finishCall`; later calls answer `good`
     /// at once. Lets a test hold the old generation's fetch in flight
-    /// while a swe-path change runs a newer poll.
+    /// while a swe-path change runs a newer poll. `claimed` picks the
+    /// first call, `called` marks it parked — set under the same lock
+    /// section that drains `waiter`, so `waitUntilCalled` can neither
+    /// miss nor hang.
     private final class FirstHeldRunner: CommandRunning, @unchecked Sendable {
         let good: CommandResult
         private let lock = NSLock()
@@ -85,6 +89,7 @@ import Testing
         private var held: CheckedContinuation<CommandResult, Never>?
         private var waiter: CheckedContinuation<Void, Never>?
         private var called = false
+        private var claimed = false
 
         init(good: CommandResult) { self.good = good }
         var calls: [[String]] { lock.withLock { recorded } }
@@ -92,26 +97,87 @@ import Testing
         func run(_ arguments: [String]) async throws -> CommandResult {
             lock.withLock { recorded.append(arguments) }
             let isFirst = lock.withLock { () -> Bool in
-                defer { called = true }
-                return !called
+                defer { claimed = true }
+                return !claimed
             }
             if isFirst {
-                let pending = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-                    defer { waiter = nil }
-                    return waiter
-                }
-                pending?.resume()
                 return await withCheckedContinuation {
                     (c: CheckedContinuation<CommandResult, Never>) in
-                    lock.withLock { held = c } }
+                    let pending = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                        held = c
+                        called = true
+                        defer { waiter = nil }
+                        return waiter
+                    }
+                    pending?.resume()
+                }
             }
             return good
         }
 
         func waitUntilCalled() async {
-            if lock.withLock({ called }) { return }
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                lock.withLock { waiter = c } }
+                let ready = lock.withLock { () -> Bool in
+                    if called { return true }
+                    waiter = c
+                    return false
+                }
+                if ready { c.resume() }
+            }
+        }
+
+        func finishCall(_ result: CommandResult) {
+            let pending = lock.withLock { () -> CheckedContinuation<CommandResult, Never>? in
+                defer { held = nil }
+                return held
+            }
+            pending?.resume(returning: result)
+        }
+    }
+
+    /// Parks call `park` (0-based, counting every call) until
+    /// `finishCall`; every other call answers `good` at once.
+    private final class NthHeldRunner: CommandRunning, @unchecked Sendable {
+        let park: Int
+        let good: CommandResult
+        private let lock = NSLock()
+        private var recorded: [[String]] = []
+        private var held: CheckedContinuation<CommandResult, Never>?
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var heldStarted = false
+
+        init(park: Int, good: CommandResult) { self.park = park; self.good = good }
+        var calls: [[String]] { lock.withLock { recorded } }
+
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            let isHeld = lock.withLock { () -> Bool in
+                recorded.append(arguments)
+                return recorded.count - 1 == park
+            }
+            if isHeld {
+                return await withCheckedContinuation {
+                    (c: CheckedContinuation<CommandResult, Never>) in
+                    let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+                        held = c
+                        heldStarted = true
+                        defer { waiters.removeAll() }
+                        return waiters
+                    }
+                    pending.forEach { $0.resume() }
+                }
+            }
+            return good
+        }
+
+        func waitUntilHeld() async {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                let ready = lock.withLock { () -> Bool in
+                    if heldStarted { return true }
+                    waiters.append(c)
+                    return false
+                }
+                if ready { c.resume() }
+            }
         }
 
         func finishCall(_ result: CommandResult) {
@@ -407,6 +473,53 @@ import Testing
         #expect(runner.calls.count == 3)
         let lastError = await feed.lastError
         #expect(lastError == nil)
+    }
+
+    @Test func aStaleSuccessCannotClearTheNewerTooOldVerdict() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        // Call 0 parks; the path change's poll hears "unknown subcommand"
+        // and sets the verdict. The parked old reply answering "ok" must
+        // not clear it.
+        let runner = NthHeldRunner(
+            park: 0,
+            good: CommandResult(status: 1, stdout: Data(),
+                                stderr: "Unknown harness subcommand: usage-events"))
+        let feed = feed(runner, ledger: ledger, accounts: accts())
+        let stale = Task { await feed.poll() }
+        await runner.waitUntilHeld()
+        await feed.swePathChanged()
+        runner.finishCall(reply("ok", twoEvents, accountId: "uid-1"))
+        await stale.value
+        // The verdict stuck: the next poll returns without asking swe.
+        await feed.poll()
+        #expect(runner.calls.count == 2)
+    }
+
+    @Test func aSupersededRoundStillReportsItsIngestedRows() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let extra = CursorUsageFeed.Account(home: "/t/cursor-side/desktop",
+                                            accountDir: "/t/cursor-side/desktop")
+        // The old round's first account answers and ingests; its second
+        // parks while a swe-path change supersedes the round.
+        let runner = NthHeldRunner(park: 1, good: reply("ok", twoEvents, accountId: "uid-1"))
+        let ingests = Mutex(0)
+        let feed = CursorUsageFeed(
+            ledger: ledger, swe: { SweClient(runner: runner) },
+            accounts: { self.accts() + [extra] },
+            progressFile: temp.url.appending(path: "cache/cursor-feed.json"),
+            onIngested: { ingests.withLock { $0 += 1 } })
+        let stale = Task { await feed.poll() }
+        await runner.waitUntilHeld()
+        await feed.swePathChanged()
+        runner.finishCall(reply("ok", twoEvents, accountId: "uid-2"))
+        await stale.value
+        // The new round re-ingests the same keys, so its own callback is
+        // a no-op — the one notification is the superseded round's
+        // already-written rows.
+        #expect(ingests.withLock { $0 } == 1)
+        #expect(await ledger.events(in: allTime).count == 2)
     }
 
     @Test func anIncompleteReplyIngestsButDoesNotAdvanceThrough() async throws {

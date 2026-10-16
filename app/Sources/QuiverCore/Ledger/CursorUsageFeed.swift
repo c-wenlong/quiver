@@ -97,21 +97,25 @@ public actor CursorUsageFeed {
                 changed += try await poll(
                     account, seenAccounts: &seenAccounts, dirty: &dirty,
                     generation: generation)
+                // A stale success must not clear a newer generation's
+                // too-old verdict.
+                guard generation == requestGeneration else { break }
                 sweTooOld = false
             } catch SweError.commandFailed(_, let message)
                 where message.localizedCaseInsensitiveContains("unknown harness subcommand")
                     || message.localizedCaseInsensitiveContains("unknown argument") {
-                guard generation == requestGeneration else { return }
+                guard generation == requestGeneration else { break }
                 sweTooOld = true
                 Self.log.info("installed swe has no harness usage-events; skipping the Cursor feed")
                 return
             } catch {
-                guard generation == requestGeneration else { return }
+                guard generation == requestGeneration else { break }
                 note(error, for: account)
             }
         }
-        guard generation == requestGeneration else { return }
-        if dirty { saveProgress() }
+        // Rows a superseded round already wrote still count and still
+        // notify; only the progress save belongs to the current one.
+        if generation == requestGeneration, dirty { saveProgress() }
         if changed > 0 { await onIngested?() }
     }
 
