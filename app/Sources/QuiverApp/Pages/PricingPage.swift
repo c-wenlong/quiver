@@ -486,7 +486,7 @@ private struct PriceSheet: View {
         saveError = nil
         Task {
             do {
-                try await model.remove(key: originalKey)
+                try await model.remove(matching: row.model)
                 dismiss()
             } catch {
                 saveError = error.localizedDescription

@@ -214,6 +214,31 @@ public struct PricingCatalog: Sendable {
         return nil
     }
 
+    /// Every saved user key `model` can resolve to. The literal name, its
+    /// normalized forms and the `-fast` split all apply, and several saved
+    /// keys can match one model (`gpt-4.1` and `gpt-4-1` both price
+    /// `gpt-4.1`, but only one lands in `overrideIndex`), so every `.yours`
+    /// entry's own forms are compared, not just the index's single hit.
+    public func userKeys(matching model: String) -> [String] {
+        let lowered = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var forms = Self.forms(of: lowered, stripDates: true, stripEffort: true)
+        forms.append(lowered)
+        let split = Self.splitTierSuffix(model: lowered, tier: "")
+        if split.model != lowered {
+            forms.append(split.model)
+            forms += Self.forms(of: split.model, stripDates: true, stripEffort: true)
+        }
+        let lookup = Set(forms)
+        return entries.keys
+            .filter { sources[$0] == .yours }
+            .filter { key in
+                lookup.contains(key.lowercased())
+                    || Self.forms(of: key, stripDates: true, stripEffort: true)
+                        .contains { lookup.contains($0) }
+            }
+            .sorted()
+    }
+
     /// The model's default key for a user price: the logged name with any
     /// provider prefix, snapshot date and effort suffix stripped, so a
     /// price saved under it covers every form the lookup generates

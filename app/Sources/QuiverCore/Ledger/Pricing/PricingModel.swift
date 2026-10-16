@@ -192,9 +192,12 @@ public final class PricingModel {
         try await reprice()
     }
 
-    /// Delete `key`'s saved price and reprice back to downloaded sources.
-    public func remove(key: String) async throws {
-        try overrides.remove(key)
+    /// Delete every saved key that prices `model` and reprice back to
+    /// downloaded sources — several keys can match one model (`gpt-4.1`
+    /// and `gpt-4-1`), and removing just one would leave it user-priced.
+    public func remove(matching model: String) async throws {
+        let keys = await ledger.catalog().userKeys(matching: model)
+        try overrides.remove(keys)
         try await reprice()
     }
 
