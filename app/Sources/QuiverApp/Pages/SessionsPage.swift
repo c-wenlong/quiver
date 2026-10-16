@@ -356,9 +356,10 @@ private struct SessionRow: View {
     var body: some View {
         let s = row.session
         HStack(alignment: .top, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
+            // The logo centres on the row (title and details together), not
+            // on the title line.
+            HStack(alignment: .center, spacing: 12) {
                 HarnessIcon(harness: HarnessMark(s.harness).icon ?? s.harness, size: 16)
-                    .padding(.top, 1)
                     .help(HarnessMark(s.harness).name)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
