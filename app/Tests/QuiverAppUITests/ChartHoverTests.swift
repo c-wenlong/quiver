@@ -1,0 +1,143 @@
+import Testing
+@testable import QuiverApp
+
+/// A sleep the test fires by hand. Each call parks until `fire` or until
+/// its task is cancelled, which throws as `Task.sleep` does.
+@MainActor
+private final class ManualSleep {
+    private(set) var durations: [Duration] = []
+    private var parked: [Int: CheckedContinuation<Void, Error>] = [:]
+    private var cancelled: Set<Int> = []
+    /// Someone waiting for the sleep count to reach a number.
+    private var countWaiter: (count: Int, continuation: CheckedContinuation<Void, Never>)?
+
+    /// Returns once `count` sleeps have started: `enter` and `leave` only
+    /// schedule the wait, so a test fires a sleep after it exists.
+    func started(_ count: Int) async {
+        if durations.count >= count { return }
+        await withCheckedContinuation { countWaiter = (count, $0) }
+    }
+
+    func sleep(_ duration: Duration) async throws {
+        let id = durations.count
+        durations.append(duration)
+        if let waiter = countWaiter, durations.count >= waiter.count {
+            countWaiter = nil
+            waiter.continuation.resume()
+        }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if cancelled.contains(id) { continuation.resume(throwing: CancellationError()) }
+                else { parked[id] = continuation }
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancel(id) }
+        }
+    }
+
+    var waiting: Int { parked.count }
+
+    func fire(_ id: Int) {
+        parked.removeValue(forKey: id)?.resume()
+    }
+
+    private func cancel(_ id: Int) {
+        cancelled.insert(id)
+        parked.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    }
+}
+
+@MainActor
+@Suite struct ChartHoverTests {
+    private func make() -> (ChartHover, ManualSleep) {
+        let sleep = ManualSleep()
+        return (ChartHover(sleep: { try await sleep.sleep($0) }), sleep)
+    }
+
+    /// Lets queued cancellations and wakes run.
+    private func drain() async {
+        for _ in 0..<5 { await Task.yield() }
+    }
+
+    @Test func theFirstCardWaitsTheOpenDelay() async {
+        let (hover, sleep) = make()
+        hover.enter(2)
+        await sleep.started(1)
+        #expect(hover.shown == nil)
+        #expect(sleep.durations == [ChartHover.openDelay])
+        sleep.fire(0)
+        await hover.settle()
+        #expect(hover.shown == 2)
+    }
+
+    @Test func withACardUpTheNextBarSwitchesAtOnce() async {
+        let (hover, sleep) = make()
+        hover.enter(2)
+        await sleep.started(1)
+        sleep.fire(0)
+        await hover.settle()
+        hover.enter(3)
+        await drain()
+        #expect(hover.shown == 3)
+        #expect(sleep.durations.count == 1, "no second wait")
+    }
+
+    @Test func enteringTheNextBarInsideTheCloseWindowSwitchesAndCancelsTheClose() async {
+        let (hover, sleep) = make()
+        hover.enter(2)
+        await sleep.started(1)
+        sleep.fire(0)
+        await hover.settle()
+        hover.leave(2)
+        await sleep.started(2)
+        #expect(sleep.durations.last == ChartHover.closeDelay)
+        #expect(hover.shown == 2, "the card outlives its bar")
+        hover.enter(3)
+        #expect(hover.shown == 3)
+        await drain()
+        #expect(sleep.waiting == 0, "the close was cancelled")
+        await hover.settle()
+        #expect(hover.shown == 3)
+    }
+
+    @Test func leavingClosesAfterTheCloseDelay() async {
+        let (hover, sleep) = make()
+        hover.enter(2)
+        await sleep.started(1)
+        sleep.fire(0)
+        await hover.settle()
+        hover.leave(2)
+        await sleep.started(2)
+        sleep.fire(1)
+        await hover.settle()
+        #expect(hover.shown == nil)
+    }
+
+    @Test func aLateLeaveFromTheLastBarIsIgnored() async {
+        let (hover, sleep) = make()
+        hover.enter(2)
+        await sleep.started(1)
+        sleep.fire(0)
+        await hover.settle()
+        hover.enter(3)
+        hover.leave(2)
+        await drain()
+        #expect(hover.shown == 3)
+        #expect(sleep.durations.count == 1)
+    }
+
+    @Test func leavingBeforeTheCardOpensCancelsIt() async {
+        let (hover, sleep) = make()
+        hover.enter(2)
+        await sleep.started(1)
+        hover.leave(2)
+        await sleep.started(2)
+        await drain()
+        // The open wait is gone; only the close wait is left.
+        #expect(sleep.waiting == 1)
+        #expect(sleep.durations == [ChartHover.openDelay, ChartHover.closeDelay])
+        sleep.fire(1)
+        await hover.settle()
+        #expect(hover.shown == nil)
+    }
+}
