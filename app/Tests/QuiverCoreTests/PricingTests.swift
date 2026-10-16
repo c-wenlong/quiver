@@ -3,9 +3,9 @@ import Testing
 @testable import QuiverCore
 
 private func event(_ model: String, tokens: Int = 100, loggedCost: Double? = nil,
-                   harness: String = "claude") -> UsageEvent {
+                   harness: String = "claude", at: Date = Date()) -> UsageEvent {
     UsageEvent(harness: harness, accountHome: "", sessionId: "s", model: model,
-               timestamp: Date(), inputTokens: tokens,
+               timestamp: at, inputTokens: tokens,
                costUSD: loggedCost)
 }
 
@@ -498,3 +498,150 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         _ = temp
     }
 }
+
+extension PricingModelTests {
+    @Test func `a harness filter keeps only its models and tokens`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex"),
+            event("claude-opus-5-5", tokens: 100, harness: "codex"),
+        ], catalog: priced)
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+        let rows = model.groups.flatMap(\.models)
+        #expect(rows.map(\.model).sorted() == ["claude-opus-5-5", "gpt-5"])
+        #expect(rows.allSatisfy { $0.harnesses == ["codex"] })
+        #expect(model.groups.reduce(0) { $0 + $1.tokens } == 400)
+        _ = temp
+    }
+
+    @Test func `the unpriced list follows the filter`() async throws {
+        let (ledger, model, temp) = try makeModel([
+            event("swe-2-max", tokens: 200, harness: "claude"),
+            event("kimi-k2", tokens: 300, harness: "codex"),
+            event("gpt-5", tokens: 10, harness: "codex"),
+        ], catalog: priced)
+        await ledger.setPricing(priced)
+        await model.load()
+        #expect(model.unpriced.map(\.model).sorted() == ["gpt-5", "kimi-k2", "swe-2-max"])
+        model.harnessFilter = "codex"
+        await model.load()
+        #expect(model.unpriced.map(\.model) == ["kimi-k2", "gpt-5"])
+        _ = temp
+    }
+
+    @Test func `a filter whose harness vanished falls back to all`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex",
+                  at: Date().addingTimeInterval(-60 * 86_400)),
+        ], catalog: priced)
+        model.period = .allTime
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+        #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
+        model.period = .today
+        await model.load()
+        #expect(model.harnessFilter == nil)
+        #expect(model.harnessOptions == ["claude"])
+        _ = temp
+    }
+
+    /// Parks the first `slices` call on a continuation the test releases
+    /// by hand, so a superseded load provably sits inside its first
+    /// suspension while its replacement runs to completion.
+    /// The `slices` closure runs off the main actor while the test polls
+    /// from it, so every access goes through the lock.
+    private final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _armed = false
+        private var _waiter: CheckedContinuation<Void, Never>?
+
+        func arm() { lock.withLock { _armed = true } }
+        /// Disarms and says whether it was armed, in one step.
+        func takeArmed() -> Bool {
+            lock.withLock {
+                defer { _armed = false }
+                return _armed
+            }
+        }
+        var waiter: CheckedContinuation<Void, Never>? {
+            get { lock.withLock { _waiter } }
+            set { lock.withLock { _waiter = newValue } }
+        }
+    }
+
+    @Test func `a superseded load does not clear the filter or republish`() async throws {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        for (i, e) in [
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex",
+                  at: Date().addingTimeInterval(-60 * 86_400)),
+        ].enumerated() {
+            try store.upsert(LedgerRecord(key: "t:\(i)", event: e))
+        }
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let gate = Gate()
+        let catalog = priced
+        let model = PricingModel(
+            ledger: ledger,
+            overrides: PricingOverrides(url: temp.url.appending(path: "config/pricing.json")),
+            makeCatalog: { catalog }, apply: { _ in },
+            slices: { range in
+                if gate.takeArmed() {
+                    await withCheckedContinuation { gate.waiter = $0 }
+                }
+                return await ledger.byModelHarness(in: range)
+            })
+        model.period = .allTime
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+
+        // The stale "today" load (no codex in it) parks on the gate; its
+        // replacement runs, then the stale one resumes and must leave
+        // the filter, the options and the rows alone.
+        model.period = .today
+        gate.arm()
+        let stale = Task { await model.load() }
+        for _ in 0..<500 where gate.waiter == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let waiter = try #require(gate.waiter, "the first load never parked")
+        model.period = .allTime
+        await model.load()
+        waiter.resume()
+        await stale.value
+        #expect(model.harnessFilter == "codex")
+        #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
+    }
+
+    @Test func `the covered-by list stays unfiltered`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("swe-2-max", tokens: 200, harness: "claude"),
+            event("swe-2-medium", tokens: 100, harness: "codex"),
+        ], catalog: priced)
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+        // The sheet warns that a saved price applies to every harness, so
+        // the names it lists must too.
+        #expect(model.coveredBy("swe-2") == ["swe-2-max", "swe-2-medium"])
+        _ = temp
+    }
+
+    @Test func `the harness options sort by tokens`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 100, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex"),
+            event("swe-2-max", tokens: 200, harness: "devin"),
+        ], catalog: priced)
+        await model.load()
+        #expect(model.harnessOptions == ["codex", "devin", "claude"])
+        _ = temp
+    }
+}
+

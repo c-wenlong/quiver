@@ -76,10 +76,25 @@ public final class PricingModel {
     }
 
     public var period: OverviewPeriod = .month
+    /// Harnesses with usage in the selected period, most tokens first:
+    /// the filter menu's options after its "All harnesses" row.
+    public private(set) var harnessOptions: [String] = []
+    /// When set, every list on the page shows only this harness's usage.
+    /// A selection whose usage vanished (a period change) falls back to
+    /// all on the next load. Not persisted.
+    public var harnessFilter: String?
     public private(set) var groups: [ProviderGroup] = []
     /// Models with unpriced tokens, largest first; the warning button's list.
     public private(set) var unpriced: [PricedModel] = []
     public private(set) var isLoading = false
+
+    /// Model names seen in the period across every harness: the sheet's
+    /// "Covers …" list stays unfiltered because a saved price applies to
+    /// every harness that ran the model.
+    private var periodModels: [String] = []
+    /// Bumped on every `load`: a superseded load must not publish or
+    /// touch the filter once a newer one has started.
+    private var loadGeneration = 0
 
     private let ledger: Ledger
     private var overrides: PricingOverrides
@@ -90,12 +105,16 @@ public final class PricingModel {
     private let apply: @Sendable (PricingCatalog) async -> Void
     private let now: () -> Date
     private let calendar: Calendar
+    /// The period's per-model-per-harness usage; overridable in tests to
+    /// hold a load mid-flight.
+    private let slices: @Sendable (DateInterval) async -> [ModelUsage]
 
     public init(
         ledger: Ledger, overrides: PricingOverrides,
         makeCatalog: @escaping @Sendable () throws -> PricingCatalog,
         apply: @escaping @Sendable (PricingCatalog) async -> Void,
-        now: @escaping () -> Date = Date.init, calendar: Calendar = .current
+        now: @escaping () -> Date = Date.init, calendar: Calendar = .current,
+        slices: (@Sendable (DateInterval) async -> [ModelUsage])? = nil
     ) {
         self.ledger = ledger
         self.overrides = overrides
@@ -103,15 +122,33 @@ public final class PricingModel {
         self.apply = apply
         self.now = now
         self.calendar = calendar
+        self.slices = slices ?? { range in
+            await ledger.byModelHarness(in: range)
+        }
     }
 
     /// Rebuild the rows for the selected period.
     public func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         let range = period.range(now: now(), calendar: calendar)
-        let slices = await ledger.byModelHarness(in: range)
+        let all = await slices(range)
+        guard generation == loadGeneration else { return }
+        periodModels = Array(Set(all.map(\.model))).sorted()
+        var byHarness: [String: Int] = [:]
+        for slice in all { byHarness[slice.harness, default: 0] += slice.totals.totalTokens }
+        harnessOptions = byHarness
+            .sorted { ($0.value, $0.key) > ($1.value, $1.key) }
+            .map(\.key)
+        if let harnessFilter, byHarness[harnessFilter] == nil {
+            self.harnessFilter = nil
+        }
+        let filter = harnessFilter
+        let slices = filter == nil ? all : all.filter { $0.harness == filter }
         let catalog = await ledger.catalog()
+        guard generation == loadGeneration else { return }
         var merged: [String: PricedModel] = [:]
         var order: [String] = []
         for slice in slices {
@@ -176,9 +213,10 @@ public final class PricingModel {
     }
 
     /// The logged model names a price saved under `key` would cover: every
-    /// model in the period whose base name is `key`.
+    /// model in the period whose base name is `key`, unfiltered — a saved
+    /// price applies to every harness.
     public func coveredBy(_ key: String) -> [String] {
-        groups.flatMap(\.models).map(\.model)
+        periodModels
             .filter { PricingCatalog.baseName(for: $0) == key }
             .sorted()
     }
