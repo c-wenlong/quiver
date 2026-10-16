@@ -451,45 +451,16 @@ public enum APIKeyMask {
     }
 }
 
-/// Which harness logo stands for a provider heading. Headings are free-form
-/// ("# ANTHROPIC", "# Moonshot / Kimi", "# x.ai"), so this matches words,
-/// ignoring case, and gives nil for a provider no harness logo stands for.
+/// Which logo stands for a provider heading, from `ModelBrands`. Headings
+/// are free-form ("# ANTHROPIC", "# Moonshot / Kimi", "# x.ai"), so this
+/// matches whole words, ignoring case, and gives nil when no brand with a
+/// bundled logo is named.
 public enum APIKeyProviderLogo {
-    static let byWord = ["anthropic": "claude", "claude": "claude",
-                         "openai": "openai",
-                         "moonshot": "kimi", "kimi": "kimi",
-                         "google": "gemini", "gemini": "gemini",
-                         "xai": "grok", "grok": "grok",
-                         "mistral": "mistral-vibe",
-                         "qwen": "qwen-code", "alibaba": "qwen-code",
-                         "deepseek": "deepseek",
-                         "zai": "zai", "zhipu": "zai",
-                         "01": "yi", "yi": "yi",
-                         "minimax": "minimax",
-                         "mimo": "xiaomimimo", "xiaomi": "xiaomimimo",
-                         "stepfun": "stepfun",
-                         "groq": "groq",
-                         "upstage": "upstage",
-                         "cerebras": "cerebras",
-                         "opencode": "opencode",
-                         "openrouter": "openrouter",
-                         "together": "together",
-                         "fireworks": "fireworks",
-                         "vercel": "vercel",
-                         "nebius": "nebius",
-                         "featherless": "featherless",
-                         "routing": "routing-run", "routingrun": "routing-run",
-                         "nvidia": "nvidia"]
-
     public static func logoID(for provider: String) -> String? {
-        let lower = provider.lowercased()
-        let words = lower.split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        // The heading run together catches a name written apart: "x.ai", "Open AI".
-        let joined = words.joined()
-        for word in words + [joined] {
-            if let id = byWord[word], HarnessIcons.icon(for: id) != nil { return id }
+        guard let icon = ModelBrands.inText(provider)?.icon, HarnessIcons.icon(for: icon) != nil else {
+            return nil
         }
-        return nil
+        return icon
     }
 }
 
