@@ -412,7 +412,6 @@ private struct QuickFigures: View {
                                 .font(Theme.rowTitle).monospacedDigit().foregroundStyle(Theme.textPrimary)
                         }
                         .padding(.vertical, 9)
-                        .modelCard(app.models, for: model.model) { app.selection = .models }
                         if index < min(summary.models.count, 5) - 1 { Divider().overlay(Theme.border) }
                     }
                 }
