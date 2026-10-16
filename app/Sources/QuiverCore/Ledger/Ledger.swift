@@ -422,13 +422,6 @@ public actor Ledger {
         return changed
     }
 
-    /// The newest timestamp stored for `harnesses` under `accountHome`, nil
-    /// when none. Polled sources ask for what is newer than this (with
-    /// overlap), or their whole window on a first run.
-    func latestEventTimestamp(harnesses: [String], accountHome: String) throws -> Date? {
-        try store.latestEventTimestamp(harnesses: harnesses, account: accountHome)
-    }
-
     // MARK: - Queries
 
     public func events(in range: DateInterval) -> [UsageEvent] {

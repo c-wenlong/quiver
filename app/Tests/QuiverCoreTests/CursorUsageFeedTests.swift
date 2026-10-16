@@ -27,9 +27,52 @@ import Testing
          "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": null}
         """
 
+    /// Replies chosen by whether `--account-dir` is in the args, so the
+    /// default profile and an extra can answer differently.
+    private final class SplitRunner: CommandRunning, @unchecked Sendable {
+        var replies: [String?: CommandResult] = [:]
+        private let lock = NSLock()
+        private var recorded: [[String]] = []
+        var calls: [[String]] { lock.withLock { recorded } }
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            lock.withLock { recorded.append(arguments) }
+            let dir = arguments.first { $0.hasPrefix("--account-dir=") }
+                .map { String($0.dropFirst("--account-dir=".count)) }
+            return replies[dir]
+                ?? CommandResult(status: 1, stdout: Data(), stderr: "unscripted")
+        }
+    }
+
     private func feed(_ runner: any CommandRunning, ledger: Ledger,
-                      accounts: [CursorUsageFeed.Account]) -> CursorUsageFeed {
-        CursorUsageFeed(ledger: ledger, swe: SweClient(runner: runner), accounts: { accounts })
+                      accounts: [CursorUsageFeed.Account],
+                      progressFile: URL? = nil) -> CursorUsageFeed {
+        CursorUsageFeed(ledger: ledger, swe: SweClient(runner: runner),
+                        accounts: { accounts },
+                        progressFile: progressFile
+                            ?? FileManager.default.temporaryDirectory
+                                .appending(path: "cursor-feed-\(UUID().uuidString).json"))
+    }
+
+    /// A progress file that already knows `profiles[home] = accountId`
+    /// and that account's `through` mark.
+    private func progressFile(_ home: String, _ accountId: String,
+                            through: Double, in temp: TempDir) -> URL {
+        let url = temp.url.appending(path: "cache/cursor-feed.json")
+        let body: [String: Any] = [
+            "schema": 1,
+            "profiles": [home: accountId],
+            "accounts": [accountId: ["through": through]],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: body)
+        try! FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! data.write(to: url)
+        return url
+    }
+
+    /// The `--since` argument a recorded call carried.
+    private func sinceArg(_ call: [String]) -> Double {
+        Double(call.first { $0.hasPrefix("--since=") }!.dropFirst("--since=".count))!
     }
 
     private func accts() -> [CursorUsageFeed.Account] { [CursorUsageFeed.Account(home: account)] }
@@ -81,22 +124,32 @@ import Testing
         let temp = try TempDir()
         let ledger = try Ledger(cacheDirectory: temp.path("cache"))
         let runner = LockedRunner([
-            (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
+            (["harness", "usage-events", "cursor"],
+             reply("ok", twoEvents, accountId: "uid-1")),
         ])
-        let feed = feed(runner, ledger: ledger, accounts: accts())
+        let feed = feed(runner, ledger: ledger, accounts: accts(),
+                        progressFile: temp.url.appending(path: "cache/cursor-feed.json"))
 
         let before = Date().addingTimeInterval(-180 * 86_400).timeIntervalSince1970
         await feed.poll()
-        var arg = runner.calls[0].first { $0.hasPrefix("--since=") }!.dropFirst("--since=".count)
         // First poll asks for the whole 180-day window (--since is whole
         // seconds, so it truncates up to a second).
-        #expect((before - 1)...before + 60 ~= Double(arg)!)
+        #expect((before - 1)...before + 60 ~= sinceArg(runner.calls[0]))
 
         await feed.poll()
-        arg = runner.calls[1].first { $0.hasPrefix("--since=") }!.dropFirst("--since=".count)
-        // Later polls resume from the newest stored event minus two days.
+        // Later polls resume from the account's newest event minus the
+        // two-day overlap.
         let expected = 1791700100 - 2 * 86_400
-        #expect(abs(Double(arg)! - Double(expected)) < 2)
+        #expect(abs(sinceArg(runner.calls[1]) - Double(expected)) < 2)
+
+        // ... and the progress file round-trips: the profile names the
+        // account, the account carries the newest timestamp.
+        let saved = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: temp.url.appending(path: "cache/cursor-feed.json")))
+            as! [String: Any]
+        #expect((saved["profiles"] as? [String: String]) == [account: "uid-1"])
+        #expect((saved["accounts"] as? [String: [String: Double]])?["uid-1"]?["through"]
+                == 1791700100)
     }
 
     @Test func authRequiredAndSignedOutKeepTheStoredRows() async throws {
@@ -181,9 +234,12 @@ import Testing
             onIngested: { await overview.reloadAfterLedgerWrite() })
         await feed.poll()
         #expect(overview.revision == before + 1)
+        // The calendar watches the same counter the scan path bumps.
+        #expect(overview.ledgerWrites == 1)
         // An identical refetch changes no rows, so no reload fires.
         await feed.poll()
         #expect(overview.revision == before + 1)
+        #expect(overview.ledgerWrites == 1)
     }
 
     @Test func twoProfilesOnOneAccountStoreOneCopy() async throws {
@@ -241,6 +297,67 @@ import Testing
         await feed(runner, ledger: ledger, accounts: accts()).poll()
         let events = await ledger.events(in: allTime)
         #expect(events.count == 2)
+    }
+
+    @Test func anExpiredDefaultDoesNotBlockAWorkingProfileOnTheSameAccount() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let runner = SplitRunner()
+        // The default profile is signed into the same account but its
+        // session is stale; the extra profile's session works.
+        runner.replies[nil] = reply("auth-required", "", accountId: "uid-1")
+        runner.replies["/t/cursor-side/desktop"] =
+            reply("ok", twoEvents, accountId: "uid-1")
+        let extra = CursorUsageFeed.Account(home: "/t/cursor-side/desktop",
+                                            accountDir: "/t/cursor-side/desktop")
+        await feed(runner, ledger: ledger, accounts: accts() + [extra]).poll()
+        let events = await ledger.events(in: allTime)
+        // The expired default never marked the account, so the working
+        // extra imported it once, under its own home.
+        #expect(events.count == 2)
+        #expect(events.allSatisfy { $0.accountHome == "/t/cursor-side/desktop" })
+    }
+
+    @Test func anAccountSwitchFetchesTheNewAccountsFullWindow() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        // This profile used to answer as uid-old, which has a mark.
+        let file = progressFile(account, "uid-old", through: 1791700100, in: temp)
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"],
+             reply("ok", twoEvents, accountId: "uid-new")),
+        ])
+        let feed = feed(runner, ledger: ledger, accounts: accts(), progressFile: file)
+        await feed.poll()
+        // First call used uid-old's mark minus the overlap...
+        #expect(abs(sinceArg(runner.calls[0]) - Double(1791700100 - 2 * 86_400)) < 2)
+        // ... and the switch to uid-new re-asked for its full window.
+        let before = Date().addingTimeInterval(-180 * 86_400).timeIntervalSince1970
+        #expect((before - 1)...before + 60 ~= sinceArg(runner.calls[1]))
+        #expect(await ledger.events(in: allTime).count == 2)
+    }
+
+    @Test func anIncompleteReplyIngestsButDoesNotAdvanceThrough() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let file = progressFile(account, "uid-1", through: 1791700100, in: temp)
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"],
+             reply("incomplete", twoEvents, accountId: "uid-1")),
+        ])
+        let feed = feed(runner, ledger: ledger, accounts: accts(), progressFile: file)
+        await feed.poll()
+        // The events still landed...
+        #expect(await ledger.events(in: allTime).count == 2)
+        // ... but `through` stayed put, so the next poll asks for the same
+        // range again rather than skipping what the cap hid.
+        let saved = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: file)) as! [String: Any]
+        #expect((saved["accounts"] as? [String: [String: Double]])?["uid-1"]?["through"]
+                == 1791700100)
+        await feed.poll()
+        let expected = 1791700100 - 2 * 86_400
+        #expect(abs(sinceArg(runner.calls[1]) - Double(expected)) < 2)
     }
 }
 

@@ -359,6 +359,7 @@ final class AppModel {
                     }
                     return accounts
                 },
+                progressFile: quiver.appending(path: "cache/cursor-feed.json"),
                 onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
         } catch {
             overview = nil

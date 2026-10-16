@@ -31,6 +31,10 @@ public actor CursorUsageFeed {
     private let ledger: Ledger
     private let swe: SweClient
     private let accounts: @Sendable () -> [Account]
+    /// `cache/cursor-feed.json`: which account each profile answers as,
+    /// and each account's newest imported timestamp.
+    private let progressFile: URL
+    private var progress: CursorFeedProgress
     /// An swe without `usage-events` is asked once, then left alone for the
     /// rest of the session.
     private var sweTooOld = false
@@ -45,10 +49,16 @@ public actor CursorUsageFeed {
 
     public init(ledger: Ledger, swe: SweClient,
                 accounts: @escaping @Sendable () -> [Account],
+                progressFile: URL? = nil,
                 onIngested: (@Sendable () async -> Void)? = nil) {
         self.ledger = ledger
         self.swe = swe
         self.accounts = accounts
+        self.progressFile = progressFile ?? FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: ".quiver/cache/cursor-feed.json")
+        self.progress = (try? JSONDecoder().decode(
+            CursorFeedProgress.self,
+            from: (try? Data(contentsOf: self.progressFile)) ?? Data())) ?? CursorFeedProgress()
         self.onIngested = onIngested
     }
 
@@ -73,9 +83,11 @@ public actor CursorUsageFeed {
         guard !sweTooOld else { return }
         var seenAccounts = Set<String>()
         var changed = 0
+        var dirty = false
         for account in accounts() {
             do {
-                changed += try await poll(account, seenAccounts: &seenAccounts)
+                changed += try await poll(
+                    account, seenAccounts: &seenAccounts, dirty: &dirty)
             } catch SweError.commandFailed(_, let message)
                 where message.localizedCaseInsensitiveContains("unknown harness subcommand")
                     || message.localizedCaseInsensitiveContains("unknown argument") {
@@ -86,27 +98,43 @@ public actor CursorUsageFeed {
                 note(error, for: account)
             }
         }
+        if dirty { saveProgress() }
         if changed > 0 { await onIngested?() }
     }
 
     /// Polls one profile and ingests its events, returning how many rows
-    /// changed. A reply whose `account_id` another profile already
-    /// imported this round is left alone.
-    private func poll(_ account: Account, seenAccounts: inout Set<String>) async throws -> Int {
-        let latest = try await ledger.latestEventTimestamp(
-            harnesses: Self.harnesses, accountHome: account.home)
-        // First run asks for the full window; afterwards the newest stored
-        // event minus the overlap.
-        let since = max(0, latest?.addingTimeInterval(-Self.overlap).timeIntervalSince1970
-            ?? Date().addingTimeInterval(-Self.window).timeIntervalSince1970)
-        let reply = try await swe.usageEvents(accountDir: account.accountDir, since: since)
-        if let accountId = reply.accountId {
-            guard seenAccounts.insert(accountId).inserted else {
-                Self.log.info("cursor feed: a second profile on the same account; skipping it")
-                return 0
+    /// changed.
+    private func poll(_ account: Account,
+                      seenAccounts: inout Set<String>,
+                      dirty: inout Bool) async throws -> Int {
+        let fullWindow = Date().addingTimeInterval(-Self.window).timeIntervalSince1970
+        // The window each account is read through: its high-water mark
+        // minus the overlap, or the whole feed window when unknown.
+        func window(for accountId: String?) -> TimeInterval {
+            accountId.flatMap { progress.accounts[$0]?.through }
+                .map { max(0, $0 - Self.overlap) } ?? fullWindow
+        }
+        let expected = progress.profiles[account.home]
+        var reply = try await swe.usageEvents(
+            accountDir: account.accountDir, since: window(for: expected))
+        // A switched or newly seen account reads through its own mark —
+        // the profile's old account's overlap would skip the new one's
+        // history.
+        if let accountId = reply.accountId, accountId != expected {
+            let own = window(for: accountId)
+            if own != window(for: expected) {
+                reply = try await swe.usageEvents(
+                    accountDir: account.accountDir, since: own)
             }
         }
-        // signed-out / auth-required / unavailable all keep the stored data.
+        if let accountId = reply.accountId, seenAccounts.contains(accountId) {
+            Self.log.info("cursor feed: a second profile on the same account; skipping it")
+            return 0
+        }
+        // signed-out / auth-required / unavailable all keep the stored
+        // data — and, because `seenAccounts` only records an id after its
+        // import ran, an expired profile never blocks a working sibling
+        // on the same account.
         guard reply.status == "ok" || reply.status == "incomplete" else { return 0 }
         if reply.status == "incomplete" {
             Self.log.warning(
@@ -116,9 +144,31 @@ public actor CursorUsageFeed {
         // when it cannot. Two profiles on one account therefore write the
         // same keys, and `accountHome` stays with the first-seen profile.
         let accountKey = reply.accountId ?? account.home
-        return try await ledger.ingest(reply.events.map {
+        let changed = try await ledger.ingest(reply.events.map {
             Self.record(for: $0, accountKey: accountKey, accountHome: account.home)
         })
+        if let accountId = reply.accountId {
+            seenAccounts.insert(accountId)
+            progress.profiles[account.home] = accountId
+            // `through` advances only on `ok`: `incomplete` means part of
+            // the window may be missing, so the next poll asks for the
+            // same range again (re-ingest is idempotent).
+            if reply.status == "ok",
+               let newest = reply.events.map(\.timestamp).max() {
+                progress.accounts[accountId, default: .init()].through = max(
+                    progress.accounts[accountId]?.through ?? 0, newest)
+            }
+            dirty = true
+        }
+        return changed
+    }
+
+    private func saveProgress() {
+        guard let data = try? JSONEncoder().encode(progress) else { return }
+        try? FileManager.default.createDirectory(
+            at: progressFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try? data.write(to: progressFile, options: .atomic)
     }
 
     /// Record a per-account poll failure for logs and later display. The
@@ -186,6 +236,17 @@ extension SweClient {
         var args = ["harness", "usage-events", "cursor", "--since=\(Int(since))", "--json"]
         if let accountDir { args.append("--account-dir=\(accountDir)") }
         return try await call(args, allowFailure: true)
+    }
+}
+
+/// `cache/cursor-feed.json`: each profile's last-seen `account_id`, and
+/// each account's newest imported timestamp in epoch seconds.
+struct CursorFeedProgress: Codable, Sendable {
+    var schema = 1
+    var profiles: [String: String] = [:]
+    var accounts: [String: Through] = [:]
+    struct Through: Codable, Sendable {
+        var through: TimeInterval = 0
     }
 }
 

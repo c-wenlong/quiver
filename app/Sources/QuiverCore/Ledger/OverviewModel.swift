@@ -147,6 +147,9 @@ public final class OverviewModel {
     public private(set) var scanNotes: [String] = []
     /// Successful scans so far; other views reload their ledger figures when it changes.
     public private(set) var completedScans = 0
+    /// Ledger writes outside the scan path (the Cursor feed's ingest);
+    /// views that refresh on `completedScans` watch this too.
+    public private(set) var ledgerWrites = 0
     /// When the figures were last rebuilt.
     public private(set) var updatedAt: Date?
 
@@ -226,6 +229,7 @@ public final class OverviewModel {
     /// then rebuild exactly like a scan that read files did.
     public func reloadAfterLedgerWrite() async {
         revision += 1
+        ledgerWrites += 1
         await load(scan: false)
     }
 
