@@ -6,9 +6,9 @@ import Testing
     @Test func subNavIsGroupedAsApproved() {
         #expect(SettingsGroup.allCases.map(\.title) == ["App", "Usage", "Advanced"])
         #expect(SettingsGroup.app.sections == [.general, .preferences, .notifications, .updates])
-        #expect(SettingsGroup.usage.sections == [.providers])
+        #expect(SettingsGroup.usage.sections == [.providers, .services])
         #expect(SettingsGroup.advanced.sections == [.paths])
-        #expect(SettingsGroup.order == [.general, .preferences, .notifications, .updates, .providers, .paths])
+        #expect(SettingsGroup.order == [.general, .preferences, .notifications, .updates, .providers, .services, .paths])
     }
 
     @Test func everySectionHasATitleSymbolAndADescription() {
