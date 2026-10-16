@@ -94,7 +94,7 @@ final class LedgerStore {
         try? db.execute("ALTER TABLE events ADD COLUMN session_total INTEGER NOT NULL DEFAULT 0")
         selectByKey = try db.prepare("""
             SELECT sidechain, input, output, cache_read, cache_write, cache_write_1h,
-                reasoning, session_total, cost, ts FROM events WHERE key = ?
+                reasoning, session_total, cost, ts, dim FROM events WHERE key = ?
             """)
         selectByMessage = try db.prepare("""
             SELECT key, sidechain, input + output + cache_read + cache_write + reasoning
@@ -153,7 +153,7 @@ final class LedgerStore {
             if record.authoritative {
                 // The source's own figure always wins, but only a changed
                 // figure is a write.
-                guard !sameEvent(selectByKey, as: record) else { return false }
+                guard try !sameEvent(selectByKey, as: record) else { return false }
                 try write(record, key: key)
                 return true
             }
@@ -184,13 +184,18 @@ final class LedgerStore {
     }
 
     /// True when the row `selectByKey` just stepped to stores the same
-    /// figures as `record`. Only meaningful while the statement's cursor
-    /// is on that row.
-    private func sameEvent(_ row: Statement, as record: LedgerRecord) -> Bool {
+    /// figures and dimension as `record`. Only meaningful while the
+    /// statement's cursor is on that row.
+    private func sameEvent(_ row: Statement, as record: LedgerRecord) throws -> Bool {
         let e = record.event
         let costMatches = row.isNull(8)
             ? e.costUSD == nil
             : e.costUSD != nil && row.double(8) == e.costUSD
+        // The dim carries model, cwd, account and tier: an authoritative
+        // re-read where only those moved is a change, not a duplicate.
+        let dim = try dimID(DimKey(
+            harness: e.harness, account: e.accountHome, session: e.sessionId,
+            cwd: e.cwd ?? "", model: e.model, tier: e.serviceTier ?? ""))
         return row.int(0) == Int64(record.isSidechain ? 1 : 0)
             && row.int(1) == Int64(e.inputTokens)
             && row.int(2) == Int64(e.outputTokens)
@@ -201,6 +206,7 @@ final class LedgerStore {
             && row.int(7) == Int64(e.isSessionTotal ? 1 : 0)
             && costMatches
             && row.double(9) == e.timestamp.timeIntervalSince1970
+            && row.int(10) == dim
     }
 
     private static func shouldReplace(

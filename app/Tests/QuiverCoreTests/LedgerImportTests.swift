@@ -203,6 +203,31 @@ import Testing
         #expect(await ledger.events(in: allTime).count == 2)
     }
 
+    @Test func aModelChangeWithTheSameTotalsReImports() async throws {
+        let temp = try TempDir()
+        let home = try droidHome(temp, usage:
+            """
+            "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        #expect(await ledger.events(in: allTime).first?.model == "glm-5.2")
+
+        // Same session, same totals, new model: the dim changed, so the
+        // re-read must land rather than look identical to the stored row.
+        let file = home.appendingPathComponent("sessions/-Users-x-proj/s1.settings.json")
+        try Data("""
+            {"model":"glm-6",
+             "inclusiveTokenUsage":{"inputTokens":1000,"outputTokens":200,
+             "cacheReadTokens":0,"cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1}}
+            """.utf8).write(to: file)
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events.first?.model == "glm-6")
+    }
+
     @Test func aSessionNowReportingZeroClearsItsEvent() async throws {
         let temp = try TempDir()
         let home = try droidHome(temp, usage:
