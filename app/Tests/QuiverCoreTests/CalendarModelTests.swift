@@ -559,9 +559,28 @@ private final class HeldActivity: ActivityProviding, @unchecked Sendable {
         }
         pending.forEach { $0.resume() }
     }
+    /// Returns once `count` reads have started. load() paints a cached
+    /// range before it asks any provider, so this orders a check after
+    /// the paint instead of yielding and hoping the load ran first.
+    func started(_ count: Int = 1) async {
+        await withCheckedContinuation { continuation in
+            let now = state.withLock { s -> Bool in
+                if s.calls >= count { return true }
+                s.arrivals.append((count, continuation))
+                return false
+            }
+            if now { continuation.resume() }
+        }
+    }
     func activityBlocks(in range: DateInterval, gap: TimeInterval,
                         force: Bool) async throws -> [ActivityBlock] {
-        state.withLock { $0.calls += 1 }
+        let arrived = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.calls += 1
+            let ready = s.arrivals.filter { s.calls >= $0.count }
+            s.arrivals.removeAll { s.calls >= $0.count }
+            return ready.map(\.continuation)
+        }
+        arrived.forEach { $0.resume() }
         let waitFirst = !force && holdPrefetch ? true : state.withLock { $0.held }
         if waitFirst {
             await withCheckedContinuation { continuation in
@@ -582,6 +601,7 @@ private final class HeldActivity: ActivityProviding, @unchecked Sendable {
         var calls = 0
         var held = true
         var waiting: [CheckedContinuation<Void, Never>] = []
+        var arrivals: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
         private let lock = NSLock()
         func withLock<T>(_ body: (State) -> T) -> T {
             lock.lock()
@@ -706,7 +726,10 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         await load
     }
 
-    @Test func aTwentyEightDayRangeCachesAndPublishes() async {
+    // The time limit fails the test instead of hanging the suite if
+    // load() ever stops asking the provider.
+    @Test(.timeLimit(.minutes(1)))
+    func aTwentyEightDayRangeCachesAndPublishes() async {
         let provider = FakeActivity(blocks: [block("2026-10-05T10:00:00Z", session: "a"),
                                              block("2026-11-01T10:00:00Z", session: "b")])
         let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
@@ -724,7 +747,10 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
                                        .init(start: month.start, end: month.end,
                                              providers: [0: [block("2026-10-05T10:00:00Z")]])]))
         async let load: () = cached.load(range: month, force: false)
-        await Task.yield()
+        // One yield does not promise the async-let child has reached the
+        // main actor yet; under load it often has not. Wait for the held
+        // read instead: the paint comes first, and the read never answers.
+        await held.started()
         #expect(cached.blocks.count == 1)
         held.release()
         await load
