@@ -216,6 +216,24 @@ final class AppModel {
         didSet { UserDefaults.standard.set(mcpServersPath, forKey: "mcpServersPath") }
     }
 
+    /// The persisted value; defaults on when nothing was stored yet.
+    private static func hidesTrivialSessions() -> Bool {
+        UserDefaults.standard.object(forKey: "hideTrivialSessions") == nil
+            || UserDefaults.standard.bool(forKey: "hideTrivialSessions")
+    }
+
+    /// Settings → "Hide accidental sessions": drops empty and probe-like
+    /// sessions from the Sessions page and the calendar. Default on.
+    var hideTrivialSessions: Bool {
+        didSet {
+            UserDefaults.standard.set(hideTrivialSessions, forKey: "hideTrivialSessions")
+            sessions?.hideTrivial = hideTrivialSessions
+            ledger?.setHidesTrivialSessions(hideTrivialSessions)
+            calendar?.noteScanCompleted()
+            if let calendar { Task { await calendar.load() } }
+        }
+    }
+
     /// The app "Open in editor" uses, kept by name; empty means the first found.
     var codeEditor: String {
         didSet { UserDefaults.standard.set(codeEditor, forKey: "codeEditor") }
@@ -236,6 +254,8 @@ final class AppModel {
     let compute: ComputeModel
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
+    /// Kept for `hideTrivialSessions`; nil with `sessions`.
+    private let ledger: Ledger?
     /// The Calendar page's activity blocks; nil with `sessions`.
     let calendar: CalendarModel?
     /// Cursor's per-event usage feed into the ledger; nil with `sessions`.
@@ -277,6 +297,7 @@ final class AppModel {
         apiKeysPath = keysPath
         apiKeys = Self.keysModel(path: keysPath)
         mcpServersPath = UserDefaults.standard.string(forKey: "mcpServersPath") ?? ""
+        hideTrivialSessions = Self.hidesTrivialSessions()
         codeEditor = UserDefaults.standard.string(forKey: "codeEditor") ?? ""
 
         // Everything Quiver keeps lives under ~/.quiver (see AGENTS.md).
@@ -311,12 +332,15 @@ final class AppModel {
                                  paths: store.paths(for:), home: home)
             }
         let directory: @Sendable () -> AccountDirectory = { directoryCache.current }
+        let hidesTrivial = Self.hidesTrivialSessions()
         do {
             // User prices (config/pricing.json) win over both published lists.
             let pricing = PricingStore(cacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
                                        overridesFile: quiver.appending(path: "config/pricing.json"))
             let ledger = try Ledger(cacheDirectory: quiver.appending(path: "cache/ledger"),
                                     pricing: (try? pricing.load()) ?? .empty)
+            self.ledger = ledger
+            ledger.setHidesTrivialSessions(hidesTrivial)
             overview = OverviewModel(ledger: ledger, roots: { directory().roots },
                                      accountLabel: { directory().label(for: $0) },
                                      refreshPricing: { await pricing.refreshIfStale() })
@@ -379,11 +403,13 @@ final class AppModel {
         } catch {
             overview = nil
             sessions = nil
+            ledger = nil
             calendar = nil
             cursorFeed = nil
             pricingModel = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
+        sessions?.hideTrivial = hidesTrivial
         skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))
         // The Skills page's hub tab is now Plugins > Explore, kept in
         // plugin-catalog.json; its old snapshot has no reader left.

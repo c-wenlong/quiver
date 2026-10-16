@@ -125,6 +125,8 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
     func usage(_ id: String, _ harness: String, models: [String], cost: Double, home: String = "/Users/k/.claude") -> SessionUsage {
         var t = UsageTotals()
         t.inputTokens = 100
+        // Three replies keeps the row clear of the trivial-session rule.
+        t.eventCount = 3
         t.costUSD = cost
         return SessionUsage(sessionId: id, harness: harness, accountHome: home, cwd: nil, models: models, totals: t,
                             firstTimestamp: now, lastTimestamp: now)
@@ -162,7 +164,9 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
             session("a", "claude", cwd: "/c/quiver", at: 1_791_699_000, title: "Ledger work"),
             session("b", "codex", cwd: "/c/site", at: 1_791_698_000),
             session("c", "claude", cwd: "/c/site", at: 1_791_000_000),
-        ], [usage("a", "claude", models: ["opus"], cost: 1), usage("c", "claude", models: ["sonnet"], cost: 1)])
+        ], [usage("a", "claude", models: ["opus"], cost: 1),
+            usage("b", "codex", models: ["gpt"], cost: 1, home: "/Users/k/.codex"),
+            usage("c", "claude", models: ["sonnet"], cost: 1)])
         await model.load()
 
         model.filter.harness = "claude"
@@ -193,12 +197,14 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
             session("a", "claude", cwd: "/c/quiver", at: 1_791_699_000),
             session("b", "codex", cwd: "/c/site", at: 1_791_650_000),
             session("c", "claude", cwd: "/c/site", at: 1_790_900_000),
-        ], [usage("a", "claude", models: ["opus"], cost: 4), usage("c", "claude", models: ["sonnet"], cost: 1.5)])
+        ], [usage("a", "claude", models: ["opus"], cost: 4),
+            usage("b", "codex", models: ["gpt"], cost: 0, home: "/Users/k/.codex"),
+            usage("c", "claude", models: ["sonnet"], cost: 1.5)])
         await model.load()
 
         let summary = model.summary
         #expect(summary.sessions == 3)
-        #expect(summary.totals.totalTokens == 200)
+        #expect(summary.totals.totalTokens == 300)
         #expect(summary.totals.costUSD == 5.5)
 
         let groups = model.groupedByDay(calendar: calendar)
@@ -207,7 +213,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
 
         model.filter.harness = "codex"
         #expect(model.summary.sessions == 1)
-        #expect(model.summary.totals.totalTokens == 0)
+        #expect(model.summary.totals.totalTokens == 100)
     }
 
     @Test func aSessionsDurationSpansItsFirstAndLastEvent() {
@@ -222,7 +228,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         let model = await model([
             session("a", "claude", cwd: "/c/q", at: 1_791_699_000),
             session("y", "claude", cwd: "/c/q", at: 1_791_644_400),
-        ], [])
+        ], [usage("a", "claude", models: [], cost: 0)])
         await model.load()
         model.filter.window = .today
         #expect(model.visible.map(\.id) == ["a"])
@@ -244,7 +250,8 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         old.lastTimestamp = now.addingTimeInterval(-200 * 86_400)
         // A default-home session swe didn't list stays out: swe is the source there.
         let stray = usage("d1", "claude", models: [], cost: 1)
-        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)], [work, old, stray])
+        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)],
+                                [work, old, stray, usage("a", "claude", models: [], cost: 0)])
         await model.load()
         // The listing is unbounded, so extra-account sessions join at any
         // age; the window filter still keeps the old one out of view.
@@ -333,7 +340,9 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
             session("a", "claude", cwd: "/c/Quiver", at: 1_791_699_000),
             session("b", "codex", cwd: "/c/quiver", at: 1_791_698_000),
             session("c", "claude", cwd: "/c/site", at: 1_791_697_000),
-        ], [])
+        ], [usage("a", "claude", models: [], cost: 0),
+            usage("b", "codex", models: [], cost: 0, home: "/Users/k/.codex"),
+            usage("c", "claude", models: [], cost: 0)])
         await model.load()
         #expect(model.projects.map(\.name) == ["Quiver", "site"])
         #expect(model.projects.map(\.count) == [2, 1])
@@ -346,7 +355,9 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
             session("a", "claude", cwd: "/c/site", at: 1_791_699_000),
             session("b", "claude", cwd: "/c/3f2a9c1", at: 1_791_698_000),
             session("c", "claude", cwd: "/c/0199abcd-1111-2222-3333-444455556666", at: 1_791_697_000),
-        ], [])
+        ], [usage("a", "claude", models: [], cost: 0),
+            usage("b", "claude", models: [], cost: 0),
+            usage("c", "claude", models: [], cost: 0)])
         await model.load()
         // Other carries every generated name and always sorts last.
         #expect(model.projects.map(\.name) == ["site", "Other"])
@@ -412,6 +423,113 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         await loading.value
         // The load's stale read must not overwrite the refresh's rows.
         #expect(model.models.first?.tokens == 900)
+    }
+
+    @Test func emptyListedSessionsHideWithACountUntilShown() async {
+        // A session swe lists that the ledger never saw ran zero
+        // responses. Gemini has no usage log, so its rows always stay.
+        let model = await model([
+            session("a", "claude", cwd: "/c/q", at: 1_791_699_000),
+            session("b", "claude", cwd: "/c/q", at: 1_791_698_000),
+            session("g", "gemini", cwd: "/c/q", at: 1_791_697_000),
+        ], [usage("b", "claude", models: [], cost: 0)])
+        await model.load()
+        #expect(model.visible.map(\.id) == ["b", "g"])
+        #expect(model.hiddenTrivialCount == 1)
+        model.showTrivial = true
+        #expect(model.visible.map(\.id) == ["a", "b", "g"])
+        #expect(model.hiddenTrivialCount == 1)
+    }
+
+    @Test func probeLikeSessionsHideAndTheSettingBringsThemBack() async {
+        var probeTotals = UsageTotals()
+        probeTotals.inputTokens = 20
+        probeTotals.outputTokens = 10
+        probeTotals.eventCount = 1
+        let probe = SessionUsage(sessionId: "p", harness: "claude",
+                                 accountHome: "/Users/k/.claude", cwd: nil,
+                                 models: ["opus"], totals: probeTotals,
+                                 firstTimestamp: now, lastTimestamp: now)
+        let model = await model([
+            session("p", "claude", cwd: "/c/q", at: 1_791_699_000),
+            session("b", "claude", cwd: "/c/q", at: 1_791_698_000),
+        ], [probe, usage("b", "claude", models: [], cost: 0)])
+        await model.load()
+        #expect(model.visible.map(\.id) == ["b"])
+        #expect(model.hiddenTrivialCount == 1)
+        // Settings' "Hide accidental sessions" off shows everything.
+        model.hideTrivial = false
+        #expect(model.visible.map(\.id) == ["p", "b"])
+        #expect(model.hiddenTrivialCount == 0)
+    }
+
+    @Test func aLongSessionIsNotTrivialBecauseStatsCoverItsWholeHistory() async {
+        // The usage row is whole-history, so a session with plenty of
+        // earlier replies stays visible however probe-like its last day
+        // looks.
+        var long = usage("l", "claude", models: [], cost: 0)
+        long.totals.eventCount = 40
+        let model = await model([session("l", "claude", cwd: "/c/q", at: 1_791_699_000)], [long])
+        await model.load()
+        #expect(model.visible.map(\.id) == ["l"])
+        #expect(model.hiddenTrivialCount == 0)
+    }
+}
+
+/// The "Hide accidental sessions" rule itself: empty sessions are always
+/// trivial, and a one-shot probe under a minute with a nearly empty reply
+/// is too — except on harnesses whose logs carry no per-reply detail.
+@Suite struct SessionFilterTests {
+    private func usage(harness: String = "claude", responses: Int = 2,
+                       span: TimeInterval = 59, input: Int = 500,
+                       output: Int = 99, reasoning: Int = 0) -> SessionUsage {
+        var totals = UsageTotals()
+        totals.inputTokens = input
+        totals.outputTokens = output
+        totals.reasoningTokens = reasoning
+        totals.eventCount = responses
+        let start = Date(timeIntervalSince1970: 1_791_700_000)
+        return SessionUsage(sessionId: "s", harness: harness, accountHome: "/h",
+                            cwd: nil, models: ["m"], totals: totals,
+                            firstTimestamp: start,
+                            lastTimestamp: start.addingTimeInterval(span))
+    }
+
+    @Test func aTwoResponseMinuteWithAnAlmostEmptyReplyIsTrivial() {
+        #expect(SessionFilter.isTrivial(usage: usage(responses: 2, span: 59, output: 99)))
+    }
+
+    @Test func aThirdResponseMakesItReal() {
+        #expect(!SessionFilter.isTrivial(usage: usage(responses: 3, span: 59, output: 99)))
+    }
+
+    @Test func aHundredOutputTokensMakesItReal() {
+        #expect(!SessionFilter.isTrivial(usage: usage(responses: 2, span: 59, output: 100)))
+    }
+
+    @Test func aMinuteLongSpanMakesItReal() {
+        #expect(!SessionFilter.isTrivial(usage: usage(responses: 2, span: 60, output: 99)))
+    }
+
+    @Test func reasoningCountsTowardTheReply() {
+        #expect(SessionFilter.isTrivial(usage: usage(output: 50, reasoning: 49)))
+        #expect(!SessionFilter.isTrivial(usage: usage(output: 50, reasoning: 50)))
+    }
+
+    @Test func aSessionWithNoTokensIsTrivialHoweverLongItRan() {
+        #expect(SessionFilter.isTrivial(usage: usage(responses: 50, span: 3600, input: 0, output: 0)))
+    }
+
+    @Test func aSessionWithNoResponsesIsTrivial() {
+        #expect(SessionFilter.isTrivial(usage: usage(responses: 0, span: 3600, input: 5000, output: 5000)))
+    }
+
+    @Test func harnessesWithoutReplyDetailOnlyDropWhenEmpty() {
+        for harness in ["cursor", "droid", "cline"] {
+            // One short reply is indistinguishable from a real quick answer.
+            #expect(!SessionFilter.isTrivial(usage: usage(harness: harness, responses: 1, span: 0, output: 5)))
+            #expect(SessionFilter.isTrivial(usage: usage(harness: harness, responses: 1, span: 0, input: 0, output: 0)))
+        }
     }
 }
 

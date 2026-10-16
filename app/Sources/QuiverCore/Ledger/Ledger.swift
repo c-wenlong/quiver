@@ -157,6 +157,16 @@ public actor Ledger {
     /// the write connection or this actor.
     let activityURL: URL
     let activityConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
+    /// Settings' "Hide accidental sessions": whether the calendar drops
+    /// trivial sessions. Outside the actor because the block query runs
+    /// on its own read connection.
+    let trivialGate = OSAllocatedUnfairLock<Bool>(initialState: true)
+
+    /// Flips the calendar's trivial-session drop (Settings → "Hide
+    /// accidental sessions").
+    public nonisolated func setHidesTrivialSessions(_ hides: Bool) {
+        trivialGate.withLock { $0 = hides }
+    }
 
     /// - Parameters:
     ///   - cacheDirectory: where the ledger database lives; production uses

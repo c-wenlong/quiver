@@ -126,7 +126,8 @@ extension Ledger: ActivityProviding {
                     ?? activityURL.path
                 connection = try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
             }
-            return try connection!.activityBlocks(in: range, gap: gap)
+            let hideTrivial = trivialGate.withLock { $0 }
+            return try connection!.activityBlocks(in: range, gap: gap, hideTrivial: hideTrivial)
                 .filter { Self.calendarHarnesses.contains($0.harness) }
         }
     }
@@ -136,8 +137,9 @@ extension LedgerStore {
     /// Blocks over this store's write connection; the calendar reads
     /// through Ledger's own read-only one. Kept for tests that build a
     /// store directly.
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
-        try db.activityBlocks(in: range, gap: gap)
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        hideTrivial: Bool = true) throws -> [ActivityBlock] {
+        try db.activityBlocks(in: range, gap: gap, hideTrivial: hideTrivial)
     }
 }
 
@@ -153,15 +155,21 @@ extension SQLiteDatabase {
     /// pulled a day past each edge so a block straddling the range keeps
     /// its real ends; the overlap check then drops the rest.
     static let edgeLookout: TimeInterval = 24 * 3600
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        hideTrivial: Bool = true) throws -> [ActivityBlock] {
         let lo = range.start.timeIntervalSince1970 - Self.edgeLookout
         let hi = range.end.timeIntervalSince1970 + Self.edgeLookout
         // Sessions whose every event is a helper call (Devin's
         // summarizer/compactor) produce no blocks at all. "Every" means
         // the session's whole stored history, not just this range: a
         // real response earlier keeps later helper events on the
-        // calendar as part of that work.
+        // calendar as part of that work. `hideTrivial` drops accidental
+        // sessions the same way, judged on the session's whole stored
+        // history (SessionFilter): zero tokens, zero responses, or a
+        // one-shot probe — except for harnesses without per-reply
+        // detail, where only emptiness counts.
         let helpers = HelperModels.all.sorted()
+        let noDetail = SessionFilter.noReplyDetailHarnesses.sorted()
         let realSessions = try prepare("""
             SELECT DISTINCT d.harness, d.account, d.session
             FROM events e JOIN dims d ON d.id = e.dim
@@ -172,9 +180,27 @@ extension SQLiteDatabase {
                         AND d2.session = d.session
                         AND d2.model NOT IN (\(helpers.map { _ in "?" }.joined(separator: ",")))
               )
+              AND (? = 0 OR NOT (
+                  SELECT CASE
+                      WHEN COUNT(*) = 0
+                           OR SUM(e3.input + e3.output + e3.cache_read
+                                  + e3.cache_write + e3.reasoning) = 0 THEN 1
+                      WHEN d.harness NOT IN (\(noDetail.map { _ in "?" }.joined(separator: ",")))
+                           AND COUNT(*) <= ?
+                           AND MAX(e3.ts) - MIN(e3.ts) < ?
+                           AND SUM(e3.output + e3.reasoning) < ? THEN 1
+                      ELSE 0 END
+                  FROM events e3 JOIN dims d3 ON d3.id = e3.dim
+                  WHERE d3.harness = d.harness AND d3.account = d.account
+                        AND d3.session = d.session))
             """)
         realSessions.bind([SQLiteValue.double(lo), .double(hi)]
-                          + helpers.map { SQLiteValue.text($0) })
+                          + helpers.map { SQLiteValue.text($0) }
+                          + [.int(hideTrivial ? 1 : 0)]
+                          + noDetail.map { SQLiteValue.text($0) }
+                          + [.int(SessionFilter.maxProbeResponses),
+                             .double(SessionFilter.maxProbeSpan),
+                             .int(SessionFilter.maxProbeOutputTokens)])
         var real: Set<String> = []
         while try realSessions.step() {
             real.insert("\(realSessions.text(0) ?? "")\u{0}"

@@ -627,20 +627,52 @@ public final class SessionsModel {
         resolvedProjects = resolved
     }
 
-    public var visible: [Row] {
-        let since = windowStart(filter.window)
+    // MARK: - Trivial sessions
+
+    /// Settings' "Hide accidental sessions". Off disables the filter here
+    /// and on the calendar alike.
+    public var hideTrivial = true
+    /// The page's "Show" for hidden rows; a view state, not persisted.
+    public var showTrivial = false
+
+    /// Whether the row is an accidental session: empty (zero responses —
+    /// a listed session of a usage-log harness with no ledger events at
+    /// all counts) or probe-like. Harnesses the ledger does not read are
+    /// never hidden.
+    func isTrivial(_ row: Row) -> Bool {
+        guard SessionFilter.usageLogHarnesses.contains(row.session.harness) else { return false }
+        guard let usage = row.usage else { return true }
+        return SessionFilter.isTrivial(usage: usage)
+    }
+
+    /// Rows the current filters match that the trivial rule would hide.
+    /// Counts them even while `showTrivial` keeps them visible.
+    public var hiddenTrivialCount: Int {
+        guard hideTrivial else { return 0 }
+        return rows.count { matches($0) && isTrivial($0) }
+    }
+
+    /// The non-trivial filter terms: harness, window, project, model and
+    /// search.
+    private func matches(_ row: Row) -> Bool {
+        let s = row.session
+        if let harness = filter.harness, s.harness != harness { return false }
+        if s.lastActiveAt < windowStart(filter.window) { return false }
+        if let key = filter.project, Self.projectKey(project(for: s)) != key { return false }
+        if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
         let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
-        return rows.filter { row in
-            let s = row.session
-            if let harness = filter.harness, s.harness != harness { return false }
-            if s.lastActiveAt < since { return false }
-            if let key = filter.project, Self.projectKey(project(for: s)) != key { return false }
-            if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
-            if !needle.isEmpty {
-                let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
-                    .compactMap { $0 }.joined(separator: " ").lowercased()
-                if !haystack.contains(needle) { return false }
-            }
+        if !needle.isEmpty {
+            let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
+                .compactMap { $0 }.joined(separator: " ").lowercased()
+            if !haystack.contains(needle) { return false }
+        }
+        return true
+    }
+
+    public var visible: [Row] {
+        rows.filter { row in
+            guard matches(row) else { return false }
+            if hideTrivial, !showTrivial, isTrivial(row) { return false }
             return true
         }
     }

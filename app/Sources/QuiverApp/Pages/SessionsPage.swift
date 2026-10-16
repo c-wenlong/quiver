@@ -127,6 +127,23 @@ private struct SessionsContent: View {
                         }
                     }
                 }
+                if model.hideTrivial, model.hiddenTrivialCount > 0 {
+                    HStack(spacing: 8) {
+                        Text(model.showTrivial
+                             ? "Showing \(model.hiddenTrivialCount) short or empty sessions"
+                             : "\(model.hiddenTrivialCount) short or empty sessions hidden")
+                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        Spacer()
+                        Button(model.showTrivial ? "Hide" : "Show") {
+                            model.showTrivial.toggle()
+                        }
+                        .font(Theme.caption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.top, 10)
+                }
             }
         }
     }
