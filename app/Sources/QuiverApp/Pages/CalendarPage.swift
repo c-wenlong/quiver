@@ -51,6 +51,13 @@ private struct CalendarContent: View {
     /// the pointer crossing to a neighbour swaps rather than flickers.
     private static let cardShowDelay: Duration = .milliseconds(350)
     private static let cardHideDelay: Duration = .milliseconds(150)
+    /// While a chip card is open, the pointer's screen position is
+    /// polled this often against the chip ∪ card safe region.
+    private static let cardPollInterval: Duration = .milliseconds(50)
+    /// The live views behind the open chip card's safe region.
+    @State private var cardGeometry = CardGeometry()
+    /// The pointer poller that owns an open chip card's lifetime.
+    @State private var cardWatch: Task<Void, Never>?
 
     private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
 
@@ -383,6 +390,7 @@ private struct CalendarContent: View {
                   color: { self.color(for: $0) },
                   title: { self.title(for: $0) },
                   hover: { self.hoverCard(key: $0, inside: $1) },
+                  geometry: cardGeometry,
                   card: { self.cardBinding(for: $0) },
                   cardRows: { self.cardRows(for: $0) },
                   open: { self.open($0) },
@@ -567,37 +575,74 @@ private struct CalendarContent: View {
         block.project
     }
 
-    /// Pointer entered or left a block: the card opens after a beat and
-    /// closes after a shorter grace, so it never pops under a passing
-    /// pointer and never flickers between adjacent blocks.
+    /// The anchor under the pointer. A pending show or hide re-checks it
+    /// at fire time, so a stale event can never open or close the card
+    /// the pointer already left.
+    @State private var anchorInside: String?
+
+    /// Pointer entered or left a block or chip: the card opens after a
+    /// beat and closes after a shorter grace, so it never pops under a
+    /// passing pointer and never flickers between adjacent blocks. Once
+    /// a chip's card is open the pointer poller owns its lifetime, so a
+    /// chip exit never schedules a hide.
     private func hoverCard(key: String, inside: Bool) {
+        if inside {
+            anchorInside = key
+        } else if anchorInside == key {
+            anchorInside = nil
+        }
         cardTask?.cancel()
         if inside {
-            if cardKey != nil { cardKey = key; return }
+            if cardKey != nil {
+                if cardKey != key { setCard(key) }
+                return
+            }
             cardTask = Task { @MainActor in
                 try? await Task.sleep(for: Self.cardShowDelay)
-                guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? nil : .default) { cardKey = key }
+                guard !Task.isCancelled, anchorInside == key else { return }
+                withAnimation(reduceMotion ? nil : .default) { setCard(key) }
             }
         } else {
+            guard cardKey != nil, !key.hasPrefix("overflow|") else { return }
             cardTask = Task { @MainActor in
                 try? await Task.sleep(for: Self.cardHideDelay)
-                guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? nil : .default) { cardKey = nil }
+                guard !Task.isCancelled, anchorInside == nil else { return }
+                withAnimation(reduceMotion ? nil : .default) { setCard(nil) }
+            }
+        }
+    }
+
+    /// Opens or closes the card and starts or stops the pointer poller
+    /// that keeps an open chip card alive across the arrow gap.
+    private func setCard(_ key: String?) {
+        cardKey = key
+        cardWatch?.cancel()
+        cardWatch = nil
+        guard let key, key.hasPrefix("overflow|") else { return }
+        cardWatch = Task { @MainActor in
+            var region = HoverSafeRegion()
+            while !Task.isCancelled, cardKey == key {
+                region.rect = cardGeometry.safeRect(for: key)
+                if region.update(point: NSEvent.mouseLocation, now: ContinuousClock.now) {
+                    withAnimation(reduceMotion ? nil : .default) { setCard(nil) }
+                    return
+                }
+                try? await Task.sleep(for: Self.cardPollInterval)
             }
         }
     }
 
     private func dismissCard() {
         cardTask?.cancel()
-        cardKey = nil
+        setCard(nil)
+        anchorInside = nil
     }
 
     /// Tapping a "+N" chip opens its card at once; the hover delay only
     /// exists so a passing pointer never pops a card.
     private func openCard(key: String) {
         cardTask?.cancel()
-        withAnimation(reduceMotion ? nil : .default) { cardKey = key }
+        withAnimation(reduceMotion ? nil : .default) { setCard(key) }
     }
 
     /// Popover binding keyed on the segment's or entry's id: only the
@@ -642,6 +687,9 @@ private struct DayColumn: View {
     /// The page-level hover card: block + inside/outside on hover, the
     /// popover binding and the capped session list to show.
     var hover: (String, Bool) -> Void
+    /// Live views behind each chip and the open card, so the pointer
+    /// poller can read their screen rects.
+    var geometry: CardGeometry
     var card: (String) -> Binding<Bool>
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
@@ -678,12 +726,14 @@ private struct DayColumn: View {
                 }
                 ForEach(layout.segments) { segment in
                     let lane = geo.size.width / CGFloat(segment.laneCount)
+                    // Padding, not .offset: only the layout position gives
+                    // the popover the block's real frame; offset leaves the
+                    // anchor at the column's top, off the visible hours.
                     BlockView(segment: segment, color: color(segment.block),
                               title: title(segment.block),
                               account: model.accountName(for: segment.block.accountHome),
                               multiAccount: model.accounts(for: segment.block.harness).count > 1)
                         .frame(width: lane - 2, height: height(from: segment.start, to: segment.end))
-                        .offset(x: CGFloat(segment.lane) * lane + 1, y: y(segment.start))
                         .onTapGesture { open(segment.block) }
                         .onHover { inside in hover(segment.id, inside) }
                         .popover(isPresented: card(segment.id),
@@ -695,14 +745,18 @@ private struct DayColumn: View {
                                       active: block.end.timeIntervalSince(block.start),
                                       shown: rows.shown, more: rows.more)
                         }
+                        .padding(.leading, CGFloat(segment.lane) * lane + 1)
+                        .padding(.top, y(segment.start))
                 }
                 ForEach(layout.overflows) { overflow in
                     let lane = geo.size.width / CGFloat(overflow.laneCount)
                     OverflowChip(overflow: overflow, clock: Self.clock)
                         .frame(width: lane - 2,
                                height: height(from: overflow.start, to: overflow.end))
-                        .offset(x: CGFloat(overflow.lane) * lane + 1,
-                                y: y(overflow.start))
+                        .background(HoverRegionView { view, attached in
+                            geometry.register(chip: overflow.id, view: view,
+                                              attached: attached)
+                        })
                         .contentShape(.rect)
                         .onTapGesture { showCard(overflow.id) }
                         .onHover { inside in hover(overflow.id, inside) }
@@ -710,9 +764,11 @@ private struct DayColumn: View {
                                  attachmentAnchor: .rect(.bounds),
                                  arrowEdge: .leading) {
                             OverflowCard(overflow: overflow, model: model,
-                                         cardRows: cardRows, open: open)
-                                .onHover { inside in hover(overflow.id, inside) }
+                                         cardRows: cardRows, open: open,
+                                         geometry: geometry)
                         }
+                        .padding(.leading, CGFloat(overflow.lane) * lane + 1)
+                        .padding(.top, y(overflow.start))
                 }
                 if day.contains(now) {
                     Rectangle().fill(.red).frame(height: 1.5)
@@ -1259,6 +1315,9 @@ private struct OverflowCard: View {
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
+    /// Registers the card's view so the pointer poller can read the
+    /// popover window's frame.
+    var geometry: CardGeometry
 
     /// The row under the pointer; stays put when the pointer moves to
     /// the right pane, so the detail never flickers.
@@ -1288,7 +1347,7 @@ private struct OverflowCard: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(overflow.hidden.count) more · "
                      + "\(Self.clock.string(from: overflow.start))"
@@ -1314,6 +1373,8 @@ private struct OverflowCard: View {
                           shown: rows.shown, more: rows.more)
             }
         }
+        .background(HoverRegionView { view, attached in
+            geometry.register(card: overflow.id, view: view, attached: attached) })
     }
 
     private func row(_ block: ActivityBlock) -> some View {
@@ -1406,5 +1467,78 @@ private extension Array {
     /// Evenly sized groups, for the week-mode snap targets.
     func chunked(by size: Int) -> [[Element]] {
         stride(from: 0, to: count, by: Swift.max(1, size)).map { Array(self[$0..<Swift.min($0 + size, count)]) }
+    }
+}
+
+/// The views whose screen rects bound an open chip card's safe region.
+/// The pointer poller reads them fresh every tick, so scrolling and
+/// window moves need no re-reporting. Weak, so a torn-down view cannot
+/// keep the card's geometry alive.
+@MainActor final class CardGeometry {
+    private struct WeakView {
+        weak var view: NSView?
+    }
+
+    private var chips: [String: WeakView] = [:]
+    /// One entry per open card, keyed like the chips: switching cards can
+    /// run the old card's detach after the new card's attach, and a keyed
+    /// slot plus the identity check keeps that detach from wiping the new
+    /// card's frame.
+    private var cards: [String: WeakView] = [:]
+
+    func register(chip key: String, view: NSView, attached: Bool) {
+        if attached {
+            chips[key] = WeakView(view: view)
+        } else if chips[key]?.view === view {
+            chips[key] = nil
+        }
+    }
+
+    func register(card key: String, view: NSView, attached: Bool) {
+        if attached {
+            cards[key] = WeakView(view: view)
+        } else if cards[key]?.view === view {
+            cards[key] = nil
+        }
+    }
+
+    /// Chip ∪ popover window in screen coordinates, covering the arrow
+    /// gap. `.null` (contains nothing) until either side is reported.
+    func safeRect(for key: String) -> CGRect {
+        var rect = CGRect.null
+        if let view = cards[key]?.view, let frame = view.window?.frame {
+            rect = rect.union(frame)
+        }
+        if let view = chips[key]?.view, let window = view.window {
+            rect = rect.union(window.convertToScreen(view.convert(view.bounds, to: nil)))
+        }
+        return rect
+    }
+}
+
+/// Registers its backing NSView while it is in a window, so the card
+/// poller can read screen rects — reliable where `.onHover` is not,
+/// like a popover's non-key window.
+private struct HoverRegionView: NSViewRepresentable {
+    /// Reports the backing view itself on attach and detach, so a stale
+    /// detach can be told apart from the view currently registered.
+    var report: (NSView, Bool) -> Void
+
+    func makeNSView(context: Context) -> View {
+        let view = View()
+        view.report = report
+        return view
+    }
+
+    func updateNSView(_ view: View, context: Context) {
+        view.report = report
+    }
+
+    final class View: NSView {
+        var report: ((NSView, Bool) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            report?(self, window != nil)
+        }
     }
 }
