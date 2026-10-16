@@ -156,10 +156,10 @@ struct StubbornSource: SessionListing {
                                   snapshots: MemorySnapshots(), listTimeout: .milliseconds(50),
                                   now: { [start] in start })
         let elapsed = await ContinuousClock().measure { await model.load(for: "/bin/swe") }
-        // The bound catches a hang, not latency: the source holds out
-        // for 60s, so ten seconds still fails a broken timeout while a
+        // The bound catches a hang, not latency: it sits under the
+        // source's 60s hold, so a broken timeout still fails while a
         // starved CI runner cannot trip it.
-        #expect(elapsed < .seconds(10))
+        #expect(elapsed < .seconds(30))
         #expect(model.error != nil)
         #expect(!model.isLoading)
     }

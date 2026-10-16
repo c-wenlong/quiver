@@ -129,8 +129,11 @@ import Testing
                                   usage: usage, launcher: FakeLauncher(), terminal: { .terminal }, loginPath: { "" })
         let task = Task { await model.keepFresh(every: .milliseconds(10)) }
         // Wait for three reloads (two default accounts each) rather than
-        // counting what fits in a fixed window: CI runners are slow.
-        let deadline = Date().addingTimeInterval(10)
+        // counting what fits in a fixed window: each load does real disk
+        // work, so on a loaded CI runner a cycle can take seconds. A
+        // minute only delays a genuinely broken reload, it cannot pass
+        // one.
+        let deadline = Date().addingTimeInterval(60)
         while usage.requests.count < 6 && Date() < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }

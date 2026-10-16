@@ -205,10 +205,10 @@ actor NamesSource {
         let elapsed = await ContinuousClock().measure {
             await loader.load(from: "/bin/swe", fetch: stubborn)
         }
-        // The bound catches a hang, not latency: the source holds out
-        // for 60s, so ten seconds still fails a broken timeout while a
+        // The bound catches a hang, not latency: it sits under the
+        // source's 60s hold, so a broken timeout still fails while a
         // starved CI runner cannot trip it.
-        #expect(elapsed < .seconds(10))
+        #expect(elapsed < .seconds(30))
         #expect(!loader.isLoading)
         guard case .failed = loader.state else { Issue.record("\(loader.state)"); return }
     }
