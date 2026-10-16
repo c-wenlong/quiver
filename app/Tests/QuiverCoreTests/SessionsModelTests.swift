@@ -268,6 +268,83 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(row.usage?.accountHome == "/Users/k/.quiver/accounts/claude/w/home")
     }
 
+    @Test func feedSessionsWithoutATranscriptComeFromTheLedger() async throws {
+        let cursorHome = "/Users/k/Library/Application Support/Cursor"
+        var cloud = usage("bc-1111", "cursor", models: ["claude-opus-5-5"], cost: 5, home: cursorHome)
+        cloud.lastTimestamp = now.addingTimeInterval(-60)
+        var bot = usage("conv-9", "grok-bot", models: ["grok-bot-default"], cost: 2, home: cursorHome)
+        bot.lastTimestamp = now.addingTimeInterval(-120)
+        var editor = usage("e-7", "cursor", models: ["gpt-5.6"], cost: 1, home: cursorHome)
+        editor.lastTimestamp = now.addingTimeInterval(-180)
+        // swe lists this one from its transcript, so the ledger adds no second row.
+        let listed = usage("t-1", "cursor", models: ["gpt-5.6"], cost: 3, home: cursorHome)
+        let model = await model([session("t-1", "cursor", cwd: "/c/quiver", at: 1_791_700_000)],
+                                [cloud, bot, editor, listed])
+        await model.load()
+
+        #expect(model.rows.map(\.session.id) == ["t-1", "bc-1111", "conv-9", "e-7"])
+        #expect(model.rows.map(\.location) == [.local, .cloud, .cloud, .local])
+        #expect(model.rows[0].usage?.totals.costUSD == 3)
+        let row = model.rows[2]
+        #expect(row.session.harness == "grok-bot")
+        #expect(row.session.agent == "Grok Bot")
+        #expect(row.session.title == nil)
+        #expect(row.session.resume == nil)
+        #expect(row.session.lastActiveAt == bot.lastTimestamp)
+        #expect(model.harnesses == ["cursor", "grok-bot"])
+        #expect(model.summary.totals.costUSD == 11)
+        model.filter.search = "cloud"
+        #expect(model.visible.map(\.session.id) == ["bc-1111", "conv-9"])
+    }
+
+    @Test func aFeedConversationPolledByTwoProfilesIsOneRow() async throws {
+        // Two profiles on one Cursor account took turns polling: older
+        // events kept the first home, newer ones the second.
+        let first = "/Users/k/Library/Application Support/Cursor"
+        let second = "/Users/k/.quiver/accounts/cursor/w/home"
+        var old = usage("bc-1", "cursor", models: ["opus"], cost: 2, home: first)
+        old.firstTimestamp = now.addingTimeInterval(-7200)
+        old.lastTimestamp = now.addingTimeInterval(-3600)
+        var new = usage("bc-1", "cursor", models: ["gpt"], cost: 3, home: second)
+        new.firstTimestamp = now.addingTimeInterval(-600)
+        new.lastTimestamp = now.addingTimeInterval(-60)
+        var listedOld = usage("t-1", "cursor", models: [], cost: 1, home: first)
+        listedOld.lastTimestamp = now.addingTimeInterval(-3600)
+        let listedNew = usage("t-1", "cursor", models: [], cost: 4, home: second)
+        let model = await model([session("t-1", "cursor", cwd: nil, at: 1_791_700_000)],
+                                [old, new, listedOld, listedNew])
+        await model.load()
+
+        #expect(model.rows.map(\.session.id) == ["t-1", "bc-1"])
+        #expect(model.rows.map(\.usage?.totals.costUSD) == [5, 5])
+        let row = model.rows[1]
+        #expect(row.usage?.accountHome == second)
+        #expect(row.usage?.models == ["gpt", "opus"])
+        #expect(row.duration == 7140)
+    }
+
+    @Test func dayBucketsFromTwoAccountsStayApart() async throws {
+        // Events Cursor gave no conversation id fall into a per-day bucket,
+        // which is one account's day, not one conversation.
+        let first = usage("cursor-2026-10-11", "cursor", models: [], cost: 1, home: "/a")
+        var second = usage("cursor-2026-10-11", "cursor", models: [], cost: 2, home: "/b")
+        second.lastTimestamp = now.addingTimeInterval(-60)
+        let model = await model([], [first, second])
+        await model.load()
+        #expect(model.rows.map(\.usage?.accountHome) == ["/a", "/b"])
+        #expect(model.rows.map(\.usage?.totals.costUSD) == [1, 2])
+        #expect(CursorUsageFeed.isDayBucket("cursor-2026-10-11"))
+        #expect(!CursorUsageFeed.isDayBucket("cursor-agent-1"))
+    }
+
+    @Test func aSessionsLocationFollowsItsHarnessAndId() {
+        #expect(SessionLocation(harness: "grok-bot", id: "4f1c") == .cloud)
+        #expect(SessionLocation(harness: "cursor", id: "bc-ec6482ef") == .cloud)
+        #expect(SessionLocation(harness: "cursor", id: "sand-subagent-afb1") == .cloud)
+        #expect(SessionLocation(harness: "cursor", id: "4f1c") == .local)
+        #expect(SessionLocation(harness: "claude", id: "bc-1") == .local)
+    }
+
     @Test func codexSessionsResumeByTheirThreadId() async throws {
         let home = "/Users/k/.quiver/accounts/codex/x/home"
         var rollout = usage("rollout-2026-09-09T14-52-42-0199ABCD-1111-2222-3333-444455556666", "codex",

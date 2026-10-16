@@ -436,6 +436,33 @@ private struct TogglingActivity: ActivityProviding {
         #expect(found(index, home: "/work").usage?.accountHome == "/work")
     }
 
+    @Test func aFeedBlockFromAnOlderProfileFindsTheMergedRow() {
+        // The Sessions page merged this Grok Bot conversation under the
+        // home that polled it last; the block was drawn from the first.
+        let usage = SessionUsage(sessionId: "conv-1", harness: "grok-bot", accountHome: "/second",
+                                 cwd: nil, models: ["grok-bot-default"], totals: UsageTotals(),
+                                 firstTimestamp: utc("2026-10-14T09:00:00Z"),
+                                 lastTimestamp: utc("2026-10-14T09:30:00Z"))
+        let merged = SessionsModel.Row(
+            session: SessionInfo(id: "conv-1", harness: "grok-bot", agent: "Grok Bot", cwd: nil, title: nil,
+                                 titleSource: nil, lastActiveAt: utc("2026-10-14T09:30:00Z"), status: nil, resume: nil),
+            usage: usage, id: "grok-bot|conv-1")
+        let index = CalendarSessionIndex(rows: [merged])
+        let ref = ActivityBlock.SessionRef(sessionId: "conv-1", start: utc("2026-10-14T09:00:00Z"),
+                                           end: utc("2026-10-14T09:05:00Z"), responses: 1)
+        #expect(index.row(for: ref, harness: "grok-bot", accountHome: "/first").usage == usage)
+        // A day bucket is one account's, so another home's block doesn't match it.
+        var day = merged
+        day.session.id = "cursor-2026-10-14"
+        day.session.harness = "cursor"
+        day.usage?.harness = "cursor"
+        day.usage?.sessionId = "cursor-2026-10-14"
+        let buckets = CalendarSessionIndex(rows: [day])
+        let dayRef = ActivityBlock.SessionRef(sessionId: "cursor-2026-10-14", start: ref.start, end: ref.end, responses: 1)
+        #expect(buckets.row(for: dayRef, harness: "cursor", accountHome: "/first").usage == nil)
+        #expect(buckets.row(for: dayRef, harness: "cursor", accountHome: "/second").usage != nil)
+    }
+
     @Test func aRowWithoutUsageIsTheFallbackOnly() {
         let index = CalendarSessionIndex(rows: [row(home: nil)])
         // No account-specific row: the fallback answers.

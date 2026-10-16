@@ -7,11 +7,18 @@ import Foundation
 /// resolves each block to its own row.
 public struct CalendarSessionIndex: Sendable {
     private var rows: [String: SessionsModel.Row] = [:]
+    private var feed: [String: SessionsModel.Row] = [:]
 
     public init(rows: [SessionsModel.Row]) {
         for row in rows {
             let key = "\(row.session.harness)|\(row.usage?.accountHome ?? "")|\(row.session.id)"
             self.rows[key] = row
+            // A feed row merges every profile home that polled it, so a
+            // block from an older home finds it by conversation.
+            if SessionFilter.feedHarnesses.contains(row.session.harness) {
+                self.feed[SessionsModel.feedKey(harness: row.session.harness, account: row.usage?.accountHome ?? "",
+                                                session: row.session.id)] = row
+            }
         }
     }
 
@@ -22,6 +29,7 @@ public struct CalendarSessionIndex: Sendable {
     public func row(for ref: ActivityBlock.SessionRef, harness: String,
                     accountHome: String) -> SessionsModel.Row {
         if let row = rows["\(harness)|\(accountHome)|\(ref.sessionId)"]
+            ?? feed[SessionsModel.feedKey(harness: harness, account: accountHome, session: ref.sessionId)]
             ?? rows["\(harness)||\(ref.sessionId)"] {
             return row
         }

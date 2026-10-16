@@ -15,7 +15,7 @@ struct SessionsPage: View {
         if let model = app.sessions {
             SessionsContent(model: model)
         } else {
-            Page(title: "Sessions", subtitle: "Local sessions, usage and estimated cost.") {
+            Page(title: "Sessions", subtitle: "Local and cloud sessions, usage and estimated cost.") {
                 ErrorCard(message: app.overviewError ?? "The usage ledger is unavailable.")
             }
         }
@@ -33,7 +33,7 @@ private struct SessionsContent: View {
     @State private var openedDays: Set<Date> = []
 
     var body: some View {
-        Page(title: "Sessions", subtitle: "Local sessions, usage and estimated cost.") {
+        Page(title: "Sessions", subtitle: "Local and cloud sessions, usage and estimated cost.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
                     await model.load(for: app.swePath)
@@ -415,7 +415,9 @@ private struct SessionRow: View {
                 .opacity(hovering || resumeFocused ? 1 : 0)
                 .focused($resumeFocused)
                 .focusRing(resumeFocused, cornerRadius: Theme.iconButtonRadius)
-                .help(s.resume == nil ? "This harness has no resume command" : "Resume in your terminal")
+                .help(s.resume != nil ? "Resume in your terminal"
+                      : row.location == .cloud ? "A cloud session can't be resumed here"
+                      : "This harness has no resume command")
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 8)
@@ -441,12 +443,13 @@ private struct SessionRow: View {
         .accessibilityAction(named: "Resume", resume)
     }
 
-    /// project · agent · models · time · duration
+    /// project · agent · location · models · time · duration
     var details: String {
         let s = row.session
         var parts: [String] = []
         if let project { parts.append(project) }
         parts.append(s.agent)
+        parts.append(row.location.title)
         if let models = row.usage?.models, !models.isEmpty { parts.append(models.joined(separator: ", ")) }
         parts.append(s.lastActiveAt.formatted(date: .omitted, time: .shortened))
         if let duration = row.duration, duration >= 60 { parts.append(Self.duration(duration)) }
@@ -495,6 +498,7 @@ struct SessionDetail: View {
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 field("Harness", s.agent)
+                field("Location", row.location.title)
                 field("Folder", s.cwd ?? "Unknown")
                 field("Last active", s.lastActiveAt.formatted(date: .abbreviated, time: .shortened))
                 field("Session id", s.id)
@@ -544,9 +548,9 @@ struct SessionDetail: View {
                     .keyboardShortcut(.defaultAction)
                     .primaryButton()
                     .disabled(s.resume == nil)
-                    .help(s.resume == nil
-                          ? "This session is no longer in \(s.agent)'s history"
-                          : "Resume in terminal")
+                    .help(s.resume != nil ? "Resume in terminal"
+                          : row.location == .cloud ? "A cloud session can't be resumed here"
+                          : "This session is no longer in \(s.agent)'s history")
             }
         }
         .padding(24)
