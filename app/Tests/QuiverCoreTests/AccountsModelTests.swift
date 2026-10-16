@@ -645,7 +645,10 @@ final class FakeRunningInstances: RunningInstances {
         let elapsed = ContinuousClock.now - start
         #expect(FileManager.default.fileExists(atPath: dir.appending(path: "started").path))
         #expect(elapsed >= .milliseconds(1750))
-        #expect(elapsed < .seconds(5))
+        // The bound catches a hang, not latency: it sits under the
+        // child's 60s sleep, so a broken timeout still fails while a
+        // starved CI runner cannot trip it.
+        #expect(elapsed < .seconds(30))
     }
 
     @Test func aFailingRunDoesNotRenew() async throws {

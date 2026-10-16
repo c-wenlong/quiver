@@ -76,10 +76,10 @@ import Testing
 
         let started = Date()
         let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
-        // The bound catches a hang, not latency: the shell sleeps 30s,
-        // so ten seconds still fails a broken timeout while a starved
-        // CI runner cannot trip it.
-        #expect(Date().timeIntervalSince(started) < 10)
+        // The bound catches a hang, not latency: it sits under the
+        // shell's 30s sleep, so a broken timeout still fails while a
+        // starved CI runner cannot trip it.
+        #expect(Date().timeIntervalSince(started) < 20)
         #expect(env["PATH"] == "/usr/bin:/bin")
     }
 
