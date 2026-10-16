@@ -131,8 +131,10 @@ Notes:
   cost next to its sessions.
 - **Cursor:** its calendar comes from the editor's own database, not the
   CLI, and it writes no token log Quiver reads. Calendar yes, tokens no.
-- **Droid, Pi, Freebuff:** calendar reads their session files, but none of
-  them carries token counts, so they contribute time, not spend.
+- **Droid, Pi, Freebuff:** the calendar reads their session files, but
+  Quiver doesn't import their token counts yet, so they contribute time,
+  not spend. Pi records tokens and cost per message and Droid keeps token
+  totals per session, so both can be added.
 - **Usage limits:** meters exist for Claude, Codex, Copilot, Cursor, Devin,
   Droid and Freebuff. Devin and Cursor report several quota windows; the
   rest report their main limits.
