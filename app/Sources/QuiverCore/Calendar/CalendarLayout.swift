@@ -61,7 +61,9 @@ public enum CalendarLayout {
     /// `segments` with a lane budget: a cluster needing `maxLanes` lanes
     /// or fewer packs exactly as it always did; one needing more keeps
     /// its longest pieces in `maxLanes - 1` lanes and folds the rest
-    /// into overflow chips on the last lane.
+    /// into overflow chips on the last lane — except a hidden run of a
+    /// single piece, which keeps the last lane for itself since a "+1"
+    /// chip would be as wide as the block it hid.
     public static func layout(_ blocks: [ActivityBlock], day: DateInterval,
                               minimumDuration: TimeInterval = 0,
                               maxLanes: Int) -> DayLayout {
@@ -163,6 +165,18 @@ public enum CalendarLayout {
                 for group in hiddenGroups {
                     let start = group.map(\.start).min()!
                     let end = group.map(\.end).max()!
+                    if group.count == 1, let piece = group.first {
+                        // A "+1" chip is as wide as the block it hides, so
+                        // a lone hidden piece just takes the chip's lane.
+                        // Groups are disjoint runs, so it can't collide
+                        // with a real chip there.
+                        segments.append(Segment(block: piece.block,
+                                                start: piece.start,
+                                                end: piece.end,
+                                                lane: maxLanes - 1,
+                                                laneCount: maxLanes))
+                        continue
+                    }
                     overflows.append(Overflow(
                         hidden: group.map {
                             Segment(block: $0.block, start: $0.start, end: $0.end,
