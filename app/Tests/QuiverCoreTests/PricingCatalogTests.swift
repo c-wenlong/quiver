@@ -141,6 +141,30 @@ struct Offline: Error {}
         #expect(catalog.rates(for: "claude-opus-5")?.tierMultipliers["fast"] == 2)
     }
 
+    @Test func splitTierSuffixPullsFastOutOfTheModelName() throws {
+        let split = PricingCatalog.splitTierSuffix(model: "claude-opus-5-5-high-fast", tier: "")
+        #expect(split.model == "claude-opus-5-5-high")
+        #expect(split.tier == "fast")
+        // A logged tier wins over the name.
+        let kept = PricingCatalog.splitTierSuffix(model: "claude-opus-5-5-high-fast", tier: "priority")
+        #expect(kept.model == "claude-opus-5-5-high-fast")
+        #expect(kept.tier == "priority")
+        let plain = PricingCatalog.splitTierSuffix(model: "gpt-6-sol", tier: "")
+        #expect(plain.model == "gpt-6-sol")
+        #expect(plain.tier == "")
+    }
+
+    @Test func freeModelNamesAreRecognised() throws {
+        for model in ["openrouter/free", "nvidia/nemotron-3-ultra-550b-a55b:free",
+                      "deepseek-v4-flash-free", "mimo-v2.5-free",
+                      "qwen3.6-plus-free", "nemotron-3-ultra-free"] {
+            #expect(PricingCatalog.isFree(model), "\(model) should be free")
+        }
+        for model in ["gpt-6-sol", "freebuff-model", "claude-opus-5-5"] {
+            #expect(!PricingCatalog.isFree(model), "\(model) is not free")
+        }
+    }
+
     @Test func refreshFetchesThroughTheTransportAndCachesTheResult() async throws {
         let temp = try TempDir()
         let cache = temp.path("pricing/litellm.json")
@@ -193,5 +217,57 @@ struct Offline: Error {}
         let september = DateInterval(start: utc("2026-09-01T00:00:00Z"), end: utc("2026-10-01T00:00:00Z"))
         #expect(await ledger.totals(in: september).costUSD == 0.25)
         #expect(await ledger.totals(in: september).unpricedTokens == 0)
+    }
+
+    /// A ledger over one hand-written Claude home.
+    private func ledger(with lines: String) async throws -> (Ledger, TempDir) {
+        let temp = try TempDir()
+        let home = temp.path("claude")
+        let file = home.appendingPathComponent("projects/-p/s1.jsonl")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(lines.utf8).write(to: file)
+        let pricing = try PricingCatalog(liteLLM: Data("""
+            {"claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05,
+              "litellm_provider": "anthropic"},
+             "grok-code-fast": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06,
+              "litellm_provider": "xai"}}
+            """.utf8), supplement: PricingSupplement(
+            tierMultipliers: ["claude-opus-5-5": ["fast": 2]]))
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: pricing)
+        try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
+        return (ledger, temp)
+    }
+
+    @Test func aFastModelSuffixPricesAtTheFastMultiplier() async throws {
+        // Same tokens on the base model and on Devin's `-fast` name.
+        let (ledger, keepAlive) = try await ledger(with:
+            claudeLine(message: "m1", request: "r1", output: 100, input: 1_000, model: "claude-opus-5-5")
+            + claudeLine(message: "m2", request: "r2", output: 100, input: 1_000, model: "claude-opus-5-5-high-fast"))
+        let expected = 2 * (1_000 * 4e-06 + 100 * 2e-05) + (1_000 * 4e-06 + 100 * 2e-05)
+        let totals = await ledger.totals(in: allTime)
+        #expect(abs(totals.costUSD - expected) < 1e-9)
+        #expect(totals.unpricedTokens == 0)
+        _ = keepAlive
+    }
+
+    @Test func aCatalogNameEndingInFastPricesAtItsOwnRates() async throws {
+        // `grok-code-fast` is a real catalog entry: the literal name must be
+        // tried before the `-fast` suffix is split, or it goes unpriced.
+        let (ledger, keepAlive) = try await ledger(with:
+            claudeLine(message: "m1", output: 100, input: 1_000, model: "grok-code-fast"))
+        let expected = 1_000 * 1e-06 + 100 * 2e-06
+        let totals = await ledger.totals(in: allTime)
+        #expect(abs(totals.costUSD - expected) < 1e-9)
+        #expect(totals.unpricedTokens == 0)
+        _ = keepAlive
+    }
+
+    @Test func aFreeModelCostsZeroAndIsNotUnpriced() async throws {
+        let (ledger, keepAlive) = try await ledger(with:
+            claudeLine(message: "m1", output: 100, input: 1_000, model: "deepseek-v4-flash-free"))
+        let totals = await ledger.totals(in: allTime)
+        #expect(totals.costUSD == 0)
+        #expect(totals.unpricedTokens == 0)
     }
 }

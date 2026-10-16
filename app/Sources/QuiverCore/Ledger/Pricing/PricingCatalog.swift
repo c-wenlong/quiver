@@ -77,6 +77,25 @@ public struct PricingCatalog: Sendable {
 
     public var modelCount: Int { entries.count }
 
+    /// Devin logs fast mode in the model name (`claude-opus-5-5-high-fast`)
+    /// with an empty tier. Split that suffix out so the lookup finds the
+    /// base model and the cost call prices it at the fast multiplier.
+    /// A logged tier always wins over the name.
+    public static func splitTierSuffix(model: String, tier: String) -> (model: String, tier: String) {
+        if tier.isEmpty, model.lowercased().hasSuffix("-fast") {
+            return (String(model.dropLast(5)), "fast")
+        }
+        return (model, tier)
+    }
+
+    /// Free-tier models never carry a catalog price: OpenRouter's
+    /// `provider/model:free` and `openrouter/free`, and the `-free`
+    /// suffixed names OpenCode logs.
+    public static func isFree(_ model: String) -> Bool {
+        let bare = bareName(model)
+        return bare == "free" || bare.hasSuffix(":free") || bare.hasSuffix("-free")
+    }
+
     /// Rates for `model`, or nil when the catalog cannot price it. A nil
     /// model is reported as unpriced, never as free.
     public func rates(for model: String) -> ModelRates? {
