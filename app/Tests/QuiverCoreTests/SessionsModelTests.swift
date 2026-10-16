@@ -297,6 +297,32 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(model.visible.map(\.session.id) == ["bc-1111", "conv-9"])
     }
 
+    @Test func aFeedConversationPolledByTwoProfilesIsOneRow() async throws {
+        // Two profiles on one Cursor account took turns polling: older
+        // events kept the first home, newer ones the second.
+        let first = "/Users/k/Library/Application Support/Cursor"
+        let second = "/Users/k/.quiver/accounts/cursor/w/home"
+        var old = usage("bc-1", "cursor", models: ["opus"], cost: 2, home: first)
+        old.firstTimestamp = now.addingTimeInterval(-7200)
+        old.lastTimestamp = now.addingTimeInterval(-3600)
+        var new = usage("bc-1", "cursor", models: ["gpt"], cost: 3, home: second)
+        new.firstTimestamp = now.addingTimeInterval(-600)
+        new.lastTimestamp = now.addingTimeInterval(-60)
+        var listedOld = usage("t-1", "cursor", models: [], cost: 1, home: first)
+        listedOld.lastTimestamp = now.addingTimeInterval(-3600)
+        let listedNew = usage("t-1", "cursor", models: [], cost: 4, home: second)
+        let model = await model([session("t-1", "cursor", cwd: nil, at: 1_791_700_000)],
+                                [old, new, listedOld, listedNew])
+        await model.load()
+
+        #expect(model.rows.map(\.session.id) == ["t-1", "bc-1"])
+        #expect(model.rows.map(\.usage?.totals.costUSD) == [5, 5])
+        let row = model.rows[1]
+        #expect(row.usage?.accountHome == second)
+        #expect(row.usage?.models == ["gpt", "opus"])
+        #expect(row.duration == 7140)
+    }
+
     @Test func aSessionsLocationFollowsItsHarnessAndId() {
         #expect(SessionLocation(harness: "grok-bot", id: "4f1c") == .cloud)
         #expect(SessionLocation(harness: "cursor", id: "bc-ec6482ef") == .cloud)

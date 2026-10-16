@@ -437,18 +437,21 @@ public final class SessionsModel {
         var byKey: [UsageKey: SessionUsage] = [:]
         for row in usage {
             let key = UsageKey(harness: row.harness, account: row.accountHome, session: row.sessionId)
-            if var existing = byKey[key] {
-                existing.totals.add(row.totals)
-                existing.models = Array(Set(existing.models + row.models)).sorted()
-                existing.firstTimestamp = min(existing.firstTimestamp, row.firstTimestamp)
-                existing.lastTimestamp = max(existing.lastTimestamp, row.lastTimestamp)
-                existing.cwd = existing.cwd ?? row.cwd
-                byKey[key] = existing
-            } else {
-                byKey[key] = row
-            }
+            byKey[key] = byKey[key].map { merged($0, row) } ?? row
         }
         return byKey
+    }
+
+    /// Two usage rows of one session added together. The account is the
+    /// one that recorded the later event.
+    static func merged(_ a: SessionUsage, _ b: SessionUsage) -> SessionUsage {
+        var result = a.lastTimestamp >= b.lastTimestamp ? a : b
+        let other = a.lastTimestamp >= b.lastTimestamp ? b : a
+        result.totals.add(other.totals)
+        result.models = Array(Set(result.models + other.models)).sorted()
+        result.firstTimestamp = min(result.firstTimestamp, other.firstTimestamp)
+        result.cwd = result.cwd ?? other.cwd
+        return result
     }
 
     /// Harnesses Quiver keeps extra accounts for; swe reads only their default home.
@@ -457,11 +460,20 @@ public final class SessionsModel {
     private func join(_ sessions: [SessionInfo], _ usage: [UsageKey: SessionUsage]) -> [Row] {
         var byHarnessAndId: [String: [SessionUsage]] = [:]
         for (key, use) in usage { byHarnessAndId["\(key.harness)|\(key.session)", default: []].append(use) }
+        // A feed conversation is one session whichever profile polled it:
+        // profiles signed in to one account take turns, and each stores
+        // the events it read under its own home.
+        var feed: [String: SessionUsage] = [:]
+        for (id, uses) in byHarnessAndId where uses.first.map({ SessionFilter.feedHarnesses.contains($0.harness) }) ?? false {
+            feed[id] = uses.dropFirst().reduce(uses[0], Self.merged)
+        }
 
         // swe's rows: Claude and Codex from their default home only; other
         // harnesses have one store each, whatever its folder.
         var rows = sessions.map { session -> Row in
-            let candidates = byHarnessAndId["\(session.harness)|\(session.id)"] ?? []
+            let id = "\(session.harness)|\(session.id)"
+            if let use = feed[id] { return Row(session: session, usage: use) }
+            let candidates = byHarnessAndId[id] ?? []
             let use = Self.accountHarnesses.contains(session.harness)
                 ? candidates.first { defaultHomes.contains($0.accountHome) }
                 : candidates.max { $0.lastTimestamp < $1.lastTimestamp }
@@ -483,12 +495,11 @@ public final class SessionsModel {
         // editor chats. Usage is all there is, so they have no title,
         // folder or resume command.
         let listedIds = Set(sessions.map { "\($0.harness)|\($0.id)" })
-        for (key, use) in usage where SessionFilter.feedHarnesses.contains(key.harness)
-            && !listedIds.contains("\(key.harness)|\(key.session)") {
+        for (id, use) in feed where !listedIds.contains(id) {
             let session = SessionInfo(
-                id: key.session, harness: key.harness, agent: UsageFormat.harness(key.harness), cwd: use.cwd,
+                id: use.sessionId, harness: use.harness, agent: UsageFormat.harness(use.harness), cwd: use.cwd,
                 title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil, resume: nil)
-            rows.append(Row(session: session, usage: use, id: "\(key.harness)|\(key.account)|\(key.session)"))
+            rows.append(Row(session: session, usage: use, id: id))
         }
         return rows.sorted { ($0.session.lastActiveAt, $1.id) > ($1.session.lastActiveAt, $0.id) }
     }
