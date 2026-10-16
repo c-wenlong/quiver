@@ -139,6 +139,7 @@ import Testing
         #expect(event.costUSD == nil)
         #expect(event.model == "glm-5.2")
         #expect(event.cwd == "/Users/x/proj")
+        #expect(event.isSessionTotal)
         #expect(event.timestamp == utc("2026-10-03T12:00:00Z"))
     }
 
