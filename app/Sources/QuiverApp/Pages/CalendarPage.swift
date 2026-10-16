@@ -258,10 +258,11 @@ private struct CalendarContent: View {
     /// invalidating CalendarContent's body (and every `DayColumn`).
     @State private var scrollOffset = HeaderOffset()
 
-    /// Harnesses with more than one account in the window: computed once
-    /// per render and handed to the columns, not once per block.
+    /// Harnesses with more than one account, over every block the grid
+    /// draws (buffer days included, so a harness only in the buffer still
+    /// labels its accounts). `columns` computes it once per render.
     private var multiAccountHarnesses: Set<String> {
-        Set(model.harnesses.filter { model.accounts(for: $0).count > 1 })
+        Set(Set(model.visibleBlocks.map(\.harness)).filter { model.accounts(for: $0).count > 1 })
     }
 
     /// Days per on-screen window: the columns each take 1/span of the
@@ -376,19 +377,20 @@ private struct CalendarContent: View {
     /// Day columns grouped into snap targets: one view per day for Day
     /// and N-day, one per week for Week so a swipe lands whole weeks.
     private func columns(now: Date, width: CGFloat) -> some View {
-        HStack(spacing: 0) {
+        let multiAccount = multiAccountHarnesses
+        return HStack(spacing: 0) {
             if snapsByWeek {
                 ForEach(model.renderDays.chunked(by: span), id: \.first!.start) { week in
                     HStack(spacing: 0) {
                         ForEach(week, id: \.start) { day in
-                            dayColumn(day, now: now, width: width)
+                            dayColumn(day, now: now, width: width, multiAccount: multiAccount)
                         }
                     }
                     .id(week.first!.start)
                 }
             } else {
                 ForEach(model.renderDays, id: \.start) { day in
-                    dayColumn(day, now: now, width: width)
+                    dayColumn(day, now: now, width: width, multiAccount: multiAccount)
                         .id(day.start)
                 }
             }
@@ -396,9 +398,10 @@ private struct CalendarContent: View {
         .scrollTargetLayout()
     }
 
-    private func dayColumn(_ day: DateInterval, now: Date, width: CGFloat) -> some View {
+    private func dayColumn(_ day: DateInterval, now: Date, width: CGFloat,
+                           multiAccount: Set<String>) -> some View {
         DayColumn(model: model, day: day, now: now,
-                  multiAccount: multiAccountHarnesses,
+                  multiAccount: multiAccount,
                   color: { self.color(for: $0) },
                   title: { self.title(for: $0) },
                   hover: { self.hoverCard(key: $0, inside: $1) },
