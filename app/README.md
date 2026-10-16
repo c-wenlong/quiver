@@ -19,6 +19,20 @@ The app runs `swe … --json`, so it needs a quiver with JSON output (M0).
 If the `swe` your login shell finds is older, the app says so; point it at
 a newer one in Settings.
 
+## Install
+
+```bash
+app/script/install-app.sh       # release build of origin/main into ~/Applications
+```
+
+It fetches, builds `origin/main` in its own worktree under
+`~/.quiver/cache/install` (kept between runs, so rebuilds are incremental),
+quits the installed Quiver, swaps the new bundle in and relaunches it. It
+never builds the checkout's current branch, so sessions working on other
+branches can't leave a half-finished app installed. A failed build changes
+nothing. `QUIVER_INSTALL_REF` builds another ref and `QUIVER_INSTALL_DIR`
+installs somewhere else.
+
 ## Layout
 
 | Path | What |
@@ -31,6 +45,7 @@ a newer one in Settings.
 | `Sources/QuiverApp` | The SwiftUI shell: window, sidebar, pages, menu bar panel |
 | `Sources/QuiverWidgets` | The WidgetKit extension: usage limits, usage summary, activity heatmap, top models |
 | `Tests/QuiverCoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
+| `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/Quiver.app` |
 | `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Apple Development identity if you have one, else ad-hoc) |
 | `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.quiver/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
