@@ -652,8 +652,6 @@ private struct CalendarContent: View {
     }
 }
 
-/// One day column: hour lines and the day's segments laid out in their
-/// overlap lanes, with the red now-line when the column is today.
 /// The columns' horizontal scroll offset, mirrored on the day header so
 /// it slides in lockstep. Held in an object rather than view state so a
 /// tick only invalidates the strip that reads `x`, not the grid.
@@ -737,6 +735,8 @@ private struct DayHeaderStrip: View {
     }
 }
 
+/// One day column: hour lines and the day's segments laid out in their
+/// overlap lanes, with the red now-line when the column is today.
 private struct DayColumn: View {
     var model: CalendarModel
     var day: DateInterval
