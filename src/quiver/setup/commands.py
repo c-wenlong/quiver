@@ -33,6 +33,7 @@ def cmd_harness(args):
   {c('cyan', 'swe harness archive')}            List what you archived, and why
   {c('cyan', 'swe harness discover [flags]')}   Scan PATH and home dirs for AI tools
   {c('cyan', 'swe harness usage <devin|cursor> --account-dir=<dir>')}  An extra account's rate limit
+  {c('cyan', 'swe harness usage-events cursor [--since=<s>]')}  Cursor's per-event usage feed
 
   {c('dim', 'Archiving hides it from swe list and records why — nothing is uninstalled;')}
   {c('dim', 'swe list --scope=all shows it again.')}
@@ -69,8 +70,13 @@ def cmd_harness(args):
 
         result = cmd_harness_usage(rest)
         return result if isinstance(result, int) else 0
+    if sub == "usage-events":
+        from quiver.harness.commands import cmd_harness_usage_events
+
+        result = cmd_harness_usage_events(rest)
+        return result if isinstance(result, int) else 0
     print(c("red", f"  Unknown harness subcommand: '{sub}'"))
-    print(c("dim", "  Try: swe harness list | edit | star | archive | discover | usage"))
+    print(c("dim", "  Try: swe harness list | edit | star | archive | discover | usage | usage-events"))
     return 1
 
 
