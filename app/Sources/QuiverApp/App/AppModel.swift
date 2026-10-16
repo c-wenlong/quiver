@@ -273,6 +273,8 @@ final class AppModel {
     let codexUsage: CodexAccountUsage?
     /// The Pricing page's per-model rates; nil with `sessions`.
     let pricingModel: PricingModel?
+    /// The Models page's benchmarks crossed with usage; nil with `sessions`.
+    let models: ModelsModel?
     /// The Settings > Services section's keys and probe results.
     let services: ServicesModel
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
@@ -326,12 +328,13 @@ final class AppModel {
         // Quiver's own service keys live in Keychain under their own
         // service; only dates go in config/services.json. A test build
         // swaps the keychain service so it never touches the real items.
+        let serviceCredentials = ServiceCredentials(
+            secrets: KeychainCLI(),
+            service: ProcessInfo.processInfo.environment["QUIVER_SERVICES_KEYCHAIN"]
+                ?? ServiceCredentials.keychainService,
+            metadataURL: quiver.appending(path: "config/services.json"))
         services = ServicesModel(
-            credentials: ServiceCredentials(
-                secrets: KeychainCLI(),
-                service: ProcessInfo.processInfo.environment["QUIVER_SERVICES_KEYCHAIN"]
-                    ?? ServiceCredentials.keychainService,
-                metadataURL: quiver.appending(path: "config/services.json")),
+            credentials: serviceCredentials,
             transport: URLSessionTransport())
         let store = ProfileStore(root: quiver.appending(path: "accounts"), userHome: home)
         // Non-default Devin/Cursor profiles are accounts of a harness: swe
@@ -452,6 +455,17 @@ final class AppModel {
                 overrides: PricingOverrides(url: quiver.appending(path: "config/pricing.json")),
                 makeCatalog: { try pricing.load() },
                 apply: { catalog in await overviewModel?.pricingUpdated(catalog) })
+            // Benchmark data + the user's own per-model usage, for the
+            // Models page and the hover cards everywhere else.
+            models = ModelsModel(
+                store: ArtificialAnalysisStore(
+                    directory: ArtificialAnalysisStore.resolvedDirectory(home: home)),
+                keyReader: {
+                    await serviceCredentials.value(for: "ARTIFICIAL_ANALYSIS_API_KEY")
+                },
+                transport: URLSessionTransport(),
+                linksURL: quiver.appending(path: "config/model-links.json"),
+                slices: { range in await ledger.byModelHarness(in: range) })
         } catch {
             overview = nil
             sessions = nil
@@ -460,6 +474,7 @@ final class AppModel {
             cursorFeed = nil
             codexUsage = nil
             pricingModel = nil
+            models = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
         sessions?.hideTrivial = hidesTrivial
