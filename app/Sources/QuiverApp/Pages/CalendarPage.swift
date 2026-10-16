@@ -598,7 +598,8 @@ private struct CalendarContent: View {
         cardWatch = Task { @MainActor in
             var region = HoverSafeRegion()
             while !Task.isCancelled, cardKey == key {
-                region.rect = cardGeometry.safeRect(for: key)
+                region.anchor = cardGeometry.anchorRect(for: key)
+                region.card = cardGeometry.cardRect(for: key)
                 if region.update(point: NSEvent.mouseLocation, now: ContinuousClock.now) {
                     withAnimation(reduceMotion ? nil : .default) { setCard(nil) }
                     return
@@ -1584,17 +1585,22 @@ private extension Array {
         }
     }
 
+    /// The anchor view's screen rect, nil until it reports in.
+    func anchorRect(for key: String) -> CGRect? {
+        guard let view = chips[key]?.view, let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+
+    /// The popover window's frame, nil while it is still appearing — the
+    /// poller gives a missing card its short pending grace.
+    func cardRect(for key: String) -> CGRect? {
+        cards[key]?.view?.window?.frame
+    }
+
     /// Chip ∪ popover window in screen coordinates, covering the arrow
     /// gap. `.null` (contains nothing) until either side is reported.
     func safeRect(for key: String) -> CGRect {
-        var rect = CGRect.null
-        if let view = cards[key]?.view, let frame = view.window?.frame {
-            rect = rect.union(frame)
-        }
-        if let view = chips[key]?.view, let window = view.window {
-            rect = rect.union(window.convertToScreen(view.convert(view.bounds, to: nil)))
-        }
-        return rect
+        (cardRect(for: key) ?? .null).union(anchorRect(for: key) ?? .null)
     }
 }
 

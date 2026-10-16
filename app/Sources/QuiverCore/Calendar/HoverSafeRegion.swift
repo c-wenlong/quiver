@@ -7,21 +7,26 @@ import Foundation
 /// feeds it here; the card closes only after the pointer has been
 /// outside the safe region for `hideGrace` continuously.
 public struct HoverSafeRegion: Sendable, Equatable {
-    /// Chip ∪ card in screen coordinates: the union covers the arrow gap.
-    public var rect: CGRect
+    /// The block, chip or month entry under the pointer, in screen
+    /// coordinates. nil until the view reports in.
+    public var anchor: CGRect?
+    /// The popover's window frame in screen coordinates. nil while the
+    /// card is still appearing — the pointer cannot be outside a rect
+    /// that does not exist yet, so the card gets `pendingGrace` cover.
+    public var card: CGRect?
     /// How long the pointer may stay outside before the card closes.
     public var hideGrace: Duration
-    /// While the card's window has not reported its frame (the popover
-    /// is still appearing) `rect` is null and the pointer cannot be
-    /// outside a rect that does not exist — the card stays open. Once
-    /// `pendingGrace` has passed a missing rect stops protecting it.
+    /// While `card` is still unknown the pointer counts as inside; once
+    /// `pendingGrace` has passed a missing card rect stops protecting.
     public var pendingGrace: Duration
     private var outsideSince: ContinuousClock.Instant?
     private var pendingSince: ContinuousClock.Instant?
 
-    public init(rect: CGRect = .null, hideGrace: Duration = .milliseconds(150),
+    public init(anchor: CGRect? = nil, card: CGRect? = nil,
+                hideGrace: Duration = .milliseconds(150),
                 pendingGrace: Duration = .seconds(1)) {
-        self.rect = rect
+        self.anchor = anchor
+        self.card = card
         self.hideGrace = hideGrace
         self.pendingGrace = pendingGrace
     }
@@ -29,10 +34,11 @@ public struct HoverSafeRegion: Sendable, Equatable {
     /// Feed the pointer's position. True once it has been outside for
     /// the whole grace; stepping back inside resets the timer.
     public mutating func update(point: CGPoint, now: ContinuousClock.Instant) -> Bool {
-        var inside = rect.contains(point)
-        if rect.isNull {
+        let region = (anchor ?? .null).union(card ?? .null)
+        var inside = region.contains(point)
+        if card == nil {
             if pendingSince == nil { pendingSince = now }
-            inside = now - pendingSince! < pendingGrace
+            inside = inside || now - pendingSince! < pendingGrace
         } else {
             pendingSince = nil
         }
