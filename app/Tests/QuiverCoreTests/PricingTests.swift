@@ -552,9 +552,25 @@ extension PricingModelTests {
     /// Parks the first `slices` call on a continuation the test releases
     /// by hand, so a superseded load provably sits inside its first
     /// suspension while its replacement runs to completion.
+    /// The `slices` closure runs off the main actor while the test polls
+    /// from it, so every access goes through the lock.
     private final class Gate: @unchecked Sendable {
-        var armed = false
-        var waiter: CheckedContinuation<Void, Never>?
+        private let lock = NSLock()
+        private var _armed = false
+        private var _waiter: CheckedContinuation<Void, Never>?
+
+        func arm() { lock.withLock { _armed = true } }
+        /// Disarms and says whether it was armed, in one step.
+        func takeArmed() -> Bool {
+            lock.withLock {
+                defer { _armed = false }
+                return _armed
+            }
+        }
+        var waiter: CheckedContinuation<Void, Never>? {
+            get { lock.withLock { _waiter } }
+            set { lock.withLock { _waiter = newValue } }
+        }
     }
 
     @Test func `a superseded load does not clear the filter or republish`() async throws {
@@ -575,8 +591,7 @@ extension PricingModelTests {
             overrides: PricingOverrides(url: temp.url.appending(path: "config/pricing.json")),
             makeCatalog: { catalog }, apply: { _ in },
             slices: { range in
-                if gate.armed {
-                    gate.armed = false
+                if gate.takeArmed() {
                     await withCheckedContinuation { gate.waiter = $0 }
                 }
                 return await ledger.byModelHarness(in: range)
@@ -590,7 +605,7 @@ extension PricingModelTests {
         // replacement runs, then the stale one resumes and must leave
         // the filter, the options and the rows alone.
         model.period = .today
-        gate.armed = true
+        gate.arm()
         let stale = Task { await model.load() }
         for _ in 0..<500 where gate.waiter == nil {
             try await Task.sleep(for: .milliseconds(10))
