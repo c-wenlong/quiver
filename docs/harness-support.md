@@ -104,13 +104,13 @@ Notes:
 | Codex | Yes | Yes | Yes |
 | OpenCode | Yes | Yes | No |
 | Devin | Yes | Yes | Yes |
-| Droid | No | Yes | Yes |
-| Pi | No | Yes | No |
+| Droid | Partial | Yes | Yes |
+| Pi | Yes | Yes | No |
 | Freebuff | No | Yes | Yes |
 | Cursor | No | Yes | Yes |
 | Copilot | No | No | Yes |
 | Gemini | No | No | No |
-| Cline | No | No | No |
+| Cline | Partial | No | No |
 | Kilo | No | No | No |
 | Crush | No | No | No |
 | Continue | No | No | No |
@@ -127,15 +127,19 @@ Notes:
 
 Notes:
 
-- **Tokens and cost:** only Claude, Codex, OpenCode and Devin write logs
-  Quiver prices. Every other harness shows no spend on the Overview and no
-  cost next to its sessions.
+- **Tokens and cost:** Claude, Codex, OpenCode, Devin and Pi write logs
+  Quiver prices per request. Droid and Cline give Quiver each session's
+  totals instead, so their spend shows as a lump at the session's end. Every
+  other harness shows no spend on the Overview and no cost next to its
+  sessions.
 - **Cursor:** its calendar comes from the editor's own database, not the
   CLI, and it writes no token log Quiver reads. Calendar yes, tokens no.
-- **Droid, Pi, Freebuff:** the calendar reads their session files, but
-  Quiver doesn't import their token counts yet, so they contribute time,
-  not spend. Pi records tokens and cost per message and Droid keeps token
-  totals per session, so both can be added.
+- **Droid and Cline, tokens and cost:** both keep token totals per
+  session rather than per request, so Quiver counts the whole session at
+  its last activity (Droid) or its end (Cline). Droid reports credits,
+  not dollars, so its cost comes from Quiver's price list.
+- **Freebuff:** the calendar reads its session files, but Quiver doesn't
+  import its token counts yet, so it contributes time, not spend.
 - **Usage limits:** meters exist for Claude, Codex, Copilot, Cursor, Devin,
   Droid and Freebuff. Devin and Cursor report several quota windows; the
   rest report their main limits.
@@ -167,9 +171,9 @@ Notes:
 
 ## Known gaps
 
-- **Tokens and cost exist for four harnesses only** (Claude, Codex,
-  OpenCode, Devin). For everything else the Overview shows time and limits,
-  never spend.
+- **Tokens and cost exist for seven harnesses only** (Claude, Codex,
+  OpenCode, Devin, Pi, Droid, Cline; the last two as session totals). For
+  everything else the Overview shows time and limits, never spend.
 - **Copilot gets shared skills but no instructions link**; no confirmed
   file exists to link.
 - **Devin extra profiles are not counted in the ledger**, so their spend is
