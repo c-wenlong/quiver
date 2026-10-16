@@ -9,7 +9,7 @@ import Testing
     private let card = CGRect(x: 100, y: 250, width: 300, height: 200)
 
     private func region() -> HoverSafeRegion {
-        HoverSafeRegion(rect: chip.union(card))
+        HoverSafeRegion(anchor: chip, card: card)
     }
 
     /// Mutating `update` cannot sit inside `#expect`; unwrap the result.
@@ -52,5 +52,60 @@ import Testing
         #expect(!closing(&region, away, t0))
         #expect(!closing(&region, away, t0.advanced(by: .milliseconds(149))))
         #expect(closing(&region, away, t0.advanced(by: .milliseconds(150))))
+    }
+}
+
+extension HoverSafeRegionTests {
+    @Test func anUnregisteredCardRectCountsAsInsideWhileItAppears() {
+        // The popover's window has not reported yet: the pointer cannot
+        // be outside a rect that does not exist.
+        var region = HoverSafeRegion()
+        let t0 = ContinuousClock.now
+        let away = CGPoint(x: 900, y: 900)
+        for step in 0..<20 {
+            #expect(!closing(&region, away, t0.advanced(by: .milliseconds(50 * step))))
+        }
+    }
+
+    @Test func aKnownAnchorDoesNotSkipTheCardPendingGrace() {
+        // Anchor reported, card frame still unknown: the popover is
+        // mid-flight, and the pointer outside the anchor still gets the
+        // pending grace rather than an instant close.
+        var region = HoverSafeRegion(anchor: chip)
+        let t0 = ContinuousClock.now
+        let away = CGPoint(x: 900, y: 900)
+        #expect(!closing(&region, away, t0))
+        #expect(!closing(&region, away, t0.advanced(by: .milliseconds(500))))
+        region.card = card
+        #expect(!closing(&region, CGPoint(x: 550, y: 310),
+                        t0.advanced(by: .milliseconds(600))))
+    }
+
+    @Test func aMissingRectStopsProtectingPastThePendingGrace() {
+        var region = HoverSafeRegion()
+        let t0 = ContinuousClock.now
+        let away = CGPoint(x: 900, y: 900)
+        #expect(!closing(&region, away, t0))
+        #expect(!closing(&region, away, t0.advanced(by: .milliseconds(999))))
+        // The second is up: the pointer is now outside, and the normal
+        // 150 ms grace still has to elapse before the card closes.
+        #expect(!closing(&region, away, t0.advanced(by: .milliseconds(1149))))
+        #expect(!closing(&region, away, t0.advanced(by: .milliseconds(1298))))
+        #expect(closing(&region, away, t0.advanced(by: .milliseconds(1299))))
+    }
+
+    @Test func aRectArrivingMidFlightResumesNormalRules() {
+        var region = HoverSafeRegion()
+        let t0 = ContinuousClock.now
+        let away = CGPoint(x: 900, y: 900)
+        #expect(!closing(&region, away, t0))
+        region.anchor = chip
+        region.card = card
+        #expect(!closing(&region, away, t0.advanced(by: .milliseconds(100))))
+        #expect(!closing(&region, CGPoint(x: 550, y: 310),
+                        t0.advanced(by: .milliseconds(150))))
+        // The step inside reset the outside timer, which restarted here.
+        #expect(!closing(&region, away, t0.advanced(by: .milliseconds(400))))
+        #expect(closing(&region, away, t0.advanced(by: .milliseconds(550))))
     }
 }
