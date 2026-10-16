@@ -60,6 +60,12 @@ private struct SessionsContent: View {
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
+            if let cloudError = model.cloudError {
+                Card {
+                    Label("Devin cloud sessions didn't update: \(cloudError)", systemImage: "exclamationmark.circle")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
             if model.isCapped {
                 Card {
                     Label("Showing the most recent \(model.rows.count) sessions; older ones are left out.",
@@ -407,15 +413,17 @@ private struct SessionRow: View {
                 .font(Theme.bodySmall).monospacedDigit()
                 .foregroundStyle(row.usage == nil ? Theme.textSecondary : Theme.accent)
                 .frame(width: spendColumnWidth, alignment: .trailing)
-            Button("Resume", systemImage: "play", action: resume)
+            Button(s.opensInBrowser ? "Open in Devin" : "Resume",
+                   systemImage: s.opensInBrowser ? "arrow.up.right.square" : "play", action: resume)
                 .buttonStyle(IconButtonStyle())
-                .disabled(s.resume == nil)
+                .disabled(s.resume == nil && !s.opensInBrowser)
                 // Shown on row hover, or while it has keyboard focus so its
                 // ring is visible; otherwise hidden but still reachable.
                 .opacity(hovering || resumeFocused ? 1 : 0)
                 .focused($resumeFocused)
                 .focusRing(resumeFocused, cornerRadius: Theme.iconButtonRadius)
                 .help(s.resume != nil ? "Resume in your terminal"
+                      : s.opensInBrowser ? "Open in Devin"
                       : row.location == .cloud ? "A cloud session can't be resumed here"
                       : "This harness has no resume command")
         }
@@ -429,7 +437,11 @@ private struct SessionRow: View {
         .onTapGesture(count: 2, perform: open)
         .contextMenu {
             Button("Details…", action: open)
-            Button("Resume in terminal", action: resume).disabled(s.resume == nil)
+            if s.opensInBrowser {
+                Button("Open in Devin", action: resume)
+            } else {
+                Button("Resume in terminal", action: resume).disabled(s.resume == nil)
+            }
             Divider()
             Button("Copy session ID") { copyToPasteboard(s.id) }
             if let cwd = s.cwd {
@@ -499,15 +511,15 @@ struct SessionDetail: View {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 field("Harness", s.agent)
                 field("Location", row.location.title)
-                field("Folder", s.cwd ?? "Unknown")
+                if !s.opensInBrowser { field("Folder", s.cwd ?? "Unknown") }
                 field("Last active", s.lastActiveAt.formatted(date: .abbreviated, time: .shortened))
                 field("Session id", s.id)
                 if let usage = row.usage {
                     field("Account", usage.accountHome)
                     field("Models", usage.models.joined(separator: ", "))
-                    if let duration = row.duration, duration >= 60 {
-                        field("Ran for", SessionRow.duration(duration))
-                    }
+                }
+                if let duration = row.duration, duration >= 60 {
+                    field("Ran for", SessionRow.duration(duration))
                 }
             }
             if let usage = row.usage {
@@ -526,7 +538,8 @@ struct SessionDetail: View {
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             } else {
-                Text("No token usage recorded for this session in the ledger.")
+                Text(s.opensInBrowser ? "Devin's API reports no token or ACU usage for this session."
+                     : "No token usage recorded for this session in the ledger.")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             }
             if let command = s.resume {
@@ -544,11 +557,12 @@ struct SessionDetail: View {
                 Button("Copy session ID") { copyToPasteboard(s.id) }.secondaryButton()
                 Spacer()
                 Button("Close", action: close).keyboardShortcut(.cancelAction).secondaryButton()
-                Button("Resume in terminal") { resume(); close() }
+                Button(s.opensInBrowser ? "Open in Devin" : "Resume in terminal") { resume(); close() }
                     .keyboardShortcut(.defaultAction)
                     .primaryButton()
-                    .disabled(s.resume == nil)
+                    .disabled(s.resume == nil && !s.opensInBrowser)
                     .help(s.resume != nil ? "Resume in terminal"
+                          : s.opensInBrowser ? "Open the session in Devin's web app"
                           : row.location == .cloud ? "A cloud session can't be resumed here"
                           : "This session is no longer in \(s.agent)'s history")
             }

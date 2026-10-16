@@ -14,6 +14,9 @@ public final class ServicesModel {
     public private(set) var probing: Set<String> = []
     /// A failed set/remove, shown in the section; never carries a value.
     public private(set) var error: String?
+    /// Runs after a field is saved or removed, with the field's name, so
+    /// whatever reads that key can fetch again at once.
+    public var onFieldChanged: (@MainActor (String) -> Void)?
 
     private let credentials: ServiceCredentials
     private let transport: any HTTPTransport
@@ -64,6 +67,7 @@ public final class ServicesModel {
             self.error = error.localizedDescription
         }
         await refresh(field)
+        onFieldChanged?(field)
     }
 
     public func remove(_ field: String) async {
@@ -76,6 +80,7 @@ public final class ServicesModel {
             self.error = error.localizedDescription
         }
         await refresh(field)
+        onFieldChanged?(field)
     }
 
     /// The service's probe request; keeps only the outcome. A set or
