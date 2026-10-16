@@ -214,6 +214,43 @@ private struct TogglingActivity: ActivityProviding {
         #expect(counts["claude"] == 2)
     }
 
+    @Test func accountLabelsAreReadOncePerHomePerLoad() async {
+        // Same lazy memo as knownAccounts: the label closure reaches the
+        // accounts store, so a redraw asking per block calls it once.
+        var counts: [String: Int] = [:]
+        let counted = CalendarModel(
+            providers: [FakeActivity(blocks: [block("2026-10-14T09:00:00Z", home: "/h")])],
+            accountLabel: { counts[$0, default: 0] += 1; return "L\($0)" },
+            defaults: freshDefaults(),
+            now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        await counted.load()
+        for _ in 0..<50 { _ = counted.accountName(for: "/h") }
+        #expect(counts["/h"] == 1)
+        // The next load re-reads the store once, not per call.
+        await counted.load()
+        _ = counted.accountName(for: "/h")
+        #expect(counts["/h"] == 2)
+    }
+
+    @Test func accountsFollowTheWindowAfterLandingAndLoading() async {
+        // The memo is per window: landing elsewhere re-reads it, and a
+        // load replacing the blocks re-reads it too.
+        let m = model(blocks: [
+            block("2026-10-14T09:00:00Z", home: "/h1"),
+            block("2026-10-21T09:00:00Z", home: "/h2"),
+        ])
+        await m.load()
+        #expect(m.accounts(for: "claude") == ["/h1"])
+        // A cached memo must not survive the anchor's move.
+        m.land(on: utc("2026-10-21T00:00:00Z"))
+        #expect(m.accounts(for: "claude") == ["/h2"])
+        await m.load()
+        #expect(m.accounts(for: "claude") == ["/h2"])
+        m.land(on: utc("2026-10-14T00:00:00Z"))
+        await m.load()
+        #expect(m.accounts(for: "claude") == ["/h1"])
+    }
+
     @Test func theRenderRangeBuffersOneWindowOnEachSide() {
         let model = model() // anchor 2026-10-14, a Wednesday
         model.mode = .day
