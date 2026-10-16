@@ -88,6 +88,9 @@ public struct UsageTotals: Sendable, Equatable, Codable {
 public struct ModelUsage: Sendable, Equatable {
     public var model: String
     public var harness: String
+    /// The logged tier for this slice ("fast", "priority"), nil for the
+    /// base tier. The price it shows charges the tier's rates.
+    public var tier: String?
     public var totals: UsageTotals
     /// Every event in the slice carried its own logged cost, so no price
     /// list was consulted.
@@ -506,6 +509,7 @@ public actor Ledger {
         else { return [] }
         return groups.map { group in
             ModelUsage(model: group.model, harness: group.dimensions[.harness] ?? "",
+                       tier: group.tier,
                        totals: price(group), harnessBilled: group.hasLoggedCost)
         }
     }

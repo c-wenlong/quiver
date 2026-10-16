@@ -22,9 +22,11 @@ public final class PricingModel {
         public var entry: String?
         public var source: PricingCatalog.Source?
         public var rates: ModelRates?
-        /// The tier the name carried (`claude-opus-5-5-high-fast` prices as
-        /// the base model at the "fast" multiplier), nil for the base tier.
-        public var tier: String?
+        /// The charged tiers seen (`claude-opus-5-5-high-fast` prices as
+        /// the base model at the "fast" multiplier, and a dim-level "fast"
+        /// arrives through `ModelUsage.tier`), sorted; empty for the base
+        /// tier.
+        public var tiers: [String]
         /// A free model: priced at zero with no catalog entry.
         public var isFree: Bool
         /// Tokens with neither a logged cost nor a resolved rate.
@@ -80,19 +82,29 @@ public final class PricingModel {
         var merged: [String: PricedModel] = [:]
         var order: [String] = []
         for slice in slices {
+            // A logged "fast" dim tier and a `-fast` name suffix both
+            // charge a multiplier the row names.
+            var sliceTiers: [String] = []
+            if let tier = slice.tier, !tier.isEmpty { sliceTiers.append(tier) }
             if var row = merged[slice.model] {
                 row.totals.add(slice.totals)
                 row.harnessBilled = row.harnessBilled && slice.harnessBilled
                 row.unpricedTokens += slice.totals.unpricedTokens
                 if !row.harnesses.contains(slice.harness) { row.harnesses.append(slice.harness) }
+                for tier in sliceTiers where !row.tiers.contains(tier) {
+                    row.tiers.append(tier)
+                }
                 merged[slice.model] = row
             } else {
                 var entry: String?, source: PricingCatalog.Source?, rates: ModelRates?
-                var tier: String?, isFree = false
-                switch catalog.resolve(model: slice.model) {
+                var isFree = false
+                var tiers = sliceTiers
+                switch catalog.resolve(model: slice.model, tier: slice.tier ?? "") {
                 case .priced(let found, let key, let whereFrom, let resolvedTier):
                     entry = key; source = whereFrom; rates = found
-                    tier = resolvedTier.isEmpty ? nil : resolvedTier
+                    if !resolvedTier.isEmpty, !tiers.contains(resolvedTier) {
+                        tiers.append(resolvedTier)
+                    }
                 case .free:
                     isFree = true
                 case nil:
@@ -102,7 +114,7 @@ public final class PricingModel {
                     model: slice.model, totals: slice.totals, harnesses: [slice.harness],
                     harnessBilled: slice.harnessBilled,
                     entry: entry, source: source, rates: rates,
-                    tier: tier, isFree: isFree,
+                    tiers: tiers.sorted(), isFree: isFree,
                     unpricedTokens: slice.totals.unpricedTokens)
                 order.append(slice.model)
             }
@@ -138,6 +150,16 @@ public final class PricingModel {
     /// Persist `key`'s price, rebuild the catalog with it, and reprice.
     public func save(key: String, prices: PricingOverrides.Prices) async throws {
         try overrides.set(key, prices: prices)
+        try await reprice()
+    }
+
+    /// Delete `key`'s saved price and reprice back to downloaded sources.
+    public func remove(key: String) async throws {
+        try overrides.remove(key)
+        try await reprice()
+    }
+
+    private func reprice() async throws {
         let catalog = try makeCatalog()
         await apply(catalog)
         await load()

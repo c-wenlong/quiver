@@ -56,6 +56,32 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(catalog.lookup("nonexistent-model") == nil)
     }
 
+    @Test func `an override wins under every equivalent name`() throws {
+        var overrides = PricingOverrides(
+            url: FileManager.default.temporaryDirectory
+                .appending(path: "pricing-\(UUID().uuidString).json"))
+        try overrides.set("gpt-4-1", prices: .init(input: 1, output: 2))
+        try overrides.set("claude-opus-5-5", prices: .init(input: 9, output: 9))
+        let catalog = try PricingCatalog(
+            liteLLM: Data("""
+                {"gpt-4.1": {"input_cost_per_token": 0.000002, \
+                "output_cost_per_token": 0.000008}, \
+                "anthropic/claude-opus-5-5-20260101": {\
+                "input_cost_per_token": 0.000015, "output_cost_per_token": 0.000075}}
+                """.utf8),
+            overrides: overrides.entries)
+        // The published literal key, the user key's form, and a dated
+        // published entry all lose to the saved price.
+        for model in ["gpt-4.1", "gpt-4-1"] {
+            let hit = try #require(catalog.lookup(model))
+            #expect(hit.source == .yours && hit.rates.input == 0.000001)
+        }
+        let dated = try #require(catalog.lookup("claude-opus-5-5-20260101"))
+        #expect(dated.source == .yours && dated.rates.input == 0.000009)
+        let prefixed = try #require(catalog.lookup("anthropic/claude-opus-5-5-20260101"))
+        #expect(prefixed.source == .yours)
+    }
+
     @Test func `save then load round-trips, missing file is empty`() throws {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "pricing-\(UUID().uuidString).json")
@@ -239,7 +265,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(model.unpriced.isEmpty)
         let fast = try #require(model.groups.flatMap(\.models)
             .first { $0.model == "claude-opus-5-5-high-fast" })
-        #expect(fast.source == .liteLLM && fast.tier == "fast"
+        #expect(fast.source == .liteLLM && fast.tiers == ["fast"]
                 && fast.entry == "claude-opus-5-5" && !fast.isFree)
         let free = try #require(model.groups.flatMap(\.models)
             .first { $0.model == "openrouter/free" })
@@ -248,6 +274,33 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         // free one costs nothing, so neither reports unpriced tokens.
         let totals = await ledger.totals(in: allTime)
         #expect(totals.unpricedTokens == 0)
+        #expect(totals.costUSD == 0.003)  // 100 input @ $15/1M x2
+        _ = temp
+    }
+
+    @Test func `a logged dim tier shows the multiplier and prices it`() async throws {
+        var supplement = PricingSupplement()
+        supplement.defaultTierMultipliers = ["fast": 2]
+        let catalog = try PricingCatalog(
+            liteLLM: Data("""
+                {"claude-opus-5-5": {"input_cost_per_token": 0.000015, \
+                "output_cost_per_token": 0.000075}}
+                """.utf8),
+            supplement: supplement)
+        // Claude fast mode: the model name stays the same and the tier
+        // rides on the dim's serviceTier.
+        let (ledger, model, temp) = try makeModel([
+            UsageEvent(harness: "claude", accountHome: "", sessionId: "s",
+                       model: "claude-opus-5-5", timestamp: Date(),
+                       inputTokens: 100, serviceTier: "fast"),
+        ], catalog: catalog)
+        await ledger.setPricing(catalog)
+        await model.load()
+        let row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.tiers == ["fast"])
+        #expect(row.rates?.tierMultipliers["fast"] == 2)
+        // The ledger charges the multiplier, so the page and totals agree.
+        let totals = await ledger.totals(in: allTime)
         #expect(totals.costUSD == 0.003)  // 100 input @ $15/1M x2
         _ = temp
     }

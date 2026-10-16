@@ -33,6 +33,10 @@ public struct PricingCatalog: Sendable {
     private var entries: [String: ModelRates]
     /// Normalized name to entry key, built once.
     private var index: [String: String]
+    /// Same index over only the user-priced keys, checked first so a saved
+    /// price wins under every equivalent name (`gpt-4-1` beats the
+    /// published `gpt-4.1`, an undated key beats a dated published entry).
+    private var overrideIndex: [String: String]
     /// Which source each entry key came from; absent means LiteLLM.
     private var sources: [String: Source]
     private var supplement: PricingSupplement
@@ -45,6 +49,7 @@ public struct PricingCatalog: Sendable {
         self.supplement = supplement
         self.sources = sources
         self.index = [:]
+        self.overrideIndex = [:]
         // Bare keys win over provider-prefixed ones, then shorter prefixes.
         let ordered = entries.keys.sorted { lhs, rhs in
             let l = (Self.prefixRank(lhs), lhs), r = (Self.prefixRank(rhs), rhs)
@@ -54,6 +59,13 @@ public struct PricingCatalog: Sendable {
             for key in ordered {
                 for form in Self.forms(of: key, stripDates: pass == 1) where index[form] == nil {
                     index[form] = key
+                }
+            }
+        }
+        for pass in 0..<2 {
+            for key in ordered where sources[key] == .yours {
+                for form in Self.forms(of: key, stripDates: pass == 1) where overrideIndex[form] == nil {
+                    overrideIndex[form] = key
                 }
             }
         }
@@ -172,8 +184,13 @@ public struct PricingCatalog: Sendable {
     /// normalized forms.
     private func resolvedKey(for model: String) -> String? {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if entries[trimmed] != nil { return trimmed }
         let lowered = trimmed.lowercased()
+        // The user's own prices are consulted before anything else.
+        if sources[trimmed] == .yours { return trimmed }
+        for form in [lowered] + Self.forms(of: lowered, stripDates: true, stripEffort: true) {
+            if let key = overrideIndex[form] { return key }
+        }
+        if entries[trimmed] != nil { return trimmed }
         if let alias = supplement.aliases[lowered], alias.lowercased() != lowered {
             return resolvedKey(for: alias)
         }

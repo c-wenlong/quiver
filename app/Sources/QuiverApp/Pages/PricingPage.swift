@@ -147,7 +147,8 @@ private struct ProviderCard: View {
                 .padding(.bottom, 8)
             ForEach(shown) { row in
                 Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline)
-                PricingRow(row: row, clickable: row.unpricedTokens > 0) { edit(row) }
+                PricingRow(row: row,
+                           clickable: row.unpricedTokens > 0 || row.source == .yours) { edit(row) }
             }
             if group.models.count > Self.foldLimit {
                 if !shown.isEmpty { Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline) }
@@ -193,13 +194,15 @@ private struct PricingRow: View {
         }
     }
 
-    /// A split `-fast`-style name shows the base rates plus what the tier
-    /// applies: "fast ×2" when the catalog knows a multiplier, else just
-    /// the tier name.
+    /// Charged tiers show the base rates plus what each applies:
+    /// "fast ×2" when the catalog knows a multiplier, else just the tier
+    /// name.
     private var tierNote: String? {
-        guard let tier = row.tier else { return nil }
-        guard let multiplier = row.rates?.tierMultipliers[tier] else { return tier }
-        return "\(tier) ×\(String(format: "%g", multiplier))"
+        guard !row.tiers.isEmpty else { return nil }
+        return row.tiers.map { tier in
+            guard let multiplier = row.rates?.tierMultipliers[tier] else { return tier }
+            return "\(tier) ×\(String(format: "%g", multiplier))"
+        }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -229,8 +232,8 @@ private struct PricingRow: View {
                     .lineLimit(1).fixedSize()
             }
             Spacer()
-            ForEach(rateColumns, id: \.self) { rate in
-                Text(rate)
+            ForEach(rateColumns.indices, id: \.self) { index in
+                Text(rateColumns[index])
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     .frame(width: Self.rateColumnWidth, alignment: .trailing)
             }
@@ -292,11 +295,29 @@ private struct PriceSheet: View {
     @State private var cacheRead = ""
     @State private var cacheWrite = ""
     @State private var saving = false
+    @State private var saveError: String?
+
+    /// Editing one of the user's own prices rather than adding a new one.
+    private var editing: Bool { row.source == .yours }
 
     init(model: PricingModel, row: PricingModel.PricedModel) {
         self.model = model
         self.row = row
-        _key = State(initialValue: PricingCatalog.baseName(for: row.model))
+        _key = State(initialValue: row.source == .yours && row.entry != nil
+                     ? row.entry! : PricingCatalog.baseName(for: row.model))
+        // A saved price pre-fills the fields (stored per token, shown
+        // per million).
+        if row.source == .yours, let rates = row.rates {
+            _input = State(initialValue: Self.rate(rates.input))
+            _output = State(initialValue: Self.rate(rates.output))
+            _cacheRead = State(initialValue: Self.rate(rates.cacheRead))
+            _cacheWrite = State(initialValue: Self.rate(rates.cacheWrite))
+        }
+    }
+
+    /// A per-token rate as the per-million text the fields hold.
+    private static func rate(_ perToken: Double) -> String {
+        String(format: "%g", perToken * 1_000_000)
     }
 
     private func number(_ text: String, orBlankAs blank: Double? = nil) -> Double? {
@@ -340,7 +361,17 @@ private struct PriceSheet: View {
             }
             Text("USD per 1M tokens. Blank cache fields count as 0.")
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            if let saveError {
+                Text(saveError)
+                    .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
+                if editing {
+                    Button("Remove price") { remove() }
+                        .secondaryButton()
+                        .disabled(saving)
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .secondaryButton()
@@ -368,9 +399,29 @@ private struct PriceSheet: View {
             cacheRead: number(cacheRead, orBlankAs: 0) ?? 0,
             cacheWrite: number(cacheWrite, orBlankAs: 0) ?? 0)
         saving = true
+        saveError = nil
         Task {
-            try? await model.save(key: key, prices: prices)
-            dismiss()
+            do {
+                try await model.save(key: key, prices: prices)
+                dismiss()
+            } catch {
+                saveError = error.localizedDescription
+                saving = false
+            }
+        }
+    }
+
+    private func remove() {
+        saving = true
+        saveError = nil
+        Task {
+            do {
+                try await model.remove(key: key.trimmingCharacters(in: .whitespaces))
+                dismiss()
+            } catch {
+                saveError = error.localizedDescription
+                saving = false
+            }
         }
     }
 }

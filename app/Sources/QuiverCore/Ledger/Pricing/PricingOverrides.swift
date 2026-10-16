@@ -48,6 +48,17 @@ public struct PricingOverrides: Sendable {
     /// Set `name`'s price and write the file atomically.
     public mutating func set(_ name: String, prices: Prices) throws {
         models[name] = prices
+        try write()
+    }
+
+    /// Drop `name`'s saved price (a no-op when it has none) and write the
+    /// file atomically.
+    public mutating func remove(_ name: String) throws {
+        guard models.removeValue(forKey: name) != nil else { return }
+        try write()
+    }
+
+    private func write() throws {
         let document: [String: Any] = [
             "schema": 1,
             "models": models.mapValues { prices in
