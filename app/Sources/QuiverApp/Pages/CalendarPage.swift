@@ -1346,7 +1346,7 @@ private struct OverflowCard: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(overflow.hidden.count) more · "
                      + "\(Self.clock.string(from: overflow.start))"
