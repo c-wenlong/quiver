@@ -879,7 +879,7 @@ private struct BlockView: View {
     /// The block's real times: `start`/`end` on the segment are display
     /// times stretched by the minimum duration.
     private var timeRange: String {
-        "\(Self.clock.string(from: segment.block.start))–\(Self.clock.string(from: segment.block.end))"
+        CalendarFormat.range(start: segment.block.start, end: segment.block.end)
     }
 
     var body: some View {
@@ -1121,9 +1121,7 @@ private struct HarnessLegend: View {
     }
 
     private static func time(_ seconds: TimeInterval) -> String {
-        let minutes = Int(seconds / 60)
-        if minutes >= 60 { return "\(minutes / 60)h \(minutes % 60)m" }
-        return "\(minutes)m"
+        CalendarFormat.duration(seconds)
     }
 }
 
@@ -1225,10 +1223,7 @@ private struct MonthEntry: View {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
     }()
 
-    private var active: String {
-        let minutes = Int(entry.active / 60)
-        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
-    }
+    private var active: String { CalendarFormat.duration(entry.active) }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -1263,9 +1258,10 @@ private struct SessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.session.title ?? String(ref.sessionId.prefix(8)))
+                Text(CalendarFormat.sessionTitle(row.session.title,
+                                                 sessionId: ref.sessionId))
                     .font(.system(size: 11, weight: .medium)).lineLimit(1)
-                Text("\(Self.clock.string(from: ref.start))–\(Self.clock.string(from: ref.end)) · "
+                Text("\(CalendarFormat.range(start: ref.start, end: ref.end)) · "
                      + "\(ref.responses) response\(ref.responses == 1 ? "" : "s")")
                     .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
             }
@@ -1304,12 +1300,9 @@ private struct BlockCard: View {
     }()
 
     private var range: String {
-        "\(Self.clock.string(from: block.start))–\(Self.clock.string(from: block.end))"
+        CalendarFormat.range(start: block.start, end: block.end)
     }
-    private var duration: String {
-        let minutes = Int(active / 60)
-        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
-    }
+    private var duration: String { CalendarFormat.duration(active) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1403,20 +1396,19 @@ private struct OverflowCard: View {
     }
 
     private static func duration(of block: ActivityBlock) -> String {
-        let minutes = Int(block.end.timeIntervalSince(block.start) / 60)
-        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+        CalendarFormat.duration(block.end.timeIntervalSince(block.start))
     }
 
     private static func range(of block: ActivityBlock) -> String {
-        "\(clock.string(from: block.start))–\(clock.string(from: block.end))"
+        CalendarFormat.range(start: block.start, end: block.end)
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(overflow.hidden.count) more · "
-                     + "\(Self.clock.string(from: overflow.start))"
-                     + "–\(Self.clock.string(from: overflow.end))")
+                     + CalendarFormat.range(start: overflow.start,
+                                            end: overflow.end))
                     .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 12).padding(.bottom, 8)
                 ScrollView {
@@ -1496,7 +1488,7 @@ private struct ProjectSessionsSheet: View {
                 HarnessIcon(harness: HarnessMark(block.harness).icon ?? block.harness, size: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(block.project).font(Theme.sectionTitle).tracking(-0.5)
-                    Text("\(Self.clock.string(from: block.start))–\(Self.clock.string(from: block.end)) · "
+                    Text("\(CalendarFormat.range(start: block.start, end: block.end)) · "
                          + "\(block.sessions.count) session\(block.sessions.count == 1 ? "" : "s")")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }

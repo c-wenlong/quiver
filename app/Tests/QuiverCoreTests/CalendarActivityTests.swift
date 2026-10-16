@@ -19,9 +19,10 @@ import Testing
     }
 
     private func event(_ ts: String, harness: String = "claude",
-                       home: String = "/h", session: String = "s") -> UsageEvent {
+                       home: String = "/h", session: String = "s",
+                       model: String = "m") -> UsageEvent {
         UsageEvent(harness: harness, accountHome: home, sessionId: session,
-                   model: "m", timestamp: utc(ts), outputTokens: 1)
+                   model: model, timestamp: utc(ts), outputTokens: 1)
     }
 
     private let day = DateInterval(start: utc("2026-10-05T00:00:00Z"),
@@ -157,5 +158,52 @@ extension CalendarActivityTests {
         #expect(blocks[0].responses == 6)
         #expect(blocks[0].start == utc("2026-10-14T09:00:00Z"))
         #expect(blocks[0].end == utc("2026-10-14T09:50:00Z"))
+    }
+}
+
+extension CalendarActivityTests {
+    @Test func aHelperOnlySessionDrawsNoBlock() throws {
+        // Devin's summarizer/compactor sessions are bookkeeping, not work.
+        let (temp, store) = try store([
+            event("2026-10-05T11:02:00Z", session: "natural-riverbed",
+                  model: "summarizer"),
+            event("2026-10-05T11:03:00Z", session: "compacted", model: "compactor"),
+            event("2026-10-05T10:00:00Z", session: "shared-kayak"),
+        ])
+        _ = temp
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
+        #expect(blocks.map(\.sessions.first?.sessionId) == ["shared-kayak"])
+    }
+
+    @Test func aRealEventOutsideTheRangeKeepsTheSessionHelperBlock() throws {
+        // A real response on Oct 5 and a helper response on Oct 10 in one
+        // session: the helper block is part of real work, and the day
+        // query and the month query must agree.
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", session: "shared-kayak"),
+            event("2026-10-10T11:02:00Z", session: "shared-kayak",
+                  model: "summarizer"),
+        ])
+        _ = temp
+        let narrow = DateInterval(start: utc("2026-10-10T00:00:00Z"),
+                                  end: utc("2026-10-11T00:00:00Z"))
+        let wide = DateInterval(start: utc("2026-10-01T00:00:00Z"),
+                                end: utc("2026-11-01T00:00:00Z"))
+        #expect(try store.activityBlocks(in: narrow, gap: 30 * 60).count == 1)
+        #expect(try store.activityBlocks(in: wide, gap: 30 * 60).count == 2)
+    }
+
+    @Test func helperCallsInsideARealSessionStillCount() throws {
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", session: "shared-kayak"),
+            event("2026-10-05T10:05:00Z", session: "shared-kayak",
+                  model: "summarizer"),
+            event("2026-10-05T10:10:00Z", session: "shared-kayak",
+                  model: "compactor"),
+        ])
+        _ = temp
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
+        #expect(blocks.count == 1)
+        #expect(blocks[0].responses == 3)
     }
 }
