@@ -16,11 +16,18 @@ public final class ProjectResolver: Sendable {
     public typealias Identity = (key: String, name: String)
 
     private let gitDir: @Sendable (String) -> SessionProjects.GitDir?
+    /// A `grok-bot` session id's project identity, from the local Bot
+    /// roster: its sessions carry no working folder, so they group by
+    /// Bot instead. Injectable like `gitDir`.
+    private let grokBot: @Sendable (String) -> Identity
     private let cache = OSAllocatedUnfairLock<[String: Identity]>(initialState: [:])
 
     public init(gitDir: @escaping @Sendable (String) -> SessionProjects.GitDir?
-                = { SessionProjects.gitDir(at: $0) }) {
+                = { SessionProjects.gitDir(at: $0) },
+                grokBot: @escaping @Sendable (String) -> Identity
+                = { GrokBotRoster.shared.project(for: $0) }) {
         self.gitDir = gitDir
+        self.grokBot = grokBot
     }
 
     public func identity(of cwd: String?) -> Identity {
@@ -47,7 +54,18 @@ public final class ProjectResolver: Sendable {
     }
 
     /// A provider's per-session blocks re-keyed into project blocks.
+    /// `grok-bot` blocks carry no folder — their sessions name a Bot —
+    /// so the roster labels them before the folder grouping runs.
     public func group(_ blocks: [ActivityBlock], gap: TimeInterval) -> [ActivityBlock] {
-        ActivityBlocks.groupByProject(blocks, gap: gap) { identity(of: $0) }
+        let labelled = blocks.map { block in
+            guard block.harness == "grok-bot", block.project.isEmpty,
+                  let sessionId = block.sessions.first?.sessionId else { return block }
+            let identity = grokBot(sessionId)
+            return ActivityBlock(harness: block.harness, accountHome: block.accountHome,
+                                 project: identity.name, sessions: block.sessions,
+                                 start: block.start, end: block.end,
+                                 responses: block.responses, projectKey: identity.key)
+        }
+        return ActivityBlocks.groupByProject(labelled, gap: gap) { identity(of: $0) }
     }
 }

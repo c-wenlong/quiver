@@ -33,6 +33,24 @@ public enum CalendarFormat {
     /// whole string carries no words.
     public static func sessionTitle(_ title: String?, sessionId: String) -> String {
         if let title, !title.isEmpty { return title }
+        return sessionTitleFallback(sessionId)
+    }
+
+    /// A session row's label when the harness changes what the id
+    /// means: a `grok-bot` conversation id is a Bot's id, so the roster
+    /// names the row; every other harness uses the usual fallback.
+    public static func sessionTitle(_ title: String?, sessionId: String,
+                                    harness: String) -> String {
+        if let title, !title.isEmpty { return title }
+        if harness == "grok-bot" {
+            return GrokBotRoster.shared.labels(for: sessionId).sessionTitle
+        }
+        return sessionTitleFallback(sessionId)
+    }
+
+    /// The id-only fallback: whole for readable slugs, chopped for
+    /// UUID-like ids.
+    private static func sessionTitleFallback(_ sessionId: String) -> String {
         let bare = sessionId.replacingOccurrences(of: "-", with: "")
         let looksUUID = sessionId.count > 24
             || (bare.count == 32 && bare.allSatisfy(\.isHexDigit))
