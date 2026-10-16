@@ -62,6 +62,12 @@ public struct CodexAccountSection: Sendable, Equatable {
 
     public var hasNegativeWeek: Bool { weeks.contains { $0.difference < 0 } }
     public var hasNegativeMonth: Bool { months.contains { $0.difference < 0 } }
+
+    /// Nothing was used on either side anywhere in the shown range —
+    /// the section renders one muted line instead of zeroed figures.
+    public static func isEmpty(_ periods: [CodexComparePeriod]) -> Bool {
+        periods.allSatisfy { $0.account == 0 && $0.mac == 0 }
+    }
 }
 
 /// Every Codex account's per-day usage, read through
@@ -250,9 +256,10 @@ public final class CodexAccountUsage {
 
     /// Account and this-Mac day maps into both comparisons.
     ///
-    /// The window keeps only days both sides have, and this Mac is cut
-    /// at the account data's last day — OpenAI's totals lag by about a
-    /// day, so the newest local day would only invent a difference.
+    /// The window is the account's days — a day with no local events
+    /// counts as 0 for This Mac, and the account data's last day cuts
+    /// the window (OpenAI's totals lag by about a day, so the newest
+    /// local day would only invent a difference).
     /// Weeks start Monday; months use the caller's calendar. Six of
     /// each, ending at the current one, which is `inProgress`.
     public static func compare(account: [Date: Int], mac: [Date: Int],
@@ -271,9 +278,12 @@ public final class CodexAccountUsage {
         guard let lastAccountDay = accountDays.keys.max() else {
             return ([], [], .init(account: 0, mac: 0, difference: 0, fraction: 0))
         }
+        // The window is the account's days: a day the Mac has no events
+        // for counts as 0, it is not missing. The account's last day
+        // still cuts the window — OpenAI's totals lag by about a day.
         var shared: [Date: (account: Int, mac: Int)] = [:]
         for (day, tokens) in accountDays where day <= lastAccountDay {
-            if let local = macDays[day] { shared[day] = (tokens, local) }
+            shared[day] = (tokens, macDays[day] ?? 0)
         }
         var monday = calendar
         monday.firstWeekday = 2

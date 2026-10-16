@@ -44,42 +44,55 @@ struct CodexCompareSection: View {
 
     @ViewBuilder private var data: some View {
         VStack(alignment: .leading, spacing: 10) {
-            caption("Last 4 weeks")
-            HStack(spacing: 8) {
-                CompareChip(value: UsageFormat.tokens(section.chips.account),
-                            label: "Account total",
-                            help: "All devices and Codex Cloud, from OpenAI")
-                CompareChip(value: UsageFormat.tokens(section.chips.mac),
-                            label: "This Mac",
-                            help: "This Mac's Codex logs")
-                CompareChip(
-                    value: signed(section.chips.difference),
-                    label: section.chips.difference >= 0
-                        ? "Elsewhere (\(percent(section.chips.fraction)))"
-                        : "More on this Mac",
-                    help: "Account total minus this Mac",
-                    warn: section.chips.difference < 0)
-            }
-            HStack {
-                caption(tab == .weekly ? "Weekly tokens" : "Monthly tokens")
-                Spacer()
-                Tabs(options: [(Tab.weekly, "Weekly"), (Tab.monthly, "Monthly")],
-                     selection: $tab, style: .table)
-            }
             let periods = tab == .weekly ? section.weeks : section.months
-            legend
-            CompareChart(periods: periods, weekly: tab == .weekly)
-            CompareTable(periods: periods, weekly: tab == .weekly)
-            if (tab == .weekly ? section.hasNegativeWeek : section.hasNegativeMonth) {
-                Text("This Mac shows more than the account here. Possible causes: "
-                     + "sessions from another account in a shared conversation folder, "
-                     + "or OpenAI's day boundary, which isn't your midnight.")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if section.stale {
-                Text("Couldn't refresh — showing the last reading.")
+            if CodexAccountSection.isEmpty(periods) {
+                HStack {
+                    caption(tab == .weekly ? "Weekly tokens" : "Monthly tokens")
+                    Spacer()
+                    Tabs(options: [(Tab.weekly, "Weekly"), (Tab.monthly, "Monthly")],
+                         selection: $tab, style: .table)
+                }
+                Text(tab == .weekly
+                     ? "No Codex usage on this account in the last 4 weeks"
+                     : "No Codex usage on this account in the last 6 months")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            } else {
+                caption("Last 4 weeks")
+                HStack(spacing: 8) {
+                    CompareChip(value: UsageFormat.tokens(section.chips.account),
+                                label: "Account total",
+                                help: "All devices and Codex Cloud, from OpenAI")
+                    CompareChip(value: UsageFormat.tokens(section.chips.mac),
+                                label: "This Mac",
+                                help: "This Mac's Codex logs")
+                    CompareChip(
+                        value: signed(section.chips.difference),
+                        label: section.chips.difference >= 0
+                            ? "Elsewhere (\(percent(section.chips.fraction)))"
+                            : "More on this Mac",
+                        help: "Account total minus this Mac",
+                        warn: section.chips.difference < 0)
+                }
+                HStack {
+                    caption(tab == .weekly ? "Weekly tokens" : "Monthly tokens")
+                    Spacer()
+                    Tabs(options: [(Tab.weekly, "Weekly"), (Tab.monthly, "Monthly")],
+                         selection: $tab, style: .table)
+                }
+                legend
+                CompareChart(periods: periods, weekly: tab == .weekly)
+                CompareTable(periods: periods, weekly: tab == .weekly)
+                if (tab == .weekly ? section.hasNegativeWeek : section.hasNegativeMonth) {
+                    Text("This Mac shows more than the account here. Possible causes: "
+                         + "sessions from another account in a shared conversation folder, "
+                         + "or OpenAI's day boundary, which isn't your midnight.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if section.stale {
+                    Text("Couldn't refresh — showing the last reading.")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                }
             }
         }
     }

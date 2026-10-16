@@ -113,6 +113,29 @@ import Testing
         #expect(chips.fraction == 0.125)
     }
 
+    @Test func anAccountWithNoLocalLogsStillShowsItsTotals() async {
+        // The Mac has nothing for this home: the account's days still
+        // make the window, each with This Mac = 0.
+        let (model, _) = model(
+            reports: ["/h": report([("2026-10-13", 10), ("2026-10-14", 20)])],
+            mac: [:])
+        await model.refresh(homes: ["/h"])
+        let section = model.section(for: "/h")!
+        #expect(section.weeks.last?.account == 30)
+        #expect(section.weeks.last?.mac == 0)
+        #expect(!CodexAccountSection.isEmpty(section.weeks))
+    }
+
+    @Test func anAllZeroAccountShowsTheEmptyState() async {
+        let (model, _) = model(
+            reports: ["/h": report([], status: "ok")], mac: [:])
+        await model.refresh(homes: ["/h"])
+        let section = model.section(for: "/h")!
+        #expect(section.kind == .data)
+        #expect(CodexAccountSection.isEmpty(section.weeks))
+        #expect(CodexAccountSection.isEmpty(section.months))
+    }
+
     @Test func aNegativePeriodSetsTheFlag() async {
         let mac = [day("2026-10-13"): 20, day("2026-10-07"): 5]
         let (model, _) = model(
