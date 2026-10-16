@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Settings > Preferences > "Hide accidental sessions" (default on)
   switches both filters off.
 
+- **Settings > Services in Quiver.** Keys for the services Quiver itself
+  calls — Devin's API token and org id, and an Artificial Analysis key —
+  live in the login keychain under `com.cwenlong.quiver.services`, read
+  and written through `/usr/bin/security` so a rebuild never re-prompts.
+  Only when each key was added and last used goes to
+  `~/.quiver/config/services.json`; values never leave the keychain.
+  Each service has a Test button: Devin's calls `v3/self` for free,
+  Artificial Analysis spends one of its 1,000 daily requests on the
+  models list.
+
 - **`swe harness usage <devin|cursor> --account-dir=<dir>` reads an extra
   account's rate limit from its own files.** Devin resolves to
   `<dir>/devin/credentials.toml` (the CLI's `XDG_DATA_HOME`), Cursor to

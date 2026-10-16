@@ -480,6 +480,25 @@ public actor Ledger {
             .sorted { ($0.day, $0.harness, $0.model) < ($1.day, $1.harness, $1.model) }
     }
 
+    /// One account home's token totals per calendar day for one harness —
+    /// every token kind summed, the same `totalTokens` Overview reports.
+    /// Days with no usage are left out.
+    public func dailyTokens(harness: String, accountHome: String,
+                            in range: DateInterval, calendar: Calendar) -> [Date: Int] {
+        guard let groups = try? store.groups(
+            in: range, by: [.harness, .account], thresholds: pricing.thresholds,
+            bucketSeconds: 900)
+        else { return [:] }
+        var days: [Date: Int] = [:]
+        for group in groups
+        where group.dimensions[.harness] == harness
+            && group.dimensions[.account] == accountHome {
+            let day = calendar.startOfDay(for: max(group.bucket ?? group.first, range.start))
+            days[day, default: 0] += group.tokens.total
+        }
+        return days
+    }
+
     /// Usage per session, most recent first. `harness` restricts the read
     /// to one harness's dims when the caller only wants those.
     public func bySession(in range: DateInterval, harness: String? = nil) -> [SessionUsage] {
