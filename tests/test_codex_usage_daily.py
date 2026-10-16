@@ -9,12 +9,15 @@ import io
 import json
 import os
 import stat
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
-FAKE_CODEX = """#!/usr/bin/env python3
+# The shebang is filled with this interpreter's absolute path: the Nix
+# build sandbox has no /usr/bin/env, so `#!/usr/bin/env python3` can't run.
+FAKE_CODEX = """#!{python}
 import json
 import os
 import sys
@@ -32,7 +35,14 @@ for line in sys.stdin:
     if echo:
         with open(echo, "w") as f:
             f.write(os.environ.get("CODEX_HOME", ""))
+    mode = os.environ.get("FAKE_CODEX_MODE", "ok")
     if message.get("method") == "initialize":
+        if mode == "exit-early":
+            sys.exit(0)
+        if mode == "init-error":
+            print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "error": {
+                "code": -32000, "message": "server is shutting down"}}), flush=True)
+            continue
         print(json.dumps({"jsonrpc": "2.0", "id": message["id"],
                           "result": {"ok": True}}), flush=True)
     elif message.get("method") == "account/usage/read":
@@ -55,6 +65,13 @@ for line in sys.stdin:
                 "code": -32000,
                 "message": "codex account authentication required to read "
                            "token usage"}}), flush=True)
+        elif mode == "partial-buckets":
+            print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": {
+                "summary": {},
+                "dailyUsageBuckets": [
+                    {"startDate": "2026-10-12"},
+                    {"tokens": 7},
+                    {"startDate": "2026-10-13", "tokens": 400}]}}), flush=True)
         elif mode == "unknown-method":
             print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "error": {
                 "code": -32601, "message": "method not found"}}), flush=True)
@@ -81,7 +98,7 @@ class CodexUsageDailyTest(unittest.TestCase):
     def _fake_codex(self, mode="ok"):
         path = os.path.join(self.bin_dir, "codex")
         with open(path, "w") as f:
-            f.write(FAKE_CODEX)
+            f.write(FAKE_CODEX.replace("{python}", sys.executable, 1))
         os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP
                  | stat.S_IXOTH)
         env = dict(os.environ)
@@ -139,6 +156,42 @@ class CodexUsageDailyTest(unittest.TestCase):
     def test_method_not_found_is_unsupported(self):
         report = self._fetch(self._fake_codex("unknown-method"))
         self.assertEqual(report["status"], "unsupported")
+
+    def test_an_initialize_error_is_classified(self):
+        report = self._fetch(self._fake_codex("init-error"))
+        self.assertEqual(report["status"], "unavailable")
+        self.assertIsNone(report["summary"])
+
+    def test_a_child_that_exits_before_answering_is_unavailable(self):
+        report = self._fetch(self._fake_codex("exit-early"))
+        self.assertEqual(report["status"], "unavailable")
+
+    def test_buckets_missing_a_date_or_tokens_are_skipped(self):
+        report = self._fetch(self._fake_codex("partial-buckets"))
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["days"], [{"date": "2026-10-13", "tokens": 400}])
+        self.assertEqual(report["summary"]["lifetime_tokens"], 0)
+
+    def test_classify_error_falls_back_to_unavailable(self):
+        from quiver.harness.codex_usage import _classify_error
+
+        self.assertEqual(_classify_error(None), "unavailable")
+        self.assertEqual(_classify_error({"code": -32000, "message": "boom"}),
+                         "unavailable")
+        self.assertEqual(_classify_error({"message": "Unknown method foo"}),
+                         "unsupported")
+
+    def test_human_mode_unsupported_and_unavailable_exit_one(self):
+        from quiver.harness.codex_usage import print_codex_usage_daily
+
+        for status in ("unsupported", "unavailable"):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out):
+                code = print_codex_usage_daily(
+                    {"status": status, "summary": None, "days": []}, None, err=err)
+            self.assertEqual(code, 1)
+            self.assertEqual(out.getvalue(), "")
+            self.assertIn("codex", err.getvalue())
 
     def test_a_timeout_is_unavailable_and_the_child_dies(self):
         report = self._fetch(self._fake_codex("sleep"), timeout=0.5)
