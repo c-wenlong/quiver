@@ -40,6 +40,34 @@ import Testing
         #expect(names.label(for: "/Users/k/.local/share/devin/cli") == "Devin")
         #expect(names.label(for: "/opt/elsewhere") == "/opt/elsewhere")
     }
+
+    @Test func theDirectoryRebuildsOnlyWhenProfilesChange() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "dir-cache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "profiles.json")
+        try "[]".write(to: file, atomically: true, encoding: .utf8)
+        let store = ProfileStore(root: root, userHome: home)
+        final class Builds: @unchecked Sendable { var value = 0 }
+        let builds = Builds()
+        let cache = CachedAccountDirectory(file: file) {
+            builds.value += 1
+            return AccountDirectory(profiles: [], paths: store.paths(for:), home: self.home)
+        }
+        // Same mtime answers from the cache: one build for any reads.
+        _ = cache.current
+        _ = cache.current
+        #expect(builds.value == 1)
+        // A changed stamp rebuilds once, then settles again.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 2_000_000_000)],
+            ofItemAtPath: file.path)
+        _ = cache.current
+        #expect(builds.value == 2)
+        _ = cache.current
+        #expect(builds.value == 2)
+    }
 }
 
 @Suite struct UsageFormatTests {

@@ -253,9 +253,16 @@ private struct CalendarContent: View {
     /// The landed horizontal scroll target: a leading day, or a week
     /// start in week mode where the week is the scroll unit.
     @State private var landed: Date?
-    /// The columns' horizontal scroll offset, mirrored on the header so
-    /// it slides in lockstep while staying pinned above the grid.
-    @State private var scrollX: CGFloat = 0
+    /// The columns' horizontal scroll offset. Only `DayHeaderStrip`
+    /// reads it, so a scroll tick re-renders the strip alone instead of
+    /// invalidating CalendarContent's body (and every `DayColumn`).
+    @State private var scrollOffset = HeaderOffset()
+
+    /// Harnesses with more than one account in the window: computed once
+    /// per render and handed to the columns, not once per block.
+    private var multiAccountHarnesses: Set<String> {
+        Set(model.harnesses.filter { model.accounts(for: $0).count > 1 })
+    }
 
     /// Days per on-screen window: the columns each take 1/span of the
     /// grid's width and the render range buffers one span either side.
@@ -307,7 +314,9 @@ private struct CalendarContent: View {
             let gridWidth = max(0, geo.size.width - Self.axisWidth)
             let columnWidth = gridWidth / CGFloat(span)
             VStack(spacing: 0) {
-                dayHeaders(columnWidth: columnWidth, gridWidth: gridWidth)
+                DayHeaderStrip(days: model.renderDays, columnWidth: columnWidth,
+                               gridWidth: gridWidth, axisWidth: Self.axisWidth,
+                               offset: scrollOffset, now: now)
                 TimelineView(.everyMinute) { context in
                     ScrollViewReader { proxy in
                         ScrollView {
@@ -322,7 +331,7 @@ private struct CalendarContent: View {
                                 .onScrollGeometryChange(for: CGFloat.self) {
                                     $0.contentOffset.x + $0.contentInsets.leading
                                 } action: { _, offset in
-                                    scrollX = offset
+                                    scrollOffset.x = offset
                                 }
                             }
                             .id("grid")
@@ -389,6 +398,7 @@ private struct CalendarContent: View {
 
     private func dayColumn(_ day: DateInterval, now: Date, width: CGFloat) -> some View {
         DayColumn(model: model, day: day, now: now,
+                  multiAccount: multiAccountHarnesses,
                   color: { self.color(for: $0) },
                   title: { self.title(for: $0) },
                   hover: { self.hoverCard(key: $0, inside: $1) },
@@ -398,72 +408,6 @@ private struct CalendarContent: View {
                   open: { self.open($0) },
                   showCard: { self.openCard(key: $0) })
         .frame(width: width)
-    }
-
-    /// The header row sits outside the scroll view so it stays pinned
-    /// vertically; the columns' scroll offset slides it in lockstep. The
-    /// strip inside is the full render width, so the container gets the
-    /// grid's width explicitly and clips what hangs past it.
-    private func dayHeaders(columnWidth: CGFloat, gridWidth: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: Self.axisWidth, height: 0)
-            ZStack(alignment: .leading) {
-                HStack(spacing: 0) {
-                    ForEach(model.renderDays, id: \.start) { day in
-                        dayHeader(day, width: columnWidth)
-                    }
-                }
-                .offset(x: -scrollX)
-            }
-            .frame(width: gridWidth, alignment: .leading)
-            .clipped()
-        }
-        .padding(.vertical, 8)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.border).frame(height: 1)
-        }
-    }
-
-    /// One day's header: "Mon 12" side by side when the column is wide,
-    /// the weekday over the day number when it's tight, a one-letter
-    /// weekday when it's very narrow. Today's red pill works in all three.
-    @ViewBuilder
-    private func dayHeader(_ day: DateInterval, width: CGFloat) -> some View {
-        let isToday = day.contains(now)
-        let number = Text(day.start.formatted(.dateTime.day()))
-            .font(.system(size: 12, weight: isToday ? .semibold : .regular))
-            .foregroundStyle(isToday ? .white : .primary)
-            .lineLimit(1)
-            .padding(.horizontal, 5).padding(.vertical, 2)
-            .background(isToday ? Color.red : .clear,
-                        in: RoundedRectangle(cornerRadius: 5))
-        switch DayHeaderStyle.forWidth(width) {
-        case .inline:
-            HStack(spacing: 5) {
-                Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
-                    .lineLimit(1)
-                number
-            }
-            .font(Theme.caption)
-            .padding(.leading, 8)
-            .frame(width: width, alignment: .leading)
-        case .stacked:
-            VStack(spacing: 1) {
-                Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
-                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    .lineLimit(1)
-                number
-            }
-            .frame(width: width)
-        case .compact:
-            VStack(spacing: 1) {
-                Text(day.start.formatted(.dateTime.weekday(.narrow)))
-                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    .lineLimit(1)
-                number
-            }
-            .frame(width: width)
-        }
     }
 
     private static let axisWidth: CGFloat = 52
@@ -710,10 +654,96 @@ private struct CalendarContent: View {
 
 /// One day column: hour lines and the day's segments laid out in their
 /// overlap lanes, with the red now-line when the column is today.
+/// The columns' horizontal scroll offset, mirrored on the day header so
+/// it slides in lockstep. Held in an object rather than view state so a
+/// tick only invalidates the strip that reads `x`, not the grid.
+@Observable
+private final class HeaderOffset {
+    var x: CGFloat = 0
+}
+
+/// The header row sits outside the scroll view so it stays pinned
+/// vertically; the columns' scroll offset slides it in lockstep. The
+/// strip inside is the full render width, so the container gets the
+/// grid's width explicitly and clips what hangs past it.
+private struct DayHeaderStrip: View {
+    var days: [DateInterval]
+    var columnWidth: CGFloat
+    var gridWidth: CGFloat
+    var axisWidth: CGFloat
+    var offset: HeaderOffset
+    var now: Date
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: axisWidth, height: 0)
+            ZStack(alignment: .leading) {
+                HStack(spacing: 0) {
+                    ForEach(days, id: \.start) { day in
+                        dayHeader(day, width: columnWidth)
+                    }
+                }
+                .offset(x: -offset.x)
+            }
+            .frame(width: gridWidth, alignment: .leading)
+            .clipped()
+        }
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.border).frame(height: 1)
+        }
+    }
+
+    /// One day's header: "Mon 12" side by side when the column is wide,
+    /// the weekday over the day number when it's tight, a one-letter
+    /// weekday when it's very narrow. Today's red pill works in all three.
+    @ViewBuilder
+    private func dayHeader(_ day: DateInterval, width: CGFloat) -> some View {
+        let isToday = day.contains(now)
+        let number = Text(day.start.formatted(.dateTime.day()))
+            .font(.system(size: 12, weight: isToday ? .semibold : .regular))
+            .foregroundStyle(isToday ? .white : .primary)
+            .lineLimit(1)
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(isToday ? Color.red : .clear,
+                        in: RoundedRectangle(cornerRadius: 5))
+        switch DayHeaderStyle.forWidth(width) {
+        case .inline:
+            HStack(spacing: 5) {
+                Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
+                    .lineLimit(1)
+                number
+            }
+            .font(Theme.caption)
+            .padding(.leading, 8)
+            .frame(width: width, alignment: .leading)
+        case .stacked:
+            VStack(spacing: 1) {
+                Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+                number
+            }
+            .frame(width: width)
+        case .compact:
+            VStack(spacing: 1) {
+                Text(day.start.formatted(.dateTime.weekday(.narrow)))
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+                number
+            }
+            .frame(width: width)
+        }
+    }
+}
+
 private struct DayColumn: View {
     var model: CalendarModel
     var day: DateInterval
     var now: Date
+    /// Harnesses carrying more than one account in the window; the page
+    /// hands down one set so each segment need not recount accounts.
+    var multiAccount: Set<String>
     var color: (ActivityBlock) -> Color
     var title: (ActivityBlock) -> String
     /// The page-level hover card: block + inside/outside on hover, the
@@ -764,7 +794,7 @@ private struct DayColumn: View {
                     BlockView(segment: segment, color: color(segment.block),
                               title: title(segment.block),
                               account: model.accountName(for: segment.block.accountHome),
-                              multiAccount: model.accounts(for: segment.block.harness).count > 1)
+                              multiAccount: multiAccount.contains(segment.block.harness))
                         .frame(width: lane - 2, height: height(from: segment.start, to: segment.end))
                         .onTapGesture { open(segment.block) }
                         .onHover { inside in hover(segment.id, inside) }
