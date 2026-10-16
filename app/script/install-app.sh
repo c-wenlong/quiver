@@ -12,7 +12,8 @@
 # `open -n app/build/Quiver.app` and never write to the installed copy.
 #
 # A failed fetch or build stops before anything is touched: the old app
-# keeps running. One install runs at a time.
+# keeps running. One install runs at a time, and one stopped mid-swap
+# puts the old app back.
 #
 # Overrides:
 #   QUIVER_INSTALL_REF   what to build (default origin/main)
@@ -32,30 +33,53 @@ dest="${QUIVER_INSTALL_DIR:-$HOME/Applications}/Quiver.app"
 cache="${QUIVER_INSTALL_CACHE:-$HOME/.quiver/cache/install}"
 src="$cache/src"
 out="$cache/out"
-lock="$cache/lock"
-
-mkdir -p "$cache" "$(dirname "$dest")"
-if ! mkdir "$lock" 2>/dev/null; then
-  echo "install-app: another install is running (remove $lock if it is not)" >&2
-  exit 1
-fi
 staged="$dest.installing"
-trap 'rm -rf "$lock" "$staged"' EXIT
+binary="$dest/Contents/MacOS/Quiver"
+
+# Two locks: the cache's guards its worktree and build output, the
+# destination's guards the swap, so installs that share either one wait
+# for each other whatever else they were given.
+cache_lock="$cache/lock"
+dest_lock="$dest.lock"
+held_cache=0
+held_dest=0
+cleanup() {
+  if [ "$held_dest" = 1 ]; then
+    # Stopped between the two renames: put the old app back.
+    if [ ! -e "$dest" ] && [ -e "$dest.old" ]; then mv "$dest.old" "$dest"; fi
+    rm -rf "$staged"
+    rmdir "$dest_lock" 2>/dev/null || true
+  fi
+  if [ "$held_cache" = 1 ]; then rmdir "$cache_lock" 2>/dev/null || true; fi
+}
+trap cleanup EXIT
+take_lock() {
+  if ! mkdir "$1" 2>/dev/null; then
+    echo "install-app: another install is running (remove $1 if it is not)" >&2
+    exit 1
+  fi
+}
+mkdir -p "$cache" "$(dirname "$dest")"
+take_lock "$cache_lock"; held_cache=1
+take_lock "$dest_lock"; held_dest=1
 
 git -C "$repo" fetch --quiet origin
-if ! git -C "$repo" rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+if ! sha="$(git -C "$repo" rev-parse --verify --quiet "$ref^{commit}")"; then
   echo "install-app: $ref is not a commit" >&2
   exit 1
 fi
-# The worktree is ours alone, so it is moved to the ref by force: nothing
-# in it is anyone's work.
+# The worktree is ours alone, so it is moved to the commit by force:
+# nothing in it is anyone's work. A worktree another clone made is
+# replaced, since it would not see this clone's fetch.
 git -C "$repo" worktree prune
-if [ -e "$src/.git" ]; then
-  git -C "$src" checkout --quiet --detach --force "$ref"
+common="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)"
+if [ -e "$src/.git" ] &&
+   [ "$(git -C "$src" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common" ]; then
+  git -C "$src" checkout --quiet --detach --force "$sha"
   git -C "$src" clean -fdq
 else
   rm -rf "$src"
-  git -C "$repo" worktree add --quiet --detach "$src" "$ref"
+  git -C "$repo" worktree add --quiet --detach "$src" "$sha"
 fi
 commit="$(git -C "$src" rev-parse --short HEAD)"
 echo "install-app: building $ref ($commit), $config"
@@ -71,17 +95,23 @@ QUIVER_BUILD_DIR="$out" QUIVER_SOURCE_PATH="$repo" \
 rm -rf "$staged"
 ditto "$out/Quiver.app" "$staged"
 
-binary="$dest/Contents/MacOS/Quiver"
-running="$(pgrep -f "^$binary" || true)"
+# Processes running the installed binary, matched as a literal path.
+# Only the installed copy: dev builds share the bundle id, so quitting by
+# app name could close another session's build instead.
+installed_pids() {
+  ps -axo pid=,comm= | B="$binary" awk '{
+    pid = $1; sub(/^[ \t]*[0-9]+[ \t]+/, "")
+    if ($0 == ENVIRON["B"]) print pid
+  }'
+}
+running="$(installed_pids)"
 if [ -n "$running" ]; then
-  # Only the installed copy: dev builds share the bundle id, so quitting
-  # by app name could close another session's build instead.
   kill -TERM $running
   for _ in $(seq 1 50); do
-    pgrep -f "^$binary" >/dev/null || break
+    [ -z "$(installed_pids)" ] && break
     sleep 0.2
   done
-  if pgrep -f "^$binary" >/dev/null; then
+  if [ -n "$(installed_pids)" ]; then
     echo "install-app: Quiver did not quit; nothing was replaced" >&2
     exit 1
   fi
@@ -91,11 +121,7 @@ if [ -e "$dest" ]; then
   rm -rf "$dest.old"
   mv "$dest" "$dest.old"
 fi
-if ! mv "$staged" "$dest"; then
-  [ -e "$dest.old" ] && mv "$dest.old" "$dest"
-  echo "install-app: could not move the new app into place; the old one is back" >&2
-  exit 1
-fi
+mv "$staged" "$dest"
 rm -rf "$dest.old"
 open "$dest"
 echo "install-app: installed $commit at $dest"
