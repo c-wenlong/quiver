@@ -98,6 +98,39 @@ extension Ledger {
     /// feed and has no other source; plain `cursor` events stay out because
     /// CursorAppActivity already reads the editor's own state.
     static let calendarHarnesses: Set<String> = ["claude", "codex", "opencode", "devin", "grok-bot"]
+
+    /// The trivial-session drop for file-read sessions (Pi and Droid):
+    /// their logs reach the calendar without going through the block
+    /// query, so the same whole-history `SessionFilter` rule runs here
+    /// over the ledger's per-session stats, under the same setting.
+    /// A session the ledger has no rows for stays: absent rows prove
+    /// nothing about a file's responses.
+    public func filterTrivialActivitySessions(
+        _ sessions: [ActivityFileIndex.IndexedSession], harness: String
+    ) -> [ActivityFileIndex.IndexedSession] {
+        guard trivialGate.withLock({ $0 }) else { return sessions }
+        struct Key: Hashable { var account, session: String }
+        var usage: [Key: SessionUsage] = [:]
+        for row in bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0),
+                                              end: .distantFuture))
+        where row.harness == harness {
+            let key = Key(account: row.accountHome, session: row.sessionId)
+            if var existing = usage[key] {
+                existing.totals.add(row.totals)
+                existing.firstTimestamp = min(existing.firstTimestamp, row.firstTimestamp)
+                existing.lastTimestamp = max(existing.lastTimestamp, row.lastTimestamp)
+                usage[key] = existing
+            } else {
+                usage[key] = row
+            }
+        }
+        return sessions.filter { session in
+            guard let totals = usage[Key(account: session.accountHome,
+                                         session: session.sessionId)]
+            else { return true }
+            return !SessionFilter.isTrivial(usage: totals)
+        }
+    }
 }
 
 /// Models a harness calls for its own bookkeeping, not user work: Devin
