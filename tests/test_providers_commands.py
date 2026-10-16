@@ -422,15 +422,17 @@ class CmdListMigrationTest(unittest.TestCase):
             patches = self._patches(tmp_path)
             with patches[0], patches[1], patches[2]:
                 # Filter to "openai" — only openai rows match.
-                output_openai = _run_cmd_list(["openai"])
-                openai_filter_output = strip_ansi(_run_cmd_list(["openai"]))
-                # No anonymous providers should render.
-                for name in DEFAULT_PROVIDERS:
-                    if name != "openai":
-                        self.assertNotIn(
-                            name, openai_filter_output,
-                            f"filter 'openai' should drop {name!r}",
-                        )
+                lines = _run_cmd_list(["openai"]).split("\n")
+            # Read the PROVIDER cell of each table row, not the whole
+            # output: the footer prints the keys dir, and a random temp
+            # folder name like "tmp4xaifqgl" contains "xai".
+            hdr_idx = self._hdr_idx(lines)
+            providers = []
+            for ln in lines[hdr_idx + 2:]:
+                if not ln.strip():
+                    break  # the table ends at the first blank line
+                providers.append(strip_ansi(ln).split("│")[0].strip())
+            self.assertEqual(providers, ["openai"])
 
     def test_no_keys_tip_advisory_after_table(self):
         with TemporaryDirectory() as tmp:
