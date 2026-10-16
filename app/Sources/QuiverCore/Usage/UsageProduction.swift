@@ -83,6 +83,30 @@ public struct KeychainCLI: SecretReading {
     }
 }
 
+extension KeychainCLI: SecretStoring {
+    /// `security`'s exit code when the item is not in the keychain.
+    static let itemNotFoundStatus: Int32 = 44
+
+    /// Upserts the item. `security` takes the value only through `-w` on
+    /// argv; the arguments go nowhere near a log.
+    public func setGenericPassword(service: String, account: String, value: String) async throws {
+        let result = try await runner.run([
+            "add-generic-password", "-U", "-s", service, "-a", account,
+            "-w", value, "-T", Self.securityPath])
+        guard result.status == 0 else {
+            throw SweError.commandFailed(status: result.status, message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    /// Removes the item; one that was never there is already removed.
+    public func deleteGenericPassword(service: String, account: String) async throws {
+        let result = try await runner.run(["delete-generic-password", "-s", service, "-a", account])
+        guard result.status == 0 || result.status == Self.itemNotFoundStatus else {
+            throw SweError.commandFailed(status: result.status, message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+}
+
 /// The real file system.
 public struct LocalFiles: FileReading {
     public init() {}

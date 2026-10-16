@@ -1,7 +1,7 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, preferences, notifications, updates, providers, paths
+    case general, preferences, notifications, updates, providers, services, paths
 
     public var id: String { rawValue }
 
@@ -12,6 +12,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "Notifications"
         case .updates: "Updates"
         case .providers: "Providers"
+        case .services: "Services"
         case .paths: "Paths"
         }
     }
@@ -24,6 +25,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "Alerts when a usage limit runs low."
         case .updates: "Which version you're running and where updates come from."
         case .providers: "Which harnesses show up across the app, and in what order."
+        case .services: "Keys for the services Quiver itself calls, kept in the Keychain."
         case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
         }
     }
@@ -36,6 +38,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "bell"
         case .updates: "arrow.triangle.2.circlepath"
         case .providers: "square.stack.3d.up"
+        case .services: "key"
         case .paths: "folder"
         }
     }
@@ -69,7 +72,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
     public var sections: [SettingsSection] {
         switch self {
         case .app: [.general, .preferences, .notifications, .updates]
-        case .usage: [.providers]
+        case .usage: [.providers, .services]
         case .advanced: [.paths]
         }
     }

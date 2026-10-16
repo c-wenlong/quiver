@@ -242,6 +242,8 @@ final class AppModel {
     let cursorFeed: CursorUsageFeed?
     /// The Pricing page's per-model rates; nil with `sessions`.
     let pricingModel: PricingModel?
+    /// The Settings > Services section's keys and probe results.
+    let services: ServicesModel
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
     let skills: SkillsModel
     let mcp: McpModel
@@ -289,6 +291,16 @@ final class AppModel {
             secrets: KeychainCLI(),
             files: LocalFiles(),
             cacheURL: quiver.appending(path: "cache/app-usage.json"))
+        // Quiver's own service keys live in Keychain under their own
+        // service; only dates go in config/services.json. A test build
+        // swaps the keychain service so it never touches the real items.
+        services = ServicesModel(
+            credentials: ServiceCredentials(
+                secrets: KeychainCLI(),
+                service: ProcessInfo.processInfo.environment["QUIVER_SERVICES_KEYCHAIN"]
+                    ?? ServiceCredentials.keychainService,
+                metadataURL: quiver.appending(path: "config/services.json")),
+            transport: URLSessionTransport())
         let store = ProfileStore(root: quiver.appending(path: "accounts"), userHome: home)
         // Non-default Devin/Cursor profiles are accounts of a harness: swe
         // reads their usage from the account's own directory.

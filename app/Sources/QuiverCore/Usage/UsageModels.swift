@@ -85,6 +85,14 @@ public protocol SecretReading: Sendable {
     func genericPassword(service: String, account: String) async -> String?
 }
 
+/// Reads, writes and deletes generic-password items. Values pass through
+/// argv on write (`security` has no stdin for `-w`), so a run's arguments
+/// must never be logged.
+public protocol SecretStoring: SecretReading {
+    func setGenericPassword(service: String, account: String, value: String) async throws
+    func deleteGenericPassword(service: String, account: String) async throws
+}
+
 /// Reads a whole file, or nil when it is missing or unreadable.
 public protocol FileReading: Sendable {
     func read(_ path: String) -> Data?
