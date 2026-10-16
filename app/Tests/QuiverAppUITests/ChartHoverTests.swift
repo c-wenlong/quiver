@@ -10,6 +10,17 @@ private final class ManualSleep {
     private var cancelled: Set<Int> = []
     /// Someone waiting for the sleep count to reach a number.
     private var countWaiter: (count: Int, continuation: CheckedContinuation<Void, Never>)?
+    /// How many sleeps were cancelled, and someone waiting for a number.
+    private var cancellations = 0
+    private var cancelWaiter: (count: Int, continuation: CheckedContinuation<Void, Never>)?
+
+    /// Returns once `count` sleeps have been cancelled. A cancellation
+    /// lands through its own task, so a test waits for it rather than
+    /// guessing with yields.
+    func cancelled(_ count: Int) async {
+        if cancellations >= count { return }
+        await withCheckedContinuation { cancelWaiter = (count, $0) }
+    }
 
     /// Returns once `count` sleeps have started: `enter` and `leave` only
     /// schedule the wait, so a test fires a sleep after it exists.
@@ -44,6 +55,11 @@ private final class ManualSleep {
     private func cancel(_ id: Int) {
         cancelled.insert(id)
         parked.removeValue(forKey: id)?.resume(throwing: CancellationError())
+        cancellations += 1
+        if let waiter = cancelWaiter, cancellations >= waiter.count {
+            cancelWaiter = nil
+            waiter.continuation.resume()
+        }
     }
 }
 
@@ -52,11 +68,6 @@ private final class ManualSleep {
     private func make() -> (ChartHover, ManualSleep) {
         let sleep = ManualSleep()
         return (ChartHover(sleep: { try await sleep.sleep($0) }), sleep)
-    }
-
-    /// Lets queued cancellations and wakes run.
-    private func drain() async {
-        for _ in 0..<5 { await Task.yield() }
     }
 
     @Test func theFirstCardWaitsTheOpenDelay() async {
@@ -77,7 +88,6 @@ private final class ManualSleep {
         sleep.fire(0)
         await hover.settle()
         hover.enter(3)
-        await drain()
         #expect(hover.shown == 3)
         #expect(sleep.durations.count == 1, "no second wait")
     }
@@ -94,7 +104,7 @@ private final class ManualSleep {
         #expect(hover.shown == 2, "the card outlives its bar")
         hover.enter(3)
         #expect(hover.shown == 3)
-        await drain()
+        await sleep.cancelled(1)
         #expect(sleep.waiting == 0, "the close was cancelled")
         await hover.settle()
         #expect(hover.shown == 3)
@@ -121,7 +131,6 @@ private final class ManualSleep {
         await hover.settle()
         hover.enter(3)
         hover.leave(2)
-        await drain()
         #expect(hover.shown == 3)
         #expect(sleep.durations.count == 1)
     }
@@ -132,7 +141,7 @@ private final class ManualSleep {
         await sleep.started(1)
         hover.leave(2)
         await sleep.started(2)
-        await drain()
+        await sleep.cancelled(1)
         // The open wait is gone; only the close wait is left.
         #expect(sleep.waiting == 1)
         #expect(sleep.durations == [ChartHover.openDelay, ChartHover.closeDelay])
