@@ -1,3 +1,4 @@
+import AppKit
 import QuiverCore
 import SwiftUI
 
@@ -27,6 +28,11 @@ private struct ModelsContent: View {
     /// The logged name the link sheet is editing.
     @State private var linking: String?
     @State private var linkError: String?
+    /// The toolbar row's width and its two fixed clusters' ideals — the
+    /// "Updated …" stamp shows only when all three fit on one row.
+    @State private var toolbarWidth: CGFloat = 0
+    @State private var controlsWidth: CGFloat = 0
+    @State private var trailingWidth: CGFloat = 0
     @AppStorage("settingsSection") private var settingsSection = ""
 
     static let attribution = URL(string: "https://artificialanalysis.ai")!
@@ -57,11 +63,12 @@ private struct ModelsContent: View {
     // MARK: - Toolbar
 
     /// The controls row: view mode, metric, scope, harness and period on
-    /// the left (wrapping under narrow windows), and the freshness stamp
-    /// plus the warning and reload buttons on the right.
+    /// the left; the freshness stamp, warning and reload buttons on the
+    /// right. When the row runs out of room the stamp hides and its text
+    /// moves into the reload button's hover help — nothing else gives.
     private var toolbar: some View {
-        HStack(alignment: .top, spacing: 8) {
-            FlowLayout(spacing: 8, lineSpacing: 8) {
+        HStack(spacing: 8) {
+            HStack(spacing: 8) {
                 Tabs(options: [(ModelsModel.ViewMode.chart, "Chart"),
                                (ModelsModel.ViewMode.table, "Table")],
                      selection: Binding(get: { model.viewMode },
@@ -89,19 +96,42 @@ private struct ModelsContent: View {
                                               }),
                            width: nil)
             }
+            .fixedSize()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = $0 }
             Spacer(minLength: 8)
+            if let updatedAt = model.updatedAt, roomForStamp {
+                Text("Updated \(updatedAt.formatted(.relative(presentation: .named)))")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1).fixedSize()
+            }
             HStack(spacing: 8) {
-                if let updatedAt = model.updatedAt {
-                    Text("Updated \(updatedAt.formatted(.relative(presentation: .named)))")
-                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1).fixedSize()
-                }
                 if !model.unmatched.isEmpty {
                     UnmatchedBadge(model: model) { linking = $0 }
                 }
                 reload
             }
+            .fixedSize()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { trailingWidth = $0 }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
+    }
+
+    /// Whether the stamp fits beside the controls and the buttons. The
+    /// clusters are fixedSize, so their rendered width is their ideal.
+    private var roomForStamp: Bool {
+        guard let updatedAt = model.updatedAt else { return false }
+        let text = "Updated \(updatedAt.formatted(.relative(presentation: .named)))"
+        let stamp = (text as NSString)
+            .size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
+        return controlsWidth + 8 + stamp + 8 + trailingWidth <= toolbarWidth
+    }
+
+    /// The freshness stamp lives here too, for when the row drops it.
+    private var reloadHelp: String {
+        let base = model.refreshError
+            ?? "Fetch the latest benchmarks from Artificial Analysis"
+        guard let updatedAt = model.updatedAt else { return base }
+        return "Updated \(updatedAt.formatted(.relative(presentation: .named))). \(base)"
     }
 
     private var reload: some View {
@@ -115,14 +145,14 @@ private struct ModelsContent: View {
         }
         .iconButton()
         .disabled(model.isRefreshing || !model.hasKey)
-        .help(model.refreshError
-              ?? "Fetch the latest benchmarks from Artificial Analysis")
+        .help(reloadHelp)
     }
 
     // MARK: - Content
 
     @ViewBuilder private var content: some View {
-        if !model.hasKey && !model.isLoading {
+        // Cached benchmarks still show after the key is removed.
+        if !model.hasKey && !model.isLoading && model.allModels.isEmpty {
             noKey
         } else if model.allModels.isEmpty {
             if model.isLoading || model.isRefreshing {
@@ -136,8 +166,8 @@ private struct ModelsContent: View {
             EmptyCard(text: "No usage in this period.", icon: "chart.bar")
         } else {
             switch model.viewMode {
-            case .chart: ChartCard(model: model, link: { linking = $0 })
-            case .table: TableCard(model: model, link: { linking = $0 })
+            case .chart: ChartCard(model: model)
+            case .table: TableCard(model: model)
             }
         }
     }
@@ -221,15 +251,18 @@ private struct UnmatchedBadge: View {
 /// value inside the bar and the logo plus angled name under it. Used
 /// models keep a light inset outline; bars scroll before they shrink past
 /// 28pt.
-private struct ChartCard: View {
+struct ChartCard: View {
     @Bindable var model: ModelsModel
-    var link: (String) -> Void
 
     /// Bars never get narrower than this; the row scrolls instead.
     static let minColumnWidth: CGFloat = 36
+    /// The bar zone; every bar bottoms out on the same baseline.
     static let barHeight: CGFloat = 280
-    /// Room for the angled names under the bars.
-    static let labelHeight: CGFloat = 130
+    static let logoHeight: CGFloat = 20
+    /// The label zone: names angled −45° hang down-left from their bar.
+    static let labelHeight: CGFloat = 150
+    /// A name's unrotated cap — about 140pt along the −45° run.
+    static let labelRun: CGFloat = 196
 
     @State private var width: CGFloat = 0
 
@@ -249,18 +282,19 @@ private struct ChartCard: View {
                 Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 ScrollView(.horizontal) {
-                    HStack(alignment: .bottom, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         ForEach(model.rows) { row in
                             BarColumn(row: row, metric: model.metric, peak: peak)
                                 .frame(width: columnWidth - 8)
-                                .modelCard(model, for: row.logged,
-                                           link: row.aa == nil ? { link(row.logged) } : nil)
+                                .modelCard(model, for: row.logged, row: row)
                         }
                     }
                     .padding(.horizontal, 6)
-                    .frame(height: Self.barHeight + Self.labelHeight, alignment: .bottom)
                 }
                 .scrollIndicators(.hidden)
+                // Page enables selectable text. Rotated chart labels must stay SwiftUI
+                // text: AppKit's selectable-text layout aborts in _nsis_frameInEngine.
+                .textSelection(.disabled)
                 legend
                 HStack {
                     Text("Hover a bar for the model card (cost scale, Intelligence, Coding, Speed)")
@@ -273,15 +307,17 @@ private struct ChartCard: View {
         }
     }
 
-    /// One swatch per provider the shown models belong to.
+    /// One swatch per provider, ordered by first appearance in the chart.
     private var legend: some View {
-        var seen: [String: ModelVendor] = [:]
-        for row in model.rows where row.aa != nil {
-            let vendor = ModelVendor.of(row.aa!)
-            seen[vendor.id] = seen[vendor.id] ?? vendor
+        var order: [ModelVendor] = []
+        var seen: Set<String> = []
+        for row in model.rows {
+            guard let aa = row.aa else { continue }
+            let vendor = ModelVendor.of(aa)
+            if seen.insert(vendor.id).inserted { order.append(vendor) }
         }
         return FlowLayout(spacing: 14, lineSpacing: 6) {
-            ForEach(Array(seen.values.enumerated()), id: \.element.id) { _, vendor in
+            ForEach(order, id: \.id) { vendor in
                 HStack(spacing: 5) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color(rgb: vendor.color))
@@ -304,14 +340,28 @@ private struct BarColumn: View {
         row.aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: row.logged)
     }
 
-    /// Bar text reads dark on light fills (OpenAI's grey).
+    /// Bar text reads dark on light fills (OpenAI's grey) — a fixed
+    /// near-black, not the theme's dark-mode white.
     private var valueColor: Color {
-        vendor.color.luminance > 0.45 ? Theme.textPrimary : .white
+        vendor.color.luminance > 0.45 ? Color(hex: "#0a0a0a") : .white
+    }
+
+    /// The name cut at `labelRun` (head ellipsis), the look the old clip
+    /// gave. Measured at the label font so the cap lands where the clip did.
+    private var label: String {
+        let name = row.aa?.name ?? row.logged
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9.5)]
+        var cut = Substring(name)
+        while !cut.isEmpty,
+              (("…" + cut) as NSString).size(withAttributes: attrs).width > ChartCard.labelRun {
+            cut = cut.dropFirst()
+        }
+        return cut.count == name.count ? name : "…" + cut
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Value inside the bar's top, or a stub when AA has none.
+            // Zone 1: the bar, bottom-aligned on the shared baseline.
             let fraction = row.value.map { max($0 / max(peak, .leastNonzeroMagnitude), 0) } ?? 0
             RoundedRectangle(cornerRadius: 4)
                 .fill(row.value == nil ? AnyShapeStyle(Theme.subtle) : AnyShapeStyle(Color(rgb: vendor.color)))
@@ -332,22 +382,27 @@ private struct BarColumn: View {
                             .padding(1)
                     }
                 }
-            // The logo and the angled name.
-            if let icon = vendor.icon, HarnessIcon.exists(for: icon) {
-                HarnessIcon(harness: icon, size: 12)
-                    .padding(.top, 6)
-            } else {
-                Color.clear.frame(width: 12, height: 12).padding(.top, 6)
+                .frame(height: ChartCard.barHeight, alignment: .bottom)
+            // Zone 2: the provider logo.
+            Group {
+                if let icon = vendor.icon, HarnessIcon.exists(for: icon) {
+                    HarnessIcon(harness: icon, size: 12)
+                } else {
+                    Color.clear.frame(width: 12, height: 12)
+                }
             }
-            Text(row.aa?.name ?? row.logged)
+            .frame(height: ChartCard.logoHeight)
+            // Zone 3: the name, angled −45° down-left from the bar's
+            // trailing edge, head-truncated at `labelRun` so it never
+            // runs under the neighbour's label.
+            Text(label)
                 .font(.system(size: 9.5))
                 .foregroundStyle(row.used ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
                 .fixedSize()
-                .rotationEffect(.degrees(-60), anchor: .topLeading)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.leading, 4)
-                .padding(.top, 4)
+                .rotationEffect(.degrees(-45), anchor: .topTrailing)
+                .frame(maxWidth: .infinity, alignment: .topTrailing)
+                .frame(height: ChartCard.labelHeight, alignment: .top)
         }
     }
 }
@@ -358,7 +413,6 @@ private struct BarColumn: View {
 /// rank and the user's tokens.
 private struct TableCard: View {
     @Bindable var model: ModelsModel
-    var link: (String) -> Void
 
     var body: some View {
         Card {
@@ -366,7 +420,7 @@ private struct TableCard: View {
                 header
                 Divider().overlay(Theme.border)
                 ForEach(model.rows) { row in
-                    TableRow(row: row, model: model, link: link)
+                    TableRow(row: row, model: model)
                     Divider().overlay(Theme.rowDivider)
                 }
             }
@@ -391,7 +445,6 @@ private struct TableCard: View {
 private struct TableRow: View {
     var row: ModelsModel.Row
     var model: ModelsModel
-    var link: (String) -> Void
 
     private var vendor: ModelVendor {
         row.aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: row.logged)
@@ -429,8 +482,7 @@ private struct TableRow: View {
         }
         .padding(.vertical, 8)
         .contentShape(.rect)
-        .modelCard(model, for: row.logged,
-                   link: row.aa == nil ? { link(row.logged) } : nil)
+        .modelCard(model, for: row.logged, row: row)
     }
 
     @ViewBuilder private func metric(_ value: Double?, unit: String? = nil) -> some View {

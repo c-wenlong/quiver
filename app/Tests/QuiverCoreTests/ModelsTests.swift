@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -312,7 +313,9 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         ])
         await model.load()
         #expect(model.hasKey)
-        #expect(model.rows.count == 2)
+        // Unmatched names never reach the chart or table.
+        #expect(model.rows.count == 1)
+        #expect(model.rows.allSatisfy { $0.aa != nil })
         let used = model.rows.first { $0.logged == "claude-opus-5-5-max" }
         #expect(used?.aa?.id == "opus")
         #expect(used?.tokens == 1000)
@@ -383,15 +386,21 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         try writeLLMs(dir, [
             entry("hi", "Hi", "hi", creator: "openai", intelligence: 90, price: 20),
             entry("lo", "Lo", "lo", creator: "openai", intelligence: 10, price: 1),
+            // A used model with no benchmark for the metric sorts last.
+            entry("noval", "NoVal", "noval", creator: "mistral"),
         ])
-        let model = makeModel(dir: dir, slices: [slice("unmatched-x", "pi", tokens: 5)])
+        let model = makeModel(dir: dir, slices: [
+            slice("noval", "pi", tokens: 5),
+            slice("unmatched-x", "pi", tokens: 3),
+        ])
         await model.load()
         model.set(scope: .top25)
         // Intelligence sorts best-first.
-        #expect(model.rows.map(\.logged) == ["Hi", "Lo", "unmatched-x"])
-        // Cost sorts cheapest-first; the unmatched row stays last.
+        #expect(model.rows.map(\.logged) == ["Hi", "Lo", "noval"])
+        // Cost sorts cheapest-first; the valueless row stays last.
         model.set(metric: .cost)
-        #expect(model.rows.map(\.logged) == ["Lo", "Hi", "unmatched-x"])
+        #expect(model.rows.map(\.logged) == ["Lo", "Hi", "noval"])
+        #expect(model.unmatched == [ModelsModel.Unmatched(model: "unmatched-x", tokens: 3)])
     }
 
     @Test func linkingRematchesTheLoggedName() async throws {
@@ -418,5 +427,165 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(!model.hasKey)
         #expect(model.allModels.isEmpty)
         #expect(transport.requests.isEmpty)
+    }
+
+    /// A slices closure the test pauses and releases by hand; each entry
+    /// is one in-flight call.
+    private final class SlicesGate: @unchecked Sendable {
+        private let state = Mutex<[CheckedContinuation<[ModelUsage], Never>]>([])
+        var pendingCount: Int { state.withLock { $0.count } }
+        func call(_ range: DateInterval) async -> [ModelUsage] {
+            _ = range
+            return await withCheckedContinuation { continuation in
+                state.withLock { $0.append(continuation) }
+            }
+        }
+        func resume(_ index: Int, with value: [ModelUsage]) {
+            state.withLock { $0[index] }.resume(returning: value)
+        }
+    }
+
+    private func gatedModel(dir: TempDir, gate: SlicesGate) -> ModelsModel {
+        ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
+                    keyReader: { "key" },
+                    transport: StubHTTP(),
+                    linksURL: dir.path("config/model-links.json"),
+                    slices: { range in await gate.call(range) },
+                    now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                    calendar: Calendar(identifier: .gregorian))
+    }
+
+    private func waitForCalls(_ gate: SlicesGate, _ count: Int) async throws {
+        while gate.pendingCount < count {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @Test func anOlderPeriodAnswerCannotOverwriteANewerOne() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("a", "A", "a", creator: "openai", intelligence: 80),
+            entry("b", "B", "b", creator: "anthropic", intelligence: 70),
+        ])
+        let gate = SlicesGate()
+        let model = gatedModel(dir: dir, gate: gate)
+        let loading = Task { await model.load() }
+        try await waitForCalls(gate, 1)
+        gate.resume(0, with: [slice("b", "claude", tokens: 50)])
+        await loading.value
+        #expect(model.rows.filter(\.used).map(\.logged) == ["b"])
+
+        // Two period switches: the week's answer lands after today's and
+        // must not write its older data over it.
+        let older = Task { await model.set(period: .week) }
+        try await waitForCalls(gate, 2)
+        let newer = Task { await model.set(period: .today) }
+        try await waitForCalls(gate, 3)
+        gate.resume(2, with: [slice("a", "codex", tokens: 9)])
+        await newer.value
+        gate.resume(1, with: [slice("b", "claude", tokens: 5000)])
+        await older.value
+        #expect(model.period == .today)
+        let used = model.rows.filter(\.used)
+        #expect(used.map(\.logged) == ["a"])
+        #expect(used.first?.tokens == 9)
+    }
+
+    @Test func aSecondConcurrentRefreshDoesNotDoubleTheFetches() async throws {
+        let dir = try TempDir()
+        let transport = StubHTTP()
+        transport.handler = { _ in
+            (#"{"data":[{"id":"m","name":"M","slug":"m","model_creator":{"id":"c","name":"C","slug":"c"},"evaluations":{},"pricing":{}}]}"#
+                .data(using: .utf8)!, 200, [:])
+        }
+        let model = ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
+                                keyReader: { "key" }, transport: transport,
+                                linksURL: dir.path("links.json"),
+                                slices: { _ in [] })
+        // The guard lands before the first await, so whichever call runs
+        // second returns immediately instead of fetching six endpoints again.
+        async let first: Void = model.refresh()
+        async let second: Void = model.refresh()
+        await first
+        await second
+        #expect(transport.requests.count == 6)
+    }
+
+    @Test func loadIfNeededReadsTheCacheWithoutAnyRequests() async throws {
+        let dir = try TempDir()
+        // Stale cache (no meta): a plain load() would refresh first.
+        let aa = dir.path("aa")
+        try FileManager.default.createDirectory(at: aa, withIntermediateDirectories: true)
+        try #"{"data":[{"id":"a","name":"A","slug":"a","model_creator":{"id":"o","name":"O","slug":"o"},"evaluations":{"artificial_analysis_intelligence_index":80},"pricing":{}}]}"#
+            .data(using: .utf8)!.write(to: aa.appending(path: AAEndpoint.llms.fileName))
+        let transport = StubHTTP()
+        let model = ModelsModel(store: ArtificialAnalysisStore(directory: aa),
+                                keyReader: { "key" }, transport: transport,
+                                linksURL: dir.path("links.json"),
+                                slices: { _ in [] })
+        await model.loadIfNeeded()
+        #expect(transport.requests.isEmpty)
+        #expect(model.hasKey)
+        #expect(!model.rows.isEmpty)
+        // A second hover is a no-op, not another read.
+        await model.loadIfNeeded()
+        #expect(transport.requests.isEmpty)
+    }
+
+    /// A mutable slices answer, so a period switch can return a
+    /// different set than the load did.
+    private final class SlicesBox: @unchecked Sendable {
+        private let state = Mutex<[ModelUsage]>([])
+        var current: [ModelUsage] {
+            get { state.withLock { $0 } }
+            set { state.withLock { $0 = newValue } }
+        }
+    }
+
+    @Test func aResetHarnessFilterShowsAllUsageAgain() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("a", "A", "a", creator: "openai", intelligence: 80),
+            entry("b", "B", "b", creator: "anthropic", intelligence: 70),
+        ])
+        let box = SlicesBox()
+        box.current = [slice("a", "codex", tokens: 100), slice("b", "claude", tokens: 50)]
+        let model = ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
+                                keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in box.current },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian))
+        await model.load()
+        model.set(harnessFilter: "codex")
+        #expect(model.rows.filter(\.used).map(\.logged) == ["a"])
+        // The new period has no codex rows: the filter drops back to All
+        // and the claude usage shows instead of an empty page.
+        box.current = [slice("b", "claude", tokens: 50)]
+        await model.set(period: .week)
+        #expect(model.harnessFilter == nil)
+        #expect(model.rows.filter(\.used).map(\.logged) == ["b"])
+    }
+
+    @Test func theMergedRowIsWhatTheHoverCardReuses() async throws {
+        // Two logged names fold into one row; the card gets that row, not
+        // a card(for:) resolve of the dominant name, which would lose the
+        // other alias's tokens and harness.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("grok", "Grok 4.7 (xhigh)", "grok-4-7-xhigh",
+                  creator: "xai", intelligence: 46),
+        ])
+        let model = makeModel(dir: dir, slices: [
+            slice("grok-4.7", "grok", tokens: 100),
+            slice("grok-4.7-fast", "cursor", tokens: 50),
+        ])
+        await model.load()
+        let row = try #require(model.rows.first { $0.used })
+        let resolved = model.card(for: row.logged)
+        #expect(row.tokens == 150)
+        #expect(row.harnesses == ["grok", "cursor"])
+        #expect(resolved.tokens == 100)
+        #expect(resolved.harnesses == ["grok"])
     }
 }

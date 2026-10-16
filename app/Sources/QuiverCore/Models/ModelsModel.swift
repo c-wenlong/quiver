@@ -163,6 +163,12 @@ public final class ModelsModel {
     /// The usage the last load saw, kept so the scope/metric pickers can
     /// rebuild rows without hitting the ledger again.
     private var periodSlices: [ModelUsage] = []
+    /// Bumped by every load and period switch so a slower older answer
+    /// cannot write its state over a newer one's.
+    private var usageGeneration = 0
+    /// Whether a load has completed; the hover card's `loadIfNeeded`
+    /// reads it so hovering never re-runs the fetch.
+    private var hasLoaded = false
 
     public init(store: ArtificialAnalysisStore,
                 keyReader: @escaping @Sendable () async -> String?,
@@ -181,32 +187,51 @@ public final class ModelsModel {
 
     /// Loads the stored AA data and the period's usage, then rebuilds.
     /// When a saved key exists and the models file is missing or older
-    /// than a week, a background refresh runs first.
-    public func load() async {
+    /// than a week, a background refresh runs first — unless
+    /// `allowRefresh` is off, as in the hover card's cached read.
+    public func load(allowRefresh: Bool = true) async {
+        usageGeneration += 1
+        let generation = usageGeneration
         isLoading = true
-        defer { isLoading = false }
-        hasKey = await keyReader() != nil
-        if hasKey && store.llmsIsStale() {
+        // A superseded load leaves the flag to whichever load owns it.
+        defer { if generation == usageGeneration { isLoading = false } }
+        let key = await keyReader()
+        guard generation == usageGeneration else { return }
+        hasKey = key != nil
+        if allowRefresh && hasKey && store.llmsIsStale() {
             await refresh()
+            guard generation == usageGeneration else { return }
         }
         links = ModelMatcher.loadLinks(from: linksURL)
         allModels = store.languageModels() ?? []
         updatedAt = store.meta()[AAEndpoint.llms.rawValue]?.fetchedAt
             .map { Date(timeIntervalSince1970: $0) }
-        let range = period.range(now: now(), calendar: calendar)
-        periodSlices = await slices(range)
+        let fresh = await slices(period.range(now: now(), calendar: calendar))
+        guard generation == usageGeneration else { return }
+        periodSlices = fresh
+        hasLoaded = true
         rebuild()
     }
 
-    /// The toolbar's reload: fetches every endpoint now.
+    /// The hover card's read: the cached data only, and only once — a
+    /// hover must never kick off the six-endpoint refresh.
+    public func loadIfNeeded() async {
+        guard !hasLoaded, !isLoading else { return }
+        await load(allowRefresh: false)
+    }
+
+    /// The toolbar's reload: fetches every endpoint now. A second call
+    /// while one is running returns at once rather than doubling the
+    /// requests.
     public func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         guard let key = await keyReader() else {
             hasKey = false
             return
         }
         hasKey = true
-        isRefreshing = true
-        defer { isRefreshing = false }
         let errors = await store.refresh(key: key, transport: transport)
         refreshError = errors[.llms] ?? errors.values.sorted().first
         links = ModelMatcher.loadLinks(from: linksURL)
@@ -225,7 +250,15 @@ public final class ModelsModel {
 
     public func set(period value: OverviewPeriod) async {
         period = value
-        periodSlices = await slices(value.range(now: now(), calendar: calendar))
+        // Before the first load lands, superseding it would leave the
+        // benchmarks unread; run the whole load for the new period.
+        guard hasLoaded else { await load(); return }
+        usageGeneration += 1
+        let generation = usageGeneration
+        let fresh = await slices(value.range(now: now(), calendar: calendar))
+        guard generation == usageGeneration else { return }
+        periodSlices = fresh
+        isLoading = false
         rebuild()
     }
 
@@ -270,11 +303,22 @@ public final class ModelsModel {
 
     /// Rebuilds rows from `periodSlices`, `allModels` and `links`.
     private func rebuild() {
-        // Per logged model: total tokens and the harnesses that ran it.
-        var byModel: [String: (tokens: Int, harnesses: [String], byHarness: [String: Int])] = [:]
+        // The filter menu counts every harness in the period, whether or
+        // not the filter lets it through.
         var harnessTokens: [String: Int] = [:]
         for slice in periodSlices {
             harnessTokens[slice.harness, default: 0] += slice.totals.totalTokens
+        }
+        harnessOptions = harnessTokens
+            .sorted { ($0.value, $0.key) > ($1.value, $1.key) }
+            .map(\.key)
+        // A harness that left the period resets to All — before the rows
+        // are filtered, so the reset really does show everything again.
+        if let harnessFilter, harnessTokens[harnessFilter] == nil { self.harnessFilter = nil }
+
+        // Per logged model: total tokens and the harnesses that ran it.
+        var byModel: [String: (tokens: Int, harnesses: [String], byHarness: [String: Int])] = [:]
+        for slice in periodSlices {
             guard harnessFilter == nil || slice.harness == harnessFilter else { continue }
             var entry = byModel[slice.model] ?? (0, [], [:])
             entry.tokens += slice.totals.totalTokens
@@ -282,10 +326,6 @@ public final class ModelsModel {
             entry.byHarness[slice.harness, default: 0] += slice.totals.totalTokens
             byModel[slice.model] = entry
         }
-        harnessOptions = harnessTokens
-            .sorted { ($0.value, $0.key) > ($1.value, $1.key) }
-            .map(\.key)
-        if let harnessFilter, harnessTokens[harnessFilter] == nil { self.harnessFilter = nil }
 
         // Order each model's harnesses by its tokens under them.
         for (model, entry) in byModel {
@@ -306,10 +346,8 @@ public final class ModelsModel {
             let aa = ModelMatcher.match(logged, in: allModels, links: links)
             let parsed = ModelMatcher.parse(logged)
             guard let aa else {
+                // Unmatched names only surface in the warning popover.
                 stillUnmatched.append(Unmatched(model: logged, tokens: entry.tokens))
-                used.append(Row(logged: logged, aa: nil, harnesses: entry.harnesses,
-                                tokens: entry.tokens, value: nil, costPercentile: nil,
-                                qualifier: qualifier(parsed)))
                 continue
             }
             matchedIDs.insert(aa.id)
