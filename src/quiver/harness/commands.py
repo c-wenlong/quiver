@@ -2479,9 +2479,11 @@ def cmd_harness_usage_events(args):
     # document, so their noise goes to stderr there.
     with (contextlib.redirect_stdout(sys.stderr) if json_view
           else contextlib.nullcontext()):
-        status, events = fetch_cursor_usage_events(state_db, since=since)
+        status, events, account_id = fetch_cursor_usage_events(
+            state_db, since=since)
     if json_view:
-        return emit({"status": status, "events": events})
+        return emit({"status": status, "account_id": account_id,
+                     "events": events})
     if status == "unavailable":
         print(c("red", "  Cursor's usage feed could not be read"), file=err)
         return 1
@@ -2491,6 +2493,10 @@ def cmd_harness_usage_events(args):
     if status == "auth-required":
         print("  cursor: session expired — sign in again")
         return 0
+    if status == "incomplete":
+        print(c("yellow", "  cursor: the feed hit its page cap on part of "
+                "the window — these events may not be all of it"),
+              file=err)
     total_tokens = sum(
         e["input_tokens"] + e["output_tokens"]
         + e["cache_read_tokens"] + e["cache_write_tokens"] for e in events)

@@ -593,7 +593,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
     def test_json_emits_status_and_events(self):
         with patch(
             "quiver.harness.rate_limits.fetch_cursor_usage_events",
-            return_value=("ok", self._events()),
+            return_value=("ok", self._events(), "uid-1"),
         ) as fetch:
             code, out, _ = self._run(["cursor", "--json"])
         self.assertEqual(code, 0)
@@ -602,12 +602,13 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
         self.assertEqual(len(data["events"]), 2)
         # The default account: no account dir means a None state_db.
         fetch.assert_called_once_with(None, since=None)
+        self.assertEqual(data["account_id"], "uid-1")
 
     def test_since_and_account_dir_pass_through(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
                 "quiver.harness.rate_limits.fetch_cursor_usage_events",
-                return_value=("ok", []),
+                return_value=("ok", [], "uid-1"),
             ) as fetch:
                 code, _, _ = self._run(
                     ["cursor", f"--account-dir={tmp}", "--since=1700000000",
@@ -620,7 +621,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
     def test_unavailable_exits_nonzero_with_clean_json(self):
         with patch(
             "quiver.harness.rate_limits.fetch_cursor_usage_events",
-            return_value=("unavailable", []),
+            return_value=("unavailable", [], "uid-1"),
         ):
             code, out, _ = self._run(["cursor", "--json"])
         # The status lands in the document; a transport failure exits
@@ -629,7 +630,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
         self.assertEqual(json.loads(out)["data"]["status"], "unavailable")
         with patch(
             "quiver.harness.rate_limits.fetch_cursor_usage_events",
-            return_value=("unavailable", []),
+            return_value=("unavailable", [], "uid-1"),
         ):
             code, out, err = self._run(["cursor"])
         self.assertEqual(code, 1)
@@ -639,7 +640,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
         for status in ("signed-out", "auth-required"):
             with patch(
                 "quiver.harness.rate_limits.fetch_cursor_usage_events",
-                return_value=(status, []),
+                return_value=(status, [], "uid-1"),
             ):
                 code, out, _ = self._run(["cursor", "--json"])
             self.assertEqual(code, 0)
@@ -648,7 +649,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
     def test_stdout_stays_pure_json_when_a_helper_warns(self):
         def noisy(state_db, since=None):
             print("warning: something chatty on stdout")
-            return "ok", self._events(1)
+            return "ok", self._events(1), "uid-1"
 
         with patch(
             "quiver.harness.rate_limits.fetch_cursor_usage_events",
@@ -659,10 +660,58 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
         self.assertEqual(len(json.loads(out)["data"]["events"]), 1)
         self.assertNotIn("chatty", out)
 
+    def test_signed_out_and_auth_required_human_messages(self):
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("signed-out", [], None),
+        ):
+            code, out, _ = self._run(["cursor"])
+        self.assertEqual(code, 0)
+        self.assertIn("not signed in", out)
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("auth-required", [], "uid-1"),
+        ):
+            code, out, _ = self._run(["cursor"])
+        self.assertEqual(code, 0)
+        self.assertIn("sign in again", out)
+
+    def test_incomplete_keeps_the_events_and_warns(self):
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("incomplete", self._events(), "uid-1"),
+        ):
+            code, out, err = self._run(["cursor"])
+        self.assertEqual(code, 0)
+        self.assertIn("2 events", out)
+        # Human-mode diagnostics print on the console stream (stdout).
+        self.assertIn("page cap", out)
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("incomplete", self._events(1), "uid-1"),
+        ):
+            code, out, _ = self._run(["cursor", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(len(data["events"]), 1)
+
+    def test_bad_since_unknown_flag_and_missing_account_dir(self):
+        code, out, _ = self._run(["cursor", "--since=abc"])
+        self.assertEqual(code, 1)
+        self.assertIn("Bad --since", out)
+        code, out, _ = self._run(["cursor", "--bogus"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown argument", out)
+        code, out, _ = self._run(
+            ["cursor", "--account-dir=/definitely/missing/dir"])
+        self.assertEqual(code, 1)
+        self.assertIn("No such directory", out)
+
     def test_human_output_summarises_by_model(self):
         with patch(
             "quiver.harness.rate_limits.fetch_cursor_usage_events",
-            return_value=("ok", self._events()),
+            return_value=("ok", self._events(), "uid-1"),
         ):
             code, out, _ = self._run(["cursor"])
         self.assertEqual(code, 0)

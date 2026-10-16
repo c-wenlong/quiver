@@ -396,6 +396,10 @@ to use their own login state and environment."""
   {c('cyan', 'swe harness discover --all')}        Include already-registered and missing tools too
   {c('cyan', 'swe harness usage <devin|cursor> --account-dir=<dir>')}  An extra account's rate
                                                    limit, from its own credentials (add --json)
+  {c('cyan', 'swe harness usage-events cursor [--account-dir=<d>] [--since=<s>]')}
+                                                   Cursor's per-event feed (add --json); status
+                                                   "incomplete" means part of the window hit the
+                                                   page cap
 
 {c('bold', 'Alias')}  {c('cyan', 'swe discover')} is the same as {c('cyan', 'swe harness discover')}"""
     ),
