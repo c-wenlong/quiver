@@ -43,6 +43,10 @@ staged="$dest.installing"
 trap 'rm -rf "$lock" "$staged"' EXIT
 
 git -C "$repo" fetch --quiet origin
+if ! git -C "$repo" rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+  echo "install-app: $ref is not a commit" >&2
+  exit 1
+fi
 # The worktree is ours alone, so it is moved to the ref by force: nothing
 # in it is anyone's work.
 git -C "$repo" worktree prune
