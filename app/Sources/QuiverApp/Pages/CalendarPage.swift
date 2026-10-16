@@ -462,6 +462,7 @@ private struct CalendarContent: View {
                                   color: { self.color(for: $0) },
                                   title: { self.title(for: $0) },
                                   hover: { self.hoverCard(key: $0, inside: $1) },
+                                  geometry: cardGeometry,
                                   card: { self.cardBinding(for: $0) },
                                   cardRows: { self.cardRows(for: $0) }) { block in
                             open(block)
@@ -559,11 +560,10 @@ private struct CalendarContent: View {
     /// the pointer already left.
     @State private var anchorInside: String?
 
-    /// Pointer entered or left a block or chip: the card opens after a
-    /// beat and closes after a shorter grace, so it never pops under a
-    /// passing pointer and never flickers between adjacent blocks. Once
-    /// a chip's card is open the pointer poller owns its lifetime, so a
-    /// chip exit never schedules a hide.
+    /// Pointer entered or left a block, chip or month entry: the card
+    /// opens after a beat, and once any card is open the pointer poller
+    /// owns its lifetime — an anchor exit never schedules a hide, so a
+    /// slow crossing into the card cannot collapse it.
     private func hoverCard(key: String, inside: Bool) {
         if inside {
             anchorInside = key
@@ -571,33 +571,30 @@ private struct CalendarContent: View {
             anchorInside = nil
         }
         cardTask?.cancel()
-        if inside {
-            if cardKey != nil {
-                if cardKey != key { setCard(key) }
-                return
-            }
-            cardTask = Task { @MainActor in
-                try? await Task.sleep(for: Self.cardShowDelay)
-                guard !Task.isCancelled, anchorInside == key else { return }
-                withAnimation(reduceMotion ? nil : .default) { setCard(key) }
-            }
-        } else {
-            guard cardKey != nil, !key.hasPrefix("overflow|") else { return }
-            cardTask = Task { @MainActor in
-                try? await Task.sleep(for: Self.cardHideDelay)
-                guard !Task.isCancelled, anchorInside == nil else { return }
-                withAnimation(reduceMotion ? nil : .default) { setCard(nil) }
-            }
+        guard inside else {
+            // With a card open the poller decides when it closes; with
+            // no card open there is nothing to hide.
+            return
+        }
+        if cardKey != nil {
+            if cardKey != key { setCard(key) }
+            return
+        }
+        cardTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.cardShowDelay)
+            guard !Task.isCancelled, anchorInside == key else { return }
+            withAnimation(reduceMotion ? nil : .default) { setCard(key) }
         }
     }
 
     /// Opens or closes the card and starts or stops the pointer poller
-    /// that keeps an open chip card alive across the arrow gap.
+    /// that keeps an open card alive across the arrow gap, whatever the
+    /// anchor kind.
     private func setCard(_ key: String?) {
         cardKey = key
         cardWatch?.cancel()
         cardWatch = nil
-        guard let key, key.hasPrefix("overflow|") else { return }
+        guard let key else { return }
         cardWatch = Task { @MainActor in
             var region = HoverSafeRegion()
             while !Task.isCancelled, cardKey == key {
@@ -626,9 +623,18 @@ private struct CalendarContent: View {
 
     /// Popover binding keyed on the segment's or entry's id: only the
     /// hovered instance's card is up, and a click outside drops it.
+    /// AppKit can also resolve the binding to closed when the popover's
+    /// own window takes a mouse event; the pointer sitting inside the
+    /// card's safe region overrides that.
     private func cardBinding(for key: String) -> Binding<Bool> {
         Binding(get: { cardKey == key },
-                set: { if !$0 { dismissCard() } })
+                set: { newValue in
+                    guard !newValue else { return }
+                    if !cardGeometry.safeRect(for: key)
+                        .contains(NSEvent.mouseLocation) {
+                        dismissCard()
+                    }
+                })
     }
 
     /// The card's session list: earliest first, capped at eight rows.
@@ -799,6 +805,10 @@ private struct DayColumn: View {
                               account: model.accountName(for: segment.block.accountHome),
                               multiAccount: multiAccount.contains(segment.block.harness))
                         .frame(width: lane - 2, height: height(from: segment.start, to: segment.end))
+                        .background(HoverRegionView { view, attached in
+                            geometry.register(chip: segment.id, view: view,
+                                              attached: attached)
+                        })
                         .onTapGesture { open(segment.block) }
                         .onHover { inside in hover(segment.id, inside) }
                         .popover(isPresented: card(segment.id),
@@ -809,6 +819,10 @@ private struct DayColumn: View {
                             BlockCard(block: block, model: model,
                                       active: block.end.timeIntervalSince(block.start),
                                       shown: rows.shown, more: rows.more)
+                                .background(HoverRegionView { view, attached in
+                                    geometry.register(card: segment.id, view: view,
+                                                      attached: attached)
+                                })
                         }
                         .padding(.leading, CGFloat(segment.lane) * lane + 1)
                         .padding(.top, y(segment.start))
@@ -1136,6 +1150,9 @@ private struct MonthCell: View {
     var color: (ActivityBlock) -> Color
     var title: (ActivityBlock) -> String
     var hover: (String, Bool) -> Void
+    /// Live views behind each entry row and the open card, so the
+    /// pointer poller can read their screen rects.
+    var geometry: CardGeometry
     var card: (String) -> Binding<Bool>
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
@@ -1177,6 +1194,10 @@ private struct MonthCell: View {
                 ForEach(split.shown) { entry in
                     MonthEntry(entry: entry, model: model,
                                color: color(entry.block), title: title(entry.block))
+                        .background(HoverRegionView { view, attached in
+                            geometry.register(chip: entry.id, view: view,
+                                              attached: attached)
+                        })
                         .onTapGesture { open(entry.block) }
                         .onHover { inside in hover(entry.id, inside) }
                         .popover(isPresented: card(entry.id),
@@ -1186,6 +1207,10 @@ private struct MonthCell: View {
                             BlockCard(block: entry.block, model: model,
                                       active: entry.active,
                                       shown: rows.shown, more: rows.more)
+                                .background(HoverRegionView { view, attached in
+                                    geometry.register(card: entry.id, view: view,
+                                                      attached: attached)
+                                })
                         }
                 }
                 if split.more > 0 {

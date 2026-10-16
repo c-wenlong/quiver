@@ -11,17 +11,32 @@ public struct HoverSafeRegion: Sendable, Equatable {
     public var rect: CGRect
     /// How long the pointer may stay outside before the card closes.
     public var hideGrace: Duration
+    /// While the card's window has not reported its frame (the popover
+    /// is still appearing) `rect` is null and the pointer cannot be
+    /// outside a rect that does not exist — the card stays open. Once
+    /// `pendingGrace` has passed a missing rect stops protecting it.
+    public var pendingGrace: Duration
     private var outsideSince: ContinuousClock.Instant?
+    private var pendingSince: ContinuousClock.Instant?
 
-    public init(rect: CGRect = .null, hideGrace: Duration = .milliseconds(150)) {
+    public init(rect: CGRect = .null, hideGrace: Duration = .milliseconds(150),
+                pendingGrace: Duration = .seconds(1)) {
         self.rect = rect
         self.hideGrace = hideGrace
+        self.pendingGrace = pendingGrace
     }
 
     /// Feed the pointer's position. True once it has been outside for
     /// the whole grace; stepping back inside resets the timer.
     public mutating func update(point: CGPoint, now: ContinuousClock.Instant) -> Bool {
-        if rect.contains(point) {
+        var inside = rect.contains(point)
+        if rect.isNull {
+            if pendingSince == nil { pendingSince = now }
+            inside = now - pendingSince! < pendingGrace
+        } else {
+            pendingSince = nil
+        }
+        if inside {
             outsideSince = nil
             return false
         }
