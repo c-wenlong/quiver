@@ -753,8 +753,9 @@ private struct DayColumn: View {
                     OverflowChip(overflow: overflow, clock: Self.clock)
                         .frame(width: lane - 2,
                                height: height(from: overflow.start, to: overflow.end))
-                        .background(HoverRegionView { view in
-                            geometry.register(chip: overflow.id, view: view)
+                        .background(HoverRegionView { view, attached in
+                            geometry.register(chip: overflow.id, view: view,
+                                              attached: attached)
                         })
                         .contentShape(.rect)
                         .onTapGesture { showCard(overflow.id) }
@@ -1372,7 +1373,8 @@ private struct OverflowCard: View {
                           shown: rows.shown, more: rows.more)
             }
         }
-        .background(HoverRegionView { view in geometry.register(card: view) })
+        .background(HoverRegionView { view, attached in
+            geometry.register(card: overflow.id, view: view, attached: attached) })
     }
 
     private func row(_ block: ActivityBlock) -> some View {
@@ -1478,21 +1480,33 @@ private extension Array {
     }
 
     private var chips: [String: WeakView] = [:]
-    private var card: WeakView?
+    /// One entry per open card, keyed like the chips: switching cards can
+    /// run the old card's detach after the new card's attach, and a keyed
+    /// slot plus the identity check keeps that detach from wiping the new
+    /// card's frame.
+    private var cards: [String: WeakView] = [:]
 
-    func register(chip key: String, view: NSView?) {
-        chips[key] = WeakView(view: view)
+    func register(chip key: String, view: NSView, attached: Bool) {
+        if attached {
+            chips[key] = WeakView(view: view)
+        } else if chips[key]?.view === view {
+            chips[key] = nil
+        }
     }
 
-    func register(card view: NSView?) {
-        card = WeakView(view: view)
+    func register(card key: String, view: NSView, attached: Bool) {
+        if attached {
+            cards[key] = WeakView(view: view)
+        } else if cards[key]?.view === view {
+            cards[key] = nil
+        }
     }
 
     /// Chip ∪ popover window in screen coordinates, covering the arrow
     /// gap. `.null` (contains nothing) until either side is reported.
     func safeRect(for key: String) -> CGRect {
         var rect = CGRect.null
-        if let view = card?.view, let frame = view.window?.frame {
+        if let view = cards[key]?.view, let frame = view.window?.frame {
             rect = rect.union(frame)
         }
         if let view = chips[key]?.view, let window = view.window {
@@ -1506,23 +1520,25 @@ private extension Array {
 /// poller can read screen rects — reliable where `.onHover` is not,
 /// like a popover's non-key window.
 private struct HoverRegionView: NSViewRepresentable {
-    var register: (NSView?) -> Void
+    /// Reports the backing view itself on attach and detach, so a stale
+    /// detach can be told apart from the view currently registered.
+    var report: (NSView, Bool) -> Void
 
     func makeNSView(context: Context) -> View {
         let view = View()
-        view.register = register
+        view.report = report
         return view
     }
 
     func updateNSView(_ view: View, context: Context) {
-        view.register = register
+        view.report = report
     }
 
     final class View: NSView {
-        var register: ((NSView?) -> Void)?
+        var report: ((NSView, Bool) -> Void)?
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            register?(window == nil ? nil : self)
+            report?(self, window != nil)
         }
     }
 }
