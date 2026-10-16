@@ -350,7 +350,8 @@ extension LedgerStore {
     func events(in range: DateInterval) throws -> [UsageEvent] {
         let statement = try db.prepare("""
             SELECT d.harness, d.account, d.session, d.cwd, d.model, d.tier, e.ts,
-                e.input, e.output, e.cache_read, e.cache_write, e.cache_write_1h, e.reasoning, e.cost
+                e.input, e.output, e.cache_read, e.cache_write, e.cache_write_1h, e.reasoning,
+                e.session_total, e.cost
             FROM events e JOIN dims d ON d.id = e.dim
             WHERE e.ts >= ? AND e.ts < ? ORDER BY e.ts, e.key
             """)
@@ -366,8 +367,9 @@ extension LedgerStore {
                 inputTokens: Int(statement.int(7)), outputTokens: Int(statement.int(8)),
                 cacheReadTokens: Int(statement.int(9)), cacheWriteTokens: Int(statement.int(10)),
                 cacheWrite1hTokens: Int(statement.int(11)), reasoningTokens: Int(statement.int(12)),
-                costUSD: statement.isNull(13) ? nil : statement.double(13),
-                serviceTier: tier.isEmpty ? nil : tier))
+                costUSD: statement.isNull(14) ? nil : statement.double(14),
+                serviceTier: tier.isEmpty ? nil : tier,
+                isSessionTotal: statement.int(13) != 0))
         }
         return events
     }
