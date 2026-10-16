@@ -253,9 +253,10 @@ private struct UnmatchedBadge: View {
 /// The metric chart: one provider-coloured bar per model, best first, the
 /// value inside the bar and the logo plus angled name under it. Used
 /// models keep a light inset outline; bars scroll before they shrink past
-/// 28pt. Hovering anywhere over a column shows its model card beside the
-/// bar: one card for the whole chart, moved and refilled as the pointer
-/// crosses columns, so neighbouring bars never open cards of their own.
+/// 28pt. Hovering a bar (the bar itself, not its column or label) shows
+/// its model card beside it: one card for the whole chart, moved and
+/// refilled as the pointer crosses bars, so neighbouring bars never open
+/// cards of their own.
 struct ChartCard: View {
     @Bindable var model: ModelsModel
 
@@ -263,11 +264,16 @@ struct ChartCard: View {
     static let minColumnWidth: CGFloat = 36
     /// The bar zone; every bar bottoms out on the same baseline.
     static let barHeight: CGFloat = 280
-    static let logoHeight: CGFloat = 20
-    /// The label zone: names angled −45° hang down-left from their bar.
+    /// The provider logo and the zone it sits in.
+    static let logoSize: CGFloat = 18
+    static let logoHeight: CGFloat = 28
+    /// The label zone: each name ends under its bar's middle and runs
+    /// down-left at `labelAngle`, Artificial Analysis style.
     static let labelHeight: CGFloat = 150
-    /// A name's unrotated cap — about 140pt along the −45° run.
-    static let labelRun: CGFloat = 196
+    static let labelAngle: Double = 60
+    static let labelFont: CGFloat = 10.5
+    /// A name's cap along its slant: as long as the zone is deep.
+    static let labelRun: CGFloat = 160
     /// The strip's side padding and the gap between bars.
     static let inset: CGFloat = 6
     static let spacing: CGFloat = 8
@@ -291,7 +297,30 @@ struct ChartCard: View {
 
     private var columnWidth: CGFloat {
         guard !model.rows.isEmpty else { return Self.minColumnWidth }
-        return max(Self.minColumnWidth, (width - 12) / CGFloat(model.rows.count))
+        return max(Self.minColumnWidth, (width - 2 * Self.inset - leadingRoom) / CGFloat(model.rows.count))
+    }
+
+    /// Extra space before the first bar so its slanted name, which runs
+    /// left of the bar's middle, isn't cut off by the strip's edge.
+    private var leadingRoom: CGFloat {
+        Self.leadingRoom(reach: model.rows.first.map(BarColumn.labelReach) ?? 0,
+                         width: width, count: model.rows.count)
+    }
+
+    /// The padding P that puts the first bar's middle at least `reach`
+    /// from the strip's edge, against the column width that results once
+    /// P itself is taken out: P + inset + (column − spacing) / 2 ≥ reach,
+    /// with column = (width − 2·inset − P) / count, or the minimum width
+    /// once that floors.
+    static func leadingRoom(reach: CGFloat, width: CGFloat, count: Int) -> CGFloat {
+        guard count > 0, reach > 0 else { return 0 }
+        let n = CGFloat(count)
+        let flexible = (reach - inset + spacing / 2 - (width - 2 * inset) / (2 * n)) / (1 - 1 / (2 * n))
+        var room = max(0, flexible)
+        if (width - 2 * inset - room) / n < minColumnWidth {
+            room = max(0, reach - inset - (minColumnWidth - spacing) / 2)
+        }
+        return room.rounded(.up)
     }
 
     /// The tallest bar: every height is a fraction of it.
@@ -306,22 +335,15 @@ struct ChartCard: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: Self.spacing) {
-                        ForEach(model.rows) { row in
-                            BarColumn(row: row, metric: model.metric, peak: peak)
-                                .frame(width: columnWidth - Self.spacing)
+                        ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                            BarColumn(row: row, metric: model.metric, peak: peak) { inside in
+                                if inside { rest(on: index) } else { leave(index) }
+                            }
+                            .frame(width: columnWidth - Self.spacing)
                         }
                     }
                     .padding(.horizontal, Self.inset)
-                    .contentShape(.rect)
-                    .onContinuousHover(coordinateSpace: .local) { phase in
-                        switch phase {
-                        case .active(let point): rest(on: column(at: point.x))
-                        case .ended:
-                            rest?.cancel()
-                            pending = nil
-                            hovered = nil
-                        }
-                    }
+                    .padding(.leading, leadingRoom)
                     .onGeometryChange(for: CGRect.self) {
                         $0.frame(in: .named(Self.space))
                     } action: { strip = $0 }
@@ -365,12 +387,20 @@ struct ChartCard: View {
         }
     }
 
-    /// The column a strip-local x falls in; the gap after a bar counts
-    /// as that bar's, so crossing a gap never drops the card.
-    private func column(at x: CGFloat) -> Int? {
-        guard !model.rows.isEmpty else { return nil }
-        let index = Int(((x - Self.inset) / columnWidth).rounded(.down))
-        return min(max(index, 0), model.rows.count - 1)
+    /// The pointer left `index`'s bar. Its card closes after the switch
+    /// delay, so crossing the gap to the next bar hands the card over
+    /// instead of closing and reopening it. Leaving a bar that is neither
+    /// showing nor about to show changes nothing: the enter on the next
+    /// bar can arrive before the leave on this one.
+    private func leave(_ index: Int) {
+        guard (pending ?? hovered) == index else { return }
+        pending = nil
+        rest?.cancel()
+        rest = Task { @MainActor in
+            try? await Task.sleep(for: Self.switchDelay)
+            guard !Task.isCancelled else { return }
+            hovered = nil
+        }
     }
 
     /// The card beside the hovered bar: to its right, or to its left
@@ -378,7 +408,7 @@ struct ChartCard: View {
     /// tallest bar and kept inside the chart area.
     @ViewBuilder private var hoverCard: some View {
         if let index = hovered, model.rows.indices.contains(index) {
-            let left = strip.minX + Self.inset + CGFloat(index) * columnWidth
+            let left = strip.minX + Self.inset + leadingRoom + CGFloat(index) * columnWidth
             let right = left + columnWidth - Self.spacing
             let gap: CGFloat = 10
             let x = right + gap + ModelCard.width <= area.width
@@ -425,6 +455,8 @@ private struct BarColumn: View {
     var metric: ModelsModel.Metric
     /// The chart's largest value; heights are fractions of it.
     var peak: Double
+    /// The pointer entered (true) or left (false) the bar itself.
+    var hover: (Bool) -> Void
 
     private var vendor: ModelVendor {
         row.aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: row.logged)
@@ -436,17 +468,29 @@ private struct BarColumn: View {
         vendor.color.luminance > 0.45 ? Color(hex: "#0a0a0a") : .white
     }
 
-    /// The name cut at `labelRun` (head ellipsis), the look the old clip
-    /// gave. Measured at the label font so the cap lands where the clip did.
-    private var label: String {
+    /// The name cut at `labelRun` (head ellipsis), so the end under the
+    /// bar always shows. Measured at the label font.
+    static func label(_ row: ModelsModel.Row) -> String {
         let name = row.aa.map(ModelMatcher.displayName) ?? row.logged
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9.5)]
         var cut = Substring(name)
-        while !cut.isEmpty,
-              (("…" + cut) as NSString).size(withAttributes: attrs).width > ChartCard.labelRun {
+        while !cut.isEmpty, width(of: "…" + cut) > ChartCard.labelRun {
             cut = cut.dropFirst()
         }
         return cut.count == name.count ? name : "…" + cut
+    }
+
+    /// How far left of the bar's middle the slanted name reaches: its
+    /// length along the slant plus the half line height its far corner
+    /// sticks out sideways.
+    static func labelReach(_ row: ModelsModel.Row) -> CGFloat {
+        let angle = ChartCard.labelAngle * .pi / 180
+        let lineHeight = NSFont.systemFont(ofSize: ChartCard.labelFont).boundingRectForFont.height
+        return width(of: label(row)) * cos(angle) + lineHeight / 2 * sin(angle)
+    }
+
+    private static func width(of text: String) -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: ChartCard.labelFont)]
+        return (text as NSString).size(withAttributes: attrs).width
     }
 
     var body: some View {
@@ -472,27 +516,37 @@ private struct BarColumn: View {
                             .padding(1)
                     }
                 }
+                // Only the bar opens the card, not the empty space above
+                // it or the logo and name below.
+                .contentShape(.rect)
+                .onHover(perform: hover)
                 .frame(height: ChartCard.barHeight, alignment: .bottom)
             // Zone 2: the provider logo.
             Group {
                 if let icon = vendor.icon, HarnessIcon.exists(for: icon) {
-                    HarnessIcon(harness: icon, size: 12)
+                    HarnessIcon(harness: icon, size: ChartCard.logoSize)
                 } else {
-                    Color.clear.frame(width: 12, height: 12)
+                    Color.clear.frame(width: ChartCard.logoSize, height: ChartCard.logoSize)
                 }
             }
             .frame(height: ChartCard.logoHeight)
-            // Zone 3: the name, angled −45° down-left from the bar's
-            // trailing edge, head-truncated at `labelRun` so it never
-            // runs under the neighbour's label.
-            Text(label)
-                .font(.system(size: 9.5))
-                .foregroundStyle(row.used ? Theme.textPrimary : Theme.textSecondary)
-                .lineLimit(1)
-                .fixedSize()
-                .rotationEffect(.degrees(-45), anchor: .topTrailing)
-                .frame(maxWidth: .infinity, alignment: .topTrailing)
-                .frame(height: ChartCard.labelHeight, alignment: .top)
+            // Zone 3: the name. Its end sits on a point under the bar's
+            // middle and it runs down-left at `labelAngle`, so every name
+            // lands on its own bar whatever its length.
+            Color.clear
+                .frame(height: ChartCard.labelHeight)
+                .overlay(alignment: .top) {
+                    Color.clear.frame(width: 0, height: 0)
+                        .overlay(alignment: .trailing) {
+                            Text(Self.label(row))
+                                .font(.system(size: ChartCard.labelFont))
+                                .foregroundStyle(row.used ? Theme.textPrimary : Theme.textSecondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .rotationEffect(.degrees(-ChartCard.labelAngle), anchor: .trailing)
+                        }
+                        .padding(.top, 6)
+                }
         }
     }
 }
