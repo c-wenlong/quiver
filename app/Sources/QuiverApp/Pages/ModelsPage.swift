@@ -419,16 +419,25 @@ private struct TableCard: View {
 
     var body: some View {
         Card {
-            VStack(spacing: 0) {
-                header
-                Divider().overlay(Theme.border)
-                ForEach(model.rows) { row in
-                    TableRow(row: row, model: model)
-                    Divider().overlay(Theme.rowDivider)
+            // Narrow windows scroll sideways instead of crushing the
+            // model names under the fixed columns.
+            ScrollView(.horizontal) {
+                VStack(spacing: 0) {
+                    header
+                    Divider().overlay(Theme.border)
+                    ForEach(model.rows) { row in
+                        TableRow(row: row, model: model)
+                        Divider().overlay(Theme.rowDivider)
+                    }
                 }
+                .containerRelativeFrame(.horizontal) { width, _ in max(width, Self.minWidth) }
             }
+            .scrollIndicators(.automatic)
         }
     }
+
+    /// The fixed columns plus room for a model name.
+    static let minWidth: CGFloat = 760
 
     private var header: some View {
         HStack(spacing: 0) {

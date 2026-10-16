@@ -409,7 +409,9 @@ public final class ModelsModel {
         let all: [Row]
         switch scope {
         case .yoursPlusTop:
-            all = used + topAA(excluding: matchedIDs, count: 10).map(leaderboardRow)
+            // The real top ten, minus the ones already in `used`.
+            all = used + topAA(excluding: [], count: 10)
+                .filter { !matchedIDs.contains($0.id) }.map(leaderboardRow)
         case .yours:
             all = used
         case .top25:
