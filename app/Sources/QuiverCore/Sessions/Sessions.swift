@@ -118,7 +118,7 @@ extension SweClient: SessionListing {
 }
 
 public protocol SessionUsageQuerying: Sendable {
-    func bySession(in range: DateInterval) async -> [SessionUsage]
+    func bySession(in range: DateInterval, harness: String?) async -> [SessionUsage]
     /// Per day, harness and model, for the model filter's token counts.
     func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage]
 }
@@ -402,7 +402,7 @@ public final class SessionsModel {
     /// may have started months ago.
     private func readUsage() async -> ([UsageKey: SessionUsage], [DailyUsage]) {
         let range = DateInterval(start: Date(timeIntervalSince1970: 0), end: now())
-        async let usage = ledger.bySession(in: range)
+        async let usage = ledger.bySession(in: range, harness: nil)
         async let daily = ledger.daily(in: range, calendar: calendar)
         return (Self.keyed(await usage), await daily)
     }

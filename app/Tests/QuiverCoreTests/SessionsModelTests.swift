@@ -72,7 +72,7 @@ actor FakeSessionLedger: SessionUsageQuerying {
     func setDaily(_ rows: [DailyUsage]) { self.days = rows }
     func holdNextDaily() { holdDaily = true }
     func releaseDaily() { dailyGate?.resume(); dailyGate = nil }
-    func bySession(in range: DateInterval) async -> [SessionUsage] {
+    func bySession(in range: DateInterval, harness: String?) async -> [SessionUsage] {
         ranges.append(range)
         return rows
     }

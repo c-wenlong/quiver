@@ -480,10 +480,12 @@ public actor Ledger {
             .sorted { ($0.day, $0.harness, $0.model) < ($1.day, $1.harness, $1.model) }
     }
 
-    /// Usage per session, most recent first.
-    public func bySession(in range: DateInterval) -> [SessionUsage] {
+    /// Usage per session, most recent first. `harness` restricts the read
+    /// to one harness's dims when the caller only wants those.
+    public func bySession(in range: DateInterval, harness: String? = nil) -> [SessionUsage] {
         guard let groups = try? store.groups(
-            in: range, by: [.harness, .account, .session, .cwd], thresholds: pricing.thresholds)
+            in: range, by: [.harness, .account, .session, .cwd],
+            thresholds: pricing.thresholds, harness: harness)
         else { return [] }
         struct Key: Hashable { var harness, account, session: String }
         var sessions: [Key: SessionUsage] = [:]

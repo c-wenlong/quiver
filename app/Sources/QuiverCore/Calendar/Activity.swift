@@ -108,12 +108,12 @@ extension Ledger {
     public func filterTrivialActivitySessions(
         _ sessions: [ActivityFileIndex.IndexedSession], harness: String
     ) -> [ActivityFileIndex.IndexedSession] {
-        guard trivialGate.withLock({ $0 }) else { return sessions }
+        guard !sessions.isEmpty, trivialGate.withLock({ $0 }) else { return sessions }
         struct Key: Hashable { var account, session: String }
         var usage: [Key: SessionUsage] = [:]
         for row in bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0),
-                                              end: .distantFuture))
-        where row.harness == harness {
+                                              end: .distantFuture),
+                             harness: harness) {
             let key = Key(account: row.accountHome, session: row.sessionId)
             if var existing = usage[key] {
                 existing.totals.add(row.totals)
