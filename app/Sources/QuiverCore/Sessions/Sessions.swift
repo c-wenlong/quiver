@@ -347,7 +347,10 @@ public final class SessionsModel {
     }
 
     /// Re-reads tokens and spend from the ledger after a scan, keeping the list.
-    public func refreshUsage() async {
+    /// `ledgerScanned` is the overview's "a scan has completed": missing
+    /// usage only counts as empty once it is true.
+    public func refreshUsage(ledgerScanned: Bool = false) async {
+        self.ledgerScanned = ledgerScanned
         usageGeneration += 1
         let mine = usageGeneration
         let (usage, daily) = await readUsage()
@@ -635,13 +638,21 @@ public final class SessionsModel {
     /// The page's "Show" for hidden rows; a view state, not persisted.
     public var showTrivial = false
 
+    /// Set once a ledger scan has completed. Until then a listed
+    /// session's missing usage proves nothing: the ledger may simply not
+    /// have read the logs yet.
+    public var ledgerScanned = false
+
     /// Whether the row is an accidental session: empty (zero responses —
-    /// a listed session of a usage-log harness with no ledger events at
-    /// all counts) or probe-like. Harnesses the ledger does not read are
-    /// never hidden.
+    /// a listed session of a local-log harness with no ledger events at
+    /// all counts, once the ledger has actually scanned) or probe-like.
+    /// Feed-polled harnesses (Cursor, Grok Bot) and harnesses the ledger
+    /// does not read are never hidden for missing usage.
     func isTrivial(_ row: Row) -> Bool {
         guard SessionFilter.usageLogHarnesses.contains(row.session.harness) else { return false }
-        guard let usage = row.usage else { return true }
+        guard let usage = row.usage else {
+            return ledgerScanned && SessionFilter.localLogHarnesses.contains(row.session.harness)
+        }
         return SessionFilter.isTrivial(usage: usage)
     }
 

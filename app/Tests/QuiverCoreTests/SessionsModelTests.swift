@@ -425,20 +425,65 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(model.models.first?.tokens == 900)
     }
 
-    @Test func emptyListedSessionsHideWithACountUntilShown() async {
+    @Test func emptyListedSessionsHideAfterTheFirstScanWithACountUntilShown() async {
         // A session swe lists that the ledger never saw ran zero
-        // responses. Gemini has no usage log, so its rows always stay.
+        // responses — once the ledger has actually scanned. Gemini has
+        // no usage log, so its rows always stay.
         let model = await model([
             session("a", "claude", cwd: "/c/q", at: 1_791_699_000),
             session("b", "claude", cwd: "/c/q", at: 1_791_698_000),
             session("g", "gemini", cwd: "/c/q", at: 1_791_697_000),
         ], [usage("b", "claude", models: [], cost: 0)])
         await model.load()
+        // Before the first scan completes, missing usage proves nothing:
+        // the ledger may just not have read the logs yet.
+        #expect(model.visible.map(\.id) == ["a", "b", "g"])
+        #expect(model.hiddenTrivialCount == 0)
+
+        await model.refreshUsage(ledgerScanned: true)
         #expect(model.visible.map(\.id) == ["b", "g"])
         #expect(model.hiddenTrivialCount == 1)
         model.showTrivial = true
         #expect(model.visible.map(\.id) == ["a", "b", "g"])
         #expect(model.hiddenTrivialCount == 1)
+    }
+
+    @Test func feedHarnessRowsStayVisibleWithoutUsage() async {
+        // Cursor and Grok Bot usage comes from polling an account feed,
+        // not scanning logs: a missing row means unpolled, never empty.
+        // Real zero-token stats still hide them.
+        var grokTotals = UsageTotals()
+        grokTotals.eventCount = 3
+        let model = await model([
+            session("c", "cursor", cwd: "/c/q", at: 1_791_699_000),
+            session("b", "grok-bot", cwd: nil, at: 1_791_698_000),
+            session("z", "grok-bot", cwd: nil, at: 1_791_697_000),
+        ], [SessionUsage(sessionId: "z", harness: "grok-bot",
+                         accountHome: "/h", cwd: nil, models: [],
+                         totals: grokTotals,
+                         firstTimestamp: now, lastTimestamp: now)])
+        await model.load()
+        await model.refreshUsage(ledgerScanned: true)
+        // c and b have no usage at all yet stay visible; z's real
+        // zero-token stats hide it.
+        #expect(model.visible.map(\.id) == ["c", "b"])
+        #expect(model.hiddenTrivialCount == 1)
+    }
+
+    @Test func everyMatchHiddenStillCountsForTheFooter() async {
+        // When the rule hides every matching row the list is empty, but
+        // the footer data stays: the count is there and "Show" reveals
+        // the rows.
+        let model = await model([
+            session("a", "claude", cwd: "/c/q", at: 1_791_699_000),
+            session("b", "codex", cwd: "/c/q", at: 1_791_698_000),
+        ], [])
+        await model.load()
+        await model.refreshUsage(ledgerScanned: true)
+        #expect(model.visible.isEmpty)
+        #expect(model.hiddenTrivialCount == 2)
+        model.showTrivial = true
+        #expect(model.visible.map(\.id) == ["a", "b"])
     }
 
     @Test func probeLikeSessionsHideAndTheSettingBringsThemBack() async {

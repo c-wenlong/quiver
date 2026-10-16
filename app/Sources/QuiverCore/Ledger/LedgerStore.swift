@@ -82,6 +82,7 @@ final class LedgerStore {
                 reasoning INTEGER NOT NULL,
                 cost REAL);
             CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+            CREATE INDEX IF NOT EXISTS events_dim ON events (dim);
             CREATE INDEX IF NOT EXISTS events_msg ON events (msg) WHERE msg IS NOT NULL;
             CREATE TABLE IF NOT EXISTS cursors (
                 path TEXT PRIMARY KEY, inode INTEGER NOT NULL, size INTEGER NOT NULL, modified REAL NOT NULL,

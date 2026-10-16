@@ -72,7 +72,9 @@ private struct SessionsContent: View {
         // Opening the page again within a minute shows the same list.
         .task(id: app.swePath) { await model.loadIfStale(for: app.swePath) }
         // New usage from a scan, without listing the sessions again.
-        .task(id: app.overview?.completedScans) { await model.refreshUsage() }
+        .task(id: app.overview?.completedScans) {
+            await model.refreshUsage(ledgerScanned: (app.overview?.completedScans ?? 0) > 0)
+        }
         .sheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
@@ -83,8 +85,11 @@ private struct SessionsContent: View {
         if model.rows.isEmpty && model.isLoading {
             LoadingCard(text: "Listing sessions…")
         } else if groups.isEmpty {
+            // Every matching row can be trivial: the footer still shows
+            // what was hidden and offers "Show" to reveal them.
             EmptyCard(text: model.rows.isEmpty ? "No sessions listed." : "No sessions match these filters.",
                       icon: "clock")
+            hiddenFooter
         } else {
             VStack(spacing: 0) {
                 HStack(spacing: 16) {
@@ -127,24 +132,30 @@ private struct SessionsContent: View {
                         }
                     }
                 }
-                if model.hideTrivial, model.hiddenTrivialCount > 0 {
-                    HStack(spacing: 8) {
-                        Text(model.showTrivial
-                             ? "Showing \(model.hiddenTrivialCount) short or empty sessions"
-                             : "\(model.hiddenTrivialCount) short or empty sessions hidden")
-                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                        Spacer()
-                        Button(model.showTrivial ? "Hide" : "Show") {
-                            model.showTrivial.toggle()
-                        }
-                        .font(Theme.caption)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Theme.textSecondary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 10)
-                }
+                hiddenFooter
             }
+        }
+    }
+
+    /// "N short or empty sessions hidden" plus the Show/Hide toggle,
+    /// under the list and under the empty card alike.
+    @ViewBuilder private var hiddenFooter: some View {
+        if model.hideTrivial, model.hiddenTrivialCount > 0 {
+            HStack(spacing: 8) {
+                Text(model.showTrivial
+                     ? "Showing \(model.hiddenTrivialCount) short or empty sessions"
+                     : "\(model.hiddenTrivialCount) short or empty sessions hidden")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                Spacer()
+                Button(model.showTrivial ? "Hide" : "Show") {
+                    model.showTrivial.toggle()
+                }
+                .font(Theme.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 10)
         }
     }
 

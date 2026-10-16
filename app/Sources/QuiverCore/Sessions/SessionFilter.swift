@@ -7,12 +7,19 @@ import Foundation
 /// whole stored history) and the Sessions page (`SessionUsage`, already
 /// whole-history) decide through this one place.
 public enum SessionFilter {
-    /// Harnesses whose event logs the ledger reads. A listed session of
-    /// one of these with no usage events at all ran zero responses.
-    public static let usageLogHarnesses: Set<String> = [
+    /// Harnesses whose local event logs the ledger scans. A listed
+    /// session of one of these with no usage events ran zero responses —
+    /// but only once a scan has actually completed; before that an empty
+    /// ledger proves nothing.
+    public static let localLogHarnesses: Set<String> = [
         "claude", "codex", "opencode", "devin", "pi", "droid", "cline",
-        "cursor", "grok-bot",
     ]
+    /// Harnesses whose usage rows come from polling an account feed, not
+    /// scanning local logs. A session of one of these with no usage is
+    /// just unpolled, never empty; only real stats can hide it.
+    public static let feedHarnesses: Set<String> = ["cursor", "grok-bot"]
+    /// Every harness the ledger can carry usage rows for.
+    public static let usageLogHarnesses = localLogHarnesses.union(feedHarnesses)
     /// Harnesses whose events carry no per-reply token detail, so the
     /// probe rule cannot tell a probe from a real quick answer; only
     /// emptiness marks them trivial.

@@ -169,8 +169,10 @@ extension SQLiteDatabase {
         // one-shot probe — except for harnesses without per-reply
         // detail, where only emptiness counts.
         let helpers = HelperModels.all.sorted()
-        let noDetail = SessionFilter.noReplyDetailHarnesses.sorted()
-        let realSessions = try prepare("""
+        // The candidate sessions first: distinct harness/account/session
+        // triples with an event in range and a non-helper event anywhere
+        // in their stored history.
+        let candidates = try prepare("""
             SELECT DISTINCT d.harness, d.account, d.session
             FROM events e JOIN dims d ON d.id = e.dim
             WHERE e.ts >= ? AND e.ts < ?
@@ -180,32 +182,56 @@ extension SQLiteDatabase {
                         AND d2.session = d.session
                         AND d2.model NOT IN (\(helpers.map { _ in "?" }.joined(separator: ",")))
               )
-              AND (? = 0 OR NOT (
-                  SELECT CASE
-                      WHEN COUNT(*) = 0
-                           OR SUM(e3.input + e3.output + e3.cache_read
-                                  + e3.cache_write + e3.reasoning) = 0 THEN 1
-                      WHEN d.harness NOT IN (\(noDetail.map { _ in "?" }.joined(separator: ",")))
-                           AND COUNT(*) <= ?
-                           AND MAX(e3.ts) - MIN(e3.ts) < ?
-                           AND SUM(e3.output + e3.reasoning) < ? THEN 1
-                      ELSE 0 END
-                  FROM events e3 JOIN dims d3 ON d3.id = e3.dim
-                  WHERE d3.harness = d.harness AND d3.account = d.account
-                        AND d3.session = d.session))
             """)
-        realSessions.bind([SQLiteValue.double(lo), .double(hi)]
-                          + helpers.map { SQLiteValue.text($0) }
-                          + [.int(hideTrivial ? 1 : 0)]
-                          + noDetail.map { SQLiteValue.text($0) }
-                          + [.int(SessionFilter.maxProbeResponses),
-                             .double(SessionFilter.maxProbeSpan),
-                             .int(SessionFilter.maxProbeOutputTokens)])
+        candidates.bind([SQLiteValue.double(lo), .double(hi)]
+                        + helpers.map { SQLiteValue.text($0) })
+        var candidateKeys: [[String]] = []
+        while try candidates.step() {
+            candidateKeys.append([candidates.text(0) ?? "", candidates.text(1) ?? "",
+                                  candidates.text(2) ?? ""])
+        }
+        // One grouped pass computes every candidate's whole-history
+        // totals once, restricted through a temp table of the candidates;
+        // `events_dim` keeps each dim's events an index lookup away.
         var real: Set<String> = []
-        while try realSessions.step() {
-            real.insert("\(realSessions.text(0) ?? "")\u{0}"
-                        + "\(realSessions.text(1) ?? "")\u{0}"
-                        + "\(realSessions.text(2) ?? "")")
+        if !candidateKeys.isEmpty {
+            try execute("""
+                CREATE TEMP TABLE IF NOT EXISTS calendar_candidates (
+                    harness TEXT, account TEXT, session TEXT)
+                """)
+            try execute("DELETE FROM calendar_candidates")
+            let insert = try prepare(
+                "INSERT INTO calendar_candidates VALUES (?, ?, ?)")
+            for key in candidateKeys {
+                try insert.bind([.text(key[0]), .text(key[1]), .text(key[2])]).run()
+            }
+            let stats = try prepare("""
+                SELECT d.harness, d.account, d.session, COUNT(*),
+                       SUM(e.input + e.output + e.cache_read + e.cache_write + e.reasoning),
+                       MAX(e.ts) - MIN(e.ts), SUM(e.output + e.reasoning)
+                FROM dims d JOIN events e ON e.dim = d.id
+                WHERE EXISTS (
+                    SELECT 1 FROM calendar_candidates c
+                    WHERE c.harness = d.harness AND c.account = d.account
+                          AND c.session = d.session)
+                GROUP BY d.harness, d.account, d.session
+                """)
+            while try stats.step() {
+                let harness = stats.text(0) ?? ""
+                let key = harness + "\u{0}" + (stats.text(1) ?? "")
+                    + "\u{0}" + (stats.text(2) ?? "")
+                let count = stats.int(3)
+                let total = stats.int(4)
+                let span = stats.double(5)
+                let outAndReasoning = stats.int(6)
+                let trivial = count == 0 || total == 0
+                    || (!SessionFilter.noReplyDetailHarnesses.contains(harness)
+                        && count <= SessionFilter.maxProbeResponses
+                        && span < SessionFilter.maxProbeSpan
+                        && outAndReasoning < SessionFilter.maxProbeOutputTokens)
+                if !hideTrivial || !trivial { real.insert(key) }
+            }
+            try execute("DELETE FROM calendar_candidates")
         }
         let statement = try prepare("""
             WITH ordered AS (

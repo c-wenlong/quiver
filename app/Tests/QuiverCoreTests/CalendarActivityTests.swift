@@ -257,6 +257,22 @@ extension CalendarActivityTests {
         #expect(try store2.activityBlocks(in: day, gap: 30 * 60).isEmpty)
     }
 
+    @Test func wholeHistoryAggregatesAcrossASessionsDims() throws {
+        // "split" switched models mid-run, so its events sit under two
+        // dims. Each dim alone looks probe-like; judged as one session
+        // the three replies inside a minute are still under the span
+        // bound — but three responses is over the reply bound, so the
+        // session is real. A per-dim check would wrongly drop it.
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", session: "split", model: "opus", output: 10),
+            event("2026-10-05T10:00:20Z", session: "split", model: "opus", output: 10),
+            event("2026-10-05T10:00:40Z", session: "split", model: "sonnet", output: 10),
+        ])
+        _ = temp
+        #expect(try store.activityBlocks(in: day, gap: 30 * 60)
+            .map { $0.sessions[0].sessionId } == ["split"])
+    }
+
     @Test func aProbeSessionDropsAndARealOneStays() throws {
         // Two replies inside a minute with almost nothing back: hidden.
         // Same shape plus a third reply or a minute-long span: real.
