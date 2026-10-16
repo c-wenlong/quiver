@@ -300,6 +300,12 @@ private struct PriceSheet: View {
     /// Editing one of the user's own prices rather than adding a new one.
     private var editing: Bool { row.source == .yours }
 
+    /// The key the row's price is saved under: the entry the lookup
+    /// answered, not whatever the "Price applies to" field now says.
+    private var originalKey: String {
+        row.entry ?? PricingCatalog.baseName(for: row.model)
+    }
+
     init(model: PricingModel, row: PricingModel.PricedModel) {
         self.model = model
         self.row = row
@@ -402,7 +408,8 @@ private struct PriceSheet: View {
         saveError = nil
         Task {
             do {
-                try await model.save(key: key, prices: prices)
+                try await model.save(key: key, prices: prices,
+                                     replacing: editing ? originalKey : nil)
                 dismiss()
             } catch {
                 saveError = error.localizedDescription
@@ -416,7 +423,7 @@ private struct PriceSheet: View {
         saveError = nil
         Task {
             do {
-                try await model.remove(key: key.trimmingCharacters(in: .whitespaces))
+                try await model.remove(key: originalKey)
                 dismiss()
             } catch {
                 saveError = error.localizedDescription

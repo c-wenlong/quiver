@@ -45,23 +45,32 @@ public struct PricingOverrides: Sendable {
         }
     }
 
-    /// Set `name`'s price and write the file atomically.
-    public mutating func set(_ name: String, prices: Prices) throws {
-        models[name] = prices
-        try write()
+    /// Set `name`'s price and write the file atomically. `replacing`
+    /// renames an entry: the old key leaves in the same write, so a save
+    /// under a changed "Price applies to" never loses the price. The
+    /// in-memory list changes only once the write lands, so a failed
+    /// write leaves it exactly as it was and a retry still writes.
+    public mutating func set(_ name: String, prices: Prices, replacing: String? = nil) throws {
+        var updated = models
+        if let replacing { updated.removeValue(forKey: replacing) }
+        updated[name] = prices
+        try write(updated)
+        models = updated
     }
 
     /// Drop `name`'s saved price (a no-op when it has none) and write the
-    /// file atomically.
+    /// file atomically. Like `set`, the write lands before `models` does.
     public mutating func remove(_ name: String) throws {
-        guard models.removeValue(forKey: name) != nil else { return }
-        try write()
+        var updated = models
+        guard updated.removeValue(forKey: name) != nil else { return }
+        try write(updated)
+        models = updated
     }
 
-    private func write() throws {
-        let document: [String: Any] = [
+    private func write(_ document: [String: Prices]) throws {
+        let object: [String: Any] = [
             "schema": 1,
-            "models": models.mapValues { prices in
+            "models": document.mapValues { prices in
                 [
                     "input": prices.input, "output": prices.output,
                     "cache_read": prices.cacheRead, "cache_write": prices.cacheWrite,
@@ -69,7 +78,7 @@ public struct PricingOverrides: Sendable {
             },
         ]
         let data = try JSONSerialization.data(
-            withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
+            withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)

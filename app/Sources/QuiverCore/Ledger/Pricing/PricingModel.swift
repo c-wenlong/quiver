@@ -148,8 +148,11 @@ public final class PricingModel {
     }
 
     /// Persist `key`'s price, rebuild the catalog with it, and reprice.
-    public func save(key: String, prices: PricingOverrides.Prices) async throws {
-        try overrides.set(key, prices: prices)
+    /// `replacing` is the entry being edited: a save under a changed key
+    /// drops the old one in the same write.
+    public func save(key: String, prices: PricingOverrides.Prices,
+                     replacing: String? = nil) async throws {
+        try overrides.set(key, prices: prices, replacing: replacing)
         try await reprice()
     }
 

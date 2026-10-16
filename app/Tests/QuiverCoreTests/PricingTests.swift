@@ -82,6 +82,36 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(prefixed.source == .yours)
     }
 
+    @Test func `a failed write leaves the in-memory prices alone`() throws {
+        let temp = try TempDir()
+        // A regular file where the config directory would go blocks the
+        // atomic write outright.
+        try Data().write(to: temp.path("blocked"))
+        var blocked = PricingOverrides(url: temp.path("blocked/pricing.json"))
+        #expect(throws: (any Error).self) {
+            try blocked.set("swe-2", prices: .init(input: 1, output: 1))
+        }
+        #expect(blocked.models.isEmpty)
+
+        // The same for remove: a read-only directory fails the write, the
+        // price stays saved, and a retry once writable lands.
+        let url = temp.path("config/pricing.json")
+        var overrides = PricingOverrides(url: url)
+        try overrides.set("swe-2", prices: .init(input: 1, output: 1))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o555], ofItemAtPath: temp.path("config").path)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: temp.path("config").path)
+        }
+        #expect(throws: (any Error).self) { try overrides.remove("swe-2") }
+        #expect(overrides.models["swe-2"] != nil)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: temp.path("config").path)
+        try overrides.remove("swe-2")
+        #expect(overrides.models["swe-2"] == nil)
+    }
+
     @Test func `save then load round-trips, missing file is empty`() throws {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "pricing-\(UUID().uuidString).json")
@@ -245,6 +275,32 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         await model.load()
         #expect(model.unpriced.isEmpty)
         #expect(model.groups.flatMap(\.models).first?.source == .yours)
+    }
+
+    @Test func `saving under a changed key replaces the old one in one write`() async throws {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2-max", tokens: 1_000)))
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let file = temp.url.appending(path: "config/pricing.json")
+        let model = PricingModel(
+            ledger: ledger, overrides: PricingOverrides(url: file),
+            makeCatalog: { try PricingCatalog(
+                liteLLM: Data("{}".utf8),
+                overrides: PricingOverrides(url: file).entries) },
+            apply: { catalog in await ledger.setPricing(catalog) })
+        // Edit swe-2's saved price to live under swe-2-medium instead:
+        // the old key leaves in the same write.
+        try await model.save(key: "swe-2", prices: .init(input: 1, output: 1))
+        try await model.save(key: "swe-2-medium", prices: .init(input: 2, output: 2),
+                             replacing: "swe-2")
+        let saved = PricingOverrides(url: file)
+        #expect(saved.models["swe-2"] == nil)
+        #expect(saved.models["swe-2-medium"]?.input == 2)
+        // Remove always takes the original key, whatever the field said.
+        try await model.remove(key: "swe-2-medium")
+        #expect(PricingOverrides(url: file).models.isEmpty)
+        _ = temp
     }
 
     @Test func `a fast-suffixed model and a free model are both priced`() async throws {
