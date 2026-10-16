@@ -94,8 +94,10 @@ extension Ledger {
     /// Harnesses whose ledger events drive the calendar. Pi and Droid have
     /// their own file activity sources and Cline has none, so letting the
     /// ledger answer for them would draw the same sessions twice (or draw
-    /// Cline where nothing is wanted).
-    static let calendarHarnesses: Set<String> = ["claude", "codex", "opencode", "devin"]
+    /// Cline where nothing is wanted). Grok Bot comes from Cursor's usage
+    /// feed and has no other source; plain `cursor` events stay out because
+    /// CursorAppActivity already reads the editor's own state.
+    static let calendarHarnesses: Set<String> = ["claude", "codex", "opencode", "devin", "grok-bot"]
 }
 
 extension Ledger: ActivityProviding {

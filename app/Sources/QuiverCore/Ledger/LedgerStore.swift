@@ -92,8 +92,10 @@ final class LedgerStore {
         // Session-total events never count toward long-context surcharges.
         // Old rows are correct with the 0 default, so no schema bump.
         try? db.execute("ALTER TABLE events ADD COLUMN session_total INTEGER NOT NULL DEFAULT 0")
-        selectByKey = try db.prepare(
-            "SELECT sidechain, input + output + cache_read + cache_write + reasoning FROM events WHERE key = ?")
+        selectByKey = try db.prepare("""
+            SELECT sidechain, input, output, cache_read, cache_write, cache_write_1h,
+                reasoning, session_total, cost, ts, dim FROM events WHERE key = ?
+            """)
         selectByMessage = try db.prepare("""
             SELECT key, sidechain, input + output + cache_read + cache_write + reasoning
             FROM events WHERE msg = ? AND (sidechain = 1 OR ? = 1) LIMIT 1
@@ -139,18 +141,29 @@ final class LedgerStore {
 
     /// Adds a record unless the ledger already holds the same response. On a
     /// collision the non-sidechain copy wins, then the larger token total.
-    func upsert(_ record: LedgerRecord) throws {
+    /// - Returns: true when a row was inserted or changed; a re-fetch of
+    ///   the same event under the same key is a no-op and returns false.
+    @discardableResult
+    func upsert(_ record: LedgerRecord) throws -> Bool {
         let key = StableHash.of(record.key)
         let total = Int64(record.event.totalTokens)
         selectByKey.bind([.int(key)])
         if try selectByKey.step() {
             let existingSidechain = selectByKey.int(0) != 0
-            let existingTotal = selectByKey.int(1)
-            if record.authoritative
-                || Self.shouldReplace(record.isSidechain, total, existingSidechain, existingTotal) {
+            if record.authoritative {
+                // The source's own figure always wins, but only a changed
+                // figure is a write.
+                guard try !sameEvent(selectByKey, as: record) else { return false }
                 try write(record, key: key)
+                return true
             }
-            return
+            let existingTotal = selectByKey.int(1) + selectByKey.int(2)
+                + selectByKey.int(3) + selectByKey.int(4) + selectByKey.int(6)
+            if Self.shouldReplace(record.isSidechain, total, existingSidechain, existingTotal) {
+                try write(record, key: key)
+                return true
+            }
+            return false
         }
         if let messageId = record.messageId {
             selectByMessage.bind([.int(StableHash.of(messageId)), .int(record.isSidechain ? 1 : 0)])
@@ -161,11 +174,39 @@ final class LedgerStore {
                 if Self.shouldReplace(record.isSidechain, total, otherSidechain, otherTotal) {
                     try deleteEvent.bind([.int(otherKey)]).run()
                     try write(record, key: key)
+                    return true
                 }
-                return
+                return false
             }
         }
         try write(record, key: key)
+        return true
+    }
+
+    /// True when the row `selectByKey` just stepped to stores the same
+    /// figures and dimension as `record`. Only meaningful while the
+    /// statement's cursor is on that row.
+    private func sameEvent(_ row: Statement, as record: LedgerRecord) throws -> Bool {
+        let e = record.event
+        let costMatches = row.isNull(8)
+            ? e.costUSD == nil
+            : e.costUSD != nil && row.double(8) == e.costUSD
+        // The dim carries model, cwd, account and tier: an authoritative
+        // re-read where only those moved is a change, not a duplicate.
+        let dim = try dimID(DimKey(
+            harness: e.harness, account: e.accountHome, session: e.sessionId,
+            cwd: e.cwd ?? "", model: e.model, tier: e.serviceTier ?? ""))
+        return row.int(0) == Int64(record.isSidechain ? 1 : 0)
+            && row.int(1) == Int64(e.inputTokens)
+            && row.int(2) == Int64(e.outputTokens)
+            && row.int(3) == Int64(e.cacheReadTokens)
+            && row.int(4) == Int64(e.cacheWriteTokens)
+            && row.int(5) == Int64(e.cacheWrite1hTokens)
+            && row.int(6) == Int64(e.reasoningTokens)
+            && row.int(7) == Int64(e.isSessionTotal ? 1 : 0)
+            && costMatches
+            && row.double(9) == e.timestamp.timeIntervalSince1970
+            && row.int(10) == dim
     }
 
     private static func shouldReplace(

@@ -97,6 +97,7 @@ public enum UsageFormat {
         case "codex": "Codex"
         case "opencode": "OpenCode"
         case "devin": "Devin"
+        case "grok-bot": "Grok Bot"
         default: id.prefix(1).uppercased() + id.dropFirst()
         }
     }

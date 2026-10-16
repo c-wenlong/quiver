@@ -401,6 +401,27 @@ public actor Ledger {
         report.filesRead += 1
     }
 
+    /// Store records a poll produced (Cursor's usage feed) in one
+    /// transaction. Every record carries a stable key, so an overlapping
+    /// re-fetch upserts to the same rows instead of duplicating them.
+    /// - Returns: how many rows were inserted or changed, so the caller
+    ///   can tell a no-op ingest from one the Overview should reload for.
+    @discardableResult
+    func ingest(_ records: [LedgerRecord]) throws -> Int {
+        var changed = 0
+        try store.db.execute("BEGIN IMMEDIATE")
+        do {
+            for record in records {
+                if try store.upsert(record) { changed += 1 }
+            }
+            try store.db.execute("COMMIT")
+        } catch {
+            store.rollback()
+            throw error
+        }
+        return changed
+    }
+
     // MARK: - Queries
 
     public func events(in range: DateInterval) -> [UsageEvent] {

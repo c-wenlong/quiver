@@ -70,6 +70,8 @@ private struct CalendarContent: View {
 
     var body: some View {
         let inMonth = model.mode == .month
+        let ledgerChanges = (app.overview?.completedScans ?? 0)
+            + (app.overview?.ledgerWrites ?? 0)
         return Page(title: Self.monthTitle.string(from: model.anchor),
              subtitle: inMonth ? "" : "Week \(model.calendar.component(.weekOfYear, from: model.visibleRange.start))",
              scrolls: false,
@@ -139,10 +141,10 @@ private struct CalendarContent: View {
         .onChange(of: model.visibleRange) {
             Task { await model.load() }
         }
-        .onChange(of: app.overview?.completedScans ?? 0) {
-            // A finished scan may have logged new responses for the days
-            // on show; stale ranges keep painting until their refetch
-            // lands.
+        .onChange(of: ledgerChanges) {
+            // A finished scan or an import may have logged new responses
+            // for the days on show; stale ranges keep painting until
+            // their refetch lands.
             model.noteScanCompleted()
             Task { await model.load(force: true) }
         }
