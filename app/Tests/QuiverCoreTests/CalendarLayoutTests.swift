@@ -293,3 +293,16 @@ import Testing
         #expect(CalendarLayout.clockOffset(half, in: day, calendar: cal) == 10.5)
     }
 }
+
+@Suite struct DayHeaderStyleTests {
+    @Test func `headers shrink with the column`() {
+        #expect(DayHeaderStyle.forWidth(70) == .inline)
+        #expect(DayHeaderStyle.forWidth(50) == .stacked)
+        #expect(DayHeaderStyle.forWidth(30) == .compact)
+        // The exact boundaries.
+        #expect(DayHeaderStyle.forWidth(64) == .inline)
+        #expect(DayHeaderStyle.forWidth(36) == .stacked)
+        #expect(DayHeaderStyle.forWidth(63.9) == .stacked)
+        #expect(DayHeaderStyle.forWidth(35.9) == .compact)
+    }
+}
