@@ -304,4 +304,74 @@ import Testing
         #expect(section.weeks.last?.account == 42)
         #expect(section.weeks.last?.mac == 7)
     }
+
+    @Test func aStaleTooOldReplyCannotReinstateTheVerdict() async {
+        // Fetch 1 is the old swe path's: it parks on a gate while the
+        // path change's forced refresh runs and succeeds.
+        var gate: CheckedContinuation<CodexDailyReport, Error>?
+        var entered = false
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
+        let model = CodexAccountUsage(
+            cacheFile: url,
+            fetch: { _ in
+                if !entered {
+                    entered = true
+                    return try await withCheckedThrowingContinuation {
+                        (c: CheckedContinuation<CodexDailyReport, Error>) in gate = c }
+                }
+                return self.report([("2026-10-13", 10)])
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        let stale = Task { await model.refresh(homes: ["/h"]) }
+        while !entered { await Task.yield() }
+        await model.swePathChanged()
+        #expect(model.section(for: "/h")?.kind == .data)
+        // Only now does the old path's fetch fail "unknown subcommand":
+        // its generation is stale, so it must not set sweTooOld.
+        gate?.resume(throwing: SweError.commandFailed(
+            status: 1, message: "Unknown harness subcommand: 'usage-daily'"))
+        await stale.value
+        #expect(!model.sweTooOld)
+        let section = model.section(for: "/h")!
+        #expect(section.kind == .data)
+        #expect(section.weeks.last?.account == 10)
+        #expect(model.entries["/h"]?.report.days.first?.tokens == 10)
+    }
+
+    @Test func anOlderReplyCannotOverwriteANewerFetch() async {
+        // Both fetches park: the older refresh's reply lands while the
+        // newer one is still in flight.
+        var gates: [CheckedContinuation<CodexDailyReport, Error>] = []
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
+        let model = CodexAccountUsage(
+            cacheFile: url,
+            fetch: { _ in
+                try await withCheckedThrowingContinuation {
+                    (c: CheckedContinuation<CodexDailyReport, Error>) in gates.append(c) }
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        let stale = Task { await model.refresh(homes: ["/h"]) }
+        while gates.count < 1 { await Task.yield() }
+        let fresh = Task { await model.refresh(homes: ["/h"]) }
+        while gates.count < 2 { await Task.yield() }
+        #expect(model.fetching == ["/h"])
+        // The old reply lands first: dropped, and it must not clear the
+        // newer refresh's in-flight flag.
+        gates[0].resume(returning: report([("2026-10-14", 999)]))
+        await stale.value
+        #expect(model.fetching == ["/h"])
+        #expect(model.section(for: "/h")?.kind == .loading)
+        gates[1].resume(returning: report([("2026-10-13", 10)]))
+        await fresh.value
+        #expect(model.fetching.isEmpty)
+        #expect(model.section(for: "/h")?.weeks.last?.account == 10)
+        // The cache kept the newer reply, not the 999.
+        let reloaded = CodexAccountUsage(
+            cacheFile: url,
+            fetch: { _ in throw SweError.commandFailed(status: 1, message: "no fetch") },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        #expect(reloaded.entries["/h"]?.report.days.first?.tokens == 10)
+    }
 }

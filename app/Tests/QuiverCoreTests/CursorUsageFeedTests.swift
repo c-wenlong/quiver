@@ -75,6 +75,54 @@ import Testing
         Double(call.first { $0.hasPrefix("--since=") }!.dropFirst("--since=".count))!
     }
 
+    /// The first call parks until `finishCall`; later calls answer `good`
+    /// at once. Lets a test hold the old generation's fetch in flight
+    /// while a swe-path change runs a newer poll.
+    private final class FirstHeldRunner: CommandRunning, @unchecked Sendable {
+        let good: CommandResult
+        private let lock = NSLock()
+        private var recorded: [[String]] = []
+        private var held: CheckedContinuation<CommandResult, Never>?
+        private var waiter: CheckedContinuation<Void, Never>?
+        private var called = false
+
+        init(good: CommandResult) { self.good = good }
+        var calls: [[String]] { lock.withLock { recorded } }
+
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            lock.withLock { recorded.append(arguments) }
+            let isFirst = lock.withLock { () -> Bool in
+                defer { called = true }
+                return !called
+            }
+            if isFirst {
+                let pending = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                    defer { waiter = nil }
+                    return waiter
+                }
+                pending?.resume()
+                return await withCheckedContinuation {
+                    (c: CheckedContinuation<CommandResult, Never>) in
+                    lock.withLock { held = c } }
+            }
+            return good
+        }
+
+        func waitUntilCalled() async {
+            if lock.withLock({ called }) { return }
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                lock.withLock { waiter = c } }
+        }
+
+        func finishCall(_ result: CommandResult) {
+            let pending = lock.withLock { () -> CheckedContinuation<CommandResult, Never>? in
+                defer { held = nil }
+                return held
+            }
+            pending?.resume(returning: result)
+        }
+    }
+
     private func accts() -> [CursorUsageFeed.Account] { [CursorUsageFeed.Account(home: account)] }
 
     @Test func eventsMapToLedgerRecords() async throws {
@@ -335,6 +383,30 @@ import Testing
         let before = Date().addingTimeInterval(-180 * 86_400).timeIntervalSince1970
         #expect((before - 1)...before + 60 ~= sinceArg(runner.calls[1]))
         #expect(await ledger.events(in: allTime).count == 2)
+    }
+
+    @Test func aStaleReplyCannotReinstateTheTooOldVerdict() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        // Call 1 (the old path's poll) parks; the path change's poll
+        // answers "ok" and ingests before the parked reply lands.
+        let runner = FirstHeldRunner(good: reply("ok", twoEvents, accountId: "uid-1"))
+        let feed = feed(runner, ledger: ledger, accounts: accts())
+        let stale = Task { await feed.poll() }
+        await runner.waitUntilCalled()
+        await feed.swePathChanged()
+        #expect(await ledger.events(in: allTime).count == 2)
+        // The old path's fetch fails "unknown subcommand" only now: its
+        // generation is stale, so the verdict must not come back.
+        runner.finishCall(CommandResult(
+            status: 1, stdout: Data(),
+            stderr: "Unknown harness subcommand: usage-events"))
+        await stale.value
+        // sweTooOld stayed off: the next poll still asks swe.
+        await feed.poll()
+        #expect(runner.calls.count == 3)
+        let lastError = await feed.lastError
+        #expect(lastError == nil)
     }
 
     @Test func anIncompleteReplyIngestsButDoesNotAdvanceThrough() async throws {

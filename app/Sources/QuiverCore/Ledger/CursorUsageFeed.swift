@@ -40,6 +40,10 @@ public actor CursorUsageFeed {
     /// An swe without `usage-events` is asked once, then left alone for the
     /// rest of the session.
     private var sweTooOld = false
+    /// Bumped by every poll round and swe-path change; replies from an
+    /// older generation are dropped so a stale fetch cannot reinstate
+    /// `sweTooOld` or write data after the path moved on.
+    private var requestGeneration = 0
     /// The most recent per-account poll failure, for later display. The
     /// stored rows are untouched either way; this only says why nothing
     /// new arrived.
@@ -83,23 +87,30 @@ public actor CursorUsageFeed {
     /// the stored rows, is logged and retried next round.
     public func poll() async {
         guard !sweTooOld else { return }
+        requestGeneration += 1
+        let generation = requestGeneration
         var seenAccounts = Set<String>()
         var changed = 0
         var dirty = false
         for account in accounts() {
             do {
                 changed += try await poll(
-                    account, seenAccounts: &seenAccounts, dirty: &dirty)
+                    account, seenAccounts: &seenAccounts, dirty: &dirty,
+                    generation: generation)
+                sweTooOld = false
             } catch SweError.commandFailed(_, let message)
                 where message.localizedCaseInsensitiveContains("unknown harness subcommand")
                     || message.localizedCaseInsensitiveContains("unknown argument") {
+                guard generation == requestGeneration else { return }
                 sweTooOld = true
                 Self.log.info("installed swe has no harness usage-events; skipping the Cursor feed")
                 return
             } catch {
+                guard generation == requestGeneration else { return }
                 note(error, for: account)
             }
         }
+        guard generation == requestGeneration else { return }
         if dirty { saveProgress() }
         if changed > 0 { await onIngested?() }
     }
@@ -107,6 +118,7 @@ public actor CursorUsageFeed {
     /// The swe path changed in Settings: the "too old" verdict was about
     /// the old build, so clear it and retry the feed at once.
     public func swePathChanged() async {
+        requestGeneration += 1
         sweTooOld = false
         await poll()
     }
@@ -115,7 +127,8 @@ public actor CursorUsageFeed {
     /// changed.
     private func poll(_ account: Account,
                       seenAccounts: inout Set<String>,
-                      dirty: inout Bool) async throws -> Int {
+                      dirty: inout Bool,
+                      generation: Int) async throws -> Int {
         let fullWindow = Date().addingTimeInterval(-Self.window).timeIntervalSince1970
         // The window each account is read through: its high-water mark
         // minus the overlap, or the whole feed window when unknown.
@@ -126,6 +139,7 @@ public actor CursorUsageFeed {
         let expected = progress.profiles[account.home]
         var reply = try await swe().usageEvents(
             accountDir: account.accountDir, since: window(for: expected))
+        guard generation == requestGeneration else { return 0 }
         // A switched or newly seen account reads through its own mark —
         // the profile's old account's overlap would skip the new one's
         // history.
@@ -134,6 +148,7 @@ public actor CursorUsageFeed {
             if own != window(for: expected) {
                 reply = try await swe().usageEvents(
                     accountDir: account.accountDir, since: own)
+                guard generation == requestGeneration else { return 0 }
             }
         }
         if let accountId = reply.accountId, seenAccounts.contains(accountId) {
@@ -153,6 +168,7 @@ public actor CursorUsageFeed {
         // when it cannot. Two profiles on one account therefore write the
         // same keys, and `accountHome` stays with the first-seen profile.
         let accountKey = reply.accountId ?? account.home
+        guard generation == requestGeneration else { return 0 }
         let changed = try await ledger.ingest(reply.events.map {
             Self.record(for: $0, accountKey: accountKey, accountHome: account.home)
         })

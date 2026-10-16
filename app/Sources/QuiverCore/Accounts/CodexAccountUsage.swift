@@ -101,6 +101,10 @@ public final class CodexAccountUsage {
     public private(set) var sweTooOld = false
     /// Accounts being fetched right now.
     public private(set) var fetching: Set<String> = []
+    /// Bumped by every refresh and swe-path change; replies from an
+    /// older generation are dropped so a stale fetch cannot overwrite
+    /// newer data or reinstate `sweTooOld` after the path moved on.
+    @ObservationIgnored private var requestGeneration = 0
 
     private let fetch: (String) async throws -> CodexDailyReport
     /// This Mac's codex tokens per local day for an account home — the
@@ -165,6 +169,8 @@ public final class CodexAccountUsage {
     /// The swe path changed in Settings: the "too old" verdict was about
     /// the old build, so clear it and retry the known accounts at once.
     public func swePathChanged() async {
+        requestGeneration += 1
+        fetching.removeAll()
         sweTooOld = false
         await refresh(homes: lastHomes(), force: true)
     }
@@ -173,8 +179,11 @@ public final class CodexAccountUsage {
     /// every home with an entry. Runs no swe fetch — the "This Mac" side
     /// is rebuilt after each ledger scan or write.
     public func recompute() async {
+        let generation = requestGeneration
         for home in entries.keys {
-            sections[home] = await build(home)
+            let section = await build(home)
+            guard generation == requestGeneration else { return }
+            sections[home] = section
         }
     }
 
@@ -221,11 +230,16 @@ public final class CodexAccountUsage {
     public func refresh(homes: [String], force: Bool = false) async {
         lastHomes = { homes }
         guard !sweTooOld else { return }
+        requestGeneration += 1
+        let generation = requestGeneration
+        fetching.removeAll()
         for home in homes {
             fetching.insert(home)
-            defer { fetching.remove(home) }
+            defer { if generation == requestGeneration { fetching.remove(home) } }
             do {
                 let report = try await fetch(home)
+                guard generation == requestGeneration else { return }
+                sweTooOld = false
                 if report.status == "unavailable" {
                     if entries[home] != nil {
                         // Keep the last good numbers; the section flags
@@ -242,10 +256,12 @@ public final class CodexAccountUsage {
             } catch SweError.commandFailed(_, let message)
                 where message.localizedCaseInsensitiveContains("unknown harness subcommand")
                     || message.localizedCaseInsensitiveContains("unknown argument") {
+                guard generation == requestGeneration else { return }
                 sweTooOld = true
                 Self.log.info("installed swe has no harness usage-daily; hiding the Codex totals")
                 return
             } catch {
+                guard generation == requestGeneration else { return }
                 if entries[home] != nil {
                     markStale(home)
                 } else {
@@ -253,7 +269,9 @@ public final class CodexAccountUsage {
                 }
                 Self.log.error("codex usage-daily failed for an account: \(error.localizedDescription)")
             }
-            sections[home] = await build(home)
+            let section = await build(home)
+            guard generation == requestGeneration else { return }
+            sections[home] = section
         }
         save()
     }
