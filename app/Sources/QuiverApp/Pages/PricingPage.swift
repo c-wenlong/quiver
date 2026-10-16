@@ -32,6 +32,11 @@ private struct PricingContent: View {
             if !model.unpriced.isEmpty {
                 UnpricedBadge(unpriced: model.unpriced) { editing = $0 }
             }
+            SelectMenu(options: [(value: String?.none, title: "All harnesses", icon: nil)]
+                       + model.harnessOptions.map {
+                           (value: $0, title: HarnessMark($0).name, icon: $0)
+                       },
+                       selection: $model.harnessFilter, width: nil)
             // A compact select, not the header-wide tab strip, so the
             // trailing controls fit at every window width.
             SelectMenu(options: OverviewPeriod.allCases.map { ($0, $0.title) },
@@ -53,6 +58,7 @@ private struct PricingContent: View {
             }
         }
         .task(id: model.period) { await model.load() }
+        .task(id: model.harnessFilter) { await model.load() }
         .task(id: app.overview?.completedScans) { await model.load() }
         .sheet(item: $editing) { row in
             PriceSheet(model: model, row: row)
@@ -418,6 +424,12 @@ private struct PriceSheet: View {
                     Text("Covers \(covered.joined(separator: ", ")) in this period.")
                         .font(Theme.caption).foregroundStyle(Theme.textMuted)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if model.harnessFilter != nil {
+                    // One price per model: a saved rate reprices every
+                    // harness's usage of it, filter or not.
+                    Text("Price applies to every harness")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 }
             }
             HStack(spacing: 10) {

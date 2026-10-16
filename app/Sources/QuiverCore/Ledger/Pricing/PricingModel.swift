@@ -76,6 +76,13 @@ public final class PricingModel {
     }
 
     public var period: OverviewPeriod = .month
+    /// Harnesses with usage in the selected period, most tokens first:
+    /// the filter menu's options after its "All harnesses" row.
+    public private(set) var harnessOptions: [String] = []
+    /// When set, every list on the page shows only this harness's usage.
+    /// A selection whose usage vanished (a period change) falls back to
+    /// all on the next load. Not persisted.
+    public var harnessFilter: String?
     public private(set) var groups: [ProviderGroup] = []
     /// Models with unpriced tokens, largest first; the warning button's list.
     public private(set) var unpriced: [PricedModel] = []
@@ -110,7 +117,17 @@ public final class PricingModel {
         isLoading = true
         defer { isLoading = false }
         let range = period.range(now: now(), calendar: calendar)
-        let slices = await ledger.byModelHarness(in: range)
+        let all = await ledger.byModelHarness(in: range)
+        var byHarness: [String: Int] = [:]
+        for slice in all { byHarness[slice.harness, default: 0] += slice.totals.totalTokens }
+        harnessOptions = byHarness
+            .sorted { ($0.value, $0.key) > ($1.value, $1.key) }
+            .map(\.key)
+        if let harnessFilter, byHarness[harnessFilter] == nil {
+            self.harnessFilter = nil
+        }
+        let filter = harnessFilter
+        let slices = filter == nil ? all : all.filter { $0.harness == filter }
         let catalog = await ledger.catalog()
         var merged: [String: PricedModel] = [:]
         var order: [String] = []

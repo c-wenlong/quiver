@@ -3,9 +3,9 @@ import Testing
 @testable import QuiverCore
 
 private func event(_ model: String, tokens: Int = 100, loggedCost: Double? = nil,
-                   harness: String = "claude") -> UsageEvent {
+                   harness: String = "claude", at: Date = Date()) -> UsageEvent {
     UsageEvent(harness: harness, accountHome: "", sessionId: "s", model: model,
-               timestamp: Date(), inputTokens: tokens,
+               timestamp: at, inputTokens: tokens,
                costUSD: loggedCost)
 }
 
@@ -498,3 +498,66 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         _ = temp
     }
 }
+
+extension PricingModelTests {
+    @Test func `a harness filter keeps only its models and tokens`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex"),
+            event("claude-opus-5-5", tokens: 100, harness: "codex"),
+        ], catalog: priced)
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+        let rows = model.groups.flatMap(\.models)
+        #expect(rows.map(\.model).sorted() == ["claude-opus-5-5", "gpt-5"])
+        #expect(rows.allSatisfy { $0.harnesses == ["codex"] })
+        #expect(model.groups.reduce(0) { $0 + $1.tokens } == 400)
+        _ = temp
+    }
+
+    @Test func `the unpriced list follows the filter`() async throws {
+        let (ledger, model, temp) = try makeModel([
+            event("swe-2-max", tokens: 200, harness: "claude"),
+            event("kimi-k2", tokens: 300, harness: "codex"),
+            event("gpt-5", tokens: 10, harness: "codex"),
+        ], catalog: priced)
+        await ledger.setPricing(priced)
+        await model.load()
+        #expect(model.unpriced.map(\.model).sorted() == ["gpt-5", "kimi-k2", "swe-2-max"])
+        model.harnessFilter = "codex"
+        await model.load()
+        #expect(model.unpriced.map(\.model) == ["kimi-k2", "gpt-5"])
+        _ = temp
+    }
+
+    @Test func `a filter whose harness vanished falls back to all`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex",
+                  at: Date().addingTimeInterval(-60 * 86_400)),
+        ], catalog: priced)
+        model.period = .allTime
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+        #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
+        model.period = .today
+        await model.load()
+        #expect(model.harnessFilter == nil)
+        #expect(model.harnessOptions == ["claude"])
+        _ = temp
+    }
+
+    @Test func `the harness options sort by tokens`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 100, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex"),
+            event("swe-2-max", tokens: 200, harness: "devin"),
+        ], catalog: priced)
+        await model.load()
+        #expect(model.harnessOptions == ["codex", "devin", "claude"])
+        _ = temp
+    }
+}
+
