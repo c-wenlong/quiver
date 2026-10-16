@@ -335,6 +335,8 @@ struct PageView: View {
             AgentsMdPage()
         case .mcpServers:
             McpServersPage()
+        case .models:
+            ModelsPage()
         case .plugins:
             PluginsPage()
         case .apiKeys:

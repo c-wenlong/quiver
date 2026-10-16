@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Artificial Analysis spends one of its 1,000 daily requests on the
   models list.
 
+- **Models page in Quiver.** A new Primitives page benchmarks the models
+  the ledger saw against Artificial Analysis's leaderboard: a provider-
+  coloured bar chart or table over Intelligence, Coding, Maths, Speed,
+  time to first token and cost, scoped to your models plus the top ten,
+  your models only, or the top 25. Data lands in
+  `~/.quiver/data/artificial-analysis/` (raw responses for all six
+  endpoints, refreshed on demand or when the models file is a week old);
+  a failed fetch never clobbers what's stored. Logged names match AA
+  entries by normalised base plus effort, and `model-links.json` can pin
+  a match by hand from the page's ⚠︎ popover. Hovering a model here, in
+  Overview's top models or in Pricing opens a card with its cost rank
+  against the whole list and the headline benchmarks. The sidebar's
+  Manage group is now Accounts, API keys, Harnesses, Compute.
+
 - **`swe harness usage <devin|cursor> --account-dir=<dir>` reads an extra
   account's rate limit from its own files.** Devin resolves to
   `<dir>/devin/credentials.toml` (the CLI's `XDG_DATA_HOME`), Cursor to

@@ -37,12 +37,37 @@ public final class ModelsModel {
             }
         }
 
+        /// The card subtitle under the chart title.
+        public var detail: String {
+            switch self {
+            case .intelligence:
+                "Artificial Analysis Intelligence Index: a blend of their independent evaluations (reasoning, knowledge, coding, agentic tasks)."
+            case .coding: "Artificial Analysis Coding Index."
+            case .maths: "Artificial Analysis Maths Index."
+            case .speed: "Median output tokens per second across providers."
+            case .ttft: "Median seconds to the first token, lower is better."
+            case .cost: "Blended price per 1M tokens (3:1 input to output), lower is better."
+            }
+        }
+
         /// Whether a bigger number is the better bar (the sort runs the
         /// other way for TTFT and cost).
         public var higherIsBetter: Bool {
             switch self {
             case .intelligence, .coding, .maths, .speed: true
             case .ttft, .cost: false
+            }
+        }
+
+        /// The value as the bar and table show it.
+        public func format(_ value: Double) -> String {
+            switch self {
+            case .intelligence, .coding, .maths, .speed:
+                String(Int(value.rounded()))
+            case .ttft:
+                String(format: "%.2fs", value)
+            case .cost:
+                UsageFormat.dollars(value)
             }
         }
 
@@ -191,6 +216,19 @@ public final class ModelsModel {
         rebuild()
     }
 
+    /// The toolbar pickers set these; metric, scope and harness rebuild
+    /// from the slices already in memory, period refetches them.
+    public func set(metric value: Metric) { metric = value; rebuild() }
+    public func set(scope value: Scope) { scope = value; rebuild() }
+    public func set(harnessFilter value: String?) { harnessFilter = value; rebuild() }
+    public func set(viewMode value: ViewMode) { viewMode = value }
+
+    public func set(period value: OverviewPeriod) async {
+        period = value
+        periodSlices = await slices(value.range(now: now(), calendar: calendar))
+        rebuild()
+    }
+
     /// Saves a manual link for an unmatched logged model, then rebuilds.
     public func link(logged: String, to aaID: String) throws {
         var next = links
@@ -226,7 +264,8 @@ public final class ModelsModel {
     /// The effort/mode word a parsed name carried, display-cased.
     private func qualifier(_ parsed: ModelMatcher.Parsed) -> String? {
         if parsed.fast { return "Fast" }
-        return parsed.effort?.prefix(1).uppercased() + (parsed.effort?.dropFirst() ?? "")
+        guard let effort = parsed.effort else { return nil }
+        return effort.prefix(1).uppercased() + effort.dropFirst()
     }
 
     /// Rebuilds rows from `periodSlices`, `allModels` and `links`.
@@ -254,19 +293,52 @@ public final class ModelsModel {
                 .sorted { (entry.byHarness[$0] ?? 0) > (entry.byHarness[$1] ?? 0) }
         }
 
+        // Names that resolve to the same AA model merge into one row —
+        // "grok-4.7" and "grok-4.7-fast" are one bar, not two. The row
+        // keeps the biggest contributor's logged name and qualifier.
         var used: [Row] = []
+        var mergedIndex: [String: Int] = [:]
+        var mergedHarness: [String: [String: Int]] = [:]
+        var dominantTokens: [String: Int] = [:]
         var stillUnmatched: [Unmatched] = []
         var matchedIDs: Set<String> = []
         for (logged, entry) in byModel {
             let aa = ModelMatcher.match(logged, in: allModels, links: links)
             let parsed = ModelMatcher.parse(logged)
-            if let aa { matchedIDs.insert(aa.id) }
-            else { stillUnmatched.append(Unmatched(model: logged, tokens: entry.tokens)) }
-            used.append(Row(logged: logged, aa: aa, harnesses: entry.harnesses,
-                            tokens: entry.tokens,
-                            value: aa.flatMap { metric.value(of: $0) },
-                            costPercentile: aa.flatMap { CostPercentile.rank(of: $0, in: allModels) },
-                            qualifier: qualifier(parsed)))
+            guard let aa else {
+                stillUnmatched.append(Unmatched(model: logged, tokens: entry.tokens))
+                used.append(Row(logged: logged, aa: nil, harnesses: entry.harnesses,
+                                tokens: entry.tokens, value: nil, costPercentile: nil,
+                                qualifier: qualifier(parsed)))
+                continue
+            }
+            matchedIDs.insert(aa.id)
+            if let index = mergedIndex[aa.id] {
+                used[index].tokens += entry.tokens
+                for (harness, tokens) in entry.byHarness {
+                    mergedHarness[aa.id, default: [:]][harness, default: 0] += tokens
+                }
+                if entry.tokens > 0, entry.tokens > dominantTokens[aa.id] ?? 0 {
+                    dominantTokens[aa.id] = entry.tokens
+                    used[index].logged = logged
+                    used[index].qualifier = qualifier(parsed)
+                }
+            } else {
+                mergedIndex[aa.id] = used.count
+                dominantTokens[aa.id] = entry.tokens
+                mergedHarness[aa.id] = entry.byHarness
+                used.append(Row(logged: logged, aa: aa, harnesses: entry.harnesses,
+                                tokens: entry.tokens,
+                                value: metric.value(of: aa),
+                                costPercentile: CostPercentile.rank(of: aa, in: allModels),
+                                qualifier: qualifier(parsed)))
+            }
+        }
+        for (id, byHarness) in mergedHarness {
+            if let index = mergedIndex[id] {
+                used[index].harnesses = byHarness
+                    .sorted { ($0.value, $0.key) > ($1.value, $1.key) }.map(\.key)
+            }
         }
         unmatched = stillUnmatched.sorted { ($0.tokens, $0.model) > ($1.tokens, $1.model) }
 

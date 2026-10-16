@@ -35,26 +35,34 @@ public struct ModelMatcher: Sendable {
         if let slash = base.lastIndex(of: "/") {
             base = String(base[base.index(after: slash)...])
         }
-        // Snapshot dates: "@20251001", "-2025-10-01", "-20251001".
-        for pattern in [#"@\d{8}$"#, #"-\d{4}-\d{2}-\d{2}$"#, #"-\d{8}$"#] {
-            if let range = base.range(of: pattern, options: .regularExpression) {
+        // Modes and snapshot dates can stack in any order
+        // ("model-max@20261003-fast"), so strip each until nothing moves.
+        var fast = false
+        var changed = true
+        while changed {
+            changed = false
+            if let range = base.range(of: #"-fast$"#, options: .regularExpression) {
+                fast = true
                 base.removeSubrange(range)
+                changed = true
+            }
+            if effort == nil,
+               let range = base.range(of: #"-(minimal|low|medium|high|xhigh|max)$"#,
+                                      options: .regularExpression) {
+                effort = String(base[range].dropFirst())
+                base.removeSubrange(range)
+                changed = true
+            }
+            // Snapshot dates: "@20251001", "-2025-10-01", "-20251001".
+            for pattern in [#"@\d{8}$"#, #"-\d{4}-\d{2}-\d{2}$"#, #"-\d{8}$"#] {
+                if let range = base.range(of: pattern, options: .regularExpression) {
+                    base.removeSubrange(range)
+                    changed = true
+                }
             }
         }
         base = base.replacingOccurrences(of: ".", with: "-")
             .replacingOccurrences(of: " ", with: "-")
-        // "-fast" is a mode, not part of the model's name.
-        var fast = false
-        if let range = base.range(of: #"-fast$"#, options: .regularExpression) {
-            fast = true
-            base.removeSubrange(range)
-        }
-        // A trailing effort token: "gpt-6.1-sol-max".
-        if effort == nil, let range = base.range(of: #"-(minimal|low|medium|high|xhigh|max)$"#,
-                                                 options: .regularExpression) {
-            effort = String(base[range].dropFirst())
-            base.removeSubrange(range)
-        }
         return Parsed(base: base, effort: effort, fast: fast)
     }
 
