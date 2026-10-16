@@ -1077,7 +1077,7 @@ private struct HarnessLegend: View {
                 HStack(spacing: 6) {
                     checkbox(shown: !model.isHidden(harness))
                     HarnessIcon(harness: harness, size: 13)
-                    Text(harness.capitalized).font(.system(size: 11))
+                    Text(HarnessMark(harness).name).font(.system(size: 11))
                         .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
                     Spacer()
                     Text(Self.time(model.totals[harness] ?? 0))
@@ -1085,7 +1085,7 @@ private struct HarnessLegend: View {
                 }
             }
             .help(model.isHidden(harness) ? "Show \(harness)" : "Hide \(harness)")
-            .accessibilityLabel("\(harness.capitalized), \(model.isHidden(harness) ? "hidden" : "shown")")
+            .accessibilityLabel("\(HarnessMark(harness).name), \(model.isHidden(harness) ? "hidden" : "shown")")
             .accessibilityAddTraits(.isToggle)
             .accessibilityValue(model.isHidden(harness) ? "0" : "1")
         }
