@@ -389,13 +389,21 @@ public actor Ledger {
         totals.eventCount = group.count
         if group.hasLoggedCost {
             totals.costUSD = group.loggedCost
-        } else if let rates = pricing.rates(for: group.model) {
+            return totals
+        }
+        // Fast mode arrives as a `-fast` suffix on the model name with an
+        // empty tier; split it before lookup and before the cost call.
+        let (model, tier) = PricingCatalog.splitTierSuffix(model: group.model, tier: group.tier ?? "")
+        if let rates = pricing.rates(for: model) {
             let crosses = rates.longContext.map { long in
                 (pricing.thresholds.firstIndex(of: long.threshold) ?? Int.max) < group.thresholdsCrossed
             } ?? false
             totals.costUSD = rates.cost(
                 input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite,
-                cacheWrite1h: t.cacheWrite1h, reasoning: t.reasoning, tier: group.tier, crossesLongContext: crosses)
+                cacheWrite1h: t.cacheWrite1h, reasoning: t.reasoning, tier: tier, crossesLongContext: crosses)
+        } else if PricingCatalog.isFree(model) {
+            // A free model is priced at zero, not reported as unpriced.
+            totals.costUSD = 0
         } else if t.total > 0 {
             totals.unpricedTokens = t.total
             totals.unpricedModels = [group.model]
