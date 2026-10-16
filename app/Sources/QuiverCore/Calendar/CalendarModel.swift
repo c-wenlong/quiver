@@ -100,15 +100,20 @@ public final class CalendarModel {
     public var mode: Mode = .week {
         didSet {
             if mode != mode.normalized { mode = mode.normalized }
+            harnessAccounts.removeAll()
             applyCached()
             persist()
         }
     }
     /// The day the visible range is built around.
-    public private(set) var anchor: Date
+    public private(set) var anchor: Date {
+        didSet { harnessAccounts.removeAll() }
+    }
     /// Every block the providers reported for the visible range, before
     /// the legend's hidden toggles apply. `visibleBlocks` is the grid's.
-    public private(set) var blocks: [ActivityBlock] = []
+    public private(set) var blocks: [ActivityBlock] = [] {
+        didSet { harnessAccounts.removeAll() }
+    }
     /// The last provider read that failed; nil once every provider read
     /// cleanly. Failed providers keep their last good blocks meanwhile.
     public private(set) var loadError: String?
@@ -139,6 +144,13 @@ public final class CalendarModel {
     /// Filled lazily while views read accounts, so it must not be
     /// observed: a write during a render would invalidate that render.
     @ObservationIgnored private var knownHomes: [String: [String]] = [:]
+    /// Same rule for the per-block lookups: `accountName` calls the
+    /// injected label closure, which on the live app rebuilds the
+    /// accounts store from disk — memoised once per home per load.
+    @ObservationIgnored private var accountLabels: [String: String] = [:]
+    /// `accounts(for:)` per harness, rebuilt when `blocks` or the anchor
+    /// (and with it `windowBlocks`) changes.
+    @ObservationIgnored private var harnessAccounts: [String: [String]] = [:]
 
     private func knownHomes(for harness: String) -> [String] {
         if let cached = knownHomes[harness] { return cached }
@@ -378,6 +390,8 @@ public final class CalendarModel {
         let mine = generation
         // Profile edits land here: fresh homes get picked up next load.
         knownHomes.removeAll()
+        accountLabels.removeAll()
+        harnessAccounts.removeAll()
         let range = range
         if let cached = cache[range] {
             blocks = Self.flatten(cached)
@@ -539,9 +553,12 @@ public final class CalendarModel {
     /// the window and Quiver's known accounts for it, so a quiet account
     /// still lists (like Notion's per-calendar rows) at "0m".
     public func accounts(for harness: String) -> [String] {
+        if let cached = harnessAccounts[harness] { return cached }
         var homes = Set(windowBlocks.filter { $0.harness == harness }.map(\.accountHome))
         homes.formUnion(knownHomes(for: harness))
-        return homes.sorted()
+        let sorted = homes.sorted()
+        harnessAccounts[harness] = sorted
+        return sorted
     }
 
     /// The account rows show whenever the harness has more than one
@@ -558,7 +575,10 @@ public final class CalendarModel {
     /// The legend's label for an account home: the profile's name when
     /// the accounts store knows one, else the home path itself.
     public func accountName(for accountHome: String) -> String {
-        accountLabel(accountHome)
+        if let cached = accountLabels[accountHome] { return cached }
+        let name = accountLabel(accountHome)
+        accountLabels[accountHome] = name
+        return name
     }
 
     /// Seconds in the range per harness, each block counted only for its

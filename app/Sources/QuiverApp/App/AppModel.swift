@@ -303,9 +303,14 @@ final class AppModel {
                                  terminal: { terminalChoice() },
                                  installedApp: { [apps] in apps.installedApp(for: $0) })
 
-        let directory: @Sendable () -> AccountDirectory = {
-            AccountDirectory(profiles: (try? store.load()) ?? [], paths: store.paths(for:), home: home)
-        }
+        // Built once per profiles.json mtime, not per call: the calendar
+        // asks for account labels once per rendered block.
+        let directoryCache = CachedAccountDirectory(
+            file: quiver.appending(path: "accounts/profiles.json")) {
+                AccountDirectory(profiles: (try? store.load()) ?? [],
+                                 paths: store.paths(for:), home: home)
+            }
+        let directory: @Sendable () -> AccountDirectory = { directoryCache.current }
         do {
             // User prices (config/pricing.json) win over both published lists.
             let pricing = PricingStore(cacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
