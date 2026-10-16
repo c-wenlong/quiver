@@ -26,6 +26,7 @@ GITHUB_TREE = "https://github.com/c-wenlong/quiver/tree/main/"
 # repo-relative source -> staged path, in nav order. cli.md is generated.
 PAGES: list[tuple[str, str]] = [
     ("README.md", "index.md"),
+    ("docs/harness-support.md", "harness-support.md"),
     ("app/README.md", "app/index.md"),
     ("app/ROADMAP.md", "app/roadmap.md"),
     ("docs/app-architecture.md", "app/architecture.md"),

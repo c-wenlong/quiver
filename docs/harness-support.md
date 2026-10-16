@@ -1,0 +1,179 @@
+# Harness support
+
+Quiver knows about more harnesses than it has features for. This page shows,
+per harness, what actually works today. **Yes** means fully supported.
+**Partial** means it works with a limitation, spelled out in the notes under
+each table. **No** means not implemented, usually because the harness writes
+no data Quiver can read.
+
+Only harnesses `swe discover` can find are listed, plus Jules and Mastracode,
+which `swe install` knows but discovery does not.
+
+## Setup
+
+| Harness | Install | Instructions | Skills | Plugins | MCP sync |
+|---|---|---|---|---|---|
+| Claude Code | Yes | Yes | Yes | Yes | Yes |
+| Codex | Yes | Yes | Yes | Yes | Yes |
+| Cursor | Yes | Yes | Yes | Partial | Yes |
+| Gemini | Yes | Yes | Yes | No | Yes |
+| Copilot | Yes | No | Yes | No | Yes |
+| Cline | Yes | Yes | Yes | No | Yes |
+| Kilo | Yes | Yes | Yes | No | Yes |
+| OpenCode | Yes | Yes | Yes | No | Yes |
+| Droid | Yes | Yes | Yes | No | Yes |
+| Devin | Yes | Yes | Yes | No | Partial |
+| Crush | Yes | Yes | Yes | No | Partial |
+| Qwen Code | Yes | Yes | Yes | No | Partial |
+| Mistral Vibe | Yes | No | No | No | Partial |
+| Goose | Yes | No | No | No | Partial |
+| Aider | Yes | No | No | No | Partial |
+| Continue | Yes | No | No | No | Partial |
+| Pi | Yes | No | No | No | Partial |
+| Forge | Yes | No | No | No | Partial |
+| Augment | Yes | No | No | No | Partial |
+| Kiro | Yes | No | No | No | Partial |
+| Blackbox | Yes | No | No | No | Partial |
+| Freebuff | Yes | No | No | No | Partial |
+| Jules | Yes | No | No | No | No |
+| Mastracode | Yes | No | No | No | No |
+
+Notes:
+
+- **Cursor, plugins:** `swe plugins` lists Cursor's installed plugins, but
+  install, uninstall, enable and disable only run through the Claude and
+  Codex CLIs.
+- **Copilot, instructions:** Quiver links its shared skills directory but
+  has no confirmed instructions file for Copilot, so `AGENTS.md` is not
+  linked there.
+- **Cline, instructions:** linked at `~/.agents/AGENTS.md`, the shared
+  location Cline reads.
+- **MCP, Partial:** these harnesses sync through the conventional
+  `~/.<name>/mcp.json` path, which Quiver cannot confirm the harness
+  actually reads. Claude, Cursor, Copilot, Cline, Gemini, OpenCode, Kilo,
+  Codex and Droid have verified config locations instead.
+- **Jules and Mastracode:** install-only. They are not in the discovery
+  catalog, so MCP sync never sees them.
+
+## Sessions
+
+Session listing and resume are the same in `swe session` and the app's
+Sessions page: the app reads swe's output.
+
+| Harness | Sessions list | Resume a session |
+|---|---|---|
+| Claude Code | Yes | Yes |
+| Codex | Yes | Yes |
+| Cursor | Yes | Yes |
+| OpenCode | Yes | Yes |
+| Kilo | Yes | Yes |
+| Pi | Yes | Yes |
+| Droid | Yes | Yes |
+| Copilot | Yes | Yes |
+| Devin | Yes | Yes |
+| Freebuff | Yes | Yes |
+| Cline | Yes | Yes |
+| Gemini | Yes | Partial |
+| Continue | Yes | Partial |
+| Crush | Yes | Partial |
+| Forge | Yes | Partial |
+| Qwen Code | No | No |
+| Mistral Vibe | No | No |
+| Goose | No | No |
+| Aider | No | No |
+| Augment | No | No |
+| Kiro | No | No |
+| Blackbox | No | No |
+| Jules | No | No |
+| Mastracode | No | No |
+
+Notes:
+
+- **Resume, Partial:** Gemini, Continue, Crush and Forge take no session id
+  on their command lines, so Quiver can only reopen the harness in the
+  session's directory, not the session itself.
+- **Codex:** resumes by thread id; sessions whose ids carry no thread uuid
+  offer no resume.
+
+## Usage in the app
+
+| Harness | Tokens and cost | Calendar activity | Usage limits |
+|---|---|---|---|
+| Claude Code | Yes | Yes | Yes |
+| Codex | Yes | Yes | Yes |
+| OpenCode | Yes | Yes | No |
+| Devin | Yes | Yes | Yes |
+| Droid | No | Yes | Yes |
+| Pi | No | Yes | No |
+| Freebuff | No | Yes | Yes |
+| Cursor | No | Yes | Yes |
+| Copilot | No | No | Yes |
+| Gemini | No | No | No |
+| Cline | No | No | No |
+| Kilo | No | No | No |
+| Crush | No | No | No |
+| Continue | No | No | No |
+| Forge | No | No | No |
+| Qwen Code | No | No | No |
+| Mistral Vibe | No | No | No |
+| Goose | No | No | No |
+| Aider | No | No | No |
+| Augment | No | No | No |
+| Kiro | No | No | No |
+| Blackbox | No | No | No |
+| Jules | No | No | No |
+| Mastracode | No | No | No |
+
+Notes:
+
+- **Tokens and cost:** only Claude, Codex, OpenCode and Devin write logs
+  Quiver prices. Every other harness shows no spend on the Overview and no
+  cost next to its sessions.
+- **Cursor:** its calendar comes from the editor's own database, not the
+  CLI, and it writes no token log Quiver reads. Calendar yes, tokens no.
+- **Droid, Pi, Freebuff:** calendar reads their session files, but none of
+  them carries token counts, so they contribute time, not spend.
+- **Usage limits:** meters exist for Claude, Codex, Copilot, Cursor, Devin,
+  Droid and Freebuff. Devin and Cursor report several quota windows; the
+  rest report their main limits.
+
+## Accounts and processes
+
+| Harness | Multiple accounts | Account-aware launch | Compute attribution |
+|---|---|---|---|
+| Claude Code | Yes | Yes | Yes |
+| Codex | Yes | Yes | Yes |
+| Devin | Partial | Yes | Yes |
+| Cursor | Partial | Yes | Yes |
+| Every other discovered harness | No | No | Yes |
+
+Notes:
+
+- **Multiple accounts:** only Claude, Codex, Devin and Cursor can hold extra
+  profiles. Claude and Codex extras are full accounts: own sign-in, own
+  usage, own cost.
+- **Cursor:** the `cursor-agent` CLI keeps one global sign-in, so extra
+  accounts are desktop-only (each gets its own app instance and data
+  directory).
+- **Devin:** extra accounts show usage limits, but tokens and cost come
+  from the default account only.
+- **Compute:** the Compute page attributes CPU and memory for every starred
+  harness by matching its command names. Harnesses whose config lives
+  outside `~/.<name>` (Droid, Qwen Code, Mistral Vibe) are matched by
+  process name only.
+
+## Known gaps
+
+- **Tokens and cost exist for four harnesses only** (Claude, Codex,
+  OpenCode, Devin). For everything else the Overview shows time and limits,
+  never spend.
+- **Copilot gets shared skills but no instructions link**; no confirmed
+  file exists to link.
+- **Devin extra profiles are not counted in the ledger**, so their spend is
+  invisible even though their limits show.
+- **Grok** has a session reader, but no discovery or install entry: it
+  cannot appear in `swe list` or the app, and its sessions only surface
+  through `swe session` output.
+- **Mistral Vibe, Goose, Aider, Augment, Kiro and Blackbox** are
+  discoverable and installable but have no instructions, skills, sessions
+  or usage support yet.
