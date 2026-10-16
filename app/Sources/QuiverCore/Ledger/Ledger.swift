@@ -12,15 +12,25 @@ public struct LedgerRoots: Sendable, Equatable {
     public var openCodeDatabases: [URL]
     /// Devin CLI databases (`sessions.db`).
     public var devinDatabases: [URL]
+    /// Pi homes; session logs are under `<home>/agent/sessions`.
+    public var piHomes: [URL]
+    /// Droid homes (`~/.factory`); session totals are under `<home>/sessions`.
+    public var droidHomes: [URL]
+    /// Cline homes; sessions are under `<home>/data/sessions`.
+    public var clineHomes: [URL]
 
     public init(
         claudeHomes: [URL] = [], codexHomes: [URL] = [],
-        openCodeDatabases: [URL] = [], devinDatabases: [URL] = []
+        openCodeDatabases: [URL] = [], devinDatabases: [URL] = [],
+        piHomes: [URL] = [], droidHomes: [URL] = [], clineHomes: [URL] = []
     ) {
         self.claudeHomes = claudeHomes
         self.codexHomes = codexHomes
         self.openCodeDatabases = openCodeDatabases
         self.devinDatabases = devinDatabases
+        self.piHomes = piHomes
+        self.droidHomes = droidHomes
+        self.clineHomes = clineHomes
     }
 
     /// The default locations under one user home, plus any profile homes.
@@ -32,7 +42,10 @@ public struct LedgerRoots: Sendable, Equatable {
             claudeHomes: [home.appendingPathComponent(".claude")] + claudeProfiles,
             codexHomes: [home.appendingPathComponent(".codex")] + codexProfiles,
             openCodeDatabases: [home.appendingPathComponent(".local/share/opencode/opencode.db")],
-            devinDatabases: [home.appendingPathComponent(".local/share/devin/cli/sessions.db")])
+            devinDatabases: [home.appendingPathComponent(".local/share/devin/cli/sessions.db")],
+            piHomes: [home.appendingPathComponent(".pi")],
+            droidHomes: [home.appendingPathComponent(".factory")],
+            clineHomes: [home.appendingPathComponent(".cline")])
     }
 }
 
@@ -182,6 +195,32 @@ public actor Ledger {
             report.databasesRead += try scanSource(database, kind: "Devin",
                                                    scan: DatabaseSources.scanDevin, report: &report)
         }
+        for home in roots.piHomes {
+            for file in Self.jsonlFiles(under: home.appendingPathComponent("agent/sessions")) {
+                if Task.isCancelled { return report }
+                try scanFile(file, accountHome: home.path, parser: PiFileParser.self, seen: &seen, report: &report)
+                await Task.yield()
+            }
+        }
+        for home in roots.droidHomes {
+            for file in Self.files(under: home.appendingPathComponent("sessions"), suffix: ".settings.json") {
+                if Task.isCancelled { return report }
+                try scanSessionFile(file, accountHome: home.path,
+                                    parse: { try SessionTotalsFile.droid(settings: $0, accountHome: home.path) },
+                                    report: &report)
+            }
+        }
+        for home in roots.clineHomes {
+            // `<id>/<id>.json`: the stem must equal its session directory.
+            for file in Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json")
+            where file.deletingPathExtension().lastPathComponent
+                == file.deletingLastPathComponent().lastPathComponent {
+                if Task.isCancelled { return report }
+                try scanSessionFile(file, accountHome: home.path,
+                                    parse: { try SessionTotalsFile.cline(session: $0, accountHome: home.path) },
+                                    report: &report)
+            }
+        }
         return report
     }
 
@@ -278,6 +317,50 @@ public actor Ledger {
             files.append(url)
         }
         return files.sorted { $0.path < $1.path }
+    }
+
+    /// Every file under `directory` ending in `suffix`, path-sorted.
+    static func files(under directory: URL, suffix: String) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+        else { return [] }
+        var files: [URL] = []
+        for case let url as URL in enumerator where url.lastPathComponent.hasSuffix(suffix) {
+            files.append(url)
+        }
+        return files.sorted { $0.path < $1.path }
+    }
+
+    /// One session-total file (Droid's `.settings.json`, Cline's session
+    /// JSON): re-read whole whenever its stamp changes; the record upserts
+    /// under the session's stable key, replacing rather than duplicating.
+    private func scanSessionFile(
+        _ url: URL, accountHome: String,
+        parse: (URL) throws -> [LedgerRecord], report: inout ScanReport
+    ) throws {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return }
+        if let saved = try store.cursor(for: path),
+           saved.inode == info.inode, saved.size == info.size, saved.modified == info.modified {
+            report.filesUnchanged += 1
+            return
+        }
+        let records = try parse(URL(fileURLWithPath: path))
+        try store.db.execute("BEGIN IMMEDIATE")
+        do {
+            for record in records {
+                try store.upsert(record)
+            }
+            try store.save(FileCursor(
+                path: path, inode: info.inode, size: info.size, modified: info.modified,
+                offset: info.size, headHash: 0, headLength: 0, tailHash: 0, tailLength: 0,
+                state: nil, skippedLines: 0))
+            try store.db.execute("COMMIT")
+        } catch {
+            store.rollback()
+            throw error
+        }
+        report.filesRead += 1
     }
 
     // MARK: - Queries

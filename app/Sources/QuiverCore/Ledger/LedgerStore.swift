@@ -143,7 +143,8 @@ final class LedgerStore {
         if try selectByKey.step() {
             let existingSidechain = selectByKey.int(0) != 0
             let existingTotal = selectByKey.int(1)
-            if Self.shouldReplace(record.isSidechain, total, existingSidechain, existingTotal) {
+            if record.authoritative
+                || Self.shouldReplace(record.isSidechain, total, existingSidechain, existingTotal) {
                 try write(record, key: key)
             }
             return

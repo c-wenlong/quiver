@@ -1,0 +1,270 @@
+import Foundation
+import Testing
+@testable import QuiverCore
+
+/// The three new ledger sources: Pi's per-message JSONL, Droid's and
+/// Cline's rewritten session-total files.
+@Suite struct LedgerImportTests {
+    // MARK: - Fixtures
+
+    private static func piMessage(id: String, ms: Int, input: Int, output: Int,
+                                  reasoning: Int, cacheRead: Int, cost: Double) -> String {
+        """
+        {"type":"message","id":"\(id)","message":{"role":"assistant","model":"gpt-5.3-codex",\
+        "provider":"github-copilot","timestamp":\(ms),"usage":{"input":\(input),"output":\(output),\
+        "cacheRead":\(cacheRead),"cacheWrite":0,"reasoning":\(reasoning),\
+        "totalTokens":\(input + output + cacheRead),\
+        "cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":\(cost)}}}}
+        """ + "\n"
+    }
+
+    private func piHome(_ temp: TempDir, lines: String) throws -> URL {
+        let home = temp.path("pi")
+        let file = home.appendingPathComponent(
+            "agent/sessions/-Users-x-proj/2026-10-03T10-00-00-000Z_aaaa.jsonl")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(lines.utf8).write(to: file)
+        return home
+    }
+
+    private func droidHome(_ temp: TempDir, usage: String, lastStamp: String = "2026-10-03T12:00:00Z") throws -> URL {
+        let home = temp.path("factory")
+        let dir = home.appendingPathComponent("sessions/-Users-x-proj")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("""
+            {"type":"session_start","cwd":"/Users/x/proj"}
+            {"type":"message","timestamp":"2026-10-03T11:00:00Z","message":{"role":"assistant"}}
+            {"type":"message","timestamp":"\(lastStamp)","message":{"role":"assistant"}}
+            """.utf8).write(to: dir.appendingPathComponent("s1.jsonl"))
+        try Data("""
+            {"model":"glm-5.2","reasoningEffort":"high",
+             "inclusiveTokenUsage":{\(usage)}}
+            """.utf8).write(to: dir.appendingPathComponent("s1.settings.json"))
+        return home
+    }
+
+    private func clineHome(_ temp: TempDir, metadata: String) throws -> URL {
+        let home = temp.path("cline")
+        let dir = home.appendingPathComponent("data/sessions/t1_abc")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("""
+            {"session_id":"t1_abc","provider":"xai","model":"grok-4-1-fast-reasoning",
+             "cwd":"/Users/x/proj","started_at":"2026-10-03T10:00:00Z",
+             "ended_at":"2026-10-03T11:00:00Z","status":"done",
+             "metadata":{"title":"t",\(metadata)}}
+            """.utf8).write(to: dir.appendingPathComponent("t1_abc.json"))
+        try Data(#"{"version":1,"messages":[]}"#.utf8)
+            .write(to: dir.appendingPathComponent("t1_abc.messages.json"))
+        return home
+    }
+
+    // MARK: - Pi
+
+    @Test func piAssistantMessagesGivePricedEvents() async throws {
+        let temp = try TempDir()
+        let home = try piHome(temp, lines:
+            """
+            {"type":"session","cwd":"/Users/x/proj","timestamp":1759480000000}
+            {"type":"message","id":"u1","message":{"role":"user","timestamp":1759480001000}}
+            """ + "\n"
+            + Self.piMessage(id: "a1", ms: 1759480002000, input: 100, output: 50,
+                             reasoning: 20, cacheRead: 300, cost: 0.01)
+            + Self.piMessage(id: "a2", ms: 1759480003000, input: 40, output: 30,
+                             reasoning: 0, cacheRead: 0, cost: 0.005))
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(piHomes: [home]))
+
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 2)
+        let first = try #require(events.first)
+        // reasoning is inside output: stored output is output - reasoning.
+        #expect(first.inputTokens == 100)
+        #expect(first.outputTokens == 30)
+        #expect(first.reasoningTokens == 20)
+        #expect(first.cacheReadTokens == 300)
+        #expect(first.costUSD == 0.01)
+        #expect(first.model == "gpt-5.3-codex")
+        #expect(first.harness == "pi")
+        #expect(first.cwd == "/Users/x/proj")
+        // swe's Pi session id is the file's full path.
+        #expect(first.sessionId.hasSuffix("_aaaa.jsonl"))
+    }
+
+    @Test func piRescanAppendsOnlyTheNewLine() async throws {
+        let temp = try TempDir()
+        let home = try piHome(temp, lines:
+            Self.piMessage(id: "a1", ms: 1759480002000, input: 10, output: 10,
+                           reasoning: 0, cacheRead: 0, cost: 0.001))
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(piHomes: [home]))
+        #expect(await ledger.events(in: allTime).count == 1)
+
+        let file = home.appendingPathComponent(
+            "agent/sessions/-Users-x-proj/2026-10-03T10-00-00-000Z_aaaa.jsonl")
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(Self.piMessage(
+            id: "a2", ms: 1759480003000, input: 20, output: 20,
+            reasoning: 0, cacheRead: 0, cost: 0.002).utf8))
+        try handle.close()
+
+        try await ledger.scan(roots: LedgerRoots(piHomes: [home]))
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 2)
+        #expect(await ledger.totals(in: allTime).costUSD == 0.003)
+    }
+
+    // MARK: - Droid
+
+    @Test func droidSettingsGiveOneEventAtTheTranscriptsLastStamp() async throws {
+        let temp = try TempDir()
+        let home = try droidHome(temp, usage:
+            """
+            "inputTokens":1000,"outputTokens":200,"cacheReadTokens":5000,
+            "cacheCreationTokens":50,"thinkingTokens":0,"factoryCredits":99
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        let event = try #require(events.first)
+        #expect(event.sessionId == "s1")
+        #expect(event.inputTokens == 1_000)
+        #expect(event.outputTokens == 200)
+        #expect(event.cacheReadTokens == 5_000)
+        #expect(event.cacheWriteTokens == 50)
+        #expect(event.costUSD == nil)
+        #expect(event.model == "glm-5.2")
+        #expect(event.cwd == "/Users/x/proj")
+        #expect(event.timestamp == utc("2026-10-03T12:00:00Z"))
+    }
+
+    @Test func droidRewriteReplacesTheTotals() async throws {
+        let temp = try TempDir()
+        let home = try droidHome(temp, usage:
+            """
+            "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+
+        let file = home.appendingPathComponent("sessions/-Users-x-proj/s1.settings.json")
+        try Data("""
+            {"model":"glm-5.2",
+             "inclusiveTokenUsage":{"inputTokens":2000,"outputTokens":400,
+             "cacheReadTokens":0,"cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":2}}
+            """.utf8).write(to: file)
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events.first?.inputTokens == 2_000)
+        #expect(events.first?.outputTokens == 400)
+    }
+
+    @Test func droidAllZeroUsageGivesNoEvent() async throws {
+        let temp = try TempDir()
+        let home = try droidHome(temp, usage:
+            """
+            "inputTokens":0,"outputTokens":0,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":0
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        #expect(await ledger.events(in: allTime).isEmpty)
+    }
+
+    // MARK: - Cline
+
+    @Test func clineReadsTokensInNotUsageInputTokens() async throws {
+        let temp = try TempDir()
+        let home = try clineHome(temp, metadata:
+            """
+            "tokensIn":100,"tokensOut":20,"cacheReads":900,"cacheWrites":5,"totalCost":0.5,
+            "usage":{"inputTokens":1000,"outputTokens":20,"cacheReadTokens":900,
+                     "cacheWriteTokens":5,"totalCost":0.5}
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
+
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        let event = try #require(events.first)
+        // tokensIn, not usage.inputTokens (100, not 1000).
+        #expect(event.inputTokens == 100)
+        #expect(event.outputTokens == 20)
+        #expect(event.cacheReadTokens == 900)
+        #expect(event.cacheWriteTokens == 5)
+        #expect(event.costUSD == 0.5)
+        #expect(event.sessionId == "t1_abc")
+        #expect(event.model == "grok-4-1-fast-reasoning")
+        #expect(event.timestamp == utc("2026-10-03T11:00:00Z"))
+    }
+
+    @Test func clineZeroCostFallsBackToTheCatalog() async throws {
+        let temp = try TempDir()
+        let home = try clineHome(temp, metadata:
+            """
+            "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
+        let event = try #require(await ledger.events(in: allTime).first)
+        #expect(event.costUSD == nil)
+    }
+
+    @Test func clineRewriteReplacesTheSession() async throws {
+        let temp = try TempDir()
+        let home = try clineHome(temp, metadata:
+            """
+            "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0.5
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
+
+        let file = home.appendingPathComponent("data/sessions/t1_abc/t1_abc.json")
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        var metadata = object["metadata"] as? [String: Any] ?? [:]
+        metadata["tokensIn"] = 300
+        metadata["totalCost"] = 1.5
+        object["metadata"] = metadata
+        try JSONSerialization.data(withJSONObject: object).write(to: file)
+        try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
+
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events.first?.inputTokens == 300)
+        #expect(events.first?.costUSD == 1.5)
+    }
+
+    // MARK: - Calendar
+
+    @Test func ledgerActivitySkipsPiDroidAndCline() async throws {
+        let temp = try TempDir()
+        let pi = try piHome(temp, lines:
+            Self.piMessage(id: "a1", ms: 1759480002000, input: 10, output: 10,
+                           reasoning: 0, cacheRead: 0, cost: 0.001))
+        let droid = try droidHome(temp, usage:
+            """
+            "inputTokens":100,"outputTokens":20,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
+            """)
+        let cline = try clineHome(temp, metadata:
+            """
+            "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0.5
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(piHomes: [pi], droidHomes: [droid], clineHomes: [cline]))
+
+        #expect(await ledger.events(in: allTime).count == 3)
+        // The calendar keeps Pi and Droid's own file sources and no Cline;
+        // the ledger answers for the four original harnesses only.
+        let blocks = try await ledger.activityBlocks(
+            in: allTime, gap: 3600, force: false)
+        #expect(blocks.isEmpty)
+    }
+}

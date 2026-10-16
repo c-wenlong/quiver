@@ -14,7 +14,7 @@ import Foundation
 /// - `reasoningTokens`: thinking or reasoning tokens. Claude and Codex both log
 ///   these inside their output count; the parsers move them here.
 public struct UsageEvent: Sendable, Equatable, Hashable, Codable {
-    /// "claude", "codex", "opencode" or "devin".
+    /// "claude", "codex", "opencode", "devin", "pi", "droid" or "cline".
     public var harness: String
     /// The config root the event was read from, for example `~/.claude` or a
     /// Quiver profile home. It is how usage is split by account.
@@ -77,6 +77,10 @@ struct LedgerRecord: Sendable, Equatable {
     /// request id, so sidechain records also collide on the message id alone.
     var messageId: String?
     var isSidechain: Bool = false
+    /// Session-total sources (Droid, Cline) rewrite one file per session, so
+    /// a re-read under the same key replaces whatever the file said before,
+    /// even when the totals went down.
+    var authoritative: Bool = false
     var event: UsageEvent
 }
 

@@ -90,6 +90,14 @@ public protocol ActivityProviding: Sendable {
                         force: Bool) async throws -> [ActivityBlock]
 }
 
+extension Ledger {
+    /// Harnesses whose ledger events drive the calendar. Pi and Droid have
+    /// their own file activity sources and Cline has none, so letting the
+    /// ledger answer for them would draw the same sessions twice (or draw
+    /// Cline where nothing is wanted).
+    static let calendarHarnesses: Set<String> = ["claude", "codex", "opencode", "devin"]
+}
+
 extension Ledger: ActivityProviding {
     /// Blocks over the ledger's response rows. `events` only reaches back
     /// for logs the app still has, but rows the scanner already committed
@@ -108,6 +116,7 @@ extension Ledger: ActivityProviding {
                 connection = try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
             }
             return try connection!.activityBlocks(in: range, gap: gap)
+                .filter { Self.calendarHarnesses.contains($0.harness) }
         }
     }
 }
