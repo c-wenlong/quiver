@@ -164,6 +164,9 @@ struct ModelCard: View {
 /// plain. `row` hands over the caller's already-merged row — re-resolving
 /// the logged name would lose the aliases folded into it.
 private struct ModelCardHover: ViewModifier {
+    // Optional: the app always provides it, an offscreen test render
+    // does not need a whole AppModel for the stamp.
+    @Environment(AppModel.self) private var app: AppModel?
     var models: ModelsModel?
     var logged: String
     var row: ModelsModel.Row?
@@ -181,6 +184,9 @@ private struct ModelCardHover: ViewModifier {
     @State private var geometry = CardGeometry()
 
     func body(content: Content) -> some View {
+        // Read outside the popover's task so the card's usage reloads
+        // when the overview's ledger re-scan count moves.
+        let stamp = app?.overview?.completedScans
         if let models {
             content
                 .contentShape(.rect)
@@ -254,7 +260,7 @@ private struct ModelCardHover: ViewModifier {
                         .background(HoverRegionView { view, attached in
                             geometry.register(card: Self.key, view: view, attached: attached)
                         })
-                        .task { await models.loadIfNeeded() }
+                        .task { await models.loadIfNeeded(usageStamp: stamp) }
                 }
         } else {
             content

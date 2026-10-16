@@ -45,6 +45,9 @@ private struct ModelsContent: View {
             content
         }
         .task { await model.load() }
+        .task(id: app.overview?.completedScans) {
+            await model.loadIfNeeded(usageStamp: app.overview?.completedScans)
+        }
         .sheet(isPresented: Binding(get: { linking != nil },
                                     set: { if !$0 { linking = nil; linkError = nil } })) {
             if let linking {
@@ -434,6 +437,11 @@ private struct TableCard: View {
             Text("Intelligence").frame(width: 80, alignment: .trailing)
             Text("Coding").frame(width: 64, alignment: .trailing)
             Text("Speed").frame(width: 64, alignment: .trailing)
+            // The picked metric shows when it has no column of its own.
+            if model.metric == .maths || model.metric == .ttft {
+                Text(model.metric == .ttft ? "TTFT" : model.metric.title)
+                    .frame(width: 64, alignment: .trailing)
+            }
             Text("Cost").frame(width: 120, alignment: .leading).padding(.leading, 16)
             Text("Your tokens").frame(width: 80, alignment: .trailing)
         }
@@ -474,6 +482,12 @@ private struct TableRow: View {
             metric(row.aa?.intelligence).frame(width: 80, alignment: .trailing)
             metric(row.aa?.coding).frame(width: 64, alignment: .trailing)
             metric(row.aa?.speed, unit: "t/s").frame(width: 64, alignment: .trailing)
+            if model.metric == .maths || model.metric == .ttft {
+                Text(row.value.map(model.metric.format) ?? "—")
+                    .font(Theme.bodySmall).monospacedDigit()
+                    .foregroundStyle(row.value == nil ? Theme.textMuted : Theme.textPrimary)
+                    .frame(width: 64, alignment: .trailing)
+            }
             CostScale(model: row.aa, rank: row.costPercentile)
                 .frame(width: 120, alignment: .leading).padding(.leading, 16)
             Text(row.tokens > 0 ? UsageFormat.tokens(row.tokens) : "—")

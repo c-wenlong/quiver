@@ -169,6 +169,9 @@ public final class ModelsModel {
     /// Whether a load has completed; the hover card's `loadIfNeeded`
     /// reads it so hovering never re-runs the fetch.
     private var hasLoaded = false
+    /// The overview scan counter the last usage read saw, so a ledger
+    /// re-scan can flag the slices as stale without re-fetching AA data.
+    private var loadedUsageStamp: Int?
 
     public init(store: ArtificialAnalysisStore,
                 keyReader: @escaping @Sendable () async -> String?,
@@ -213,11 +216,34 @@ public final class ModelsModel {
         rebuild()
     }
 
+    /// Re-reads the current period's usage slices and rebuilds — the AA
+    /// data is untouched. Before the first load it runs that load.
+    public func reloadUsage() async {
+        guard hasLoaded else { await load(allowRefresh: false); return }
+        usageGeneration += 1
+        let generation = usageGeneration
+        let fresh = await slices(period.range(now: now(), calendar: calendar))
+        guard generation == usageGeneration else { return }
+        periodSlices = fresh
+        isLoading = false
+        rebuild()
+    }
+
     /// The hover card's read: the cached data only, and only once — a
-    /// hover must never kick off the six-endpoint refresh.
-    public func loadIfNeeded() async {
-        guard !hasLoaded, !isLoading else { return }
-        await load(allowRefresh: false)
+    /// hover must never kick off the six-endpoint refresh. `usageStamp`
+    /// is the overview's scan counter; a new value means the ledger
+    /// re-scanned and the slices need a reload.
+    public func loadIfNeeded(usageStamp: Int? = nil) async {
+        if !hasLoaded {
+            guard !isLoading else { return }
+            loadedUsageStamp = usageStamp
+            await load(allowRefresh: false)
+            return
+        }
+        if let usageStamp, usageStamp != loadedUsageStamp {
+            loadedUsageStamp = usageStamp
+            await reloadUsage()
+        }
     }
 
     /// The toolbar's reload: fetches every endpoint now. A second call
@@ -253,13 +279,7 @@ public final class ModelsModel {
         // Before the first load lands, superseding it would leave the
         // benchmarks unread; run the whole load for the new period.
         guard hasLoaded else { await load(); return }
-        usageGeneration += 1
-        let generation = usageGeneration
-        let fresh = await slices(value.range(now: now(), calendar: calendar))
-        guard generation == usageGeneration else { return }
-        periodSlices = fresh
-        isLoading = false
-        rebuild()
+        await reloadUsage()
     }
 
     /// Saves a manual link for an unmatched logged model, then rebuilds.
@@ -393,9 +413,9 @@ public final class ModelsModel {
         case .yours:
             all = used
         case .top25:
-            let board = topAA(excluding: [], count: 25)
-            let boardIDs = Set(board.map(\.id))
-            all = board.map(leaderboardRow) + used.filter { !boardIDs.contains($0.aa?.id ?? "") }
+            // Leaders only: `leaderboardRow` still reuses the used row
+            // for a model on the board, so its tokens stay marked.
+            all = topAA(excluding: [], count: 25).map(leaderboardRow)
         }
         rows = Self.sort(all, by: metric)
     }

@@ -395,11 +395,12 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         ])
         await model.load()
         model.set(scope: .top25)
-        // Intelligence sorts best-first.
-        #expect(model.rows.map(\.logged) == ["Hi", "Lo", "noval"])
-        // Cost sorts cheapest-first; the valueless row stays last.
+        // Top 25 is the leaderboard only: "noval" has no intelligence,
+        // so it never makes the board even though it ran.
+        #expect(model.rows.map(\.logged) == ["Hi", "Lo"])
+        // Cost sorts cheapest-first; "noval" is still off the board.
         model.set(metric: .cost)
-        #expect(model.rows.map(\.logged) == ["Lo", "Hi", "noval"])
+        #expect(model.rows.map(\.logged) == ["Lo", "Hi"])
         #expect(model.unmatched == [ModelsModel.Unmatched(model: "unmatched-x", tokens: 3)])
     }
 
@@ -540,6 +541,49 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
             get { state.withLock { $0 } }
             set { state.withLock { $0 = newValue } }
         }
+    }
+
+    /// A SlicesBox that also counts its calls.
+    private final class SlicesCounter: @unchecked Sendable {
+        private let state = Mutex<(rows: [ModelUsage], calls: Int)>(([], 0))
+        var current: [ModelUsage] {
+            get { state.withLock { $0.rows } }
+            set { state.withLock { $0.rows = newValue } }
+        }
+        var calls: Int { state.withLock { $0.calls } }
+        func call() -> [ModelUsage] {
+            state.withLock { $0.calls += 1; return $0.rows }
+        }
+    }
+
+    @Test func aNewUsageStampReloadsTheSlicesOnce() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("a", "A", "a", creator: "openai", intelligence: 80),
+        ])
+        let counter = SlicesCounter()
+        counter.current = [slice("a", "claude", tokens: 100)]
+        let model = ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
+                                keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in counter.call() },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian))
+        await model.load()
+        #expect(counter.calls == 1)
+
+        // The ledger re-scanned: the stamp moving reloads just the
+        // usage, not the AA data.
+        counter.current = [slice("a", "claude", tokens: 250)]
+        await model.loadIfNeeded(usageStamp: 1)
+        #expect(counter.calls == 2)
+        #expect(model.rows.filter(\.used).first?.tokens == 250)
+
+        // Same stamp: nothing moved, nothing re-read.
+        counter.current = [slice("a", "claude", tokens: 999)]
+        await model.loadIfNeeded(usageStamp: 1)
+        #expect(counter.calls == 2)
+        #expect(model.rows.filter(\.used).first?.tokens == 250)
     }
 
     @Test func aResetHarnessFilterShowsAllUsageAgain() async throws {
