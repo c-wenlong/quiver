@@ -105,12 +105,16 @@ public final class PricingModel {
     private let apply: @Sendable (PricingCatalog) async -> Void
     private let now: () -> Date
     private let calendar: Calendar
+    /// The period's per-model-per-harness usage; overridable in tests to
+    /// hold a load mid-flight.
+    private let slices: @Sendable (DateInterval) async -> [ModelUsage]
 
     public init(
         ledger: Ledger, overrides: PricingOverrides,
         makeCatalog: @escaping @Sendable () throws -> PricingCatalog,
         apply: @escaping @Sendable (PricingCatalog) async -> Void,
-        now: @escaping () -> Date = Date.init, calendar: Calendar = .current
+        now: @escaping () -> Date = Date.init, calendar: Calendar = .current,
+        slices: (@Sendable (DateInterval) async -> [ModelUsage])? = nil
     ) {
         self.ledger = ledger
         self.overrides = overrides
@@ -118,6 +122,9 @@ public final class PricingModel {
         self.apply = apply
         self.now = now
         self.calendar = calendar
+        self.slices = slices ?? { range in
+            await ledger.byModelHarness(in: range)
+        }
     }
 
     /// Rebuild the rows for the selected period.
@@ -127,7 +134,7 @@ public final class PricingModel {
         isLoading = true
         defer { if generation == loadGeneration { isLoading = false } }
         let range = period.range(now: now(), calendar: calendar)
-        let all = await ledger.byModelHarness(in: range)
+        let all = await slices(range)
         guard generation == loadGeneration else { return }
         periodModels = Array(Set(all.map(\.model))).sorted()
         var byHarness: [String: Int] = [:]

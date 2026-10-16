@@ -549,29 +549,59 @@ extension PricingModelTests {
         _ = temp
     }
 
+    /// Parks the first `slices` call on a continuation the test releases
+    /// by hand, so a superseded load provably sits inside its first
+    /// suspension while its replacement runs to completion.
+    private final class Gate: @unchecked Sendable {
+        var armed = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+
     @Test func `a superseded load does not clear the filter or republish`() async throws {
-        let (_, model, temp) = try makeModel([
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        for (i, e) in [
             event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
             event("gpt-5", tokens: 300, harness: "codex",
                   at: Date().addingTimeInterval(-60 * 86_400)),
-        ], catalog: priced)
+        ].enumerated() {
+            try store.upsert(LedgerRecord(key: "t:\(i)", event: e))
+        }
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let gate = Gate()
+        let catalog = priced
+        let model = PricingModel(
+            ledger: ledger,
+            overrides: PricingOverrides(url: temp.url.appending(path: "config/pricing.json")),
+            makeCatalog: { catalog }, apply: { _ in },
+            slices: { range in
+                if gate.armed {
+                    gate.armed = false
+                    await withCheckedContinuation { gate.waiter = $0 }
+                }
+                return await ledger.byModelHarness(in: range)
+            })
         model.period = .allTime
         await model.load()
         model.harnessFilter = "codex"
         await model.load()
 
-        // A load for "today" (no codex in it) suspends inside, then an
-        // allTime load supersedes it: when the stale one resumes it must
-        // leave the filter, the options and the rows alone.
+        // The stale "today" load (no codex in it) parks on the gate; its
+        // replacement runs, then the stale one resumes and must leave
+        // the filter, the options and the rows alone.
         model.period = .today
+        gate.armed = true
         let stale = Task { await model.load() }
-        while !model.isLoading { await Task.yield() }
+        for _ in 0..<500 where gate.waiter == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let waiter = try #require(gate.waiter, "the first load never parked")
         model.period = .allTime
         await model.load()
+        waiter.resume()
         await stale.value
         #expect(model.harnessFilter == "codex")
         #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
-        _ = temp
     }
 
     @Test func `the covered-by list stays unfiltered`() async throws {
