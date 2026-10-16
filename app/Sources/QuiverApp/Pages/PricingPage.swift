@@ -271,7 +271,6 @@ private struct PricingRow: View {
                             .lineLimit(1).fixedSize()
                     }
                 }
-                .modelCard(app.models, for: row.model) { app.selection = .models }
                 // With no Source column, a caption under the name says it.
                 if !columns.source {
                     Text(sourceText).font(Theme.caption).foregroundStyle(sourceColor)

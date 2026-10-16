@@ -2,19 +2,17 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// The hover card every model label opens, laid out like Devin's model
-/// picker card: the foundation model's name with the effort the user ran
-/// it at in grey, who made it and which harnesses ran it, the headline
+/// The model card on the Models page, laid out like Devin's model picker
+/// card: the foundation model's name with the effort the user ran it at
+/// in grey, who made it and which harnesses ran it, the headline
 /// benchmarks and the user's tokens, then the cost scale and the price
-/// tiles. Unmatched names get a "Link…" action instead. The same card
-/// hangs off Models bars and rows, Overview's top models and Pricing's
-/// model cells.
+/// tiles. The chart shows it beside a hovered bar and the table opens it
+/// from a row. Overview and Pricing don't: they are too crowded for a
+/// popover.
 struct ModelCard: View {
     var row: ModelsModel.Row
     /// The period "Your use" reads from (the Models page's own).
     var period: OverviewPeriod
-    /// Opens the link sheet; nil on pages that can't offer it.
-    var link: (() -> Void)? = nil
 
     static let width: CGFloat = 300
 
@@ -41,9 +39,6 @@ struct ModelCard: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 if row.tokens > 0 {
                     line("Your use", "\(UsageFormat.tokens(row.tokens)) tokens \(periodLabel)")
-                }
-                if let link {
-                    Button("Link…", action: link).secondaryButton()
                 }
             }
         }
@@ -207,7 +202,6 @@ private struct ModelCardHover: ViewModifier {
     var models: ModelsModel?
     var logged: String
     var row: ModelsModel.Row?
-    var link: (() -> Void)?
 
     /// The geometry key this instance registers under; each modifier has
     /// its own CardGeometry, so one key suffices.
@@ -298,8 +292,7 @@ private struct ModelCardHover: ViewModifier {
                             open = false
                         }
                     }), arrowEdge: .bottom) {
-                    ModelCard(row: row ?? models.card(for: logged), period: models.period,
-                              link: link.map { go in { open = false; go() } })
+                    ModelCard(row: row ?? models.card(for: logged), period: models.period)
                         .background(HoverRegionView { view, attached in
                             geometry.register(card: Self.key, view: view, attached: attached)
                         })
@@ -317,8 +310,7 @@ extension View {
     /// merge aliases pass the row itself so the card keeps the merged
     /// harnesses and tokens.
     func modelCard(_ models: ModelsModel?, for logged: String,
-                   row: ModelsModel.Row? = nil,
-                   link: (() -> Void)? = nil) -> some View {
-        modifier(ModelCardHover(models: models, logged: logged, row: row, link: link))
+                   row: ModelsModel.Row? = nil) -> some View {
+        modifier(ModelCardHover(models: models, logged: logged, row: row))
     }
 }
