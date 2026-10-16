@@ -200,12 +200,19 @@ public actor DevinCloudSync {
         }
     }
 
-    /// One sync. With no token saved it does nothing and keeps what is
-    /// stored. Any failure keeps the stored sessions and records why.
+    /// One sync. With no token saved it fetches nothing and keeps the
+    /// stored sessions, but drops a past failure: there is nothing left
+    /// to fix. Any failure keeps the stored sessions and records why.
     public func sync() async {
         generation += 1
         let mine = generation
-        guard let credentials = await credentials(), !credentials.token.isEmpty else { return }
+        guard let credentials = await credentials(), !credentials.token.isEmpty else {
+            guard mine == generation, snapshot.error != nil else { return }
+            snapshot.error = nil
+            save()
+            await onStatus?(nil)
+            return
+        }
         do {
             let me = try await get(Self.SelfResponse.self, path: "/v3/self", token: credentials.token)
             guard mine == generation else { return }
@@ -242,6 +249,9 @@ public actor DevinCloudSync {
             snapshot.sessions = sessions
             save()
             if changed { await onChanged?(sessions) }
+            // A newer sync may have finished, or failed, during onChanged;
+            // its outcome is the one to show.
+            guard mine == generation else { return }
             await onStatus?(nil)
         } catch {
             guard mine == generation else { return }

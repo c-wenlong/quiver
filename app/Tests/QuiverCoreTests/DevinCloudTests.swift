@@ -118,6 +118,49 @@ private final class Statuses: Sendable {
     }
 }
 
+/// Parks the first `pass()` until `release()`; later calls go straight
+/// through. Parking and announcing happen in one locked section.
+private final class ParkFirstCall: Sendable {
+    private struct State {
+        var used = false
+        var parked: CheckedContinuation<Void, Never>?
+        var didPark = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+    private let state = Mutex(State())
+
+    func pass() async {
+        let park = state.withLock { s -> Bool in
+            defer { s.used = true }
+            return !s.used
+        }
+        guard park else { return }
+        await withCheckedContinuation { continuation in
+            state.withLock { s in
+                s.parked = continuation
+                s.didPark = true
+                s.waiter?.resume()
+                s.waiter = nil
+            }
+        }
+    }
+
+    func waitUntilParked() async {
+        await withCheckedContinuation { continuation in
+            state.withLock { s in
+                if s.didPark { continuation.resume() } else { s.waiter = continuation }
+            }
+        }
+    }
+
+    func release() {
+        state.withLock { s in
+            s.parked?.resume()
+            s.parked = nil
+        }
+    }
+}
+
 /// Collects what `onChanged` was handed, in order.
 private final class Changes: Sendable {
     private let list = Mutex<[[String]]>([])
@@ -338,6 +381,49 @@ private final class Changes: Sendable {
         await sync.sync()
         #expect(await sync.sessions.isEmpty)
         #expect(await sync.lastError?.contains("more pages") == true)
+    }
+
+    @Test func removingTheTokenClearsTheErrorButKeepsTheSessions() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        let statuses = Statuses()
+        let token = Mutex<String?>("cog_test")
+        let sync = DevinCloudSync(
+            directory: dir.url,
+            credentials: { token.withLock { $0 }.map { .init(token: $0, orgId: nil) } },
+            transport: api, onStatus: { statuses.record($0) })
+        await sync.sync()
+        api.route("/v3/self", "{}", status: 401)
+        await sync.sync()
+        #expect(await sync.lastError != nil)
+        token.withLock { $0 = nil }
+        await sync.sync()
+        #expect(await sync.lastError == nil)
+        #expect(statuses.values.last! == nil)
+        #expect(await sync.sessions.map(\.id) == ["s1", "s2"])
+        #expect(DevinCloudSync.stored(in: dir.url).error == nil)
+    }
+
+    @Test func anOlderSuccessDoesNotClearANewerFailure() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        let statuses = Statuses()
+        let gate = ParkFirstCall()
+        let sync = DevinCloudSync(
+            directory: dir.url, credentials: { .init(token: "cog_test", orgId: nil) },
+            transport: api, onChanged: { _ in await gate.pass() }, onStatus: { statuses.record($0) })
+        // The older sync succeeds and parks inside onChanged.
+        let older = Task { await sync.sync() }
+        await gate.waitUntilParked()
+        api.route("/v3/self", "{}", status: 500)
+        await sync.sync()
+        gate.release()
+        await older.value
+        #expect(statuses.values.count == 1)
+        #expect(statuses.values.first??.contains("500") == true)
+        #expect(await sync.lastError?.contains("500") == true)
     }
 
     @Test func noTokenMeansNoRequests() async throws {
