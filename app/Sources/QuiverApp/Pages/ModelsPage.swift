@@ -281,14 +281,9 @@ struct ChartCard: View {
     private static let space = "modelChart"
 
     @State private var width: CGFloat = 0
-    /// The column whose card shows, by index into `model.rows`.
-    @State private var hovered: Int?
-    /// The column the pointer is resting on, and the wait before its
-    /// card shows: longer for the first card, shorter to switch.
-    @State private var pending: Int?
-    @State private var rest: Task<Void, Never>?
-    static let openDelay: Duration = .milliseconds(400)
-    static let switchDelay: Duration = .milliseconds(180)
+    /// Which bar's card shows, and the waits around it.
+    @State private var hover = ChartHover()
+    static let openDelay = ChartHover.openDelay
     /// The bar strip's frame in the chart's space; moves as it scrolls.
     @State private var strip: CGRect = .zero
     /// The chart area's size, for keeping the card inside it.
@@ -337,7 +332,7 @@ struct ChartCard: View {
                     HStack(alignment: .top, spacing: Self.spacing) {
                         ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
                             BarColumn(row: row, metric: model.metric, peak: peak) { inside in
-                                if inside { rest(on: index) } else { leave(index) }
+                                if inside { hover.enter(index) } else { hover.leave(index) }
                             }
                             .frame(width: columnWidth - Self.spacing)
                         }
@@ -367,47 +362,11 @@ struct ChartCard: View {
         }
     }
 
-    /// Shows `index`'s card once the pointer has stayed on it for the
-    /// delay, so sweeping across the chart never flashes cards.
-    private func rest(on index: Int?) {
-        if index == hovered {
-            rest?.cancel()
-            pending = nil
-            return
-        }
-        guard index != pending else { return }
-        pending = index
-        rest?.cancel()
-        let delay = hovered == nil ? Self.openDelay : Self.switchDelay
-        rest = Task { @MainActor in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled else { return }
-            hovered = index
-            pending = nil
-        }
-    }
-
-    /// The pointer left `index`'s bar. Its card closes after the switch
-    /// delay, so crossing the gap to the next bar hands the card over
-    /// instead of closing and reopening it. Leaving a bar that is neither
-    /// showing nor about to show changes nothing: the enter on the next
-    /// bar can arrive before the leave on this one.
-    private func leave(_ index: Int) {
-        guard (pending ?? hovered) == index else { return }
-        pending = nil
-        rest?.cancel()
-        rest = Task { @MainActor in
-            try? await Task.sleep(for: Self.switchDelay)
-            guard !Task.isCancelled else { return }
-            hovered = nil
-        }
-    }
-
     /// The card beside the hovered bar: to its right, or to its left
     /// when the right would run out of the chart, top-aligned with the
     /// tallest bar and kept inside the chart area.
     @ViewBuilder private var hoverCard: some View {
-        if let index = hovered, model.rows.indices.contains(index) {
+        if let index = hover.shown, model.rows.indices.contains(index) {
             let left = strip.minX + Self.inset + leadingRoom + CGFloat(index) * columnWidth
             let right = left + columnWidth - Self.spacing
             let gap: CGFloat = 10
@@ -423,7 +382,6 @@ struct ChartCard: View {
                 .textSelection(.disabled)
                 .allowsHitTesting(false)
                 .offset(x: x, y: y)
-                .animation(.snappy(duration: 0.18), value: index)
         }
     }
 
