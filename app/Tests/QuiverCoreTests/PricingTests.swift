@@ -159,6 +159,15 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(catalog.resolve(model: "never-heard-of-it") == nil)
     }
 
+    @Test func `columns drop as the card narrows`() {
+        let full = PricingColumns.visible(forWidth: 700)
+        #expect(full.cacheReadWrite && full.source)
+        let tight = PricingColumns.visible(forWidth: 600)
+        #expect(!tight.cacheReadWrite && tight.source)
+        let tightest = PricingColumns.visible(forWidth: 480)
+        #expect(!tightest.cacheReadWrite && !tightest.source)
+    }
+
     @Test func `providers come from name prefixes`() {
         let cases: [(String, String)] = [
             ("claude-opus-5-5", "anthropic"), ("gpt-5", "openai"), ("o3", "openai"),

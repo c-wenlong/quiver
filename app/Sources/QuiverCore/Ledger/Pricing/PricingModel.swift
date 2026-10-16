@@ -6,6 +6,18 @@ import Observation
 /// from. Saving a user price writes `config/pricing.json`, rebuilds the
 /// catalog, and hands it to `apply`, which is the same path a refreshed
 /// LiteLLM list takes into the ledger, so past usage reprices at once.
+/// Which columns a provider card's table shows at a given content width.
+/// Narrow cards drop the cache rate columns first, then the source
+/// column (the row's hover help and a caption carry them instead).
+public struct PricingColumns: Sendable, Equatable {
+    public var cacheReadWrite: Bool
+    public var source: Bool
+
+    public static func visible(forWidth width: CGFloat) -> PricingColumns {
+        PricingColumns(cacheReadWrite: width >= 640, source: width >= 520)
+    }
+}
+
 @MainActor
 @Observable
 public final class PricingModel {

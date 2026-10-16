@@ -127,7 +127,12 @@ private struct ProviderCard: View {
     /// Rows seen before the fold.
     static let foldLimit = 4
 
+    /// The card's content width: narrow cards drop columns rather than
+    /// clipping them.
+    @State private var width: CGFloat = 0
+
     var body: some View {
+        let columns = PricingColumns.visible(forWidth: width)
         let shown = expanded ? group.models : Array(group.models.prefix(Self.foldLimit))
         VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -142,12 +147,12 @@ private struct ProviderCard: View {
             .padding(.horizontal, 20)
             .padding(.top, 20)
             .padding(.bottom, 12)
-            PricingRow.header
+            PricingRow.header(columns: columns)
                 .padding(.horizontal, 28)
                 .padding(.bottom, 8)
             ForEach(shown) { row in
                 Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline)
-                PricingRow(row: row,
+                PricingRow(row: row, columns: columns,
                            clickable: row.unpricedTokens > 0 || row.source == .yours) { edit(row) }
             }
             if group.models.count > Self.foldLimit {
@@ -160,6 +165,7 @@ private struct ProviderCard: View {
         }
         .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 }
 
@@ -174,13 +180,25 @@ private func perMillion(_ rate: Double?) -> String {
 
 private struct PricingRow: View {
     var row: PricingModel.PricedModel
+    var columns: PricingColumns
     var clickable = false
     var edit: () -> Void = {}
 
     private var rateColumns: [String] {
         let rates = row.rates
-        return [perMillion(rates?.input), perMillion(rates?.output),
-                perMillion(rates?.cacheRead), perMillion(rates?.cacheWrite)]
+        var shown = [perMillion(rates?.input), perMillion(rates?.output)]
+        if columns.cacheReadWrite {
+            shown += [perMillion(rates?.cacheRead), perMillion(rates?.cacheWrite)]
+        }
+        return shown
+    }
+
+    /// The dropped cache columns as hover text: "Cache read $0.20 · Cache
+    /// write $5.00 per 1M".
+    private var cacheHelp: String? {
+        guard !columns.cacheReadWrite else { return nil }
+        return "Cache read \(perMillion(row.rates?.cacheRead)) · "
+            + "Cache write \(perMillion(row.rates?.cacheWrite)) per 1M"
     }
 
     private var sourceText: String {
@@ -206,15 +224,27 @@ private struct PricingRow: View {
     }
 
     var body: some View {
-        let content = rowBody
+        if let cacheHelp {
+            wrapped.help(cacheHelp)
+        } else {
+            wrapped
+        }
+    }
+
+    @ViewBuilder private var wrapped: some View {
         if clickable {
-            Button(action: edit) { content }
+            Button(action: edit) { rowBody }
                 .plainButton(cornerRadius: 0)
                 .modifier(RowHover())
                 .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
         } else {
-            content
+            rowBody
         }
+    }
+
+    private var sourceColor: some ShapeStyle {
+        row.source == nil && !row.harnessBilled && !row.isFree
+            ? Theme.warningText : Theme.textSecondary
     }
 
     private var rowBody: some View {
@@ -226,22 +256,33 @@ private struct PricingRow: View {
                 }
             }
             .fixedSize()
-            Text(row.model).lineLimit(1).truncationMode(.middle)
-            if let tierNote {
-                Text(tierNote).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    .lineLimit(1).fixedSize()
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(row.model).lineLimit(1).truncationMode(.middle)
+                    if let tierNote {
+                        Text(tierNote).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            .lineLimit(1).fixedSize()
+                    }
+                }
+                // With no Source column, a caption under the name says it.
+                if !columns.source {
+                    Text(sourceText).font(Theme.caption).foregroundStyle(sourceColor)
+                        .lineLimit(1)
+                }
             }
+            .frame(minWidth: 120, alignment: .leading)
             Spacer()
             ForEach(rateColumns.indices, id: \.self) { index in
                 Text(rateColumns[index])
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     .frame(width: Self.rateColumnWidth, alignment: .trailing)
             }
-            Text(sourceText)
-                .foregroundStyle(row.source == nil && !row.harnessBilled && !row.isFree
-                                 ? Theme.warningText : Theme.textSecondary)
-                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                .frame(width: 96, alignment: .trailing)
+            if columns.source {
+                Text(sourceText)
+                    .foregroundStyle(sourceColor)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .frame(width: 96, alignment: .trailing)
+            }
             Text(UsageFormat.tokens(row.totals.totalTokens))
                 .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 .frame(width: 68, alignment: .trailing)
@@ -254,15 +295,19 @@ private struct PricingRow: View {
     /// Wide enough for "$50.00" on a value and "Cache write" on the header.
     static let rateColumnWidth: CGFloat = 76
 
-    static var header: some View {
+    static func header(columns: PricingColumns) -> some View {
         HStack(spacing: 10) {
             Text("Model").frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(["Input", "Output", "Cache read", "Cache write"], id: \.self) { label in
+            ForEach(["Input", "Output"]
+                    + (columns.cacheReadWrite ? ["Cache read", "Cache write"] : []),
+                    id: \.self) { label in
                 Text(label)
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     .frame(width: rateColumnWidth, alignment: .trailing)
             }
-            Text("Source").frame(width: 96, alignment: .trailing)
+            if columns.source {
+                Text("Source").frame(width: 96, alignment: .trailing)
+            }
             Text("Tokens").frame(width: 68, alignment: .trailing)
         }
         .font(Theme.tableHeader).foregroundStyle(Theme.tableHeaderText)
