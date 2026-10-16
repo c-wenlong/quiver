@@ -148,6 +148,7 @@ private struct SettingsSectionView: View {
             case .notifications: notificationsCard
             case .updates: updatesCard
             case .providers: ProviderVisibilityCard(model: app.providers)
+            case .services: ServicesCard(model: app.services)
             case .paths: pathsCard
             }
         }
@@ -416,6 +417,135 @@ private struct SettingsSectionView: View {
                 }
             }
         }
+    }
+}
+
+/// Settings > Services: one group per known service — its help line, a
+/// row per key (a SecureField until saved, then dates with Replace and
+/// Remove), and its Test button.
+private struct ServicesCard: View {
+    let model: ServicesModel
+
+    var body: some View {
+        SettingsCard {
+            ForEach(ServiceCredentials.services) { service in
+                if service.id != ServiceCredentials.services.first?.id { SettingsDivider() }
+                serviceGroup(service)
+            }
+            if let error = model.error {
+                SettingsDivider()
+                Text(error)
+                    .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .padding(.vertical, 10)
+            }
+        }
+        .task { await model.reload() }
+    }
+
+    private func serviceGroup(_ service: KnownService) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(service.name).font(Theme.rowTitle).foregroundStyle(Theme.textStrong)
+                Text(service.help).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.vertical, 14)
+            ForEach(service.fields, id: \.self) { field in
+                ServiceFieldRow(field: field, model: model)
+            }
+            if let probe = service.probe {
+                HStack(spacing: 10) {
+                    Button(model.probing.contains(service.id) ? "Testing…" : probe.label) {
+                        Task { await model.probe(service) }
+                    }
+                    .secondaryButton()
+                    .disabled(!model.canProbe(service) || model.probing.contains(service.id))
+                    .help(model.canProbe(service)
+                          ? "Calls the service with the saved key."
+                          : "Save \(probe.field) first.")
+                    if let result = model.probeResults[service.id] {
+                        Text(resultText(result))
+                            .font(Theme.caption)
+                            .foregroundStyle(resultColor(result))
+                    }
+                }
+                .padding(.bottom, 14)
+            }
+        }
+    }
+
+    private func resultText(_ result: ServiceCredentials.ProbeResult) -> String {
+        switch result {
+        case .works: "Works"
+        case .httpError(let status): "HTTP \(status)"
+        case .unavailable(let message): message
+        }
+    }
+
+    private func resultColor(_ result: ServiceCredentials.ProbeResult) -> Color {
+        switch result {
+        case .works: Theme.success
+        case .httpError, .unavailable: Theme.warningText
+        }
+    }
+}
+
+/// One service key: a paste field until saved, then the saved line with
+/// Replace and Remove.
+private struct ServiceFieldRow: View {
+    let field: String
+    let model: ServicesModel
+    @State private var draft = ""
+    @State private var editing = false
+
+    private var status: ServiceCredentials.Status {
+        model.statuses[field] ?? ServiceCredentials.Status(isSet: false, added: nil, lastUsed: nil)
+    }
+
+    private var savedDetail: String {
+        var line = "Saved"
+        if let added = status.added {
+            line += " · added \(added.formatted(.dateTime.month(.abbreviated).day().year()))"
+        }
+        if let lastUsed = status.lastUsed {
+            line += " · last used \(lastUsed.formatted(.dateTime.month(.abbreviated).day().year()))"
+        }
+        return line
+    }
+
+    var body: some View {
+        SettingRow(title: field,
+                   detail: status.isSet && !editing ? savedDetail : "In the Keychain, not in ~/.api_keys.") {
+            if status.isSet && !editing {
+                HStack(spacing: 8) {
+                    Button("Replace") { editing = true; draft = "" }
+                        .secondaryButton()
+                    Button("Remove") { Task { await model.remove(field) } }
+                        .secondaryButton()
+                }
+            } else {
+                HStack(spacing: 8) {
+                    SecureField(editing ? "New value" : "Paste the value", text: $draft)
+                        .quiverField(monospaced: true)
+                        .frame(width: 240)
+                        .onSubmit(save)
+                    Button("Save", action: save)
+                        .primaryButton()
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if editing {
+                        Button("Cancel") { editing = false; draft = "" }
+                            .secondaryButton()
+                    }
+                }
+            }
+        }
+    }
+
+    private func save() {
+        let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        draft = ""
+        editing = false
+        Task { await model.set(field, value: value) }
     }
 }
 
