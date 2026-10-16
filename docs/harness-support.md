@@ -107,7 +107,7 @@ Notes:
 | Droid | Partial | Yes | Yes |
 | Pi | Yes | Yes | No |
 | Freebuff | No | Yes | Yes |
-| Cursor | No | Yes | Yes |
+| Cursor | Yes | Yes | Yes |
 | Copilot | No | No | Yes |
 | Gemini | No | No | No |
 | Cline | Partial | No | No |
@@ -132,8 +132,13 @@ Notes:
   totals instead, so their spend shows as a lump at the session's end. Every
   other harness shows no spend on the Overview and no cost next to its
   sessions.
-- **Cursor:** its calendar comes from the editor's own database, not the
-  CLI, and it writes no token log Quiver reads. Calendar yes, tokens no.
+- **Cursor:** tokens and cost come from Cursor's own usage feed, which
+  covers the editor, `cursor-agent` and cloud agents; the cost is Cursor's
+  figure, not Quiver's price list. Calendar activity still comes from the
+  editor's own database, so feed events never draw a second calendar row.
+- **Grok Bot:** uses the Cursor account, so the same feed gives it tokens
+  and cost (listed as Grok Bot) and a calendar row; it has no limits meter
+  of its own.
 - **Droid and Cline, tokens and cost:** both keep token totals per
   session rather than per request, so Quiver counts the whole session at
   its last activity (Droid) or its end (Cline). Droid reports credits,
@@ -171,9 +176,10 @@ Notes:
 
 ## Known gaps
 
-- **Tokens and cost exist for seven harnesses only** (Claude, Codex,
-  OpenCode, Devin, Pi, Droid, Cline; the last two as session totals). For
-  everything else the Overview shows time and limits, never spend.
+- **Tokens and cost exist for eight harnesses only** (Claude, Codex,
+  OpenCode, Devin, Pi, Droid, Cline and Cursor, plus Grok Bot through the
+  Cursor account; Droid and Cline as session totals). For everything else
+  the Overview shows time and limits, never spend.
 - **Copilot gets shared skills but no instructions link**; no confirmed
   file exists to link.
 - **Devin extra profiles are not counted in the ledger**, so their spend is

@@ -14,7 +14,8 @@ import Foundation
 /// - `reasoningTokens`: thinking or reasoning tokens. Claude and Codex both log
 ///   these inside their output count; the parsers move them here.
 public struct UsageEvent: Sendable, Equatable, Hashable, Codable {
-    /// "claude", "codex", "opencode", "devin", "pi", "droid" or "cline".
+    /// "claude", "codex", "opencode", "devin", "pi", "droid", "cline",
+    /// "cursor" or "grok-bot" (the feed splits Grok Bot out of Cursor's).
     public var harness: String
     /// The config root the event was read from, for example `~/.claude` or a
     /// Quiver profile home. It is how usage is split by account.
