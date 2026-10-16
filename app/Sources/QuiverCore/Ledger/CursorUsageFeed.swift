@@ -234,6 +234,11 @@ public actor CursorUsageFeed {
                 costUSD: event.costUsd))
     }
 
+    /// Whether `session` is a `dayLabel` bucket rather than a conversation id.
+    static func isDayBucket(_ session: String) -> Bool {
+        session.wholeMatch(of: /cursor-\d{4}-\d{2}-\d{2}/) != nil
+    }
+
     /// `yyyy-mm-dd` in the local calendar, for the session label of events
     /// Cursor does not give a conversation id to.
     static func dayLabel(for timestamp: TimeInterval) -> String {

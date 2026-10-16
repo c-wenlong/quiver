@@ -323,6 +323,20 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(row.duration == 7140)
     }
 
+    @Test func dayBucketsFromTwoAccountsStayApart() async throws {
+        // Events Cursor gave no conversation id fall into a per-day bucket,
+        // which is one account's day, not one conversation.
+        let first = usage("cursor-2026-10-11", "cursor", models: [], cost: 1, home: "/a")
+        var second = usage("cursor-2026-10-11", "cursor", models: [], cost: 2, home: "/b")
+        second.lastTimestamp = now.addingTimeInterval(-60)
+        let model = await model([], [first, second])
+        await model.load()
+        #expect(model.rows.map(\.usage?.accountHome) == ["/a", "/b"])
+        #expect(model.rows.map(\.usage?.totals.costUSD) == [1, 2])
+        #expect(CursorUsageFeed.isDayBucket("cursor-2026-10-11"))
+        #expect(!CursorUsageFeed.isDayBucket("cursor-agent-1"))
+    }
+
     @Test func aSessionsLocationFollowsItsHarnessAndId() {
         #expect(SessionLocation(harness: "grok-bot", id: "4f1c") == .cloud)
         #expect(SessionLocation(harness: "cursor", id: "bc-ec6482ef") == .cloud)

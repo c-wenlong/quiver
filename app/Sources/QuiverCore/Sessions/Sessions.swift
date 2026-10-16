@@ -442,6 +442,13 @@ public final class SessionsModel {
         return byKey
     }
 
+    /// One feed conversation's key. A conversation id is the same session
+    /// in every profile home; a day bucket (events Cursor gave no id) is
+    /// only one account's day, so it keeps its home.
+    public nonisolated static func feedKey(harness: String, account: String, session: String) -> String {
+        CursorUsageFeed.isDayBucket(session) ? "\(harness)|\(account)|\(session)" : "\(harness)|\(session)"
+    }
+
     /// Two usage rows of one session added together. The account is the
     /// one that recorded the later event.
     static func merged(_ a: SessionUsage, _ b: SessionUsage) -> SessionUsage {
@@ -464,8 +471,9 @@ public final class SessionsModel {
         // profiles signed in to one account take turns, and each stores
         // the events it read under its own home.
         var feed: [String: SessionUsage] = [:]
-        for (id, uses) in byHarnessAndId where uses.first.map({ SessionFilter.feedHarnesses.contains($0.harness) }) ?? false {
-            feed[id] = uses.dropFirst().reduce(uses[0], Self.merged)
+        for (key, use) in usage where SessionFilter.feedHarnesses.contains(key.harness) {
+            let id = Self.feedKey(harness: key.harness, account: key.account, session: key.session)
+            feed[id] = feed[id].map { Self.merged($0, use) } ?? use
         }
 
         // swe's rows: Claude and Codex from their default home only; other
