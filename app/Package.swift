@@ -35,5 +35,6 @@ let package = Package(
             name: "QuiverWidgetsUITests",
             dependencies: ["QuiverWidgetsUI"]
         ),
+        .testTarget(name: "QuiverAppUITests", dependencies: ["QuiverApp", "QuiverCore"]),
     ]
 )

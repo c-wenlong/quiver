@@ -189,6 +189,7 @@ private struct PricingRow: View {
     var columns: PricingColumns
     var clickable = false
     var edit: () -> Void = {}
+    @Environment(AppModel.self) private var app
 
     private var rateColumns: [String] {
         let rates = row.rates
@@ -270,6 +271,7 @@ private struct PricingRow: View {
                             .lineLimit(1).fixedSize()
                     }
                 }
+                .modelCard(app.models, for: row.model) { app.selection = .models }
                 // With no Source column, a caption under the name says it.
                 if !columns.source {
                     Text(sourceText).font(Theme.caption).foregroundStyle(sourceColor)

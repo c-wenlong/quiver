@@ -5,8 +5,8 @@ import Testing
     @Test func sectionsAreGroupedAsTheRoadmapSays() {
         #expect(SidebarGroup.allCases.map(\.title) == ["Usage", "Manage", "Primitives", "System"])
         #expect(SidebarGroup.usage.sections == [.overview, .sessions, .calendar, .pricing])
-        #expect(SidebarGroup.manage.sections == [.harnesses, .accounts, .apiKeys, .compute])
-        #expect(SidebarGroup.primitives.sections == [.plugins, .skills, .agentsMd, .mcpServers])
+        #expect(SidebarGroup.manage.sections == [.accounts, .apiKeys, .harnesses, .compute])
+        #expect(SidebarGroup.primitives.sections == [.plugins, .skills, .agentsMd, .mcpServers, .models])
         #expect(SidebarGroup.system.sections == [.menuBar, .widgets, .serviceStatus, .doctor, .settings])
     }
 
@@ -27,9 +27,12 @@ import Testing
         #expect(SidebarGroup.order.first == .overview)
         #expect(AppSection.sessions.step(1) == .calendar)
         #expect(AppSection.calendar.step(1) == .pricing)
-        #expect(AppSection.pricing.step(1) == .harnesses)
-        #expect(AppSection.harnesses.step(-1) == .pricing)
+        #expect(AppSection.pricing.step(1) == .accounts)
+        #expect(AppSection.accounts.step(-1) == .pricing)
         #expect(AppSection.pricing.step(-1) == .calendar)
+        // Models closes the Primitives group.
+        #expect(AppSection.mcpServers.step(1) == .models)
+        #expect(AppSection.models.step(1) == .menuBar)
         // The ends stay put.
         #expect(AppSection.overview.step(-1) == .overview)
         #expect(SidebarGroup.order.last?.step(1) == SidebarGroup.order.last)

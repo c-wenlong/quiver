@@ -246,6 +246,9 @@ extension Card where Accessory == EmptyView {
 struct Page<Content: View, Actions: View>: View {
     var title: String
     var subtitle: String
+    /// A link that ends the subtitle, such as "Data from [Artificial
+    /// Analysis]" on the Models page. Rendered inline after the text.
+    var subtitleLink: (label: String, url: URL)? = nil
     var maxWidth: CGFloat = 1280
     var scrolls = true
     @ViewBuilder var actions: Actions
@@ -262,7 +265,7 @@ struct Page<Content: View, Actions: View>: View {
 
     private var stack: some View {
         VStack(alignment: .leading, spacing: 24) {
-            PageHeader(title: title, subtitle: subtitle) { actions }
+            PageHeader(title: title, subtitle: subtitle, link: subtitleLink) { actions }
             content
                 .textSelection(.enabled)
         }
@@ -275,9 +278,12 @@ struct Page<Content: View, Actions: View>: View {
 }
 
 extension Page where Actions == EmptyView {
-    init(title: String, subtitle: String, maxWidth: CGFloat = 1280, scrolls: Bool = true,
+    init(title: String, subtitle: String,
+         subtitleLink: (label: String, url: URL)? = nil,
+         maxWidth: CGFloat = 1280, scrolls: Bool = true,
          @ViewBuilder content: () -> Content) {
-        self.init(title: title, subtitle: subtitle, maxWidth: maxWidth, scrolls: scrolls,
+        self.init(title: title, subtitle: subtitle, subtitleLink: subtitleLink,
+                  maxWidth: maxWidth, scrolls: scrolls,
                   actions: { EmptyView() }, content: content)
     }
 }
@@ -285,14 +291,23 @@ extension Page where Actions == EmptyView {
 struct PageHeader<Actions: View>: View {
     var title: String
     var subtitle: String
+    var link: (label: String, url: URL)? = nil
     @ViewBuilder var actions: Actions
 
     var body: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title).font(Theme.pageTitle).tracking(-0.9).foregroundStyle(Theme.textPrimary)
-                if !subtitle.isEmpty {
-                    Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
+                if !subtitle.isEmpty || link != nil {
+                    // Inline link: the subtitle ends mid-sentence and the
+                    // link's label finishes it.
+                    HStack(spacing: 4) {
+                        Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
+                        if let link {
+                            Link(link.label, destination: link.url)
+                                .font(Theme.pageSubtitle).foregroundStyle(Theme.accent)
+                        }
+                    }
                 }
             }
             .textSelection(.enabled)

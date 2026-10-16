@@ -372,6 +372,7 @@ private struct DailyRow: View {
 
 private struct QuickFigures: View {
     var summary: OverviewSummary
+    @Environment(AppModel.self) private var app
 
     var busiest: DayRow? { summary.days.max { $0.totals.totalTokens < $1.totals.totalTokens } }
 
@@ -411,6 +412,7 @@ private struct QuickFigures: View {
                                 .font(Theme.rowTitle).monospacedDigit().foregroundStyle(Theme.textPrimary)
                         }
                         .padding(.vertical, 9)
+                        .modelCard(app.models, for: model.model) { app.selection = .models }
                         if index < min(summary.models.count, 5) - 1 { Divider().overlay(Theme.border) }
                     }
                 }

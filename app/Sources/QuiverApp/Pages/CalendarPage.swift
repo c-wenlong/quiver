@@ -1611,7 +1611,7 @@ private extension Array {
 /// Registers its backing NSView while it is in a window, so the card
 /// poller can read screen rects — reliable where `.onHover` is not,
 /// like a popover's non-key window.
-private struct HoverRegionView: NSViewRepresentable {
+struct HoverRegionView: NSViewRepresentable {
     /// Reports the backing view itself on attach and detach, so a stale
     /// detach can be told apart from the view currently registered.
     var report: (NSView, Bool) -> Void
