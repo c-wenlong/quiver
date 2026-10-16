@@ -20,6 +20,7 @@ Deeper references, read before touching the relevant area:
 - **Quiver shares no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything Quiver keeps lives under `~/.quiver`.
 - **Borrow ideas and code, not state.** Their source is a reference for how to do something (Switchboard's per-profile directories and launch flags, OpenUsage's menu bar panel and pricing, AIUsage's incremental scanning, TokenTracker's design). Quiver re-implements it against its own files. Keep the licence notices for any code copied.
 - The harnesses' own files (`~/.claude`, `~/.codex`, and so on) are not another app's data. Reading them is the point.
+- **Never write to `~/Applications/Quiver.app`.** Several sessions work on this repo at once, so the installed app is built only from `origin/main`, by the user running `app/script/install-app.sh`. Check your change with your own build instead: `./script/build-app.sh debug` in your worktree, then `open -n build/Quiver.app`.
 
 ## Commands
 
