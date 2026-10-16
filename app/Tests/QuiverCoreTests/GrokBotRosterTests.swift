@@ -101,6 +101,19 @@ import Testing
         }
     }
 
+    @Test func lookupsWithinTheIntervalNeverTouchTheDisk() throws {
+        let dir = try persistence(json: rosterJSON)
+        let roster = GrokBotRoster(directory: dir, recheckInterval: 3600)
+        #expect(roster.labels(for: "bot-uuid-1").projectName == "Cortex")
+        // With the folder gone, a cached lookup still answers: nothing was
+        // listed or read for it.
+        try FileManager.default.removeItem(at: dir)
+        #expect(roster.labels(for: "bot-uuid-1").projectName == "Cortex")
+        // A zero interval checks the disk every time and sees it's gone.
+        let eager = GrokBotRoster(directory: dir, recheckInterval: 0)
+        #expect(eager.labels(for: "bot-uuid-1").projectName == "Grok Bot")
+    }
+
     @Test func theRosterBlobIsFoundAmongOtherBlobs() throws {
         // Only the decoded key ending `.roster.last-roster` is opened:
         // transcripts and other persistence files stay unread.

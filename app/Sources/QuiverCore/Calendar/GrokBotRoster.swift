@@ -32,17 +32,23 @@ public final class GrokBotRoster: Sendable {
     private static let rosterSuffix = ".roster.last-roster"
 
     private let directory: URL
-    /// Decoded id → name, with the modification date it was read at so a
-    /// rewritten blob re-parses once, not on every label lookup.
-    private let cache = OSAllocatedUnfairLock<(mtime: Date?, names: [String: String])?>(
-        initialState: nil)
+    /// How long a lookup trusts the last disk check. Labels are read while
+    /// drawing rows and grouping blocks, so the folder listing and stat
+    /// happen at most this often, never once per row.
+    private let recheckInterval: TimeInterval
+    /// Decoded id → name, with when the disk was last checked and the
+    /// modification date it was read at, so a rewritten blob re-parses
+    /// once and an unchanged one is never re-listed within the interval.
+    private let cache = OSAllocatedUnfairLock<
+        (checkedAt: Date, mtime: Date?, names: [String: String])?>(initialState: nil)
 
     /// `directory` is injectable so tests point at fixtures rather than
     /// the real Application Support folder.
-    public init(directory: URL? = nil) {
+    public init(directory: URL? = nil, recheckInterval: TimeInterval = 30) {
         self.directory = directory ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Grok Bot/sand-client-persistence",
                                     isDirectory: true)
+        self.recheckInterval = recheckInterval
     }
 
     /// The full label set for a `grok-bot` session id: a rostered Bot
@@ -67,17 +73,27 @@ public final class GrokBotRoster: Sendable {
         return (labels.projectKey, labels.projectName)
     }
 
-    /// The roster's id → name map. Re-reads the blob only when its
-    /// modification date moved since the last parse; a missing file or
-    /// any read or decode failure returns (and caches) an empty map.
+    /// The roster's id → name map. Within `recheckInterval` of the last
+    /// disk check it is served from memory with no file-system access;
+    /// after that the folder is listed again and the blob re-parsed only
+    /// when its modification date moved. A missing file or any read or
+    /// decode failure returns (and caches) an empty map.
     private var names: [String: String] {
+        let now = Date()
+        if let cached = cache.withLock({ $0 }),
+           now.timeIntervalSince(cached.checkedAt) < recheckInterval {
+            return cached.names
+        }
         let file = rosterFile()
         let mtime = file.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate }
         return cache.withLock { cached in
-            if let cached, cached.mtime == mtime { return cached.names }
+            if let previous = cached, previous.mtime == mtime {
+                cached = (now, mtime, previous.names)
+                return previous.names
+            }
             let names = file.flatMap(Self.parse) ?? [:]
-            cached = (mtime, names)
+            cached = (now, mtime, names)
             return names
         }
     }
