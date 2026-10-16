@@ -146,6 +146,13 @@ private struct AccountCard: View {
                         cliInstalled: { app.others.cliInstalled[$0] ?? model.cliOnPath[profile.vendor] }),
                     perform: perform)
             }
+            if profile.vendor == .codex, let codexUsage = app.codexUsage,
+               let section = codexUsage.section(for: model.folder(of: profile).path) {
+                Divider().overlay(Theme.border)
+                CodexCompareSection(
+                    section: section,
+                    signIn: { perform { try await model.signIn(profile) } })
+            }
         }
         .alert("Rename account", isPresented: $renaming) {
             TextField("Name", text: $newName)

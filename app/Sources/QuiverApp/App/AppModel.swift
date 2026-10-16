@@ -199,6 +199,9 @@ final class AppModel {
     /// Extra Devin/Cursor profiles with their account dirs, shared by every
     /// OtherLimitsModel a swe-path change creates.
     @ObservationIgnored private var extraAccountsProvider: @MainActor () -> [(Profile, ProfilePaths)] = { [] }
+    /// Every Codex account's CODEX_HOME: the default `~/.codex` plus
+    /// each Codex profile's home in the profile store.
+    @ObservationIgnored private(set) var codexHomes: @MainActor () -> [String] = { [] }
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
     let agentsMd = AgentsModel()
     private(set) var apiKeys: APIKeysModel
@@ -240,6 +243,9 @@ final class AppModel {
     let calendar: CalendarModel?
     /// Cursor's per-event usage feed into the ledger; nil with `sessions`.
     let cursorFeed: CursorUsageFeed?
+    /// Each Codex account's daily totals against what this Mac logged;
+    /// nil with `sessions`.
+    let codexUsage: CodexAccountUsage?
     /// The Pricing page's per-model rates; nil with `sessions`.
     let pricingModel: PricingModel?
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
@@ -298,6 +304,14 @@ final class AppModel {
                 .map { ($0, store.paths(for: $0)) }
         }
         others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider)
+        codexHomes = {
+            var homes = [home.appending(path: ".codex").path]
+            for profile in (try? store.load()) ?? []
+            where profile.vendor == .codex && !profile.isDefault {
+                homes.append(store.paths(for: profile).home.path)
+            }
+            return homes
+        }
         var terminalChoice: () -> TerminalApp = { .terminal }
         accounts = AccountsModel(store: store, usage: usage, launcher: ProcessLauncher(),
                                  terminal: { terminalChoice() },
@@ -370,6 +384,13 @@ final class AppModel {
                 },
                 progressFile: quiver.appending(path: "cache/cursor-feed.json"),
                 onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
+            codexUsage = CodexAccountUsage(
+                cacheFile: quiver.appending(path: "cache/codex-account-usage.json"),
+                fetch: { home in try await client.codexUsageDaily(accountDir: home) },
+                macDays: { home, range in
+                    await ledger.dailyTokens(harness: "codex", accountHome: home,
+                                             in: range, calendar: .current)
+                })
             let overviewModel = overview
             pricingModel = PricingModel(
                 ledger: ledger,
@@ -381,6 +402,7 @@ final class AppModel {
             sessions = nil
             calendar = nil
             cursorFeed = nil
+            codexUsage = nil
             pricingModel = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
@@ -499,6 +521,9 @@ final class AppModel {
             Task { [pluginCatalog] in await pluginCatalog.restore() },
         ]
         if let cursorFeed { watchers.append(Task { await cursorFeed.keepFresh() }) }
+        if let codexUsage {
+            watchers.append(Task { await codexUsage.keepFresh(homes: codexHomes) })
+        }
         watchers += watchCatalogPlacement()
         watchers.append(watchSessions())
         watchers += watchLimits()

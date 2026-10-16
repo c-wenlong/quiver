@@ -1,0 +1,200 @@
+import Foundation
+import Testing
+@testable import QuiverCore
+
+/// The Codex account-vs-Mac comparison: window cutting, Monday weeks,
+/// local months, the negative-difference flag, every status's mapping
+/// and the cache round-trip.
+@Suite @MainActor struct CodexAccountUsageTests {
+    /// noon UTC on Thursday 2026-10-15: the current week is Oct 12–18,
+    /// the current month October.
+    private let now = utc("2026-10-15T12:00:00Z")
+    private let calendar = Calendar(identifier: .gregorian)
+
+    private func day(_ text: String) -> Date {
+        utc("\(text)T12:00:00Z")
+    }
+
+    private func model(reports: [String: CodexDailyReport] = [:],
+                       mac: [Date: Int] = [:],
+                       file: String = "usage.json") -> (CodexAccountUsage, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-usage-\(UUID().uuidString)", isDirectory: true)
+        let url = dir.appendingPathComponent(file)
+        var queue = reports
+        let model = CodexAccountUsage(
+            cacheFile: url,
+            fetch: { home in
+                guard let report = queue.removeValue(forKey: home) else {
+                    throw SweError.commandFailed(status: 1, message: "boom")
+                }
+                return report
+            },
+            macDays: { _, _ in mac },
+            now: { self.now },
+            calendar: calendar)
+        return (model, url)
+    }
+
+    private func report(_ days: [(String, Int)], status: String = "ok") -> CodexDailyReport {
+        CodexDailyReport(status: status, summary: nil,
+                         days: days.map { CodexDailyReport.Day(date: $0.0, tokens: $0.1) })
+    }
+
+    @Test func theWindowKeepsOnlyDaysBothSidesHave() {
+        let account = [
+            day("2026-10-10"): 10, day("2026-10-11"): 20, day("2026-10-12"): 30,
+            day("2026-10-13"): 40, day("2026-10-14"): 50]
+        let mac = [
+            day("2026-10-10"): 1, day("2026-10-11"): 2, day("2026-10-12"): 3,
+            day("2026-10-13"): 4, day("2026-10-14"): 5, day("2026-10-15"): 6,
+            day("2026-10-16"): 7]  // local days ahead of the account's lag
+        let (weeks, _, _) = CodexAccountUsage.compare(
+            account: account, mac: mac, now: now, calendar: calendar)
+        let current = weeks.last!
+        // Oct 15/16 are Mac-only: they stay out of the comparison.
+        #expect(current.account == 30 + 40 + 50)
+        #expect(current.mac == 3 + 4 + 5)
+    }
+
+    @Test func weeksStartOnMondayAndTheRunningWeekIsFlagged() {
+        // Oct 12, 2026 is a Monday; Oct 18 a Sunday.
+        let account = [day("2026-10-11"): 10, day("2026-10-12"): 20, day("2026-10-18"): 30]
+        let mac = [day("2026-10-11"): 1, day("2026-10-12"): 2, day("2026-10-18"): 3]
+        let (weeks, _, _) = CodexAccountUsage.compare(
+            account: account, mac: mac, now: now, calendar: calendar)
+        #expect(weeks.count == 6)
+        // Oct 11 is Sunday: it belongs to the week starting Oct 5.
+        #expect(weeks[4].account == 10)
+        // Oct 12 and Oct 18 share the current week, which is in progress.
+        #expect(weeks[5].account == 50)
+        #expect(weeks[5].inProgress)
+        #expect(!weeks[4].inProgress)
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEEE"
+        for period in weeks {
+            #expect(fmt.string(from: period.start) == "Monday")
+        }
+    }
+
+    @Test func monthsUseTheLocalCalendar() {
+        let account = [day("2026-08-03"): 10, day("2026-09-30"): 20, day("2026-10-15"): 30]
+        let mac = [day("2026-08-03"): 1, day("2026-09-30"): 2, day("2026-10-15"): 3]
+        let (_, months, _) = CodexAccountUsage.compare(
+            account: account, mac: mac, now: now, calendar: calendar)
+        #expect(months.count == 6)
+        // Six periods run May–October; August sits at index 3.
+        #expect(months[3].account == 10)   // August
+        #expect(months[4].account == 20)   // September
+        #expect(months[5].account == 30)   // October, running
+        #expect(months[5].inProgress)
+        #expect(calendar.component(.month, from: months[3].start) == 8)
+        #expect(calendar.component(.day, from: months[4].start) == 1)
+    }
+
+    @Test func theChipsSumTheLastFourWeeks() {
+        var account: [Date: Int] = [:]
+        var mac: [Date: Int] = [:]
+        // Ten tokens every day for seven weeks, Mac short five a day
+        // for one of the last four weeks.
+        for back in 0..<49 {
+            let date = Calendar(identifier: .gregorian)
+                .date(byAdding: .day, value: -back, to: day("2026-10-18"))!
+            account[date] = 10
+            mac[date] = back >= 21 && back < 28 ? 5 : 10
+        }
+        let (_, _, chips) = CodexAccountUsage.compare(
+            account: account, mac: mac, now: now, calendar: calendar)
+        // Last four weeks: Sep 21–Oct 18, 28 days × 10 on the account
+        // side; the Mac lost 5 a day for one of those weeks.
+        #expect(chips.account == 280)
+        #expect(chips.mac == 280 - 35)
+        #expect(chips.difference == 35)
+        #expect(chips.fraction == 0.125)
+    }
+
+    @Test func aNegativePeriodSetsTheFlag() async {
+        let mac = [day("2026-10-13"): 20, day("2026-10-07"): 5]
+        let (model, _) = model(
+            reports: ["/h": report([("2026-10-13", 10), ("2026-10-07", 10)])],
+            mac: mac)
+        await model.refresh(homes: ["/h"])
+        let section = model.section(for: "/h")!
+        // Oct 13 runs 10 vs 20: more on this Mac than the account knows.
+        #expect(section.hasNegativeWeek)
+        #expect(section.weeks.last?.difference == -10)
+        // Months sum both days: 20 vs 25, still negative here.
+        #expect(section.hasNegativeMonth)
+    }
+
+    @Test func sectionStatesMapEachStatus() async {
+        let (model, _) = model(reports: [
+            "/ok": report([("2026-10-13", 10)]),
+            "/auth": report([], status: "auth-required"),
+            "/old": report([], status: "unsupported"),
+        ])
+        await model.refresh(homes: ["/ok", "/auth", "/old"])
+        #expect(model.section(for: "/ok")?.kind == .data)
+        #expect(model.section(for: "/auth")?.kind == .authRequired)
+        #expect(model.section(for: "/old")?.kind == .unsupported)
+        #expect(model.section(for: "/never")?.kind == .loading)
+    }
+
+    @Test func anUnavailableReplyKeepsTheCachedDataMarkedStale() async {
+        var calls = 0
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-usage-\(UUID().uuidString)", isDirectory: true)
+        let url = dir.appendingPathComponent("usage.json")
+        let model = CodexAccountUsage(
+            cacheFile: url,
+            fetch: { _ in
+                calls += 1
+                if calls == 1 {
+                    return self.report([("2026-10-13", 10), ("2026-10-14", 20)])
+                }
+                return self.report([], status: "unavailable")
+            },
+            macDays: { _, _ in [self.day("2026-10-13"): 5, self.day("2026-10-14"): 6] },
+            now: { self.now }, calendar: calendar)
+        await model.refresh(homes: ["/h"])
+        #expect(model.section(for: "/h")?.stale == false)
+        await model.refresh(homes: ["/h"])
+        let section = model.section(for: "/h")!
+        #expect(section.stale)
+        #expect(section.kind == .data)
+        // The cached numbers still aggregate.
+        #expect(section.weeks.last?.account == 30)
+    }
+
+    @Test func sweTooOldHidesTheSection() async {
+        let (model, _) = model()
+        let tooOld = CodexAccountUsage(
+            cacheFile: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString).json"),
+            fetch: { _ in
+                throw SweError.commandFailed(
+                    status: 1, message: "Unknown harness subcommand: 'usage-daily'")
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        await tooOld.refresh(homes: ["/h"])
+        #expect(tooOld.sweTooOld)
+        #expect(tooOld.section(for: "/h") == nil)
+        _ = model
+    }
+
+    @Test func theCacheRoundTrips() async {
+        let (model, url) = model(reports: ["/h": report([("2026-10-13", 42)])])
+        await model.refresh(homes: ["/h"])
+        // A second model on the same file sees the entry without fetching.
+        let reloaded = CodexAccountUsage(
+            cacheFile: url,
+            fetch: { _ in throw SweError.commandFailed(status: 1, message: "no fetch") },
+            macDays: { _, _ in [self.day("2026-10-13"): 7] },
+            now: { self.now }, calendar: calendar)
+        await reloaded.recompute()
+        let section = reloaded.section(for: "/h")!
+        #expect(section.kind == .data)
+        #expect(section.weeks.last?.account == 42)
+        #expect(section.weeks.last?.mac == 7)
+    }
+}
