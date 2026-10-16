@@ -57,8 +57,8 @@ Notes:
 
 ## Sessions
 
-Session listing and resume are the same in `swe session` and the app's
-Sessions page: the app reads swe's output.
+Session listing is the same in `swe session` and the app's Sessions page:
+the app reads swe's output. Resume differs only for the Partial rows below.
 
 | Harness | Sessions list | Resume a session |
 |---|---|---|
@@ -90,8 +90,9 @@ Sessions page: the app reads swe's output.
 Notes:
 
 - **Resume, Partial:** Gemini, Continue, Crush and Forge take no session id
-  on their command lines, so Quiver can only reopen the harness in the
-  session's directory, not the session itself.
+  on their command lines. `swe session` can only reopen the harness in the
+  session's directory, not the session itself, and the app offers no
+  Resume button for them.
 - **Codex:** resumes by thread id; sessions whose ids carry no thread uuid
   offer no resume.
 
@@ -173,9 +174,9 @@ Notes:
   file exists to link.
 - **Devin extra profiles are not counted in the ledger**, so their spend is
   invisible even though their limits show.
-- **Grok** has a session reader, but no discovery or install entry: it
-  cannot appear in `swe list` or the app, and its sessions only surface
-  through `swe session` output.
+- **Grok** has a session reader, but no discovery or install entry. Its
+  sessions appear in `swe session` output and the app's Sessions page,
+  but discovery cannot add it to the harness list.
 - **Mistral Vibe, Goose, Aider, Augment, Kiro and Blackbox** are
   discoverable and installable but have no instructions, skills, sessions
   or usage support yet.
