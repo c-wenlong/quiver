@@ -4126,6 +4126,197 @@ class CursorFetcherTest(unittest.TestCase):
             self.assertEqual(strip_ansi(info.format_column()), "◑ included:3h0m")
 
 
+class CursorUsageEventsTest(unittest.TestCase):
+    """``fetch_cursor_usage_events`` and ``swe harness usage-events``."""
+
+    @staticmethod
+    def _jwt(claims: dict) -> str:
+        def part(raw: bytes) -> str:
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        return ".".join((
+            part(b'{"alg":"HS256","typ":"JWT"}'),
+            part(json.dumps(claims).encode()),
+            "signature",
+        ))
+
+    def _token(self, **overrides) -> str:
+        claims = {"sub": "google-oauth2|user_01TEST", "exp": 9_999_999_999}
+        claims.update(overrides)
+        return self._jwt(claims)
+
+    def _event(self, **overrides) -> dict:
+        event = {
+            "timestamp": "1789190193000",
+            "model": "claude-4-sonnet",
+            "kind": "USAGE_EVENT_KIND_INCLUDED_IN_BUSINESS",
+            "conversationId": "conv-1",
+            "isHeadless": True,
+            "tokenUsage": {
+                "inputTokens": 100, "outputTokens": 40,
+                "cacheReadTokens": 500, "cacheWriteTokens": 20,
+                "totalCents": 7,
+            },
+        }
+        event.update(overrides)
+        return event
+
+    def _fetch(self, pages, **kwargs):
+        """Run the fetch with ``pages`` (a list of row lists) as replies."""
+        from quiver.harness.rate_limits import fetch_cursor_usage_events
+
+        replies = [
+            {"totalUsageEventsCount": sum(len(p) for p in pages),
+             "usageEventsDisplay": page}
+            for page in pages
+        ]
+        calls = []
+
+        def reply(request, **kw):
+            calls.append(request)
+            return replies.pop(0) if replies else {
+                "totalUsageEventsCount": 0, "usageEventsDisplay": []}
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token",
+            return_value=self._token(),
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+            status, events = fetch_cursor_usage_events(**kwargs)
+        return status, events, calls
+
+    def test_maps_fields_and_cents_to_dollars(self):
+        status, events, calls = self._fetch([[self._event()]], now=1_800_000_000.0)
+        self.assertEqual(status, "ok")
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertEqual(event["timestamp"], 1789190193.0)
+        self.assertEqual(event["model"], "claude-4-sonnet")
+        self.assertEqual(event["kind"], "USAGE_EVENT_KIND_INCLUDED_IN_BUSINESS")
+        self.assertEqual(event["conversation_id"], "conv-1")
+        self.assertTrue(event["headless"])
+        self.assertEqual(event["input_tokens"], 100)
+        self.assertEqual(event["output_tokens"], 40)
+        self.assertEqual(event["cache_read_tokens"], 500)
+        self.assertEqual(event["cache_write_tokens"], 20)
+        self.assertEqual(event["cost_usd"], 0.07)
+        request = calls[0]
+        body = json.loads(request.data)
+        self.assertEqual(body["page"], 1)
+        self.assertEqual(body["pageSize"], 1000)
+        self.assertEqual(request.get_header("Origin"), "https://cursor.com")
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_missing_token_usage_and_null_cost(self):
+        status, events, _ = self._fetch([[
+            self._event(tokenUsage=None, conversationId=None),
+            self._event(model="grok-bot-default", tokenUsage={"outputTokens": 5}),
+        ]], now=1_800_000_000.0)
+        self.assertEqual(status, "ok")
+        self.assertIsNone(events[0]["conversation_id"])
+        self.assertIsNone(events[0]["cost_usd"])
+        self.assertEqual(events[0]["input_tokens"], 0)
+        self.assertEqual(events[1]["output_tokens"], 5)
+        self.assertIsNone(events[1]["cost_usd"])
+
+    def test_paging_stops_on_a_short_page(self):
+        full = [self._event() for _ in range(1000)]
+        status, events, calls = self._fetch(
+            [full, [self._event()], [self._event()]], now=1_800_000_000.0)
+        self.assertEqual(status, "ok")
+        self.assertEqual(len(events), 1001)
+        self.assertEqual(len(calls), 2)
+
+    def test_since_is_clamped_to_180_days(self):
+        from quiver.harness.rate_limits import _CURSOR_USAGE_EVENTS_MAX_AGE
+
+        status, _, calls = self._fetch([[]], since=1.0, now=1_800_000_000.0)
+        self.assertEqual(status, "ok")
+        body = json.loads(calls[0].data)
+        self.assertEqual(
+            int(body["startDate"]),
+            int((1_800_000_000.0 - _CURSOR_USAGE_EVENTS_MAX_AGE) * 1000))
+        _, _, calls = self._fetch([[self._event()]], since=1_799_000_000.0,
+                                  now=1_800_000_000.0)
+        self.assertEqual(json.loads(calls[0].data)["startDate"], "1799000000000")
+
+    def test_signed_out_when_no_token(self):
+        from quiver.harness.rate_limits import fetch_cursor_usage_events
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token",
+            return_value=None,
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            status, events = fetch_cursor_usage_events()
+        self.assertEqual(status, "signed-out")
+        self.assertEqual(events, [])
+        fetch.assert_not_called()
+
+    def test_auth_required_when_expired_or_401(self):
+        from quiver.harness.rate_limits import fetch_cursor_usage_events
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token",
+            return_value=self._token(exp=1_000_000_000),
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            status, _ = fetch_cursor_usage_events()
+        self.assertEqual(status, "auth-required")
+        fetch.assert_not_called()
+
+        def reply(request, on_401=None, **_):
+            if on_401 is not None:
+                on_401()
+            return None
+
+        with patch(
+            "quiver.harness.rate_limits._get_cursor_access_token",
+            return_value=self._token(),
+        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+            status, _ = fetch_cursor_usage_events()
+        self.assertEqual(status, "auth-required")
+
+    def test_unavailable_on_network_error_or_bad_page(self):
+        from quiver.harness.rate_limits import fetch_cursor_usage_events
+
+        for reply in (None, {"unexpected": True}):
+            with patch(
+                "quiver.harness.rate_limits._get_cursor_access_token",
+                return_value=self._token(),
+            ), patch(
+                "quiver.harness.rate_limits._fetch_json", return_value=reply,
+            ):
+                status, events = fetch_cursor_usage_events()
+            self.assertEqual(status, "unavailable")
+            self.assertEqual(events, [])
+
+    def test_account_dir_reads_only_its_state_db(self):
+        from quiver.harness.rate_limits import fetch_cursor_usage_events
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "User", "globalStorage", "state.vscdb")
+            os.makedirs(os.path.dirname(db))
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB)")
+            connection.commit()
+            connection.close()
+
+            seen = []
+
+            def read(candidates):
+                seen.append(candidates)
+                return None
+
+            with patch(
+                "quiver.harness.rate_limits._read_cursor_state_token", read,
+            ), patch(
+                "quiver.harness.rate_limits._get_cursor_access_token",
+            ) as default_token:
+                status, events = fetch_cursor_usage_events(db)
+
+        self.assertEqual(status, "signed-out")
+        self.assertEqual(seen, [(db,)])
+        default_token.assert_not_called()
+
+
 class DevinFetcherTest(unittest.TestCase):
     """Test the Devin quota fetcher (Windsurf seat-management RPC)."""
 

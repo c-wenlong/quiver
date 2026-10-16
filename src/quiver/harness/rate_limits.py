@@ -2028,6 +2028,158 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     return info
 
 
+# Every usage event the dashboard lists for the account: the editor,
+# `cursor-agent`, Cursor cloud agents and Grok Bot (which signs in with the
+# Cursor account). Paged, 1000 a page, oldest-first order is not promised,
+# so a page is read whole and paging stops on a short page.
+_CURSOR_USAGE_EVENTS_URL = (
+    "https://cursor.com/api/dashboard/get-filtered-usage-events")
+# The dashboard rejects windows beyond 180 days.
+_CURSOR_USAGE_EVENTS_MAX_AGE = 180 * 24 * 60 * 60
+_CURSOR_USAGE_EVENTS_PAGE_SIZE = 1000
+_CURSOR_USAGE_EVENTS_MAX_PAGES = 50
+
+
+def _usage_event_fields(event: dict) -> dict | None:
+    """One ``usageEventsDisplay`` entry mapped to the CLI's keys.
+
+    ``tokenUsage`` is a per-request counter, so missing fields are zeros,
+    not unknowns. ``totalCents`` is the charge Cursor itself computed, in
+    US cents; absent means unpriced rather than free.
+    """
+    timestamp = _cursor_ms_to_epoch(event.get("timestamp"))
+    if not timestamp:
+        return None
+    usage = event.get("tokenUsage")
+    usage = usage if isinstance(usage, dict) else {}
+
+    def tokens(key: str) -> int:
+        value = usage.get(key)
+        if isinstance(value, bool):
+            return 0
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return number if number > 0 else 0
+
+    cents = usage.get("totalCents")
+    cost = None
+    if isinstance(cents, (int, float)) and not isinstance(cents, bool):
+        cost = float(cents) / 100
+    conversation = event.get("conversationId")
+    return {
+        "timestamp": timestamp,
+        "model": str(event.get("model") or ""),
+        "kind": str(event.get("kind") or ""),
+        "conversation_id": conversation if isinstance(conversation, str) else None,
+        "headless": bool(event.get("isHeadless")),
+        "input_tokens": tokens("inputTokens"),
+        "output_tokens": tokens("outputTokens"),
+        "cache_read_tokens": tokens("cacheReadTokens"),
+        "cache_write_tokens": tokens("cacheWriteTokens"),
+        "cost_usd": cost,
+    }
+
+
+def fetch_cursor_usage_events(
+    state_db: str | None = None,
+    since: float | None = None,
+    now: float | None = None,
+) -> tuple[str, list[dict]]:
+    """Read one Cursor account's usage events, oldest requested first.
+
+    ``state_db`` pins the read to an extra account's ``state.vscdb`` — its
+    token only, never the default account's or the keychain's. ``since``
+    is epoch seconds, clamped to the 180 days the dashboard serves.
+
+    Returns ``(status, events)``: ``ok`` with the event list,
+    ``signed-out``/``auth-required`` with an empty list when there is no
+    usable token, ``unavailable`` on a network, HTTP or malformed-page
+    failure so the caller can keep its stored data and report the outage.
+    """
+    token = (
+        _read_cursor_state_token((state_db,))
+        if state_db is not None
+        else _get_cursor_access_token()
+    )
+    if not token:
+        return "signed-out", []
+    claims = _cursor_token_claims(token)
+    if claims is None:
+        return "signed-out", []
+    expires_at = claims.get("exp")
+    if (
+        isinstance(expires_at, (int, float))
+        and not isinstance(expires_at, bool)
+        and expires_at <= time.time()
+    ):
+        return "auth-required", []
+    cookie = _cursor_session_cookie(token, claims)
+    if cookie is None:
+        return "signed-out", []
+
+    now = time.time() if now is None else now
+    start = now - _CURSOR_USAGE_EVENTS_MAX_AGE
+    if since is not None:
+        try:
+            start = max(start, min(float(since), now))
+        except (TypeError, ValueError):
+            pass
+
+    status = "ok"
+
+    def post(page: int) -> urllib.request.Request:
+        body = json.dumps({
+            "teamId": 0,
+            "startDate": str(int(start * 1000)),
+            "endDate": str(int(now * 1000)),
+            "page": page,
+            "pageSize": _CURSOR_USAGE_EVENTS_PAGE_SIZE,
+        }).encode()
+        return urllib.request.Request(
+            _CURSOR_USAGE_EVENTS_URL,
+            data=body,
+            method="POST",
+            headers={
+                "Cookie": cookie,
+                "Origin": "https://cursor.com",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": f"quiver/{__version__}",
+            },
+        )
+
+    def expired() -> None:
+        nonlocal status
+        status = "auth-required"
+
+    def failed(code: int, retry_after: float | None) -> None:
+        nonlocal status
+        status = "unavailable"
+
+    events: list[dict] = []
+    for page in range(1, _CURSOR_USAGE_EVENTS_MAX_PAGES + 1):
+        reply = _fetch_json(post(page), on_401=expired, on_http_error=failed)
+        if status != "ok":
+            return status, []
+        if not isinstance(reply, dict) or not isinstance(
+            reply.get("usageEventsDisplay"), list
+        ):
+            # Network errors report nothing at all through _fetch_json, and
+            # a page without the list is a shape change: both are outages.
+            return "unavailable", []
+        rows = reply["usageEventsDisplay"]
+        for row in rows:
+            if isinstance(row, dict):
+                mapped = _usage_event_fields(row)
+                if mapped is not None:
+                    events.append(mapped)
+        if len(rows) < _CURSOR_USAGE_EVENTS_PAGE_SIZE:
+            break
+    return "ok", events
+
+
 def _register_cursor() -> None:
     """Register the Cursor included-usage fetcher."""
 

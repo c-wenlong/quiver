@@ -2421,3 +2421,94 @@ def cmd_harness_usage(args):
         ).format_column()
         print(f"    {w['window']:>8}  {cell}")
     return 0
+
+
+def cmd_harness_usage_events(args):
+    """``swe harness usage-events cursor [--account-dir=<dir>] [--since=<s>]``:
+    Cursor's per-event usage feed — the editor, cursor-agent, cloud agents
+    and Grok Bot — as rows the app ingests into its usage log."""
+    args, json_view = take_json_flag(list(args or []))
+    err = error_stream(json_view)
+    try:
+        args = expand_value_flags(args, {"--account-dir", "--since"})
+    except ValueError as exc:
+        print(c("red", str(exc)), file=err)
+        return 1
+    name = None
+    account_dir = None
+    since = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--account-dir":
+            account_dir = args[i + 1]
+            i += 2
+        elif args[i] == "--since":
+            try:
+                since = float(args[i + 1])
+            except ValueError:
+                print(c("red", f"  Bad --since: {args[i + 1]}"), file=err)
+                return 1
+            i += 2
+        elif args[i].startswith("-"):
+            print(c("red", f"Unknown argument: {args[i]}"), file=err)
+            return 1
+        elif name is None:
+            name = args[i]
+            i += 1
+        else:
+            print(c("red", f"Unexpected argument: {args[i]}"), file=err)
+            return 1
+    usage = ("Usage: swe harness usage-events cursor "
+             "[--account-dir=<dir>] [--since=<epoch-seconds>] [--json]")
+    if name != "cursor":
+        print(c("red", f"  {usage}"), file=err)
+        return 1
+    if account_dir is not None and not os.path.isdir(account_dir):
+        print(c("red", f"  No such directory: {account_dir}"), file=err)
+        return 1
+
+    from quiver.harness.rate_limits import fetch_cursor_usage_events
+
+    # Like `swe harness usage`: the account's state.vscdb alone, never the
+    # default account's token or the keychain.
+    state_db = (
+        os.path.join(account_dir, "User", "globalStorage", "state.vscdb")
+        if account_dir is not None else None
+    )
+    # Helper warnings may print to stdout; under --json stdout is the
+    # document, so their noise goes to stderr there.
+    with (contextlib.redirect_stdout(sys.stderr) if json_view
+          else contextlib.nullcontext()):
+        status, events = fetch_cursor_usage_events(state_db, since=since)
+    if json_view:
+        return emit({"status": status, "events": events})
+    if status == "unavailable":
+        print(c("red", "  Cursor's usage feed could not be read"), file=err)
+        return 1
+    if status == "signed-out":
+        print("  cursor: not signed in")
+        return 0
+    if status == "auth-required":
+        print("  cursor: session expired — sign in again")
+        return 0
+    total_tokens = sum(
+        e["input_tokens"] + e["output_tokens"]
+        + e["cache_read_tokens"] + e["cache_write_tokens"] for e in events)
+    total_cost = sum(e["cost_usd"] for e in events if e["cost_usd"] is not None)
+    print(f"  {c('bold', 'cursor')}  {len(events)} events, "
+          f"{total_tokens:,} tokens, ${total_cost:.2f}")
+    by_model: dict[str, tuple[int, int, float]] = {}
+    for event in events:
+        count, tokens, cost = by_model.get(event["model"], (0, 0, 0.0))
+        by_model[event["model"]] = (
+            count + 1,
+            tokens + event["input_tokens"] + event["output_tokens"]
+            + event["cache_read_tokens"] + event["cache_write_tokens"],
+            cost + (event["cost_usd"] or 0.0),
+        )
+    for model, (count, tokens, cost) in sorted(
+        by_model.items(), key=lambda item: -item[1][1]
+    ):
+        print(f"    {model:<32} {count:>6} events  {tokens:>14,} tokens  "
+              f"${cost:.2f}")
+    return 0

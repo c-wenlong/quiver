@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -560,6 +561,113 @@ class HarnessUsageCommandTest(unittest.TestCase):
         # Unavailable renders as unknown, never as a real 0% figure.
         self.assertIn("—", weekly)
         self.assertNotIn("100%", weekly)
+
+
+class HarnessUsageEventsCommandTest(unittest.TestCase):
+    """``swe harness usage-events cursor``."""
+
+    def _run(self, args):
+        from quiver.harness.commands import cmd_harness_usage_events
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cmd_harness_usage_events(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def _events(self, count=2):
+        return [
+            {"timestamp": 1789190193.0, "model": "claude-4-sonnet",
+             "kind": "USAGE_EVENT_KIND_FREE_CREDIT", "conversation_id": "c1",
+             "headless": False, "input_tokens": 10, "output_tokens": 5,
+             "cache_read_tokens": 0, "cache_write_tokens": 0,
+             "cost_usd": 0.01}
+            for _ in range(count)
+        ]
+
+    def test_only_cursor_is_supported(self):
+        code, out, err = self._run(["gemini", "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("cursor", err)
+
+    def test_json_emits_status_and_events(self):
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("ok", self._events()),
+        ) as fetch:
+            code, out, _ = self._run(["cursor", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(len(data["events"]), 2)
+        # The default account: no account dir means a None state_db.
+        fetch.assert_called_once_with(None, since=None)
+
+    def test_since_and_account_dir_pass_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.fetch_cursor_usage_events",
+                return_value=("ok", []),
+            ) as fetch:
+                code, _, _ = self._run(
+                    ["cursor", f"--account-dir={tmp}", "--since=1700000000",
+                     "--json"])
+        self.assertEqual(code, 0)
+        fetch.assert_called_once_with(
+            os.path.join(tmp, "User", "globalStorage", "state.vscdb"),
+            since=1700000000.0)
+
+    def test_unavailable_exits_nonzero_with_clean_json(self):
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("unavailable", []),
+        ):
+            code, out, _ = self._run(["cursor", "--json"])
+        # The status lands in the document; a transport failure exits
+        # nonzero only in human mode, matching `swe harness usage`.
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["data"]["status"], "unavailable")
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("unavailable", []),
+        ):
+            code, out, err = self._run(["cursor"])
+        self.assertEqual(code, 1)
+        self.assertNotIn("events", out)
+
+    def test_signed_out_and_auth_required_are_zero_exit(self):
+        for status in ("signed-out", "auth-required"):
+            with patch(
+                "quiver.harness.rate_limits.fetch_cursor_usage_events",
+                return_value=(status, []),
+            ):
+                code, out, _ = self._run(["cursor", "--json"])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["data"]["status"], status)
+
+    def test_stdout_stays_pure_json_when_a_helper_warns(self):
+        def noisy(state_db, since=None):
+            print("warning: something chatty on stdout")
+            return "ok", self._events(1)
+
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            side_effect=noisy,
+        ):
+            code, out, _ = self._run(["cursor", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(json.loads(out)["data"]["events"]), 1)
+        self.assertNotIn("chatty", out)
+
+    def test_human_output_summarises_by_model(self):
+        with patch(
+            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            return_value=("ok", self._events()),
+        ):
+            code, out, _ = self._run(["cursor"])
+        self.assertEqual(code, 0)
+        self.assertIn("2 events", out)
+        self.assertIn("claude-4-sonnet", out)
 
 
 if __name__ == "__main__":
