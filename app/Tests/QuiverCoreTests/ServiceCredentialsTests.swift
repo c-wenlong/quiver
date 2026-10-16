@@ -183,6 +183,52 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 /// ran against, so replacing or removing the key clears it — even while
 /// the request is still flying — and a test refreshes the key's dates.
 @Suite @MainActor struct ServicesModelTests {
+    /// A keychain stub that parks the first read of one account until
+    /// `release` answers it, so a reload can be caught mid-read while a
+    /// save, remove or another reload runs.
+    private actor GatedSecrets: SecretStoring {
+        var items: [String: String] = [:]
+        private var holdAccount: String?
+        private var held = false
+        private var gate: CheckedContinuation<String?, Never>?
+        private var entered: CheckedContinuation<Void, Never>?
+        private var parked = false
+
+        func hold(_ account: String) { holdAccount = account }
+
+        private func key(_ service: String, _ account: String) -> String {
+            "\(service)\u{0}\(account)"
+        }
+
+        func genericPassword(service: String, account: String) async -> String? {
+            if account == holdAccount, !held {
+                held = true
+                parked = true
+                entered?.resume()
+                entered = nil
+                return await withCheckedContinuation { gate = $0 }
+            }
+            return items[key(service, account)]
+        }
+        func setGenericPassword(service: String, account: String, value: String) async throws {
+            items[key(service, account)] = value
+        }
+        func deleteGenericPassword(service: String, account: String) async throws {
+            items.removeValue(forKey: key(service, account))
+        }
+
+        /// Suspends until the held read has parked.
+        func waitForHold() async {
+            if parked { return }
+            await withCheckedContinuation { entered = $0 }
+        }
+        /// Answers the parked read.
+        func release(value: String?) {
+            gate?.resume(returning: value)
+            gate = nil
+        }
+    }
+
     private func devin() throws -> KnownService {
         try #require(ServiceCredentials.services.first { $0.id == "devin" })
     }
@@ -279,6 +325,52 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         await model.probe(devin)
         #expect(model.statuses["DEVIN_API_KEY"]?.lastUsed
                     == Date(timeIntervalSince1970: 1_792_000_000))
+    }
+
+    @Test func aRemoveDuringReloadKeepsTheNewerStatus() async throws {
+        let dir = try TempDir()
+        let secrets = GatedSecrets()
+        try await secrets.setGenericPassword(
+            service: "svc", account: "DEVIN_API_KEY", value: "tok")
+        let credentials = ServiceCredentials(
+            secrets: secrets, service: "svc",
+            metadataURL: dir.url.appending(path: "config/services.json"))
+        let model = ServicesModel(
+            credentials: credentials, transport: ProbeTransport(.success((Data(), 200))))
+        // The reload parks reading the later field with the earlier
+        // field's pre-remove status already collected.
+        await secrets.hold("DEVIN_ORG_ID")
+        let reload = Task { await model.reload() }
+        await secrets.waitForHold()
+        await model.remove("DEVIN_API_KEY")
+        await secrets.release(value: nil)
+        await reload.value
+        // The stale "isSet" the parked read collected must not come back.
+        #expect(model.statuses["DEVIN_API_KEY"]?.isSet == false)
+        #expect(model.canProbe(try devin()) == false)
+    }
+
+    @Test func anOlderReloadCannotOverwriteANewerOne() async throws {
+        let dir = try TempDir()
+        let secrets = GatedSecrets()
+        let credentials = ServiceCredentials(
+            secrets: secrets, service: "svc",
+            metadataURL: dir.url.appending(path: "config/services.json"))
+        let model = ServicesModel(
+            credentials: credentials, transport: ProbeTransport(.success((Data(), 200))))
+        // Round 1 parks on the last field; round 2 finishes first.
+        await secrets.hold("ARTIFICIAL_ANALYSIS_API_KEY")
+        let old = Task { await model.reload() }
+        await secrets.waitForHold()
+        // Written straight to the store, so no field stamp moves.
+        try await secrets.setGenericPassword(
+            service: "svc", account: "ARTIFICIAL_ANALYSIS_API_KEY", value: "k")
+        await model.reload()
+        #expect(model.statuses["ARTIFICIAL_ANALYSIS_API_KEY"]?.isSet == true)
+        // The parked round now answers nil — discarded wholesale.
+        await secrets.release(value: nil)
+        await old.value
+        #expect(model.statuses["ARTIFICIAL_ANALYSIS_API_KEY"]?.isSet == true)
     }
 }
 

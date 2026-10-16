@@ -21,6 +21,12 @@ public final class ServicesModel {
     /// of one of its fields, so an older in-flight probe can't write its
     /// result over a newer key's.
     private var probeGenerations: [String: Int] = [:]
+    /// A stamp per field, bumped by set/remove and by each field refresh,
+    /// so a slow reload only writes back fields nothing touched since.
+    private var statusGenerations: [String: Int] = [:]
+    /// Bumped by every reload; an older reload's merge is discarded when
+    /// a newer one started.
+    private var reloadGeneration = 0
 
     public init(credentials: ServiceCredentials, transport: any HTTPTransport) {
         self.credentials = credentials
@@ -30,16 +36,26 @@ public final class ServicesModel {
     /// Reads every known field's status; the section calls this on appear
     /// and after each change.
     public func reload() async {
+        reloadGeneration += 1
+        let mine = reloadGeneration
+        let generations = statusGenerations
         var fresh: [String: ServiceCredentials.Status] = [:]
         for service in ServiceCredentials.services {
             for field in service.fields {
                 fresh[field] = await credentials.status(for: field)
             }
         }
-        statuses = fresh
+        // A newer reload, or a save/remove/status refresh of the field
+        // while this read was in flight, wins over the collected values.
+        guard mine == reloadGeneration else { return }
+        for (field, status) in fresh
+        where statusGenerations[field, default: 0] == generations[field, default: 0] {
+            statuses[field] = status
+        }
     }
 
     public func set(_ field: String, value: String) async {
+        statusGenerations[field, default: 0] += 1
         do {
             try await credentials.set(field, value: value)
             error = nil
@@ -51,6 +67,7 @@ public final class ServicesModel {
     }
 
     public func remove(_ field: String) async {
+        statusGenerations[field, default: 0] += 1
         do {
             try await credentials.remove(field)
             error = nil
@@ -93,6 +110,10 @@ public final class ServicesModel {
     }
 
     private func refresh(_ field: String) async {
-        statuses[field] = await credentials.status(for: field)
+        statusGenerations[field, default: 0] += 1
+        let generation = statusGenerations[field]!
+        let status = await credentials.status(for: field)
+        guard generation == statusGenerations[field] else { return }
+        statuses[field] = status
     }
 }
