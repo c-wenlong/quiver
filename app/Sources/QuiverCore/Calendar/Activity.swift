@@ -100,6 +100,15 @@ extension Ledger {
     static let calendarHarnesses: Set<String> = ["claude", "codex", "opencode", "devin", "grok-bot"]
 }
 
+/// Models a harness calls for its own bookkeeping, not user work: Devin
+/// runs `summarizer` and `compactor` calls in their own sessions, and a
+/// session containing nothing else must not draw a calendar block.
+/// Helper events inside a real session still count — they are part of
+/// that work.
+public enum HelperModels {
+    public static let all: Set<String> = ["summarizer", "compactor"]
+}
+
 extension Ledger: ActivityProviding {
     /// Blocks over the ledger's response rows. `events` only reaches back
     /// for logs the app still has, but rows the scanner already committed
@@ -147,6 +156,24 @@ extension SQLiteDatabase {
     func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
         let lo = range.start.timeIntervalSince1970 - Self.edgeLookout
         let hi = range.end.timeIntervalSince1970 + Self.edgeLookout
+        // Sessions whose every event in the fetched range is a helper
+        // call (Devin's summarizer/compactor) produce no blocks at all.
+        let helpers = HelperModels.all.sorted()
+        let realSessions = try prepare("""
+            SELECT d.harness, d.account, d.session
+            FROM events e JOIN dims d ON d.id = e.dim
+            WHERE e.ts >= ? AND e.ts < ?
+            GROUP BY d.harness, d.account, d.session
+            HAVING SUM(d.model NOT IN (\(helpers.map { _ in "?" }.joined(separator: ",")))) > 0
+            """)
+        realSessions.bind([SQLiteValue.double(lo), .double(hi)]
+                          + helpers.map { SQLiteValue.text($0) })
+        var real: Set<String> = []
+        while try realSessions.step() {
+            real.insert("\(realSessions.text(0) ?? "")\u{0}"
+                        + "\(realSessions.text(1) ?? "")\u{0}"
+                        + "\(realSessions.text(2) ?? "")")
+        }
         let statement = try prepare("""
             WITH ordered AS (
                 SELECT e.dim, e.ts,
@@ -177,6 +204,10 @@ extension SQLiteDatabase {
             guard block.end >= range.start, block.start < range.end else { return }
             merged.append(block)
         }
+        func sessionKey(of block: ActivityBlock) -> String {
+            "\(block.harness)\u{0}\(block.accountHome)\u{0}"
+                + (block.sessions.first?.sessionId ?? "")
+        }
         while try statement.step() {
             var piece = ActivityBlock(
                 harness: statement.text(0) ?? "", accountHome: statement.text(1) ?? "",
@@ -204,6 +235,6 @@ extension SQLiteDatabase {
             current = piece
         }
         flush()
-        return merged
+        return merged.filter { real.contains(sessionKey(of: $0)) }
     }
 }
