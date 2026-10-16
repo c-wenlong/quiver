@@ -229,7 +229,9 @@ struct Offline: Error {}
         try Data(lines.utf8).write(to: file)
         let pricing = try PricingCatalog(liteLLM: Data("""
             {"claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05,
-              "litellm_provider": "anthropic"}}
+              "litellm_provider": "anthropic"},
+             "grok-code-fast": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06,
+              "litellm_provider": "xai"}}
             """.utf8), supplement: PricingSupplement(
             tierMultipliers: ["claude-opus-5-5": ["fast": 2]]))
         let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: pricing)
@@ -243,6 +245,18 @@ struct Offline: Error {}
             claudeLine(message: "m1", request: "r1", output: 100, input: 1_000, model: "claude-opus-5-5")
             + claudeLine(message: "m2", request: "r2", output: 100, input: 1_000, model: "claude-opus-5-5-high-fast"))
         let expected = 2 * (1_000 * 4e-06 + 100 * 2e-05) + (1_000 * 4e-06 + 100 * 2e-05)
+        let totals = await ledger.totals(in: allTime)
+        #expect(abs(totals.costUSD - expected) < 1e-9)
+        #expect(totals.unpricedTokens == 0)
+        _ = keepAlive
+    }
+
+    @Test func aCatalogNameEndingInFastPricesAtItsOwnRates() async throws {
+        // `grok-code-fast` is a real catalog entry: the literal name must be
+        // tried before the `-fast` suffix is split, or it goes unpriced.
+        let (ledger, keepAlive) = try await ledger(with:
+            claudeLine(message: "m1", output: 100, input: 1_000, model: "grok-code-fast"))
+        let expected = 1_000 * 1e-06 + 100 * 2e-06
         let totals = await ledger.totals(in: allTime)
         #expect(abs(totals.costUSD - expected) < 1e-9)
         #expect(totals.unpricedTokens == 0)

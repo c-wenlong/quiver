@@ -391,10 +391,21 @@ public actor Ledger {
             totals.costUSD = group.loggedCost
             return totals
         }
-        // Fast mode arrives as a `-fast` suffix on the model name with an
-        // empty tier; split it before lookup and before the cost call.
-        let (model, tier) = PricingCatalog.splitTierSuffix(model: group.model, tier: group.tier ?? "")
-        if let rates = pricing.rates(for: model) {
+        // The literal name wins: `xai/grok-code-fast` is a real catalog
+        // entry. Only when it misses is a `-fast` suffix split off, because
+        // fast mode arrives on the model name with an empty tier.
+        var model = group.model
+        var tier = group.tier ?? ""
+        var rates = pricing.rates(for: model)
+        if rates == nil {
+            let split = PricingCatalog.splitTierSuffix(model: model, tier: tier)
+            if let found = pricing.rates(for: split.model) {
+                model = split.model
+                tier = split.tier
+                rates = found
+            }
+        }
+        if let rates {
             let crosses = rates.longContext.map { long in
                 (pricing.thresholds.firstIndex(of: long.threshold) ?? Int.max) < group.thresholdsCrossed
             } ?? false
