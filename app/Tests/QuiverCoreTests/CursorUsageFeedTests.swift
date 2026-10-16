@@ -46,7 +46,7 @@ import Testing
     private func feed(_ runner: any CommandRunning, ledger: Ledger,
                       accounts: [CursorUsageFeed.Account],
                       progressFile: URL? = nil) -> CursorUsageFeed {
-        CursorUsageFeed(ledger: ledger, swe: SweClient(runner: runner),
+        CursorUsageFeed(ledger: ledger, swe: { SweClient(runner: runner) },
                         accounts: { accounts },
                         progressFile: progressFile
                             ?? FileManager.default.temporaryDirectory
@@ -230,7 +230,7 @@ import Testing
                                      accountLabel: { $0 })
         let before = overview.revision
         let feed = CursorUsageFeed(
-            ledger: ledger, swe: SweClient(runner: runner), accounts: { self.accts() },
+            ledger: ledger, swe: { SweClient(runner: runner) }, accounts: { self.accts() },
             onIngested: { await overview.reloadAfterLedgerWrite() })
         await feed.poll()
         #expect(overview.revision == before + 1)

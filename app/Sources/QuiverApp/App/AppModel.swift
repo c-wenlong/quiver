@@ -57,6 +57,11 @@ final class AppModel {
             skills.use(swe, for: swePath)
             others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider)
             Task { await others.load() }
+            // The "swe too old" verdicts were about the old build.
+            Task { [codexUsage, cursorFeed] in
+                await codexUsage?.swePathChanged()
+                await cursorFeed?.swePathChanged()
+            }
         }
     }
 
@@ -369,7 +374,15 @@ final class AppModel {
             // both the ledger's account dim and swe's --account-dir.
             // An ingest that wrote rows refreshes the same way a scan does.
             cursorFeed = CursorUsageFeed(
-                ledger: ledger, swe: client,
+                // The swe chosen in Settings right now, like
+                // ProviderVisibility: the feed can't capture `self` here,
+                // and a SweClient is only the path, so reading the saved
+                // path at call time is the live client.
+                ledger: ledger,
+                swe: { SweClient(runner: ProcessRunner(
+                    executable: SweLocation.executable(
+                        override: UserDefaults.standard.string(
+                            forKey: SweLocation.defaultsKey)))) },
                 accounts: {
                     var accounts = [CursorUsageFeed.Account(
                         home: home.appending(path: "Library/Application Support/Cursor").path)]
@@ -386,7 +399,11 @@ final class AppModel {
                 onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
             codexUsage = CodexAccountUsage(
                 cacheFile: quiver.appending(path: "cache/codex-account-usage.json"),
-                fetch: { home in try await client.codexUsageDaily(accountDir: home) },
+                fetch: { home in
+                    try await Self.client(for: UserDefaults.standard.string(
+                        forKey: SweLocation.defaultsKey) ?? "")
+                        .codexUsageDaily(accountDir: home)
+                },
                 macDays: { home, range in
                     await ledger.dailyTokens(harness: "codex", accountHome: home,
                                              in: range, calendar: .current)
@@ -523,6 +540,16 @@ final class AppModel {
         if let cursorFeed { watchers.append(Task { await cursorFeed.keepFresh() }) }
         if let codexUsage {
             watchers.append(Task { await codexUsage.keepFresh(homes: codexHomes) })
+            // The "This Mac" side follows the ledger: rebuild after every
+            // completed scan or out-of-scan write, the same counters the
+            // Overview's own figures listen to. No swe fetch.
+            watchers.append(Task { [weak self] in
+                let changes = Observations { [weak self] in
+                    self.map { ($0.overview?.completedScans ?? 0,
+                                $0.overview?.ledgerWrites ?? 0) }
+                }
+                for await _ in changes { await codexUsage.recompute() }
+            })
         }
         watchers += watchCatalogPlacement()
         watchers.append(watchSessions())

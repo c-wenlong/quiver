@@ -205,6 +205,90 @@ import Testing
         _ = model
     }
 
+    @Test func aFailedFirstFetchShowsTheFailedStateThenRetries() async {
+        var fail = true
+        let model = CodexAccountUsage(
+            cacheFile: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString).json"),
+            fetch: { _ in
+                if fail {
+                    throw SweError.commandFailed(status: 1, message: "connection refused")
+                }
+                return self.report([("2026-10-13", 10)])
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        await model.refresh(homes: ["/h"])
+        let failed = model.section(for: "/h")!
+        #expect(failed.kind == .failed)
+        #expect(failed.failure?.contains("connection refused") == true)
+        // A retry (the Refresh button's force refresh) recovers it.
+        fail = false
+        await model.refresh(force: true)
+        #expect(model.section(for: "/h")?.kind == .data)
+    }
+
+    @Test func refreshForceRefetchesTheKnownHomes() async {
+        var calls: [String] = []
+        let model = CodexAccountUsage(
+            cacheFile: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString).json"),
+            fetch: { home in
+                calls.append(home)
+                return self.report([("2026-10-13", 10)])
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        await model.refresh(homes: ["/h", "/i"])
+        #expect(calls == ["/h", "/i"])
+        // The button asks without naming homes: the last set is reused.
+        await model.refresh(force: true)
+        #expect(calls == ["/h", "/i", "/h", "/i"])
+    }
+
+    @Test func recomputeRebuildsTheMacSideWithoutFetching() async {
+        var calls = 0
+        var mac: [Date: Int] = [day("2026-10-13"): 5]
+        let model = CodexAccountUsage(
+            cacheFile: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString).json"),
+            fetch: { _ in
+                calls += 1
+                return self.report([("2026-10-13", 10)])
+            },
+            macDays: { _, _ in mac }, now: { self.now }, calendar: calendar)
+        await model.refresh(homes: ["/h"])
+        #expect(model.section(for: "/h")?.weeks.last?.mac == 5)
+        // What the completedScans/ledgerWrites watcher calls after a
+        // scan: the account side isn't refetched, the local side is.
+        mac[day("2026-10-13")] = 9
+        await model.recompute()
+        #expect(calls == 1)
+        #expect(model.section(for: "/h")?.weeks.last?.mac == 9)
+    }
+
+    @Test func aNewSwePathClearsTheTooOldVerdict() async {
+        var tooOld = true
+        let model = CodexAccountUsage(
+            cacheFile: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString).json"),
+            fetch: { _ in
+                if tooOld {
+                    throw SweError.commandFailed(
+                        status: 1, message: "Unknown harness subcommand: 'usage-daily'")
+                }
+                return self.report([("2026-10-13", 10)])
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        await model.refresh(homes: ["/h"])
+        #expect(model.sweTooOld)
+        #expect(model.section(for: "/h") == nil)
+        // What AppModel calls when swePath changes: the verdict was about
+        // the old build, so the new one is tried straight away.
+        tooOld = false
+        await model.swePathChanged()
+        #expect(!model.sweTooOld)
+        #expect(model.section(for: "/h")?.kind == .data)
+    }
+
     @Test func theCacheRoundTrips() async {
         let (model, url) = model(reports: ["/h": report([("2026-10-13", 42)])])
         await model.refresh(homes: ["/h"])

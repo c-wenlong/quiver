@@ -37,6 +37,10 @@ struct CodexCompareSection: View {
         case .unsupported:
             Text("Update Codex to read account totals")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+        case .failed:
+            Text("Couldn't read this account's usage.")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .help(section.failure ?? "")
         case .data:
             data
         }
@@ -89,10 +93,10 @@ struct CodexCompareSection: View {
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if section.stale {
-                    Text("Couldn't refresh — showing the last reading.")
-                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                }
+            }
+            if section.stale {
+                Text("Couldn't refresh — showing the last reading.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
     }

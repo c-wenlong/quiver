@@ -76,6 +76,8 @@ struct AccountsPage: View {
         if renewExpired {
             await app.accounts.refreshFromButton()
             await app.others.load(refreshFailed: true)
+            // The Codex totals are a separate fetch on the same button.
+            await app.codexUsage?.refresh(force: true)
         } else {
             await app.accounts.load(force: force)
             await app.others.load()

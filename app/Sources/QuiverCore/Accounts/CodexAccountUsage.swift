@@ -51,11 +51,15 @@ public struct CodexAccountSection: Sendable, Equatable {
         case data
         case authRequired
         case unsupported
+        /// The first read failed and there is no cached data to show.
+        case failed
     }
     public var kind: Kind
     /// The account could not be read this round; the data shown is the
     /// last good reply.
     public var stale: Bool
+    /// Why a `.failed` read failed, shown as hover help.
+    public var failure: String? = nil
     public var weeks: [CodexComparePeriod]
     public var months: [CodexComparePeriod]
     public var chips: CodexCompareChips
@@ -107,6 +111,12 @@ public final class CodexAccountUsage {
     private let cacheFile: URL
     private let now: () -> Date
     private let calendar: Calendar
+    /// The homes the last refresh covered, so the Accounts page's
+    /// Refresh and a swe-path change can retry them.
+    private var lastHomes: () -> [String] = { [] }
+    /// The most recent per-home failure with no cached data behind it —
+    /// the section shows "couldn't read" until a retry lands.
+    private var failures: [String: String] = [:]
     /// Refresh cadence: at launch and then every six hours.
     public static let interval: TimeInterval = 6 * 3600
     /// The ledger is only asked for this much history: six months plus
@@ -135,6 +145,7 @@ public final class CodexAccountUsage {
     /// first pass builds sections from the cache so a cold start still
     /// paints the last run's numbers while swe answers.
     public func keepFresh(homes: @escaping () -> [String]) async {
+        lastHomes = homes
         await recompute()
         while !Task.isCancelled {
             await refresh(homes: homes())
@@ -144,9 +155,24 @@ public final class CodexAccountUsage {
         }
     }
 
+    /// The Accounts page's Refresh: fetch every known account now.
+    /// `force` just documents that this is the user asking, not the
+    /// six-hour timer; both refetch every account.
+    public func refresh(force: Bool) async {
+        await refresh(homes: lastHomes(), force: force)
+    }
+
+    /// The swe path changed in Settings: the "too old" verdict was about
+    /// the old build, so clear it and retry the known accounts at once.
+    public func swePathChanged() async {
+        sweTooOld = false
+        await refresh(homes: lastHomes(), force: true)
+    }
+
     /// Rebuild `sections` from the cached entries and the ledger, for
-    /// every home with an entry.
-    func recompute() async {
+    /// every home with an entry. Runs no swe fetch — the "This Mac" side
+    /// is rebuilt after each ledger scan or write.
+    public func recompute() async {
         for home in entries.keys {
             sections[home] = await build(home)
         }
@@ -155,9 +181,11 @@ public final class CodexAccountUsage {
     /// The section for one home's stored entry.
     private func build(_ home: String) async -> CodexAccountSection {
         guard let entry = entries[home] else {
-            return CodexAccountSection(kind: .loading, stale: false,
-                                       weeks: [], months: [],
-                                       chips: .init(account: 0, mac: 0, difference: 0, fraction: 0))
+            let failure = failures[home]
+            return CodexAccountSection(
+                kind: failure == nil ? .loading : .failed, stale: false,
+                failure: failure, weeks: [], months: [],
+                chips: .init(account: 0, mac: 0, difference: 0, fraction: 0))
         }
         switch entry.report.status {
         case "ok":
@@ -178,7 +206,9 @@ public final class CodexAccountUsage {
                                        chips: .init(account: 0, mac: 0, difference: 0, fraction: 0))
         default:
             // `unavailable` with no cached data: nothing to show.
-            return CodexAccountSection(kind: .loading, stale: true,
+            return CodexAccountSection(kind: .failed, stale: true,
+                                       failure: failures[home]
+                                           ?? "swe reported this account's usage as unavailable.",
                                        weeks: [], months: [],
                                        chips: .init(account: 0, mac: 0, difference: 0, fraction: 0))
         }
@@ -188,20 +218,26 @@ public final class CodexAccountUsage {
     /// entry marked stale; `auth-required` and `unsupported` replace it;
     /// an swe that does not know the command disables the feature for
     /// the session and logs once.
-    public func refresh(homes: [String]) async {
+    public func refresh(homes: [String], force: Bool = false) async {
+        lastHomes = { homes }
         guard !sweTooOld else { return }
         for home in homes {
             fetching.insert(home)
             defer { fetching.remove(home) }
             do {
                 let report = try await fetch(home)
-                if report.status == "unavailable", entries[home] != nil {
-                    // Keep the last good numbers; the section flags them
-                    // as stale rather than blanking.
-                    markStale(home)
+                if report.status == "unavailable" {
+                    if entries[home] != nil {
+                        // Keep the last good numbers; the section flags
+                        // them as stale rather than blanking.
+                        markStale(home)
+                    } else {
+                        failures[home] = "swe reported this account's usage as unavailable."
+                    }
                 } else {
                     entries[home] = Entry(report: report, fetchedAt: now())
                     clearStale(home)
+                    failures[home] = nil
                 }
             } catch SweError.commandFailed(_, let message)
                 where message.localizedCaseInsensitiveContains("unknown harness subcommand")
@@ -210,7 +246,11 @@ public final class CodexAccountUsage {
                 Self.log.info("installed swe has no harness usage-daily; hiding the Codex totals")
                 return
             } catch {
-                if entries[home] != nil { markStale(home) }
+                if entries[home] != nil {
+                    markStale(home)
+                } else {
+                    failures[home] = error.localizedDescription
+                }
                 Self.log.error("codex usage-daily failed for an account: \(error.localizedDescription)")
             }
             sections[home] = await build(home)
@@ -226,8 +266,11 @@ public final class CodexAccountUsage {
     /// value, or `.loading` until the first refresh lands.
     public func section(for home: String) -> CodexAccountSection? {
         guard !sweTooOld else { return nil }
-        return sections[home] ?? CodexAccountSection(
-            kind: .loading, stale: false, weeks: [], months: [],
+        if let section = sections[home] { return section }
+        let failure = failures[home]
+        return CodexAccountSection(
+            kind: failure == nil ? .loading : .failed, stale: false,
+            failure: failure, weeks: [], months: [],
             chips: .init(account: 0, mac: 0, difference: 0, fraction: 0))
     }
 

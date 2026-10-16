@@ -29,7 +29,9 @@ public actor CursorUsageFeed {
     static let harnesses = ["cursor", "grok-bot"]
 
     private let ledger: Ledger
-    private let swe: SweClient
+    /// The swe chosen in Settings right now, read at call time so a path
+    /// change reaches the feed instead of staying on the launch-time one.
+    private let swe: @Sendable () -> SweClient
     private let accounts: @Sendable () -> [Account]
     /// `cache/cursor-feed.json`: which account each profile answers as,
     /// and each account's newest imported timestamp.
@@ -47,7 +49,7 @@ public actor CursorUsageFeed {
     private let onIngested: (@Sendable () async -> Void)?
     private static let log = Logger(subsystem: "com.cwenlong.quiver", category: "cursor-feed")
 
-    public init(ledger: Ledger, swe: SweClient,
+    public init(ledger: Ledger, swe: @escaping @Sendable () -> SweClient,
                 accounts: @escaping @Sendable () -> [Account],
                 progressFile: URL? = nil,
                 onIngested: (@Sendable () async -> Void)? = nil) {
@@ -102,6 +104,13 @@ public actor CursorUsageFeed {
         if changed > 0 { await onIngested?() }
     }
 
+    /// The swe path changed in Settings: the "too old" verdict was about
+    /// the old build, so clear it and retry the feed at once.
+    public func swePathChanged() async {
+        sweTooOld = false
+        await poll()
+    }
+
     /// Polls one profile and ingests its events, returning how many rows
     /// changed.
     private func poll(_ account: Account,
@@ -115,7 +124,7 @@ public actor CursorUsageFeed {
                 .map { max(0, $0 - Self.overlap) } ?? fullWindow
         }
         let expected = progress.profiles[account.home]
-        var reply = try await swe.usageEvents(
+        var reply = try await swe().usageEvents(
             accountDir: account.accountDir, since: window(for: expected))
         // A switched or newly seen account reads through its own mark —
         // the profile's old account's overlap would skip the new one's
@@ -123,7 +132,7 @@ public actor CursorUsageFeed {
         if let accountId = reply.accountId, accountId != expected {
             let own = window(for: accountId)
             if own != window(for: expected) {
-                reply = try await swe.usageEvents(
+                reply = try await swe().usageEvents(
                     accountDir: account.accountDir, since: own)
             }
         }
