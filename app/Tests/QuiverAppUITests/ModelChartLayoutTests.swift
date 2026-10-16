@@ -86,6 +86,21 @@ struct ModelChartLayoutTests {
         view.subviews.forEach { auditFinite($0, bad: &bad, seen: &seen) }
     }
 
+    /// The room before the first bar holds against the column width it
+    /// leaves: the first bar's middle sits at least `reach` from the edge,
+    /// with no more room than needed, flexible or at the minimum width.
+    @Test(arguments: [(1400.0, 25), (900.0, 25), (1600.0, 8), (600.0, 3), (2000.0, 40)])
+    func leadingRoomClearsTheFirstLabel(width: Double, count: Int) {
+        for reach in [0.0, 20.0, 60.0, 95.0] {
+            let room = ChartCard.leadingRoom(reach: reach, width: width, count: count)
+            let column = max(ChartCard.minColumnWidth,
+                             (width - 2 * ChartCard.inset - room) / CGFloat(count))
+            let middle = room + ChartCard.inset + (column - ChartCard.spacing) / 2
+            #expect(middle >= reach - 0.001, "width \(width), count \(count), reach \(reach)")
+            if room > 0 { #expect(middle - reach < 1.5, "no more room than needed") }
+        }
+    }
+
     @Test
     func chartLaysOutFiniteAcrossResizes() async throws {
         let dir = try fixtureDir()
