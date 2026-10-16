@@ -179,6 +179,109 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
     }
 }
 
+/// The Services section's state: a probe's result belongs to the value it
+/// ran against, so replacing or removing the key clears it — even while
+/// the request is still flying — and a test refreshes the key's dates.
+@Suite @MainActor struct ServicesModelTests {
+    private func devin() throws -> KnownService {
+        try #require(ServiceCredentials.services.first { $0.id == "devin" })
+    }
+
+    /// A probe transport that parks `send` until `finish` is called, so
+    /// a test can change the key while the request is in flight.
+    private final class GatedTransport: HTTPTransport, @unchecked Sendable {
+        private var entered: CheckedContinuation<Void, Never>?
+        private var gate: CheckedContinuation<(Data, HTTPURLResponse), Never>?
+        private var isEntered = false
+
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            isEntered = true
+            entered?.resume()
+            entered = nil
+            return await withCheckedContinuation { gate = $0 }
+        }
+
+        /// Suspends until `send` was called.
+        func waitForSend() async {
+            if isEntered { return }
+            await withCheckedContinuation { entered = $0 }
+        }
+
+        func finish(status: Int = 200) {
+            gate?.resume(returning: (Data(), HTTPURLResponse(
+                url: URL(string: "https://probe.test")!, statusCode: status,
+                httpVersion: nil, headerFields: nil)!))
+            gate = nil
+        }
+    }
+
+    private func make(now: @escaping @Sendable () -> Date = {
+        Date(timeIntervalSince1970: 1_791_000_000)
+    }) throws -> (TempDir, ServiceCredentials, ServicesModel) {
+        let dir = try TempDir()
+        let credentials = ServiceCredentials(
+            secrets: StubSecrets(), service: "com.cwenlong.quiver.services.test",
+            metadataURL: dir.url.appending(path: "config/services.json"), now: now)
+        return (dir, credentials, ServicesModel(
+            credentials: credentials, transport: ProbeTransport(.success((Data(), 200)))))
+    }
+
+    @Test func replacingOrRemovingTheKeyClearsAWorksResult() async throws {
+        let (_, _, model) = try make()
+        let devin = try devin()
+        await model.set("DEVIN_API_KEY", value: "one")
+        await model.probe(devin)
+        #expect(model.probeResults["devin"] == .works)
+
+        // A new value hasn't been tested: the old answer must go.
+        await model.set("DEVIN_API_KEY", value: "two")
+        #expect(model.probeResults["devin"] == nil)
+
+        await model.probe(devin)
+        #expect(model.probeResults["devin"] == .works)
+        await model.remove("DEVIN_API_KEY")
+        #expect(model.probeResults["devin"] == nil)
+    }
+
+    @Test func anInFlightProbeCantWriteOverANewerKey() async throws {
+        let dir = try TempDir()
+        let credentials = ServiceCredentials(
+            secrets: StubSecrets(), service: "svc",
+            metadataURL: dir.url.appending(path: "config/services.json"))
+        let transport = GatedTransport()
+        let model = ServicesModel(credentials: credentials, transport: transport)
+        let devin = try devin()
+        await model.set("DEVIN_API_KEY", value: "one")
+
+        // The probe is parked inside the request when the key changes.
+        let probe = Task { await model.probe(devin) }
+        await transport.waitForSend()
+        await model.set("DEVIN_API_KEY", value: "two")
+        transport.finish(status: 200)
+        await probe.value
+
+        // The 200 answered the old key; showing "Works" for it would be wrong.
+        #expect(model.probeResults["devin"] == nil)
+        #expect(model.statuses["DEVIN_API_KEY"]?.isSet == true)
+    }
+
+    @Test func aProbeRefreshesTheKeysLastUsedDate() async throws {
+        final class Clock: @unchecked Sendable {
+            var date = Date(timeIntervalSince1970: 1_791_000_000)
+        }
+        let clock = Clock()
+        let (_, _, model) = try make(now: { clock.date })
+        let devin = try devin()
+        await model.set("DEVIN_API_KEY", value: "tok")
+        #expect(model.statuses["DEVIN_API_KEY"]?.lastUsed == nil)
+
+        clock.date = Date(timeIntervalSince1970: 1_792_000_000)
+        await model.probe(devin)
+        #expect(model.statuses["DEVIN_API_KEY"]?.lastUsed
+                    == Date(timeIntervalSince1970: 1_792_000_000))
+    }
+}
+
 /// KeychainCLI's argv: writes upsert with `-w` under Quiver's service,
 /// deletes tolerate a missing item, and no path logs the value.
 @Suite struct ServiceKeychainTests {

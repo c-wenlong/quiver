@@ -17,6 +17,10 @@ public final class ServicesModel {
 
     private let credentials: ServiceCredentials
     private let transport: any HTTPTransport
+    /// A stamp per service, bumped by each probe and by any set/remove
+    /// of one of its fields, so an older in-flight probe can't write its
+    /// result over a newer key's.
+    private var probeGenerations: [String: Int] = [:]
 
     public init(credentials: ServiceCredentials, transport: any HTTPTransport) {
         self.credentials = credentials
@@ -39,6 +43,7 @@ public final class ServicesModel {
         do {
             try await credentials.set(field, value: value)
             error = nil
+            clearProbe(forField: field)
         } catch {
             self.error = error.localizedDescription
         }
@@ -49,17 +54,36 @@ public final class ServicesModel {
         do {
             try await credentials.remove(field)
             error = nil
+            clearProbe(forField: field)
         } catch {
             self.error = error.localizedDescription
         }
         await refresh(field)
     }
 
-    /// The service's probe request; keeps only the outcome.
+    /// The service's probe request; keeps only the outcome. A set or
+    /// remove of the key while the request flies discards the result:
+    /// the answer belongs to the old value, not the new one.
     public func probe(_ service: KnownService) async {
+        probeGenerations[service.id, default: 0] += 1
+        let generation = probeGenerations[service.id]!
         probing.insert(service.id)
         defer { probing.remove(service.id) }
-        probeResults[service.id] = await credentials.probe(service, transport: transport)
+        let result = await credentials.probe(service, transport: transport)
+        if probeGenerations[service.id] == generation {
+            probeResults[service.id] = result
+        }
+        // The read recorded the key's use; show the new "last used".
+        if let field = service.probe?.field { await refresh(field) }
+    }
+
+    /// Drop the owning service's probe result and retire probes in
+    /// flight: they were run against a different value.
+    private func clearProbe(forField field: String) {
+        for service in ServiceCredentials.services where service.fields.contains(field) {
+            probeGenerations[service.id, default: 0] += 1
+            probeResults[service.id] = nil
+        }
     }
 
     /// The key the service's probe needs is saved.
