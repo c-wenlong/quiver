@@ -62,6 +62,8 @@ public struct AccountDirectory: Sendable {
 
     /// The profile's name, or a short form of the path for homes no profile owns.
     public func label(for accountHome: String) -> String {
+        // Not a folder: cloud sessions have no home on this Mac.
+        if accountHome == DevinCloud.accountHome { return "Devin cloud" }
         let path = URL(fileURLWithPath: accountHome).standardizedFileURL.path
         if let name = names[path] { return name }
         let share = home.appendingPathComponent(".local/share").path
@@ -98,6 +100,7 @@ public enum UsageFormat {
         case "opencode": "OpenCode"
         case "devin": "Devin"
         case "grok-bot": "Grok Bot"
+        case DevinCloud.harness: "Devin cloud"
         default: id.prefix(1).uppercased() + id.dropFirst()
         }
     }

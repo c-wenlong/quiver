@@ -23,6 +23,8 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
     public var status: String?
     /// Nil when the harness has no resume command.
     public var resume: Resume?
+    /// Where a cloud session opens in the browser; nil for local ones.
+    public var webURL: String?
 
     public init(id: String, harness: String, agent: String, cwd: String?, title: String?, titleSource: String?,
                 lastActiveAt: Date, status: String?, resume: Resume?) {
@@ -37,9 +39,13 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
         self.resume = resume
     }
 
+    /// A session with no resume command that has a web page, which the
+    /// row's button opens instead.
+    public var opensInBrowser: Bool { resume == nil && webURL != nil }
+
     /// swe's client decodes with `convertFromSnakeCase`.
     enum CodingKeys: String, CodingKey {
-        case id, harness, agent, cwd, title, status, resume, titleSource, lastActiveAt
+        case id, harness, agent, cwd, title, status, resume, titleSource, lastActiveAt, webURL
     }
 
     public init(from decoder: Decoder) throws {
@@ -52,6 +58,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
         lastActiveAt = Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .lastActiveAt))
         status = try c.decodeIfPresent(String.self, forKey: .status)
         resume = try c.decodeIfPresent(Resume.self, forKey: .resume)
+        webURL = try c.decodeIfPresent(String.self, forKey: .webURL)
         // A harness can list a session it has no id for; one such row must
         // not sink the whole list, so it gets a stable id of its own.
         id = try c.decodeIfPresent(String.self, forKey: .id)
@@ -146,14 +153,15 @@ public enum SessionResume {
 
 /// Where a session ran. Cursor's usage feed has no field for it, so its
 /// conversation ids decide: `bc-` is a cloud background agent and `sand-`
-/// a cloud sandbox subagent. Grok Bot only runs in Cursor's cloud. Every
-/// other session is one swe read from this Mac.
+/// a cloud sandbox subagent. Grok Bot only runs in Cursor's cloud, and
+/// `devin-cloud` sessions come from Devin's API. Every other session is
+/// one swe read from this Mac.
 public enum SessionLocation: String, Sendable, Equatable {
     case local, cloud
 
     public init(harness: String, id: String) {
         switch harness {
-        case "grok-bot": self = .cloud
+        case "grok-bot", DevinCloud.harness: self = .cloud
         case "cursor" where id.hasPrefix("bc-") || id.hasPrefix("sand-"): self = .cloud
         default: self = .local
         }
@@ -178,16 +186,21 @@ public final class SessionsModel {
         public var id: String
         public var session: SessionInfo
         public var usage: SessionUsage?
+        /// When the session ran, for a source with no ledger usage to say
+        /// it (Devin cloud sessions, from their message times).
+        public var span: DateInterval?
 
-        public init(session: SessionInfo, usage: SessionUsage?, id: String? = nil) {
+        public init(session: SessionInfo, usage: SessionUsage?, id: String? = nil, span: DateInterval? = nil) {
             self.id = id ?? session.id
             self.session = session
             self.usage = usage
+            self.span = span
         }
 
-        /// From the first to the last recorded event, when the ledger has any.
+        /// From the first to the last recorded event, when the ledger has
+        /// any, else the source's own span.
         public var duration: TimeInterval? {
-            usage.map { $0.lastTimestamp.timeIntervalSince($0.firstTimestamp) }
+            usage.map { $0.lastTimestamp.timeIntervalSince($0.firstTimestamp) } ?? span?.duration
         }
 
         public var location: SessionLocation { SessionLocation(harness: session.harness, id: session.id) }
@@ -257,6 +270,12 @@ public final class SessionsModel {
     private let now: () -> Date
     private let calendar: Calendar
     private var listed: [SessionInfo] = []
+    /// Devin cloud sessions, which swe doesn't list and the ledger has no
+    /// usage for; `DevinCloudSync` pushes them in.
+    private var cloud: [DevinCloudSession] = []
+    /// A cloud session has no folder; its first pull request's repository
+    /// stands in as the project.
+    private var cloudProjects: [String: String] = [:]
     private let snapshots: (any SnapshotStoring<SessionSnapshot>)?
     private let maxAge: TimeInterval
     private let listTimeout: Duration
@@ -387,6 +406,15 @@ public final class SessionsModel {
         await save()
     }
 
+    /// The Devin cloud sessions changed: rejoin with what is listed.
+    public func updateCloud(_ sessions: [DevinCloudSession]) {
+        guard sessions != cloud else { return }
+        cloud = sessions
+        cloudProjects = Dictionary(sessions.compactMap { s in s.project.map { (s.id, $0) } },
+                                   uniquingKeysWith: { a, _ in a })
+        rows = join(listed, latestUsage ?? [:])
+    }
+
     struct ListingTimedOut: LocalizedError {
         var timeout: Duration
         var errorDescription: String? {
@@ -508,6 +536,11 @@ public final class SessionsModel {
                 id: use.sessionId, harness: use.harness, agent: UsageFormat.harness(use.harness), cwd: use.cwd,
                 title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil, resume: nil)
             rows.append(Row(session: session, usage: use, id: id))
+        }
+        // Devin cloud sessions: API-listed, no usage, opened in the browser.
+        for session in cloud {
+            rows.append(Row(session: session.sessionInfo, usage: nil,
+                            id: "\(DevinCloud.harness)|\(session.id)", span: session.span))
         }
         return rows.sorted { ($0.session.lastActiveAt, $1.id) > ($1.session.lastActiveAt, $0.id) }
     }
@@ -651,6 +684,7 @@ public final class SessionsModel {
     /// working folders resolve (off the main thread, cached per cwd), so
     /// every worktree counts under it. Until then, the path-only guess.
     public func project(for session: SessionInfo) -> String? {
+        if session.harness == DevinCloud.harness { return cloudProjects[session.id] }
         guard let cwd = session.cwd, !cwd.isEmpty else { return nil }
         return resolvedProjects[cwd] ?? SessionInfo.project(of: cwd)
     }

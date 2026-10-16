@@ -57,7 +57,7 @@ public actor ServiceCredentials {
     public static let services: [KnownService] = [
         KnownService(
             id: "devin", name: "Devin",
-            help: "Personal access token from app.devin.ai › Settings › Devin API › PATs; org ID is at the top of that page.",
+            help: "Imports your Devin cloud sessions into Sessions and the calendar. Personal access token from app.devin.ai › Settings › Devin API › PATs; the org ID at the top of that page is optional.",
             fields: ["DEVIN_API_KEY", "DEVIN_ORG_ID"],
             probe: .init(field: "DEVIN_API_KEY", label: "Test",
                          url: "https://api.devin.ai/v3/self",

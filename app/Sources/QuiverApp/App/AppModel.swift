@@ -268,6 +268,9 @@ final class AppModel {
     let calendar: CalendarModel?
     /// Cursor's per-event usage feed into the ledger; nil with `sessions`.
     let cursorFeed: CursorUsageFeed?
+    /// Devin cloud sessions from Devin's API, for Sessions and the
+    /// calendar; nil with `sessions`.
+    let devinCloud: DevinCloudSync?
     /// Each Codex account's daily totals against what this Mac logged;
     /// nil with `sessions`.
     let codexUsage: CodexAccountUsage?
@@ -383,6 +386,7 @@ final class AppModel {
                                      defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
                                      snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")))
             let calendarCache = quiver.appending(path: "cache/calendar")
+            let devinCloudDirectory = DevinCloud.resolvedDirectory(home: home)
             let calendarSnapshots = SnapshotFile<CalendarSnapshot>(
                 url: quiver.appending(path: "cache/app-calendar.json"))
             let fileProviders: [any ActivityProviding] = [
@@ -397,6 +401,7 @@ final class AppModel {
                 FreebuffActivity(projectsRoot: home.appending(path: ".config/manicode/projects"),
                                  accountHome: home.appending(path: ".config/manicode").path,
                                  index: ActivityFileIndex(url: calendarCache.appending(path: "freebuff.json"))),
+                DevinCloudActivity(directory: devinCloudDirectory),
                 CursorAppActivity(userDataDirs: {
                     var dirs = [home.appending(path: "Library/Application Support/Cursor")]
                     dirs += ((try? store.load()) ?? [])
@@ -438,6 +443,25 @@ final class AppModel {
                 },
                 progressFile: quiver.appending(path: "cache/cursor-feed.json"),
                 onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
+            // The user's own Devin cloud sessions, with the Services token.
+            // A sync that changed them rejoins the Sessions list and
+            // redraws the calendar.
+            devinCloud = DevinCloudSync(
+                directory: devinCloudDirectory,
+                credentials: {
+                    guard let token = await serviceCredentials.value(for: "DEVIN_API_KEY") else { return nil }
+                    return .init(token: token, orgId: await serviceCredentials.value(for: "DEVIN_ORG_ID"))
+                },
+                transport: URLSessionTransport(),
+                onChanged: { [sessions, calendar] cloud in
+                    await sessions?.updateCloud(cloud)
+                    // The redraw reads the whole visible range; the sync
+                    // doesn't wait for it.
+                    Task { @MainActor in
+                        calendar?.noteScanCompleted()
+                        await calendar?.load(force: true)
+                    }
+                })
             codexUsage = CodexAccountUsage(
                 cacheFile: quiver.appending(path: "cache/codex-account-usage.json"),
                 fetch: { home in
@@ -472,12 +496,18 @@ final class AppModel {
             ledger = nil
             calendar = nil
             cursorFeed = nil
+            devinCloud = nil
             codexUsage = nil
             pricingModel = nil
             models = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
         sessions?.hideTrivial = hidesTrivial
+        // A new Devin token or org id syncs the cloud sessions at once.
+        services.onFieldChanged = { [devinCloud] field in
+            guard field.hasPrefix("DEVIN_"), let devinCloud else { return }
+            Task { await devinCloud.sync() }
+        }
         skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))
         // The Skills page's hub tab is now Plugins > Explore, kept in
         // plugin-catalog.json; its old snapshot has no reader left.
@@ -593,6 +623,7 @@ final class AppModel {
             Task { [pluginCatalog] in await pluginCatalog.restore() },
         ]
         if let cursorFeed { watchers.append(Task { await cursorFeed.keepFresh() }) }
+        if let devinCloud { watchers.append(Task { await devinCloud.keepFresh() }) }
         if let codexUsage {
             watchers.append(Task { await codexUsage.keepFresh(homes: codexHomes) })
             // The "This Mac" side follows the ledger: rebuild after every
@@ -719,6 +750,11 @@ final class AppModel {
     private var statusPolling: Task<Void, Never>?
     /// Resume a session in the chosen terminal, in the account it ran under.
     func resume(_ row: SessionsModel.Row) async throws {
+        // A cloud session with a web page opens there instead.
+        if row.session.resume == nil, let web = row.session.webURL.flatMap(URL.init(string:)) {
+            NSWorkspace.shared.open(web)
+            return
+        }
         guard let resume = row.session.resume else { return }
         let home = row.usage?.accountHome
         let defaults = [".claude", ".codex"].map { userHome.appending(path: $0).path }
