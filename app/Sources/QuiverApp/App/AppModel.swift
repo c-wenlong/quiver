@@ -461,7 +461,8 @@ final class AppModel {
                         calendar?.noteScanCompleted()
                         await calendar?.load(force: true)
                     }
-                })
+                },
+                onStatus: { [sessions] error in await sessions?.noteCloudSync(error: error) })
             codexUsage = CodexAccountUsage(
                 cacheFile: quiver.appending(path: "cache/codex-account-usage.json"),
                 fetch: { home in

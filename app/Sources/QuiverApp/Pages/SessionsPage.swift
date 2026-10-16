@@ -60,6 +60,12 @@ private struct SessionsContent: View {
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
+            if let cloudError = model.cloudError {
+                Card {
+                    Label("Devin cloud sessions didn't update: \(cloudError)", systemImage: "exclamationmark.circle")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
             if model.isCapped {
                 Card {
                     Label("Showing the most recent \(model.rows.count) sessions; older ones are left out.",

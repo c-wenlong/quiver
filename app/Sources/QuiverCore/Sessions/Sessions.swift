@@ -77,6 +77,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
         try c.encode(lastActiveAt.timeIntervalSince1970, forKey: .lastActiveAt)
         try c.encodeIfPresent(status, forKey: .status)
         try c.encodeIfPresent(resume, forKey: .resume)
+        try c.encodeIfPresent(webURL, forKey: .webURL)
     }
 
     public var project: String? { Self.project(of: cwd) }
@@ -404,6 +405,13 @@ public final class SessionsModel {
         rows = join(listed, usage)
         resolveProjects(for: rows)
         await save()
+    }
+
+    /// Why the last Devin cloud sync failed, nil once one succeeds.
+    public private(set) var cloudError: String?
+
+    public func noteCloudSync(error: String?) {
+        cloudError = error
     }
 
     /// The Devin cloud sessions changed: rejoin with what is listed.

@@ -90,6 +90,34 @@ private func messages(_ times: [Int]) -> String {
 private let org = "org-1"
 private let selfJSON = #"{"principal_type":"pat_user","user_id":"github|1","org_id":"org-1"}"#
 
+/// Collects what `onStatus` was handed, in order; `first()` waits for one.
+private final class Statuses: Sendable {
+    private struct State {
+        var values: [String?] = []
+        var waiter: CheckedContinuation<String?, Never>?
+    }
+    private let state = Mutex(State())
+    var values: [String?] { state.withLock { $0.values } }
+
+    func record(_ error: String?) {
+        state.withLock { s in
+            s.values.append(error)
+            s.waiter?.resume(returning: error)
+            s.waiter = nil
+        }
+    }
+
+    /// The first status, waiting for it when none has come yet. Checked
+    /// and registered under one lock, so a status can't slip between.
+    func first() async -> String? {
+        await withCheckedContinuation { continuation in
+            state.withLock { s in
+                if let first = s.values.first { continuation.resume(returning: first) } else { s.waiter = continuation }
+            }
+        }
+    }
+}
+
 /// Collects what `onChanged` was handed, in order.
 private final class Changes: Sendable {
     private let list = Mutex<[[String]]>([])
@@ -99,13 +127,16 @@ private final class Changes: Sendable {
 
 @Suite struct DevinCloudSyncTests {
     private func sync(_ api: FakeDevinAPI, dir: TempDir, token: String? = "cog_test",
-                      orgId: String? = nil, changes: Changes? = nil) -> DevinCloudSync {
+                      orgId: String? = nil, changes: Changes? = nil, statuses: Statuses? = nil,
+                      maxPages: Int = 50) -> DevinCloudSync {
         DevinCloudSync(
             directory: dir.url,
             credentials: { token.map { .init(token: $0, orgId: orgId) } },
             transport: api,
             now: { Date(timeIntervalSince1970: 1_792_000_000) },
-            onChanged: { changes?.record($0) })
+            onChanged: { changes?.record($0) },
+            onStatus: { statuses?.record($0) },
+            maxPages: maxPages)
     }
 
     private func standardRoutes(_ api: FakeDevinAPI) {
@@ -236,6 +267,79 @@ private final class Changes: Sendable {
         #expect(await reopened.lastError == error)
     }
 
+    @Test func everySyncReportsItsOutcome() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        let statuses = Statuses()
+        let sync = sync(api, dir: dir, statuses: statuses)
+        await sync.sync()
+        api.route("/v3/self", "{}", status: 403)
+        await sync.sync()
+        standardRoutes(api)
+        await sync.sync()
+        #expect(statuses.values.count == 3)
+        #expect(statuses.values[0] == nil)
+        #expect(statuses.values[1]?.contains("403") == true)
+        #expect(statuses.values[2] == nil)
+    }
+
+    @Test func aStoredErrorIsReportedAtLaunch() async throws {
+        let dir = try TempDir()
+        var snapshot = DevinCloudSnapshot()
+        snapshot.error = "Devin answered HTTP 500."
+        try DevinCloudSync.encoder.encode(snapshot).write(to: dir.url.appending(path: "sessions.json"))
+        let statuses = Statuses()
+        let sync = sync(FakeDevinAPI(), dir: dir, token: nil, statuses: statuses)
+        let task = Task { await sync.keepFresh(every: .seconds(3_600)) }
+        let first = await statuses.first()
+        task.cancel()
+        #expect(first == "Devin answered HTTP 500.")
+    }
+
+    @Test func noUserIdImportsNothing() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        let sync = sync(api, dir: dir)
+        await sync.sync()
+        // An answer without the user's id must not fall back to the whole org.
+        api.route("/v3/self", #"{"principal_type":"pat_user","org_id":"org-1"}"#)
+        let before = api.requests.count
+        await sync.sync()
+        #expect(api.requests[before...].map(\.url!.path) == ["/v3/self"])
+        #expect(await sync.sessions.map(\.id) == ["s1", "s2"])
+        #expect(await sync.lastError?.contains("which user") == true)
+    }
+
+    @Test func aWalkPastThePageCapFailsAndKeepsTheStore() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        let sync = sync(api, dir: dir, maxPages: 1)
+        await sync.sync()
+        #expect(await sync.sessions.count == 2)
+        // The list now says there is more than one page.
+        let more = session("s3", title: "New", created: 1_791_900_000, updated: 1_791_900_100)
+        api.route("/v3/organizations/\(org)/sessions",
+                  #"{"items":[\#(more)],"has_next_page":true,"end_cursor":"c1"}"#)
+        await sync.sync()
+        #expect(await sync.sessions.map(\.id) == ["s1", "s2"])
+        #expect(await sync.lastError?.contains("more pages") == true)
+    }
+
+    @Test func messagesPastThePageCapFailTheSync() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        api.route("/v3/organizations/\(org)/sessions/s1/messages",
+                  #"{"items":[{"event_id":"e","source":"devin","message":"x","created_at":1791000000}],"has_next_page":true,"end_cursor":"m1"}"#)
+        let sync = sync(api, dir: dir, maxPages: 1)
+        await sync.sync()
+        #expect(await sync.sessions.isEmpty)
+        #expect(await sync.lastError?.contains("more pages") == true)
+    }
+
     @Test func noTokenMeansNoRequests() async throws {
         let dir = try TempDir()
         let api = FakeDevinAPI()
@@ -332,6 +436,13 @@ private final class Changes: Sendable {
         #expect(HarnessMark(info.harness).name == "Devin cloud")
     }
 
+    @Test func sessionInfoKeepsItsWebLinkThroughCoding() throws {
+        let info = session(status: "exit", detail: nil).sessionInfo
+        let decoded = try JSONDecoder().decode(SessionInfo.self, from: JSONEncoder().encode(info))
+        #expect(decoded == info)
+        #expect(decoded.opensInBrowser)
+    }
+
     @Test func calendarBlocksSplitOnQuietStretchesAndGroupByRepo() {
         var s = session(status: "exit", detail: nil, times: [1_000, 1_600, 90_000, 90_300])
         let range = DateInterval(start: Date(timeIntervalSince1970: 0), end: Date(timeIntervalSince1970: 200_000))
@@ -403,6 +514,11 @@ private final class Changes: Sendable {
         // No usage is not "accidental" for a harness the ledger doesn't carry.
         #expect(model.visible.map(\.id) == ["devin-cloud|s1", "a"])
         #expect(model.harnesses == ["devin-cloud", "gemini"])
+
+        model.noteCloudSync(error: "Devin answered HTTP 500.")
+        #expect(model.cloudError == "Devin answered HTTP 500.")
+        model.noteCloudSync(error: nil)
+        #expect(model.cloudError == nil)
 
         // A new list from swe keeps the cloud rows.
         await model.load()

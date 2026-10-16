@@ -133,7 +133,7 @@ public struct DevinCloudSnapshot: Codable, Sendable, Equatable {
 public actor DevinCloudSync {
     /// Devin allows 200 per page; 50 pages is 10,000 sessions.
     static let pageSize = 200
-    static let maxPages = 50
+    private let maxPages: Int
 
     public struct Credentials: Sendable {
         public var token: String
@@ -150,6 +150,9 @@ public actor DevinCloudSync {
     private let transport: any HTTPTransport
     private let now: @Sendable () -> Date
     private let onChanged: (@Sendable ([DevinCloudSession]) async -> Void)?
+    /// Runs after every sync that got an answer, with its error or nil,
+    /// so a page can say why the list stopped updating.
+    private let onStatus: (@Sendable (String?) async -> Void)?
     private var snapshot: DevinCloudSnapshot
     /// Bumped by every sync; a reply from an older one is dropped, so a
     /// slow sync can't overwrite a newer one's result.
@@ -160,12 +163,16 @@ public actor DevinCloudSync {
                 credentials: @escaping @Sendable () async -> Credentials?,
                 transport: any HTTPTransport,
                 now: @escaping @Sendable () -> Date = Date.init,
-                onChanged: (@Sendable ([DevinCloudSession]) async -> Void)? = nil) {
+                onChanged: (@Sendable ([DevinCloudSession]) async -> Void)? = nil,
+                onStatus: (@Sendable (String?) async -> Void)? = nil,
+                maxPages: Int = 50) {
         self.directory = directory
+        self.maxPages = maxPages
         self.credentials = credentials
         self.transport = transport
         self.now = now
         self.onChanged = onChanged
+        self.onStatus = onStatus
         self.snapshot = Self.stored(in: directory)
     }
 
@@ -186,6 +193,7 @@ public actor DevinCloudSync {
     public func keepFresh(every interval: Duration = .seconds(900)) async {
         // What the last launch stored shows before the first sync answers.
         if !snapshot.sessions.isEmpty { await onChanged?(snapshot.sessions) }
+        if let error = snapshot.error { await onStatus?(error) }
         while !Task.isCancelled {
             await sync()
             do { try await Task.sleep(for: interval) } catch { return }
@@ -201,14 +209,17 @@ public actor DevinCloudSync {
         do {
             let me = try await get(Self.SelfResponse.self, path: "/v3/self", token: credentials.token)
             guard mine == generation else { return }
+            // Without the user's id the listing would be the whole org's,
+            // teammates and automations included.
+            guard let userId = me.userId, !userId.isEmpty else { throw SyncError.noUser }
             guard let orgId = credentials.orgId.flatMap({ $0.isEmpty ? nil : $0 }) ?? me.orgId else {
                 throw SyncError.noOrganization
             }
-            let listed = try await listSessions(org: orgId, user: me.userId, token: credentials.token)
+            let listed = try await listSessions(org: orgId, user: userId, token: credentials.token)
             guard mine == generation else { return }
             // A different user or org starts over: the stored sessions
             // belong to whoever the old token named.
-            let sameOwner = snapshot.userId == me.userId && snapshot.orgId == orgId
+            let sameOwner = snapshot.userId == userId && snapshot.orgId == orgId
             let stored = sameOwner
                 ? Dictionary(snapshot.sessions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
                 : [:]
@@ -224,18 +235,20 @@ public actor DevinCloudSync {
             }
             sessions.sort { ($0.span.end, $0.id) > ($1.span.end, $1.id) }
             let changed = sessions != snapshot.sessions
-            snapshot.userId = me.userId
+            snapshot.userId = userId
             snapshot.orgId = orgId
             snapshot.syncedAt = now()
             snapshot.error = nil
             snapshot.sessions = sessions
             save()
             if changed { await onChanged?(sessions) }
+            await onStatus?(nil)
         } catch {
             guard mine == generation else { return }
             snapshot.error = Self.describe(error)
             Self.log.error("devin cloud sync failed: \(self.snapshot.error ?? "")")
             save()
+            await onStatus?(snapshot.error)
         }
     }
 
@@ -244,12 +257,16 @@ public actor DevinCloudSync {
     enum SyncError: LocalizedError, Equatable {
         case http(Int)
         case noOrganization
+        case noUser
+        case incomplete
         var errorDescription: String? {
             switch self {
             case .http(401): "Devin rejected the token (HTTP 401). Check it in Settings › Services."
             case .http(403): "The token can't read this organization's sessions (HTTP 403)."
             case .http(let code): "Devin answered HTTP \(code)."
             case .noOrganization: "No Devin organization id. Add it in Settings › Services."
+            case .noUser: "Devin didn't say which user the token belongs to, so nothing was imported."
+            case .incomplete: "Devin returned more pages than Quiver reads; the stored sessions were kept."
             }
         }
     }
@@ -306,36 +323,39 @@ public actor DevinCloudSync {
         return "\(parts[0])/\(parts[1])"
     }
 
-    private func listSessions(org: String, user: String?, token: String) async throws -> [SessionItem] {
+    /// Every page, or `incomplete` past `maxPages`: a partial list would
+    /// drop the sessions it didn't reach from the store.
+    private func listSessions(org: String, user: String, token: String) async throws -> [SessionItem] {
         var items: [SessionItem] = []
         var after: String?
-        for _ in 0..<Self.maxPages {
-            var query = [URLQueryItem(name: "first", value: String(Self.pageSize))]
-            if let user { query.append(URLQueryItem(name: "user_ids", value: user)) }
+        for _ in 0..<maxPages {
+            var query = [URLQueryItem(name: "first", value: String(Self.pageSize)),
+                         URLQueryItem(name: "user_ids", value: user)]
             if let after { query.append(URLQueryItem(name: "after", value: after)) }
             let page = try await get(Page<SessionItem>.self,
                                      path: "/v3/organizations/\(org)/sessions", query: query, token: token)
             items += page.items
-            guard page.hasNextPage == true, let next = page.endCursor else { break }
+            guard page.hasNextPage == true, let next = page.endCursor else { return items }
             after = next
         }
-        return items
+        throw SyncError.incomplete
     }
 
     private func messageTimes(org: String, session: String, token: String) async throws -> [Date] {
         var times: [Date] = []
         var after: String?
-        for _ in 0..<Self.maxPages {
+        for _ in 0..<maxPages {
             var query = [URLQueryItem(name: "first", value: String(Self.pageSize))]
             if let after { query.append(URLQueryItem(name: "after", value: after)) }
             let page = try await get(Page<MessageItem>.self,
                                      path: "/v3/organizations/\(org)/sessions/\(session)/messages",
                                      query: query, token: token)
             times += page.items.map { DevinCloud.date($0.createdAt) }
-            guard page.hasNextPage == true, let next = page.endCursor else { break }
+            guard page.hasNextPage == true, let next = page.endCursor else { return times.sorted() }
             after = next
         }
-        return times.sorted()
+        // Partial times would be reused until the session changes again.
+        throw SyncError.incomplete
     }
 
     private func get<T: Decodable>(_ type: T.Type, path: String, query: [URLQueryItem] = [],
