@@ -549,6 +549,45 @@ extension PricingModelTests {
         _ = temp
     }
 
+    @Test func `a superseded load does not clear the filter or republish`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex",
+                  at: Date().addingTimeInterval(-60 * 86_400)),
+        ], catalog: priced)
+        model.period = .allTime
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+
+        // A load for "today" (no codex in it) suspends inside, then an
+        // allTime load supersedes it: when the stale one resumes it must
+        // leave the filter, the options and the rows alone.
+        model.period = .today
+        let stale = Task { await model.load() }
+        while !model.isLoading { await Task.yield() }
+        model.period = .allTime
+        await model.load()
+        await stale.value
+        #expect(model.harnessFilter == "codex")
+        #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
+        _ = temp
+    }
+
+    @Test func `the covered-by list stays unfiltered`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("swe-2-max", tokens: 200, harness: "claude"),
+            event("swe-2-medium", tokens: 100, harness: "codex"),
+        ], catalog: priced)
+        await model.load()
+        model.harnessFilter = "codex"
+        await model.load()
+        // The sheet warns that a saved price applies to every harness, so
+        // the names it lists must too.
+        #expect(model.coveredBy("swe-2") == ["swe-2-max", "swe-2-medium"])
+        _ = temp
+    }
+
     @Test func `the harness options sort by tokens`() async throws {
         let (_, model, temp) = try makeModel([
             event("claude-sonnet-4-6", tokens: 100, harness: "claude"),

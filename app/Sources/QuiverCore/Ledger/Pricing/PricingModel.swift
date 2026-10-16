@@ -88,6 +88,14 @@ public final class PricingModel {
     public private(set) var unpriced: [PricedModel] = []
     public private(set) var isLoading = false
 
+    /// Model names seen in the period across every harness: the sheet's
+    /// "Covers …" list stays unfiltered because a saved price applies to
+    /// every harness that ran the model.
+    private var periodModels: [String] = []
+    /// Bumped on every `load`: a superseded load must not publish or
+    /// touch the filter once a newer one has started.
+    private var loadGeneration = 0
+
     private let ledger: Ledger
     private var overrides: PricingOverrides
     /// Rebuilds the catalog with the overrides file as saved now.
@@ -114,10 +122,14 @@ public final class PricingModel {
 
     /// Rebuild the rows for the selected period.
     public func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         let range = period.range(now: now(), calendar: calendar)
         let all = await ledger.byModelHarness(in: range)
+        guard generation == loadGeneration else { return }
+        periodModels = Array(Set(all.map(\.model))).sorted()
         var byHarness: [String: Int] = [:]
         for slice in all { byHarness[slice.harness, default: 0] += slice.totals.totalTokens }
         harnessOptions = byHarness
@@ -129,6 +141,7 @@ public final class PricingModel {
         let filter = harnessFilter
         let slices = filter == nil ? all : all.filter { $0.harness == filter }
         let catalog = await ledger.catalog()
+        guard generation == loadGeneration else { return }
         var merged: [String: PricedModel] = [:]
         var order: [String] = []
         for slice in slices {
@@ -193,9 +206,10 @@ public final class PricingModel {
     }
 
     /// The logged model names a price saved under `key` would cover: every
-    /// model in the period whose base name is `key`.
+    /// model in the period whose base name is `key`, unfiltered — a saved
+    /// price applies to every harness.
     public func coveredBy(_ key: String) -> [String] {
-        groups.flatMap(\.models).map(\.model)
+        periodModels
             .filter { PricingCatalog.baseName(for: $0) == key }
             .sorted()
     }
