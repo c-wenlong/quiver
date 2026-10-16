@@ -326,7 +326,7 @@ import Testing
         try await ledger.ingest([CursorUsageFeed.record(for: CursorUsageEvent(
             timestamp: Date().timeIntervalSince1970 - 60, model: "grok-bot-cua",
             kind: "k", conversationId: "c9", headless: true,
-            inputTokens: 10, outputTokens: 5,
+            inputTokens: 10, outputTokens: 200,
             cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.001),
             accountKey: account, accountHome: account)])
         let range = DateInterval(start: .now.addingTimeInterval(-3600), duration: 3600)

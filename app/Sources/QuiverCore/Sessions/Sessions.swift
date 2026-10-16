@@ -118,7 +118,7 @@ extension SweClient: SessionListing {
 }
 
 public protocol SessionUsageQuerying: Sendable {
-    func bySession(in range: DateInterval) async -> [SessionUsage]
+    func bySession(in range: DateInterval, harness: String?) async -> [SessionUsage]
     /// Per day, harness and model, for the model filter's token counts.
     func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage]
 }
@@ -347,7 +347,10 @@ public final class SessionsModel {
     }
 
     /// Re-reads tokens and spend from the ledger after a scan, keeping the list.
-    public func refreshUsage() async {
+    /// `ledgerScanned` is the overview's "a scan has completed": missing
+    /// usage only counts as empty once it is true.
+    public func refreshUsage(ledgerScanned: Bool = false) async {
+        self.ledgerScanned = ledgerScanned
         usageGeneration += 1
         let mine = usageGeneration
         let (usage, daily) = await readUsage()
@@ -399,7 +402,7 @@ public final class SessionsModel {
     /// may have started months ago.
     private func readUsage() async -> ([UsageKey: SessionUsage], [DailyUsage]) {
         let range = DateInterval(start: Date(timeIntervalSince1970: 0), end: now())
-        async let usage = ledger.bySession(in: range)
+        async let usage = ledger.bySession(in: range, harness: nil)
         async let daily = ledger.daily(in: range, calendar: calendar)
         return (Self.keyed(await usage), await daily)
     }
@@ -627,20 +630,60 @@ public final class SessionsModel {
         resolvedProjects = resolved
     }
 
-    public var visible: [Row] {
-        let since = windowStart(filter.window)
+    // MARK: - Trivial sessions
+
+    /// Settings' "Hide accidental sessions". Off disables the filter here
+    /// and on the calendar alike.
+    public var hideTrivial = true
+    /// The page's "Show" for hidden rows; a view state, not persisted.
+    public var showTrivial = false
+
+    /// Set once a ledger scan has completed. Until then a listed
+    /// session's missing usage proves nothing: the ledger may simply not
+    /// have read the logs yet.
+    public var ledgerScanned = false
+
+    /// Whether the row is an accidental session: empty (zero responses —
+    /// a listed session of a local-log harness with no ledger events at
+    /// all counts, once the ledger has actually scanned) or probe-like.
+    /// Feed-polled harnesses (Cursor, Grok Bot) and harnesses the ledger
+    /// does not read are never hidden for missing usage.
+    func isTrivial(_ row: Row) -> Bool {
+        guard SessionFilter.usageLogHarnesses.contains(row.session.harness) else { return false }
+        guard let usage = row.usage else {
+            return ledgerScanned && SessionFilter.localLogHarnesses.contains(row.session.harness)
+        }
+        return SessionFilter.isTrivial(usage: usage)
+    }
+
+    /// Rows the current filters match that the trivial rule would hide.
+    /// Counts them even while `showTrivial` keeps them visible.
+    public var hiddenTrivialCount: Int {
+        guard hideTrivial else { return 0 }
+        return rows.count { matches($0) && isTrivial($0) }
+    }
+
+    /// The non-trivial filter terms: harness, window, project, model and
+    /// search.
+    private func matches(_ row: Row) -> Bool {
+        let s = row.session
+        if let harness = filter.harness, s.harness != harness { return false }
+        if s.lastActiveAt < windowStart(filter.window) { return false }
+        if let key = filter.project, Self.projectKey(project(for: s)) != key { return false }
+        if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
         let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
-        return rows.filter { row in
-            let s = row.session
-            if let harness = filter.harness, s.harness != harness { return false }
-            if s.lastActiveAt < since { return false }
-            if let key = filter.project, Self.projectKey(project(for: s)) != key { return false }
-            if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
-            if !needle.isEmpty {
-                let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
-                    .compactMap { $0 }.joined(separator: " ").lowercased()
-                if !haystack.contains(needle) { return false }
-            }
+        if !needle.isEmpty {
+            let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent] + (row.usage?.models ?? []).map(Optional.some))
+                .compactMap { $0 }.joined(separator: " ").lowercased()
+            if !haystack.contains(needle) { return false }
+        }
+        return true
+    }
+
+    public var visible: [Row] {
+        rows.filter { row in
+            guard matches(row) else { return false }
+            if hideTrivial, !showTrivial, isTrivial(row) { return false }
             return true
         }
     }
