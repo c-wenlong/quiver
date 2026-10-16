@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe harness usage-daily codex [--account-dir=<dir>] [--json]` reads a
+  Codex account's per-day token usage.** It spawns `codex app-server` with
+  `CODEX_HOME` at the account's home (`~/.codex` by default), runs the
+  `account/usage/read` JSON-RPC call under a 30s cap, and reports
+  `{"status", "summary", "days"}`: `ok` with lifetime/peak/streaks and
+  `{"date", "tokens"}` days, `auth-required` when the account is not
+  signed in with ChatGPT, `unsupported` when the codex build lacks the
+  method, `unavailable` for a missing binary, timeout or other failure.
+
 - **`swe harness usage <devin|cursor> --account-dir=<dir>` reads an extra
   account's rate limit from its own files.** Devin resolves to
   `<dir>/devin/credentials.toml` (the CLI's `XDG_DATA_HOME`), Cursor to
