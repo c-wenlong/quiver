@@ -49,12 +49,9 @@ def _read_message(proc, buffer: bytearray, deadline: float):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None
-        if proc.poll() is not None:
-            chunk = proc.stdout.read()
-            if chunk:
-                buffer += chunk
-                continue
-            return None
+        # Always the deadline-aware select + os.read, even after the child
+        # exits: a grandchild holding stdout open would make a blocking
+        # read() wait forever. EOF still ends the loop (os.read -> b"").
         ready, _, _ = select.select([proc.stdout], [], [], remaining)
         if not ready:
             return None

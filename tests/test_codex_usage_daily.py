@@ -8,6 +8,7 @@ handshake over stdio: answer `initialize`, then answer
 import io
 import json
 import os
+import signal
 import stat
 import sys
 import tempfile
@@ -48,6 +49,10 @@ for line in sys.stdin:
     elif message.get("method") == "account/usage/read":
         mode = os.environ.get("FAKE_CODEX_MODE", "ok")
         if mode == "sleep":
+            pid_file = os.environ.get("FAKE_CODEX_PID")
+            if pid_file:
+                with open(pid_file, "w") as f:
+                    f.write(str(os.getpid()))
             time.sleep(60)
         elif mode == "noise":
             print("not json at all", flush=True)
@@ -194,8 +199,45 @@ class CodexUsageDailyTest(unittest.TestCase):
             self.assertIn("codex", err.getvalue())
 
     def test_a_timeout_is_unavailable_and_the_child_dies(self):
-        report = self._fetch(self._fake_codex("sleep"), timeout=0.5)
+        pid_file = os.path.join(self.tmp.name, "fake.pid")
+        env = self._fake_codex("sleep")
+        env["FAKE_CODEX_PID"] = pid_file
+        report = self._fetch(env, timeout=1.0)
         self.assertEqual(report["status"], "unavailable")
+        with open(pid_file) as f:
+            pid = int(f.read())
+
+        def reap():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        self.addCleanup(reap)
+        # Killed and waited for before the call returned: the pid is gone.
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    def test_argument_errors_exit_one(self):
+        missing = os.path.join(self.tmp.name, "nope")
+        for args in (["codex", "--account-dir"],
+                     ["codex", "--bogus"],
+                     ["codex", "extra"],
+                     ["codex", f"--account-dir={missing}"]):
+            code, out, err = self._run(args)
+            self.assertEqual(code, 1, args)
+            # Human mode reports on stdout like the other harness commands.
+            self.assertTrue(out or err, args)
+
+    def test_harness_dispatch_reaches_usage_daily(self):
+        from quiver.setup.commands import cmd_harness
+
+        env = self._fake_codex()
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, env, clear=True), redirect_stdout(out), \
+                redirect_stderr(err):
+            code = cmd_harness(["usage-daily", "codex", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())["data"]["status"], "ok")
 
     def test_noise_on_stdout_is_ignored(self):
         report = self._fetch(self._fake_codex("noise"))
