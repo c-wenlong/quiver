@@ -410,19 +410,7 @@ private struct CalendarContent: View {
             ZStack(alignment: .leading) {
                 HStack(spacing: 0) {
                     ForEach(model.renderDays, id: \.start) { day in
-                        let isToday = day.contains(now)
-                        HStack(spacing: 5) {
-                            Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
-                            Text(day.start.formatted(.dateTime.day()))
-                                .font(.system(size: 12, weight: isToday ? .semibold : .regular))
-                                .foregroundStyle(isToday ? .white : .primary)
-                                .padding(.horizontal, 5).padding(.vertical, 2)
-                                .background(isToday ? Color.red : .clear,
-                                            in: RoundedRectangle(cornerRadius: 5))
-                        }
-                        .font(Theme.caption)
-                        .padding(.leading, 8)
-                        .frame(width: columnWidth, alignment: .leading)
+                        dayHeader(day, width: columnWidth)
                     }
                 }
                 .offset(x: -scrollX)
@@ -433,6 +421,48 @@ private struct CalendarContent: View {
         .padding(.vertical, 8)
         .overlay(alignment: .bottom) {
             Rectangle().fill(Theme.border).frame(height: 1)
+        }
+    }
+
+    /// One day's header: "Mon 12" side by side when the column is wide,
+    /// the weekday over the day number when it's tight, a one-letter
+    /// weekday when it's very narrow. Today's red pill works in all three.
+    @ViewBuilder
+    private func dayHeader(_ day: DateInterval, width: CGFloat) -> some View {
+        let isToday = day.contains(now)
+        let number = Text(day.start.formatted(.dateTime.day()))
+            .font(.system(size: 12, weight: isToday ? .semibold : .regular))
+            .foregroundStyle(isToday ? .white : .primary)
+            .lineLimit(1)
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(isToday ? Color.red : .clear,
+                        in: RoundedRectangle(cornerRadius: 5))
+        switch DayHeaderStyle.forWidth(width) {
+        case .inline:
+            HStack(spacing: 5) {
+                Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
+                    .lineLimit(1)
+                number
+            }
+            .font(Theme.caption)
+            .padding(.leading, 8)
+            .frame(width: width, alignment: .leading)
+        case .stacked:
+            VStack(spacing: 1) {
+                Text(day.start.formatted(.dateTime.weekday(.abbreviated)))
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+                number
+            }
+            .frame(width: width)
+        case .compact:
+            VStack(spacing: 1) {
+                Text(day.start.formatted(.dateTime.weekday(.narrow)))
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+                number
+            }
+            .frame(width: width)
         }
     }
 

@@ -217,3 +217,18 @@ public enum CalendarLayout {
             + TimeInterval(c.second ?? 0) / 3600
     }
 }
+
+/// How a day column's header lays out at a given width: the full
+/// "Mon 12" inline when there's room, "Mon" over "12" stacked when the
+/// column tightens, and a one-letter weekday when it's very narrow.
+public enum DayHeaderStyle: Sendable, Equatable {
+    case inline, stacked, compact
+
+    public static func forWidth(_ width: CGFloat) -> DayHeaderStyle {
+        switch width {
+        case 64...: return .inline
+        case 36...: return .stacked
+        default: return .compact
+        }
+    }
+}
