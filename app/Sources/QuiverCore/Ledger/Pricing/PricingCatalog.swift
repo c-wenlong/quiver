@@ -12,17 +12,44 @@ import Foundation
 /// date snapshot (`-20250929`, `-2026-09-30`, `@20250514`), and `.` versus
 /// `-` in version numbers (`claude-opus-4.6`).
 public struct PricingCatalog: Sendable {
+    /// Where a model's price came from: a user override, Quiver's
+    /// supplement, or the LiteLLM list.
+    public enum Source: String, Sendable {
+        case yours, quiver, liteLLM
+    }
+
+    /// What a logged model name resolves to. The ledger and the Pricing
+    /// page both decide through `resolve`, so they can never disagree.
+    public enum Resolution: Sendable, Equatable {
+        /// A catalog entry prices it: the entry's rates, key and source,
+        /// and the tier the model carried (`claude-opus-5-5-high-fast`
+        /// resolves to the base entry with tier "fast", which `cost(tier:)`
+        /// then prices at the tier's explicit rates or multiplier).
+        case priced(rates: ModelRates, entry: String, source: Source, tier: String)
+        /// A free model: priced at zero, no catalog entry needed.
+        case free
+    }
+
     private var entries: [String: ModelRates]
     /// Normalized name to entry key, built once.
     private var index: [String: String]
+    /// Same index over only the user-priced keys, checked first so a saved
+    /// price wins under every equivalent name (`gpt-4-1` beats the
+    /// published `gpt-4.1`, an undated key beats a dated published entry).
+    private var overrideIndex: [String: String]
+    /// Which source each entry key came from; absent means LiteLLM.
+    private var sources: [String: Source]
     private var supplement: PricingSupplement
 
     public static let empty = PricingCatalog(entries: [:], supplement: PricingSupplement())
 
-    init(entries: [String: ModelRates], supplement: PricingSupplement) {
+    init(entries: [String: ModelRates], supplement: PricingSupplement,
+         sources: [String: Source] = [:]) {
         self.entries = entries
         self.supplement = supplement
+        self.sources = sources
         self.index = [:]
+        self.overrideIndex = [:]
         // Bare keys win over provider-prefixed ones, then shorter prefixes.
         let ordered = entries.keys.sorted { lhs, rhs in
             let l = (Self.prefixRank(lhs), lhs), r = (Self.prefixRank(rhs), rhs)
@@ -35,21 +62,41 @@ public struct PricingCatalog: Sendable {
                 }
             }
         }
+        for pass in 0..<2 {
+            for key in ordered where sources[key] == .yours {
+                for form in Self.forms(of: key, stripDates: pass == 1) where overrideIndex[form] == nil {
+                    overrideIndex[form] = key
+                }
+            }
+        }
     }
 
     /// Decodes LiteLLM's JSON. Entries that are not priced per token, or are
-    /// not chat models, are dropped.
-    public init(liteLLM data: Data, supplement: PricingSupplement = PricingSupplement()) throws {
+    /// not chat models, are dropped. `overrides` (the user's own
+    /// `config/pricing.json`, LiteLLM-shaped) merge last and win over both
+    /// other sources under the same name normalization.
+    public init(liteLLM data: Data, supplement: PricingSupplement = PricingSupplement(),
+                overrides: [String: [String: Any]] = [:]) throws {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw PricingError.notACatalog
         }
         var entries: [String: ModelRates] = [:]
+        var sources: [String: Source] = [:]
         for (key, value) in object where key != "sample_spec" {
             guard let entry = value as? [String: Any], let rates = Self.rates(from: entry) else { continue }
             entries[key] = rates
         }
         for (key, value) in supplement.prices {
-            if let rates = Self.rates(from: value) { entries[key] = rates }
+            if let rates = Self.rates(from: value) {
+                entries[key] = rates
+                sources[key] = .quiver
+            }
+        }
+        for (key, value) in overrides {
+            if let rates = Self.rates(from: value) {
+                entries[key] = rates
+                sources[key] = .yours
+            }
         }
         for key in entries.keys {
             // The model's own multipliers, found through its dated or dotted
@@ -60,7 +107,7 @@ public struct PricingCatalog: Sendable {
             multipliers.merge(specific ?? [:]) { _, specific in specific }
             entries[key]?.tierMultipliers = multipliers
         }
-        self.init(entries: entries, supplement: supplement)
+        self.init(entries: entries, supplement: supplement, sources: sources)
     }
 
     /// The snapshot and supplement that ship with the app.
@@ -99,15 +146,57 @@ public struct PricingCatalog: Sendable {
     /// Rates for `model`, or nil when the catalog cannot price it. A nil
     /// model is reported as unpriced, never as free.
     public func rates(for model: String) -> ModelRates? {
+        resolvedKey(for: model).flatMap { entries[$0] }
+    }
+
+    /// The lookup `rates(for:)` runs, with which entry answered and where
+    /// that entry came from. The Pricing page shows the source.
+    public func lookup(_ model: String) -> (rates: ModelRates, entry: String, source: Source)? {
+        guard let key = resolvedKey(for: model), let rates = entries[key] else { return nil }
+        return (rates, key, sources[key] ?? .liteLLM)
+    }
+
+    /// The whole resolution for a logged model: the literal name first
+    /// (`xai/grok-code-fast` is a real entry), then the `-fast` tier
+    /// suffix, then the free-model check. nil means the model is
+    /// genuinely unpriced.
+    public func resolve(model: String, tier: String = "") -> Resolution? {
+        if let hit = lookup(model) {
+            return .priced(rates: hit.rates, entry: hit.entry, source: hit.source, tier: tier)
+        }
+        let split = Self.splitTierSuffix(model: model, tier: tier)
+        if split.model != model, let hit = lookup(split.model) {
+            return .priced(rates: hit.rates, entry: hit.entry, source: hit.source, tier: split.tier)
+        }
+        if Self.isFree(model) { return .free }
+        return nil
+    }
+
+    /// The model's default key for a user price: the logged name with any
+    /// provider prefix, snapshot date and effort suffix stripped, so a
+    /// price saved under it covers every form the lookup generates
+    /// (`swe-2` covers `swe-2-medium`, `-high` and `-max`).
+    public static func baseName(for model: String) -> String {
+        forms(of: model, stripDates: true, stripEffort: true).last ?? model
+    }
+
+    /// Which entry key `model` resolves to, through aliases and the
+    /// normalized forms.
+    private func resolvedKey(for model: String) -> String? {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let exact = entries[trimmed] { return exact }
         let lowered = trimmed.lowercased()
+        // The user's own prices are consulted before anything else.
+        if sources[trimmed] == .yours { return trimmed }
+        for form in [lowered] + Self.forms(of: lowered, stripDates: true, stripEffort: true) {
+            if let key = overrideIndex[form] { return key }
+        }
+        if entries[trimmed] != nil { return trimmed }
         if let alias = supplement.aliases[lowered], alias.lowercased() != lowered {
-            return rates(for: alias)
+            return resolvedKey(for: alias)
         }
         for form in Self.forms(of: lowered, stripDates: true, stripEffort: true) {
-            if let alias = supplement.aliases[form], alias != form { return rates(for: alias) }
-            if let key = index[form] { return entries[key] }
+            if let alias = supplement.aliases[form], alias != form { return resolvedKey(for: alias) }
+            if let key = index[form] { return key }
         }
         return nil
     }
