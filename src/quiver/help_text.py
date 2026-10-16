@@ -400,6 +400,10 @@ to use their own login state and environment."""
                                                    Cursor's per-event feed (add --json); status
                                                    "incomplete" means part of the window hit the
                                                    page cap
+  {c('cyan', 'swe harness usage-daily codex [--account-dir=<d>]')}  A Codex account's per-day
+                                                   usage via `codex app-server` (add --json);
+                                                   status is ok / auth-required / unsupported /
+                                                   unavailable
 
 {c('bold', 'Alias')}  {c('cyan', 'swe discover')} is the same as {c('cyan', 'swe harness discover')}"""
     ),

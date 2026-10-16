@@ -26,6 +26,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe install --json` | `InstallList` → `[InstallableHarness]` | `swe-install.json` |
 | `swe harness usage <devin|cursor> --account-dir=<dir> --json` | `{"name", "account_dir", "limit"}` where `limit` is a row's `rate_limit` object or null | |
 | `swe harness usage-events cursor [--account-dir=<dir>] [--since=<s>] --json` | `{"status", "account_id", "events"}` — `status` is `ok` \| `incomplete` \| `signed-out` \| `auth-required` \| `unavailable` (`incomplete` means a 7-day slice filled all 50 pages; the events are real but the window may have more). `account_id` is the Cursor user id from the token's `sub` claim, null when there is no token; each event has `timestamp` (epoch seconds), `model`, `kind`, `conversation_id`, `headless`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` (dollars, null when Cursor logged none) | |
+| `swe harness usage-daily codex [--account-dir=<dir>] --json` | `{"status", "summary", "days"}` — `status` is `ok` \| `auth-required` \| `unsupported` \| `unavailable`. `summary` is `{lifetime_tokens, peak_daily_tokens, current_streak_days, longest_streak_days}` or null; each `days` entry is `{"date": "YYYY-MM-DD", "tokens": int}` | |
 | `swe doctor --json` | `DoctorReport` (`allowFailure`) | `swe-doctor.json` |
 | `swe session <limit> [--days=N] --json` | `SessionListPayload` | `swe-session.json` |
 
