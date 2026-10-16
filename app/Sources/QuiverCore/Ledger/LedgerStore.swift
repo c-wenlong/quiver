@@ -89,6 +89,9 @@ final class LedgerStore {
                 tail_hash INTEGER NOT NULL, tail_length INTEGER NOT NULL, state BLOB, skipped INTEGER NOT NULL);
             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', '\(Self.schemaVersion)');
             """)
+        // Session-total events never count toward long-context surcharges.
+        // Old rows are correct with the 0 default, so no schema bump.
+        try? db.execute("ALTER TABLE events ADD COLUMN session_total INTEGER NOT NULL DEFAULT 0")
         selectByKey = try db.prepare(
             "SELECT sidechain, input + output + cache_read + cache_write + reasoning FROM events WHERE key = ?")
         selectByMessage = try db.prepare("""
@@ -97,8 +100,8 @@ final class LedgerStore {
             """)
         insertEvent = try db.prepare("""
             INSERT OR REPLACE INTO events (key, msg, sidechain, dim, ts, input, output, cache_read, cache_write,
-                cache_write_1h, reasoning, cost)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cache_write_1h, reasoning, session_total, cost)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """)
         deleteEvent = try db.prepare("DELETE FROM events WHERE key = ?")
         selectDim = try db.prepare(
@@ -181,8 +184,15 @@ final class LedgerStore {
             .int(key), record.messageId.map { .int(StableHash.of($0)) } ?? .null,
             .int(record.isSidechain ? 1 : 0), .int(dim), .double(e.timestamp.timeIntervalSince1970),
             .int(e.inputTokens), .int(e.outputTokens), .int(e.cacheReadTokens), .int(e.cacheWriteTokens),
-            .int(e.cacheWrite1hTokens), .int(e.reasoningTokens), .optionalDouble(e.costUSD),
+            .int(e.cacheWrite1hTokens), .int(e.reasoningTokens),
+            .int(e.isSessionTotal ? 1 : 0), .optionalDouble(e.costUSD),
         ]).run()
+    }
+
+    /// Drops the event under `key` when there is one. Used by session-total
+    /// sources whose file now reports nothing, so stale spend clears.
+    func delete(key: String) throws {
+        try deleteEvent.bind([.int(StableHash.of(key))]).run()
     }
 
     /// Abandons the open transaction. Dimension ids inserted in it are gone
@@ -290,7 +300,8 @@ extension LedgerStore {
         let dims = columns.map { "d.\($0.rawValue)" }
         let crossed = thresholds.isEmpty
             ? "0"
-            : thresholds.map { "(e.input + e.cache_read + e.cache_write > \($0))" }.joined(separator: " + ")
+            : thresholds.map { "(e.session_total = 0 AND e.input + e.cache_read + e.cache_write > \($0))" }
+                .joined(separator: " + ")
         let groupColumns = (dims + ["d.model", "d.tier", "logged", "crossed"] + (bucket.map { _ in ["bucket"] } ?? []))
             .joined(separator: ", ")
         let select = (dims + ["d.model", "d.tier", "(e.cost IS NOT NULL) AS logged", "\(crossed) AS crossed"]

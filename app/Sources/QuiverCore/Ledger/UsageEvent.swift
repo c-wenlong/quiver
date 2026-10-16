@@ -35,13 +35,18 @@ public struct UsageEvent: Sendable, Equatable, Hashable, Codable {
     /// The speed or service tier the request ran on when it is not the standard
     /// one: "fast" (Claude fast mode), "priority" or "flex" (OpenAI tiers).
     public var serviceTier: String?
+    /// Droid and Cline report one total per session, not per request. Such an
+    /// event never crosses a model's long-context threshold: its summed input
+    /// says nothing about any single request's prompt size.
+    public var isSessionTotal: Bool
 
     public init(
         harness: String, accountHome: String, sessionId: String, cwd: String? = nil,
         model: String, timestamp: Date,
         inputTokens: Int = 0, outputTokens: Int = 0,
         cacheReadTokens: Int = 0, cacheWriteTokens: Int = 0, cacheWrite1hTokens: Int = 0,
-        reasoningTokens: Int = 0, costUSD: Double? = nil, serviceTier: String? = nil
+        reasoningTokens: Int = 0, costUSD: Double? = nil, serviceTier: String? = nil,
+        isSessionTotal: Bool = false
     ) {
         self.harness = harness
         self.accountHome = accountHome
@@ -57,6 +62,26 @@ public struct UsageEvent: Sendable, Equatable, Hashable, Codable {
         self.reasoningTokens = reasoningTokens
         self.costUSD = costUSD
         self.serviceTier = serviceTier
+        self.isSessionTotal = isSessionTotal
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        harness = try container.decode(String.self, forKey: .harness)
+        accountHome = try container.decode(String.self, forKey: .accountHome)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+        model = try container.decode(String.self, forKey: .model)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        inputTokens = try container.decode(Int.self, forKey: .inputTokens)
+        outputTokens = try container.decode(Int.self, forKey: .outputTokens)
+        cacheReadTokens = try container.decode(Int.self, forKey: .cacheReadTokens)
+        cacheWriteTokens = try container.decode(Int.self, forKey: .cacheWriteTokens)
+        cacheWrite1hTokens = try container.decode(Int.self, forKey: .cacheWrite1hTokens)
+        reasoningTokens = try container.decode(Int.self, forKey: .reasoningTokens)
+        costUSD = try container.decodeIfPresent(Double.self, forKey: .costUSD)
+        serviceTier = try container.decodeIfPresent(String.self, forKey: .serviceTier)
+        isSessionTotal = try container.decodeIfPresent(Bool.self, forKey: .isSessionTotal) ?? false
     }
 
     public var totalTokens: Int {

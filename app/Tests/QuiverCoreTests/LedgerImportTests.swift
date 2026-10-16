@@ -44,14 +44,15 @@ import Testing
         return home
     }
 
-    private func clineHome(_ temp: TempDir, metadata: String) throws -> URL {
+    private func clineHome(_ temp: TempDir, metadata: String,
+                           ended: String = #""ended_at":"2026-10-03T11:00:00Z""#) throws -> URL {
         let home = temp.path("cline")
         let dir = home.appendingPathComponent("data/sessions/t1_abc")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("""
             {"session_id":"t1_abc","provider":"xai","model":"grok-4-1-fast-reasoning",
              "cwd":"/Users/x/proj","started_at":"2026-10-03T10:00:00Z",
-             "ended_at":"2026-10-03T11:00:00Z","status":"done",
+             \(ended),"status":"done",
              "metadata":{"title":"t",\(metadata)}}
             """.utf8).write(to: dir.appendingPathComponent("t1_abc.json"))
         try Data(#"{"version":1,"messages":[]}"#.utf8)
@@ -201,6 +202,87 @@ import Testing
         #expect(await ledger.events(in: allTime).count == 2)
     }
 
+    @Test func aSessionNowReportingZeroClearsItsEvent() async throws {
+        let temp = try TempDir()
+        let home = try droidHome(temp, usage:
+            """
+            "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        #expect(await ledger.events(in: allTime).count == 1)
+
+        let file = home.appendingPathComponent("sessions/-Users-x-proj/s1.settings.json")
+        try Data("""
+            {"model":"glm-5.2",
+             "inclusiveTokenUsage":{"inputTokens":0,"outputTokens":0,
+             "cacheReadTokens":0,"cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":0}}
+            """.utf8).write(to: file)
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        #expect(await ledger.events(in: allTime).isEmpty)
+    }
+
+    @Test func aNewerTranscriptReReadsUnchangedSettings() async throws {
+        let temp = try TempDir()
+        let home = try droidHome(temp, usage:
+            """
+            "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
+            """)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        #expect(await ledger.events(in: allTime).first?.timestamp == utc("2026-10-03T12:00:00Z"))
+
+        // The settings file is untouched, but the transcript gained a later
+        // line, so the event's timestamp must move.
+        let transcript = home.appendingPathComponent("sessions/-Users-x-proj/s1.jsonl")
+        let handle = try FileHandle(forWritingTo: transcript)
+        try handle.seekToEnd()
+        // The fixture's last line has no trailing newline, so prepend one.
+        try handle.write(contentsOf: Data(
+            ("\n" + #"{"type":"message","timestamp":"2026-10-03T13:00:00Z","message":{"role":"assistant"}}"#)
+                .utf8))
+        try handle.close()
+        try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events.first?.timestamp == utc("2026-10-03T13:00:00Z"))
+    }
+
+    @Test func sessionTotalsNeverCrossTheLongContextThreshold() async throws {
+        // `glm-5.2` prices input at 2x above a 200k-token prompt.
+        let pricing = try PricingCatalog(liteLLM: Data("""
+            {"glm-5.2": {"input_cost_per_token": 2e-06, "output_cost_per_token": 8e-06,
+             "input_cost_per_token_above_200k_tokens": 4e-06,
+             "output_cost_per_token_above_200k_tokens": 1.6e-05, "litellm_provider": "openai"}}
+            """.utf8), supplement: PricingSupplement())
+        let temp = try TempDir()
+        let droid = try droidHome(temp, usage:
+            """
+            "inputTokens":300000,"outputTokens":100,"cacheReadTokens":0,
+            "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
+            """)
+        let sessionLedger = try Ledger(cacheDirectory: temp.path("cache1"), pricing: pricing)
+        try await sessionLedger.scan(roots: LedgerRoots(droidHomes: [droid]))
+        // Session totals are not one request's prompt: base rates apply.
+        #expect(await sessionLedger.totals(in: allTime).costUSD == 300_000 * 2e-06 + 100 * 8e-06)
+
+        // A real per-request event over the same threshold still surcharges.
+        let claude = temp.path("claude")
+        let file = claude.appendingPathComponent("projects/-x/t.jsonl")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(("""
+            {"type":"assistant","timestamp":"2026-10-03T10:00:00Z","sessionId":"s","cwd":"/x",\
+            "requestId":"r1","message":{"id":"m1","role":"assistant","model":"glm-5.2",\
+            "usage":{"input_tokens":300000,"output_tokens":100}}}
+            """ + "\n").utf8).write(to: file)
+        let requestLedger = try Ledger(cacheDirectory: temp.path("cache2"), pricing: pricing)
+        try await requestLedger.scan(roots: LedgerRoots(claudeHomes: [claude]))
+        #expect(await requestLedger.totals(in: allTime).costUSD == 300_000 * 4e-06 + 100 * 1.6e-05)
+    }
+
     // MARK: - Cline
 
     @Test func clineReadsTokensInNotUsageInputTokens() async throws {
@@ -238,6 +320,18 @@ import Testing
         try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
         let event = try #require(await ledger.events(in: allTime).first)
         #expect(event.costUSD == nil)
+    }
+
+    @Test func clineNullEndedAtFallsBackToStartedAt() async throws {
+        let temp = try TempDir()
+        let home = try clineHome(temp, metadata:
+            """
+            "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0
+            """, ended: #""ended_at":null"#)
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
+        let event = try #require(await ledger.events(in: allTime).first)
+        #expect(event.timestamp == utc("2026-10-03T10:00:00Z"))
     }
 
     @Test func clineRewriteReplacesTheSession() async throws {

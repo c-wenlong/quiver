@@ -206,6 +206,7 @@ public actor Ledger {
             for file in Self.files(under: home.appendingPathComponent("sessions"), suffix: ".settings.json") {
                 if Task.isCancelled { return report }
                 try scanSessionFile(file, accountHome: home.path,
+                                    watched: SessionTotalsFile.droidTranscript(for: file),
                                     parse: { try SessionTotalsFile.droid(settings: $0, accountHome: home.path) },
                                     report: &report)
                 await Task.yield()
@@ -333,39 +334,65 @@ public actor Ledger {
         return files.sorted { $0.path < $1.path }
     }
 
+    /// A second file a session-total file is read together with, stored in
+    /// the cursor's state so its stamp changes also trigger a re-read
+    /// (Droid's `<uuid>.jsonl` carries the timestamp and cwd its
+    /// `.settings.json` sidecar does not).
+    private struct WatchedStamp: Codable, Equatable {
+        var inode: UInt64
+        var size: UInt64
+        var modified: Double
+
+        init?(_ path: String) {
+            guard let info = FileInfo(path: path) else { return nil }
+            inode = info.inode
+            size = info.size
+            modified = info.modified
+        }
+    }
+
     /// One session-total file (Droid's `.settings.json`, Cline's session
-    /// JSON): re-read whole whenever its stamp changes; the record upserts
-    /// under the session's stable key, replacing rather than duplicating.
+    /// JSON): re-read whole whenever its stamp (or its watched sibling's)
+    /// changes; the record upserts under the session's stable key, replacing
+    /// rather than duplicating. A file that now reports no usage deletes its
+    /// old event.
     private func scanSessionFile(
-        _ url: URL, accountHome: String,
-        parse: (URL) throws -> [LedgerRecord], report: inout ScanReport
+        _ url: URL, accountHome: String, watched: URL? = nil,
+        parse: (URL) throws -> SessionTotals?, report: inout ScanReport
     ) throws {
         let path = url.resolvingSymlinksInPath().path
         guard let info = FileInfo(path: path) else { return }
+        // The watched file's absence is part of the stamp, so a transcript
+        // appearing or disappearing re-reads too.
+        let watchedStamp = watched.flatMap { WatchedStamp($0.path) }
+        let state = watched.map { _ in (try? JSONEncoder().encode(watchedStamp)) ?? nil } ?? nil
         if let saved = try store.cursor(for: path),
-           saved.inode == info.inode, saved.size == info.size, saved.modified == info.modified {
+           saved.inode == info.inode, saved.size == info.size, saved.modified == info.modified,
+           saved.state == state {
             report.filesUnchanged += 1
             return
         }
         // A bad file (mid-rewrite, corrupt) skips this round without a
         // cursor, so it is retried on the next scan instead of aborting
         // every source after it.
-        let records: [LedgerRecord]
+        let totals: SessionTotals?
         do {
-            records = try parse(URL(fileURLWithPath: path))
+            totals = try parse(URL(fileURLWithPath: path))
         } catch {
             report.notes.append("\(url.lastPathComponent): \(error.localizedDescription)")
             return
         }
         try store.db.execute("BEGIN IMMEDIATE")
         do {
-            for record in records {
-                try store.upsert(record)
+            switch totals {
+            case .record(let record): try store.upsert(record)
+            case .empty(let key): try store.delete(key: key)
+            case nil: break
             }
             try store.save(FileCursor(
                 path: path, inode: info.inode, size: info.size, modified: info.modified,
                 offset: info.size, headHash: 0, headLength: 0, tailHash: 0, tailLength: 0,
-                state: nil, skippedLines: 0))
+                state: state, skippedLines: 0))
             try store.db.execute("COMMIT")
         } catch {
             store.rollback()
