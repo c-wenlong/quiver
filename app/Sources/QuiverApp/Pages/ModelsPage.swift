@@ -283,12 +283,14 @@ struct ChartCard: View {
     @State private var width: CGFloat = 0
     /// The column whose card shows, by index into `model.rows`.
     @State private var hovered: Int?
-    /// The column the pointer is resting on, and the wait before its
-    /// card shows: longer for the first card, shorter to switch.
+    /// The bar the pointer is resting on before the first card shows;
+    /// once one shows, the next bar's replaces it at once.
     @State private var pending: Int?
     @State private var rest: Task<Void, Never>?
     static let openDelay: Duration = .milliseconds(400)
-    static let switchDelay: Duration = .milliseconds(180)
+    /// How long a card outlives its bar, so crossing the gap to the next
+    /// bar switches the card instead of closing it.
+    static let closeDelay: Duration = .milliseconds(180)
     /// The bar strip's frame in the chart's space; moves as it scrolls.
     @State private var strip: CGRect = .zero
     /// The chart area's size, for keeping the card inside it.
@@ -368,19 +370,27 @@ struct ChartCard: View {
     }
 
     /// Shows `index`'s card once the pointer has stayed on it for the
-    /// delay, so sweeping across the chart never flashes cards.
+    /// open delay, so sweeping across the chart never flashes cards. With
+    /// a card already up, moving to another bar swaps it in at once.
     private func rest(on index: Int?) {
         if index == hovered {
             rest?.cancel()
             pending = nil
             return
         }
+        // A card is already showing: the next bar's card replaces it at
+        // once, in its new place, rather than sliding over.
+        if hovered != nil, let index {
+            rest?.cancel()
+            pending = nil
+            hovered = index
+            return
+        }
         guard index != pending else { return }
         pending = index
         rest?.cancel()
-        let delay = hovered == nil ? Self.openDelay : Self.switchDelay
         rest = Task { @MainActor in
-            try? await Task.sleep(for: delay)
+            try? await Task.sleep(for: Self.openDelay)
             guard !Task.isCancelled else { return }
             hovered = index
             pending = nil
@@ -397,7 +407,7 @@ struct ChartCard: View {
         pending = nil
         rest?.cancel()
         rest = Task { @MainActor in
-            try? await Task.sleep(for: Self.switchDelay)
+            try? await Task.sleep(for: Self.closeDelay)
             guard !Task.isCancelled else { return }
             hovered = nil
         }
@@ -423,7 +433,6 @@ struct ChartCard: View {
                 .textSelection(.disabled)
                 .allowsHitTesting(false)
                 .offset(x: x, y: y)
-                .animation(.snappy(duration: 0.18), value: index)
         }
     }
 
