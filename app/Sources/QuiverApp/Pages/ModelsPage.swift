@@ -303,10 +303,24 @@ struct ChartCard: View {
     /// Extra space before the first bar so its slanted name, which runs
     /// left of the bar's middle, isn't cut off by the strip's edge.
     private var leadingRoom: CGFloat {
-        guard let first = model.rows.first, !model.rows.isEmpty else { return 0 }
-        let estimate = max(Self.minColumnWidth, (width - 2 * Self.inset) / CGFloat(model.rows.count))
-        let reach = BarColumn.labelWidth(first) * cos(Self.labelAngle * .pi / 180)
-        return max(0, (reach - (estimate - Self.spacing) / 2 - Self.inset).rounded(.up))
+        Self.leadingRoom(reach: model.rows.first.map(BarColumn.labelReach) ?? 0,
+                         width: width, count: model.rows.count)
+    }
+
+    /// The padding P that puts the first bar's middle at least `reach`
+    /// from the strip's edge, against the column width that results once
+    /// P itself is taken out: P + inset + (column − spacing) / 2 ≥ reach,
+    /// with column = (width − 2·inset − P) / count, or the minimum width
+    /// once that floors.
+    static func leadingRoom(reach: CGFloat, width: CGFloat, count: Int) -> CGFloat {
+        guard count > 0, reach > 0 else { return 0 }
+        let n = CGFloat(count)
+        let flexible = (reach - inset + spacing / 2 - (width - 2 * inset) / (2 * n)) / (1 - 1 / (2 * n))
+        var room = max(0, flexible)
+        if (width - 2 * inset - room) / n < minColumnWidth {
+            room = max(0, reach - inset - (minColumnWidth - spacing) / 2)
+        }
+        return room.rounded(.up)
     }
 
     /// The tallest bar: every height is a fraction of it.
@@ -465,9 +479,13 @@ private struct BarColumn: View {
         return cut.count == name.count ? name : "…" + cut
     }
 
-    /// The label's length along its slant.
-    static func labelWidth(_ row: ModelsModel.Row) -> CGFloat {
-        width(of: label(row))
+    /// How far left of the bar's middle the slanted name reaches: its
+    /// length along the slant plus the half line height its far corner
+    /// sticks out sideways.
+    static func labelReach(_ row: ModelsModel.Row) -> CGFloat {
+        let angle = ChartCard.labelAngle * .pi / 180
+        let lineHeight = NSFont.systemFont(ofSize: ChartCard.labelFont).boundingRectForFont.height
+        return width(of: label(row)) * cos(angle) + lineHeight / 2 * sin(angle)
     }
 
     private static func width(of text: String) -> CGFloat {
