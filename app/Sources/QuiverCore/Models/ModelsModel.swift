@@ -114,7 +114,9 @@ public final class ModelsModel {
         public var value: Double?
         /// Cost rank 0…1 across every priced AA model.
         public var costPercentile: Double?
-        /// "High" when the logged name carried an effort or a -fast mode.
+        /// How the user ran it, when the logged name said: "High",
+        /// "Fast", "High · Fast". The bar's scores are the foundation
+        /// model's regardless.
         public var qualifier: String?
 
         public var used: Bool { tokens > 0 }
@@ -314,11 +316,12 @@ public final class ModelsModel {
                    qualifier: qualifier(parsed))
     }
 
-    /// The effort/mode word a parsed name carried, display-cased.
+    /// The effort and mode words a parsed name carried, display-cased.
     private func qualifier(_ parsed: ModelMatcher.Parsed) -> String? {
-        if parsed.fast { return "Fast" }
-        guard let effort = parsed.effort else { return nil }
-        return effort.prefix(1).uppercased() + effort.dropFirst()
+        var words: [String] = []
+        if let effort = parsed.effort { words.append(effort.prefix(1).uppercased() + effort.dropFirst()) }
+        if parsed.fast { words.append("Fast") }
+        return words.isEmpty ? nil : words.joined(separator: " · ")
     }
 
     /// Rebuilds rows from `periodSlices`, `allModels` and `links`.
@@ -354,8 +357,8 @@ public final class ModelsModel {
         }
 
         // Names that resolve to the same AA model merge into one row —
-        // "grok-4.7" and "grok-4.7-fast" are one bar, not two. The row
-        // keeps the biggest contributor's logged name and qualifier.
+        // "grok-4.7" and "grok-4.7-high-fast" are one bar, not two. The
+        // row keeps the biggest contributor's logged name and qualifier.
         var used: [Row] = []
         var mergedIndex: [String: Int] = [:]
         var mergedHarness: [String: [String: Int]] = [:]
@@ -422,9 +425,10 @@ public final class ModelsModel {
         rows = Self.sort(all, by: metric)
     }
 
-    /// AA's leaders under the current metric, best first.
+    /// AA's leaders under the current metric, best first: one entry per
+    /// foundation model, the same entry a logged name resolves to.
     private func topAA(excluding matched: Set<String>, count: Int) -> [AALanguageModel] {
-        allModels
+        ModelMatcher.headlines(in: allModels)
             .filter { !matched.contains($0.id) }
             .filter { metric.value(of: $0) != nil }
             .sorted { a, b in

@@ -253,7 +253,9 @@ private struct UnmatchedBadge: View {
 /// The metric chart: one provider-coloured bar per model, best first, the
 /// value inside the bar and the logo plus angled name under it. Used
 /// models keep a light inset outline; bars scroll before they shrink past
-/// 28pt.
+/// 28pt. Hovering anywhere over a column shows its model card beside the
+/// bar: one card for the whole chart, moved and refilled as the pointer
+/// crosses columns, so neighbouring bars never open cards of their own.
 struct ChartCard: View {
     @Bindable var model: ModelsModel
 
@@ -266,8 +268,26 @@ struct ChartCard: View {
     static let labelHeight: CGFloat = 150
     /// A name's unrotated cap — about 140pt along the −45° run.
     static let labelRun: CGFloat = 196
+    /// The strip's side padding and the gap between bars.
+    static let inset: CGFloat = 6
+    static let spacing: CGFloat = 8
+    /// The space the hover card is laid out in.
+    private static let space = "modelChart"
 
     @State private var width: CGFloat = 0
+    /// The column whose card shows, by index into `model.rows`.
+    @State private var hovered: Int?
+    /// The column the pointer is resting on, and the wait before its
+    /// card shows: longer for the first card, shorter to switch.
+    @State private var pending: Int?
+    @State private var rest: Task<Void, Never>?
+    static let openDelay: Duration = .milliseconds(400)
+    static let switchDelay: Duration = .milliseconds(180)
+    /// The bar strip's frame in the chart's space; moves as it scrolls.
+    @State private var strip: CGRect = .zero
+    /// The chart area's size, for keeping the card inside it.
+    @State private var area: CGSize = .zero
+    @State private var cardHeight: CGFloat = 0
 
     private var columnWidth: CGFloat {
         guard !model.rows.isEmpty else { return Self.minColumnWidth }
@@ -285,14 +305,26 @@ struct ChartCard: View {
                 Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 8) {
+                    HStack(alignment: .top, spacing: Self.spacing) {
                         ForEach(model.rows) { row in
                             BarColumn(row: row, metric: model.metric, peak: peak)
-                                .frame(width: columnWidth - 8)
-                                .modelCard(model, for: row.logged, row: row)
+                                .frame(width: columnWidth - Self.spacing)
                         }
                     }
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, Self.inset)
+                    .contentShape(.rect)
+                    .onContinuousHover(coordinateSpace: .local) { phase in
+                        switch phase {
+                        case .active(let point): rest(on: column(at: point.x))
+                        case .ended:
+                            rest?.cancel()
+                            pending = nil
+                            hovered = nil
+                        }
+                    }
+                    .onGeometryChange(for: CGRect.self) {
+                        $0.frame(in: .named(Self.space))
+                    } action: { strip = $0 }
                 }
                 .scrollIndicators(.hidden)
                 // Page enables selectable text. Rotated chart labels must stay SwiftUI
@@ -300,13 +332,68 @@ struct ChartCard: View {
                 .textSelection(.disabled)
                 legend
                 HStack {
-                    Text("Hover a bar for the model card (cost scale, Intelligence, Coding, Speed)")
+                    Text("Hover a bar for the model card")
                         .font(Theme.caption).foregroundStyle(Theme.textMuted)
                     Spacer()
                     Link("Data from Artificial Analysis", destination: ModelsContent.attribution)
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
+            .coordinateSpace(.named(Self.space))
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { area = $0 }
+            .overlay(alignment: .topLeading) { hoverCard }
+        }
+    }
+
+    /// Shows `index`'s card once the pointer has stayed on it for the
+    /// delay, so sweeping across the chart never flashes cards.
+    private func rest(on index: Int?) {
+        if index == hovered {
+            rest?.cancel()
+            pending = nil
+            return
+        }
+        guard index != pending else { return }
+        pending = index
+        rest?.cancel()
+        let delay = hovered == nil ? Self.openDelay : Self.switchDelay
+        rest = Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            hovered = index
+            pending = nil
+        }
+    }
+
+    /// The column a strip-local x falls in; the gap after a bar counts
+    /// as that bar's, so crossing a gap never drops the card.
+    private func column(at x: CGFloat) -> Int? {
+        guard !model.rows.isEmpty else { return nil }
+        let index = Int(((x - Self.inset) / columnWidth).rounded(.down))
+        return min(max(index, 0), model.rows.count - 1)
+    }
+
+    /// The card beside the hovered bar: to its right, or to its left
+    /// when the right would run out of the chart, top-aligned with the
+    /// tallest bar and kept inside the chart area.
+    @ViewBuilder private var hoverCard: some View {
+        if let index = hovered, model.rows.indices.contains(index) {
+            let left = strip.minX + Self.inset + CGFloat(index) * columnWidth
+            let right = left + columnWidth - Self.spacing
+            let gap: CGFloat = 10
+            let x = right + gap + ModelCard.width <= area.width
+                ? right + gap
+                : max(0, left - gap - ModelCard.width)
+            let y = min(max(strip.minY, 0), max(0, area.height - cardHeight))
+            ModelCard(row: model.rows[index], period: model.period)
+                .background(Theme.card, in: .rect(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+                .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
+                .textSelection(.disabled)
+                .allowsHitTesting(false)
+                .offset(x: x, y: y)
+                .animation(.snappy(duration: 0.18), value: index)
         }
     }
 
@@ -352,7 +439,7 @@ private struct BarColumn: View {
     /// The name cut at `labelRun` (head ellipsis), the look the old clip
     /// gave. Measured at the label font so the cap lands where the clip did.
     private var label: String {
-        let name = row.aa?.name ?? row.logged
+        let name = row.aa.map(ModelMatcher.displayName) ?? row.logged
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9.5)]
         var cut = Substring(name)
         while !cut.isEmpty,
@@ -478,12 +565,8 @@ private struct TableRow: View {
                     Text("+\(row.harnesses.count - 3)")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
-                Text(row.aa?.name ?? row.logged)
-                    .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.middle)
-                if let qualifier = row.qualifier {
-                    Badge(qualifier)
-                }
+                ModelName(name: row.aa.map(ModelMatcher.displayName) ?? row.logged,
+                          qualifier: row.qualifier)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(vendor.name).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
@@ -524,7 +607,7 @@ private struct TableRow: View {
 }
 
 /// The cost column: a mini green→purple gradient with the model's rank
-/// as a white dot.
+/// as a white dot centred on it.
 private struct CostScale: View {
     var model: AALanguageModel?
     var rank: Double?
@@ -540,7 +623,7 @@ private struct CostScale: View {
                         .frame(height: 6)
                     if let rank {
                         Circle().fill(.white).frame(width: 8, height: 8)
-                            .overlay(Circle().strokeBorder(Theme.borderStrong, lineWidth: 1))
+                            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
                             .position(x: min(max(rank * geo.size.width, 4), geo.size.width - 4),
                                       y: geo.size.height / 2)
                     }

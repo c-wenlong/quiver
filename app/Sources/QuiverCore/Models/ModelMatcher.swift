@@ -4,7 +4,14 @@ import Foundation
 /// `openai/gpt-6.1-sol@20261003`) to an Artificial Analysis model. Both
 /// sides normalize the same way before comparing: lowercase, provider
 /// prefix and snapshot date off, dots to dashes, `-fast` peeled into a
-/// mode flag, and a trailing effort word (`-high`, `(max)`) pulled out.
+/// mode flag, and a trailing effort word (`-high`, `(max)`,
+/// `(Max, Default Fallback)`) pulled out.
+///
+/// A logged name resolves to the foundation model, not to the effort or
+/// mode a harness ran it at: `claude-opus-5-5-high-fast` is Claude Opus
+/// 5.5, scored and priced as AA's headline entry for it (the one whose
+/// slug carries no effort, `claude-opus-5-5`). The effort stays on the
+/// row as its qualifier.
 public struct ModelMatcher: Sendable {
     /// A name's comparable shape: the base model plus the qualifiers that
     /// pick between variants of it.
@@ -17,17 +24,23 @@ public struct ModelMatcher: Sendable {
     }
 
     public static let efforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
-    /// When no effort matches exactly, which available one to take.
-    private static let effortPreference = ["high", "max", "medium", "low", "xhigh", "minimal"]
+    /// A family with no effort-free slug: which variant stands for it.
+    private static let effortPreference = ["max", "xhigh", "high", "medium", "low", "minimal"]
+    /// An AA name's effort tail, case-insensitive: "(max)",
+    /// "(Xhigh, Default Fallback)". "(Non-reasoning, High)" is a model of
+    /// its own and stays in the base.
+    private static let effortTail =
+        #"(?i)\s*\((minimal|low|medium|high|xhigh|max)(,[^)]*)?\)\s*$"#
 
     /// Splits a logged or AA-listed name into base, effort and fast flag.
     public static func parse(_ name: String) -> Parsed {
         var base = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // A parenthesised qualifier: "Claude Opus 5.5 (max)".
+        // A parenthesised qualifier: "Claude Opus 5.5 (max)", or with a
+        // note after the effort, "(Max, Default Fallback)".
         var effort: String?
-        if let range = base.range(of: #"\((minimal|low|medium|high|xhigh|max)\)\s*$"#,
-                                  options: .regularExpression) {
-            effort = String(base[range].dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        if let range = base.range(of: effortTail, options: .regularExpression) {
+            let tail = base[range].drop { $0 != "(" }.dropFirst()
+            effort = String(tail.prefix { $0.isLetter })
             base.removeSubrange(range)
             base = base.trimmingCharacters(in: .whitespaces)
         }
@@ -93,10 +106,8 @@ public struct ModelMatcher: Sendable {
         try JSONEncoder().encode(links).write(to: url, options: .atomic)
     }
 
-    /// The AA model `logged` names, or nil. Order: manual link, base plus
-    /// effort exact, base with no qualifier, base with the closest effort
-    /// (prefer high, then max, then medium). Ties take the highest
-    /// intelligence index.
+    /// The AA model `logged` names, or nil: a manual link, else the
+    /// headline entry of the family whose base matches.
     public static func match(_ logged: String, in models: [AALanguageModel],
                              links: [String: String] = [:]) -> AALanguageModel? {
         let parsed = parse(logged)
@@ -104,25 +115,47 @@ public struct ModelMatcher: Sendable {
            let model = models.first(where: { $0.id == linked }) {
             return model
         }
-        let candidates = models.filter { parseAA($0).base == parsed.base }
-        guard !candidates.isEmpty else { return nil }
+        return headline(of: models.filter { parseAA($0).base == parsed.base })
+    }
+
+    /// One entry per foundation model, in the order each first appears:
+    /// what the leaderboard lists, so Opus 5.5 is one bar, not four.
+    public static func headlines(in models: [AALanguageModel]) -> [AALanguageModel] {
+        var order: [String] = []
+        var families: [String: [AALanguageModel]] = [:]
+        for model in models {
+            let base = parseAA(model).base
+            if families[base] == nil { order.append(base) }
+            families[base, default: []].append(model)
+        }
+        return order.compactMap { families[$0].flatMap(headline) }
+    }
+
+    /// The entry AA headlines a family with: the slug with no effort
+    /// suffix (`claude-opus-5-5`, AA's own default run), else the highest
+    /// effort listed. Ties take the highest intelligence index.
+    private static func headline(of family: [AALanguageModel]) -> AALanguageModel? {
         func best(_ pool: [AALanguageModel]) -> AALanguageModel? {
             pool.max { ($0.intelligence ?? 0) < ($1.intelligence ?? 0) }
         }
-        if let effort = parsed.effort,
-           let exact = best(candidates.filter { parseAA($0).effort == effort }) {
-            return exact
-        }
-        if let unqualified = best(candidates.filter { parseAA($0).effort == nil }) {
-            return unqualified
-        }
-        // Closest effort by the preference order.
+        if let plain = best(family.filter { !slugHasEffort($0) }) { return plain }
         for wanted in effortPreference {
-            if let hit = best(candidates.filter { parseAA($0).effort == wanted }) {
-                return hit
-            }
+            if let hit = best(family.filter { parseAA($0).effort == wanted }) { return hit }
         }
-        return best(candidates)
+        return best(family)
+    }
+
+    private static func slugHasEffort(_ model: AALanguageModel) -> Bool {
+        model.slug.lowercased()
+            .range(of: #"-(minimal|low|medium|high|xhigh|max)$"#, options: .regularExpression) != nil
+    }
+
+    /// The foundation model's name: "Claude Opus 5.5" for "Claude Opus
+    /// 5.5 (Max, Default Fallback)". Other parentheses stay.
+    public static func displayName(_ model: AALanguageModel) -> String {
+        guard let range = model.name.range(of: effortTail, options: .regularExpression)
+        else { return model.name }
+        return String(model.name[..<range.lowerBound])
     }
 }
 
