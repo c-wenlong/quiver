@@ -107,7 +107,7 @@ private struct UnpricedBadge: View {
                         .frame(width: 300)
                         .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
+                    .plainButton(cornerRadius: 0)
                     .modifier(RowHover())
                 }
             }
@@ -206,7 +206,7 @@ private struct PricingRow: View {
         let content = rowBody
         if clickable {
             Button(action: edit) { content }
-                .buttonStyle(.plain)
+                .plainButton(cornerRadius: 0)
                 .modifier(RowHover())
                 .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
         } else {
