@@ -98,6 +98,39 @@ extension Ledger {
     /// feed and has no other source; plain `cursor` events stay out because
     /// CursorAppActivity already reads the editor's own state.
     static let calendarHarnesses: Set<String> = ["claude", "codex", "opencode", "devin", "grok-bot"]
+
+    /// The trivial-session drop for file-read sessions (Pi and Droid):
+    /// their logs reach the calendar without going through the block
+    /// query, so the same whole-history `SessionFilter` rule runs here
+    /// over the ledger's per-session stats, under the same setting.
+    /// A session the ledger has no rows for stays: absent rows prove
+    /// nothing about a file's responses.
+    public func filterTrivialActivitySessions(
+        _ sessions: [ActivityFileIndex.IndexedSession], harness: String
+    ) -> [ActivityFileIndex.IndexedSession] {
+        guard !sessions.isEmpty, trivialGate.withLock({ $0 }) else { return sessions }
+        struct Key: Hashable { var account, session: String }
+        var usage: [Key: SessionUsage] = [:]
+        for row in bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0),
+                                              end: .distantFuture),
+                             harness: harness) {
+            let key = Key(account: row.accountHome, session: row.sessionId)
+            if var existing = usage[key] {
+                existing.totals.add(row.totals)
+                existing.firstTimestamp = min(existing.firstTimestamp, row.firstTimestamp)
+                existing.lastTimestamp = max(existing.lastTimestamp, row.lastTimestamp)
+                usage[key] = existing
+            } else {
+                usage[key] = row
+            }
+        }
+        return sessions.filter { session in
+            guard let totals = usage[Key(account: session.accountHome,
+                                         session: session.sessionId)]
+            else { return true }
+            return !SessionFilter.isTrivial(usage: totals)
+        }
+    }
 }
 
 /// Models a harness calls for its own bookkeeping, not user work: Devin
@@ -126,7 +159,8 @@ extension Ledger: ActivityProviding {
                     ?? activityURL.path
                 connection = try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
             }
-            return try connection!.activityBlocks(in: range, gap: gap)
+            let hideTrivial = trivialGate.withLock { $0 }
+            return try connection!.activityBlocks(in: range, gap: gap, hideTrivial: hideTrivial)
                 .filter { Self.calendarHarnesses.contains($0.harness) }
         }
     }
@@ -136,8 +170,9 @@ extension LedgerStore {
     /// Blocks over this store's write connection; the calendar reads
     /// through Ledger's own read-only one. Kept for tests that build a
     /// store directly.
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
-        try db.activityBlocks(in: range, gap: gap)
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        hideTrivial: Bool = true) throws -> [ActivityBlock] {
+        try db.activityBlocks(in: range, gap: gap, hideTrivial: hideTrivial)
     }
 }
 
@@ -153,16 +188,24 @@ extension SQLiteDatabase {
     /// pulled a day past each edge so a block straddling the range keeps
     /// its real ends; the overlap check then drops the rest.
     static let edgeLookout: TimeInterval = 24 * 3600
-    func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        hideTrivial: Bool = true) throws -> [ActivityBlock] {
         let lo = range.start.timeIntervalSince1970 - Self.edgeLookout
         let hi = range.end.timeIntervalSince1970 + Self.edgeLookout
         // Sessions whose every event is a helper call (Devin's
         // summarizer/compactor) produce no blocks at all. "Every" means
         // the session's whole stored history, not just this range: a
         // real response earlier keeps later helper events on the
-        // calendar as part of that work.
+        // calendar as part of that work. `hideTrivial` drops accidental
+        // sessions the same way, judged on the session's whole stored
+        // history (SessionFilter): zero tokens, zero responses, or a
+        // one-shot probe — except for harnesses without per-reply
+        // detail, where only emptiness counts.
         let helpers = HelperModels.all.sorted()
-        let realSessions = try prepare("""
+        // The candidate sessions first: distinct harness/account/session
+        // triples with an event in range and a non-helper event anywhere
+        // in their stored history.
+        let candidates = try prepare("""
             SELECT DISTINCT d.harness, d.account, d.session
             FROM events e JOIN dims d ON d.id = e.dim
             WHERE e.ts >= ? AND e.ts < ?
@@ -173,13 +216,55 @@ extension SQLiteDatabase {
                         AND d2.model NOT IN (\(helpers.map { _ in "?" }.joined(separator: ",")))
               )
             """)
-        realSessions.bind([SQLiteValue.double(lo), .double(hi)]
-                          + helpers.map { SQLiteValue.text($0) })
+        candidates.bind([SQLiteValue.double(lo), .double(hi)]
+                        + helpers.map { SQLiteValue.text($0) })
+        var candidateKeys: [[String]] = []
+        while try candidates.step() {
+            candidateKeys.append([candidates.text(0) ?? "", candidates.text(1) ?? "",
+                                  candidates.text(2) ?? ""])
+        }
+        // One grouped pass computes every candidate's whole-history
+        // totals once, restricted through a temp table of the candidates;
+        // `events_dim` keeps each dim's events an index lookup away.
         var real: Set<String> = []
-        while try realSessions.step() {
-            real.insert("\(realSessions.text(0) ?? "")\u{0}"
-                        + "\(realSessions.text(1) ?? "")\u{0}"
-                        + "\(realSessions.text(2) ?? "")")
+        if !candidateKeys.isEmpty {
+            try execute("""
+                CREATE TEMP TABLE IF NOT EXISTS calendar_candidates (
+                    harness TEXT, account TEXT, session TEXT)
+                """)
+            try execute("DELETE FROM calendar_candidates")
+            let insert = try prepare(
+                "INSERT INTO calendar_candidates VALUES (?, ?, ?)")
+            for key in candidateKeys {
+                try insert.bind([.text(key[0]), .text(key[1]), .text(key[2])]).run()
+            }
+            let stats = try prepare("""
+                SELECT d.harness, d.account, d.session, COUNT(*),
+                       SUM(e.input + e.output + e.cache_read + e.cache_write + e.reasoning),
+                       MAX(e.ts) - MIN(e.ts), SUM(e.output + e.reasoning)
+                FROM dims d JOIN events e ON e.dim = d.id
+                WHERE EXISTS (
+                    SELECT 1 FROM calendar_candidates c
+                    WHERE c.harness = d.harness AND c.account = d.account
+                          AND c.session = d.session)
+                GROUP BY d.harness, d.account, d.session
+                """)
+            while try stats.step() {
+                let harness = stats.text(0) ?? ""
+                let key = harness + "\u{0}" + (stats.text(1) ?? "")
+                    + "\u{0}" + (stats.text(2) ?? "")
+                let count = stats.int(3)
+                let total = stats.int(4)
+                let span = stats.double(5)
+                let outAndReasoning = stats.int(6)
+                let trivial = count == 0 || total == 0
+                    || (!SessionFilter.noReplyDetailHarnesses.contains(harness)
+                        && count <= SessionFilter.maxProbeResponses
+                        && span < SessionFilter.maxProbeSpan
+                        && outAndReasoning < SessionFilter.maxProbeOutputTokens)
+                if !hideTrivial || !trivial { real.insert(key) }
+            }
+            try execute("DELETE FROM calendar_candidates")
         }
         let statement = try prepare("""
             WITH ordered AS (

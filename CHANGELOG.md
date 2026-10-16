@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{"date", "tokens"}` days, `auth-required` when the account is not
   signed in with ChatGPT, `unsupported` when the codex build lacks the
   method, `unavailable` for a missing binary, timeout or other failure.
+- **Hide accidental sessions in Quiver.** Sessions with no responses, no
+  tokens, or a one-shot probe (≤ 2 responses inside a minute with under
+  100 output tokens, judged on the session's whole stored history) drop
+  out of the Sessions page and the calendar. Cursor, Droid and Cline
+  logs carry no per-reply detail, so only empty sessions of theirs hide;
+  harnesses without usage logs (Gemini, Freebuff, Kilo) never hide. The
+  Sessions page footer counts what was hidden with a "Show" toggle, and
+  Settings > Preferences > "Hide accidental sessions" (default on)
+  switches both filters off.
 
 - **Settings > Services in Quiver.** Keys for the services Quiver itself
   calls — Devin's API token and org id, and an Artificial Analysis key —

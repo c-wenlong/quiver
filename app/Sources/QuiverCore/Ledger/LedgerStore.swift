@@ -82,6 +82,7 @@ final class LedgerStore {
                 reasoning INTEGER NOT NULL,
                 cost REAL);
             CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+            CREATE INDEX IF NOT EXISTS events_dim ON events (dim);
             CREATE INDEX IF NOT EXISTS events_msg ON events (msg) WHERE msg IS NOT NULL;
             CREATE TABLE IF NOT EXISTS cursors (
                 path TEXT PRIMARY KEY, inode INTEGER NOT NULL, size INTEGER NOT NULL, modified REAL NOT NULL,
@@ -335,8 +336,10 @@ extension LedgerStore {
 
     /// - Parameter bucketSeconds: also split each group into time buckets of
     ///   this many seconds since the epoch.
+    /// - Parameter harness: restrict to one harness's dims at the SQL side,
+    ///   so a caller after one harness does not read the whole table.
     func groups(in range: DateInterval, by columns: [Column], thresholds: [Int],
-                bucketSeconds: Int? = nil) throws -> [PricedGroup] {
+                bucketSeconds: Int? = nil, harness: String? = nil) throws -> [PricedGroup] {
         let bucket = bucketSeconds.map { "CAST(e.ts / \($0) AS INTEGER)" }
         let dims = columns.map { "d.\($0.rawValue)" }
         let crossed = thresholds.isEmpty
@@ -354,9 +357,11 @@ extension LedgerStore {
                 SUM(e.reasoning), TOTAL(e.cost), COUNT(*), MIN(e.ts), MAX(e.ts)
             FROM events e JOIN dims d ON d.id = e.dim
             WHERE e.ts >= ? AND e.ts < ?
+            \(harness.map { _ in "AND d.harness = ?" } ?? "")
             GROUP BY \(groupColumns)
             """)
-        statement.bind([.double(range.start.timeIntervalSince1970), .double(range.end.timeIntervalSince1970)])
+        statement.bind([.double(range.start.timeIntervalSince1970), .double(range.end.timeIntervalSince1970)]
+                       + (harness.map { [SQLiteValue.text($0)] } ?? []))
         var result: [PricedGroup] = []
         while try statement.step() {
             var dimensions: [Column: String] = [:]

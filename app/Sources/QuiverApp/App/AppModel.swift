@@ -57,6 +57,11 @@ final class AppModel {
             skills.use(swe, for: swePath)
             others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider)
             Task { await others.load() }
+            // The "swe too old" verdicts were about the old build.
+            Task { [codexUsage, cursorFeed] in
+                await codexUsage?.swePathChanged()
+                await cursorFeed?.swePathChanged()
+            }
         }
     }
 
@@ -199,6 +204,9 @@ final class AppModel {
     /// Extra Devin/Cursor profiles with their account dirs, shared by every
     /// OtherLimitsModel a swe-path change creates.
     @ObservationIgnored private var extraAccountsProvider: @MainActor () -> [(Profile, ProfilePaths)] = { [] }
+    /// Every Codex account's CODEX_HOME: the default `~/.codex` plus
+    /// each Codex profile's home in the profile store.
+    @ObservationIgnored private(set) var codexHomes: @MainActor () -> [String] = { [] }
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
     let agentsMd = AgentsModel()
     private(set) var apiKeys: APIKeysModel
@@ -214,6 +222,24 @@ final class AppModel {
     /// The managed MCP servers folder; empty means ~/.quiver/mcp/servers.
     var mcpServersPath: String {
         didSet { UserDefaults.standard.set(mcpServersPath, forKey: "mcpServersPath") }
+    }
+
+    /// The persisted value; defaults on when nothing was stored yet.
+    private static func hidesTrivialSessions() -> Bool {
+        UserDefaults.standard.object(forKey: "hideTrivialSessions") == nil
+            || UserDefaults.standard.bool(forKey: "hideTrivialSessions")
+    }
+
+    /// Settings → "Hide accidental sessions": drops empty and probe-like
+    /// sessions from the Sessions page and the calendar. Default on.
+    var hideTrivialSessions: Bool {
+        didSet {
+            UserDefaults.standard.set(hideTrivialSessions, forKey: "hideTrivialSessions")
+            sessions?.hideTrivial = hideTrivialSessions
+            ledger?.setHidesTrivialSessions(hideTrivialSessions)
+            calendar?.noteScanCompleted()
+            if let calendar { Task { await calendar.load() } }
+        }
     }
 
     /// The app "Open in editor" uses, kept by name; empty means the first found.
@@ -236,10 +262,15 @@ final class AppModel {
     let compute: ComputeModel
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
+    /// Kept for `hideTrivialSessions`; nil with `sessions`.
+    private let ledger: Ledger?
     /// The Calendar page's activity blocks; nil with `sessions`.
     let calendar: CalendarModel?
     /// Cursor's per-event usage feed into the ledger; nil with `sessions`.
     let cursorFeed: CursorUsageFeed?
+    /// Each Codex account's daily totals against what this Mac logged;
+    /// nil with `sessions`.
+    let codexUsage: CodexAccountUsage?
     /// The Pricing page's per-model rates; nil with `sessions`.
     let pricingModel: PricingModel?
     /// The Models page's benchmarks crossed with usage; nil with `sessions`.
@@ -281,6 +312,7 @@ final class AppModel {
         apiKeysPath = keysPath
         apiKeys = Self.keysModel(path: keysPath)
         mcpServersPath = UserDefaults.standard.string(forKey: "mcpServersPath") ?? ""
+        hideTrivialSessions = Self.hidesTrivialSessions()
         codeEditor = UserDefaults.standard.string(forKey: "codeEditor") ?? ""
 
         // Everything Quiver keeps lives under ~/.quiver (see AGENTS.md).
@@ -313,6 +345,14 @@ final class AppModel {
                 .map { ($0, store.paths(for: $0)) }
         }
         others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider)
+        codexHomes = {
+            var homes = [home.appending(path: ".codex").path]
+            for profile in (try? store.load()) ?? []
+            where profile.vendor == .codex && !profile.isDefault {
+                homes.append(store.paths(for: profile).home.path)
+            }
+            return homes
+        }
         var terminalChoice: () -> TerminalApp = { .terminal }
         accounts = AccountsModel(store: store, usage: usage, launcher: ProcessLauncher(),
                                  terminal: { terminalChoice() },
@@ -326,12 +366,15 @@ final class AppModel {
                                  paths: store.paths(for:), home: home)
             }
         let directory: @Sendable () -> AccountDirectory = { directoryCache.current }
+        let hidesTrivial = Self.hidesTrivialSessions()
         do {
             // User prices (config/pricing.json) win over both published lists.
             let pricing = PricingStore(cacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
                                        overridesFile: quiver.appending(path: "config/pricing.json"))
             let ledger = try Ledger(cacheDirectory: quiver.appending(path: "cache/ledger"),
                                     pricing: (try? pricing.load()) ?? .empty)
+            self.ledger = ledger
+            ledger.setHidesTrivialSessions(hidesTrivial)
             overview = OverviewModel(ledger: ledger, roots: { directory().roots },
                                      accountLabel: { directory().label(for: $0) },
                                      refreshPricing: { await pricing.refreshIfStale() })
@@ -345,10 +388,12 @@ final class AppModel {
             let fileProviders: [any ActivityProviding] = [
                 DroidActivity(sessionsRoot: home.appending(path: ".factory/sessions"),
                               accountHome: home.appending(path: ".factory").path,
-                              index: ActivityFileIndex(url: calendarCache.appending(path: "droid.json"))),
+                              index: ActivityFileIndex(url: calendarCache.appending(path: "droid.json")),
+                              filter: { await ledger.filterTrivialActivitySessions($0, harness: "droid") }),
                 PiActivity(sessionsRoot: home.appending(path: ".pi/agent/sessions"),
                            accountHome: home.appending(path: ".pi").path,
-                           index: ActivityFileIndex(url: calendarCache.appending(path: "pi.json"))),
+                           index: ActivityFileIndex(url: calendarCache.appending(path: "pi.json")),
+                           filter: { await ledger.filterTrivialActivitySessions($0, harness: "pi") }),
                 FreebuffActivity(projectsRoot: home.appending(path: ".config/manicode/projects"),
                                  accountHome: home.appending(path: ".config/manicode").path,
                                  index: ActivityFileIndex(url: calendarCache.appending(path: "freebuff.json"))),
@@ -370,7 +415,15 @@ final class AppModel {
             // both the ledger's account dim and swe's --account-dir.
             // An ingest that wrote rows refreshes the same way a scan does.
             cursorFeed = CursorUsageFeed(
-                ledger: ledger, swe: client,
+                // The swe chosen in Settings right now, like
+                // ProviderVisibility: the feed can't capture `self` here,
+                // and a SweClient is only the path, so reading the saved
+                // path at call time is the live client.
+                ledger: ledger,
+                swe: { SweClient(runner: ProcessRunner(
+                    executable: SweLocation.executable(
+                        override: UserDefaults.standard.string(
+                            forKey: SweLocation.defaultsKey)))) },
                 accounts: {
                     var accounts = [CursorUsageFeed.Account(
                         home: home.appending(path: "Library/Application Support/Cursor").path)]
@@ -385,6 +438,17 @@ final class AppModel {
                 },
                 progressFile: quiver.appending(path: "cache/cursor-feed.json"),
                 onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
+            codexUsage = CodexAccountUsage(
+                cacheFile: quiver.appending(path: "cache/codex-account-usage.json"),
+                fetch: { home in
+                    try await Self.client(for: UserDefaults.standard.string(
+                        forKey: SweLocation.defaultsKey) ?? "")
+                        .codexUsageDaily(accountDir: home)
+                },
+                macDays: { home, range in
+                    await ledger.dailyTokens(harness: "codex", accountHome: home,
+                                             in: range, calendar: .current)
+                })
             let overviewModel = overview
             pricingModel = PricingModel(
                 ledger: ledger,
@@ -405,12 +469,15 @@ final class AppModel {
         } catch {
             overview = nil
             sessions = nil
+            ledger = nil
             calendar = nil
             cursorFeed = nil
+            codexUsage = nil
             pricingModel = nil
             models = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
+        sessions?.hideTrivial = hidesTrivial
         skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))
         // The Skills page's hub tab is now Plugins > Explore, kept in
         // plugin-catalog.json; its old snapshot has no reader left.
@@ -526,6 +593,19 @@ final class AppModel {
             Task { [pluginCatalog] in await pluginCatalog.restore() },
         ]
         if let cursorFeed { watchers.append(Task { await cursorFeed.keepFresh() }) }
+        if let codexUsage {
+            watchers.append(Task { await codexUsage.keepFresh(homes: codexHomes) })
+            // The "This Mac" side follows the ledger: rebuild after every
+            // completed scan or out-of-scan write, the same counters the
+            // Overview's own figures listen to. No swe fetch.
+            watchers.append(Task { [weak self] in
+                let changes = Observations { [weak self] in
+                    self.map { ($0.overview?.completedScans ?? 0,
+                                $0.overview?.ledgerWrites ?? 0) }
+                }
+                for await _ in changes { await codexUsage.recompute() }
+            })
+        }
         watchers += watchCatalogPlacement()
         watchers.append(watchSessions())
         watchers += watchLimits()

@@ -157,6 +157,16 @@ public actor Ledger {
     /// the write connection or this actor.
     let activityURL: URL
     let activityConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
+    /// Settings' "Hide accidental sessions": whether the calendar drops
+    /// trivial sessions. Outside the actor because the block query runs
+    /// on its own read connection.
+    let trivialGate = OSAllocatedUnfairLock<Bool>(initialState: true)
+
+    /// Flips the calendar's trivial-session drop (Settings → "Hide
+    /// accidental sessions").
+    public nonisolated func setHidesTrivialSessions(_ hides: Bool) {
+        trivialGate.withLock { $0 = hides }
+    }
 
     /// - Parameters:
     ///   - cacheDirectory: where the ledger database lives; production uses
@@ -470,10 +480,31 @@ public actor Ledger {
             .sorted { ($0.day, $0.harness, $0.model) < ($1.day, $1.harness, $1.model) }
     }
 
-    /// Usage per session, most recent first.
-    public func bySession(in range: DateInterval) -> [SessionUsage] {
+    /// One account home's token totals per calendar day for one harness —
+    /// every token kind summed, the same `totalTokens` Overview reports.
+    /// Days with no usage are left out.
+    public func dailyTokens(harness: String, accountHome: String,
+                            in range: DateInterval, calendar: Calendar) -> [Date: Int] {
         guard let groups = try? store.groups(
-            in: range, by: [.harness, .account, .session, .cwd], thresholds: pricing.thresholds)
+            in: range, by: [.harness, .account], thresholds: pricing.thresholds,
+            bucketSeconds: 900)
+        else { return [:] }
+        var days: [Date: Int] = [:]
+        for group in groups
+        where group.dimensions[.harness] == harness
+            && group.dimensions[.account] == accountHome {
+            let day = calendar.startOfDay(for: max(group.bucket ?? group.first, range.start))
+            days[day, default: 0] += group.tokens.total
+        }
+        return days
+    }
+
+    /// Usage per session, most recent first. `harness` restricts the read
+    /// to one harness's dims when the caller only wants those.
+    public func bySession(in range: DateInterval, harness: String? = nil) -> [SessionUsage] {
+        guard let groups = try? store.groups(
+            in: range, by: [.harness, .account, .session, .cwd],
+            thresholds: pricing.thresholds, harness: harness)
         else { return [] }
         struct Key: Hashable { var harness, account, session: String }
         var sessions: [Key: SessionUsage] = [:]
