@@ -24,7 +24,9 @@ public final class ProjectResolver: Sendable {
     }
 
     public func identity(of cwd: String?) -> Identity {
-        guard let cwd, !cwd.isEmpty else { return ("", Self.noFolder) }
+        guard let cwd, !cwd.isEmpty, cwd != "/" else {
+            return ("", Self.noFolder)
+        }
         if let cached = cache.withLock({ $0[cwd] }) { return cached }
         let found = resolve(cwd)
         cache.withLock { $0[cwd] = found }

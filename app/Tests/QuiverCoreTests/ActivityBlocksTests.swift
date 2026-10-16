@@ -202,3 +202,13 @@ import Testing
         #expect(resolve.project(of: nil) == ProjectResolver.noFolder)
     }
 }
+
+extension ActivityBlocksTests {
+    @Test func rootAndEmptyFoldersAreNoFolder() {
+        let resolve = ProjectResolver { _ in nil }
+        #expect(resolve.project(of: "/") == ProjectResolver.noFolder)
+        #expect(resolve.project(of: "") == ProjectResolver.noFolder)
+        #expect(resolve.project(of: nil) == ProjectResolver.noFolder)
+        #expect(resolve.identity(of: "/") == ("", ProjectResolver.noFolder))
+    }
+}
