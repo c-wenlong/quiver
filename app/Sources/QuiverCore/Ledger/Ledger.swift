@@ -401,6 +401,27 @@ public actor Ledger {
         report.filesRead += 1
     }
 
+    /// Store records a poll produced (Cursor's usage feed) in one
+    /// transaction. Every record carries a stable key, so an overlapping
+    /// re-fetch upserts to the same rows instead of duplicating them.
+    func ingest(_ records: [LedgerRecord]) throws {
+        try store.db.execute("BEGIN IMMEDIATE")
+        do {
+            for record in records { try store.upsert(record) }
+            try store.db.execute("COMMIT")
+        } catch {
+            store.rollback()
+            throw error
+        }
+    }
+
+    /// The newest timestamp stored for `harnesses` under `accountHome`, nil
+    /// when none. Polled sources ask for what is newer than this (with
+    /// overlap), or their whole window on a first run.
+    func latestEventTimestamp(harnesses: [String], accountHome: String) throws -> Date? {
+        try store.latestEventTimestamp(harnesses: harnesses, account: accountHome)
+    }
+
     // MARK: - Queries
 
     public func events(in range: DateInterval) -> [UsageEvent] {

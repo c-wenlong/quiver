@@ -238,6 +238,8 @@ final class AppModel {
     let sessions: SessionsModel?
     /// The Calendar page's activity blocks; nil with `sessions`.
     let calendar: CalendarModel?
+    /// Cursor's per-event usage feed into the ledger; nil with `sessions`.
+    let cursorFeed: CursorUsageFeed?
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
     let skills: SkillsModel
     let mcp: McpModel
@@ -339,10 +341,25 @@ final class AppModel {
                                      knownAccounts: { directory().homes(for: $0) },
                                      snapshots: calendarSnapshots,
                                      restored: calendarSnapshots.load())
+            // Cursor's account usage feed covers the editor, cursor-agent,
+            // cloud agents and Grok Bot; each account's user-data dir is
+            // both the ledger's account dim and swe's --account-dir.
+            cursorFeed = CursorUsageFeed(ledger: ledger, swe: client) {
+                var accounts = [CursorUsageFeed.Account(
+                    home: home.appending(path: "Library/Application Support/Cursor").path)]
+                for profile in (try? store.load()) ?? []
+                where profile.vendor == .cursor && !profile.isDefault {
+                    if let dir = store.paths(for: profile).desktopData {
+                        accounts.append(CursorUsageFeed.Account(home: dir.path, accountDir: dir.path))
+                    }
+                }
+                return accounts
+            }
         } catch {
             overview = nil
             sessions = nil
             calendar = nil
+            cursorFeed = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
         skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))
@@ -459,6 +476,7 @@ final class AppModel {
             Task { [plugins] in await plugins.restore() },
             Task { [pluginCatalog] in await pluginCatalog.restore() },
         ]
+        if let cursorFeed { watchers.append(Task { await cursorFeed.keepFresh() }) }
         watchers += watchCatalogPlacement()
         watchers.append(watchSessions())
         watchers += watchLimits()

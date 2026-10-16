@@ -74,6 +74,10 @@ public struct HarnessMark: Equatable, Sendable {
             self.init(icon: "claude", word: "CLI", name: "Claude Code")
         case "claude-desktop":
             self.init(icon: "claude", word: "Desktop", name: "Claude Desktop")
+        // Grok Bot events come from Cursor's usage feed; the name would
+        // otherwise split at the dash and show as "Grok (bot)".
+        case "grok-bot":
+            self.init(icon: "grok", word: nil, name: "Grok Bot")
         case _ where HarnessIcons.icon(for: harness) != nil:
             self.init(icon: harness, word: nil, name: Self.name(of: harness))
         default:
@@ -94,7 +98,7 @@ public struct HarnessMark: Equatable, Sendable {
     static let names = ["claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "devin": "Devin",
                         "droid": "Factory Droid", "copilot": "GitHub Copilot", "lmstudio": "LM Studio",
                         "qwen-code": "Qwen Code", "mistral-vibe": "Mistral Vibe", "commandcode": "Command Code",
-                        "qoder-cn": "Qoder CN"]
+                        "qoder-cn": "Qoder CN", "grok-bot": "Grok Bot"]
 
     static func name(of harness: String) -> String {
         names[harness] ?? harness.prefix(1).uppercased() + harness.dropFirst()

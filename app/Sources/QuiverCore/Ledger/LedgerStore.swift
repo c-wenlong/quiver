@@ -347,6 +347,19 @@ extension LedgerStore {
         return result
     }
 
+    /// The newest stored event timestamp among `harnesses` for one account
+    /// home, nil when the ledger holds none.
+    func latestEventTimestamp(harnesses: [String], account: String) throws -> Date? {
+        let marks = harnesses.map { _ in "?" }.joined(separator: ", ")
+        let statement = try db.prepare("""
+            SELECT MAX(e.ts) FROM events e JOIN dims d ON d.id = e.dim
+            WHERE d.account = ? AND d.harness IN (\(marks))
+            """)
+        statement.bind([SQLiteValue.text(account)] + harnesses.map { SQLiteValue.text($0) })
+        guard try statement.step(), !statement.isNull(0) else { return nil }
+        return Date(timeIntervalSince1970: statement.double(0))
+    }
+
     func events(in range: DateInterval) throws -> [UsageEvent] {
         let statement = try db.prepare("""
             SELECT d.harness, d.account, d.session, d.cwd, d.model, d.tier, e.ts,
