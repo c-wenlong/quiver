@@ -106,14 +106,17 @@ public struct ModelMatcher: Sendable {
         try JSONEncoder().encode(links).write(to: url, options: .atomic)
     }
 
-    /// The AA model `logged` names, or nil: a manual link, else the
-    /// headline entry of the family whose base matches.
+    /// The AA model `logged` names, or nil: the headline entry of the
+    /// family a manual link points into, else of the family whose base
+    /// matches. A link saved against "Claude Opus 5.5 (High)" lands on
+    /// the same Opus 5.5 entry the leaderboard shows.
     public static func match(_ logged: String, in models: [AALanguageModel],
                              links: [String: String] = [:]) -> AALanguageModel? {
         let parsed = parse(logged)
         if let linked = links[parsed.base],
            let model = models.first(where: { $0.id == linked }) {
-            return model
+            let base = parseAA(model).base
+            return headline(of: models.filter { parseAA($0).base == base }) ?? model
         }
         return headline(of: models.filter { parseAA($0).base == parsed.base })
     }

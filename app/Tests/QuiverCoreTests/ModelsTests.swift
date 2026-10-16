@@ -206,6 +206,13 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         }
     }
 
+    @Test func aLinkToAnEffortEntryLandsOnItsFamilysHeadline() {
+        // The link sheet lists every effort; the leaderboard only headlines.
+        #expect(ModelMatcher.match("my-proxy-model", in: opusFamily,
+                                   links: ["my-proxy-model": "claude-opus-5-5-high"])?.slug
+                == "claude-opus-5-5")
+    }
+
     @Test func aFamilyWithNoEffortFreeSlugTakesItsHighestEffort() {
         let models = [aa("Grok 9 (High)", slug: "grok-9-high", creator: "x-ai", intelligence: 40),
                       aa("Grok 9 (Max)", slug: "grok-9-max", creator: "x-ai", intelligence: 39),

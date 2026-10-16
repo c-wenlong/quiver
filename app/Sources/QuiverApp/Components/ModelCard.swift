@@ -117,9 +117,11 @@ struct ModelCard: View {
         .background(highlighted ? Theme.subtle : .clear, in: .rect(cornerRadius: 8))
     }
 
-    /// "$4", "$0.75", "$1.25": whole dollars lose their cents.
+    /// "$4", "$0.75", "$1.25": whole dollars lose their cents, and a
+    /// paid price under a cent reads "<$0.01", never "$0.00".
     static func price(_ value: Double) -> String {
-        value == value.rounded() ? "$\(Int(value))" : String(format: "$%.2f", value)
+        if value > 0, value < 0.01 { return "<$0.01" }
+        return value == value.rounded() ? "$\(Int(value))" : String(format: "$%.2f", value)
     }
 }
 
