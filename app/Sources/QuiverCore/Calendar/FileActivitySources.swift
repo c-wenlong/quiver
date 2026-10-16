@@ -9,20 +9,27 @@ public struct FileActivitySource: ActivityProviding {
     private let index: ActivityFileIndex
     private let files: @Sendable () -> [String: ActivityFileIndex.FileStamp]
     private let parse: @Sendable (String) throws -> [ActivityFileIndex.IndexedSession]
+    /// Whole-session drop applied before grouping, e.g. the ledger's
+    /// trivial-session rule; a file source's sessions never pass through
+    /// the block query that would judge them otherwise.
+    private let filter: (@Sendable ([ActivityFileIndex.IndexedSession]) async -> [ActivityFileIndex.IndexedSession])?
 
     public init(harness: String, index: ActivityFileIndex,
                 files: @escaping @Sendable () -> [String: ActivityFileIndex.FileStamp],
-                parse: @escaping @Sendable (String) throws -> [ActivityFileIndex.IndexedSession]) {
+                parse: @escaping @Sendable (String) throws -> [ActivityFileIndex.IndexedSession],
+                filter: (@Sendable ([ActivityFileIndex.IndexedSession]) async -> [ActivityFileIndex.IndexedSession])? = nil) {
         self.harness = harness
         self.index = index
         self.files = files
         self.parse = parse
+        self.filter = filter
     }
 
     public func activityBlocks(in range: DateInterval, gap: TimeInterval,
                                force: Bool) async throws -> [ActivityBlock] {
         let sessions = try await index.sessions(files: files, force: force, parse: parse)
-        return sessions.flatMap {
+        let visible = if let filter { await filter(sessions) } else { sessions }
+        return visible.flatMap {
             ActivityBlocks.make(harness: harness, accountHome: $0.accountHome,
                                 sessionId: $0.sessionId, cwd: $0.cwd,
                                 timestamps: $0.timestamps.map(Date.init(timeIntervalSince1970:))
@@ -76,14 +83,16 @@ public enum ActivityParsers {
 public struct DroidActivity: ActivityProviding {
     private let source: FileActivitySource
 
-    public init(sessionsRoot: URL, accountHome: String, index: ActivityFileIndex) {
+    public init(sessionsRoot: URL, accountHome: String, index: ActivityFileIndex,
+                filter: (@Sendable ([ActivityFileIndex.IndexedSession]) async -> [ActivityFileIndex.IndexedSession])? = nil) {
         source = FileActivitySource(
             harness: "droid",
             index: index,
             files: { ActivityParsers.jsonlFiles(root: sessionsRoot) {
                 $0.lastPathComponent.hasSuffix(".settings.json") || $0.lastPathComponent == "settings.json"
             } },
-            parse: { try Self.parse(file: $0, accountHome: accountHome) })
+            parse: { try Self.parse(file: $0, accountHome: accountHome) },
+            filter: filter)
     }
 
     public func activityBlocks(in range: DateInterval, gap: TimeInterval,
@@ -120,12 +129,14 @@ public struct DroidActivity: ActivityProviding {
 public struct PiActivity: ActivityProviding {
     private let source: FileActivitySource
 
-    public init(sessionsRoot: URL, accountHome: String, index: ActivityFileIndex) {
+    public init(sessionsRoot: URL, accountHome: String, index: ActivityFileIndex,
+                filter: (@Sendable ([ActivityFileIndex.IndexedSession]) async -> [ActivityFileIndex.IndexedSession])? = nil) {
         source = FileActivitySource(
             harness: "pi",
             index: index,
             files: { ActivityParsers.jsonlFiles(root: sessionsRoot) },
-            parse: { try Self.parse(file: $0, accountHome: accountHome) })
+            parse: { try Self.parse(file: $0, accountHome: accountHome) },
+            filter: filter)
     }
 
     public func activityBlocks(in range: DateInterval, gap: TimeInterval,

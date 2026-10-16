@@ -50,6 +50,17 @@ import Testing
         #expect(main.totals.eventCount == 4)
     }
 
+    @Test func bySessionRestrictsToOneHarness() async throws {
+        let (_, ledger) = try await scannedFixture()
+        let claude = await ledger.bySession(in: october2026, harness: "claude")
+        #expect(!claude.isEmpty)
+        #expect(claude.allSatisfy { $0.harness == "claude" })
+        let codex = await ledger.bySession(in: october2026, harness: "codex")
+        #expect(!codex.isEmpty)
+        #expect(codex.allSatisfy { $0.harness == "codex" })
+        #expect(await ledger.bySession(in: october2026, harness: "pi").isEmpty)
+    }
+
     @Test func rangesIncludeTheirStartAndExcludeTheirEnd() async throws {
         let (_, ledger) = try await scannedFixture()
         let atA2 = utc("2026-10-03T10:01:00Z")

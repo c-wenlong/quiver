@@ -20,9 +20,9 @@ import Testing
 
     private func event(_ ts: String, harness: String = "claude",
                        home: String = "/h", session: String = "s",
-                       model: String = "m") -> UsageEvent {
+                       model: String = "m", output: Int = 200) -> UsageEvent {
         UsageEvent(harness: harness, accountHome: home, sessionId: session,
-                   model: model, timestamp: utc(ts), outputTokens: 1)
+                   model: model, timestamp: utc(ts), outputTokens: output)
     }
 
     private let day = DateInterval(start: utc("2026-10-05T00:00:00Z"),
@@ -132,7 +132,7 @@ import Testing
         let fixture = try store([
             UsageEvent(harness: "claude", accountHome: "/h", sessionId: "s",
                        cwd: "/work/project", model: "m",
-                       timestamp: utc("2026-10-05T10:00:00Z"), outputTokens: 1),
+                       timestamp: utc("2026-10-05T10:00:00Z"), outputTokens: 200),
         ])
         let store = fixture.1
         let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
@@ -205,5 +205,88 @@ extension CalendarActivityTests {
         let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
         #expect(blocks.count == 1)
         #expect(blocks[0].responses == 3)
+    }
+}
+
+extension CalendarActivityTests {
+    @Test func aZeroTokenSessionDrawsNoBlock() throws {
+        // Grok Bot's automation events carry no tokens at all; three of
+        // them over ten minutes are still a trivial session.
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", harness: "grok-bot", session: "auto", output: 0),
+            event("2026-10-05T10:05:00Z", harness: "grok-bot", session: "auto", output: 0),
+            event("2026-10-05T10:10:00Z", harness: "grok-bot", session: "auto", output: 0),
+            event("2026-10-05T10:00:00Z", session: "real"),
+        ])
+        _ = temp
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
+        #expect(blocks.map(\.sessions.first?.sessionId) == ["real"])
+    }
+
+    @Test func aProbeLikeDayInsideALongSessionStays() throws {
+        // "long" has two replies four days apart: the day query sees only
+        // the second, but the session's whole history spans days, so it
+        // is not a probe. "probe" is a one-shot and drops.
+        let (temp, store) = try store([
+            event("2026-10-01T10:00:00Z", session: "long", output: 10),
+            event("2026-10-05T10:00:00Z", session: "long", output: 10),
+            event("2026-10-05T11:00:00Z", session: "probe", output: 10),
+        ])
+        _ = temp
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
+        #expect(blocks.map(\.sessions.first?.sessionId) == ["long"])
+        // With "Hide accidental sessions" off the probe is back.
+        let all = try store.activityBlocks(in: day, gap: 30 * 60, hideTrivial: false)
+        #expect(all.map { $0.sessions[0].sessionId }.sorted() == ["long", "probe"])
+    }
+
+    @Test func oneRepliesWithoutDetailStillDrawBlocks() throws {
+        // Cursor and Droid logs carry no per-reply token detail, so a
+        // single reply can be a real answer; only emptiness hides them.
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", harness: "cursor", session: "c1", output: 5),
+            event("2026-10-05T10:00:00Z", harness: "droid", session: "d1", output: 5),
+        ])
+        _ = temp
+        #expect(try store.activityBlocks(in: day, gap: 30 * 60).count == 2)
+
+        let (temp2, store2) = try self.store([
+            event("2026-10-05T10:00:00Z", harness: "cursor", session: "c2", output: 0),
+        ])
+        _ = temp2
+        #expect(try store2.activityBlocks(in: day, gap: 30 * 60).isEmpty)
+    }
+
+    @Test func wholeHistoryAggregatesAcrossASessionsDims() throws {
+        // "split" switched models mid-run, so its events sit under two
+        // dims. Each dim alone looks probe-like; judged as one session
+        // the three replies inside a minute are still under the span
+        // bound — but three responses is over the reply bound, so the
+        // session is real. A per-dim check would wrongly drop it.
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", session: "split", model: "opus", output: 10),
+            event("2026-10-05T10:00:20Z", session: "split", model: "opus", output: 10),
+            event("2026-10-05T10:00:40Z", session: "split", model: "sonnet", output: 10),
+        ])
+        _ = temp
+        #expect(try store.activityBlocks(in: day, gap: 30 * 60)
+            .map { $0.sessions[0].sessionId } == ["split"])
+    }
+
+    @Test func aProbeSessionDropsAndARealOneStays() throws {
+        // Two replies inside a minute with almost nothing back: hidden.
+        // Same shape plus a third reply or a minute-long span: real.
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", session: "probe", output: 40),
+            event("2026-10-05T10:00:30Z", session: "probe", output: 40),
+            event("2026-10-05T10:00:00Z", session: "three", output: 40),
+            event("2026-10-05T10:00:30Z", session: "three", output: 40),
+            event("2026-10-05T10:00:59Z", session: "three", output: 10),
+            event("2026-10-05T10:00:00Z", session: "minute", output: 40),
+            event("2026-10-05T10:01:00Z", session: "minute", output: 40),
+        ])
+        _ = temp
+        let blocks = try store.activityBlocks(in: day, gap: 30 * 60)
+        #expect(blocks.map { $0.sessions[0].sessionId }.sorted() == ["minute", "three"])
     }
 }
