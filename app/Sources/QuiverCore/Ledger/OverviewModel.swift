@@ -221,6 +221,14 @@ public final class OverviewModel {
         self.calendar = calendar
     }
 
+    /// A writer outside the scan path (the Cursor feed's ingest) changed
+    /// the ledger: bump the revision so every cached summary is stale,
+    /// then rebuild exactly like a scan that read files did.
+    public func reloadAfterLedgerWrite() async {
+        revision += 1
+        await load(scan: false)
+    }
+
     /// Optionally scan the logs for new usage, then rebuild every figure.
     public func load(scan: Bool) async {
         loadGeneration += 1

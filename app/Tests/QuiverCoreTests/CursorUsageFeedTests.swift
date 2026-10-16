@@ -8,9 +8,11 @@ import Testing
     let allTime = DateInterval(start: .distantPast, end: .distantFuture)
     let account = "/home/user/Library/Application Support/Cursor"
 
-    private func reply(_ status: String, events: String, code: Int32 = 0) -> CommandResult {
-        CommandResult(status: code, stdout: Data("""
-            {"schema": 1, "data": {"status": "\(status)", "events": [\(events)]}}
+    private func reply(_ status: String, _ events: String = "",
+                       accountId: String? = nil, code: Int32 = 0) -> CommandResult {
+        let id = accountId.map { #""account_id": "\#($0)", "# } ?? ""
+        return CommandResult(status: code, stdout: Data("""
+            {"schema": 1, "data": {"status": "\(status)", \(id)"events": [\(events)]}}
             """.utf8), stderr: "")
     }
 
@@ -36,7 +38,7 @@ import Testing
         let temp = try TempDir()
         let ledger = try Ledger(cacheDirectory: temp.path("cache"))
         let runner = LockedRunner([
-            (["harness", "usage-events", "cursor"], reply("ok", events: twoEvents)),
+            (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
         ])
         await feed(runner, ledger: ledger, accounts: accts()).poll()
 
@@ -63,7 +65,7 @@ import Testing
         let temp = try TempDir()
         let ledger = try Ledger(cacheDirectory: temp.path("cache"))
         let runner = LockedRunner([
-            (["harness", "usage-events", "cursor"], reply("ok", events: twoEvents)),
+            (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
         ])
         let feed = feed(runner, ledger: ledger, accounts: accts())
         await feed.poll()
@@ -79,7 +81,7 @@ import Testing
         let temp = try TempDir()
         let ledger = try Ledger(cacheDirectory: temp.path("cache"))
         let runner = LockedRunner([
-            (["harness", "usage-events", "cursor"], reply("ok", events: twoEvents)),
+            (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
         ])
         let feed = feed(runner, ledger: ledger, accounts: accts())
 
@@ -103,12 +105,13 @@ import Testing
         try await ledger.ingest([CursorUsageFeed.record(for: CursorUsageEvent(
             timestamp: 1791700000, model: "composer-1", kind: "k", conversationId: "c",
             headless: false, inputTokens: 5, outputTokens: 1,
-            cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil), accountHome: account)])
+            cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil),
+            accountKey: account, accountHome: account)])
         for status in ["auth-required", "signed-out", "unavailable"] {
             let runner = LockedRunner([
                 (["harness", "usage-events", "cursor"],
                  // `unavailable` exits non-zero but still answers JSON.
-                 reply(status, events: "", code: status == "unavailable" ? 1 : 0)),
+                 reply(status, "", code: status == "unavailable" ? 1 : 0)),
             ])
             await feed(runner, ledger: ledger, accounts: accts()).poll()
         }
@@ -135,7 +138,7 @@ import Testing
         let temp = try TempDir()
         let ledger = try Ledger(cacheDirectory: temp.path("cache"))
         let runner = LockedRunner([
-            (["harness", "usage-events", "cursor"], reply("ok", events: "")),
+            (["harness", "usage-events", "cursor"], reply("ok", "")),
         ])
         let extra = CursorUsageFeed.Account(home: "/t/cursor-side/desktop",
                                             accountDir: "/t/cursor-side/desktop")
@@ -157,9 +160,87 @@ import Testing
             timestamp: Date().timeIntervalSince1970 - 60, model: "grok-bot-cua",
             kind: "k", conversationId: "c9", headless: true,
             inputTokens: 10, outputTokens: 5,
-            cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.001), accountHome: account)])
+            cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.001),
+            accountKey: account, accountHome: account)])
         let range = DateInterval(start: .now.addingTimeInterval(-3600), duration: 3600)
         let blocks = try ledger.activityBlocks(in: range, gap: 900, force: true)
         #expect(blocks.contains { $0.harness == "grok-bot" })
     }
+
+    @MainActor @Test func anIngestedChangeBumpsTheOverviewRevision() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
+        ])
+        let overview = OverviewModel(ledger: ledger, roots: { LedgerRoots() },
+                                     accountLabel: { $0 })
+        let before = overview.revision
+        let feed = CursorUsageFeed(
+            ledger: ledger, swe: SweClient(runner: runner), accounts: { self.accts() },
+            onIngested: { await overview.reloadAfterLedgerWrite() })
+        await feed.poll()
+        #expect(overview.revision == before + 1)
+        // An identical refetch changes no rows, so no reload fires.
+        await feed.poll()
+        #expect(overview.revision == before + 1)
+    }
+
+    @Test func twoProfilesOnOneAccountStoreOneCopy() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"],
+             reply("ok", twoEvents, accountId: "uid-1")),
+        ])
+        let extra = CursorUsageFeed.Account(home: "/t/cursor-side/desktop",
+                                            accountDir: "/t/cursor-side/desktop")
+        await feed(runner, ledger: ledger, accounts: accts() + [extra]).poll()
+        let events = await ledger.events(in: allTime)
+        // The second profile's identical events never land.
+        #expect(events.count == 2)
+        // accountHome stays the profile the account was first seen on.
+        #expect(events.allSatisfy { $0.accountHome == account })
+    }
+
+    @Test func aReplyWithoutAccountIdKeysByProfileHome() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
+        ])
+        let extra = CursorUsageFeed.Account(home: "/t/cursor-side/desktop",
+                                            accountDir: "/t/cursor-side/desktop")
+        await feed(runner, ledger: ledger, accounts: accts() + [extra]).poll()
+        let events = await ledger.events(in: allTime)
+        // No account_id means no deduplication: each profile's rows key on
+        // its own home, so both copies are stored.
+        #expect(events.count == 4)
+        #expect(Set(events.map(\.accountHome)).count == 2)
+    }
+
+    @Test func aPollFailureSetsLastError() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"],
+             CommandResult(status: 1, stdout: Data(), stderr: "database is locked")),
+        ])
+        let feed = feed(runner, ledger: ledger, accounts: accts())
+        await feed.poll()
+        let error = await feed.lastError
+        #expect(error?.contains("database is locked") == true)
+    }
+
+    @Test func anIncompleteReplyStillIngests() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"], reply("incomplete", twoEvents)),
+        ])
+        await feed(runner, ledger: ledger, accounts: accts()).poll()
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 2)
+    }
 }
+

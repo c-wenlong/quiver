@@ -344,17 +344,22 @@ final class AppModel {
             // Cursor's account usage feed covers the editor, cursor-agent,
             // cloud agents and Grok Bot; each account's user-data dir is
             // both the ledger's account dim and swe's --account-dir.
-            cursorFeed = CursorUsageFeed(ledger: ledger, swe: client) {
-                var accounts = [CursorUsageFeed.Account(
-                    home: home.appending(path: "Library/Application Support/Cursor").path)]
-                for profile in (try? store.load()) ?? []
-                where profile.vendor == .cursor && !profile.isDefault {
-                    if let dir = store.paths(for: profile).desktopData {
-                        accounts.append(CursorUsageFeed.Account(home: dir.path, accountDir: dir.path))
+            // An ingest that wrote rows refreshes the same way a scan does.
+            cursorFeed = CursorUsageFeed(
+                ledger: ledger, swe: client,
+                accounts: {
+                    var accounts = [CursorUsageFeed.Account(
+                        home: home.appending(path: "Library/Application Support/Cursor").path)]
+                    for profile in (try? store.load()) ?? []
+                    where profile.vendor == .cursor && !profile.isDefault {
+                        if let dir = store.paths(for: profile).desktopData {
+                            accounts.append(
+                                CursorUsageFeed.Account(home: dir.path, accountDir: dir.path))
+                        }
                     }
-                }
-                return accounts
-            }
+                    return accounts
+                },
+                onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
         } catch {
             overview = nil
             sessions = nil

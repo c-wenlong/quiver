@@ -404,15 +404,22 @@ public actor Ledger {
     /// Store records a poll produced (Cursor's usage feed) in one
     /// transaction. Every record carries a stable key, so an overlapping
     /// re-fetch upserts to the same rows instead of duplicating them.
-    func ingest(_ records: [LedgerRecord]) throws {
+    /// - Returns: how many rows were inserted or changed, so the caller
+    ///   can tell a no-op ingest from one the Overview should reload for.
+    @discardableResult
+    func ingest(_ records: [LedgerRecord]) throws -> Int {
+        var changed = 0
         try store.db.execute("BEGIN IMMEDIATE")
         do {
-            for record in records { try store.upsert(record) }
+            for record in records {
+                if try store.upsert(record) { changed += 1 }
+            }
             try store.db.execute("COMMIT")
         } catch {
             store.rollback()
             throw error
         }
+        return changed
     }
 
     /// The newest timestamp stored for `harnesses` under `accountHome`, nil
