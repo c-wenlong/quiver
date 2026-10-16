@@ -32,10 +32,10 @@ private struct PricingContent: View {
             if !model.unpriced.isEmpty {
                 UnpricedBadge(unpriced: model.unpriced) { editing = $0 }
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) },
-                     selection: $model.period, style: .period)
-            }
+            // A compact select, not the header-wide tab strip, so the
+            // trailing controls fit at every window width.
+            SelectMenu(options: OverviewPeriod.allCases.map { ($0, $0.title) },
+                       selection: $model.period, width: nil)
         } content: {
             if model.groups.isEmpty {
                 Card { Text(model.isLoading ? "Reading your usage logs…" : "No usage in this period.")
