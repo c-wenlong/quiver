@@ -22,6 +22,14 @@ import Testing
                 == "\(clock(start))–\(clock(end))")
     }
 
+    @Test func matchingClockTimesAcrossDaysStayARange() {
+        // 11:02 today to 11:02 tomorrow is not one moment.
+        let start = utc("2026-10-13T11:02:00Z")
+        let end = utc("2026-10-14T11:02:00Z")
+        #expect(CalendarFormat.range(start: start, end: end)
+                == "\(clock(start))–\(clock(end))")
+    }
+
     @Test func activeTimeUnderAMinuteIsLessThanOne() {
         #expect(CalendarFormat.duration(0) == "<1m")
         #expect(CalendarFormat.duration(37) == "<1m")

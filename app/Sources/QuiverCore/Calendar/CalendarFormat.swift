@@ -7,12 +7,15 @@ public enum CalendarFormat {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
     }()
 
-    /// "09:41–10:02", or just "09:41" when start and end land on the
-    /// same minute: a one-response block reads as a moment, not a span.
+    /// "09:41–10:02", or just "09:41" when start and end land in the
+    /// same minute of the same day: a one-response block reads as a
+    /// moment, not a span. Matching clock text alone is not enough —
+    /// 11:02 today to 11:02 tomorrow is a real range.
     public static func range(start: Date, end: Date) -> String {
         let s = clock.string(from: start)
         let e = clock.string(from: end)
-        return s == e ? s : "\(s)–\(e)"
+        let sameMinute = Calendar.current.isDate(start, equalTo: end, toGranularity: .minute)
+        return s == e && sameMinute ? s : "\(s)–\(e)"
     }
 
     /// "2h 5m", "47m", or "<1m" when the active time is under a minute —

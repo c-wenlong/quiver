@@ -175,6 +175,24 @@ extension CalendarActivityTests {
         #expect(blocks.map(\.sessions.first?.sessionId) == ["shared-kayak"])
     }
 
+    @Test func aRealEventOutsideTheRangeKeepsTheSessionHelperBlock() throws {
+        // A real response on Oct 5 and a helper response on Oct 10 in one
+        // session: the helper block is part of real work, and the day
+        // query and the month query must agree.
+        let (temp, store) = try store([
+            event("2026-10-05T10:00:00Z", session: "shared-kayak"),
+            event("2026-10-10T11:02:00Z", session: "shared-kayak",
+                  model: "summarizer"),
+        ])
+        _ = temp
+        let narrow = DateInterval(start: utc("2026-10-10T00:00:00Z"),
+                                  end: utc("2026-10-11T00:00:00Z"))
+        let wide = DateInterval(start: utc("2026-10-01T00:00:00Z"),
+                                end: utc("2026-11-01T00:00:00Z"))
+        #expect(try store.activityBlocks(in: narrow, gap: 30 * 60).count == 1)
+        #expect(try store.activityBlocks(in: wide, gap: 30 * 60).count == 2)
+    }
+
     @Test func helperCallsInsideARealSessionStillCount() throws {
         let (temp, store) = try store([
             event("2026-10-05T10:00:00Z", session: "shared-kayak"),

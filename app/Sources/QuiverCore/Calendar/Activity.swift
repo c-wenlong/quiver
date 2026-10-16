@@ -156,15 +156,22 @@ extension SQLiteDatabase {
     func activityBlocks(in range: DateInterval, gap: TimeInterval) throws -> [ActivityBlock] {
         let lo = range.start.timeIntervalSince1970 - Self.edgeLookout
         let hi = range.end.timeIntervalSince1970 + Self.edgeLookout
-        // Sessions whose every event in the fetched range is a helper
-        // call (Devin's summarizer/compactor) produce no blocks at all.
+        // Sessions whose every event is a helper call (Devin's
+        // summarizer/compactor) produce no blocks at all. "Every" means
+        // the session's whole stored history, not just this range: a
+        // real response earlier keeps later helper events on the
+        // calendar as part of that work.
         let helpers = HelperModels.all.sorted()
         let realSessions = try prepare("""
-            SELECT d.harness, d.account, d.session
+            SELECT DISTINCT d.harness, d.account, d.session
             FROM events e JOIN dims d ON d.id = e.dim
             WHERE e.ts >= ? AND e.ts < ?
-            GROUP BY d.harness, d.account, d.session
-            HAVING SUM(d.model NOT IN (\(helpers.map { _ in "?" }.joined(separator: ",")))) > 0
+              AND EXISTS (
+                  SELECT 1 FROM events e2 JOIN dims d2 ON d2.id = e2.dim
+                  WHERE d2.harness = d.harness AND d2.account = d.account
+                        AND d2.session = d.session
+                        AND d2.model NOT IN (\(helpers.map { _ in "?" }.joined(separator: ",")))
+              )
             """)
         realSessions.bind([SQLiteValue.double(lo), .double(hi)]
                           + helpers.map { SQLiteValue.text($0) })
