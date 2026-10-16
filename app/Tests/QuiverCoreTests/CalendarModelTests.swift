@@ -562,14 +562,23 @@ private final class HeldActivity: ActivityProviding, @unchecked Sendable {
     /// Returns once `count` reads have started. load() paints a cached
     /// range before it asks any provider, so this orders a check after
     /// the paint instead of yielding and hoping the load ran first.
+    /// Cancellation (a test's time limit) resumes the wait too, so a read
+    /// that never starts fails the test instead of hanging the suite.
     func started(_ count: Int = 1) async {
-        await withCheckedContinuation { continuation in
-            let now = state.withLock { s -> Bool in
-                if s.calls >= count { return true }
-                s.arrivals.append((count, continuation))
-                return false
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let now = state.withLock { s -> Bool in
+                    if s.calls >= count || Task.isCancelled { return true }
+                    s.arrivals.append((id, count, continuation))
+                    return false
+                }
+                if now { continuation.resume() }
             }
-            if now { continuation.resume() }
+        } onCancel: { [state] in
+            state.withLock { s in
+                s.arrivals.firstIndex { $0.id == id }.map { s.arrivals.remove(at: $0) }
+            }?.continuation.resume()
         }
     }
     func activityBlocks(in range: DateInterval, gap: TimeInterval,
@@ -601,7 +610,8 @@ private final class HeldActivity: ActivityProviding, @unchecked Sendable {
         var calls = 0
         var held = true
         var waiting: [CheckedContinuation<Void, Never>] = []
-        var arrivals: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        var arrivals: [(id: UUID, count: Int,
+                        continuation: CheckedContinuation<Void, Never>)] = []
         private let lock = NSLock()
         func withLock<T>(_ body: (State) -> T) -> T {
             lock.lock()
