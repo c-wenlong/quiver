@@ -293,6 +293,39 @@ private final class Changes: Sendable {
         #expect(changes.ids.count == 2)
     }
 
+    @Test func aSessionTheListingDropsIsKept() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        let changes = Changes()
+        let sync = sync(api, dir: dir, changes: changes)
+        await sync.sync()
+        let s2 = try #require(await sync.sessions.first { $0.id == "s2" })
+
+        // Deleted or archived on Devin's side: s2 is no longer listed, and
+        // s1 moved on with a new title.
+        api.route("/v3/organizations/\(org)/sessions", """
+        {"items":[\(session("s1", title: "Audit landing page, take 2", created: 1_791_000_000,
+                            updated: 1_791_700_000, pr: "https://github.com/acme/site/pull/12"))],
+         "has_next_page":false}
+        """)
+        api.route("/v3/organizations/\(org)/sessions/s1/messages",
+                  messages([1_791_000_000, 1_791_000_600, 1_791_690_000]))
+        let before = api.requests.count
+        await sync.sync()
+
+        let sessions = await sync.sessions
+        #expect(sessions.map(\.id) == ["s1", "s2"])
+        #expect(sessions[0].title == "Audit landing page, take 2")
+        #expect(sessions[0].messageTimes.last == Date(timeIntervalSince1970: 1_791_690_000))
+        #expect(sessions[1] == s2)
+        // The kept session's messages are not read again.
+        let reads = api.requests[before...].map(\.url!.path).filter { $0.hasSuffix("/messages") }
+        #expect(reads == ["/v3/organizations/org-1/sessions/s1/messages"])
+        #expect(DevinCloudSync.stored(in: dir.url).sessions == sessions)
+        #expect(changes.ids.last == ["s1", "s2"])
+    }
+
     @Test func aFailedSyncKeepsTheStoredSessionsAndSaysWhy() async throws {
         let dir = try TempDir()
         let api = FakeDevinAPI()
@@ -448,6 +481,16 @@ private final class Changes: Sendable {
         let reads = api.requests[before...].filter { $0.url!.path.hasSuffix("/messages") }
         #expect(reads.count == 2)
         #expect(DevinCloudSync.stored(in: dir.url).userId == "github|2")
+
+        // The old owner's sessions are not kept past the change.
+        api.route("/v3/self", #"{"user_id":"github|3","org_id":"org-1"}"#)
+        api.route("/v3/organizations/\(org)/sessions", """
+        {"items":[\(session("s3", title: "Someone else", created: 1_791_200_000, updated: 1_791_200_500))],
+         "has_next_page":false}
+        """)
+        api.route("/v3/organizations/\(org)/sessions/s3/messages", messages([1_791_200_000]))
+        await sync.sync()
+        #expect(await sync.sessions.map(\.id) == ["s3"])
     }
 
     @Test func anOlderSyncThatFinishesLastIsDropped() async throws {

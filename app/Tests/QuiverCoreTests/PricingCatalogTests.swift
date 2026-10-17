@@ -202,7 +202,7 @@ struct Offline: Error {}
               "cache_read_input_token_cost": 2e-07, "cache_creation_input_token_cost": 5e-06,
               "cache_creation_input_token_cost_above_1hr": 8e-06, "litellm_provider": "anthropic"}}
             """.utf8))
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: pricing)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: pricing)
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
 
         let sessionB = DateInterval(start: utc("2026-10-04T00:00:00Z"), end: utc("2026-10-05T00:00:00Z"))
@@ -234,7 +234,7 @@ struct Offline: Error {}
               "litellm_provider": "xai"}}
             """.utf8), supplement: PricingSupplement(
             tierMultipliers: ["claude-opus-5-5": ["fast": 2]]))
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: pricing)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: pricing)
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
         return (ledger, temp)
     }
