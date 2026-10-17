@@ -168,16 +168,23 @@ public actor Ledger {
         trivialGate.withLock { $0 = hides }
     }
 
+    /// The daily copies `backUpIfDue` takes.
+    public nonisolated let backups: LedgerBackups
+    private static let log = Logger(subsystem: "com.cwenlong.quiver", category: "ledger")
+
     /// - Parameters:
-    ///   - cacheDirectory: where the ledger database lives; production uses
-    ///     `~/.quiver/cache/ledger/`.
+    ///   - directory: where the ledger database lives; production uses
+    ///     `~/.quiver/data/ledger/` (see `LedgerLocation`).
+    ///   - backups: where the daily copies go; defaults to `directory/backups`.
     ///   - pricing: defaults to the bundled LiteLLM snapshot.
     ///   - maxLineBytes: longer lines are skipped rather than buffered.
     public init(
-        cacheDirectory: URL, pricing: PricingCatalog = (try? .bundled()) ?? .empty, maxLineBytes: Int = 64 << 20
+        directory: URL, backups: URL? = nil,
+        pricing: PricingCatalog = (try? .bundled()) ?? .empty, maxLineBytes: Int = 64 << 20
     ) throws {
-        activityURL = cacheDirectory.appendingPathComponent("ledger.sqlite")
+        activityURL = directory.appendingPathComponent(LedgerLocation.fileName)
         store = try LedgerStore(url: activityURL)
+        self.backups = LedgerBackups(directory: backups ?? directory.appendingPathComponent("backups"))
         self.pricing = pricing
         reader = JSONLReader(maxLineBytes: maxLineBytes)
     }
@@ -189,6 +196,26 @@ public actor Ledger {
     /// The catalog currently in force, for views that look models up
     /// directly (the Pricing page).
     public func catalog() -> PricingCatalog { pricing }
+
+    // MARK: - Backups
+
+    /// Takes today's copy of the ledger when there is none yet. Returns the
+    /// copy, or nil when today's exists already.
+    @discardableResult
+    public func backUpIfDue(now: Date = Date(), calendar: Calendar = .current) throws -> URL? {
+        try backups.backUpIfDue(store.db, now: now, calendar: calendar)
+    }
+
+    /// Checks for a due copy every `interval` until cancelled, so an app
+    /// left running for days still takes one each day.
+    public func keepBackedUp(every interval: Duration = .seconds(3600)) async {
+        while !Task.isCancelled {
+            do { try backUpIfDue() } catch {
+                Self.log.error("ledger backup failed: \(error)")
+            }
+            do { try await Task.sleep(for: interval) } catch { return }
+        }
+    }
 
     // MARK: - Scanning
 

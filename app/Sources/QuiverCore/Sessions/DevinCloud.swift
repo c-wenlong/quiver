@@ -114,8 +114,9 @@ public struct DevinCloudSession: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// `sessions.json`: what the last good sync saw, plus why the latest one
-/// failed. A failed sync keeps the sessions it had.
+/// `sessions.json`: every session the syncs have seen for this user and
+/// org, plus why the latest one failed. A session the API stops listing
+/// is kept, and a failed sync keeps the sessions it had.
 public struct DevinCloudSnapshot: Codable, Sendable, Equatable {
     public var schema = 1
     public var userId: String?
@@ -240,6 +241,10 @@ public actor DevinCloudSync {
                 }
                 sessions.append(item.session(updatedAt: updatedAt, messageTimes: times ?? []))
             }
+            // Sessions the listing no longer returns stay: Devin drops
+            // deleted and archived ones, and their history is still real.
+            let listedIDs = Set(listed.map(\.sessionId))
+            sessions += stored.values.filter { !listedIDs.contains($0.id) }
             sessions.sort { ($0.span.end, $0.id) > ($1.span.end, $1.id) }
             let changed = sessions != snapshot.sessions
             snapshot.userId = userId

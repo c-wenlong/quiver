@@ -215,7 +215,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         for (i, event) in records.enumerated() {
             try store.upsert(LedgerRecord(key: "t:\(i)", event: event))
         }
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let model = PricingModel(
             ledger: ledger,
             overrides: overrides ?? PricingOverrides(
@@ -275,7 +275,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let temp = try TempDir()
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2-medium", tokens: 1_000_000)))
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let model = PricingModel(
             ledger: ledger,
             overrides: PricingOverrides(url: temp.url.appending(path: "config/pricing.json")),
@@ -306,7 +306,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let temp = try TempDir()
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2-max", tokens: 1_000)))
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let file = temp.url.appending(path: "config/pricing.json")
         let model = PricingModel(
             ledger: ledger, overrides: PricingOverrides(url: file),
@@ -340,7 +340,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         for (i, event) in records.enumerated() {
             try store.upsert(LedgerRecord(key: "t:\(i)", event: event))
         }
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let file = temp.url.appending(path: "config/pricing.json")
         let model = PricingModel(
             ledger: ledger, overrides: PricingOverrides(url: file),
@@ -401,7 +401,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let temp = try TempDir()
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         try store.upsert(LedgerRecord(key: "t:1", event: event("gpt-4.1", tokens: 1_000_000)))
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let file = temp.url.appending(path: "config/pricing.json")
         let liteLLM = Data("""
             {"gpt-4.1": {"input_cost_per_token": 0.000002,
@@ -583,7 +583,7 @@ extension PricingModelTests {
         ].enumerated() {
             try store.upsert(LedgerRecord(key: "t:\(i)", event: e))
         }
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let gate = Gate()
         let catalog = priced
         let model = PricingModel(

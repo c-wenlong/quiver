@@ -58,7 +58,7 @@ private let worktree = "/Users/k/ai-engineering/.claude/worktrees/jovial"
 
     @Test func aSessionsFolderIsTheOneMostOfItsEventsUsed() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         _ = try await ledger.ingest(sideSession.enumerated().map { LedgerRecord(key: "k\($0)", event: $1) })
         let sessions = await ledger.bySession(in: DateInterval(start: utc("2026-10-05T00:00:00Z"),
                                                                end: utc("2026-10-06T00:00:00Z")))

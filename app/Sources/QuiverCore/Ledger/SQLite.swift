@@ -69,6 +69,32 @@ final class SQLiteDatabase: @unchecked Sendable {
     }
 
     var lastInsertRowID: Int64 { sqlite3_last_insert_rowid(handle) }
+
+    /// Copies the whole database into `destination` with SQLite's online
+    /// backup API: one consistent snapshot, rows still in the WAL included,
+    /// while other connections keep reading and writing.
+    func backUp(into destination: SQLiteDatabase) throws {
+        guard let backup = sqlite3_backup_init(destination.handle, "main", handle, "main") else {
+            throw destination.lastError(sqlite3_errcode(destination.handle))
+        }
+        var code = sqlite3_backup_step(backup, -1)
+        var retries = 0
+        while code == SQLITE_BUSY || code == SQLITE_LOCKED, retries < 50 {
+            sqlite3_sleep(100)
+            retries += 1
+            code = sqlite3_backup_step(backup, -1)
+        }
+        let finished = sqlite3_backup_finish(backup)
+        guard code == SQLITE_DONE else { throw Failure(code: code, message: String(cString: sqlite3_errstr(code))) }
+        guard finished == SQLITE_OK else { throw destination.lastError(finished) }
+    }
+
+    /// The single integer the query returns, such as a `count(*)`.
+    func scalar(_ sql: String) throws -> Int64 {
+        let statement = try prepare(sql)
+        guard try statement.step() else { throw Failure(code: SQLITE_ERROR, message: "no row: \(sql)") }
+        return statement.int(0)
+    }
 }
 
 final class Statement {
