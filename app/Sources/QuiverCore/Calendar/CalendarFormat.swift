@@ -43,7 +43,7 @@ public enum CalendarFormat {
                                     harness: String) -> String {
         if let title, !title.isEmpty { return title }
         if harness == "grok-bot" {
-            return GrokBotRoster.shared.labels(for: sessionId).sessionTitle
+            return GrokBotRoster.shared.title(for: sessionId)
         }
         return sessionTitleFallback(sessionId)
     }
