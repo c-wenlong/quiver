@@ -30,6 +30,9 @@ public final class CatalogDatabase: @unchecked Sendable {
     public let linksFile: URL?
     private let db: SQLiteDatabase?
     private let lock = NSLock()
+    /// Held for a whole `rebuildAliases`, reads included, so an older
+    /// rebuild (old links, old models) can never land after a newer one.
+    private let rebuildLock = NSLock()
 
     /// `~/.quiver/data/catalog/catalog.sqlite`.
     public static func defaultURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
@@ -571,6 +574,8 @@ extension CatalogDatabase {
     /// Re-decides which AA model every price key names, from the models in
     /// the table and the manual links file. Runs after either side changes.
     public func rebuildAliases() {
+        rebuildLock.lock()
+        defer { rebuildLock.unlock() }
         let links = linksFile.map(ModelMatcher.loadLinks(from:)) ?? [:]
         let index = ModelMatcher.Index(models: languageModels() ?? [], links: links)
         _ = try? transaction { db in
@@ -620,16 +625,17 @@ extension CatalogDatabase {
     }
 
     /// Moves the AA files the app kept in `data/artificial-analysis/` (one
-    /// raw response per endpoint plus `meta.json`). Runs once: any AA fetch
-    /// already recorded skips it. The files are left where they are.
+    /// raw response per endpoint plus `meta.json`). Runs once per endpoint:
+    /// one with any fetch recorded is skipped, so an import cut short
+    /// resumes where it stopped. The files are left where they are.
     public func importLegacyAA(directory: URL) {
-        guard openError == nil, !hasFetch(sourcePrefix: "aa:") else { return }
+        guard openError == nil else { return }
         let meta: [String: ArtificialAnalysisStore.Meta] = FileManager.default
             .contents(atPath: directory.appending(path: "meta.json").path)
             .flatMap { try? JSONDecoder().decode([String: ArtificialAnalysisStore.Meta].self, from: $0) } ?? [:]
         var imported = false
         defer { if imported { rebuildAliases() } }
-        for endpoint in AAEndpoint.allCases {
+        for endpoint in AAEndpoint.allCases where !hasFetch(sourcePrefix: Self.aaSource(endpoint)) {
             let entry = meta[endpoint.rawValue]
             if let body = FileManager.default.contents(atPath: directory.appending(path: endpoint.fileName).path) {
                 if (try? recordAAPayload(

@@ -90,7 +90,7 @@ private let llmsBody = Data("""
                 harness: "claude", accountHome: "", sessionId: "s", model: "claude-opus-5-5",
                 timestamp: day, inputTokens: 1_000_000)))
         }
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"),
+        let ledger = try Ledger(directory: temp.path("cache"),
                                 pricing: try PricingStore(database: database, minimumModels: 1).load())
         // $5 before the change plus $4 after, not $8 at today's price.
         let total = try #require(await ledger.totals(in: october2026).costUSD)
@@ -234,5 +234,37 @@ private let llmsBody = Data("""
         let count = database.fetches().count
         _ = ArtificialAnalysisStore(database: database, legacyDirectory: legacy)
         #expect(database.fetches().count == count)
+    }
+}
+
+@Suite struct CatalogImportResumeTests {
+    @Test func anAAImportCutShortResumesWithTheEndpointsLeft() throws {
+        let temp = try TempDir()
+        let legacy = temp.path("aa")
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try llmsBody.write(to: legacy.appending(path: AAEndpoint.llms.fileName))
+        try Data(#"{"voices": []}"#.utf8).write(to: legacy.appending(path: AAEndpoint.textToSpeech.fileName))
+        let database = CatalogDatabase(url: temp.path("catalog.sqlite"))
+        // A launch that stopped after storing only the models feed.
+        try database.recordAAPayload(.llms, body: llmsBody, at: nil, status: nil,
+                                     rateLimitHeaders: nil, url: nil)
+        database.importLegacyAA(directory: legacy)
+        #expect(database.payload(.textToSpeech) == Data(#"{"voices": []}"#.utf8))
+        #expect(database.fetches(source: "aa:llms").count == 1)
+    }
+
+    @Test func concurrentRebuildsAllFinishOnTheLatestLinks() async throws {
+        let temp = try TempDir()
+        let links = temp.path("model-links.json")
+        let database = CatalogDatabase(url: temp.path("catalog.sqlite"), linksFile: links)
+        try database.recordAAPayload(.llms, body: llmsBody, at: nil, status: 200, rateLimitHeaders: nil, url: nil)
+        try database.recordPrices(CatalogDatabase.pricedEntries([
+            "mystery-model": ["input_cost_per_token": 1e-06, "output_cost_per_token": 1e-06],
+        ]), at: Date(), url: nil, sha: nil)
+        try ModelMatcher.saveLinks(["mystery-model": "aa-o3"], to: links)
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 { group.addTask { database.rebuildAliases() } }
+        }
+        #expect(database.alias("mystery-model")?.modelID == "aa-o3")
     }
 }

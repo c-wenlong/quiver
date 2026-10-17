@@ -491,6 +491,8 @@ final class AppModel {
                 transport: URLSessionTransport(),
                 linksURL: quiver.appending(path: "config/model-links.json"),
                 slices: { range in await ledger.byModelHarness(in: range) })
+            // model-links.json may have changed while the app was closed.
+            Task.detached(priority: .utility) { catalog.rebuildAliases() }
         } catch {
             overview = nil
             sessions = nil
