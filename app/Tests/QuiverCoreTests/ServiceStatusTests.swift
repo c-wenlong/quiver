@@ -410,7 +410,9 @@ private func openGeminiIncident() throws -> Data {
     /// infrastructure pages included.
     @Test func logoIDsMapPagesToHarnessLogos() throws {
         #expect(try service("claude").logoID == "claude")
-        #expect(try service("openai").logoID == "codex")
+        // A company's page draws its brand logo from ModelBrands, the one
+        // every other page shows for OpenAI.
+        #expect(try service("openai").logoID == "openai")
         #expect(try service("github").logoID == "copilot")
         #expect(try service("gemini").logoID == "gemini")
         #expect(try service("npm").logoID == "npm")

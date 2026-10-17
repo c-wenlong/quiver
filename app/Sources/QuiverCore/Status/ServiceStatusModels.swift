@@ -167,14 +167,18 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     /// The feed's host, for messages ("Couldn't reach status.claude.com").
     public var host: String { feedURL.host() ?? feedURL.absoluteString }
 
-    /// Status pages whose logo is filed under the harness's own id.
-    static let logoIDs = ["openai": "codex", "github": "copilot"]
+    /// Status pages with no brand in `ModelBrands` whose logo is filed
+    /// under a harness's id.
+    static let logoIDs = ["github": "copilot"]
 
     /// The bundled mark for this service, or nil when there is none. A
     /// custom page is matched on its name first ("OpenRouter" finds
     /// openrouter), then on its id like a built-in page.
     public var logoID: String? {
         if isCustom, let id = APIKeyProviderLogo.logoID(for: name) { return id }
+        // A company's page shows its brand logo (OpenAI's for "openai"),
+        // the one every other page draws for that company.
+        if let icon = ModelBrands.brand(id: id)?.icon, HarnessIcons.icon(for: icon) != nil { return icon }
         let id = Self.logoIDs[id] ?? id
         return HarnessIcons.icon(for: id) != nil ? id : nil
     }

@@ -4,14 +4,8 @@ import Foundation
 public enum Vendor: String, Codable, Sendable, CaseIterable {
     case claude, codex, devin, cursor
 
-    public var title: String {
-        switch self {
-        case .claude: "Claude"
-        case .codex: "Codex"
-        case .devin: "Devin"
-        case .cursor: "Cursor"
-        }
-    }
+    /// "Claude", "Codex", …: the account name from the harness name table.
+    public var title: String { HarnessMark.accountName(rawValue) }
 
     /// Whether the vendor owns an account of its own (its `~/.claude`,
     /// `~/.codex`): only those synthesise a default profile and appear as

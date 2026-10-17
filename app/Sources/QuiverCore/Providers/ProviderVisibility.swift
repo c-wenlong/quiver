@@ -5,9 +5,11 @@ import Observation
 /// the extra providers TokenTracker lists (Antigravity, Kimi, Ark plans…).
 public struct Provider: Identifiable, Sendable, Equatable {
     public var id: String
-    public var name: String
+    /// Its name and logo come from the harness tables (`HarnessMark`), so
+    /// Settings › Providers names a harness the way every other page does.
+    public var name: String { HarnessMark.accountName(id) }
     /// The `HarnessIcons` id for its logo.
-    public var icon: String
+    public var icon: String { HarnessMark(id).icon ?? id }
     /// Install signs for providers swe doesn't list: commands on PATH, or
     /// paths that exist (`~` is the user's home). Only existence is checked;
     /// nothing inside them is read.
@@ -18,42 +20,42 @@ public struct Provider: Identifiable, Sendable, Equatable {
 public enum ProviderCatalog {
     /// TokenTracker's order first, then the rest of swe's harnesses.
     public static let all: [Provider] = [
-        Provider(id: "claude", name: "Claude", icon: "claude"),
-        Provider(id: "codex", name: "Codex", icon: "codex"),
-        Provider(id: "devin", name: "Devin", icon: "devin"),
-        Provider(id: "cursor", name: "Cursor", icon: "cursor"),
-        Provider(id: "antigravity", name: "Antigravity", icon: "antigravity",
+        Provider(id: "claude"),
+        Provider(id: "codex"),
+        Provider(id: "devin"),
+        Provider(id: "cursor"),
+        Provider(id: "antigravity",
                  paths: ["/Applications/Antigravity.app", "~/Applications/Antigravity.app",
                          "~/.gemini/antigravity", "~/.gemini/antigravity-ide"]),
-        Provider(id: "copilot", name: "GitHub Copilot", icon: "copilot"),
-        Provider(id: "kimi", name: "Kimi", icon: "kimi", commands: ["kimi"], paths: ["~/.kimi"]),
-        Provider(id: "kiro", name: "Kiro", icon: "kiro"),
-        Provider(id: "grok", name: "Grok Build", icon: "grok", commands: ["grok"]),
-        Provider(id: "zcode", name: "ZCode", icon: "zcode", paths: ["~/.zcode"]),
-        Provider(id: "opencode", name: "OpenCode", icon: "opencode"),
-        Provider(id: "commandcode", name: "Command Code", icon: "commandcode",
+        Provider(id: "copilot"),
+        Provider(id: "kimi", commands: ["kimi"], paths: ["~/.kimi"]),
+        Provider(id: "kiro"),
+        Provider(id: "grok", commands: ["grok"]),
+        Provider(id: "zcode", paths: ["~/.zcode"]),
+        Provider(id: "opencode"),
+        Provider(id: "commandcode",
                  commands: ["command-code"], paths: ["~/.commandcode"]),
-        Provider(id: "qoder", name: "Qoder", icon: "qoder",
+        Provider(id: "qoder",
                  paths: ["/Applications/Qoder.app", "~/Applications/Qoder.app", "~/.qoder"]),
-        Provider(id: "qoder-cn", name: "Qoder CN", icon: "qoder-cn",
+        Provider(id: "qoder-cn",
                  paths: ["/Applications/Qoder.app", "~/Applications/Qoder.app", "~/.qoder"]),
-        Provider(id: "ark-coding-plan", name: "Ark Coding Plan", icon: "ark", commands: ["arkcli"]),
-        Provider(id: "ark-agent-plan", name: "Ark Agent Plan", icon: "ark", commands: ["arkcli"]),
-        Provider(id: "gemini", name: "Gemini", icon: "gemini"),
-        Provider(id: "qwen-code", name: "Qwen Code", icon: "qwen-code"),
-        Provider(id: "mistral-vibe", name: "Mistral Vibe", icon: "mistral-vibe"),
-        Provider(id: "crush", name: "Crush", icon: "crush"),
-        Provider(id: "cline", name: "Cline", icon: "cline"),
-        Provider(id: "kilo", name: "Kilo Code", icon: "kilo"),
-        Provider(id: "goose", name: "goose", icon: "goose"),
-        Provider(id: "aider", name: "aider", icon: "aider"),
-        Provider(id: "continue", name: "Continue", icon: "continue"),
-        Provider(id: "pi", name: "Pi", icon: "pi"),
-        Provider(id: "forge", name: "Forge", icon: "forge"),
-        Provider(id: "droid", name: "Droid", icon: "droid"),
-        Provider(id: "augment", name: "Augment", icon: "augment"),
-        Provider(id: "blackbox", name: "Blackbox", icon: "blackbox"),
-        Provider(id: "freebuff", name: "Freebuff", icon: "freebuff"),
+        Provider(id: "ark-coding-plan", commands: ["arkcli"]),
+        Provider(id: "ark-agent-plan", commands: ["arkcli"]),
+        Provider(id: "gemini"),
+        Provider(id: "qwen-code"),
+        Provider(id: "mistral-vibe"),
+        Provider(id: "crush"),
+        Provider(id: "cline"),
+        Provider(id: "kilo"),
+        Provider(id: "goose"),
+        Provider(id: "aider"),
+        Provider(id: "continue"),
+        Provider(id: "pi"),
+        Provider(id: "forge"),
+        Provider(id: "droid"),
+        Provider(id: "augment"),
+        Provider(id: "blackbox"),
+        Provider(id: "freebuff"),
     ]
 
     public static func provider(_ id: String) -> Provider? { all.first { $0.id == id } }
