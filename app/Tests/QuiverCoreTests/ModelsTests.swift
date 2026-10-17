@@ -20,6 +20,32 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
 }
 
 @Suite struct ArtificialAnalysisDecodingTests {
+    /// AA writes 0 for a price or speed it never measured; those read as
+    /// unknown, not as free or stalled.
+    @Test func zeroMeasurementsDecodeAsUnknown() throws {
+        let json = """
+        {"status": 200, "data": [
+          {"id": "z", "name": "Muse Wonder Full (Max)", "slug": "muse",
+           "model_creator": {"id": "m", "name": "Meta", "slug": "meta"},
+           "evaluations": {"artificial_analysis_intelligence_index": 56.0},
+           "pricing": {"price_1m_blended_3_to_1": 0, "price_1m_input_tokens": 0,
+                       "price_1m_output_tokens": 0},
+           "median_output_tokens_per_second": 0, "median_time_to_first_token_seconds": 0,
+           "median_time_to_first_answer_token": 0},
+          {"id": "p", "name": "GPT-6 Luna", "slug": "luna",
+           "model_creator": {"id": "o", "name": "OpenAI", "slug": "openai"},
+           "pricing": {"price_1m_blended_3_to_1": 0.2},
+           "median_output_tokens_per_second": 128}
+        ]}
+        """
+        let models = try AAModelsResponse.decode(Data(json.utf8))
+        let unknown = try #require(models.first)
+        #expect(unknown.priceBlended == nil && unknown.priceInput == nil && unknown.priceOutput == nil)
+        #expect(unknown.speed == nil && unknown.timeToFirstToken == nil && unknown.timeToFirstAnswer == nil)
+        #expect(unknown.intelligence == 56)
+        #expect(models[1].priceBlended == 0.2 && models[1].speed == 128)
+    }
+
     /// The docs' example shape plus a benchmark AA added later.
     private let fixture = """
     {"status": 200, "prompt_options": {},

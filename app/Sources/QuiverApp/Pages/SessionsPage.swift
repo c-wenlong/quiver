@@ -216,7 +216,8 @@ private struct FilterBar: View {
                     title: model.filter.model ?? "All models",
                     rows: model.models.map { ($0.model, $0.model, UsageFormat.tokens($0.tokens)) },
                     selection: $model.filter.model,
-                    limit: 30)
+                    limit: 30,
+                    logo: { BrandLogo(model: $0, size: 14) })
     }
 
     /// The selected project's display name for its filter key.
@@ -242,6 +243,9 @@ private struct CountedMenu: View {
     var limit: Int? = nil
     /// A search field appears once there are more rows than this.
     var searchThreshold = 15
+    /// A logo before each row's title, by key; the model filter passes
+    /// the brand logo, the project filter none.
+    var logo: ((String) -> BrandLogo)? = nil
     @State private var open = false
     @State private var query = ""
     @State private var showAll = false
@@ -324,6 +328,7 @@ private struct CountedMenu: View {
             open = false
         } label: {
             HStack(spacing: 8) {
+                if let key, let logo { logo(key) }
                 Text(title)
                     .font(Theme.bodySmall)
                     .foregroundStyle(Theme.textPrimary)
@@ -496,6 +501,9 @@ private struct StatusBadge: View {
 // MARK: - Detail
 
 struct SessionDetail: View {
+    /// The widest a value can be: the 640 pt sheet less its padding and
+    /// the label column.
+    static let valueWidth: CGFloat = 460
     var row: SessionsModel.Row
     var resume: () -> Void
     var close: () -> Void
@@ -516,7 +524,21 @@ struct SessionDetail: View {
                 field("Session id", s.id)
                 if let usage = row.usage {
                     field("Account", usage.accountHome)
-                    field("Models", usage.models.joined(separator: ", "))
+                    GridRow(alignment: .top) {
+                        Text("Models").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        FlowLayout(spacing: 10, lineSpacing: 4) {
+                            ForEach(usage.models, id: \.self) { name in
+                                HStack(spacing: 5) {
+                                    BrandLogo(model: name, size: 14)
+                                    Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
+                                // A long provider-prefixed or custom name
+                                // truncates inside the sheet's value column.
+                                .frame(maxWidth: SessionDetail.valueWidth, alignment: .leading)
+                            }
+                        }
+                    }
                 }
                 if let duration = row.duration, duration >= 60 {
                     field("Ran for", SessionRow.duration(duration))

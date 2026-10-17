@@ -229,6 +229,7 @@ private struct UnmatchedBadge: View {
                 ForEach(model.unmatched) { row in
                     Button { show = false; open(row.model) } label: {
                         HStack(spacing: 6) {
+                            BrandLogo(model: row.model, size: 14)
                             Text(row.model).font(Theme.caption).foregroundStyle(Theme.textPrimary)
                                 .lineLimit(1).truncationMode(.middle)
                             Spacer()
@@ -400,6 +401,7 @@ struct ChartCard: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color(rgb: vendor.color))
                         .frame(width: 10, height: 10)
+                    BrandLogo(vendor: vendor, size: 12)
                     Text(vendor.name)
                         .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
                 }
@@ -416,9 +418,7 @@ private struct BarColumn: View {
     /// The pointer entered (true) or left (false) the bar itself.
     var hover: (Bool) -> Void
 
-    private var vendor: ModelVendor {
-        row.aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: row.logged)
-    }
+    private var vendor: ModelVendor { row.vendor }
 
     /// Bar text reads dark on light fills (OpenAI's grey) — a fixed
     /// near-black, not the theme's dark-mode white.
@@ -480,14 +480,8 @@ private struct BarColumn: View {
                 .onHover(perform: hover)
                 .frame(height: ChartCard.barHeight, alignment: .bottom)
             // Zone 2: the provider logo.
-            Group {
-                if let icon = vendor.icon, HarnessIcon.exists(for: icon) {
-                    HarnessIcon(harness: icon, size: ChartCard.logoSize)
-                } else {
-                    Color.clear.frame(width: ChartCard.logoSize, height: ChartCard.logoSize)
-                }
-            }
-            .frame(height: ChartCard.logoHeight)
+            BrandLogo(vendor: vendor, size: ChartCard.logoSize)
+                .frame(height: ChartCard.logoHeight)
             // Zone 3: the name. Its end sits on a point under the bar's
             // middle and it runs down-left at `labelAngle`, so every name
             // lands on its own bar whatever its length.
@@ -513,96 +507,150 @@ private struct BarColumn: View {
 
 /// The same rows as a table: who ran it, the headline benchmarks, cost
 /// rank and the user's tokens.
-private struct TableCard: View {
+struct TableCard: View {
     @Bindable var model: ModelsModel
+    @State private var width: CGFloat = 0
 
     var body: some View {
+        let columns = TableColumns.widths(for: width, extraMetric: model.showsExtraMetric)
         Card {
             // Narrow windows scroll sideways instead of crushing the
-            // model names under the fixed columns.
+            // columns below their minimum widths.
             ScrollView(.horizontal) {
                 VStack(spacing: 0) {
-                    header
+                    header(columns)
                     Divider().overlay(Theme.border)
                     ForEach(model.rows) { row in
-                        TableRow(row: row, model: model)
+                        TableRow(row: row, model: model, columns: columns)
                         Divider().overlay(Theme.rowDivider)
                     }
                 }
-                .containerRelativeFrame(.horizontal) { width, _ in max(width, Self.minWidth) }
+                .frame(width: columns.total, alignment: .leading)
             }
             .scrollIndicators(.automatic)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         }
     }
 
-    /// The fixed columns plus room for a model name.
-    static let minWidth: CGFloat = 760
-
-    private var header: some View {
-        HStack(spacing: 0) {
-            Text("Model").frame(maxWidth: .infinity, alignment: .leading)
-            Text("Provider").frame(width: 90, alignment: .leading)
-            Text("Intelligence").frame(width: 80, alignment: .trailing)
-            Text("Coding").frame(width: 64, alignment: .trailing)
-            Text("Speed").frame(width: 64, alignment: .trailing)
+    private func header(_ columns: TableColumns) -> some View {
+        HStack(spacing: TableColumns.gap) {
+            Text("Model").frame(width: columns.model, alignment: .leading)
+            Text("Ran in").frame(width: columns.ranIn, alignment: .leading)
+            Text("Provider").frame(width: columns.provider, alignment: .leading)
+            Text("Intelligence").frame(width: columns.intelligence, alignment: .trailing)
+            Text("Coding").frame(width: columns.coding, alignment: .trailing)
+            Text("Speed").frame(width: columns.speed, alignment: .trailing)
             // The picked metric shows when it has no column of its own.
-            if model.metric == .maths || model.metric == .ttft {
+            if model.showsExtraMetric {
                 Text(model.metric == .ttft ? "TTFT" : model.metric.title)
-                    .frame(width: 64, alignment: .trailing)
+                    .frame(width: columns.extra, alignment: .trailing)
             }
-            Text("Cost").frame(width: 120, alignment: .leading).padding(.leading, 16)
-            Text("Your tokens").frame(width: 80, alignment: .trailing)
+            Text("Cost").frame(width: columns.cost, alignment: .leading)
+            Text("Your tokens").frame(width: columns.tokens, alignment: .trailing)
         }
         .font(Theme.caption).foregroundStyle(Theme.tableHeaderText)
+        .lineLimit(1)
         .padding(.vertical, 6)
     }
+}
+
+/// The table's column widths: each column has a floor that fits its
+/// content and a weight for its share of any room above the floors, so
+/// the model name no longer takes half the table while cost and the
+/// figures are squeezed. Below the floors' sum the table scrolls.
+struct TableColumns: Equatable {
+    static let gap: CGFloat = 14
+
+    /// (floor, weight) per column, in display order.
+    static let model = (min: 180.0, weight: 24.0)
+    static let ranIn = (min: 56.0, weight: 6.0)
+    static let provider = (min: 78.0, weight: 9.0)
+    static let intelligence = (min: 72.0, weight: 8.0)
+    static let coding = (min: 50.0, weight: 7.0)
+    static let speed = (min: 64.0, weight: 8.0)
+    static let extra = (min: 56.0, weight: 7.0)
+    static let cost = (min: 150.0, weight: 20.0)
+    static let tokens = (min: 76.0, weight: 9.0)
+
+    var model: CGFloat, ranIn: CGFloat, provider: CGFloat, intelligence: CGFloat
+    var coding: CGFloat, speed: CGFloat, extra: CGFloat, cost: CGFloat, tokens: CGFloat
+
+    /// Every column plus the gaps between them.
+    var total: CGFloat {
+        let columns = [model, ranIn, provider, intelligence, coding, speed, extra, cost, tokens]
+        let shown = columns.filter { $0 > 0 }
+        return shown.reduce(0, +) + Self.gap * CGFloat(max(shown.count - 1, 0))
+    }
+
+    static func widths(for available: CGFloat, extraMetric: Bool) -> TableColumns {
+        let specs = [model, ranIn, provider, intelligence, coding, speed,
+                     extraMetric ? extra : (min: 0, weight: 0), cost, tokens]
+        let count = specs.filter { $0.min > 0 }.count
+        let floors = specs.map(\.min).reduce(0, +) + gap * CGFloat(count - 1)
+        let room = max(0, available - floors)
+        let weights = specs.map(\.weight).reduce(0, +)
+        let w = specs.map { CGFloat($0.min) + (weights > 0 ? room * CGFloat($0.weight) / CGFloat(weights) : 0) }
+        return TableColumns(model: w[0], ranIn: w[1], provider: w[2], intelligence: w[3],
+                            coding: w[4], speed: w[5], extra: w[6], cost: w[7], tokens: w[8])
+    }
+}
+
+extension ModelsModel {
+    /// The picked metric gets a table column when no fixed one shows it.
+    var showsExtraMetric: Bool { metric == .maths || metric == .ttft }
 }
 
 private struct TableRow: View {
     var row: ModelsModel.Row
     var model: ModelsModel
+    var columns: TableColumns
 
-    private var vendor: ModelVendor {
-        row.aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: row.logged)
-    }
+    private var vendor: ModelVendor { row.vendor }
 
     var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
+        HStack(spacing: TableColumns.gap) {
+            // The lab's logo from ModelBrands, the same one the chart
+            // draws under the bar; an empty slot keeps names aligned.
+            HStack(spacing: 8) {
+                BrandLogo(vendor: vendor, size: 16)
+                ModelName(name: row.aa.map(ModelMatcher.displayName) ?? row.logged,
+                          qualifier: row.qualifier)
+            }
+            .frame(width: columns.model, alignment: .leading)
+            HStack(spacing: 4) {
                 ForEach(row.harnesses.prefix(3), id: \.self) { harness in
                     HarnessIcon(harness: harness, size: 14)
-                        .accessibilityLabel(UsageFormat.harness(harness))
+                        .help(HarnessMark(harness).name)
+                        .accessibilityLabel(HarnessMark(harness).name)
                 }
                 if row.harnesses.count > 3 {
                     Text("+\(row.harnesses.count - 3)")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
-                ModelName(name: row.aa.map(ModelMatcher.displayName) ?? row.logged,
-                          qualifier: row.qualifier)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: columns.ranIn, alignment: .leading)
             Text(vendor.name).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                .frame(width: 90, alignment: .leading)
-            metric(row.aa?.intelligence).frame(width: 80, alignment: .trailing)
-            metric(row.aa?.coding).frame(width: 64, alignment: .trailing)
-            metric(row.aa?.speed, unit: "t/s").frame(width: 64, alignment: .trailing)
-            if model.metric == .maths || model.metric == .ttft {
+                .lineLimit(1)
+                .frame(width: columns.provider, alignment: .leading)
+            metric(row.aa?.intelligence).frame(width: columns.intelligence, alignment: .trailing)
+            metric(row.aa?.coding).frame(width: columns.coding, alignment: .trailing)
+            metric(row.aa?.speed, unit: "t/s").frame(width: columns.speed, alignment: .trailing)
+            if model.showsExtraMetric {
                 Text(row.value.map(model.metric.format) ?? "—")
                     .font(Theme.bodySmall).monospacedDigit()
                     .foregroundStyle(row.value == nil ? Theme.textMuted : Theme.textPrimary)
-                    .frame(width: 64, alignment: .trailing)
+                    .frame(width: columns.extra, alignment: .trailing)
             }
             CostScale(model: row.aa, rank: row.costPercentile)
-                .frame(width: 120, alignment: .leading).padding(.leading, 16)
+                .frame(width: columns.cost, alignment: .leading)
             Text(row.tokens > 0 ? UsageFormat.tokens(row.tokens) : "—")
                 .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textSecondary)
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: columns.tokens, alignment: .trailing)
         }
         .padding(.vertical, 8)
-        .contentShape(.rect)
-        .modelCard(model, for: row.logged, row: row)
     }
 
+    /// A figure, or "—" when Artificial Analysis has none.
     @ViewBuilder private func metric(_ value: Double?, unit: String? = nil) -> some View {
         if let value {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
@@ -618,14 +666,17 @@ private struct TableRow: View {
     }
 }
 
-/// The cost column: a mini green→purple gradient with the model's rank
-/// as a white dot centred on it.
+/// The cost column: a green→purple gradient as wide as the column allows,
+/// the model's rank as a white dot on it, and the blended price in a slot
+/// of its own. An unknown price (decoded as nil) shows "—" and no dot.
 private struct CostScale: View {
     var model: AALanguageModel?
     var rank: Double?
 
+    private var price: Double? { model?.priceBlended }
+
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
@@ -633,7 +684,8 @@ private struct CostScale: View {
                                                       Color(hex: "#a46ae0")],
                                              startPoint: .leading, endPoint: .trailing))
                         .frame(height: 6)
-                    if let rank {
+                        .opacity(price == nil ? 0.35 : 1)
+                    if let rank, price != nil {
                         Circle().fill(.white).frame(width: 8, height: 8)
                             .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
                             .position(x: min(max(rank * geo.size.width, 4), geo.size.width - 4),
@@ -641,13 +693,17 @@ private struct CostScale: View {
                     }
                 }
             }
-            .frame(width: 64, height: 12)
-            if let price = model?.priceBlended {
-                Text(UsageFormat.dollars(price))
-                    .font(Theme.caption).monospacedDigit().foregroundStyle(Theme.textSecondary)
-            } else {
-                Text("—").font(Theme.caption).foregroundStyle(Theme.textMuted)
+            .frame(height: 12)
+            .frame(maxWidth: .infinity)
+            Group {
+                if let price {
+                    Text(UsageFormat.dollars(price)).foregroundStyle(Theme.textSecondary)
+                } else {
+                    Text("—").foregroundStyle(Theme.textMuted)
+                }
             }
+            .font(Theme.caption).monospacedDigit()
+            .frame(width: 52, alignment: .trailing)
         }
     }
 }

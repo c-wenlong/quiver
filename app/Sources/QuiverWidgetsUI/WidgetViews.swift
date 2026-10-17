@@ -345,7 +345,7 @@ public struct ModelsView: View {
             ForEach(Array(snapshot.models.enumerated()), id: \.offset) { _, model in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        ModelLogos(harnesses: model.harnesses)
+                        ModelBrandLogo(model: model.name, harnesses: model.harnesses)
                         Text(model.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
                         Spacer(minLength: 4)
                         Text(UsageFormat.tokens(model.tokens))
@@ -365,24 +365,24 @@ public struct ModelsView: View {
     }
 }
 
-/// A model's harness logos where its dot was: the first one's, up to two
-/// overlapped when several ran it, and the old dot when none is known.
-private struct ModelLogos: View {
+/// A model's lab logo from `ModelBrands`, as every app page shows it
+/// before a model name, and the old dot when no lab is known. The tools
+/// that ran it go in the help text: a widget row has room for one logo.
+private struct ModelBrandLogo: View {
+    var model: String
     var harnesses: [String]
 
     var body: some View {
-        if let first = harnesses.first {
-            ZStack(alignment: .leading) {
-                HarnessLogo(harness: first, size: 12)
-                if harnesses.count > 1 {
-                    HarnessLogo(harness: harnesses[1], size: 12).offset(x: 7)
-                }
+        Group {
+            if let icon = ModelBrands.forModel(model).icon, HarnessIcons.logo(for: icon) != nil {
+                HarnessLogo(harness: icon, size: 12)
+            } else {
+                Circle().fill(Palette.textSecondary).frame(width: 6, height: 6)
+                    .frame(width: 12, height: 12)
             }
-            .frame(width: harnesses.count > 1 ? 19 : 12, height: 12, alignment: .leading)
-            .help(harnesses.map { UsageFormat.harness($0) }.joined(separator: ", "))
-        } else {
-            Circle().fill(Palette.textSecondary).frame(width: 6, height: 6)
         }
+        .help(([ModelBrands.forModel(model).name] + harnesses.map { UsageFormat.harness($0) })
+            .joined(separator: " · "))
     }
 }
 
