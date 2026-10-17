@@ -53,16 +53,27 @@ import Testing
     }
 
     @Test func cancellingTheCallerStopsTheChild() async throws {
-        let runner = ProcessRunner(executable: "/bin/sleep", environment: env)
-        let started = Date()
-        let task = Task { try await runner.run(["30"]) }
-        try await Task.sleep(for: .milliseconds(300))
+        // No wall-clock bound: a starved CI runner made any fixed bound
+        // flaky. The child marks when it is running, then execs into the
+        // sleep so the signal reaches it. A working cancel ends it with
+        // SIGTERM; a broken one lets the sleep exit 0.
+        let marker = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let task = Task { try await runner.run(["-c", "touch '\(marker.path)'; exec sleep 30"]) }
+
+        // Cancel only once the child is up, not after a guessed delay.
+        let deadline = Date().addingTimeInterval(20)
+        while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let childStarted = FileManager.default.fileExists(atPath: marker.path)
+        // Cancel before the check, so a failed check leaves no child behind.
         task.cancel()
-        _ = try? await task.value
-        // The bound catches a hang, not latency: the child sleeps 30s,
-        // so ten seconds still fails a broken cancel while a starved CI
-        // runner cannot trip it.
-        #expect(Date().timeIntervalSince(started) < 10)
+        try #require(childStarted)
+
+        let result = try await task.value
+        #expect(result.status == SIGTERM)
     }
 }
 
