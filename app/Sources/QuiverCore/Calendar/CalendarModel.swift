@@ -175,6 +175,10 @@ public final class CalendarModel {
     /// Most recently used ranges, for the persisted snapshot's cap.
     private var recent: [DateInterval] = []
     private let snapshots: (any SnapshotStoring<CalendarSnapshot>)?
+    /// Prefetches and snapshot saves still running, by id. Each removes
+    /// itself when done, so `backgroundWork()` can wait for the rest.
+    private var background: [Int: Task<Void, Never>] = [:]
+    private var nextBackgroundID = 0
     /// How many ranges the snapshot keeps.
     static let snapshotRangeCount = 8
 
@@ -460,7 +464,7 @@ public final class CalendarModel {
             guard cache[neighbour] == nil || stale.contains(neighbour) else { continue }
             let widened = DateInterval(start: neighbour.start.addingTimeInterval(-Self.edgeLookout),
                                        end: neighbour.end.addingTimeInterval(Self.edgeLookout))
-            Task(priority: .utility) { [providers, projects, weak self] in
+            inBackground(priority: .utility) { [providers, projects, weak self] in
                 var fetched: [Int: [ActivityBlock]] = [:]
                 await withTaskGroup(of: (Int, [ActivityBlock]?).self) { group in
                     for (i, provider) in providers.enumerated() {
@@ -500,7 +504,26 @@ public final class CalendarModel {
             cache[key].map { CalendarSnapshot.Entry(start: key.start, end: key.end,
                                                     providers: $0) }
         }
-        Task { await snapshots.save(CalendarSnapshot(ranges: entries)) }
+        inBackground { await snapshots.save(CalendarSnapshot(ranges: entries)) }
+    }
+
+    /// Runs `work` in an unstructured task the model keeps track of.
+    private func inBackground(priority: TaskPriority? = nil,
+                              _ work: @escaping @MainActor () async -> Void) {
+        nextBackgroundID += 1
+        let id = nextBackgroundID
+        background[id] = Task(priority: priority) { [weak self] in
+            await work()
+            self?.background[id] = nil
+        }
+    }
+
+    /// Returns once every prefetch and snapshot save started so far has
+    /// finished, so a test can wait for them instead of sleeping.
+    func backgroundWork() async {
+        while let task = background.values.first {
+            await task.value
+        }
     }
 
     /// The empty-state noun phrase: "today", "this week", "this month"
