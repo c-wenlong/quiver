@@ -1289,6 +1289,12 @@ private struct SessionRow: View {
                 Text("\(CalendarFormat.range(start: ref.start, end: ref.end)) · "
                      + "\(ref.responses) response\(ref.responses == 1 ? "" : "s")")
                     .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                if let parent = row.parent {
+                    Label(parent.label, systemImage: "arrow.turn.down.right")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             if let open {

@@ -519,6 +519,9 @@ struct SessionDetail: View {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 field("Harness", HarnessMark(s.harness).name)
                 field("Location", row.location.title)
+                if let parent = row.parent {
+                    field(parent.kind == .fork ? "Forked from" : "Started from", parent.title)
+                }
                 if !s.opensInBrowser { field("Folder", s.cwd ?? "Unknown") }
                 field("Last active", s.lastActiveAt.formatted(date: .abbreviated, time: .shortened))
                 field("Session id", s.id)
