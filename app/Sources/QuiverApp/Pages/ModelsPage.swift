@@ -544,8 +544,9 @@ struct TableCard: View {
             Text("Speed").frame(width: columns.speed, alignment: .trailing)
             // The picked metric shows when it has no column of its own.
             if model.showsExtraMetric {
-                Text(model.metric == .ttft ? "TTFT" : model.metric.title)
+                Text(model.metric == .ttft ? "TTFT" : model.metric == .reasoning ? "HLE" : model.metric.title)
                     .frame(width: columns.extra, alignment: .trailing)
+                    .help(model.metric.chartTitle)
             }
             HStack(spacing: 4) {
                 Text("Cost / 1M")
@@ -605,7 +606,7 @@ struct TableColumns: Equatable {
 
 extension ModelsModel {
     /// The picked metric gets a table column when no fixed one shows it.
-    var showsExtraMetric: Bool { metric == .maths || metric == .ttft }
+    var showsExtraMetric: Bool { metric == .reasoning || metric == .ttft }
 }
 
 private struct TableRow: View {
@@ -649,6 +650,7 @@ private struct TableRow: View {
                     .font(Theme.bodySmall).monospacedDigit()
                     .foregroundStyle(row.value == nil ? Theme.textMuted : Theme.textPrimary)
                     .frame(width: columns.extra, alignment: .trailing)
+                    .help(row.value == nil ? model.metric.missingNote ?? "" : "")
             }
             ListPriceCell(price: row.listPrice)
                 .frame(width: columns.price, alignment: .leading)

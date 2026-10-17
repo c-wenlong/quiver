@@ -61,7 +61,16 @@ extension AALanguageModel {
     public static let codingEvaluation = "terminalbench_v4_0"
     /// The hover note where `coding` is nil.
     public static let noCodingScore = "Artificial Analysis hasn't run Terminal-Bench 4.0 on this model"
-    public var maths: Double? { evaluations["artificial_analysis_math_index"] }
+    /// The reasoning score: AA's Humanity's Last Exam accuracy as 0–100,
+    /// run on every new model. It stands in for AA's Maths Index
+    /// (`artificial_analysis_math_index`, built on AIME 2025), which AA
+    /// retired with Intelligence Index v4.0 (January 2026), so no model
+    /// released since has one. HLE is the closest current evaluation:
+    /// expert-level questions, about 40% of them maths, on one question set.
+    public var reasoning: Double? { evaluations[Self.reasoningEvaluation].map { $0 * 100 } }
+    public static let reasoningEvaluation = "hle"
+    /// The hover note where `reasoning` is nil.
+    public static let noReasoningScore = "Artificial Analysis hasn't run Humanity's Last Exam on this model"
 }
 
 extension AALanguageModel: Decodable {
