@@ -514,18 +514,28 @@ public actor Ledger {
     /// Days with no usage are left out.
     public func dailyTokens(harness: String, accountHome: String,
                             in range: DateInterval, calendar: Calendar) -> [Date: Int] {
-        guard let groups = try? store.groups(
+        let key = AccountHistory.Key(harness: harness, homes: [accountHome])
+        return dailyTokens(for: [key], in: range, calendar: calendar)[key] ?? [:]
+    }
+
+    /// The same for several Accounts cards at once, from one grouped read:
+    /// each key sums the rows it `matches`.
+    public func dailyTokens(for keys: [AccountHistory.Key], in range: DateInterval,
+                            calendar: Calendar) -> [AccountHistory.Key: [Date: Int]] {
+        var result = Dictionary(keys.map { ($0, [Date: Int]()) }, uniquingKeysWith: { a, _ in a })
+        guard !keys.isEmpty, let groups = try? store.groups(
             in: range, by: [.harness, .account], thresholds: pricing.thresholds,
             bucketSeconds: 900)
-        else { return [:] }
-        var days: [Date: Int] = [:]
-        for group in groups
-        where group.dimensions[.harness] == harness
-            && group.dimensions[.account] == accountHome {
+        else { return result }
+        for group in groups {
+            let harness = group.dimensions[.harness] ?? ""
+            let home = group.dimensions[.account] ?? ""
+            let owners = result.keys.filter { $0.matches(harness: harness, home: home) }
+            guard !owners.isEmpty else { continue }
             let day = calendar.startOfDay(for: max(group.bucket ?? group.first, range.start))
-            days[day, default: 0] += group.tokens.total
+            for key in owners { result[key]![day, default: 0] += group.tokens.total }
         }
-        return days
+        return result
     }
 
     /// Usage per session, most recent first. `harness` restricts the read

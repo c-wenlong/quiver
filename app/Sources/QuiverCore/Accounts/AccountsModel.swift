@@ -373,4 +373,25 @@ public final class AccountsModel {
     public func folder(of profile: Profile) -> URL {
         store.paths(for: profile).home
     }
+
+    /// The ledger rows an Accounts card's history sums. A profile card
+    /// sums its own home (a Cursor profile, its app data folder, which
+    /// Cursor activity is keyed on). A harness card with no profile sums
+    /// every home of that harness except those `profiles` own, since
+    /// each of those has a card of its own.
+    public func historyKey(harness: String, profile: Profile?,
+                           profiles: [Profile]) -> AccountHistory.Key {
+        if let profile {
+            return AccountHistory.Key(harness: harness, homes: [ledgerHome(of: profile)])
+        }
+        let owned = profiles.filter { $0.vendor.rawValue == harness }.map(ledgerHome(of:))
+        return AccountHistory.Key(harness: harness, homes: nil, excluding: Set(owned))
+    }
+
+    /// The account home the ledger keys a profile's activity on.
+    private func ledgerHome(of profile: Profile) -> String {
+        let paths = store.paths(for: profile)
+        let home = profile.vendor == .cursor ? (paths.desktopData ?? paths.home) : paths.home
+        return home.standardizedFileURL.path
+    }
 }
