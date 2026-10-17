@@ -67,11 +67,51 @@ import Testing
         #expect(roster.title(for: "sand-subagent-0f9c2d1e") == "Subagent")
     }
 
-    @Test func anUnknownSessionFallsBackToTheShortId() throws {
+    @Test func anIdTheRosterDoesNotListIsADeletedBot() throws {
         let roster = GrokBotRoster(directory: try persistence(json: rosterJSON))
-        #expect(roster.title(for: "01234567-89ab-cdef-0123-456789abcdef") == "01234567…")
+        #expect(roster.title(for: "01234567-89ab-cdef-0123-456789abcdef")
+                == "Deleted Bot (01234567…)")
         // A slug-shaped id stays whole, like the shared fallback.
-        #expect(roster.title(for: "friendly-session") == "friendly-session")
+        #expect(roster.title(for: "friendly-session") == "Deleted Bot (friendly-session)")
+    }
+
+    /// A temp file for the remembered names, never `~/.quiver`.
+    private func memoryFile() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-names-\(UUID().uuidString)/grok-bot-names.json")
+    }
+
+    @Test func aBotDeletedAfterItWasSeenKeepsItsName() throws {
+        let memory = memoryFile()
+        let dir = try persistence(json: rosterJSON)
+        #expect(GrokBotRoster(directory: dir, memory: memory).title(for: "bot-uuid-1") == "Cortex")
+        // Cortex is deleted: the roster now lists NUS only.
+        let after = try persistence(json: #"{"value": {"rows": [{"id": "bot-uuid-2", "name": "NUS"}]}}"#)
+        let roster = GrokBotRoster(directory: after, memory: memory)
+        #expect(roster.title(for: "bot-uuid-1") == "Cortex")
+        #expect(roster.title(for: "bot-uuid-2") == "NUS")
+        // Only ids and names are saved.
+        let saved = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: memory))
+        #expect(saved == ["bot-uuid-1": "Cortex", "bot-uuid-2": "NUS"])
+    }
+
+    @Test func aRenamedBotTakesItsNewName() throws {
+        let memory = memoryFile()
+        _ = GrokBotRoster(directory: try persistence(json: rosterJSON), memory: memory)
+            .title(for: "bot-uuid-1")
+        let renamed = try persistence(json: #"{"value": {"rows": [{"id": "bot-uuid-1", "name": "Cortex 2"}]}}"#)
+        #expect(GrokBotRoster(directory: renamed, memory: memory).title(for: "bot-uuid-1") == "Cortex 2")
+    }
+
+    @Test func withNoRosterRememberedNamesStillAnswer() throws {
+        let memory = memoryFile()
+        _ = GrokBotRoster(directory: try persistence(json: rosterJSON), memory: memory)
+            .title(for: "bot-uuid-1")
+        let gone = GrokBotRoster(directory: URL(fileURLWithPath: "/nonexistent/grok-bots"),
+                                 memory: memory)
+        #expect(gone.title(for: "bot-uuid-1") == "Cortex")
+        // Unread roster: an unknown id is not called deleted.
+        #expect(gone.title(for: "bot-uuid-9") == "bot-uuid-9")
     }
 
     @Test func missingDirectoryOrMalformedJSONGivesAnEmptyMap() throws {
