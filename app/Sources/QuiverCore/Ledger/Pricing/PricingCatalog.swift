@@ -48,6 +48,17 @@ public struct PricingCatalog: Sendable {
     /// `sources` before user overrides, matching `listEntries`.
     private var listSources: [String: Source]
     private var supplement: PricingSupplement
+    /// Earlier prices of LiteLLM keys whose price changed or that left the
+    /// list, oldest span first, so the ledger can price an event at the
+    /// rate in force when it happened. Empty for a catalog with no history.
+    private var history: [String: [Span]] = [:]
+
+    /// One price a key held from `from` until `to` (nil: still in force).
+    struct Span: Sendable {
+        var from: Double
+        var to: Double?
+        var rates: ModelRates
+    }
 
     public static let empty = PricingCatalog(entries: [:], supplement: PricingSupplement())
 
@@ -101,6 +112,12 @@ public struct PricingCatalog: Sendable {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw PricingError.notACatalog
         }
+        self.init(liteLLMEntries: object, supplement: supplement, overrides: overrides)
+    }
+
+    /// `init(liteLLM:)` over an already decoded list.
+    init(liteLLMEntries object: [String: Any], supplement: PricingSupplement = PricingSupplement(),
+         overrides: [String: [String: Any]] = [:]) {
         var entries: [String: ModelRates] = [:]
         var sources: [String: Source] = [:]
         for (key, value) in object where key != "sample_spec" {
@@ -124,12 +141,7 @@ public struct PricingCatalog: Sendable {
             }
         }
         for key in entries.keys {
-            // The model's own multipliers, found through its dated or dotted
-            // variants too (`claude-opus-4-6-20260205`, `claude-opus-4.6`).
-            let specific = Self.forms(of: key, stripDates: true).lazy
-                .compactMap { supplement.tierMultipliers[$0] }.first
-            var multipliers = supplement.defaultTierMultipliers
-            multipliers.merge(specific ?? [:]) { _, specific in specific }
+            let multipliers = Self.multipliers(for: key, supplement: supplement)
             entries[key]?.tierMultipliers = multipliers
             listEntries[key]?.tierMultipliers = multipliers
         }
@@ -276,9 +288,69 @@ public struct PricingCatalog: Sendable {
         return nil
     }
 
-    /// Every long-context threshold any model uses, ascending.
+    /// Every long-context threshold any model uses now or used before,
+    /// ascending.
     var thresholds: [Int] {
-        Array(Set(entries.values.compactMap { $0.longContext?.threshold })).sorted()
+        let earlier = history.values.joined().compactMap { $0.rates.longContext?.threshold }
+        return Array(Set(entries.values.compactMap { $0.longContext?.threshold } + earlier)).sorted()
+    }
+
+    // MARK: - History
+
+    /// This catalog with the earlier prices of the LiteLLM keys in
+    /// `spans`. Keys a user override or Quiver's supplement prices keep
+    /// that price at every time, so their LiteLLM history is dropped.
+    func withHistory(_ spans: [String: [CatalogDatabase.PriceSpan]]) -> PricingCatalog {
+        var copy = self
+        copy.history = [:]
+        for (key, list) in spans where sources[key] == nil || sources[key] == .liteLLM {
+            let converted = list.compactMap { span -> Span? in
+                guard var rates = Self.rates(from: span.entry) else { return nil }
+                rates.tierMultipliers = entries[key]?.tierMultipliers
+                    ?? Self.multipliers(for: key, supplement: supplement)
+                return Span(from: span.from, to: span.to, rates: rates)
+            }
+            if !converted.isEmpty { copy.history[key] = converted }
+        }
+        return copy
+    }
+
+    /// Tier multipliers for `key`: the model's own, found through its
+    /// dated or dotted variants too (`claude-opus-4-6-20260205`,
+    /// `claude-opus-4.6`), over the supplement's defaults.
+    private static func multipliers(for key: String, supplement: PricingSupplement) -> [String: Double] {
+        let specific = Self.forms(of: key, stripDates: true).lazy
+            .compactMap { supplement.tierMultipliers[$0] }.first
+        var multipliers = supplement.defaultTierMultipliers
+        multipliers.merge(specific ?? [:]) { _, specific in specific }
+        return multipliers
+    }
+
+    /// Whether any key carries earlier prices.
+    var hasHistory: Bool { !history.isEmpty }
+
+    /// The moments, ascending, at which any of `keys` changed price: the
+    /// edges between the spans their history holds. Within two adjacent
+    /// boundaries every one of those keys has a single price.
+    func priceChanges(for keys: some Sequence<String>) -> [Double] {
+        var moments = Set<Double>()
+        for key in keys {
+            guard let spans = history[key] else { continue }
+            for (index, span) in spans.enumerated() {
+                if index > 0 { moments.insert(span.from) }
+                if let to = span.to { moments.insert(to) }
+            }
+        }
+        return moments.sorted()
+    }
+
+    /// The rates `entry` had at `time`, or nil to use the current ones.
+    /// A time before the key's first known price takes that first price,
+    /// so usage logged before the list was first fetched is still priced.
+    func historicalRates(entry: String, at time: Double) -> ModelRates? {
+        guard let spans = history[entry], let first = spans.first else { return nil }
+        if time < first.from { return first.rates }
+        return spans.last { $0.from <= time && ($0.to.map { time < $0 } ?? true) }?.rates
     }
 
     // MARK: - Name normalization

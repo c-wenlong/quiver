@@ -28,6 +28,7 @@ be rebuilt; deleting them loses user state.
 | `~/.api_keys/` | swe + app | directory of per-provider key files, or one shell-style file | LLM API keys | `swe providers`, app's key editor | provider key lookup, app key checks |
 | `data/ledger/ledger.sqlite` | app | SQLite (WAL) | deduplicated token events, dimension rows, scan cursors. Rows outlive their source logs (Claude Code prunes transcripts after 30 days), so this is the only copy of that history: never delete it to "reset" usage. A schema change archives it first (see below) | `Ledger` scans | Overview, Sessions, Calendar, menu bar, widgets |
 | `data/ledger/backups/ledger-YYYY-MM-DD.sqlite` | app | SQLite, one file each | a copy of the ledger per local day through SQLite's online backup API, newest 7 kept | `Ledger.keepBackedUp` (hourly check) | restore by hand: quit Quiver, copy one over `ledger.sqlite` |
+| `data/catalog/catalog.sqlite` | app | SQLite (WAL) | the model catalog: every price each LiteLLM key has held, Artificial Analysis models and raw feeds, the price-key to AA-model join, and a row per fetch (see below). Price history exists only here: a dropped file reprices past usage at today's rates. `QUIVER_CATALOG_DB` overrides the path | `PricingStore`, `ArtificialAnalysisStore` | ledger pricing, Pricing and Models pages |
 | `skills/`, `hooks/`, `plugins/`, `AGENTS.md`, `.linkignore` | swe | files and symlinks | shared instruction/skill/hook/plugin trees | `swe init`, `swe skills`, `swe plugins` | the harnesses that link them |
 | `reports/` | swe | markdown + JSON | generated reports, `session-summaries/`, `exclusions.json`, `cursors.json`, `followups.json` | `reports/store.py` (atomic writes, malformed state raises) | `swe report` |
 
@@ -55,7 +56,7 @@ under those names.
 | `cache/plugin-catalog.json` | app | snapshot v2 | `swe plugins catalog` output | 24h (`86400`s); v1 was bundled, never released |
 | `cache/sessions.json` | app | snapshot v1 | last session listing shown | `SessionSnapshot` v1; swe asked again when listing is over 60s old |
 | `cache/widgets/snapshot.json` | app | snapshot v2 | widget payload: summaries, heatmap, models, limit readings | rewritten on limit refresh; WidgetKit reads it |
-| `cache/pricing/litellm.json` | app | JSON | LiteLLM model pricing download | refreshed on schedule; bundled snapshot is the fallback |
+| `cache/pricing/litellm.json` | app | JSON | superseded: the old LiteLLM download | imported once into `data/catalog/catalog.sqlite` (dated by its mtime) and left in place; nothing writes it |
 | `cache/skills-hub.json` | app | superseded snapshot | old skills-hub payload | deleted at launch by `AppModel`; nothing reads it |
 
 Files nothing in this repo owns but observed in real `cache/` dirs:
@@ -89,8 +90,9 @@ every key below is live.
 
 ## Ledger schema (`data/ledger/ledger.sqlite`, schema version 1)
 
-Rows hold token counts, not dollars: `PricingCatalog` reprices at query time,
-so a pricing refresh reprices the whole history. `msg`, `head_hash` and
+Rows hold token counts, not dollars: `PricingCatalog` prices them at query
+time, at the rate each event's price entry had when it happened (names
+resolve through today's list; rates come from the catalog's history). `msg`, `head_hash` and
 `tail_hash` are FNV-1a 64-bit hashes (`StableHash`), never raw text.
 
 - `meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)`: the `schema` marker
@@ -145,6 +147,35 @@ MAX(ts)           SEARCH events USING COVERING INDEX events_ts
   stays recoverable. A future bump should still prefer a real `ALTER`
   migration over the rebuild.
 
+## Catalog schema (`data/catalog/catalog.sqlite`, schema version 1)
+
+`CatalogDatabase` owns it; one connection behind a lock.
+
+- `fetches(id, source, url, fetched_at, status, error, content_sha,
+  row_count, rate_limit_headers)`: every download attempt. `source` is
+  `litellm` or `aa:<endpoint>`. A failure deletes the failures recorded
+  since that source's last success, so an outage is one row.
+- `prices(key, valid_from, valid_to, input, output, cache_read, cache_write,
+  cache_write_1h, reasoning, entry, fetch_id, PRIMARY KEY(key, valid_from))`:
+  one row per price a LiteLLM key held, USD per token; `entry` is the
+  entry's price fields as sorted-key JSON. A row is added only when those
+  fields change, and `valid_to` is null on the row in force. A key that
+  leaves the list has its row closed.
+- `models(id, position, slug, name, creator_*, aa_price_*, speed, ttft,
+  ttfat, evaluations, raw, fetch_id)`: AA's language models in AA's order.
+- `model_aliases(name, model_id, method)`: every price key and the AA model
+  it names (`method` is `auto`, `manual` or `none`). Derived: rebuilt from
+  `ModelMatcher` and `config/model-links.json` at launch and after any
+  refresh or link. `prices.key` references it, so `prices JOIN
+  model_aliases` lists every priced key of one model.
+- `payloads(source, fetch_id, body)`: each AA endpoint's last good body.
+- `meta(key, value)`: the `schema` marker.
+
+Builds before the catalog kept `cache/pricing/litellm.json` and
+`data/artificial-analysis/<endpoint>.json` + `meta.json`. They are imported
+once (the price list per source, AA per endpoint, so an interrupted import
+resumes) and left in place.
+
 ## JSON formats and versions
 
 | file | envelope | notes |
@@ -185,4 +216,4 @@ MAX(ts)           SEARCH events USING COVERING INDEX events_ts
 | git status for MCP folders | `McpServerRepoModel` memory | per page visit, 4 concurrent | ticket guard |
 | GPU + process samplers | `sampledAt` reuse | half the trend interval, plus 3s on-page refresh | shared sampler |
 | login shell environment | `LoginShell.cachedEnvironment` | once per launch | single shared task |
-| pricing catalog | `cache/pricing/litellm.json` + bundled fallback | scheduled refresh | n/a |
+| pricing catalog | `data/catalog/catalog.sqlite` + bundled fallback | daily, from the last good fetch's time | n/a |

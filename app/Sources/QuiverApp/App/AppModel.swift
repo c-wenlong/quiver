@@ -353,8 +353,13 @@ final class AppModel {
         let directory: @Sendable () -> AccountDirectory = { directoryCache.current }
         let hidesTrivial = Self.hidesTrivialSessions()
         do {
+            // Prices with their history, AA's models, and the join between
+            // them: data, so clearing caches never loses price history.
+            let catalog = CatalogDatabase(url: CatalogDatabase.resolvedURL(home: home),
+                                          linksFile: quiver.appending(path: "config/model-links.json"))
             // User prices (config/pricing.json) win over both published lists.
-            let pricing = PricingStore(cacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
+            let pricing = PricingStore(database: catalog,
+                                       legacyCacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
                                        overridesFile: quiver.appending(path: "config/pricing.json"))
             // Data, not cache: its rows outlive the logs they came from.
             // Earlier builds kept it in cache/ledger.
@@ -478,13 +483,16 @@ final class AppModel {
             // Models page and the hover cards everywhere else.
             models = ModelsModel(
                 store: ArtificialAnalysisStore(
-                    directory: ArtificialAnalysisStore.resolvedDirectory(home: home)),
+                    database: catalog,
+                    legacyDirectory: ArtificialAnalysisStore.resolvedDirectory(home: home)),
                 keyReader: {
                     await serviceCredentials.value(for: "ARTIFICIAL_ANALYSIS_API_KEY")
                 },
                 transport: URLSessionTransport(),
                 linksURL: quiver.appending(path: "config/model-links.json"),
                 slices: { range in await ledger.byModelHarness(in: range) })
+            // model-links.json may have changed while the app was closed.
+            Task.detached(priority: .utility) { catalog.rebuildAliases() }
         } catch {
             overview = nil
             sessions = nil
