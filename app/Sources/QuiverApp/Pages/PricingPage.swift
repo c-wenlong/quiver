@@ -100,11 +100,12 @@ private struct UnpricedBadge: View {
                 ForEach(unpriced) { row in
                     Button { show = false; open(row) } label: {
                         HStack(spacing: 6) {
-                            ForEach(row.harnesses.prefix(3), id: \.self) { harness in
-                                HarnessIcon(harness: harness, size: 14)
-                            }
+                            BrandLogo(model: row.model, size: 14)
                             Text(row.model).font(Theme.caption).foregroundStyle(Theme.textPrimary)
                                 .lineLimit(1).truncationMode(.middle)
+                            ForEach(row.harnesses.prefix(3), id: \.self) { harness in
+                                HarnessIcon(harness: harness, size: 12)
+                            }
                             Spacer()
                             Text(UsageFormat.tokens(row.unpricedTokens))
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
@@ -407,8 +408,11 @@ private struct PriceSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(row.model).font(Theme.sectionTitle).tracking(-0.5)
-                .lineLimit(1).truncationMode(.middle)
+            HStack(spacing: 8) {
+                BrandLogo(model: row.model, size: 20)
+                Text(row.model).font(Theme.sectionTitle).tracking(-0.5)
+                    .lineLimit(1).truncationMode(.middle)
+            }
             if let listPrice = row.listPrice {
                 Text("List price (\(listPrice.source == .quiver ? "Quiver" : "LiteLLM")): "
                      + "\(perMillion(listPrice.rates.input)) in · "
