@@ -81,6 +81,10 @@ class LayoutInvariantTest(unittest.TestCase):
         # SQLite rewritten on every scan.
         self.assertIn("data/ledger/", paths.GITIGNORE_BODY)
 
+    def test_devin_cloud_sessions_are_gitignored(self):
+        # Titles and links of the user's own Devin sessions.
+        self.assertIn("data/devin-cloud/", paths.GITIGNORE_BODY)
+
     def test_mcp_helpers_and_constants_agree(self):
         self.assertEqual(paths.mcp_dir_for(), paths.MCP_DIR)
         self.assertEqual(paths.mcp_servers_dir_for(), paths.MCP_SERVERS_DIR)
