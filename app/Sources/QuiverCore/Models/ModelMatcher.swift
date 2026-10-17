@@ -200,21 +200,39 @@ public struct ModelMatcher: Sendable {
     /// the same Opus 5.5 entry the leaderboard shows.
     public static func match(_ logged: String, in models: [AALanguageModel],
                              links: [String: String] = [:]) -> AALanguageModel? {
-        let parsed = parse(logged)
-        if let linked = links[parsed.base] ?? links[legacyKey(logged)],
-           let model = models.first(where: { $0.id == linked }) {
-            let family = parseAA(model).family
-            return headline(of: models.filter { parseAA($0).family == family }) ?? model
+        Index(models: models, links: links).match(logged)?.model
+    }
+
+    /// `match` for many names against one model list: each AA model
+    /// parses once, not once per name.
+    public struct Index: Sendable {
+        private let models: [AALanguageModel]
+        private let links: [String: String]
+        private let byFamily: [String: [AALanguageModel]]
+
+        public init(models: [AALanguageModel], links: [String: String] = [:]) {
+            self.models = models
+            self.links = links
+            var byFamily: [String: [AALanguageModel]] = [:]
+            for model in models { byFamily[parseAA(model).family, default: []].append(model) }
+            self.byFamily = byFamily
         }
-        guard !parsed.base.isEmpty else { return nil }
-        let families = models.map { parseAA($0).family }
-        // Most specific first: as named, then without the fast-run
-        // suffix, then without any mode word.
-        for key in [parsed.family, parsed.slowFamily, parsed.looseFamily] {
-            let hits = zip(models, families).filter { $0.1 == key }.map(\.0)
-            if !hits.isEmpty { return headline(of: hits) }
+
+        /// The model `logged` names, and whether a manual link decided it.
+        public func match(_ logged: String) -> (model: AALanguageModel, linked: Bool)? {
+            let parsed = parse(logged)
+            if let linked = links[parsed.base] ?? links[legacyKey(logged)],
+               let model = models.first(where: { $0.id == linked }) {
+                return (headline(of: byFamily[parseAA(model).family] ?? []) ?? model, true)
+            }
+            guard !parsed.base.isEmpty else { return nil }
+            // Most specific first: as named, then without the fast-run
+            // suffix, then without any mode word.
+            for key in [parsed.family, parsed.slowFamily, parsed.looseFamily] {
+                if let hits = byFamily[key], let best = headline(of: hits) { return (best, false) }
+            }
+            return nil
         }
-        return nil
     }
 
     /// The key links were saved under before names parsed into families:

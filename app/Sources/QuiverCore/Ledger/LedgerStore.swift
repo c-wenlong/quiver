@@ -25,9 +25,11 @@ struct FileCursor: Equatable {
 /// transaction (a crash cannot count a line twice), memory stays flat however
 /// long the history is, and the rows outlive the logs they came from.
 ///
-/// Rows hold token counts, not dollars. Cost is applied when queried, so a
-/// pricing refresh reprices the whole history and the long-context and
-/// 1-hour-cache rules can still see each request on its own.
+/// Rows hold token counts, not dollars. Cost is applied when queried, at
+/// the rate each event's price entry had at its time (the catalog keeps
+/// every price a key held), so the long-context and 1-hour-cache rules can
+/// still see each request on its own and a price change never reprices
+/// the usage logged before it.
 final class LedgerStore {
     /// Bump when parsing changes what a row means. A mismatch drops the rows
     /// and cursors and the next scan rebuilds them, so history whose logs are
@@ -338,17 +340,26 @@ extension LedgerStore {
     ///   this many seconds since the epoch.
     /// - Parameter harness: restrict to one harness's dims at the SQL side,
     ///   so a caller after one harness does not read the whole table.
+    /// - Parameter priceChanges: also split each group at these moments
+    ///   (seconds since the epoch, ascending), so no group spans a price
+    ///   change and each prices at the rate of its own time.
     func groups(in range: DateInterval, by columns: [Column], thresholds: [Int],
-                bucketSeconds: Int? = nil, harness: String? = nil) throws -> [PricedGroup] {
+                bucketSeconds: Int? = nil, harness: String? = nil,
+                priceChanges: [Double] = []) throws -> [PricedGroup] {
         let bucket = bucketSeconds.map { "CAST(e.ts / \($0) AS INTEGER)" }
+        let era = priceChanges.isEmpty
+            ? "0"
+            : priceChanges.map { "(e.ts >= \($0))" }.joined(separator: " + ")
         let dims = columns.map { "d.\($0.rawValue)" }
         let crossed = thresholds.isEmpty
             ? "0"
             : thresholds.map { "(e.session_total = 0 AND e.input + e.cache_read + e.cache_write > \($0))" }
                 .joined(separator: " + ")
-        let groupColumns = (dims + ["d.model", "d.tier", "logged", "crossed"] + (bucket.map { _ in ["bucket"] } ?? []))
+        let groupColumns = (dims + ["d.model", "d.tier", "logged", "crossed", "era"]
+            + (bucket.map { _ in ["bucket"] } ?? []))
             .joined(separator: ", ")
-        let select = (dims + ["d.model", "d.tier", "(e.cost IS NOT NULL) AS logged", "\(crossed) AS crossed"]
+        let select = (dims + ["d.model", "d.tier", "(e.cost IS NOT NULL) AS logged", "\(crossed) AS crossed",
+                              "\(era) AS era"]
             + (bucket.map { ["\($0) AS bucket"] } ?? []))
             .joined(separator: ", ")
         let statement = try db.prepare("""
@@ -374,6 +385,7 @@ extension LedgerStore {
             let tier = statement.text(next()) ?? ""
             let logged = statement.int(next()) != 0
             let crossedCount = Int(statement.int(next()))
+            _ = next() // era: only splits the groups; each prices at its own `first`.
             let bucketStart = bucketSeconds.map { size in
                 Date(timeIntervalSince1970: Double(statement.int(next())) * Double(size))
             }
@@ -390,6 +402,14 @@ extension LedgerStore {
                 hasLoggedCost: logged, thresholdsCrossed: crossedCount, tokens: sums,
                 loggedCost: cost, count: count, first: first, last: last, bucket: bucketStart))
         }
+        return result
+    }
+
+    /// Every model and tier the ledger has a row for.
+    func modelsAndTiers() throws -> [(model: String, tier: String)] {
+        let statement = try db.prepare("SELECT DISTINCT model, tier FROM dims")
+        var result: [(model: String, tier: String)] = []
+        while try statement.step() { result.append((statement.text(0) ?? "", statement.text(1) ?? "")) }
         return result
     }
 

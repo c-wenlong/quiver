@@ -291,6 +291,9 @@ public final class ModelsModel {
         try ModelMatcher.saveLinks(next, to: linksURL)
         links = next
         rebuild()
+        // The catalog's price-key aliases follow the links file.
+        let database = store.database
+        Task.detached { database.rebuildAliases() }
     }
 
     /// The matcher answer for a logged name, for hover cards elsewhere.

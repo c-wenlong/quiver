@@ -123,8 +123,8 @@ public enum AAError: Error, Equatable {
 }
 
 /// The endpoints a refresh downloads. Media feeds are stored for a later
-/// page; only `llms` is read today. Each maps to one file under the data
-/// directory, which holds raw response bytes.
+/// page; only `llms` is read today. `fileName` is the raw-response file
+/// older builds wrote, read only by the one-time import.
 public enum AAEndpoint: String, CaseIterable, Sendable {
     case llms = "llms"
     case textToImage = "text-to-image"
@@ -150,15 +150,16 @@ public enum AAEndpoint: String, CaseIterable, Sendable {
     public var url: URL { URL(string: "https://artificialanalysis.ai\(path)")! }
 }
 
-/// Where downloaded Artificial Analysis responses live. This is data, not
-/// cache: `~/.quiver/data/artificial-analysis/` survives cache clears, one
-/// raw file per endpoint plus `meta.json` bookkeeping. `QUIVER_AA_DATA_DIR`
-/// points test builds somewhere throwaway.
+/// Downloaded Artificial Analysis data, kept in the catalog database:
+/// each endpoint's last good response, the language models as rows, and a
+/// fetch row per attempt (status, error, rate-limit headers).
 public struct ArtificialAnalysisStore: Sendable {
-    /// When `llms.json` is this old the app quietly refreshes at launch.
+    /// When the models feed is this old the app quietly refreshes at launch.
     public static let staleAfter: TimeInterval = 7 * 86_400
 
-    /// Per-endpoint bookkeeping in meta.json.
+    /// Per-endpoint bookkeeping: the last good fetch's time, and the latest
+    /// attempt's status, error and headers. Also the shape of the
+    /// `meta.json` older builds wrote.
     public struct Meta: Sendable, Equatable, Codable {
         public var fetchedAt: TimeInterval?
         /// The last HTTP status, nil when no request completed.
@@ -177,10 +178,10 @@ public struct ArtificialAnalysisStore: Sendable {
         }
     }
 
-    public let directory: URL
+    public let database: CatalogDatabase
     private let now: @Sendable () -> Date
 
-    /// The directory Quiver uses when the environment doesn't say.
+    /// Where older builds kept the raw files; imported once.
     public static func defaultDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         home.appending(path: ".quiver/data/artificial-analysis")
     }
@@ -193,64 +194,66 @@ public struct ArtificialAnalysisStore: Sendable {
         return defaultDirectory(home: home)
     }
 
-    public init(directory: URL, now: @escaping @Sendable () -> Date = Date.init) {
-        self.directory = directory
+    /// - Parameter legacyDirectory: the `data/artificial-analysis/` folder
+    ///   older builds wrote; imported into `database` once if it holds no
+    ///   AA data yet.
+    public init(database: CatalogDatabase, legacyDirectory: URL? = nil,
+                now: @escaping @Sendable () -> Date = Date.init) {
+        self.database = database
         self.now = now
+        if let legacyDirectory { database.importLegacyAA(directory: legacyDirectory) }
     }
 
-    private func file(for endpoint: AAEndpoint) -> URL {
-        directory.appending(path: endpoint.fileName)
+    /// A store over `directory/catalog.sqlite` that imports any raw files
+    /// already in `directory`: for tests and previews.
+    public init(directory: URL, now: @escaping @Sendable () -> Date = Date.init) {
+        self.init(database: CatalogDatabase(url: directory.appending(path: "catalog.sqlite")),
+                  legacyDirectory: directory, now: now)
     }
-
-    private var metaFile: URL { directory.appending(path: "meta.json") }
 
     public func raw(_ endpoint: AAEndpoint) -> Data? {
-        FileManager.default.contents(atPath: file(for: endpoint).path)
+        database.payload(endpoint)
     }
 
     /// The decoded language models, or nil when no good fetch has landed.
     public func languageModels() -> [AALanguageModel]? {
-        guard let data = raw(.llms) else { return nil }
-        return try? AAModelsResponse.decode(data)
+        database.languageModels()
     }
 
     public func meta() -> [String: Meta] {
-        guard let data = FileManager.default.contents(atPath: metaFile.path),
-              let decoded = try? JSONDecoder().decode([String: Meta].self, from: data)
-        else { return [:] }
-        return decoded
+        var result: [String: Meta] = [:]
+        for endpoint in AAEndpoint.allCases {
+            let source = CatalogDatabase.aaSource(endpoint)
+            guard let latest = database.lastAttempt(source: source) else { continue }
+            result[endpoint.rawValue] = Meta(
+                fetchedAt: database.lastSuccess(source: source)?.fetchedAt?.timeIntervalSince1970,
+                status: latest.status, error: latest.error, rateLimitHeaders: latest.rateLimitHeaders)
+        }
+        return result
     }
 
     /// Whether the models feed is missing or past `staleAfter`, which is
     /// when a launch may refresh without being asked.
     public func llmsIsStale() -> Bool {
-        guard let fetchedAt = meta()[AAEndpoint.llms.rawValue]?.fetchedAt,
-              FileManager.default.fileExists(atPath: file(for: .llms).path)
+        guard let fetchedAt = database.lastSuccess(source: CatalogDatabase.aaSource(.llms))?.fetchedAt
         else { return true }
-        return now().timeIntervalSince1970 - fetchedAt > Self.staleAfter
+        return now().timeIntervalSince(fetchedAt) > Self.staleAfter
     }
 
-    /// Writes one endpoint's raw bytes atomically and records the fetch.
+    /// Stores one endpoint's good response and records the fetch.
     private func save(_ endpoint: AAEndpoint, data: Data, status: Int,
                       rateLimitHeaders: [String: String]) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try data.write(to: file(for: endpoint), options: .atomic)
-        var meta = meta()
-        meta[endpoint.rawValue] = Meta(fetchedAt: now().timeIntervalSince1970,
-                                       status: status, error: nil,
-                                       rateLimitHeaders: rateLimitHeaders.isEmpty ? nil : rateLimitHeaders)
-        try JSONEncoder().encode(meta).write(to: metaFile, options: .atomic)
+        try database.recordAAPayload(
+            endpoint, body: data, at: now(), status: status,
+            rateLimitHeaders: rateLimitHeaders.isEmpty ? nil : rateLimitHeaders,
+            url: endpoint.url.absoluteString)
     }
 
-    /// A failure only updates meta.json — stored data is never clobbered.
-    private func recordFailure(_ endpoint: AAEndpoint, error: String, status: Int?) {
-        var meta = meta()
-        var entry = meta[endpoint.rawValue] ?? Meta()
-        entry.error = error
-        entry.status = status
-        meta[endpoint.rawValue] = entry
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? JSONEncoder().encode(meta).write(to: metaFile, options: .atomic)
+    /// A failure is only recorded; stored data is never clobbered.
+    private func recordFailure(_ endpoint: AAEndpoint, error: String, status: Int?,
+                               rateLimitHeaders: [String: String]? = nil) {
+        database.recordFailure(source: CatalogDatabase.aaSource(endpoint), url: endpoint.url, at: now(),
+                               status: status, error: error, rateLimitHeaders: rateLimitHeaders)
     }
 
     /// Downloads all six endpoints. Each succeeds or records its own
@@ -271,7 +274,8 @@ public struct ArtificialAnalysisStore: Sendable {
                 }
                 guard (200..<300).contains(response.statusCode) else {
                     let message = "HTTP \(response.statusCode)"
-                    recordFailure(endpoint, error: message, status: response.statusCode)
+                    recordFailure(endpoint, error: message, status: response.statusCode,
+                                  rateLimitHeaders: headers.isEmpty ? nil : headers)
                     errors[endpoint] = message
                     continue
                 }
@@ -288,6 +292,7 @@ public struct ArtificialAnalysisStore: Sendable {
                 errors[endpoint] = message
             }
         }
+        if errors[.llms] == nil { database.rebuildAliases() }
         return errors
     }
 }
