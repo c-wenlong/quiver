@@ -218,7 +218,7 @@ public actor CursorUsageFeed {
     /// writes the same rows again rather than adding new ones.
     static func record(for event: CursorUsageEvent, accountKey: String,
                        accountHome: String) -> LedgerRecord {
-        let harness = event.model.hasPrefix("grok-bot") ? "grok-bot" : "cursor"
+        let harness = ModelBrands.forModel(event.model).id == "grok-bot" ? "grok-bot" : "cursor"
         let milliseconds = Int64((event.timestamp * 1000).rounded())
         let session = event.conversationId ?? "cursor-" + dayLabel(for: event.timestamp)
         let key = "cursor-feed:\(accountKey):\(milliseconds):\(event.model):"

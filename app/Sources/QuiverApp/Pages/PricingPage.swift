@@ -257,16 +257,19 @@ private struct PricingRow: View {
 
     private var rowBody: some View {
         HStack(spacing: 10) {
-            HStack(spacing: 2) {
-                ForEach(row.harnesses.prefix(3), id: \.self) { harness in
-                    HarnessIcon(harness: harness, size: 14)
-                        .accessibilityLabel(UsageFormat.harness(harness))
-                }
-            }
-            .fixedSize()
+            // The lab's logo first, as everywhere a model is named; the
+            // tools that ran it follow the name.
+            BrandLogo(model: row.model, size: 16)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(row.model).lineLimit(1).truncationMode(.middle)
+                    HStack(spacing: 2) {
+                        ForEach(row.harnesses.prefix(3), id: \.self) { harness in
+                            HarnessIcon(harness: harness, size: 12)
+                                .accessibilityLabel(UsageFormat.harness(harness))
+                        }
+                    }
+                    .fixedSize()
                     if let tierNote {
                         Text(tierNote).font(Theme.caption).foregroundStyle(Theme.textMuted)
                             .lineLimit(1).fixedSize()

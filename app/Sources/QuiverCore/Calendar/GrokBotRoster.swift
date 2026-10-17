@@ -62,8 +62,8 @@ public final class GrokBotRoster: Sendable {
         if sessionId.hasPrefix(Self.subagentPrefix) {
             return ("Subagents", "Subagents", "Subagent")
         }
-        return ("Grok Bot", "Grok Bot",
-                CalendarFormat.sessionTitle(nil, sessionId: sessionId))
+        let name = HarnessMark("grok-bot").name
+        return (name, name, CalendarFormat.sessionTitle(nil, sessionId: sessionId))
     }
 
     /// The project identity part of `labels(for:)`, for resolvers that

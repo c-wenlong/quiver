@@ -215,11 +215,11 @@ public actor Ledger {
             }
         }
         for database in roots.openCodeDatabases where FileManager.default.fileExists(atPath: database.path) {
-            report.databasesRead += try scanSource(database, kind: "OpenCode",
+            report.databasesRead += try scanSource(database, kind: HarnessMark("opencode").name,
                                                    scan: DatabaseSources.scanOpenCode, report: &report)
         }
         for database in roots.devinDatabases where FileManager.default.fileExists(atPath: database.path) {
-            report.databasesRead += try scanSource(database, kind: "Devin",
+            report.databasesRead += try scanSource(database, kind: HarnessMark("devin").name,
                                                    scan: DatabaseSources.scanDevin, report: &report)
         }
         for home in roots.piHomes {

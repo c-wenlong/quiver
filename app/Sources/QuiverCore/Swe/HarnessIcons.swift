@@ -71,16 +71,16 @@ public struct HarnessMark: Equatable, Sendable {
     public init(_ harness: String) {
         switch harness {
         case "claude":
-            self.init(icon: "claude", word: "CLI", name: "Claude Code")
+            self.init(icon: "claude", word: "CLI", name: Self.name(of: "claude"))
         case "claude-desktop":
-            self.init(icon: "claude", word: "Desktop", name: "Claude Desktop")
+            self.init(icon: "claude", word: "Desktop", name: Self.name(of: "claude-desktop"))
         // Grok Bot events come from Cursor's usage feed; the name would
         // otherwise split at the dash and show as "Grok (bot)".
         case "grok-bot":
-            self.init(icon: "grok", word: nil, name: "Grok Bot")
+            self.init(icon: "grok", word: nil, name: Self.name(of: "grok-bot"))
         // Devin's API sessions; the default would read "Devin (cloud)".
         case DevinCloud.harness:
-            self.init(icon: "devin", word: "Cloud", name: "Devin cloud")
+            self.init(icon: "devin", word: "Cloud", name: Self.name(of: DevinCloud.harness))
         case _ where HarnessIcons.icon(for: harness) != nil:
             self.init(icon: harness, word: nil, name: Self.name(of: harness))
         default:
@@ -97,13 +97,27 @@ public struct HarnessMark: Equatable, Sendable {
         }
     }
 
-    /// Product names where capitalising the id gets them wrong.
-    static let names = ["claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "devin": "Devin",
+    /// The one harness name table: each product's own spelling where
+    /// capitalising the id gets it wrong. Every page names a harness through
+    /// `HarnessMark(id).name` (or `UsageFormat.harness`, which reads it), so
+    /// a name changed here changes everywhere. Names always start with a
+    /// capital letter.
+    static let names = ["claude": "Claude Code", "claude-desktop": "Claude Desktop", "codex": "Codex",
+                        "opencode": "OpenCode", "devin": "Devin", "devin-cloud": "Devin cloud",
                         "droid": "Factory Droid", "copilot": "GitHub Copilot", "lmstudio": "LM Studio",
                         "qwen-code": "Qwen Code", "mistral-vibe": "Mistral Vibe", "commandcode": "Command Code",
-                        "qoder-cn": "Qoder CN", "grok-bot": "Grok Bot", "devin-cloud": "Devin cloud"]
+                        "qoder-cn": "Qoder CN", "grok-bot": "Grok Bot", "grok": "Grok Build",
+                        "kilo": "Kilo Code", "goose": "Goose", "aider": "Aider", "zcode": "ZCode",
+                        "ark-coding-plan": "Ark Coding Plan", "ark-agent-plan": "Ark Agent Plan"]
 
     static func name(of harness: String) -> String {
         names[harness] ?? harness.prefix(1).uppercased() + harness.dropFirst()
+    }
+
+    /// The name of an account or usage provider for a harness: the same as
+    /// the harness name, except that a Claude account is "Claude". It is
+    /// the Anthropic subscription, which covers the app and the CLI alike.
+    public static func accountName(_ id: String) -> String {
+        id == "claude" ? "Claude" : HarnessMark(id).name
     }
 }

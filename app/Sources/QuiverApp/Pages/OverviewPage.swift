@@ -374,6 +374,27 @@ private struct QuickFigures: View {
     var summary: OverviewSummary
     @Environment(AppModel.self) private var app
 
+    private func modelName(_ name: String) -> some View {
+        Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            .lineLimit(1).truncationMode(.middle)
+    }
+
+    @ViewBuilder private func harnessLogos(_ harnesses: [String]) -> some View {
+        if !harnesses.isEmpty {
+            HStack(spacing: 2) {
+                ForEach(Array(harnesses.prefix(3)), id: \.self) { harness in
+                    HarnessIcon(harness: harness, size: 12)
+                        .accessibilityLabel(UsageFormat.harness(harness))
+                }
+                if harnesses.count > 3 {
+                    Text("+\(harnesses.count - 3)")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .fixedSize()
+        }
+    }
+
     var busiest: DayRow? { summary.days.max { $0.totals.totalTokens < $1.totals.totalTokens } }
 
     var body: some View {
@@ -393,23 +414,16 @@ private struct QuickFigures: View {
                                 .frame(width: 20, height: 20)
                                 .background(Theme.subtle, in: .circle)
                             BrandLogo(model: model.model, size: 16)
-                            Text(model.model).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                                .lineLimit(1).truncationMode(.middle)
-                            // The tools that ran it, after the name.
-                            if !model.harnesses.isEmpty {
-                                HStack(spacing: 2) {
-                                    ForEach(Array(model.harnesses.prefix(3)), id: \.self) { harness in
-                                        HarnessIcon(harness: harness, size: 12)
-                                            .accessibilityLabel(UsageFormat.harness(harness))
-                                    }
-                                    if model.harnesses.count > 3 {
-                                        Text("+\(model.harnesses.count - 3)")
-                                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                                    }
+                            // The name comes first: the tools that ran it
+                            // follow only while the whole name still fits.
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 8) {
+                                    modelName(model.model)
+                                    harnessLogos(model.harnesses)
                                 }
-                                .fixedSize()
+                                modelName(model.model)
                             }
-                            Spacer()
+                            Spacer(minLength: 8)
                             Text(model.share, format: .percent.precision(.fractionLength(1)))
                                 .font(Theme.rowTitle).monospacedDigit().foregroundStyle(Theme.textPrimary)
                         }

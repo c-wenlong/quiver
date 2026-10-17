@@ -63,12 +63,12 @@ public struct AccountDirectory: Sendable {
     /// The profile's name, or a short form of the path for homes no profile owns.
     public func label(for accountHome: String) -> String {
         // Not a folder: cloud sessions have no home on this Mac.
-        if accountHome == DevinCloud.accountHome { return "Devin cloud" }
+        if accountHome == DevinCloud.accountHome { return HarnessMark(DevinCloud.harness).name }
         let path = URL(fileURLWithPath: accountHome).standardizedFileURL.path
         if let name = names[path] { return name }
         let share = home.appendingPathComponent(".local/share").path
-        if path == share + "/opencode" { return "OpenCode" }
-        if path == share + "/devin/cli" { return "Devin" }
+        if path == share + "/opencode" { return HarnessMark("opencode").name }
+        if path == share + "/devin/cli" { return HarnessMark("devin").name }
         let base = home.path
         if path.hasPrefix(base + "/") { return "~" + path.dropFirst(base.count) }
         return path
@@ -93,16 +93,9 @@ public enum UsageFormat {
         return amount.formatted(style)
     }
 
+    /// A harness's display name: `HarnessMark`'s table, the one source.
     public static func harness(_ id: String) -> String {
-        switch id {
-        case "claude": "Claude Code"
-        case "codex": "Codex"
-        case "opencode": "OpenCode"
-        case "devin": "Devin"
-        case "grok-bot": "Grok Bot"
-        case DevinCloud.harness: "Devin cloud"
-        default: id.prefix(1).uppercased() + id.dropFirst()
-        }
+        HarnessMark(id).name
     }
 
     /// Money that is a balance, not a spend: always to the cent, "$9,868.98".
@@ -119,7 +112,7 @@ public enum UsageFormat {
         case "included": "Included"
         case "auto": "Auto"
         case "api": "API"
-        case "grok_bot": "Grok Bot"
+        case "grok_bot": HarnessMark("grok-bot").name
         default: label
         }
     }
