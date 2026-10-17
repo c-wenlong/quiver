@@ -30,18 +30,26 @@ import Testing
         let legacy = temp.path("cache/ledger")
         let data = temp.path("data/ledger")
         let old = legacy.appending(path: "ledger.sqlite")
-        // A ledger still open, with nothing checkpointed: the rows sit in
-        // ledger.sqlite-wal, so moving the main file alone would lose them.
-        let store = try LedgerStore(url: old)
+        // What a crash leaves: the files of a ledger that was still open,
+        // with nothing checkpointed, so the rows sit in ledger.sqlite-wal
+        // and moving the main file alone would lose them.
+        let writing = temp.path("writing/ledger.sqlite")
+        let store = try LedgerStore(url: writing)
         try store.db.execute("PRAGMA wal_autocheckpoint = 0")
         try fill(store, count: 40)
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try withExtendedLifetime(store) {
+            for suffix in ["", "-wal", "-shm"] {
+                try FileManager.default.copyItem(atPath: writing.path + suffix, toPath: old.path + suffix)
+            }
+        }
         let walSize = try FileManager.default.attributesOfItem(atPath: old.path + "-wal")[.size] as? Int ?? 0
         #expect(walSize > 0)
         let mainOnly = temp.path("main-only.sqlite")
         try FileManager.default.copyItem(at: old, to: mainOnly)
         #expect(((try? eventCount(mainOnly)) ?? 0) < 40)
 
-        let opened = withExtendedLifetime(store) { LedgerLocation.prepare(directory: data, legacy: legacy) }
+        let opened = LedgerLocation.prepare(directory: data, legacy: legacy)
 
         #expect(opened == data)
         let moved = data.appending(path: "ledger.sqlite")
@@ -68,6 +76,45 @@ import Testing
         #expect(LedgerLocation.prepare(directory: data, legacy: legacy) == data)
         #expect(exists(data.appending(path: "ledger.schema-0.sqlite")))
         #expect(!exists(legacy.appending(path: "ledger.schema-0.sqlite")))
+    }
+
+    @Test func anOldLedgerStillOpenElsewhereWaitsForTheNextLaunch() throws {
+        let temp = try TempDir()
+        let legacy = temp.path("cache/ledger")
+        let data = temp.path("data/ledger")
+        let old = legacy.appending(path: "ledger.sqlite")
+        // An older Quiver still running: it could write rows after the copy.
+        var running: LedgerStore? = try LedgerStore(url: old)
+        try fill(running!, count: 6)
+
+        #expect(LedgerLocation.prepare(directory: data, legacy: legacy) == legacy)
+        #expect(!exists(data.appending(path: "ledger.sqlite")))
+        #expect(!exists(data.appending(path: ".ledger.sqlite.moving")))
+        // It keeps writing to the old ledger, and nothing is lost.
+        try running!.db.execute("BEGIN IMMEDIATE")
+        try running!.upsert(event(6))
+        try running!.db.execute("COMMIT")
+        running = nil
+
+        #expect(LedgerLocation.prepare(directory: data, legacy: legacy) == data)
+        #expect(try eventCount(data.appending(path: "ledger.sqlite")) == 7)
+        #expect(!exists(old))
+    }
+
+    @Test func anArchiveLeftBehindMovesAtALaterLaunch() throws {
+        let temp = try TempDir()
+        let legacy = temp.path("cache/ledger")
+        let data = temp.path("data/ledger")
+        try fill(LedgerStore(url: data.appending(path: "ledger.sqlite")), count: 1)
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try Data("left".utf8).write(to: legacy.appending(path: "ledger.schema-0.sqlite"))
+        try Data("here".utf8).write(to: data.appending(path: "ledger.schema-0.sqlite"))
+
+        #expect(LedgerLocation.prepare(directory: data, legacy: legacy) == data)
+        #expect(!exists(legacy.appending(path: "ledger.schema-0.sqlite")))
+        // The name was taken, so the moved one gets a suffix.
+        #expect(try Data(contentsOf: data.appending(path: "ledger.schema-0.1.sqlite")) == Data("left".utf8))
+        #expect(try Data(contentsOf: data.appending(path: "ledger.schema-0.sqlite")) == Data("here".utf8))
     }
 
     @Test func aFailedMoveKeepsReadingTheOldFileUntouched() throws {

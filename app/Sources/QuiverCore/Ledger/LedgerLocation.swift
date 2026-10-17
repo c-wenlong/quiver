@@ -14,32 +14,36 @@ public enum LedgerLocation {
 
     /// Moves a ledger left in `legacy` into `directory`, then returns the
     /// directory to open. When `directory` has a ledger already it wins and
-    /// the legacy one is left alone. When the move fails the legacy ledger
-    /// is opened where it is, untouched, and the move is tried again at the
-    /// next launch: an empty ledger in `directory` would hide its history
-    /// and stop every later try.
+    /// the legacy one is left alone. When the move fails, or another Quiver
+    /// still has the legacy ledger open, the legacy ledger is opened where
+    /// it is and the move is tried again at the next launch: an empty
+    /// ledger in `directory` would hide its history and stop every later try.
     public static func prepare(directory: URL, legacy: URL) -> URL {
         let target = directory.appending(path: fileName)
         let source = legacy.appending(path: fileName)
         let files = FileManager.default
-        guard !files.fileExists(atPath: target.path), files.fileExists(atPath: source.path) else {
-            return directory
+        if !files.fileExists(atPath: target.path), files.fileExists(atPath: source.path) {
+            do {
+                try move(source, to: target)
+                log.notice("moved the ledger from \(source.path, privacy: .public) to \(target.path, privacy: .public)")
+            } catch {
+                log.error("couldn't move the ledger, still reading \(source.path, privacy: .public): \(error)")
+                return legacy
+            }
         }
-        do {
-            try move(source, to: target)
-            log.notice("moved the ledger from \(source.path, privacy: .public) to \(target.path, privacy: .public)")
-            return directory
-        } catch {
-            log.error("couldn't move the ledger, still reading \(source.path, privacy: .public): \(error)")
-            return legacy
-        }
+        moveArchives(from: legacy, to: directory)
+        return directory
     }
 
     /// Copies through the backup API rather than moving the files, so rows
     /// still in the WAL come along and a copy that fails halfway leaves the
-    /// source as it was. The copy is checked table by table and renamed
-    /// into place; only then is the source removed. Quiver must not be
-    /// writing the source meanwhile: rows written after the copy are lost.
+    /// source's rows as they were. The copy is checked table by table and
+    /// renamed into place; only then is the source removed.
+    ///
+    /// The source is held in an exclusive lock from before the copy until
+    /// its files are gone, so no other connection can write a row the copy
+    /// misses. Taking the lock fails at once while any other connection has
+    /// it open (an older Quiver still running), and the move waits.
     static func move(_ source: URL, to target: URL) throws {
         let files = FileManager.default
         let directory = target.deletingLastPathComponent()
@@ -48,32 +52,48 @@ public enum LedgerLocation {
                                   attributes: [.posixPermissions: 0o700])
         let partial = directory.appending(path: ".\(fileName).moving")
         removeDatabase(at: partial)
+        let from = try SQLiteDatabase(url: source)
+        // In exclusive locking mode the lock outlives the empty transaction
+        // that takes it, and is held until `from` closes.
+        try from.execute("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT")
         do {
-            try copy(source, to: partial, verify: true)
+            try copy(from, to: partial, verify: true)
             try files.moveItem(at: partial, to: target)
         } catch {
             removeDatabase(at: partial)
             throw error
         }
         removeDatabase(at: source)
-        // Schema archives (`ledger.schema-<version>.sqlite`) are history too.
-        let legacy = source.deletingLastPathComponent()
-        for archive in (try? files.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil)) ?? []
-        where archive.lastPathComponent.hasPrefix("ledger.schema-") && archive.pathExtension == "sqlite" {
-            let destination = directory.appending(path: archive.lastPathComponent)
-            if !files.fileExists(atPath: destination.path) { try? files.moveItem(at: archive, to: destination) }
+    }
+
+    /// Schema archives (`ledger.schema-<version>.sqlite`) are history too.
+    /// Checked at every launch, not only with the move, so one that failed
+    /// to move is tried again. A name taken in `directory` gets a `.N`.
+    static func moveArchives(from legacy: URL, to directory: URL) {
+        let files = FileManager.default
+        let archives = ((try? files.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.lastPathComponent.hasPrefix("ledger.schema-") && $0.pathExtension == "sqlite" }
+        for archive in archives {
+            let stem = archive.deletingPathExtension().lastPathComponent
+            var destination = directory.appending(path: archive.lastPathComponent)
+            var copy = 1
+            while files.fileExists(atPath: destination.path) {
+                destination = directory.appending(path: "\(stem).\(copy).sqlite")
+                copy += 1
+            }
+            do {
+                try files.createDirectory(at: directory, withIntermediateDirectories: true,
+                                          attributes: [.posixPermissions: 0o700])
+                try files.moveItem(at: archive, to: destination)
+            } catch {
+                log.error("couldn't move \(archive.path, privacy: .public): \(error)")
+            }
         }
     }
 
-    /// `source` as one self-contained file at `destination`, with no WAL
-    /// beside it. The source is opened read-only, so nothing in it is
-    /// checkpointed or changed. `verify` checks the copy's integrity and
-    /// every table's row count against the source.
-    static func copy(_ source: URL, to destination: URL, verify: Bool) throws {
-        let from = try SQLiteDatabase(readOnly: source)
-        try copy(from, to: destination, verify: verify)
-    }
-
+    /// `from` as one self-contained file at `destination`, with no WAL
+    /// beside it. `verify` checks the copy's integrity and every table's
+    /// row count against the source.
     static func copy(_ from: SQLiteDatabase, to destination: URL, verify: Bool) throws {
         try fill(destination, from: from, verify: verify)
         // The copy's connection is closed now. Leaving WAL mode leaves its

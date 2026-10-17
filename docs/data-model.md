@@ -131,10 +131,13 @@ MAX(ts)           SEARCH events USING COVERING INDEX events_ts
 - Location: builds before the move kept the ledger in `cache/ledger/`.
   `LedgerLocation.prepare` copies it to `data/ledger/` at launch through the
   backup API (rows still in the WAL included), checks every table's row
-  count, renames the copy into place and only then deletes the old files,
-  `ledger.schema-*.sqlite` archives moved along. A failure leaves the old
-  file untouched, opens it where it is, and tries again next launch. When
-  `data/ledger/ledger.sqlite` exists already the old one is never read.
+  count, renames the copy into place and only then deletes the old files.
+  It holds the old file in an exclusive lock throughout, so while another
+  Quiver has it open the move waits for a later launch. A failure leaves the
+  old rows untouched, opens the old file where it is, and tries again next
+  launch. When `data/ledger/ledger.sqlite` exists already the old one is
+  never read. `ledger.schema-*.sqlite` archives move at every launch (a
+  `.N` suffix when the name is taken), so one that failed is retried.
 - Versioning lives in `meta.schema`, not `user_version`. A mismatch rebuilds
   the tables (the ledger is a cache of logs) but first archives the old file
   via `VACUUM INTO` to `ledger.schema-<version>.sqlite` beside it (a `.N`
