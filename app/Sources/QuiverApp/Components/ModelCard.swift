@@ -30,7 +30,8 @@ struct ModelCard: View {
             if let aa = row.aa {
                 VStack(spacing: 8) {
                     line("Intelligence", aa.intelligence.map { "\(Int($0.rounded()))" })
-                    line("Coding", aa.coding.map { "\(Int($0.rounded()))" })
+                    line("Terminal-Bench 4.0", aa.coding.map { "\(Int($0.rounded()))%" })
+                        .help(aa.coding == nil ? AALanguageModel.noCodingScore : "")
                     line("Speed", aa.speed.flatMap { $0 > 0 ? "\(Int($0.rounded())) t/s" : nil })
                     line("Your use", row.tokens > 0
                          ? "\(UsageFormat.tokens(row.tokens)) tokens \(periodLabel)" : nil)

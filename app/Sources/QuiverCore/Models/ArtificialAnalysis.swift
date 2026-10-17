@@ -50,7 +50,17 @@ public struct AALanguageModel: Sendable, Equatable, Identifiable {
 extension AALanguageModel {
     /// The intelligence index AA headlines with.
     public var intelligence: Double? { evaluations["artificial_analysis_intelligence_index"] }
-    public var coding: Double? { evaluations["artificial_analysis_coding_index"] }
+    /// The coding score: AA's Terminal-Bench 4.0 pass rate as 0–100, run on
+    /// every new model. AA's Coding Index (`artificial_analysis_coding_index`)
+    /// is built on Terminal-Bench 2.1, which AA stopped running when
+    /// Intelligence Index v4.3 (September 2026) moved to 4.0, so it is empty
+    /// for every model released since. The versions are not on one scale
+    /// (2.1 scores run about 50 points higher for the same model), so a
+    /// model AA never ran on 4.0 has no score rather than an older one.
+    public var coding: Double? { evaluations[Self.codingEvaluation].map { $0 * 100 } }
+    public static let codingEvaluation = "terminalbench_v4_0"
+    /// The hover note where `coding` is nil.
+    public static let noCodingScore = "Artificial Analysis hasn't run Terminal-Bench 4.0 on this model"
     public var maths: Double? { evaluations["artificial_analysis_math_index"] }
 }
 

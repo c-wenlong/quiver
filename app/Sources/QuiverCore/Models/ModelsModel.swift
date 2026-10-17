@@ -29,7 +29,7 @@ public final class ModelsModel {
         public var chartTitle: String {
             switch self {
             case .intelligence: "Intelligence index"
-            case .coding: "Coding index"
+            case .coding: "Terminal-Bench 4.0"
             case .maths: "Maths index"
             case .speed: "Output speed"
             case .ttft: "Time to first token"
@@ -42,7 +42,7 @@ public final class ModelsModel {
             switch self {
             case .intelligence:
                 "Artificial Analysis Intelligence Index: a blend of their independent evaluations (reasoning, knowledge, coding, agentic tasks)."
-            case .coding: "Artificial Analysis Coding Index."
+            case .coding: "Agentic coding and terminal tasks passed, run by Artificial Analysis. Replaces their Coding Index, which they stopped computing for new models in September 2026."
             case .maths: "Artificial Analysis Maths Index."
             case .speed: "Median output tokens per second across providers."
             case .ttft: "Median seconds to the first token, lower is better."
@@ -62,8 +62,10 @@ public final class ModelsModel {
         /// The value as the bar and table show it.
         public func format(_ value: Double) -> String {
             switch self {
-            case .intelligence, .coding, .maths, .speed:
+            case .intelligence, .maths, .speed:
                 String(Int(value.rounded()))
+            case .coding:
+                "\(Int(value.rounded()))%"
             case .ttft:
                 String(format: "%.2fs", value)
             case .cost:

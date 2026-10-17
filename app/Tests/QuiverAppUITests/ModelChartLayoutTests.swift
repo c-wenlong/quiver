@@ -24,7 +24,7 @@ struct ModelChartLayoutTests {
            "slug": "claude-opus-5-5-high",
            "model_creator": {"id": "anthropic", "name": "Anthropic", "slug": "anthropic"},
            "evaluations": {"artificial_analysis_intelligence_index": 61.0,
-                           "artificial_analysis_coding_index": 59.0},
+                           "terminalbench_v4_0": 0.59},
            "pricing": {"price_1m_blended_3_to_1": 8.75, "price_1m_input_tokens": 5.0,
                        "price_1m_output_tokens": 25.0},
            "median_output_tokens_per_second": 42.0}
@@ -32,7 +32,7 @@ struct ModelChartLayoutTests {
           {"id": "g6a", "name": "GPT-6 Astra", "slug": "gpt-6-astra",
            "model_creator": {"id": "openai", "name": "OpenAI", "slug": "openai"},
            "evaluations": {"artificial_analysis_intelligence_index": 55.0,
-                           "artificial_analysis_coding_index": 54.0},
+                           "terminalbench_v4_0": 0.54},
            "pricing": {"price_1m_blended_3_to_1": 4.0, "price_1m_input_tokens": 3.0,
                        "price_1m_output_tokens": 9.0},
            "median_output_tokens_per_second": 88.0}
