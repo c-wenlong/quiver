@@ -196,8 +196,9 @@ private struct HistoryChart: View {
 
     @ChartContentBuilder private func areas(_ points: [Point]) -> some ChartContent {
         ForEach(points) { point in
+            // Unstacked: each fill follows its own line, not the sum.
             AreaMark(x: .value("Period", point.index), y: .value("Tokens", point.tokens),
-                     series: .value("Series", point.series))
+                     series: .value("Series", point.series), stacking: .unstacked)
                 .interpolationMethod(.monotone)
                 .foregroundStyle(LinearGradient(colors: [point.color.opacity(0.18), .clear],
                                                 startPoint: .top, endPoint: .bottom))
