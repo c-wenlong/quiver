@@ -53,7 +53,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
        {"id": "m1", "name": "Claude Opus 5.5", "slug": "claude-opus-5-5",
         "model_creator": {"id": "c1", "name": "Anthropic", "slug": "anthropic"},
         "evaluations": {"artificial_analysis_intelligence_index": 58.2,
-                        "artificial_analysis_coding_index": 55.1,
+                        "artificial_analysis_coding_index": 71.0,
+                        "terminalbench_v4_0": 0.55,
                         "artificial_analysis_math_index": 40.0,
                         "mmlu_pro": 88.0, "brand_new_bench": 12.5,
                         "dropped_null": null},
@@ -65,7 +66,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         "median_time_to_first_answer_token": 1.9},
        {"id": "m2", "name": "GPT-6 Astra", "slug": "gpt-6-astra",
         "model_creator": {"id": "c2", "name": "OpenAI", "slug": "openai"},
-        "evaluations": {"artificial_analysis_intelligence_index": 55.9},
+        "evaluations": {"artificial_analysis_intelligence_index": 55.9,
+                        "artificial_analysis_coding_index": 60.0, "terminalbench_v2_1": 0.88},
         "pricing": {"price_1m_blended_3_to_1": 8.0},
         "median_output_tokens_per_second": 130.0}
      ]}
@@ -80,7 +82,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(first.creatorName == "Anthropic")
         #expect(first.creatorSlug == "anthropic")
         #expect(first.intelligence == 58.2)
-        #expect(first.coding == 55.1)
+        // Coding is Terminal-Bench 4.0 as a percentage, not the stale index.
+        #expect(abs((first.coding ?? 0) - 55) < 1e-9)
         #expect(first.maths == 40.0)
         // AA adds benchmarks; the dict must keep them.
         #expect(first.evaluations["brand_new_bench"] == 12.5)
@@ -94,6 +97,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(first.timeToFirstAnswer == 1.9)
         // Missing sections leave nils, not crashes.
         let second = models[1]
+        // Only the old index and Terminal-Bench 2.1: no coding score, since
+        // 2.1 is not on 4.0's scale.
         #expect(second.coding == nil)
         #expect(second.priceInput == nil)
         #expect(second.timeToFirstToken == nil)
@@ -467,7 +472,7 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                        coding: Double? = nil, price: Double? = nil) -> [String: Any] {
         var evals: [String: Any] = [:]
         if let intelligence { evals["artificial_analysis_intelligence_index"] = intelligence }
-        if let coding { evals["artificial_analysis_coding_index"] = coding }
+        if let coding { evals[AALanguageModel.codingEvaluation] = coding / 100 }
         return ["id": id, "name": name, "slug": slug,
                 "model_creator": ["id": creator, "name": creator, "slug": creator],
                 "evaluations": evals,

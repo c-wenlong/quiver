@@ -539,7 +539,8 @@ struct TableCard: View {
             Text("Ran in").frame(width: columns.ranIn, alignment: .leading)
             Text("Provider").frame(width: columns.provider, alignment: .leading)
             Text("Intelligence").frame(width: columns.intelligence, alignment: .trailing)
-            Text("Coding").frame(width: columns.coding, alignment: .trailing)
+            Text("Terminal-Bench").frame(width: columns.coding, alignment: .trailing)
+                .help("Terminal-Bench 4.0: agentic coding and terminal tasks passed, run by Artificial Analysis")
             Text("Speed").frame(width: columns.speed, alignment: .trailing)
             // The picked metric shows when it has no column of its own.
             if model.showsExtraMetric {
@@ -572,7 +573,7 @@ struct TableColumns: Equatable {
     static let ranIn = (min: 56.0, weight: 6.0)
     static let provider = (min: 78.0, weight: 9.0)
     static let intelligence = (min: 72.0, weight: 8.0)
-    static let coding = (min: 50.0, weight: 7.0)
+    static let coding = (min: 100.0, weight: 7.0)
     static let speed = (min: 64.0, weight: 8.0)
     static let extra = (min: 56.0, weight: 7.0)
     static let price = (min: 150.0, weight: 12.0)
@@ -640,7 +641,8 @@ private struct TableRow: View {
                 .lineLimit(1)
                 .frame(width: columns.provider, alignment: .leading)
             metric(row.aa?.intelligence).frame(width: columns.intelligence, alignment: .trailing)
-            metric(row.aa?.coding).frame(width: columns.coding, alignment: .trailing)
+            metric(row.aa?.coding, unit: "%", missing: AALanguageModel.noCodingScore)
+                .frame(width: columns.coding, alignment: .trailing)
             metric(row.aa?.speed, unit: "t/s").frame(width: columns.speed, alignment: .trailing)
             if model.showsExtraMetric {
                 Text(row.value.map(model.metric.format) ?? "—")
@@ -659,8 +661,10 @@ private struct TableRow: View {
         .padding(.vertical, 8)
     }
 
-    /// A figure, or "—" when Artificial Analysis has none.
-    @ViewBuilder private func metric(_ value: Double?, unit: String? = nil) -> some View {
+    /// A figure, or "—" when Artificial Analysis has none, with `missing`
+    /// as the dash's hover note.
+    @ViewBuilder private func metric(_ value: Double?, unit: String? = nil,
+                                     missing: String? = nil) -> some View {
         if let value {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text("\(Int(value.rounded()))")
@@ -671,6 +675,7 @@ private struct TableRow: View {
             }
         } else {
             Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
+                .help(missing ?? "")
         }
     }
 }
