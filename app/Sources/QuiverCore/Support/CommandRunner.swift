@@ -80,21 +80,19 @@ public struct ProcessRunner: CommandRunning {
                 }
                 group.enter()
                 process.terminationHandler = { _ in group.leave() }
-                let launched: Bool
-                do {
-                    launched = try gate.launch()
-                } catch {
-                    // Close our write ends so the readers see EOF and finish.
+                // No child started: close our write ends so the readers see
+                // EOF and finish, and leave the exit entry the termination
+                // handler will never leave, so the group does not leak.
+                func abandon(_ error: any Error) {
+                    group.leave()
                     try? out.fileHandleForWriting.close()
                     try? err.fileHandleForWriting.close()
-                    continuation.resume(throwing: SweError.notInstalled(executable))
-                    return
+                    continuation.resume(throwing: error)
                 }
-                guard launched else {
-                    try? out.fileHandleForWriting.close()
-                    try? err.fileHandleForWriting.close()
-                    continuation.resume(throwing: CancellationError())
-                    return
+                do {
+                    guard try gate.launch() else { return abandon(CancellationError()) }
+                } catch {
+                    return abandon(SweError.notInstalled(executable))
                 }
                 group.notify(queue: .global()) {
                     continuation.resume(returning: CommandResult(
