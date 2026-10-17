@@ -1,82 +1,170 @@
 import Foundation
 
-/// Maps a model name the logs carry (`claude-opus-5-5-high-fast`,
-/// `openai/gpt-6.1-sol@20261003`) to an Artificial Analysis model. Both
-/// sides normalize the same way before comparing: lowercase, provider
-/// prefix and snapshot date off, dots to dashes, `-fast` peeled into a
-/// mode flag, and a trailing effort word (`-high`, `(max)`,
-/// `(Max, Default Fallback)`) pulled out.
+/// Maps a model name the logs carry (`claude-opus-5-thinking-high-fast`,
+/// `cursor-grok-4.6-high-fast`, `openai/gpt-6.1-sol@20261003`) to an
+/// Artificial Analysis model.
+///
+/// Both sides parse the same way. A name is a family (the vendor and
+/// model words plus the version number) followed by optional run
+/// qualifiers: an effort (`high`, `(max)`), a mode (`thinking`,
+/// `reasoning`, `(Auto)`), fast inference (`-fast`), and release notes
+/// (`preview`, `(Sep '25)`, a snapshot date). The qualifiers are pulled
+/// out and the family is compared as a key, sorted words plus ordered
+/// numbers, so `claude-4.5-sonnet` and `claude-sonnet-4-5` meet.
+///
+/// A mode word can also be part of a model's name: Kimi K2 Thinking,
+/// Sonar Reasoning and Grok 4 Fast are models of their own. So an AA
+/// name keeps those words, and a logged name tries them first
+/// (`kimi-k2-thinking`, `grok-4-fast`) before falling back to the family
+/// without them (`claude-opus-5-thinking-high-fast` is Claude Opus 5).
 ///
 /// A logged name resolves to the foundation model, not to the effort or
-/// mode a harness ran it at: `claude-opus-5-5-high-fast` is Claude Opus
-/// 5.5, scored and priced as AA's headline entry for it (the one whose
-/// slug carries no effort, `claude-opus-5-5`). The effort stays on the
-/// row as its qualifier.
+/// mode a harness ran it at: `claude-opus-5-thinking-high-fast` is Claude
+/// Opus 5, scored and priced as AA's headline entry for it. The effort and
+/// mode stay on the row as its qualifier.
 public struct ModelMatcher: Sendable {
-    /// A name's comparable shape: the base model plus the qualifiers that
-    /// pick between variants of it.
+    /// A name's comparable shape: the family plus the qualifiers that pick
+    /// between variants of it.
     public struct Parsed: Sendable, Equatable {
+        /// The name in reading order without its run qualifiers but with
+        /// any mode word inside it, dash-joined: "claude-opus-5-thinking".
+        /// The key manual links are saved under.
         public var base: String
         /// minimal|low|medium|high|xhigh|max, when the name said one.
         public var effort: String?
         /// The name ended `-fast`, which AA models never spell out.
         public var fast: Bool
+        /// The name said thinking or reasoning.
+        public var thinking: Bool = false
+        /// A preview or dated release: a family's stable entry beats it.
+        public var prerelease: Bool = false
+
+        /// The name as a model of its own: `base` plus "fast" when it
+        /// ended so. What an AA entry groups by.
+        public var family: String {
+            ModelMatcher.familyKey(base.split(separator: "-").map(String.init) + (fast ? ["fast"] : []))
+        }
+
+        /// The family without the fast-run suffix: a logged
+        /// `kimi-k2-thinking-fast` is Kimi K2 Thinking run fast.
+        public var slowFamily: String {
+            ModelMatcher.familyKey(base.split(separator: "-").map(String.init))
+        }
+
+        /// The family with every mode word dropped: what a logged name
+        /// falls back to when no model carries those words.
+        public var looseFamily: String {
+            ModelMatcher.familyKey(base.split(separator: "-").map(String.init)
+                .filter { !ModelMatcher.modeWords.contains($0) && $0 != "non" })
+        }
+    }
+
+    /// What two names must share to be one model: the words sorted, the
+    /// numbers in order. Word order differs between vendors
+    /// (`claude-4.5-sonnet`, `claude-sonnet-4-5`); version order never does.
+    static func familyKey(_ tokens: [String]) -> String {
+        let words = tokens.filter { !$0.allSatisfy(\.isNumber) }.sorted()
+        let numbers = tokens.filter { $0.allSatisfy(\.isNumber) }
+        return words.joined(separator: "-") + "|" + numbers.joined(separator: "-")
     }
 
     public static let efforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
     /// A family with no effort-free slug: which variant stands for it.
     private static let effortPreference = ["max", "xhigh", "high", "medium", "low", "minimal"]
     /// An AA name's effort tail, case-insensitive: "(max)",
-    /// "(Xhigh, Default Fallback)". "(Non-reasoning, High)" is a model of
-    /// its own and stays in the base.
+    /// "(Xhigh, Default Fallback)".
     private static let effortTail =
         #"(?i)\s*\((minimal|low|medium|high|xhigh|max)(,[^)]*)?\)\s*$"#
+    /// Words that say how a model ran, not which model it is.
+    private static let thinkingWords: Set<String> = ["thinking", "reasoning"]
+    static let modeWords: Set<String> = thinkingWords.union(["adaptive", "auto", "latest"])
+    /// Harness names some tools put in front of the model's own name.
+    private static let harnessPrefixes: Set<String> = ["cursor", "windsurf"]
+    private static let months: Set<String> = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ]
 
-    /// Splits a logged or AA-listed name into base, effort and fast flag.
+    /// Splits a logged or AA-listed name into its family and qualifiers.
     public static func parse(_ name: String) -> Parsed {
-        var base = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // A parenthesised qualifier: "Claude Opus 5.5 (max)", or with a
-        // note after the effort, "(Max, Default Fallback)".
+        var text = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var effort: String?
-        if let range = base.range(of: effortTail, options: .regularExpression) {
-            let tail = base[range].drop { $0 != "(" }.dropFirst()
+        var thinking = false
+        var prerelease = false
+        // The effort tail: "Claude Opus 5.5 (max)", or with a note after
+        // the effort, "(Max, Default Fallback)".
+        if let range = text.range(of: effortTail, options: .regularExpression) {
+            let tail = text[range].drop { $0 != "(" }.dropFirst()
             effort = String(tail.prefix { $0.isLetter })
-            base.removeSubrange(range)
-            base = base.trimmingCharacters(in: .whitespaces)
+            text.removeSubrange(range)
         }
         // A provider prefix: "openai/gpt-6.1-sol".
-        if let slash = base.lastIndex(of: "/") {
-            base = String(base[base.index(after: slash)...])
+        if let slash = text.lastIndex(of: "/") {
+            text = String(text[text.index(after: slash)...])
         }
-        // Modes and snapshot dates can stack in any order
-        // ("model-max@20261003-fast"), so strip each until nothing moves.
+        // Other bracketed notes: a mode ("(Auto)", "(Reasoning)",
+        // "(Non-reasoning, High)") or a release ("(Sep '25)") goes; any
+        // other note is part of the name and stays as words.
+        while let range = text.range(of: #"\(([^()]*)\)"#, options: .regularExpression) {
+            let words = tokens(String(text[range].dropFirst().dropLast()))
+            if words.contains(where: months.contains) {
+                prerelease = true
+            } else if words.allSatisfy({ modeWords.contains($0) || efforts.contains($0) || $0 == "non" }) {
+                if words.contains(where: thinkingWords.contains), !words.contains("non") { thinking = true }
+            } else {
+                text.replaceSubrange(range, with: " " + words.joined(separator: " ") + " ")
+                continue
+            }
+            text.replaceSubrange(range, with: " ")
+        }
+        text = text.trimmingCharacters(in: .whitespaces)
+        // Fast, effort and snapshot dates trail the family and stack in
+        // any order ("model-max@20261003-fast"): strip until nothing moves.
         var fast = false
         var changed = true
         while changed {
             changed = false
-            if let range = base.range(of: #"-fast$"#, options: .regularExpression) {
+            if let range = text.range(of: #"[-\s]fast$"#, options: .regularExpression) {
                 fast = true
-                base.removeSubrange(range)
+                text.removeSubrange(range)
                 changed = true
             }
             if effort == nil,
-               let range = base.range(of: #"-(minimal|low|medium|high|xhigh|max)$"#,
+               let range = text.range(of: #"[-\s](minimal|low|medium|high|xhigh|max)$"#,
                                       options: .regularExpression) {
-                effort = String(base[range].dropFirst())
-                base.removeSubrange(range)
+                effort = String(text[range].dropFirst())
+                text.removeSubrange(range)
                 changed = true
             }
             // Snapshot dates: "@20251001", "-2025-10-01", "-20251001".
             for pattern in [#"@\d{8}$"#, #"-\d{4}-\d{2}-\d{2}$"#, #"-\d{8}$"#] {
-                if let range = base.range(of: pattern, options: .regularExpression) {
-                    base.removeSubrange(range)
+                if let range = text.range(of: pattern, options: .regularExpression) {
+                    text.removeSubrange(range)
                     changed = true
                 }
             }
         }
-        base = base.replacingOccurrences(of: ".", with: "-")
-            .replacingOccurrences(of: " ", with: "-")
-        return Parsed(base: base, effort: effort, fast: fast)
+        // Words inside the name: "preview" is a release note and goes;
+        // a mode word ("claude-opus-5-thinking") stays in `base` and
+        // only `looseFamily` drops it.
+        var words = tokens(text)
+        for (index, word) in words.enumerated()
+        where thinkingWords.contains(word) && (index == 0 || words[index - 1] != "non") {
+            thinking = true
+        }
+        if words.contains("preview") { prerelease = true }
+        words.removeAll { $0 == "preview" }
+        if words.count > 1, let first = words.first, harnessPrefixes.contains(first) {
+            words.removeFirst()
+        }
+        return Parsed(base: words.joined(separator: "-"), effort: effort, fast: fast,
+                      thinking: thinking, prerelease: prerelease)
+    }
+
+    /// Lowercase alphanumeric runs: "Gemini 2.5 Flash-Lite" is gemini, 2,
+    /// 5, flash, lite. "+" is a word ("Command A+" is not Command A).
+    private static func tokens(_ text: String) -> [String] {
+        text.lowercased().replacingOccurrences(of: "+", with: " plus ")
+            .split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
 
     /// What an AA entry's name parses to; the slug's trailing token is a
@@ -107,18 +195,64 @@ public struct ModelMatcher: Sendable {
     }
 
     /// The AA model `logged` names, or nil: the headline entry of the
-    /// family a manual link points into, else of the family whose base
-    /// matches. A link saved against "Claude Opus 5.5 (High)" lands on
+    /// family a manual link points into, else of the family `logged`
+    /// parses to. A link saved against "Claude Opus 5.5 (High)" lands on
     /// the same Opus 5.5 entry the leaderboard shows.
     public static func match(_ logged: String, in models: [AALanguageModel],
                              links: [String: String] = [:]) -> AALanguageModel? {
         let parsed = parse(logged)
-        if let linked = links[parsed.base],
+        if let linked = links[parsed.base] ?? links[legacyKey(logged)],
            let model = models.first(where: { $0.id == linked }) {
-            let base = parseAA(model).base
-            return headline(of: models.filter { parseAA($0).base == base }) ?? model
+            let family = parseAA(model).family
+            return headline(of: models.filter { parseAA($0).family == family }) ?? model
         }
-        return headline(of: models.filter { parseAA($0).base == parsed.base })
+        guard !parsed.base.isEmpty else { return nil }
+        let families = models.map { parseAA($0).family }
+        // Most specific first: as named, then without the fast-run
+        // suffix, then without any mode word.
+        for key in [parsed.family, parsed.slowFamily, parsed.looseFamily] {
+            let hits = zip(models, families).filter { $0.1 == key }.map(\.0)
+            if !hits.isEmpty { return headline(of: hits) }
+        }
+        return nil
+    }
+
+    /// The key links were saved under before names parsed into families:
+    /// effort tail, provider prefix, then trailing fast/effort/date off,
+    /// dots and spaces to dashes. Read as a fallback so those links hold.
+    static func legacyKey(_ name: String) -> String {
+        var base = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var effort = false
+        if let range = base.range(of: effortTail, options: .regularExpression) {
+            effort = true
+            base.removeSubrange(range)
+            base = base.trimmingCharacters(in: .whitespaces)
+        }
+        if let slash = base.lastIndex(of: "/") {
+            base = String(base[base.index(after: slash)...])
+        }
+        var changed = true
+        while changed {
+            changed = false
+            if let range = base.range(of: #"-fast$"#, options: .regularExpression) {
+                base.removeSubrange(range)
+                changed = true
+            }
+            if !effort,
+               let range = base.range(of: #"-(minimal|low|medium|high|xhigh|max)$"#,
+                                      options: .regularExpression) {
+                effort = true
+                base.removeSubrange(range)
+                changed = true
+            }
+            for pattern in [#"@\d{8}$"#, #"-\d{4}-\d{2}-\d{2}$"#, #"-\d{8}$"#] {
+                if let range = base.range(of: pattern, options: .regularExpression) {
+                    base.removeSubrange(range)
+                    changed = true
+                }
+            }
+        }
+        return base.replacingOccurrences(of: ".", with: "-").replacingOccurrences(of: " ", with: "-")
     }
 
     /// One entry per foundation model, in the order each first appears:
@@ -127,25 +261,31 @@ public struct ModelMatcher: Sendable {
         var order: [String] = []
         var families: [String: [AALanguageModel]] = [:]
         for model in models {
-            let base = parseAA(model).base
-            if families[base] == nil { order.append(base) }
-            families[base, default: []].append(model)
+            let family = parseAA(model).family
+            if families[family] == nil { order.append(family) }
+            families[family, default: []].append(model)
         }
         return order.compactMap { families[$0].flatMap(headline) }
     }
 
-    /// The entry AA headlines a family with: the slug with no effort
-    /// suffix (`claude-opus-5-5`, AA's own default run), else the highest
-    /// effort listed. Ties take the highest intelligence index.
+    /// The entry AA headlines a family with: a stable release before a
+    /// preview or dated one; within that, the slug with no effort suffix
+    /// (`claude-opus-5-5`, AA's own default run), else the highest effort
+    /// listed. Ties, and a reasoning run against a non-reasoning one,
+    /// take the highest intelligence index.
     private static func headline(of family: [AALanguageModel]) -> AALanguageModel? {
         func best(_ pool: [AALanguageModel]) -> AALanguageModel? {
             pool.max { ($0.intelligence ?? 0) < ($1.intelligence ?? 0) }
         }
-        if let plain = best(family.filter { !slugHasEffort($0) }) { return plain }
-        for wanted in effortPreference {
-            if let hit = best(family.filter { parseAA($0).effort == wanted }) { return hit }
+        let stable = family.filter { !parseAA($0).prerelease }
+        for pool in [stable, family] where !pool.isEmpty {
+            if let plain = best(pool.filter { !slugHasEffort($0) }) { return plain }
+            for wanted in effortPreference {
+                if let hit = best(pool.filter { parseAA($0).effort == wanted }) { return hit }
+            }
+            return best(pool)
         }
-        return best(family)
+        return nil
     }
 
     private static func slugHasEffort(_ model: AALanguageModel) -> Bool {
@@ -154,11 +294,21 @@ public struct ModelMatcher: Sendable {
     }
 
     /// The foundation model's name: "Claude Opus 5.5" for "Claude Opus
-    /// 5.5 (Max, Default Fallback)". Other parentheses stay.
+    /// 5.5 (Max, Default Fallback)", "Claude Opus 4.5" for "Claude Opus
+    /// 4.5 (Reasoning)". A note that names the model ("Grok 2 (Dec '24)")
+    /// stays.
     public static func displayName(_ model: AALanguageModel) -> String {
-        guard let range = model.name.range(of: effortTail, options: .regularExpression)
-        else { return model.name }
-        return String(model.name[..<range.lowerBound])
+        var name = model.name
+        if let range = name.range(of: effortTail, options: .regularExpression) {
+            name = String(name[..<range.lowerBound])
+        }
+        while let range = name.range(of: #"\s*\(([^()]*)\)\s*$"#, options: .regularExpression) {
+            let words = tokens(String(name[range]))
+            guard words.allSatisfy({ modeWords.contains($0) || efforts.contains($0) || $0 == "non" })
+            else { break }
+            name = String(name[..<range.lowerBound])
+        }
+        return name
     }
 }
 

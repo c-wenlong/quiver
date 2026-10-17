@@ -252,9 +252,114 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(ModelMatcher.headlines(in: models).map(\.slug) == ["claude-opus-5-5", "gpt-6-astra"])
     }
 
-    @Test func displayNameDropsOnlyTheEffortTail() {
+    @Test func displayNameDropsEffortAndModeTailsButKeepsNamingNotes() {
         #expect(ModelMatcher.displayName(opusFamily[0]) == "Claude Opus 5.5")
-        #expect(ModelMatcher.displayName(aa("GPT-6 Sol (Non-reasoning)", slug: "x")) == "GPT-6 Sol (Non-reasoning)")
+        // Reasoning and non-reasoning runs are one family now.
+        #expect(ModelMatcher.displayName(aa("GPT-6 Sol (Non-reasoning)", slug: "x")) == "GPT-6 Sol")
+        #expect(ModelMatcher.displayName(aa("Claude Opus 4.7 (Non-reasoning, High)", slug: "x")) == "Claude Opus 4.7")
+        #expect(ModelMatcher.displayName(aa("Claude 4.5 Sonnet (Reasoning)", slug: "x")) == "Claude 4.5 Sonnet")
+        // A release note names which model it is.
+        #expect(ModelMatcher.displayName(aa("Grok 2 (Dec '24)", slug: "x")) == "Grok 2 (Dec '24)")
+    }
+
+    /// The shapes Devin, Cursor and Grok Bot log, against AA's names for
+    /// the same models (from the real lists, 2026-10).
+    private var harnessNamedModels: [AALanguageModel] {
+        [aa("Claude Opus 5 (Max)", slug: "claude-opus-5", intelligence: 55),
+         aa("Claude Opus 5 (High)", slug: "claude-opus-5-high", intelligence: 52),
+         aa("Claude 4.5 Sonnet (Reasoning)", slug: "claude-4-5-sonnet-thinking", intelligence: 43),
+         aa("Claude 4.5 Sonnet (Non-reasoning)", slug: "claude-4-5-sonnet", intelligence: 37),
+         aa("Claude 4.5 Haiku (Reasoning)", slug: "claude-4-5-haiku-reasoning", intelligence: 35),
+         aa("Grok 4.5 (High)", slug: "grok-4-5", creator: "x-ai"),
+         aa("Grok 4.6 (High)", slug: "grok-4-6", creator: "x-ai"),
+         aa("Grok 4.7 (Xhigh)", slug: "grok-4-7", creator: "x-ai"),
+         aa("Grok 4.7 (High)", slug: "grok-4-7-high", creator: "x-ai"),
+         aa("Gemini 2.5 Flash (Reasoning)", slug: "gemini-2-5-flash-reasoning", creator: "google", intelligence: 27),
+         aa("Gemini 2.5 Flash (Non-reasoning)", slug: "gemini-2-5-flash", creator: "google", intelligence: 21),
+         aa("Gemini 2.5 Flash Preview (Sep '25) (Reasoning)", slug: "gemini-2-5-flash-preview-09-2025-reasoning",
+            creator: "google", intelligence: 30),
+         aa("Gemini 3.1 Pro Preview", slug: "gemini-3-1-pro-preview", creator: "google")]
+    }
+
+    @Test func thinkingFastHarnessPrefixesAndNotesStillFindTheFamily() {
+        let expected: [String: String] = [
+            "claude-opus-5-thinking-high-fast": "claude-opus-5",
+            "claude-opus-5-thinking-high": "claude-opus-5",
+            "claude-4.5-sonnet": "claude-4-5-sonnet-thinking",
+            "claude-haiku-4-5-20251001": "claude-4-5-haiku-reasoning",
+            "cursor-grok-4.5-high": "grok-4-5",
+            "cursor-grok-4.5-high-fast": "grok-4-5",
+            "cursor-grok-4.6-high-fast": "grok-4-6",
+            "grok-4.7-high (Auto)": "grok-4-7",
+            "Grok 4.6 (Auto)": "grok-4-6",
+            // The stable release, not the higher-scoring preview.
+            "gemini-2.5-flash": "gemini-2-5-flash-reasoning",
+            // Only a preview exists, so the preview it is.
+            "gemini-3.1-pro": "gemini-3-1-pro-preview",
+        ]
+        for (logged, slug) in expected {
+            #expect(ModelMatcher.match(logged, in: harnessNamedModels)?.slug == slug, "\(logged)")
+        }
+        #expect(ModelMatcher.headlines(in: harnessNamedModels).map(\.slug)
+                == ["claude-opus-5", "claude-4-5-sonnet-thinking", "claude-4-5-haiku-reasoning",
+                    "grok-4-5", "grok-4-6", "grok-4-7", "gemini-2-5-flash-reasoning", "gemini-3-1-pro-preview"])
+    }
+
+    @Test func aModeWordThatNamesAModelKeepsItApart() {
+        let models = [aa("Kimi K2", slug: "kimi-k2", creator: "moonshot"),
+                      aa("Kimi K2 Thinking", slug: "kimi-k2-thinking", creator: "moonshot"),
+                      aa("Grok 4", slug: "grok-4", creator: "x-ai"),
+                      aa("Grok 4 Fast (Reasoning)", slug: "grok-4-fast-reasoning", creator: "x-ai"),
+                      aa("Sonar", slug: "sonar", creator: "perplexity"),
+                      aa("Sonar Reasoning", slug: "sonar-reasoning", creator: "perplexity"),
+                      aa("Command A", slug: "command-a", creator: "cohere"),
+                      aa("Command A+", slug: "command-a-plus", creator: "cohere")]
+        #expect(ModelMatcher.headlines(in: models).count == 8)
+        #expect(ModelMatcher.match("kimi-k2-thinking", in: models)?.slug == "kimi-k2-thinking")
+        #expect(ModelMatcher.match("kimi-k2", in: models)?.slug == "kimi-k2")
+        #expect(ModelMatcher.match("grok-4-fast", in: models)?.slug == "grok-4-fast-reasoning")
+        #expect(ModelMatcher.match("grok-4", in: models)?.slug == "grok-4")
+        #expect(ModelMatcher.match("sonar-reasoning", in: models)?.slug == "sonar-reasoning")
+        #expect(ModelMatcher.match("command-a+", in: models)?.slug == "command-a-plus")
+        // Run fast, a model named for its mode is still that model.
+        #expect(ModelMatcher.match("kimi-k2-thinking-fast", in: models)?.slug == "kimi-k2-thinking")
+        #expect(ModelMatcher.match("sonar-reasoning-fast", in: models)?.slug == "sonar-reasoning")
+    }
+
+    @Test func linksSavedUnderTheOldKeyStillHold() {
+        let models = [aa("Grok 4.6 (High)", slug: "grok-4-6", creator: "x-ai"),
+                      aa("My Grok", slug: "my-grok", creator: "x-ai")]
+        // Before families, `cursor-grok-4.6-high-fast` saved under
+        // "cursor-grok-4-6" and `grok-4.7-high (Auto)` under its whole name.
+        #expect(ModelMatcher.legacyKey("cursor-grok-4.6-high-fast") == "cursor-grok-4-6")
+        #expect(ModelMatcher.legacyKey("grok-4.7-high (Auto)") == "grok-4-7-high-(auto)")
+        #expect(ModelMatcher.legacyKey("openai/gpt-6.1-sol-max@20261003-fast") == "gpt-6-1-sol")
+        #expect(ModelMatcher.match("cursor-grok-4.6-high-fast", in: models,
+                                   links: ["cursor-grok-4-6": "my-grok"])?.slug == "my-grok")
+        #expect(ModelMatcher.match("grok-4.7-high (Auto)", in: models,
+                                   links: ["grok-4-7-high-(auto)": "my-grok"])?.slug == "my-grok")
+        // A link under the new key wins over one under the old.
+        #expect(ModelMatcher.match("cursor-grok-4.6-high-fast", in: models,
+                                   links: ["grok-4-6": "grok-4-6", "cursor-grok-4-6": "my-grok"])?.slug
+                == "grok-4-6")
+    }
+
+    @Test func parseSeparatesTheFamilyFromHowItRan() {
+        let parsed = ModelMatcher.parse("claude-opus-5-thinking-high-fast")
+        // `base` keeps the mode word, so links saved before still hit.
+        #expect(parsed.base == "claude-opus-5-thinking")
+        #expect(parsed.effort == "high")
+        #expect(parsed.fast)
+        #expect(parsed.thinking)
+        #expect(parsed.looseFamily == ModelMatcher.parse("Claude Opus 5 (Max)").family)
+        #expect(ModelMatcher.parse("claude-4.5-sonnet").family == ModelMatcher.parse("claude-sonnet-4-5").family)
+        #expect(ModelMatcher.parse("claude-opus-5").family != ModelMatcher.parse("claude-opus-5-5").family)
+        #expect(ModelMatcher.parse("cursor-grok-4.6-high-fast").base == "grok-4-6")
+        #expect(ModelMatcher.parse("Gemini 3.1 Pro Preview").prerelease)
+        #expect(ModelMatcher.parse("Gemini 2.5 Pro Preview (Mar' 25)").prerelease)
+        #expect(!ModelMatcher.parse("Claude 4.5 Sonnet (Non-reasoning)").thinking)
+        // A bare harness word is a name, not a prefix.
+        #expect(ModelMatcher.parse("cursor").base == "cursor")
     }
 
     @Test func dotsAndDatesNormalizeTheLoggedName() {
@@ -267,6 +372,9 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(ModelMatcher.match("swe-2-medium", in: models) == nil)
         #expect(ModelMatcher.match("grok-bot-abc123", in: models) == nil)
         #expect(ModelMatcher.match("compactor", in: models) == nil)
+        #expect(ModelMatcher.match("grok-bot-default", in: models) == nil)
+        #expect(ModelMatcher.match("openrouter/free", in: models) == nil)
+        #expect(ModelMatcher.match("(auto)", in: models) == nil)
     }
 
     @Test func aManualLinkBeatsEveryRule() throws {
@@ -686,5 +794,26 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(row.harnesses == ["grok", "cursor"])
         #expect(resolved.tokens == 100)
         #expect(resolved.harnesses == ["grok"])
+    }
+
+    @Test func harnessSpelledNamesFoldIntoTheFoundationRow() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus5", "Claude Opus 5 (Max)", "claude-opus-5", creator: "anthropic", intelligence: 55),
+            entry("grok46", "Grok 4.6 (High)", "grok-4-6", creator: "xai", intelligence: 44),
+        ])
+        let model = makeModel(dir: dir, slices: [
+            slice("claude-opus-5-thinking-high-fast", "devin", tokens: 100),
+            slice("claude-opus-5", "claude", tokens: 40),
+            slice("cursor-grok-4.6-high-fast", "cursor", tokens: 30),
+        ])
+        await model.load()
+        let used = model.rows.filter(\.used)
+        #expect(used.map(\.aa?.id) == ["opus5", "grok46"])
+        #expect(used[0].tokens == 140)
+        // The dominant name's run qualifiers show on the row.
+        #expect(used[0].qualifier == "Thinking · High · Fast")
+        #expect(used[1].qualifier == "High · Fast")
+        #expect(model.unmatched.isEmpty)
     }
 }

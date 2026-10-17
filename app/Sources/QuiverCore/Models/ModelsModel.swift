@@ -319,6 +319,7 @@ public final class ModelsModel {
     /// The effort and mode words a parsed name carried, display-cased.
     private func qualifier(_ parsed: ModelMatcher.Parsed) -> String? {
         var words: [String] = []
+        if parsed.thinking { words.append("Thinking") }
         if let effort = parsed.effort { words.append(effort.prefix(1).uppercased() + effort.dropFirst()) }
         if parsed.fast { words.append("Fast") }
         return words.isEmpty ? nil : words.joined(separator: " · ")
