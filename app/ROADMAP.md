@@ -63,7 +63,7 @@ remembering CLI commands.
 - [x] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
   (`QuiverCore/Ledger`, persisted to `~/.quiver/cache/ledger/ledger.sqlite`)
 - [x] Pricing from a bundled LiteLLM snapshot, refreshed daily before a scan
-  (`PricingStore`, cached at `~/.quiver/cache/pricing/litellm.json`)
+  (`PricingStore`, kept with every past price in `~/.quiver/data/catalog/catalog.sqlite`)
 - [x] Overview page: total tokens and cost, harness split, daily table, heatmap
 - [x] Cost donut in the menu bar panel (Today, Yesterday, 30 days)
 

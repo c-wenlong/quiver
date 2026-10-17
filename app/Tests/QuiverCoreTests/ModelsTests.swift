@@ -134,8 +134,9 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(meta?.rateLimitHeaders?["X-RateLimit-Remaining"] == "999")
         #expect(meta?.fetchedAt == 1_800_000_000)
         for endpoint in AAEndpoint.allCases {
-            #expect(FileManager.default.fileExists(atPath: dir.path(endpoint.fileName).path))
+            #expect(store.raw(endpoint) == self.llmsBody)
         }
+        #expect(store.database.fetches().count == 6)
     }
 
     @Test func aFailedRequestKeepsTheStoredDataAndRecordsTheError() async throws {
@@ -167,25 +168,34 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(store.languageModels() == nil)
         #expect(store.meta()[AAEndpoint.llms.rawValue]?.error == "Unusable response")
         // The other endpoints still saved.
-        #expect(FileManager.default.fileExists(atPath: dir.path(AAEndpoint.textToImage.fileName).path))
+        #expect(store.raw(.textToImage) != nil)
+        #expect(store.raw(.llms) == nil)
     }
 
     @Test func stalenessTurnsOnMissingAndOldDataOnly() throws {
         let dir = try TempDir()
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        var store = ArtificialAnalysisStore(directory: dir.url, now: { now })
+        var store = makeStore(dir, now: now)
         #expect(store.llmsIsStale())
-        // Fresh data is not stale.
-        try llmsBody.write(to: dir.path(AAEndpoint.llms.fileName))
-        store = makeStore(dir, now: now)
-        // Pretend a successful fetch wrote meta 1h ago.
-        try #"{"llms": {"fetchedAt": 1799964000.0, "status": 200}}"#
-            .data(using: .utf8)!
-            .write(to: dir.path("meta.json"))
+        // A good fetch an hour ago is fresh.
+        try store.database.recordAAPayload(.llms, body: llmsBody, at: now.addingTimeInterval(-3_600),
+                                           status: 200, rateLimitHeaders: nil, url: nil)
+        #expect(!store.llmsIsStale())
+        // A failure since does not make it stale or fresh.
+        store.database.recordFailure(source: "aa:llms", url: nil, at: now, status: 429, error: "HTTP 429")
         #expect(!store.llmsIsStale())
         // Eight days later it is.
         store = ArtificialAnalysisStore(directory: dir.url,
                                         now: { now.addingTimeInterval(8 * 86_400) })
+        #expect(store.llmsIsStale())
+    }
+
+    @Test func anUndatedImportIsStale() throws {
+        let dir = try TempDir()
+        // Files from an older build with no meta.json: imported, but stale.
+        try llmsBody.write(to: dir.path(AAEndpoint.llms.fileName))
+        let store = makeStore(dir)
+        #expect(store.languageModels()?.first?.name == "Claude Opus 5.5")
         #expect(store.llmsIsStale())
     }
 }

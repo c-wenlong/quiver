@@ -147,7 +147,8 @@ public struct ScanReport: Sendable, Equatable {
 ///
 /// - `scan(roots:)` reads only what changed since the last scan.
 /// - `totals`, `daily`, `bySession` and `byAccount` price events at query time
-///   with the current `PricingCatalog`.
+///   with the current `PricingCatalog`: names resolve through today's list,
+///   and each event pays the rate its price entry had when it happened.
 public actor Ledger {
     let store: LedgerStore
     private var pricing: PricingCatalog
@@ -466,7 +467,8 @@ public actor Ledger {
     /// bucket never straddles midnight.
     public func daily(in range: DateInterval, calendar: Calendar) -> [DailyUsage] {
         guard let groups = try? store.groups(
-            in: range, by: [.harness, .model], thresholds: pricing.thresholds, bucketSeconds: 900)
+            in: range, by: [.harness, .model], thresholds: pricing.thresholds, bucketSeconds: 900,
+            priceChanges: priceChanges(in: range))
         else { return [] }
         struct Key: Hashable { var day: Date, harness: String, model: String }
         var days: [Key: UsageTotals] = [:]
@@ -504,7 +506,7 @@ public actor Ledger {
     public func bySession(in range: DateInterval, harness: String? = nil) -> [SessionUsage] {
         guard let groups = try? store.groups(
             in: range, by: [.harness, .account, .session, .cwd],
-            thresholds: pricing.thresholds, harness: harness)
+            thresholds: pricing.thresholds, harness: harness, priceChanges: priceChanges(in: range))
         else { return [] }
         struct Key: Hashable { var harness, account, session: String }
         var sessions: [Key: SessionUsage] = [:]
@@ -542,7 +544,8 @@ public actor Ledger {
     /// queries, for the Pricing page's per-model rows.
     public func byModelHarness(in range: DateInterval) -> [ModelUsage] {
         guard let groups = try? store.groups(
-            in: range, by: [.harness, .model], thresholds: pricing.thresholds)
+            in: range, by: [.harness, .model], thresholds: pricing.thresholds,
+            priceChanges: priceChanges(in: range))
         else { return [] }
         return groups.map { group in
             ModelUsage(model: group.model, harness: group.dimensions[.harness] ?? "",
@@ -576,7 +579,8 @@ public actor Ledger {
     }
 
     private func aggregate(in range: DateInterval, by columns: [LedgerStore.Column]) -> [[String]: UsageTotals] {
-        guard let groups = try? store.groups(in: range, by: columns, thresholds: pricing.thresholds) else {
+        guard let groups = try? store.groups(in: range, by: columns, thresholds: pricing.thresholds,
+                                             priceChanges: priceChanges(in: range)) else {
             return [:]
         }
         var result: [[String]: UsageTotals] = [:]
@@ -585,6 +589,21 @@ public actor Ledger {
             result[key, default: UsageTotals()].add(price(group))
         }
         return result
+    }
+
+    /// The moments inside `range` at which the price entry of any model
+    /// the ledger holds changed. Splitting the query there keeps every
+    /// group inside one price; other entries' changes split nothing.
+    private func priceChanges(in range: DateInterval) -> [Double] {
+        guard pricing.hasHistory, let used = try? store.modelsAndTiers() else { return [] }
+        var entries = Set<String>()
+        for (model, tier) in used {
+            if case .priced(_, let entry, _, _) = pricing.resolve(model: model, tier: tier) {
+                entries.insert(entry)
+            }
+        }
+        let start = range.start.timeIntervalSince1970, end = range.end.timeIntervalSince1970
+        return pricing.priceChanges(for: entries).filter { $0 > start && $0 < end }
     }
 
     private func price(_ group: LedgerStore.PricedGroup) -> UsageTotals {
@@ -604,7 +623,10 @@ public actor Ledger {
         // name wins (`xai/grok-code-fast` is a real entry), then the
         // `-fast` tier suffix, then the free-model check.
         switch pricing.resolve(model: group.model, tier: group.tier ?? "") {
-        case .priced(let rates, _, _, let tier):
+        case .priced(let current, let entry, _, let tier):
+            // A group never spans a price change, so its first event's
+            // time picks the one rate every event in it paid.
+            let rates = pricing.historicalRates(entry: entry, at: group.first.timeIntervalSince1970) ?? current
             let crosses = rates.longContext.map { long in
                 (pricing.thresholds.firstIndex(of: long.threshold) ?? Int.max) < group.thresholdsCrossed
             } ?? false

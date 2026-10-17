@@ -165,31 +165,51 @@ struct Offline: Error {}
         }
     }
 
-    @Test func refreshFetchesThroughTheTransportAndCachesTheResult() async throws {
+    @Test func refreshFetchesThroughTheTransportAndStoresTheResult() async throws {
         let temp = try TempDir()
-        let cache = temp.path("pricing/litellm.json")
+        let database = CatalogDatabase(url: temp.path("catalog.sqlite"))
         let now = utc("2026-10-11T00:00:00Z")
-        let store = PricingStore(cacheFile: cache, transport: StubTransport(data: liteLLM), minimumModels: 1)
+        let store = PricingStore(database: database, transport: StubTransport(data: liteLLM), minimumModels: 1)
         let refreshed = try #require(await store.refreshIfStale(now: now))
         #expect(refreshed.rates(for: "gpt-6.1-sol")?.input == 2e-06)
-        #expect(FileManager.default.fileExists(atPath: cache.path))
+        let fetch = try #require(database.lastSuccess(source: CatalogDatabase.liteLLMSource))
+        #expect(fetch.fetchedAt == now)
+        #expect(fetch.rowCount == 7)
+        #expect(fetch.contentSHA?.count == 64)
 
-        // Within a day the cached copy is used and the network is not asked.
-        let offline = PricingStore(cacheFile: cache, transport: StubTransport(error: Offline()), minimumModels: 1)
+        // Within a day the stored copy is used and the network is not asked.
+        let offline = PricingStore(database: database, transport: StubTransport(error: Offline()), minimumModels: 1)
         #expect(await offline.refreshIfStale(now: now.addingTimeInterval(3_600)) == nil)
         #expect(try offline.load().rates(for: "o3")?.reasoning == 9e-06)
+        #expect(database.fetches().count == 1)
     }
 
     @Test func aFailedOrGarbledRefreshKeepsWhatWasThere() async throws {
         let temp = try TempDir()
-        let cache = temp.path("pricing/litellm.json")
-        let offline = PricingStore(cacheFile: cache, transport: StubTransport(error: Offline()), minimumModels: 1)
+        let database = CatalogDatabase(url: temp.path("catalog.sqlite"))
+        let offline = PricingStore(database: database, transport: StubTransport(error: Offline()), minimumModels: 1)
         #expect(await offline.refreshIfStale(now: Date()) == nil)
-        let garbled = PricingStore(cacheFile: cache, transport: StubTransport(data: Data("<html>".utf8)), minimumModels: 1)
+        let garbled = PricingStore(database: database, transport: StubTransport(data: Data("<html>".utf8)),
+                                   minimumModels: 1)
         #expect(await garbled.refreshIfStale(now: Date()) == nil)
-        #expect(!FileManager.default.fileExists(atPath: cache.path))
-        // With no refreshed copy, load falls back to the bundled snapshot.
+        #expect(database.currentPriceEntries() == nil)
+        // Only the latest failure since the last success is kept.
+        let fetches = database.fetches(source: CatalogDatabase.liteLLMSource)
+        #expect(fetches.count == 1)
+        #expect(fetches.first?.error == "Unusable response")
+        // With no downloaded list, load falls back to the bundled snapshot.
         #expect(try offline.load().rates(for: "claude-opus-5-5") != nil)
+    }
+
+    @Test func anUnchangedListRecordsTheFetchButReportsNothingNew() async throws {
+        let temp = try TempDir()
+        let database = CatalogDatabase(url: temp.path("catalog.sqlite"))
+        let store = PricingStore(database: database, transport: StubTransport(data: liteLLM), minimumModels: 1)
+        let day = utc("2026-10-11T00:00:00Z")
+        #expect(await store.refreshIfStale(now: day) != nil)
+        #expect(await store.refreshIfStale(now: day.addingTimeInterval(2 * 86_400)) == nil)
+        #expect(database.fetches(source: CatalogDatabase.liteLLMSource).count == 2)
+        #expect(database.prices(key: "o3").count == 1)
     }
 }
 
