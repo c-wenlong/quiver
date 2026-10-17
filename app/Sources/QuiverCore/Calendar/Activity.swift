@@ -290,9 +290,24 @@ extension SQLiteDatabase {
         statement.bind([.double(lo), .double(hi), .double(gap)])
         var merged: [ActivityBlock] = []
         var current: ActivityBlock?
+        // The current block's responses per folder: the block takes the
+        // folder most of its responses came from (SessionFolders).
+        var votes: [(cwd: String, events: Int)] = []
+        func vote(_ cwd: String?, _ responses: Int) {
+            guard let cwd, !cwd.isEmpty else { return }
+            if let index = votes.firstIndex(where: { $0.cwd == cwd }) {
+                votes[index].events += responses
+            } else {
+                votes.append((cwd, responses))
+            }
+        }
         func flush() {
-            guard let block = current else { return }
+            guard var block = current else { return }
             current = nil
+            if let cwd = SessionFolders.pick(votes), !block.sessions.isEmpty {
+                block.sessions[0].cwd = cwd
+            }
+            votes = []
             guard block.end >= range.start, block.start < range.end else { return }
             merged.append(block)
         }
@@ -319,11 +334,11 @@ extension SQLiteDatabase {
                     sessionId: piece.sessions.first?.sessionId ?? "",
                     start: min(previous.start, piece.start),
                     end: max(previous.end, piece.end),
-                    responses: previous.responses + piece.responses,
-                    cwd: piece.sessions.first?.cwd ?? previous.sessions.first?.cwd)
+                    responses: previous.responses + piece.responses)
             } else {
                 flush()
             }
+            vote(statement.text(6), Int(statement.int(5)))
             current = piece
         }
         flush()

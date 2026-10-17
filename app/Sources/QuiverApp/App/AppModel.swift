@@ -366,7 +366,14 @@ final class AppModel {
             overviewError = nil
             sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
                                      defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
-                                     snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")))
+                                     snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")),
+                                     // Which desktop session started each Claude session.
+                                     parents: {
+                                         ClaudeDesktopSessions(
+                                             root: ClaudeDesktopSessions.defaultRoot(home: home),
+                                             cacheFile: quiver.appending(path: "cache/claude-desktop-sessions.json"))
+                                             .parents()
+                                     })
             let calendarCache = quiver.appending(path: "cache/calendar")
             let devinCloudDirectory = DevinCloud.resolvedDirectory(home: home)
             let calendarSnapshots = SnapshotFile<CalendarSnapshot>(

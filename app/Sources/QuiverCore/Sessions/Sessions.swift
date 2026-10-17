@@ -190,12 +190,17 @@ public final class SessionsModel {
         /// When the session ran, for a source with no ledger usage to say
         /// it (Devin cloud sessions, from their message times).
         public var span: DateInterval?
+        /// The Claude desktop session that started this one, when the
+        /// desktop app recorded it.
+        public var parent: SessionParent?
 
-        public init(session: SessionInfo, usage: SessionUsage?, id: String? = nil, span: DateInterval? = nil) {
+        public init(session: SessionInfo, usage: SessionUsage?, id: String? = nil, span: DateInterval? = nil,
+                    parent: SessionParent? = nil) {
             self.id = id ?? session.id
             self.session = session
             self.usage = usage
             self.span = span
+            self.parent = parent
         }
 
         /// From the first to the last recorded event, when the ledger has
@@ -280,6 +285,10 @@ public final class SessionsModel {
     private let snapshots: (any SnapshotStoring<SessionSnapshot>)?
     private let maxAge: TimeInterval
     private let listTimeout: Duration
+    /// Claude transcript id to the desktop session that started it, read
+    /// with each listing (ClaudeDesktopSessions).
+    private let readParents: (@Sendable () async -> [String: SessionParent])?
+    private var parents: [String: SessionParent] = [:]
     /// When the list on show was listed and by which swe; nil until one is.
     private var listedAt: Date?
     private var listedFrom: String?
@@ -305,7 +314,9 @@ public final class SessionsModel {
     public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
                 limit: Int = 100_000, snapshots: (any SnapshotStoring<SessionSnapshot>)? = nil, maxAge: TimeInterval = 60,
                 listTimeout: Duration = .seconds(60),
+                parents: (@Sendable () async -> [String: SessionParent])? = nil,
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
+        self.readParents = parents
         self.source = source
         self.ledger = ledger
         self.defaultHomes = defaultHomes
@@ -321,6 +332,13 @@ public final class SessionsModel {
     /// has loaded, so a slow read never replaces a newer one.
     public func restore() async {
         guard listedAt == nil, let snapshot = await snapshots?.load(), listedAt == nil else { return }
+        // A fresh saved list skips the next listing, so parents are read
+        // here too; the reader's cache makes this a few milliseconds.
+        if let readParents {
+            let parents = await readParents()
+            guard listedAt == nil else { return }
+            self.parents = parents
+        }
         let usage = Self.keyed(snapshot.usage)
         listed = snapshot.sessions
         latestUsage = usage
@@ -371,8 +389,11 @@ public final class SessionsModel {
         }
         usageGeneration += 1
         let myUsage = usageGeneration
+        async let readParents = readParents?()
         let (usage, daily) = await readUsage()
+        let parents = await readParents
         guard mine == generation else { return }
+        if let parents { self.parents = parents }
         // A refresh that finished meanwhile read the ledger later; keep
         // its numbers, the model filter's daily rows included.
         let staleRead = myUsage != usageGeneration
@@ -549,6 +570,9 @@ public final class SessionsModel {
         for session in cloud {
             rows.append(Row(session: session.sessionInfo, usage: nil,
                             id: "\(DevinCloud.harness)|\(session.id)", span: session.span))
+        }
+        for index in rows.indices where rows[index].session.harness == "claude" {
+            rows[index].parent = parents[rows[index].session.id]
         }
         return rows.sorted { ($0.session.lastActiveAt, $1.id) > ($1.session.lastActiveAt, $0.id) }
     }
