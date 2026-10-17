@@ -147,6 +147,11 @@ GITIGNORE_BODY = """# Regenerable. Everything else here is worth versioning.
 cache/
 backups/
 
+# The app's usage ledger and its daily backups: one row per model response,
+# with project paths, session ids and account homes. Personal, ~30 MB, and
+# rewritten on every scan, so never versioned.
+data/ledger/
+
 # MCP server checkouts: ~2.7 GB of nested git repos and build output.
 # mcp.json records what they are, so this can be rebuilt from a clone.
 mcp/servers/

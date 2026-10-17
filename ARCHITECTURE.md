@@ -53,6 +53,7 @@ half never mix:
   mcp/servers/       server checkouts, ~2.7 GB of nested repos (gitignored)
   reports/           generated daily and weekly reports
   completions/       generated shell completion scripts
+  data/ledger/       app usage ledger + daily backups          (gitignored)
   cache/             sessions, rate limits, counts             (gitignored)
   backups/           pre-overwrite copies                      (gitignored)
 ```
@@ -82,7 +83,8 @@ does it support plugins, where do its skills live — is a question for
 `tools.json`, `providers.json`, `stars.json`, and the caches are all listed,
 so a machine's actual state can never land in this repo by accident.
 `~/.quiver` carries its own `.gitignore` — written by `swe init` from
-`paths.GITIGNORE_BODY`, and listing `cache/`, `backups/` and `mcp/servers/` —
+`paths.GITIGNORE_BODY`, and listing `cache/`, `backups/`, `data/ledger/` (the
+app's usage ledger: personal and ~30 MB) and `mcp/servers/` —
 plus its own git history, independent of this one. Note what that list does
 *not* cover: `secrets/.api_keys` holds resolved credential values, and it is
 **not** ignored, so an operator versioning `~/.quiver` has to add `secrets/`
