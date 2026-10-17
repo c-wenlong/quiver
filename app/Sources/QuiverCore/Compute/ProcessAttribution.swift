@@ -10,16 +10,12 @@ public struct HarnessMatcher: Sendable, Equatable {
     public var commands: Set<String>
     /// "<home>/.<harness>", e.g. ~/.codex.
     public var homeFolder: String
-    /// The harness's brand colour from swe, "#RRGGBB"; nil when swe has none.
-    public var primaryColor: String?
 
-    public init(harness: String, appPath: String? = nil, commands: Set<String>, homeFolder: String,
-                primaryColor: String? = nil) {
+    public init(harness: String, appPath: String? = nil, commands: Set<String>, homeFolder: String) {
         self.harness = harness
         self.appPath = appPath
         self.commands = commands
         self.homeFolder = homeFolder
-        self.primaryColor = primaryColor
     }
 }
 
