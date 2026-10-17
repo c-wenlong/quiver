@@ -61,7 +61,7 @@ remembering CLI commands.
 
 ### M3. Overview
 - [x] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
-  (`QuiverCore/Ledger`, persisted to `~/.quiver/cache/ledger/ledger.sqlite`)
+  (`QuiverCore/Ledger`, persisted to `~/.quiver/data/ledger/ledger.sqlite`)
 - [x] Pricing from a bundled LiteLLM snapshot, refreshed daily before a scan
   (`PricingStore`, kept with every past price in `~/.quiver/data/catalog/catalog.sqlite`)
 - [x] Overview page: total tokens and cost, harness split, daily table, heatmap

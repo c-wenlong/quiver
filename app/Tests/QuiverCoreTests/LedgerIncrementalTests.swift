@@ -27,7 +27,7 @@ func claudeLine(
             file = home.appendingPathComponent("projects/-p/s1.jsonl")
             try FileManager.default.createDirectory(
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            ledger = try Ledger(cacheDirectory: temp.path("cache"))
+            ledger = try Ledger(directory: temp.path("cache"))
         }
 
         func write(_ text: String) throws { try Data(text.utf8).write(to: file) }
@@ -118,7 +118,7 @@ func claudeLine(
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let text = claudeLine(message: "m1") + claudeLine(message: "big", padding: 5_000) + claudeLine(message: "m3")
         try Data(text.utf8).write(to: file)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), maxLineBytes: 2_000)
+        let ledger = try Ledger(directory: temp.path("cache"), maxLineBytes: 2_000)
         let report = try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
         #expect(report.skippedLines == 1)
         #expect(await ledger.totals(in: allTime).totalTokens == 22)
@@ -132,7 +132,7 @@ func claudeLine(
         try await s.ledger.scan(roots: s.roots)
         #expect(await s.total() == 11)
 
-        let reopened = try Ledger(cacheDirectory: s.temp.path("cache"))
+        let reopened = try Ledger(directory: s.temp.path("cache"))
         #expect(await reopened.totals(in: allTime).totalTokens == 11)
     }
 

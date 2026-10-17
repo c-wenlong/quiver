@@ -73,7 +73,7 @@ import Testing
                              reasoning: 20, cacheRead: 300, cost: 0.01)
             + Self.piMessage(id: "a2", ms: 1759480003000, input: 40, output: 30,
                              reasoning: 0, cacheRead: 0, cost: 0.005))
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(piHomes: [home]))
 
         let events = await ledger.events(in: allTime)
@@ -97,7 +97,7 @@ import Testing
         let home = try piHome(temp, lines:
             Self.piMessage(id: "a1", ms: 1759480002000, input: 10, output: 10,
                            reasoning: 0, cacheRead: 0, cost: 0.001))
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(piHomes: [home]))
         #expect(await ledger.events(in: allTime).count == 1)
 
@@ -125,7 +125,7 @@ import Testing
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":5000,
             "cacheCreationTokens":50,"thinkingTokens":0,"factoryCredits":99
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
 
         let events = await ledger.events(in: allTime)
@@ -150,7 +150,7 @@ import Testing
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
             "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
 
         let file = home.appendingPathComponent("sessions/-Users-x-proj/s1.settings.json")
@@ -174,7 +174,7 @@ import Testing
             "inputTokens":0,"outputTokens":0,"cacheReadTokens":0,
             "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":0
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
         #expect(await ledger.events(in: allTime).isEmpty)
     }
@@ -189,7 +189,7 @@ import Testing
         // A settings file caught mid-rewrite must not abort the scan.
         let broken = home.appendingPathComponent("sessions/-Users-x-proj/s2.settings.json")
         try Data("{\"inclusiveTokenUsage\":".utf8).write(to: broken)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
         #expect(await ledger.events(in: allTime).count == 1)
 
@@ -210,7 +210,7 @@ import Testing
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
             "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
         #expect(await ledger.events(in: allTime).first?.model == "glm-5.2")
 
@@ -235,7 +235,7 @@ import Testing
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
             "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
         #expect(await ledger.events(in: allTime).count == 1)
 
@@ -256,7 +256,7 @@ import Testing
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
             "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
         #expect(await ledger.events(in: allTime).first?.timestamp == utc("2026-10-03T12:00:00Z"))
 
@@ -289,7 +289,7 @@ import Testing
             "inputTokens":300000,"outputTokens":100,"cacheReadTokens":0,
             "cacheCreationTokens":0,"thinkingTokens":0,"factoryCredits":1
             """)
-        let sessionLedger = try Ledger(cacheDirectory: temp.path("cache1"), pricing: pricing)
+        let sessionLedger = try Ledger(directory: temp.path("cache1"), pricing: pricing)
         try await sessionLedger.scan(roots: LedgerRoots(droidHomes: [droid]))
         // Session totals are not one request's prompt: base rates apply.
         #expect(await sessionLedger.totals(in: allTime).costUSD == 300_000 * 2e-06 + 100 * 8e-06)
@@ -304,7 +304,7 @@ import Testing
             "requestId":"r1","message":{"id":"m1","role":"assistant","model":"glm-5.2",\
             "usage":{"input_tokens":300000,"output_tokens":100}}}
             """ + "\n").utf8).write(to: file)
-        let requestLedger = try Ledger(cacheDirectory: temp.path("cache2"), pricing: pricing)
+        let requestLedger = try Ledger(directory: temp.path("cache2"), pricing: pricing)
         try await requestLedger.scan(roots: LedgerRoots(claudeHomes: [claude]))
         #expect(await requestLedger.totals(in: allTime).costUSD == 300_000 * 4e-06 + 100 * 1.6e-05)
     }
@@ -319,7 +319,7 @@ import Testing
             "usage":{"inputTokens":1000,"outputTokens":20,"cacheReadTokens":900,
                      "cacheWriteTokens":5,"totalCost":0.5}
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
 
         let events = await ledger.events(in: allTime)
@@ -342,7 +342,7 @@ import Testing
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
         let event = try #require(await ledger.events(in: allTime).first)
         #expect(event.costUSD == nil)
@@ -354,7 +354,7 @@ import Testing
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0
             """, ended: #""ended_at":null"#)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
         let event = try #require(await ledger.events(in: allTime).first)
         #expect(event.timestamp == utc("2026-10-03T10:00:00Z"))
@@ -366,7 +366,7 @@ import Testing
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0.5
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(clineHomes: [home]))
 
         let file = home.appendingPathComponent("data/sessions/t1_abc/t1_abc.json")
@@ -401,7 +401,7 @@ import Testing
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0.5
             """)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(piHomes: [pi], droidHomes: [droid], clineHomes: [cline]))
 
         #expect(await ledger.events(in: allTime).count == 3)

@@ -19,7 +19,7 @@ func execute(_ sql: String, on url: URL) throws {
         let temp = try TempDir()
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
 
         let events = await ledger.events(in: allTime)
@@ -48,7 +48,7 @@ func execute(_ sql: String, on url: URL) throws {
         let temp = try TempDir()
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
         #expect(await ledger.totals(in: allTime).totalTokens == 1_600 + 8_695)
 
@@ -70,7 +70,7 @@ func execute(_ sql: String, on url: URL) throws {
         let temp = try TempDir()
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: try .bundled())
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: try .bundled())
         try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
 
         let events = await ledger.events(in: allTime)
@@ -95,7 +95,7 @@ func execute(_ sql: String, on url: URL) throws {
         let temp = try TempDir()
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
         #expect(await ledger.events(in: allTime).count == 2)
 
@@ -112,7 +112,7 @@ func execute(_ sql: String, on url: URL) throws {
         let temp = try TempDir()
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
         #expect(await ledger.events(in: allTime).count == 2)
 
@@ -134,7 +134,7 @@ func execute(_ sql: String, on url: URL) throws {
         let temp = try TempDir()
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
         let before = await ledger.events(in: allTime).count
 
@@ -182,7 +182,7 @@ func execute(_ sql: String, on url: URL) throws {
             at: broken.deletingLastPathComponent(), withIntermediateDirectories: true)
         try execute("CREATE TABLE unrelated (id INTEGER)", on: broken)
 
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         let report = try await ledger.scan(roots: LedgerRoots(
             openCodeDatabases: [broken], devinDatabases: [good]))
 
@@ -200,7 +200,7 @@ func execute(_ sql: String, on url: URL) throws {
         let temp = try TempDir()
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
 
         // A second connection holding an exclusive lock makes every cache
         // operation fail, starting at BEGIN IMMEDIATE.

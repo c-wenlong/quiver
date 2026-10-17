@@ -7,7 +7,7 @@ import Testing
         let temp = try TempDir()
         let claude = try temp.copyFixture("claude-home")
         let codex = try temp.copyFixture("codex-home")
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [claude], codexHomes: [codex]))
         return (temp, ledger)
     }

@@ -361,7 +361,12 @@ final class AppModel {
             let pricing = PricingStore(database: catalog,
                                        legacyCacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
                                        overridesFile: quiver.appending(path: "config/pricing.json"))
-            let ledger = try Ledger(cacheDirectory: quiver.appending(path: "cache/ledger"),
+            // Data, not cache: its rows outlive the logs they came from.
+            // Earlier builds kept it in cache/ledger.
+            let ledgerData = quiver.appending(path: "data/ledger")
+            let ledgerDirectory = LedgerLocation.prepare(directory: ledgerData,
+                                                         legacy: quiver.appending(path: "cache/ledger"))
+            let ledger = try Ledger(directory: ledgerDirectory, backups: ledgerData.appending(path: "backups"),
                                     pricing: (try? pricing.load()) ?? .empty)
             self.ledger = ledger
             ledger.setHidesTrivialSessions(hidesTrivial)
@@ -595,6 +600,7 @@ final class AppModel {
     }
 
     private var refreshing: Task<Void, Never>?
+    private var backingUp: Task<Void, Never>?
 
     private var watchers: [Task<Void, Never>] = []
 
@@ -606,6 +612,7 @@ final class AppModel {
         }
         guard watchers.isEmpty else { return }
         if let overview { refreshing = Task { await overview.keepFresh() } }
+        if let ledger, backingUp == nil { backingUp = Task { await ledger.keepBackedUp() } }
         watchers = [
             Task { await accounts.keepFresh() },
             // The last session list shows at once; swe lists again behind it,

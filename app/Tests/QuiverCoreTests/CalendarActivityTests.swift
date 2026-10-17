@@ -121,7 +121,7 @@ import Testing
 
     @Test func theLedgerAnswersThroughTheProtocol() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"), pricing: .empty)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         #expect(try await ledger.activityBlocks(in: day, gap: 60, force: false).isEmpty)
         // The existential the CalendarModel holds works the same way.
         let provider: any ActivityProviding = ledger

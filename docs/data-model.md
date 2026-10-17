@@ -26,6 +26,8 @@ be rebuilt; deleting them loses user state.
 | `accounts/harness-names.json` | app | JSON `{schema, names}` | account names for harness cards, app-owned (renaming in Accounts never writes harness.json) | `HarnessAccountNameStore` | accounts cards, menu bar, widgets |
 | `secrets/.api_keys` | swe | plain text, mode 600 | MCP credential values | `swe mcp` | MCP format writers |
 | `~/.api_keys/` | swe + app | directory of per-provider key files, or one shell-style file | LLM API keys | `swe providers`, app's key editor | provider key lookup, app key checks |
+| `data/ledger/ledger.sqlite` | app | SQLite (WAL) | deduplicated token events, dimension rows, scan cursors. Rows outlive their source logs (Claude Code prunes transcripts after 30 days), so this is the only copy of that history: never delete it to "reset" usage. A schema change archives it first (see below) | `Ledger` scans | Overview, Sessions, Calendar, menu bar, widgets |
+| `data/ledger/backups/ledger-YYYY-MM-DD.sqlite` | app | SQLite, one file each | a copy of the ledger per local day through SQLite's online backup API, newest 7 kept | `Ledger.keepBackedUp` (hourly check) | restore by hand: quit Quiver, copy one over `ledger.sqlite` |
 | `skills/`, `hooks/`, `plugins/`, `AGENTS.md`, `.linkignore` | swe | files and symlinks | shared instruction/skill/hook/plugin trees | `swe init`, `swe skills`, `swe plugins` | the harnesses that link them |
 | `reports/` | swe | markdown + JSON | generated reports, `session-summaries/`, `exclusions.json`, `cursors.json`, `followups.json` | `reports/store.py` (atomic writes, malformed state raises) | `swe report` |
 
@@ -42,7 +44,6 @@ under those names.
 | `cache/session_counts.json` | swe | JSON per window (`"7"`, `"30"`, `"100"`, `"all"`) | session counts + broken parser names | 24h, `SWE_SESSION_COUNTS_TTL`; `invalidate_counts_cache()`; rebuilt on `swe list` |
 | `cache/rate_limits_cache.json` | swe | JSON per provider | last limit reading per provider | 300s, `SWE_RATE_LIMITS_TTL`; stale fallback up to 24h; per-provider `updated_at` |
 | `cache/claude_usage_cache.json` | swe | JSON `{info, retry_at, credential_fingerprint, fetched_at}` | Claude usage endpoint's last reading + 429 cooldown | reading kept up to 24h; cooldown from `Retry-After` |
-| `cache/ledger/ledger.sqlite` | app | SQLite (WAL) | deduplicated token events, dimension rows, scan cursors | **only partly rebuildable:** rows can outlive their source logs (harnesses prune old transcripts), so this may hold the only copy of old history. Don't delete it to "reset" usage; a schema change archives it first (see below) |
 | `cache/app-usage.json` (+ `.lock`) | app | JSON `{version: 1, accounts}` | Claude/Codex usage readings, cooldowns, credential fingerprints, last failure per account (`lastFailure: {at, status}`) (no secrets) | 60s poll; flock-shared read-modify-write |
 | `cache/app-other-limits.json` | app | JSON `{savedAt, rows, cards, starred, cliInstalled}` | the last `swe list --usage` cards OtherLimitsModel showed | written after each successful load; hydrate at init; corrupt or missing files are ignored |
 | `cache/app-limit-alerts.json` | app | JSON | `LimitAlerter` dedupe state (alerted ids, reset timestamps) | pruned per evaluation |
@@ -86,7 +87,7 @@ every key below is live.
 | `widgetLimitsSourceOrder`, `widgetSummaryShowsTotal` | limits source order; summary widget's total line |
 | `migratedCursorAutoToIncluded` | one-time marker: Cursor `auto` rewritten to `included` |
 
-## Ledger schema (`cache/ledger/ledger.sqlite`, schema version 1)
+## Ledger schema (`data/ledger/ledger.sqlite`, schema version 1)
 
 Rows hold token counts, not dollars: `PricingCatalog` reprices at query time,
 so a pricing refresh reprices the whole history. `msg`, `head_hash` and
@@ -127,6 +128,16 @@ MAX(ts)           SEARCH events USING COVERING INDEX events_ts
 
 - v1: initial schema (dims / events / cursors / meta). No v0 file ever
   shipped, so no migration exists.
+- Location: builds before the move kept the ledger in `cache/ledger/`.
+  `LedgerLocation.prepare` copies it to `data/ledger/` at launch through the
+  backup API (rows still in the WAL included), checks every table's row
+  count, renames the copy into place and only then deletes the old files.
+  It holds the old file in an exclusive lock throughout, so while another
+  Quiver has it open the move waits for a later launch. A failure leaves the
+  old rows untouched, opens the old file where it is, and tries again next
+  launch. When `data/ledger/ledger.sqlite` exists already the old one is
+  never read. `ledger.schema-*.sqlite` archives move at every launch (a
+  `.N` suffix when the name is taken), so one that failed is retried.
 - Versioning lives in `meta.schema`, not `user_version`. A mismatch rebuilds
   the tables (the ledger is a cache of logs) but first archives the old file
   via `VACUUM INTO` to `ledger.schema-<version>.sqlite` beside it (a `.N`
