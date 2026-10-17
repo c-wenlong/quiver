@@ -450,7 +450,10 @@ private struct ServicesCard: View {
     private func serviceGroup(_ service: KnownService) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(service.name).font(Theme.rowTitle).foregroundStyle(Theme.textStrong)
+                HStack(spacing: 8) {
+                    if HarnessIcon.exists(for: service.id) { HarnessIcon(harness: service.id, size: 16) }
+                    Text(service.name).font(Theme.rowTitle).foregroundStyle(Theme.textStrong)
+                }
                 Text(service.help).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             .padding(.vertical, 14)

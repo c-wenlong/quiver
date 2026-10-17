@@ -1102,7 +1102,7 @@ private struct HarnessLegend: View {
                         .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                 }
             }
-            .help(model.isHidden(harness) ? "Show \(harness)" : "Hide \(harness)")
+            .help(model.isHidden(harness) ? "Show \(HarnessMark(harness).name)" : "Hide \(HarnessMark(harness).name)")
             .accessibilityLabel("\(HarnessMark(harness).name), \(model.isHidden(harness) ? "hidden" : "shown")")
             .accessibilityAddTraits(.isToggle)
             .accessibilityValue(model.isHidden(harness) ? "0" : "1")

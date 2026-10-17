@@ -465,7 +465,7 @@ private struct SessionRow: View {
         let s = row.session
         var parts: [String] = []
         if let project { parts.append(project) }
-        parts.append(s.agent)
+        parts.append(HarnessMark(s.harness).name)
         parts.append(row.location.title)
         if let models = row.usage?.models, !models.isEmpty { parts.append(models.joined(separator: ", ")) }
         parts.append(s.lastActiveAt.formatted(date: .omitted, time: .shortened))
@@ -517,7 +517,7 @@ struct SessionDetail: View {
                 StatusBadge(status: s.status)
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                field("Harness", s.agent)
+                field("Harness", HarnessMark(s.harness).name)
                 field("Location", row.location.title)
                 if !s.opensInBrowser { field("Folder", s.cwd ?? "Unknown") }
                 field("Last active", s.lastActiveAt.formatted(date: .abbreviated, time: .shortened))
@@ -586,7 +586,7 @@ struct SessionDetail: View {
                     .help(s.resume != nil ? "Resume in terminal"
                           : s.opensInBrowser ? "Open the session in Devin's web app"
                           : row.location == .cloud ? "A cloud session can't be resumed here"
-                          : "This session is no longer in \(s.agent)'s history")
+                          : "This session is no longer in \(HarnessMark(s.harness).name)'s history")
             }
         }
         .padding(24)

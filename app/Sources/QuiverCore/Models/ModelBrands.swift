@@ -48,7 +48,7 @@ public enum ModelBrands {
         .init(id: "google", name: "Google", color: rgb("#3fa35b"), icon: "gemini",
               keywords: ["google", "gemini"], models: ["gemini", "gemma"]),
         // Grok Bot is Cursor's bot, not xAI's API, so `grok` skips it.
-        .init(id: "xai", name: "xAI", color: rgb("#8a73e8"), icon: "grok",
+        .init(id: "xai", name: "XAI", color: rgb("#8a73e8"), icon: "grok",
               keywords: ["xai", "x-ai", "grok"], models: ["grok(?!-bot)"]),
         .init(id: "grok-bot", name: "Grok Bot", color: rgb("#8a73e8"), icon: "grok",
               keywords: ["grok-bot"], models: ["grok-bot"]),
