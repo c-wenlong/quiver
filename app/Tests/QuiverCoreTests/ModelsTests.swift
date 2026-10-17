@@ -321,6 +321,27 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(ModelMatcher.match("grok-4", in: models)?.slug == "grok-4")
         #expect(ModelMatcher.match("sonar-reasoning", in: models)?.slug == "sonar-reasoning")
         #expect(ModelMatcher.match("command-a+", in: models)?.slug == "command-a-plus")
+        // Run fast, a model named for its mode is still that model.
+        #expect(ModelMatcher.match("kimi-k2-thinking-fast", in: models)?.slug == "kimi-k2-thinking")
+        #expect(ModelMatcher.match("sonar-reasoning-fast", in: models)?.slug == "sonar-reasoning")
+    }
+
+    @Test func linksSavedUnderTheOldKeyStillHold() {
+        let models = [aa("Grok 4.6 (High)", slug: "grok-4-6", creator: "x-ai"),
+                      aa("My Grok", slug: "my-grok", creator: "x-ai")]
+        // Before families, `cursor-grok-4.6-high-fast` saved under
+        // "cursor-grok-4-6" and `grok-4.7-high (Auto)` under its whole name.
+        #expect(ModelMatcher.legacyKey("cursor-grok-4.6-high-fast") == "cursor-grok-4-6")
+        #expect(ModelMatcher.legacyKey("grok-4.7-high (Auto)") == "grok-4-7-high-(auto)")
+        #expect(ModelMatcher.legacyKey("openai/gpt-6.1-sol-max@20261003-fast") == "gpt-6-1-sol")
+        #expect(ModelMatcher.match("cursor-grok-4.6-high-fast", in: models,
+                                   links: ["cursor-grok-4-6": "my-grok"])?.slug == "my-grok")
+        #expect(ModelMatcher.match("grok-4.7-high (Auto)", in: models,
+                                   links: ["grok-4-7-high-(auto)": "my-grok"])?.slug == "my-grok")
+        // A link under the new key wins over one under the old.
+        #expect(ModelMatcher.match("cursor-grok-4.6-high-fast", in: models,
+                                   links: ["grok-4-6": "grok-4-6", "cursor-grok-4-6": "my-grok"])?.slug
+                == "grok-4-6")
     }
 
     @Test func parseSeparatesTheFamilyFromHowItRan() {

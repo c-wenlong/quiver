@@ -45,6 +45,12 @@ public struct ModelMatcher: Sendable {
             ModelMatcher.familyKey(base.split(separator: "-").map(String.init) + (fast ? ["fast"] : []))
         }
 
+        /// The family without the fast-run suffix: a logged
+        /// `kimi-k2-thinking-fast` is Kimi K2 Thinking run fast.
+        public var slowFamily: String {
+            ModelMatcher.familyKey(base.split(separator: "-").map(String.init))
+        }
+
         /// The family with every mode word dropped: what a logged name
         /// falls back to when no model carries those words.
         public var looseFamily: String {
@@ -195,18 +201,58 @@ public struct ModelMatcher: Sendable {
     public static func match(_ logged: String, in models: [AALanguageModel],
                              links: [String: String] = [:]) -> AALanguageModel? {
         let parsed = parse(logged)
-        if let linked = links[parsed.base],
+        if let linked = links[parsed.base] ?? links[legacyKey(logged)],
            let model = models.first(where: { $0.id == linked }) {
             let family = parseAA(model).family
             return headline(of: models.filter { parseAA($0).family == family }) ?? model
         }
         guard !parsed.base.isEmpty else { return nil }
         let families = models.map { parseAA($0).family }
-        for key in [parsed.family, parsed.looseFamily] {
+        // Most specific first: as named, then without the fast-run
+        // suffix, then without any mode word.
+        for key in [parsed.family, parsed.slowFamily, parsed.looseFamily] {
             let hits = zip(models, families).filter { $0.1 == key }.map(\.0)
             if !hits.isEmpty { return headline(of: hits) }
         }
         return nil
+    }
+
+    /// The key links were saved under before names parsed into families:
+    /// effort tail, provider prefix, then trailing fast/effort/date off,
+    /// dots and spaces to dashes. Read as a fallback so those links hold.
+    static func legacyKey(_ name: String) -> String {
+        var base = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var effort = false
+        if let range = base.range(of: effortTail, options: .regularExpression) {
+            effort = true
+            base.removeSubrange(range)
+            base = base.trimmingCharacters(in: .whitespaces)
+        }
+        if let slash = base.lastIndex(of: "/") {
+            base = String(base[base.index(after: slash)...])
+        }
+        var changed = true
+        while changed {
+            changed = false
+            if let range = base.range(of: #"-fast$"#, options: .regularExpression) {
+                base.removeSubrange(range)
+                changed = true
+            }
+            if !effort,
+               let range = base.range(of: #"-(minimal|low|medium|high|xhigh|max)$"#,
+                                      options: .regularExpression) {
+                effort = true
+                base.removeSubrange(range)
+                changed = true
+            }
+            for pattern in [#"@\d{8}$"#, #"-\d{4}-\d{2}-\d{2}$"#, #"-\d{8}$"#] {
+                if let range = base.range(of: pattern, options: .regularExpression) {
+                    base.removeSubrange(range)
+                    changed = true
+                }
+            }
+        }
+        return base.replacingOccurrences(of: ".", with: "-").replacingOccurrences(of: " ", with: "-")
     }
 
     /// One entry per foundation model, in the order each first appears:
