@@ -474,6 +474,50 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                 "pricing": price.map { ["price_1m_blended_3_to_1": $0] } ?? [:]]
     }
 
+    @Test func rowsShowTheLedgersPriceElseTheModelsMainKey() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5", creator: "anthropic",
+                  intelligence: 70, price: 8),
+            entry("sol", "GPT-6.1 Sol", "gpt-6-1-sol", creator: "openai", intelligence: 60, price: 4),
+        ])
+        let store = ArtificialAnalysisStore(directory: dir.path("aa"))
+        func priced(_ input: Double) -> [String: Any] {
+            ["input_cost_per_token": input, "output_cost_per_token": input * 5,
+             "cache_read_input_token_cost": input / 10]
+        }
+        try store.database.recordPrices([
+            "claude-opus-5-5": priced(4e-06),
+            "gpt-6.1-sol": priced(2e-06),
+            "openrouter/openai/gpt-6.1-sol": priced(2.5e-06),
+            "gpt-6.1-sol-2026-07-09": priced(3e-06),
+        ], at: Date(), url: nil, sha: nil)
+        store.database.rebuildAliases()
+        // The ledger charges a saved price of the user's for Opus.
+        let ledgerCatalog = PricingCatalog(liteLLMEntries: ["claude-opus-5-5": priced(4e-06)],
+                                           overrides: ["claude-opus-5-5": priced(9e-06)])
+        let used = [slice("claude-opus-5-5-high", "claude", tokens: 100)]
+        let model = ModelsModel(store: store, keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in used },
+                                pricing: { ledgerCatalog },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian))
+        await model.load(allowRefresh: false)
+
+        let opus = try #require(model.rows.first { $0.aa?.id == "opus" }?.listPrice)
+        #expect(opus.key == "claude-opus-5-5")
+        #expect(opus.source == .yours)
+        #expect(abs(opus.input - 9) < 1e-9)
+        // A leaderboard row nobody ran: the bare key, not a reseller's or a dated one.
+        let sol = try #require(model.rows.first { $0.aa?.id == "sol" }?.listPrice)
+        #expect(sol.key == "gpt-6.1-sol")
+        #expect(sol.source == .liteLLM)
+        #expect(abs(sol.input - 2) < 1e-9 && abs(sol.output - 10) < 1e-9 && abs(sol.cacheRead - 0.2) < 1e-9)
+        // The hover card for the logged name carries the same price.
+        #expect(model.card(for: "claude-opus-5-5-high").listPrice == opus)
+    }
+
     @Test func usedModelsMatchAndUnmatchedOnesCollect() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [

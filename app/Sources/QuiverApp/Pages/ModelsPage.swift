@@ -39,7 +39,7 @@ private struct ModelsContent: View {
 
     var body: some View {
         Page(title: "Models",
-             subtitle: "Benchmarks for the models you use and the leaders. Data from",
+             subtitle: "Benchmarks for the models you use and the leaders. Cost is LiteLLM's list price; benchmarks from",
              subtitleLink: ("Artificial Analysis.", Self.attribution)) {
             toolbar
             content
@@ -505,8 +505,9 @@ private struct BarColumn: View {
 
 // MARK: - Table
 
-/// The same rows as a table: who ran it, the headline benchmarks, cost
-/// rank and the user's tokens.
+/// The same rows as a table: who ran it, the headline benchmarks, the
+/// LiteLLM list price the ledger charges, AA's blended price and cost
+/// rank beside it, and the user's tokens.
 struct TableCard: View {
     @Bindable var model: ModelsModel
     @State private var width: CGFloat = 0
@@ -545,7 +546,12 @@ struct TableCard: View {
                 Text(model.metric == .ttft ? "TTFT" : model.metric.title)
                     .frame(width: columns.extra, alignment: .trailing)
             }
-            Text("Cost").frame(width: columns.cost, alignment: .leading)
+            HStack(spacing: 4) {
+                Text("Cost / 1M")
+                Text("in · out · cache").foregroundStyle(Theme.textMuted)
+            }
+            .frame(width: columns.price, alignment: .leading)
+            Text("AA blended").frame(width: columns.cost, alignment: .leading)
             Text("Your tokens").frame(width: columns.tokens, alignment: .trailing)
         }
         .font(Theme.caption).foregroundStyle(Theme.tableHeaderText)
@@ -569,29 +575,30 @@ struct TableColumns: Equatable {
     static let coding = (min: 50.0, weight: 7.0)
     static let speed = (min: 64.0, weight: 8.0)
     static let extra = (min: 56.0, weight: 7.0)
-    static let cost = (min: 150.0, weight: 20.0)
+    static let price = (min: 150.0, weight: 12.0)
+    static let cost = (min: 130.0, weight: 16.0)
     static let tokens = (min: 76.0, weight: 9.0)
 
     var model: CGFloat, ranIn: CGFloat, provider: CGFloat, intelligence: CGFloat
-    var coding: CGFloat, speed: CGFloat, extra: CGFloat, cost: CGFloat, tokens: CGFloat
+    var coding: CGFloat, speed: CGFloat, extra: CGFloat, price: CGFloat, cost: CGFloat, tokens: CGFloat
 
     /// Every column plus the gaps between them.
     var total: CGFloat {
-        let columns = [model, ranIn, provider, intelligence, coding, speed, extra, cost, tokens]
+        let columns = [model, ranIn, provider, intelligence, coding, speed, extra, price, cost, tokens]
         let shown = columns.filter { $0 > 0 }
         return shown.reduce(0, +) + Self.gap * CGFloat(max(shown.count - 1, 0))
     }
 
     static func widths(for available: CGFloat, extraMetric: Bool) -> TableColumns {
         let specs = [model, ranIn, provider, intelligence, coding, speed,
-                     extraMetric ? extra : (min: 0, weight: 0), cost, tokens]
+                     extraMetric ? extra : (min: 0, weight: 0), price, cost, tokens]
         let count = specs.filter { $0.min > 0 }.count
         let floors = specs.map(\.min).reduce(0, +) + gap * CGFloat(count - 1)
         let room = max(0, available - floors)
         let weights = specs.map(\.weight).reduce(0, +)
         let w = specs.map { CGFloat($0.min) + (weights > 0 ? room * CGFloat($0.weight) / CGFloat(weights) : 0) }
         return TableColumns(model: w[0], ranIn: w[1], provider: w[2], intelligence: w[3],
-                            coding: w[4], speed: w[5], extra: w[6], cost: w[7], tokens: w[8])
+                            coding: w[4], speed: w[5], extra: w[6], price: w[7], cost: w[8], tokens: w[9])
     }
 }
 
@@ -641,6 +648,8 @@ private struct TableRow: View {
                     .foregroundStyle(row.value == nil ? Theme.textMuted : Theme.textPrimary)
                     .frame(width: columns.extra, alignment: .trailing)
             }
+            ListPriceCell(price: row.listPrice)
+                .frame(width: columns.price, alignment: .leading)
             CostScale(model: row.aa, rank: row.costPercentile)
                 .frame(width: columns.cost, alignment: .leading)
             Text(row.tokens > 0 ? UsageFormat.tokens(row.tokens) : "—")
@@ -666,7 +675,34 @@ private struct TableRow: View {
     }
 }
 
-/// The cost column: a green→purple gradient as wide as the column allows,
+/// The Cost column: the list price per 1M input, output and cache-read
+/// tokens, with the key, cache-write rate and source on hover.
+private struct ListPriceCell: View {
+    var price: ModelsModel.ListPrice?
+
+    var body: some View {
+        if let price {
+            Text([price.input, price.output, price.cacheRead].map(ModelCard.price).joined(separator: " · "))
+                .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .help(Self.help(price))
+        } else {
+            Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
+                .help("No LiteLLM price for this model")
+        }
+    }
+
+    static func help(_ price: ModelsModel.ListPrice) -> String {
+        let source = switch price.source {
+        case .liteLLM: "LiteLLM"
+        case .quiver: "Quiver's price list"
+        case .yours: "your price"
+        }
+        return "\(price.key), from \(source)\nCache write \(ModelCard.price(price.cacheWrite)) / 1M"
+    }
+}
+
+/// The AA blended column: a green→purple gradient as wide as the column allows,
 /// the model's rank as a white dot on it, and the blended price in a slot
 /// of its own. An unknown price (decoded as nil) shows "—" and no dot.
 private struct CostScale: View {
