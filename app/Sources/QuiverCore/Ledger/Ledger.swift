@@ -508,7 +508,9 @@ public actor Ledger {
         else { return [] }
         struct Key: Hashable { var harness, account, session: String }
         var sessions: [Key: SessionUsage] = [:]
-        var cwdSeenAt: [Key: Date] = [:]
+        // Events per folder, in first-seen order: a side session's few
+        // notes-folder events must not name it.
+        var cwdVotes: [Key: [(cwd: String, events: Int)]] = [:]
         for group in groups {
             let key = Key(harness: group.dimensions[.harness] ?? "", account: group.dimensions[.account] ?? "",
                           session: group.dimensions[.session] ?? "")
@@ -521,12 +523,16 @@ public actor Ledger {
             if !session.models.contains(group.model) { session.models.append(group.model) }
             session.firstTimestamp = min(session.firstTimestamp, group.first)
             session.lastTimestamp = max(session.lastTimestamp, group.last)
-            if let cwd, group.last >= (cwdSeenAt[key] ?? .distantPast) {
-                session.cwd = cwd
-                cwdSeenAt[key] = group.last
+            if let cwd {
+                if let index = cwdVotes[key]?.firstIndex(where: { $0.cwd == cwd }) {
+                    cwdVotes[key]![index].events += group.count
+                } else {
+                    cwdVotes[key, default: []].append((cwd, group.count))
+                }
             }
             sessions[key] = session
         }
+        for (key, votes) in cwdVotes { sessions[key]?.cwd = SessionFolders.pick(votes) }
         return sessions.values
             .map { var s = $0; s.models.sort(); return s }
             .sorted { ($0.lastTimestamp, $0.sessionId) > ($1.lastTimestamp, $1.sessionId) }
