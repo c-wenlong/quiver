@@ -256,6 +256,9 @@ final class AppModel {
     /// Each Codex account's daily totals against what this Mac logged;
     /// nil with `sessions`.
     let codexUsage: CodexAccountUsage?
+    /// Every account card's weekly and monthly tokens on the Accounts
+    /// page, from the ledger; nil with `sessions`.
+    let accountHistory: AccountHistory?
     /// The Pricing page's per-model rates; nil with `sessions`.
     let pricingModel: PricingModel?
     /// The Models page's benchmarks crossed with usage; nil with `sessions`.
@@ -473,6 +476,9 @@ final class AppModel {
                     await ledger.dailyTokens(harness: "codex", accountHome: home,
                                              in: range, calendar: .current)
                 })
+            accountHistory = AccountHistory(days: { keys, range in
+                await ledger.dailyTokens(for: keys, in: range, calendar: .current)
+            })
             let overviewModel = overview
             pricingModel = PricingModel(
                 ledger: ledger,
@@ -501,6 +507,7 @@ final class AppModel {
             cursorFeed = nil
             devinCloud = nil
             codexUsage = nil
+            accountHistory = nil
             pricingModel = nil
             models = nil
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
@@ -639,6 +646,16 @@ final class AppModel {
                                 $0.overview?.ledgerWrites ?? 0) }
                 }
                 for await _ in changes { await codexUsage.recompute() }
+            })
+        }
+        if let accountHistory {
+            // Same counters: only the keys the Accounts page shows rebuild.
+            watchers.append(Task { [weak self] in
+                let changes = Observations { [weak self] in
+                    self.map { ($0.overview?.completedScans ?? 0,
+                                $0.overview?.ledgerWrites ?? 0) }
+                }
+                for await _ in changes { await accountHistory.recompute() }
             })
         }
         watchers += watchCatalogPlacement()

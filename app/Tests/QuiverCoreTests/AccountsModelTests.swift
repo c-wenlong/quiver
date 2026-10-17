@@ -157,6 +157,26 @@ final class FakeRunningInstances: RunningInstances {
             claudeExe, "--user-data-dir=\(store.paths(for: profile).desktopData!.path)"])
     }
 
+    /// Each Accounts card's history sums its own folder; a harness's own
+    /// card sums the rest, leaving out the extra accounts' folders.
+    @Test func historyKeysSplitAHarnessBetweenItsCards() {
+        let model = model()
+        let work = Profile(id: "cursor-work", vendor: .cursor, name: "Work", isDefault: false, color: "#ffffff")
+        let devin = Profile(id: "devin-2", vendor: .devin, name: "Two", isDefault: false, color: "#ffffff")
+        let profiles = [personal, work, devin]
+        #expect(model.historyKey(harness: "claude", profile: personal, profiles: profiles)
+                == AccountHistory.Key(harness: "claude",
+                                      homes: [store.paths(for: personal).home.standardizedFileURL.path]))
+        // Cursor activity is keyed on the app's data folder, not the CLI home.
+        let workDesktop = store.paths(for: work).desktopData!.standardizedFileURL.path
+        #expect(model.historyKey(harness: "cursor", profile: work, profiles: profiles)
+                == AccountHistory.Key(harness: "cursor", homes: [workDesktop]))
+        #expect(model.historyKey(harness: "cursor", profile: nil, profiles: profiles)
+                == AccountHistory.Key(harness: "cursor", homes: nil, excluding: [workDesktop]))
+        #expect(model.historyKey(harness: "opencode", profile: nil, profiles: profiles)
+                == AccountHistory.Key(harness: "opencode", homes: nil))
+    }
+
     @Test func openingAnAlreadyRunningAccountFocusesItsInstanceInstead() async throws {
         let cortex = try store.add(vendor: .claude, name: "Cortex")
         running.instances = [cortexInstance(pid: 42, for: cortex),
