@@ -41,7 +41,6 @@ public struct ProcessRunner: CommandRunning {
         } else {
             env = await LoginShell.cachedEnvironment()
         }
-        try Task.checkCancellation()
 
         // App Nap may throttle an app that is not frontmost, as when a page
         // refreshes behind another window. The user asked for this work, so
@@ -59,6 +58,7 @@ public struct ProcessRunner: CommandRunning {
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
+        let gate = LaunchGate(process)
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -80,13 +80,20 @@ public struct ProcessRunner: CommandRunning {
                 }
                 group.enter()
                 process.terminationHandler = { _ in group.leave() }
+                let launched: Bool
                 do {
-                    try process.run()
+                    launched = try gate.launch()
                 } catch {
                     // Close our write ends so the readers see EOF and finish.
                     try? out.fileHandleForWriting.close()
                     try? err.fileHandleForWriting.close()
                     continuation.resume(throwing: SweError.notInstalled(executable))
+                    return
+                }
+                guard launched else {
+                    try? out.fileHandleForWriting.close()
+                    try? err.fileHandleForWriting.close()
+                    continuation.resume(throwing: CancellationError())
                     return
                 }
                 group.notify(queue: .global()) {
@@ -98,7 +105,38 @@ public struct ProcessRunner: CommandRunning {
             }
         } onCancel: {
             // Leaving a page cancels its task; the child should not outlive it.
-            if process.isRunning { process.terminate() }
+            gate.cancel()
+        }
+    }
+}
+
+/// The one place a run's cancel and its launch meet. Both take the lock, so
+/// a cancel that lands before the launch stops it from starting, and one
+/// that lands after terminates the child. Checking `isRunning` alone missed
+/// a cancel that arrived before `run()`, and the child then ran to the end.
+private final class LaunchGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let process: Process
+    private var cancelled = false
+    private var launched = false
+
+    init(_ process: Process) { self.process = process }
+
+    /// Starts the process, or returns false without starting it when the
+    /// run was already cancelled.
+    func launch() throws -> Bool {
+        try lock.withLock {
+            if cancelled { return false }
+            try process.run()
+            launched = true
+            return true
+        }
+    }
+
+    func cancel() {
+        lock.withLock {
+            cancelled = true
+            if launched, process.isRunning { process.terminate() }
         }
     }
 }

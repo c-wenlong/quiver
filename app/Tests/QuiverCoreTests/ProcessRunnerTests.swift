@@ -75,6 +75,23 @@ import Testing
         let result = try await task.value
         #expect(result.status == SIGTERM)
     }
+
+    @Test func aCancelBeforeLaunchNeverStartsTheChild() async throws {
+        // The task cancels itself before calling run, so the cancel handler
+        // fires before the launch every time, with no timing involved. A
+        // launch that ignored it would start the child, which touches the
+        // marker, and run would return its exit instead of throwing.
+        let marker = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await runner.run(["-c", "touch '\(marker.path)'; exec sleep 30"])
+        }
+
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
 }
 
 @Suite struct LoginShellTimeoutTests {
