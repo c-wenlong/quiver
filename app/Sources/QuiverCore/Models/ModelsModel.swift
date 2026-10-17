@@ -455,3 +455,11 @@ public final class ModelsModel {
         }
     }
 }
+
+extension ModelsModel.Row {
+    /// The lab behind the model, from `ModelBrands`: the AA creator once
+    /// matched, else the logged name.
+    public var vendor: ModelVendor {
+        aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: logged)
+    }
+}

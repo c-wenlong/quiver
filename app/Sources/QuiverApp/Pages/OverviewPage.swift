@@ -392,10 +392,14 @@ private struct QuickFigures: View {
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                                 .frame(width: 20, height: 20)
                                 .background(Theme.subtle, in: .circle)
+                            BrandLogo(model: model.model, size: 16)
+                            Text(model.model).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                                .lineLimit(1).truncationMode(.middle)
+                            // The tools that ran it, after the name.
                             if !model.harnesses.isEmpty {
                                 HStack(spacing: 2) {
                                     ForEach(Array(model.harnesses.prefix(3)), id: \.self) { harness in
-                                        HarnessIcon(harness: harness, size: 14)
+                                        HarnessIcon(harness: harness, size: 12)
                                             .accessibilityLabel(UsageFormat.harness(harness))
                                     }
                                     if model.harnesses.count > 3 {
@@ -405,8 +409,6 @@ private struct QuickFigures: View {
                                 }
                                 .fixedSize()
                             }
-                            Text(model.model).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                                .lineLimit(1).truncationMode(.middle)
                             Spacer()
                             Text(model.share, format: .percent.precision(.fractionLength(1)))
                                 .font(Theme.rowTitle).monospacedDigit().foregroundStyle(Theme.textPrimary)

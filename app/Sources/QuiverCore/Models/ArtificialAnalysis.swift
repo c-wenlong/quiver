@@ -83,13 +83,18 @@ extension AALanguageModel: Decodable {
         // [String: Double?] decodes every key AA adds; nulls drop out.
         let raw = try c.decodeIfPresent([String: Double?].self, forKey: .evaluations) ?? [:]
         evaluations = raw.compactMapValues { $0 }
+        // AA writes 0 where it has no measurement: no API price (277 of
+        // 704 models in October 2026) or no speed run. Zero is "unknown",
+        // so every page shows "—" and the cost rank leaves them out rather
+        // than ranking them cheapest.
+        func measured(_ value: Double?) -> Double? { value.flatMap { $0 > 0 ? $0 : nil } }
         let pricing = try c.decodeIfPresent([String: Double?].self, forKey: .pricing) ?? [:]
-        priceBlended = pricing[PricingKeys.blended.rawValue] ?? nil
-        priceInput = pricing[PricingKeys.input.rawValue] ?? nil
-        priceOutput = pricing[PricingKeys.output.rawValue] ?? nil
-        speed = try c.decodeIfPresent(Double.self, forKey: .speed)
-        timeToFirstToken = try c.decodeIfPresent(Double.self, forKey: .ttft)
-        timeToFirstAnswer = try c.decodeIfPresent(Double.self, forKey: .ttfat)
+        priceBlended = measured(pricing[PricingKeys.blended.rawValue] ?? nil)
+        priceInput = measured(pricing[PricingKeys.input.rawValue] ?? nil)
+        priceOutput = measured(pricing[PricingKeys.output.rawValue] ?? nil)
+        speed = measured(try c.decodeIfPresent(Double.self, forKey: .speed))
+        timeToFirstToken = measured(try c.decodeIfPresent(Double.self, forKey: .ttft))
+        timeToFirstAnswer = measured(try c.decodeIfPresent(Double.self, forKey: .ttfat))
     }
 }
 

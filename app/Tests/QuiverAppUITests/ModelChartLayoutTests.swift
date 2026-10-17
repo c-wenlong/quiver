@@ -101,6 +101,27 @@ struct ModelChartLayoutTests {
         }
     }
 
+    /// Columns never drop below their floors; room above the floors is
+    /// shared by weight, so the table fills the card exactly and the model
+    /// name gets about a quarter of the extra width, not all of it.
+    @Test(arguments: [false, true])
+    func tableColumnsShareTheWidth(extraMetric: Bool) {
+        let floors = TableColumns.widths(for: 0, extraMetric: extraMetric)
+        #expect(floors.model == CGFloat(TableColumns.model.min))
+        #expect(floors.cost == CGFloat(TableColumns.cost.min))
+        #expect((floors.extra > 0) == extraMetric)
+        // Narrower than the floors: floors as they are, and the table scrolls.
+        let narrow = TableColumns.widths(for: floors.total - 100, extraMetric: extraMetric)
+        #expect(narrow == floors)
+
+        let wide = TableColumns.widths(for: 1600, extraMetric: extraMetric)
+        #expect(abs(wide.total - 1600) < 0.5)
+        let room = 1600 - floors.total
+        let modelShare = (wide.model - floors.model) / room
+        #expect(modelShare > 0.2 && modelShare < 0.3)
+        #expect(wide.cost - floors.cost > wide.coding - floors.coding)
+    }
+
     @Test
     func chartLaysOutFiniteAcrossResizes() async throws {
         let dir = try fixtureDir()
