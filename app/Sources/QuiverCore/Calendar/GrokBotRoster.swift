@@ -43,10 +43,17 @@ public final class GrokBotRoster: Sendable {
     /// Decoded id → name, with when the disk was last checked and the
     /// modification date it was read at, so a rewritten blob re-parses
     /// once and an unchanged one is never re-listed within the interval.
-    /// `names` is the live roster merged over every name remembered;
-    /// `read` says whether the roster parsed and named at least one Bot.
     private let cache = OSAllocatedUnfairLock<
-        (checkedAt: Date, mtime: Date?, names: [String: String], read: Bool)?>(initialState: nil)
+        (checkedAt: Date, mtime: Date?, known: Known)?>(initialState: nil)
+
+    /// What one roster read knows: every name, live or remembered; the
+    /// ids the roster lists now, named or not; and whether it named at
+    /// least one Bot, the only case where an unlisted id means deleted.
+    private struct Known: Sendable {
+        var names: [String: String] = [:]
+        var live: Set<String> = []
+        var read = false
+    }
     /// Where every Bot name ever read is kept; nil remembers nothing
     /// (tests, unless they pass a temporary file).
     private let memory: URL?
@@ -63,52 +70,60 @@ public final class GrokBotRoster: Sendable {
 
     /// A `grok-bot` session row's title: the Bot's name, live or
     /// remembered; "Subagent" for a `sand-subagent-` id; "Deleted Bot
-    /// (<short id>)" for an id the roster, read fine, does not list;
-    /// else the usual session-id fallback.
+    /// (<short id>)" for a conversation id the roster, naming Bots, does
+    /// not list; else the usual session-id fallback (an unnamed live Bot,
+    /// a daily `cursor-YYYY-MM-DD` bucket, or an unread roster).
     public func title(for sessionId: String) -> String {
         let known = lookup
         if let name = known.names[sessionId], !name.isEmpty { return name }
         if sessionId.hasPrefix(Self.subagentPrefix) { return "Subagent" }
         let short = CalendarFormat.sessionTitle(nil, sessionId: sessionId)
-        return known.read ? "Deleted Bot (\(short))" : short
+        guard known.read, !known.live.contains(sessionId),
+              !CursorUsageFeed.isDayBucket(sessionId) else { return short }
+        return "Deleted Bot (\(short))"
     }
 
-    /// The roster's id → name map, merged over every remembered name,
-    /// and whether the roster parsed. Within `recheckInterval` of the last
-    /// disk check it is served from memory with no file-system access;
-    /// after that the folder is listed again and the blob re-parsed only
-    /// when its modification date moved. A missing file or any read or
-    /// decode failure leaves only the remembered names.
-    private var lookup: (names: [String: String], read: Bool) {
+    /// The roster merged over every remembered name. Within
+    /// `recheckInterval` of the last disk check it is served from memory
+    /// with no file-system access; after that the folder is listed again
+    /// and the blob re-parsed only when its modification date moved. A
+    /// missing file or any read or decode failure leaves only the
+    /// remembered names, with `read` false.
+    private var lookup: Known {
         let now = Date()
         if let cached = cache.withLock({ $0 }),
            now.timeIntervalSince(cached.checkedAt) < recheckInterval {
-            return (cached.names, cached.read)
+            return cached.known
         }
         let file = rosterFile()
         let mtime = file.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate }
         return cache.withLock { cached in
             if let previous = cached, previous.mtime == mtime {
-                cached = (now, mtime, previous.names, previous.read)
-                return (previous.names, previous.read)
+                cached = (now, mtime, previous.known)
+                return previous.known
             }
             let live = file.flatMap(Self.parse) ?? [:]
-            let names = remember(live)
-            // A roster naming no Bot proves nothing about which are gone.
-            cached = (now, mtime, names, !live.isEmpty)
-            return (names, !live.isEmpty)
+            let named = live.filter { !$0.value.isEmpty }
+            // Names this process already knows stay even if the file
+            // write below failed, so a Bot deleted next is not lost.
+            let known = Known(names: remember(named, alsoKnown: cached?.known.names ?? [:]),
+                              live: Set(live.keys), read: !named.isEmpty)
+            cached = (now, mtime, known)
+            return known
         }
     }
 
-    /// The remembered names with `live` merged over them (a renamed Bot
-    /// takes its new name), written back only when something changed.
-    /// Only ids and names are stored, the same two fields `parse` reads.
-    private func remember(_ live: [String: String]) -> [String: String] {
-        guard let memory else { return live }
+    /// The saved names, then `alsoKnown`, then `live` merged over them (a
+    /// renamed Bot takes its new name), written back only when the file
+    /// is missing something. Only ids and names are stored, the same two
+    /// fields `parse` reads.
+    private func remember(_ live: [String: String],
+                          alsoKnown: [String: String]) -> [String: String] {
+        guard let memory else { return alsoKnown.merging(live) { _, new in new } }
         let saved = (try? Data(contentsOf: memory))
             .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
-        let merged = saved.merging(live.filter { !$0.value.isEmpty }) { _, new in new }
+        let merged = saved.merging(alsoKnown) { _, new in new }.merging(live) { _, new in new }
         if merged != saved {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

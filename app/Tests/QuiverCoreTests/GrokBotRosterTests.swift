@@ -81,6 +81,41 @@ import Testing
             .appendingPathComponent("grok-names-\(UUID().uuidString)/grok-bot-names.json")
     }
 
+    @Test func dailyBucketsAndUnnamedLiveBotsAreNotDeleted() throws {
+        let roster = GrokBotRoster(directory: try persistence(json: rosterJSON))
+        // Usage with no conversation id lands in a daily bucket.
+        #expect(roster.title(for: "cursor-2026-10-12") == "cursor-2026-10-12")
+        // Listed in the roster, just without a name.
+        let unnamed = GrokBotRoster(directory: try persistence(json:
+            #"{"value": {"rows": [{"id": "bot-uuid-1", "name": "Cortex"}, {"id": "quiet-bot", "name": ""}]}}"#))
+        #expect(unnamed.title(for: "quiet-bot") == "quiet-bot")
+        // A roster of only empty names proves nothing about deletions.
+        let blank = GrokBotRoster(directory: try persistence(json:
+            #"{"value": {"rows": [{"id": "quiet-bot", "name": ""}]}}"#))
+        #expect(blank.title(for: "other-bot") == "other-bot")
+    }
+
+    /// A save that fails must not forget a name this process already
+    /// read: the Bot is deleted on the next roster read, and still named.
+    @Test func aFailedSaveKeepsNamesAlreadyRead() throws {
+        // A memory path under a regular file can never be written.
+        let blocker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-blocker-\(UUID().uuidString)")
+        try Data().write(to: blocker)
+        let dir = try persistence(json: rosterJSON)
+        let roster = GrokBotRoster(directory: dir, memory: blocker.appendingPathComponent("names.json"),
+                                   recheckInterval: 0)
+        #expect(roster.title(for: "bot-uuid-1") == "Cortex")
+        // Rewrite the roster without Cortex; a later mtime forces a re-parse.
+        let blob = try #require(FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).first)
+        try #"{"value": {"rows": [{"id": "bot-uuid-2", "name": "NUS"}]}}"#
+            .write(to: blob, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)],
+                                              ofItemAtPath: blob.path)
+        #expect(roster.title(for: "bot-uuid-2") == "NUS")
+        #expect(roster.title(for: "bot-uuid-1") == "Cortex")
+    }
+
     @Test func aBotDeletedAfterItWasSeenKeepsItsName() throws {
         let memory = memoryFile()
         let dir = try persistence(json: rosterJSON)
