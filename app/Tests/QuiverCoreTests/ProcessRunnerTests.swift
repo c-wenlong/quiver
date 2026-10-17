@@ -67,8 +67,10 @@ import Testing
         while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
             try await Task.sleep(for: .milliseconds(50))
         }
-        try #require(FileManager.default.fileExists(atPath: marker.path))
+        let childStarted = FileManager.default.fileExists(atPath: marker.path)
+        // Cancel before the check, so a failed check leaves no child behind.
         task.cancel()
+        try #require(childStarted)
 
         let result = try await task.value
         #expect(result.status == SIGTERM)
