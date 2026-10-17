@@ -57,8 +57,10 @@ target stays thin.
 
 ## Usage ledger
 
-`Ledger` (an actor) reads harness logs into a deduplicated SQLite store under a
-cache directory you pass in (production: `~/.quiver/cache/ledger/`):
+`Ledger` (an actor) reads harness logs into a deduplicated SQLite store in the
+directory you pass in (production: `~/.quiver/data/ledger/`, chosen by
+`LedgerLocation`, which moves a ledger left in the old `cache/ledger/` there at
+launch). `keepBackedUp` keeps one copy a day in `backups/`, the newest 7. Sources:
 
 | Harness | Source | One event per | Dedup key |
 |---|---|---|---|

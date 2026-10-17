@@ -60,7 +60,7 @@ import Testing
     @Test func theWholeHomeCountsEachTurnOnce() async throws {
         let temp = try TempDir()
         let home = try temp.copyFixture("codex-home")
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(codexHomes: [home]))
         // The legacy rollout is also copied into archived_sessions.
         let totals = await ledger.totals(in: october2026)
@@ -80,7 +80,7 @@ import Testing
         let lines = try fixtureLines("codex-home/sessions/2026/10/04/\(legacySession).jsonl")
             .map { String(decoding: $0, as: UTF8.self) + "\n" }
         try Data(lines[0..<5].joined().utf8).write(to: file)
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(codexHomes: [home]))
         #expect(await ledger.totals(in: october2026).totalTokens == 1_050)
 

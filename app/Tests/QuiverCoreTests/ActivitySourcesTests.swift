@@ -144,7 +144,7 @@ import Testing
 /// under the same "Hide accidental sessions" setting.
 extension ActivitySourcesTests {
     private func ledger(_ events: [UsageEvent], in dir: TempDir) async throws -> Ledger {
-        let ledger = try Ledger(cacheDirectory: dir.path("cache/ledger"), pricing: .empty)
+        let ledger = try Ledger(directory: dir.path("cache/ledger"), pricing: .empty)
         try await ledger.ingest(events.enumerated().map {
             LedgerRecord(key: "k\($0.offset)", event: $0.element)
         })

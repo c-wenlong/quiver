@@ -11,7 +11,7 @@ import Testing
     @Test func eachResponseCountsOnceAcrossStreamingResumesAndSubAgents() async throws {
         let temp = try TempDir()
         let home = try temp.copyFixture("claude-home")
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
 
         let events = await ledger.events(in: allTime)
@@ -38,7 +38,7 @@ import Testing
     @Test func scanningTwiceAddsNothing() async throws {
         let temp = try TempDir()
         let home = try temp.copyFixture("claude-home")
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
         #expect(await ledger.events(in: allTime).count == 7)
@@ -48,7 +48,7 @@ import Testing
     @Test func aSubAgentReplaySeenBeforeItsParentGivesWayToTheParent() async throws {
         let temp = try TempDir()
         let home = try temp.copyFixture("claude-home")
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         // Only the sub-agent transcript exists at first.
         let main = home.appendingPathComponent("projects/-tmp-demo/11111111-1111-4111-8111-111111111111.jsonl")
         let parked = temp.path("parked.jsonl")
@@ -74,7 +74,7 @@ import Testing
             at: try ledgerFixtureURL("claude-home/projects/-tmp-legacy/33333333-3333-4333-8333-333333333333.jsonl"),
             to: work.appendingPathComponent("projects/-tmp-w/s.jsonl"))
         // The same response in a second home is still one response.
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [personal, work]))
         let accounts = await ledger.byAccount(in: allTime)
         #expect(accounts[personal.path]?.totalTokens == 69_509 + 200)

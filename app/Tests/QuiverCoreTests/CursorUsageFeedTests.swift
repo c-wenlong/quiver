@@ -193,7 +193,7 @@ import Testing
 
     @Test func eventsMapToLedgerRecords() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
         ])
@@ -220,7 +220,7 @@ import Testing
 
     @Test func anOverlappingRefetchDoesNotDuplicate() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
         ])
@@ -236,7 +236,7 @@ import Testing
 
     @Test func theWindowStartsAt180DaysThenOverlapsTwo() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"],
              reply("ok", twoEvents, accountId: "uid-1")),
@@ -268,7 +268,7 @@ import Testing
 
     @Test func authRequiredAndSignedOutKeepTheStoredRows() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.ingest([CursorUsageFeed.record(for: CursorUsageEvent(
             timestamp: 1791700000, model: "composer-1", kind: "k", conversationId: "c",
             headless: false, inputTokens: 5, outputTokens: 1,
@@ -289,7 +289,7 @@ import Testing
 
     @Test func anOlderSweIsAskedOnceThenLeftAlone() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"],
              CommandResult(status: 1, stdout: Data(),
@@ -303,7 +303,7 @@ import Testing
 
     @Test func extraAccountsPassTheirAccountDir() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"], reply("ok", "")),
         ])
@@ -322,7 +322,7 @@ import Testing
 
         // End to end: an ingested grok-bot event becomes an activity block.
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.ingest([CursorUsageFeed.record(for: CursorUsageEvent(
             timestamp: Date().timeIntervalSince1970 - 60, model: "grok-bot-cua",
             kind: "k", conversationId: "c9", headless: true,
@@ -336,7 +336,7 @@ import Testing
 
     @MainActor @Test func anIngestedChangeBumpsTheOverviewRevision() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
         ])
@@ -358,7 +358,7 @@ import Testing
 
     @Test func twoProfilesOnOneAccountStoreOneCopy() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"],
              reply("ok", twoEvents, accountId: "uid-1")),
@@ -375,7 +375,7 @@ import Testing
 
     @Test func aReplyWithoutAccountIdKeysByProfileHome() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"], reply("ok", twoEvents)),
         ])
@@ -391,7 +391,7 @@ import Testing
 
     @Test func aPollFailureSetsLastError() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"],
              CommandResult(status: 1, stdout: Data(), stderr: "database is locked")),
@@ -404,7 +404,7 @@ import Testing
 
     @Test func anIncompleteReplyStillIngests() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"], reply("incomplete", twoEvents)),
         ])
@@ -415,7 +415,7 @@ import Testing
 
     @Test func anExpiredDefaultDoesNotBlockAWorkingProfileOnTheSameAccount() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let runner = SplitRunner()
         // The default profile is signed into the same account but its
         // session is stale; the extra profile's session works.
@@ -434,7 +434,7 @@ import Testing
 
     @Test func anAccountSwitchFetchesTheNewAccountsFullWindow() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         // This profile used to answer as uid-old, which has a mark.
         let file = progressFile(account, "uid-old", through: 1791700100, in: temp)
         let runner = LockedRunner([
@@ -453,7 +453,7 @@ import Testing
 
     @Test func aStaleReplyCannotReinstateTheTooOldVerdict() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         // Call 1 (the old path's poll) parks; the path change's poll
         // answers "ok" and ingests before the parked reply lands.
         let runner = FirstHeldRunner(good: reply("ok", twoEvents, accountId: "uid-1"))
@@ -477,7 +477,7 @@ import Testing
 
     @Test func aStaleSuccessCannotClearTheNewerTooOldVerdict() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         // Call 0 parks; the path change's poll hears "unknown subcommand"
         // and sets the verdict. The parked old reply answering "ok" must
         // not clear it.
@@ -498,7 +498,7 @@ import Testing
 
     @Test func aSupersededRoundStillReportsItsIngestedRows() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let extra = CursorUsageFeed.Account(home: "/t/cursor-side/desktop",
                                             accountDir: "/t/cursor-side/desktop")
         // The old round's first account answers and ingests; its second
@@ -524,7 +524,7 @@ import Testing
 
     @Test func anIncompleteReplyIngestsButDoesNotAdvanceThrough() async throws {
         let temp = try TempDir()
-        let ledger = try Ledger(cacheDirectory: temp.path("cache"))
+        let ledger = try Ledger(directory: temp.path("cache"))
         let file = progressFile(account, "uid-1", through: 1791700100, in: temp)
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"],
