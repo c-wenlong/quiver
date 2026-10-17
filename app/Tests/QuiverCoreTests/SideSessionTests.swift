@@ -152,4 +152,23 @@ private let worktree = "/Users/k/ai-engineering/.claude/worktrees/jovial"
         #expect(byKey["codex|cli-side"]?.parent == nil)
         #expect(byKey["claude|other"]?.parent == nil)
     }
+
+    @Test func aRestoredListCarriesParentsToo() async throws {
+        let now = Date(timeIntervalSince1970: 1_791_700_000)
+        let temp = try TempDir()
+        let file = SessionSnapshotFile(url: temp.path("cache/sessions.json"))
+        let session = SessionInfo(id: "cli-side", harness: "claude", agent: "Claude Code", cwd: "/c/x",
+                                  title: "side", titleSource: nil, lastActiveAt: now, status: nil, resume: nil)
+        await file.save(SessionSnapshot(source: "/bin/swe", savedAt: now.addingTimeInterval(-10),
+                                        sessions: [session], failures: [], isCapped: false, usage: []))
+        let parent = SessionParent(id: "local_parent", title: "design-systems-repo", kind: .side)
+        let source = FakeSessionSource(list: SessionList(sessions: [], failures: []))
+        let model = SessionsModel(source: source, ledger: FakeSessionLedger(), snapshots: file,
+                                  parents: { ["cli-side": parent] }, now: { now })
+        await model.restore()
+        // The saved list is fresh, so no listing runs after it.
+        await model.loadIfStale(for: "/bin/swe")
+        #expect(model.rows.map(\.id) == ["cli-side"])
+        #expect(model.rows.first?.parent == parent)
+    }
 }

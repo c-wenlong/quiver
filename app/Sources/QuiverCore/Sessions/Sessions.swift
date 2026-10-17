@@ -332,6 +332,13 @@ public final class SessionsModel {
     /// has loaded, so a slow read never replaces a newer one.
     public func restore() async {
         guard listedAt == nil, let snapshot = await snapshots?.load(), listedAt == nil else { return }
+        // A fresh saved list skips the next listing, so parents are read
+        // here too; the reader's cache makes this a few milliseconds.
+        if let readParents {
+            let parents = await readParents()
+            guard listedAt == nil else { return }
+            self.parents = parents
+        }
         let usage = Self.keyed(snapshot.usage)
         listed = snapshot.sessions
         latestUsage = usage
