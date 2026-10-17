@@ -228,8 +228,7 @@ private struct CalendarContent: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(model.harnesses, id: \.self) { harness in
-                        HarnessLegend(model: model, harness: harness,
-                                      colors: app.widgetHarnessStyle.colors)
+                        HarnessLegend(model: model, harness: harness)
                     }
                 }
             }
@@ -656,9 +655,7 @@ private struct CalendarContent: View {
     }
 
     private func color(for block: ActivityBlock) -> Color {
-        let hex = app.widgetHarnessStyle.colors[block.harness]
-            ?? HarnessColor.resolve(id: block.harness, primaryColor: nil).hex
-        return Color(hex: hex)
+        Color(rgb: HarnessColor.of(block.harness))
     }
 }
 
@@ -1035,11 +1032,9 @@ private struct MiniMonth: View {
 private struct HarnessLegend: View {
     var model: CalendarModel
     var harness: String
-    var colors: [String: String]
 
     private var color: Color {
-        let hex = colors[harness] ?? HarnessColor.resolve(id: harness, primaryColor: nil).hex
-        return Color(hex: hex)
+        Color(rgb: HarnessColor.of(harness))
     }
 
     private var accounts: [String] { model.accounts(for: harness) }

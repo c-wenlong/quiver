@@ -791,7 +791,3 @@ private struct RowHover: ViewModifier {
             .onHover { hovering = $0 }
     }
 }
-
-private extension Color {
-    init(rgb: HarnessRGB) { self.init(red: rgb.red, green: rgb.green, blue: rgb.blue) }
-}

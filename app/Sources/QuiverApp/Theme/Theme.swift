@@ -1,4 +1,5 @@
 import AppKit
+import QuiverCore
 import SwiftUI
 
 /// The look, from the TokenTracker style package in the design-systems repo
@@ -147,16 +148,10 @@ enum Theme {
 
     // MARK: Data colours
 
-    /// One fixed hue per harness, validated together for colour-blind
-    /// separation on both the dark and light surface. Anything else is grey.
+    /// The harness's colour from `HarnessColor`, the one palette every
+    /// page reads.
     static func harness(_ id: String) -> Color {
-        switch id {
-        case "claude": Color(hex: "#cf6848")
-        case "codex": Color(hex: "#3b7ff0")
-        case "opencode": Color(hex: "#139f8b")
-        case "devin": Color(hex: "#c4860f")
-        default: .gray
-        }
+        Color(rgb: HarnessColor.of(id))
     }
 
     /// Order the harnesses always appear in, so a colour never moves.
@@ -169,6 +164,9 @@ enum Theme {
 }
 
 extension Color {
+    /// A QuiverCore colour (harness or model brand) as a SwiftUI colour.
+    init(rgb: HarnessRGB) { self.init(red: rgb.red, green: rgb.green, blue: rgb.blue) }
+
     /// A colour that follows the appearance, from `#rrggbb` or `#rrggbbaa`.
     init(light: String, dark: String) {
         self.init(nsColor: NSColor(name: nil) { appearance in

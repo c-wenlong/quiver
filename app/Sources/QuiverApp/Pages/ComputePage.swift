@@ -174,19 +174,9 @@ private struct TrendCard: View {
         }
     }
 
-    @MainActor private static var colourCache: [String: Color] = [:]
-
-    /// The line's colour: the harness's declared colour, else a hue out
-    /// of its bundled colour logo, else a stable palette pick. Cached:
-    /// resolve() reads the logo's SVG off disk.
+    /// The line's colour: the app's one harness colour.
     private func colour(of harness: String) -> Color {
-        let primary = model.matchers.first { $0.harness == harness }?.primaryColor ?? ""
-        let key = "\(harness)|\(primary)"
-        if let cached = Self.colourCache[key] { return cached }
-        let colour = Color(rgb: HarnessColor.resolve(id: harness,
-                                                     primaryColor: primary.isEmpty ? nil : primary))
-        Self.colourCache[key] = colour
-        return colour
+        Color(rgb: HarnessColor.of(harness))
     }
 
     var body: some View {
@@ -340,10 +330,6 @@ private struct TrendCard: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
         .fixedSize()
     }
-}
-
-private extension Color {
-    init(rgb: HarnessRGB) { self.init(red: rgb.red, green: rgb.green, blue: rgb.blue) }
 }
 
 /// The thresholds, behind the header's gear; changing one reflags the

@@ -9,7 +9,7 @@ import Testing
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
     static let home = "/Users/test"
     static let claude = HarnessMatcher(harness: "claude", commands: ["claude"],
-                                     homeFolder: home + "/.claude", primaryColor: "#d97757")
+                                     homeFolder: home + "/.claude")
 
     static func proc(_ pid: Int32, _ ppid: Int32, path: String, mem: UInt64 = 1 << 20,
                      cpu: UInt64 = 0) -> ProcessSample {
@@ -122,16 +122,15 @@ import Testing
 
     // MARK: HarnessColour
 
-    @Test func aValidPrimaryColourWins() {
+    @Test func aHandPickedColourWinsOverTheLogo() {
         let svg = ##"<path fill="#ff6daa"/>"##
-        let rgb = HarnessColor.resolve(id: "claude", primaryColor: "#12ab34", colorSVG: svg)
-        #expect(rgb == HarnessRGB(red: 0x12 / 255, green: 0xab / 255, blue: 0x34 / 255))
+        #expect(HarnessColor.resolve(id: "codex", colorSVG: svg) == HarnessRGB(hex: "#3b7ff0"))
+        #expect(HarnessColor.of("claude") == HarnessRGB(hex: "#d97757"))
     }
 
-    @Test func anInvalidPrimaryColourFallsThroughToTheLogo() {
+    @Test func aHarnessOutsideThePaletteTakesItsLogoColour() {
         let svg = ##"<path fill="#ff6daa"/>"##
-        let rgb = HarnessColor.resolve(id: "claude", primaryColor: "banana", colorSVG: svg)
-        #expect(rgb == HarnessRGB(hex: "#ff6daa"))
+        #expect(HarnessColor.resolve(id: "made-up-harness", colorSVG: svg) == HarnessRGB(hex: "#ff6daa"))
     }
 
     @Test func theLogoPickPrefersTheVividFill() {
@@ -144,16 +143,22 @@ import Testing
     }
 
     @Test func thePalettePickIsStableForAnId() {
-        let a = HarnessColor.resolve(id: "made-up-harness", primaryColor: nil, colorSVG: nil)
-        let b = HarnessColor.resolve(id: "made-up-harness", primaryColor: nil, colorSVG: nil)
+        let a = HarnessColor.resolve(id: "made-up-harness", colorSVG: nil)
+        let b = HarnessColor.resolve(id: "made-up-harness", colorSVG: nil)
         #expect(a == b)
         #expect(HarnessColor.palette.contains(a))
     }
 
-    @Test func aDarkColourIsLiftedToReadOnTheCard() {
-        let rgb = HarnessColor.resolve(id: "cursor", primaryColor: "#000000", colorSVG: nil)
+    @Test func aDarkLogoIsLiftedToReadOnTheCard() {
+        let rgb = HarnessColor.resolve(id: "made-up-harness", colorSVG: ##"<path fill="#200010"/>"##)
         #expect(rgb.luminance >= HarnessColor.luminanceFloor)
-        #expect(rgb.red > 0 && rgb.green == rgb.red && rgb.blue == rgb.red)
+    }
+
+    /// Every harness in the palette reads apart from the others; a
+    /// repeat would merge two harnesses in the share bar and calendar.
+    @Test func theHandPickedColoursAreDistinct() {
+        let hexes = HarnessColor.fixed.values.map(\.hex)
+        #expect(Set(hexes).count == hexes.count)
     }
 
     // MARK: The trend sampler
