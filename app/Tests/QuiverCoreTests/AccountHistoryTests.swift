@@ -34,63 +34,84 @@ import Testing
         #expect(history.months.map(\.tokens) == [0, 0, 0, 0, 40, 112])
     }
 
-    /// The ledger stand-in: each key answers its queued figures in
-    /// order; `hold` parks the next call for that key until `release`.
+    /// The ledger stand-in: each read answers every key it is given
+    /// with that harness's next queued figure; `hold` parks the next read
+    /// that includes that harness until `release`.
     @MainActor final class Days {
         var queued: [String: [Int]]
-        var asked: [AccountHistory.Key] = []
+        var reads: [Set<AccountHistory.Key>] = []
         var hold: String?
         private(set) var holding = false
         private var parked: CheckedContinuation<Void, Never>?
 
         init(_ queued: [String: [Int]]) { self.queued = queued }
 
-        func answer(_ key: AccountHistory.Key, at day: Date) async -> [Date: Int] {
-            asked.append(key)
-            let value = queued[key.harness]!.removeFirst()
-            if hold == key.harness {
-                hold = nil
+        func answer(_ keys: [AccountHistory.Key], at day: Date) async -> [AccountHistory.Key: [Date: Int]] {
+            reads.append(Set(keys))
+            var result: [AccountHistory.Key: [Date: Int]] = [:]
+            for key in keys { result[key] = [day: queued[key.harness]!.removeFirst()] }
+            if let hold, keys.contains(where: { $0.harness == hold }) {
+                self.hold = nil
                 holding = true
                 await withCheckedContinuation { parked = $0 }
             }
-            return [day: value]
+            return result
         }
 
         func release() { parked?.resume(); parked = nil }
     }
 
-    @Test func requestBuildsOnlyMissingKeysAndRecomputeRebuildsThem() async {
+    let claude = AccountHistory.Key(harness: "claude", homes: ["/h/.claude"])
+    let cursor = AccountHistory.Key(harness: "cursor", homes: nil, excluding: ["/x"])
+
+    func model(_ days: Days, now: Date) -> AccountHistory {
+        AccountHistory(days: { keys, _ in await days.answer(keys, at: now) },
+                       now: { now }, calendar: calendar)
+    }
+
+    /// Every shown card comes from one ledger read, and a scan rebuilds
+    /// them all in one more.
+    @Test func shownKeysShareOneReadAndRebuildOnRecompute() async {
         let now = day(10, 16)
         let days = Days(["claude": [10, 25], "cursor": [4, 9]])
-        let history = AccountHistory(days: { key, _ in await days.answer(key, at: now) },
-                                     now: { now }, calendar: calendar)
-        let claude = AccountHistory.Key(harness: "claude", homes: ["/h/.claude"])
-        let cursor = AccountHistory.Key(harness: "cursor", homes: nil, excluding: ["/x"])
-        await history.request([claude, cursor])
-        await history.request([claude])
-        #expect(days.asked == [claude, cursor])
+        let history = model(days, now: now)
+        await history.show([claude, cursor])
+        #expect(days.reads == [[claude, cursor]])
         #expect(history.histories[claude]?.weeks.last?.tokens == 10)
         await history.recompute()
-        #expect(days.asked.count == 4)
+        #expect(days.reads.count == 2)
         #expect(history.histories[claude]?.weeks.last?.tokens == 25)
         #expect(history.histories[cursor]?.weeks.last?.tokens == 9)
     }
 
-    /// An older rebuild that finishes late never overwrites a newer one.
-    @Test func anOlderBuildNeverOverwritesNewerFigures() async {
+    /// Hidden history, or a page left behind, costs nothing on a scan;
+    /// the last figures stay cached for when it shows again.
+    @Test func hiddenKeysAreNotRebuilt() async {
         let now = day(10, 16)
-        let days = Days(["claude": [1, 5, 7]])
-        let history = AccountHistory(days: { key, _ in await days.answer(key, at: now) },
-                                     now: { now }, calendar: calendar)
-        let claude = AccountHistory.Key(harness: "claude", homes: nil)
-        await history.request([claude])
+        let days = Days(["claude": [10, 25]])
+        let history = model(days, now: now)
+        await history.show([claude])
+        history.hide()
+        await history.recompute()
+        #expect(days.reads.count == 1)
+        #expect(history.histories[claude]?.weeks.last?.tokens == 10)
+        await history.show([claude])
+        #expect(history.histories[claude]?.weeks.last?.tokens == 25)
+    }
+
+    /// A scan that lands while a card's first figures are still loading
+    /// rebuilds it, and the first read finishing late is dropped.
+    @Test func aScanDuringTheFirstBuildWins() async {
+        let now = day(10, 16)
+        let days = Days(["claude": [1, 7]])
         days.hold = "claude"
-        let older = Task { await history.recompute() }
+        let history = model(days, now: now)
+        let first = Task { await history.show([claude]) }
         while !days.holding { await Task.yield() }
         await history.recompute()
         #expect(history.histories[claude]?.weeks.last?.tokens == 7)
         days.release()
-        await older.value
+        await first.value
         #expect(history.histories[claude]?.weeks.last?.tokens == 7)
     }
 }

@@ -13,22 +13,23 @@ import Testing
     }
 
     /// The Accounts history sums one harness over chosen homes, or every
-    /// home but those other cards own.
+    /// home but those other cards own, all keys from one read.
     @Test func dailyTokensSumChosenHomesOrAllButExcluded() async throws {
         let (temp, ledger) = try await scannedFixture()
         let home = temp.path("claude-home").path
         let range = DateInterval(start: Date(timeIntervalSince1970: 0), end: Date(timeIntervalSince1970: 4_000_000_000))
         let calendar = Calendar(identifier: .gregorian)
-        let all = await ledger.dailyTokens(harness: "claude", accountHomes: nil, in: range, calendar: calendar)
-        #expect(!all.isEmpty)
-        #expect(await ledger.dailyTokens(harness: "claude", accountHomes: [home],
-                                         in: range, calendar: calendar) == all)
+        let all = AccountHistory.Key(harness: "claude", homes: nil)
+        let mine = AccountHistory.Key(harness: "claude", homes: [home])
+        let rest = AccountHistory.Key(harness: "claude", homes: nil, excluding: [home])
+        let other = AccountHistory.Key(harness: "claude", homes: ["/elsewhere"])
+        let read = await ledger.dailyTokens(for: [all, mine, rest, other], in: range, calendar: calendar)
+        #expect(read[all]?.isEmpty == false)
+        #expect(read[mine] == read[all])
         #expect(await ledger.dailyTokens(harness: "claude", accountHome: home,
-                                         in: range, calendar: calendar) == all)
-        #expect(await ledger.dailyTokens(harness: "claude", accountHomes: nil, excluding: [home],
-                                         in: range, calendar: calendar).isEmpty)
-        #expect(await ledger.dailyTokens(harness: "claude", accountHomes: ["/elsewhere"],
-                                         in: range, calendar: calendar).isEmpty)
+                                         in: range, calendar: calendar) == read[all])
+        #expect(read[rest] == [:])
+        #expect(read[other] == [:])
     }
 
     @Test func dailyBucketsUseTheCallersCalendar() async throws {

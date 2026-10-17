@@ -55,9 +55,14 @@ struct AccountsPage: View {
                     }
                 }
                 .task(id: showHistory ? historyKeys(cards: cards, harnesses: harnesses) : []) {
-                    guard showHistory else { return }
-                    await app.accountHistory?.request(historyKeys(cards: cards, harnesses: harnesses))
+                    if showHistory {
+                        await app.accountHistory?.show(historyKeys(cards: cards, harnesses: harnesses))
+                    } else {
+                        app.accountHistory?.hide()
+                    }
                 }
+                // Off the page, scans stop rebuilding charts nobody sees.
+                .onDisappear { app.accountHistory?.hide() }
             }
             if let note = app.others.note {
                 Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)

@@ -471,9 +471,8 @@ final class AppModel {
                     await ledger.dailyTokens(harness: "codex", accountHome: home,
                                              in: range, calendar: .current)
                 })
-            accountHistory = AccountHistory(days: { key, range in
-                await ledger.dailyTokens(harness: key.harness, accountHomes: key.homes,
-                                         excluding: key.excluding, in: range, calendar: .current)
+            accountHistory = AccountHistory(days: { keys, range in
+                await ledger.dailyTokens(for: keys, in: range, calendar: .current)
             })
             let overviewModel = overview
             pricingModel = PricingModel(
@@ -642,7 +641,7 @@ final class AppModel {
             })
         }
         if let accountHistory {
-            // Same counters: only the keys the Accounts page asked for rebuild.
+            // Same counters: only the keys the Accounts page shows rebuild.
             watchers.append(Task { [weak self] in
                 let changes = Observations { [weak self] in
                     self.map { ($0.overview?.completedScans ?? 0,
