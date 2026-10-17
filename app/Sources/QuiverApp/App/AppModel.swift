@@ -92,31 +92,13 @@ final class AppModel {
         }
     }
 
-    /// Resolved widget line colours, by "harness|primaryColor":
-    /// resolve() reads logo SVGs off disk, and the Widgets page's
-    /// snapshot asks for this every body pass.
-    @ObservationIgnored private var widgetColourCache: [String: String] = [:]
-
-    /// The Settings provider order and each harness's trend-chart colour
-    /// as hex, as the widget snapshot's per-harness lines want them.
+    /// The Settings provider order and each harness's colour as hex, as
+    /// the widget snapshot's per-harness lines want them.
     var widgetHarnessStyle: (order: [String], colors: [String: String]) {
         let order = providers.rows.map(\.provider.id)
-        let primaries = Dictionary(compute.matchers.map { ($0.harness, $0.primaryColor) },
-                                   uniquingKeysWith: { first, _ in first })
-        var colors: [String: String] = [:]
         var harnesses = Set(order)
         harnesses.formUnion((overview?.activityRows ?? []).map(\.harness))
-        for harness in harnesses {
-            let primary = primaries[harness] ?? nil
-            let key = "\(harness)|\(primary ?? "")"
-            if let cached = widgetColourCache[key] {
-                colors[harness] = cached
-            } else {
-                let hex = HarnessColor.resolve(id: harness, primaryColor: primary).hex
-                widgetColourCache[key] = hex
-                colors[harness] = hex
-            }
-        }
+        let colors = Dictionary(uniqueKeysWithValues: harnesses.map { ($0, HarnessColor.of($0).hex) })
         return (order, colors)
     }
 
@@ -560,8 +542,7 @@ final class AppModel {
                     return HarnessMatcher(harness: harness.name,
                                           appPath: apps.installedApp(for: harness.name),
                                           commands: commands,
-                                          homeFolder: home + "/." + harness.name,
-                                          primaryColor: harness.primaryColor)
+                                          homeFolder: home + "/." + harness.name)
                 }
         }, managedPIDs: { await Self.launchdManagedPIDs() }, defaults: .standard)
         terminalChoice = { [unowned self] in self.terminal }

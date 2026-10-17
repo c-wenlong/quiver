@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// An sRGB colour as plain components, so QuiverCore never imports a UI
 /// framework; the app wraps it in SwiftUI `Color`.
@@ -63,15 +64,36 @@ public struct HarnessRGB: Sendable, Equatable {
     }
 }
 
-/// The colour a trend line draws in: the harness's own declared colour
-/// when swe sends one, else a hue taken from its bundled colour logo,
-/// else a stable pick from a small palette. Whatever wins is lifted to
-/// read on the dark card.
+/// The one colour each harness draws in, on every page: the Overview
+/// share bar, the menu bar donut, Calendar blocks, Compute trend lines,
+/// widgets and the Models chart's Anthropic bars. A hand-picked hue for
+/// the harnesses in `fixed`; anything else takes a hue from its bundled
+/// colour logo, else a stable palette pick, lifted to read on the dark
+/// card. Change `fixed` and every page follows.
 public enum HarnessColor {
-    /// The lowest luminance a trend colour keeps.
+    /// The lowest luminance a derived colour keeps.
     public static let luminanceFloor = 0.25
 
-    /// Ten hues that all read on the dark theme.
+    /// The hand-picked palette, chosen together so neighbouring harnesses
+    /// stay apart on the dark and light surfaces. It wins over swe's
+    /// `primary_color`, which would otherwise give Calendar and Compute a
+    /// second colour for the same harness.
+    public static let fixed: [String: HarnessRGB] = [
+        "claude": HarnessRGB(hex: "#d97757")!,
+        "codex": HarnessRGB(hex: "#3b7ff0")!,
+        "opencode": HarnessRGB(hex: "#139f8b")!,
+        "devin": HarnessRGB(hex: "#c4860f")!,
+        "cursor": HarnessRGB(hex: "#c08ce0")!,
+        "grok-bot": HarnessRGB(hex: "#8a73e8")!,
+        "pi": HarnessRGB(hex: "#5fb3d9")!,
+        "droid": HarnessRGB(hex: "#e06c8f")!,
+        "freebuff": HarnessRGB(hex: "#8ac74f")!,
+        "cline": HarnessRGB(hex: "#9aa0aa")!,
+        "gemini": HarnessRGB(hex: "#e3b51e")!,
+    ]
+
+    /// Ten hues that all read on the dark theme, for harnesses outside
+    /// `fixed` with no colour logo.
     public static let palette: [HarnessRGB] = [
         HarnessRGB(hex: "#5aa2ff")!, HarnessRGB(hex: "#f0a04b")!,
         HarnessRGB(hex: "#4ec9b0")!, HarnessRGB(hex: "#e06c8f")!,
@@ -80,26 +102,30 @@ public enum HarnessColor {
         HarnessRGB(hex: "#d9b44a")!, HarnessRGB(hex: "#c08ce0")!,
     ]
 
-    /// The full chain: a valid `primaryColor`, then the colour logo's
-    /// strongest fill, then a stable palette pick.
-    public static func resolve(id: String, primaryColor: String?, colorSVG: String?) -> HarnessRGB {
-        if let hex = primaryColor, let rgb = HarnessRGB(hex: hex) {
-            return rgb.lifted(toLuminance: luminanceFloor)
-        }
-        if let svg = colorSVG, let rgb = pick(in: svg) {
-            return rgb.lifted(toLuminance: luminanceFloor)
-        }
-        return palette[stableIndex(of: id)].lifted(toLuminance: luminanceFloor)
-    }
+    private static let cache = OSAllocatedUnfairLock<[String: HarnessRGB]>(initialState: [:])
 
-    /// Resolve against the bundled icon: colour SVGs only, since a
-    /// single-colour mark has no brand hue to offer.
-    public static func resolve(id: String, primaryColor: String?) -> HarnessRGB {
+    /// The harness's colour. Cached: a harness outside `fixed` reads its
+    /// logo's SVG off disk, and views ask on every body pass.
+    public static func of(_ id: String) -> HarnessRGB {
+        if let rgb = fixed[id] { return rgb }
+        if let rgb = cache.withLock({ $0[id] }) { return rgb }
         var svg: String?
         if let icon = HarnessIcons.icon(for: id), icon.isColor {
             svg = try? String(contentsOf: icon.url, encoding: .utf8)
         }
-        return resolve(id: id, primaryColor: primaryColor, colorSVG: svg)
+        let rgb = resolve(id: id, colorSVG: svg)
+        cache.withLock { $0[id] = rgb }
+        return rgb
+    }
+
+    /// The chain with the logo passed in: `fixed`, then the colour
+    /// logo's strongest fill, then a stable palette pick.
+    public static func resolve(id: String, colorSVG: String?) -> HarnessRGB {
+        if let rgb = fixed[id] { return rgb }
+        if let svg = colorSVG, let rgb = pick(in: svg) {
+            return rgb.lifted(toLuminance: luminanceFloor)
+        }
+        return palette[stableIndex(of: id)].lifted(toLuminance: luminanceFloor)
     }
 
     /// The most saturated non-grey fill the SVG declares, scoring

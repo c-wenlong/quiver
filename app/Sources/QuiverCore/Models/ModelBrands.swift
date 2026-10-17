@@ -41,7 +41,7 @@ public enum ModelBrands {
         // where it is black or would be a third blue (Z.ai yellow, Moonshot
         // bronze, InclusionAI magenta), so neighbouring bars stay apart.
         .init(id: "anthropic", name: "Anthropic",
-              color: HarnessColor.resolve(id: "claude", primaryColor: nil), icon: "claude",
+              color: HarnessColor.of("claude"), icon: "claude",
               keywords: ["anthropic", "claude"], models: ["claude"]),
         .init(id: "openai", name: "OpenAI", color: rgb("#c9c9cf"), icon: "openai",
               keywords: ["openai"], models: ["gpt-", "chatgpt", "codex", #"o\d"#]),
