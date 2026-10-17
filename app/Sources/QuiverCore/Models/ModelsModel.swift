@@ -10,7 +10,7 @@ import Observation
 public final class ModelsModel {
     /// Chart metric: what each bar's height and the sort show.
     public enum Metric: String, CaseIterable, Identifiable, Sendable {
-        case intelligence, coding, maths, speed, ttft, cost
+        case intelligence, coding, reasoning, speed, ttft, cost
 
         public var id: String { rawValue }
 
@@ -18,7 +18,7 @@ public final class ModelsModel {
             switch self {
             case .intelligence: "Intelligence"
             case .coding: "Coding"
-            case .maths: "Maths"
+            case .reasoning: "Reasoning"
             case .speed: "Speed"
             case .ttft: "Time to first token"
             case .cost: "AA blended cost"
@@ -30,7 +30,7 @@ public final class ModelsModel {
             switch self {
             case .intelligence: "Intelligence index"
             case .coding: "Terminal-Bench 4.0"
-            case .maths: "Maths index"
+            case .reasoning: "Humanity's Last Exam"
             case .speed: "Output speed"
             case .ttft: "Time to first token"
             case .cost: "Artificial Analysis blended cost per 1M tokens"
@@ -43,7 +43,7 @@ public final class ModelsModel {
             case .intelligence:
                 "Artificial Analysis Intelligence Index: a blend of their independent evaluations (reasoning, knowledge, coding, agentic tasks)."
             case .coding: "Agentic coding and terminal tasks passed, run by Artificial Analysis. Replaces their Coding Index, which they stopped computing for new models in September 2026."
-            case .maths: "Artificial Analysis Maths Index."
+            case .reasoning: "Expert-level questions answered correctly, about 40% of them maths, run by Artificial Analysis. Replaces their Maths Index, which they retired in January 2026."
             case .speed: "Median output tokens per second across providers."
             case .ttft: "Median seconds to the first token, lower is better."
             case .cost: "Artificial Analysis's blended price per 1M tokens (3:1 input to output), lower is better. The table's Cost column is the LiteLLM price the ledger charges."
@@ -54,7 +54,7 @@ public final class ModelsModel {
         /// other way for TTFT and cost).
         public var higherIsBetter: Bool {
             switch self {
-            case .intelligence, .coding, .maths, .speed: true
+            case .intelligence, .coding, .reasoning, .speed: true
             case .ttft, .cost: false
             }
         }
@@ -62,9 +62,9 @@ public final class ModelsModel {
         /// The value as the bar and table show it.
         public func format(_ value: Double) -> String {
             switch self {
-            case .intelligence, .maths, .speed:
+            case .intelligence, .speed:
                 String(Int(value.rounded()))
-            case .coding:
+            case .coding, .reasoning:
                 "\(Int(value.rounded()))%"
             case .ttft:
                 String(format: "%.2fs", value)
@@ -78,10 +78,20 @@ public final class ModelsModel {
             switch self {
             case .intelligence: model.intelligence
             case .coding: model.coding
-            case .maths: model.maths
+            case .reasoning: model.reasoning
             case .speed: model.speed
             case .ttft: model.timeToFirstToken
             case .cost: model.priceBlended
+            }
+        }
+
+        /// Why a model has no value, for the dash's hover note, where AA
+        /// skips this evaluation on some models.
+        public var missingNote: String? {
+            switch self {
+            case .coding: AALanguageModel.noCodingScore
+            case .reasoning: AALanguageModel.noReasoningScore
+            case .intelligence, .speed, .ttft, .cost: nil
             }
         }
     }
