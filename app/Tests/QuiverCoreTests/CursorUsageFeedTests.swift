@@ -442,12 +442,17 @@ import Testing
              reply("ok", twoEvents, accountId: "uid-new")),
         ])
         let feed = feed(runner, ledger: ledger, accounts: accts(), progressFile: file)
+        // The full window starts 180 days before the poll; bracket the
+        // poll itself so a slow run can't land outside (the feed sends
+        // whole seconds, hence the second of slack below).
+        let window = CursorUsageFeed.window
+        let start = Date().timeIntervalSince1970 - window
         await feed.poll()
+        let end = Date().timeIntervalSince1970 - window
         // First call used uid-old's mark minus the overlap...
         #expect(abs(sinceArg(runner.calls[0]) - Double(1791700100 - 2 * 86_400)) < 2)
         // ... and the switch to uid-new re-asked for its full window.
-        let before = Date().addingTimeInterval(-180 * 86_400).timeIntervalSince1970
-        #expect((before - 1)...before + 60 ~= sinceArg(runner.calls[1]))
+        #expect((start - 1)...end ~= sinceArg(runner.calls[1]))
         #expect(await ledger.events(in: allTime).count == 2)
     }
 
