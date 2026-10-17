@@ -152,6 +152,10 @@ backups/
 # rewritten on every scan, so never versioned.
 data/ledger/
 
+# Devin cloud sessions the app syncs from the API: titles, links, repos and
+# message times of your own sessions. Personal, and rewritten on each sync.
+data/devin-cloud/
+
 # MCP server checkouts: ~2.7 GB of nested git repos and build output.
 # mcp.json records what they are, so this can be rebuilt from a clone.
 mcp/servers/
