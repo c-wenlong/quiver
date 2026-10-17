@@ -15,10 +15,18 @@ import os
 /// no other blob (transcripts, credentials) is ever opened. A missing
 /// directory, unreadable or malformed blob yields an empty map: a row
 /// then falls back to the short session id.
+///
+/// Deleting a Bot drops it from the roster, and Grok Bot keeps no name
+/// for it. So every id and name read is also remembered in `memory`
+/// (`~/.quiver/data/grok-bot-names.json`, Quiver's own copy), never
+/// pruned, and a Bot deleted later still titles by its last name. An id
+/// in neither, while the roster names Bots, is a Bot deleted before Quiver
+/// saw it: "Deleted Bot (<short id>)".
 public final class GrokBotRoster: Sendable {
     /// The shared instance the calendar uses. Reads are cached and the
     /// roster file is only re-parsed when its modification date changes.
-    public static let shared = GrokBotRoster()
+    public static let shared = GrokBotRoster(memory: FileManager.default.homeDirectoryForCurrentUser
+        .appending(path: ".quiver/data/grok-bot-names.json"))
 
     /// `grok-bot` sessions under a Bot that is not a top-level Bot of its
     /// own: subagent runs, titled "Subagent".
@@ -36,49 +44,98 @@ public final class GrokBotRoster: Sendable {
     /// modification date it was read at, so a rewritten blob re-parses
     /// once and an unchanged one is never re-listed within the interval.
     private let cache = OSAllocatedUnfairLock<
-        (checkedAt: Date, mtime: Date?, names: [String: String])?>(initialState: nil)
+        (checkedAt: Date, mtime: Date?, known: Known)?>(initialState: nil)
 
-    /// `directory` is injectable so tests point at fixtures rather than
-    /// the real Application Support folder.
-    public init(directory: URL? = nil, recheckInterval: TimeInterval = 30) {
+    /// What one roster read knows: every name, live or remembered; the
+    /// ids the roster lists now, named or not; and whether it named at
+    /// least one Bot, the only case where an unlisted id means deleted.
+    private struct Known: Sendable {
+        var names: [String: String] = [:]
+        var live: Set<String> = []
+        var read = false
+    }
+    /// Where every Bot name ever read is kept; nil remembers nothing
+    /// (tests, unless they pass a temporary file).
+    private let memory: URL?
+
+    /// `directory` and `memory` are injectable so tests point at fixtures
+    /// rather than the real Application Support folder and `~/.quiver`.
+    public init(directory: URL? = nil, memory: URL? = nil, recheckInterval: TimeInterval = 30) {
+        self.memory = memory
         self.directory = directory ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Grok Bot/sand-client-persistence",
                                     isDirectory: true)
         self.recheckInterval = recheckInterval
     }
 
-    /// A `grok-bot` session row's title: the Bot's name when the roster
-    /// has it, "Subagent" for a `sand-subagent-` id, else the usual
-    /// session-id fallback.
+    /// A `grok-bot` session row's title: the Bot's name, live or
+    /// remembered; "Subagent" for a `sand-subagent-` id; "Deleted Bot
+    /// (<short id>)" for a conversation id the roster, naming Bots, does
+    /// not list; else the usual session-id fallback (an unnamed live Bot,
+    /// a daily `cursor-YYYY-MM-DD` bucket, or an unread roster).
     public func title(for sessionId: String) -> String {
-        if let name = names[sessionId], !name.isEmpty { return name }
+        let known = lookup
+        if let name = known.names[sessionId], !name.isEmpty { return name }
         if sessionId.hasPrefix(Self.subagentPrefix) { return "Subagent" }
-        return CalendarFormat.sessionTitle(nil, sessionId: sessionId)
+        let short = CalendarFormat.sessionTitle(nil, sessionId: sessionId)
+        guard known.read, !known.live.contains(sessionId),
+              !CursorUsageFeed.isDayBucket(sessionId) else { return short }
+        return "Deleted Bot (\(short))"
     }
 
-    /// The roster's id → name map. Within `recheckInterval` of the last
-    /// disk check it is served from memory with no file-system access;
-    /// after that the folder is listed again and the blob re-parsed only
-    /// when its modification date moved. A missing file or any read or
-    /// decode failure returns (and caches) an empty map.
-    private var names: [String: String] {
+    /// The roster merged over every remembered name. Within
+    /// `recheckInterval` of the last disk check it is served from memory
+    /// with no file-system access; after that the folder is listed again
+    /// and the blob re-parsed only when its modification date moved. A
+    /// missing file or any read or decode failure leaves only the
+    /// remembered names, with `read` false.
+    private var lookup: Known {
         let now = Date()
         if let cached = cache.withLock({ $0 }),
            now.timeIntervalSince(cached.checkedAt) < recheckInterval {
-            return cached.names
+            return cached.known
         }
         let file = rosterFile()
         let mtime = file.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate }
         return cache.withLock { cached in
             if let previous = cached, previous.mtime == mtime {
-                cached = (now, mtime, previous.names)
-                return previous.names
+                cached = (now, mtime, previous.known)
+                return previous.known
             }
-            let names = file.flatMap(Self.parse) ?? [:]
-            cached = (now, mtime, names)
-            return names
+            let live = file.flatMap(Self.parse) ?? [:]
+            let named = live.filter { !$0.value.isEmpty }
+            // Names this process already knows stay even if the file
+            // write below failed, so a Bot deleted next is not lost.
+            let known = Known(names: remember(named, alsoKnown: cached?.known.names ?? [:]),
+                              live: Set(live.keys), read: !named.isEmpty)
+            cached = (now, mtime, known)
+            return known
         }
+    }
+
+    /// The saved names, then `alsoKnown`, then `live` merged over them (a
+    /// renamed Bot takes its new name), written back only when the file
+    /// is missing something. Only ids and names are stored, the same two
+    /// fields `parse` reads.
+    private func remember(_ live: [String: String],
+                          alsoKnown: [String: String]) -> [String: String] {
+        guard let memory else { return alsoKnown.merging(live) { _, new in new } }
+        let saved = (try? Data(contentsOf: memory))
+            .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        let merged = saved.merging(alsoKnown) { _, new in new }.merging(live) { _, new in new }
+        if merged != saved {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            do {
+                try FileManager.default.createDirectory(at: memory.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                try encoder.encode(merged).write(to: memory, options: .atomic)
+            } catch {
+                Logger.calendar.error("grok bot names not saved: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return merged
     }
 
     /// The one blob whose decoded filename key ends with the roster
