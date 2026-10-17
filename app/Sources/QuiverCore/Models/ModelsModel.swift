@@ -21,7 +21,7 @@ public final class ModelsModel {
             case .maths: "Maths"
             case .speed: "Speed"
             case .ttft: "Time to first token"
-            case .cost: "Cost"
+            case .cost: "AA blended cost"
             }
         }
 
@@ -33,7 +33,7 @@ public final class ModelsModel {
             case .maths: "Maths index"
             case .speed: "Output speed"
             case .ttft: "Time to first token"
-            case .cost: "Blended cost per 1M tokens"
+            case .cost: "Artificial Analysis blended cost per 1M tokens"
             }
         }
 
@@ -46,7 +46,7 @@ public final class ModelsModel {
             case .maths: "Artificial Analysis Maths Index."
             case .speed: "Median output tokens per second across providers."
             case .ttft: "Median seconds to the first token, lower is better."
-            case .cost: "Blended price per 1M tokens (3:1 input to output), lower is better."
+            case .cost: "Artificial Analysis's blended price per 1M tokens (3:1 input to output), lower is better. The table's Cost column is the LiteLLM price the ledger charges."
             }
         }
 
@@ -118,8 +118,35 @@ public final class ModelsModel {
         /// "Fast", "High · Fast". The bar's scores are the foundation
         /// model's regardless.
         public var qualifier: String?
+        /// The per-token price the Cost column shows, from LiteLLM (or
+        /// the user's own or Quiver's price), unlike `aa`'s blend.
+        public var listPrice: ListPrice?
 
         public var used: Bool { tokens > 0 }
+    }
+
+    /// A model's list price, USD per 1M tokens of each kind. For a model
+    /// the user ran it is the entry the ledger charges for the logged name;
+    /// for a leaderboard row, the model's main LiteLLM key (a bare name
+    /// before a provider-prefixed one, then the shortest).
+    public struct ListPrice: Sendable, Equatable {
+        /// The price list key: `claude-opus-5-5`, `xai/grok-4.20-0309`.
+        public var key: String
+        public var source: PricingCatalog.Source
+        public var input: Double
+        public var output: Double
+        public var cacheRead: Double
+        public var cacheWrite: Double
+
+        public init(key: String, source: PricingCatalog.Source, input: Double, output: Double,
+                    cacheRead: Double, cacheWrite: Double) {
+            self.key = key
+            self.source = source
+            self.input = input
+            self.output = output
+            self.cacheRead = cacheRead
+            self.cacheWrite = cacheWrite
+        }
     }
 
     /// A used model the matcher couldn't place, for the warning popover.
@@ -160,6 +187,12 @@ public final class ModelsModel {
     private var links: [String: String] = [:]
     /// The period's per-model-per-harness usage; overridable in tests.
     private let slices: @Sendable (DateInterval) async -> [ModelUsage]
+    /// The price catalog the ledger charges with; nil leaves used rows
+    /// to the catalog join like leaderboard rows.
+    private let pricing: @Sendable () async -> PricingCatalog?
+    private var pricingCatalog: PricingCatalog?
+    /// Current LiteLLM rows per AA model id, from the catalog join.
+    private var catalogPrices: [String: [CatalogDatabase.PriceRow]] = [:]
     private let now: () -> Date
     private let calendar: Calendar
     /// The usage the last load saw, kept so the scope/metric pickers can
@@ -180,12 +213,14 @@ public final class ModelsModel {
                 transport: any HTTPTransport,
                 linksURL: URL,
                 slices: (@Sendable (DateInterval) async -> [ModelUsage])?,
+                pricing: @escaping @Sendable () async -> PricingCatalog? = { nil },
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.store = store
         self.keyReader = keyReader
         self.transport = transport
         self.linksURL = linksURL
         self.slices = slices ?? { _ in [] }
+        self.pricing = pricing
         self.now = now
         self.calendar = calendar
     }
@@ -211,6 +246,8 @@ public final class ModelsModel {
         allModels = store.languageModels() ?? []
         updatedAt = store.meta()[AAEndpoint.llms.rawValue]?.fetchedAt
             .map { Date(timeIntervalSince1970: $0) }
+        await loadPrices()
+        guard generation == usageGeneration else { return }
         let fresh = await slices(period.range(now: now(), calendar: calendar))
         guard generation == usageGeneration else { return }
         periodSlices = fresh
@@ -266,6 +303,7 @@ public final class ModelsModel {
         allModels = store.languageModels() ?? []
         updatedAt = store.meta()[AAEndpoint.llms.rawValue]?.fetchedAt
             .map { Date(timeIntervalSince1970: $0) }
+        await loadPrices()
         rebuild()
     }
 
@@ -316,7 +354,32 @@ public final class ModelsModel {
         return Row(logged: logged, aa: aa, harnesses: harnesses, tokens: tokens,
                    value: aa.flatMap { metric.value(of: $0) },
                    costPercentile: aa.flatMap { CostPercentile.rank(of: $0, in: allModels) },
-                   qualifier: qualifier(parsed))
+                   qualifier: qualifier(parsed),
+                   listPrice: listPrice(logged: logged, aa: aa))
+    }
+
+    /// Reads the ledger's catalog and the catalog join's current prices.
+    private func loadPrices() async {
+        pricingCatalog = await pricing()
+        let database = store.database
+        catalogPrices = await Task.detached { database.currentPricesByModel() }.value
+    }
+
+    /// The list price a row shows: the ledger's entry for `logged` when it
+    /// prices that name, else `aa`'s main key in the catalog join.
+    func listPrice(logged: String?, aa: AALanguageModel?) -> ListPrice? {
+        if let logged, let pricingCatalog,
+           case .priced(let rates, let entry, let source, _) = pricingCatalog.resolve(model: logged, tier: "") {
+            return ListPrice(key: entry, source: source, input: rates.input * 1e6, output: rates.output * 1e6,
+                             cacheRead: rates.cacheRead * 1e6, cacheWrite: rates.cacheWrite * 1e6)
+        }
+        guard let aa, let rows = catalogPrices[aa.id] else { return nil }
+        func rank(_ row: CatalogDatabase.PriceRow) -> (Int, Int, String) {
+            (row.key.contains("/") ? 1 : 0, row.key.count, row.key)
+        }
+        guard let best = rows.min(by: { rank($0) < rank($1) }) else { return nil }
+        return ListPrice(key: best.key, source: .liteLLM, input: best.input * 1e6, output: best.output * 1e6,
+                         cacheRead: best.cacheRead * 1e6, cacheWrite: best.cacheWrite * 1e6)
     }
 
     /// The effort and mode words a parsed name carried, display-cased.
@@ -369,6 +432,9 @@ public final class ModelsModel {
         var dominantTokens: [String: Int] = [:]
         var stillUnmatched: [Unmatched] = []
         var matchedIDs: Set<String> = []
+        // Per AA model, the logged name with the most tokens: its ledger
+        // price is the row's list price.
+        var pricedNames: [String: String] = [:]
         for (logged, entry) in byModel {
             let aa = ModelMatcher.match(logged, in: allModels, links: links)
             let parsed = ModelMatcher.parse(logged)
@@ -385,6 +451,7 @@ public final class ModelsModel {
                 }
                 if entry.tokens > 0, entry.tokens > dominantTokens[aa.id] ?? 0 {
                     dominantTokens[aa.id] = entry.tokens
+                    pricedNames[aa.id] = logged
                     used[index].logged = logged
                     used[index].qualifier = qualifier(parsed)
                 }
@@ -397,6 +464,7 @@ public final class ModelsModel {
                                 value: metric.value(of: aa),
                                 costPercentile: CostPercentile.rank(of: aa, in: allModels),
                                 qualifier: qualifier(parsed)))
+                pricedNames[aa.id] = logged
             }
         }
         for (id, byHarness) in mergedHarness {
@@ -405,13 +473,18 @@ public final class ModelsModel {
                     .sorted { ($0.value, $0.key) > ($1.value, $1.key) }.map(\.key)
             }
         }
+        for index in used.indices {
+            used[index].listPrice = listPrice(logged: used[index].aa.flatMap { pricedNames[$0.id] },
+                                              aa: used[index].aa)
+        }
         unmatched = stillUnmatched.sorted { ($0.tokens, $0.model) > ($1.tokens, $1.model) }
 
         func leaderboardRow(_ model: AALanguageModel) -> Row {
             used.first(where: { $0.aa?.id == model.id })
                 ?? Row(logged: model.name, aa: model,
                        value: metric.value(of: model),
-                       costPercentile: CostPercentile.rank(of: model, in: allModels))
+                       costPercentile: CostPercentile.rank(of: model, in: allModels),
+                       listPrice: listPrice(logged: nil, aa: model))
         }
         let all: [Row]
         switch scope {
