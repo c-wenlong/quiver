@@ -512,14 +512,23 @@ public actor Ledger {
     /// Days with no usage are left out.
     public func dailyTokens(harness: String, accountHome: String,
                             in range: DateInterval, calendar: Calendar) -> [Date: Int] {
+        dailyTokens(harness: harness, accountHomes: [accountHome], in: range, calendar: calendar)
+    }
+
+    /// The same over several account homes, or every home the harness
+    /// logged but `excluding` when `accountHomes` is nil.
+    public func dailyTokens(harness: String, accountHomes: Set<String>?,
+                            excluding: Set<String> = [],
+                            in range: DateInterval, calendar: Calendar) -> [Date: Int] {
         guard let groups = try? store.groups(
             in: range, by: [.harness, .account], thresholds: pricing.thresholds,
             bucketSeconds: 900)
         else { return [:] }
         var days: [Date: Int] = [:]
-        for group in groups
-        where group.dimensions[.harness] == harness
-            && group.dimensions[.account] == accountHome {
+        for group in groups where group.dimensions[.harness] == harness {
+            let home = group.dimensions[.account] ?? ""
+            if let accountHomes, !accountHomes.contains(home) { continue }
+            if excluding.contains(home) { continue }
             let day = calendar.startOfDay(for: max(group.bucket ?? group.first, range.start))
             days[day, default: 0] += group.tokens.total
         }

@@ -6,6 +6,10 @@ struct AccountsPage: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
     @State private var actionError: String?
+    /// Every card's usage history, off by default so the cards stay
+    /// the same height; one switch for the whole page.
+    @AppStorage("accountsShowHistory") private var showHistory = false
+    @AppStorage("accountsHistoryMonthly") private var monthly = false
 
     var body: some View {
         let model = app.accounts
@@ -18,6 +22,14 @@ struct AccountsPage: View {
             .disabled(model.isLoading)
             .keyboardShortcut("r", modifiers: .command)
             .help("Refresh (⌘R)")
+            if showHistory {
+                Tabs(options: [(false, "Weekly"), (true, "Monthly")], selection: $monthly)
+            }
+            Button(showHistory ? "Hide history" : "Show history", systemImage: "chart.bar") {
+                showHistory.toggle()
+            }
+            .secondaryButton()
+            .help("Weekly or monthly tokens on every account")
             Button("Add account", systemImage: "plus") { adding = true }
                 .primaryButton()
         } content: {
@@ -35,12 +47,16 @@ struct AccountsPage: View {
             if !cards.isEmpty || !harnesses.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.gutter, alignment: .top)], spacing: Theme.gutter) {
                     ForEach(cards) { card in
-                        AccountCard(card: card, perform: perform,
+                        AccountCard(card: card, history: history, perform: perform,
                                     reloadAll: { await reloadAll(force: $0) })
                     }
                     ForEach(harnesses) { row in
-                        HarnessAccountCard(row: row, perform: perform)
+                        HarnessAccountCard(row: row, history: history, perform: perform)
                     }
+                }
+                .task(id: showHistory ? historyKeys(cards: cards, harnesses: harnesses) : []) {
+                    guard showHistory else { return }
+                    await app.accountHistory?.request(historyKeys(cards: cards, harnesses: harnesses))
                 }
             }
             if let note = app.others.note {
@@ -70,6 +86,26 @@ struct AccountsPage: View {
         .task { await app.others.load() }
     }
 
+    /// What every card's history section needs, or nil while it is hidden.
+    private var history: HistoryDisplay? {
+        showHistory ? HistoryDisplay(monthly: monthly, profiles: allProfiles) : nil
+    }
+
+    /// Every account Quiver keeps a folder for, so a harness's own card
+    /// leaves out the homes that have cards of their own.
+    private var allProfiles: [Profile] {
+        app.accounts.cards.map(\.profile) + app.others.cards.compactMap(\.profile)
+    }
+
+    private func historyKeys(cards: [AccountsModel.Card],
+                             harnesses: [OtherLimitsModel.Card]) -> [AccountHistory.Key] {
+        let profiles = allProfiles
+        return cards.map { app.accounts.historyKey(harness: $0.profile.vendor.rawValue,
+                                                   profile: $0.profile, profiles: profiles) }
+            + harnesses.map { app.accounts.historyKey(harness: $0.name, profile: $0.profile,
+                                                      profiles: profiles) }
+    }
+
     private func reloadAll(force: Bool, renewExpired: Bool = false) async {
         // Only the Refresh button renews and asks swe to refetch failures;
         // every other caller just loads.
@@ -97,9 +133,16 @@ struct AccountsPage: View {
     }
 }
 
+/// How the cards draw their history while the page shows it.
+struct HistoryDisplay {
+    var monthly: Bool
+    var profiles: [Profile]
+}
+
 private struct AccountCard: View {
     @Environment(AppModel.self) private var app
     var card: AccountsModel.Card
+    var history: HistoryDisplay?
     var perform: (@escaping () async throws -> Void) -> Void
     var reloadAll: (Bool) async -> Void
     @State private var renaming = false
@@ -148,11 +191,15 @@ private struct AccountCard: View {
                         cliInstalled: { app.others.cliInstalled[$0] ?? model.cliOnPath[profile.vendor] }),
                     perform: perform)
             }
-            if profile.vendor == .codex, let codexUsage = app.codexUsage,
-               let section = codexUsage.section(for: model.folder(of: profile).path) {
-                Divider().overlay(Theme.border)
-                CodexCompareSection(
-                    section: section,
+            if let history {
+                let key = model.historyKey(harness: profile.vendor.rawValue, profile: profile,
+                                           profiles: history.profiles)
+                AccountHistorySection(
+                    history: app.accountHistory?.histories[key],
+                    codex: profile.vendor == .codex
+                        ? app.codexUsage?.section(for: model.folder(of: profile).path) : nil,
+                    harnessName: profile.vendor.title,
+                    monthly: history.monthly,
                     signIn: { perform { try await model.signIn(profile) } })
             }
         }
@@ -402,6 +449,7 @@ private struct LaunchButtons: View {
 private struct HarnessAccountCard: View {
     @Environment(AppModel.self) private var app
     var row: OtherLimitsModel.Card
+    var history: HistoryDisplay?
     var perform: (@escaping () async throws -> Void) -> Void
     @State private var renaming = false
     @State private var newName = ""
@@ -492,6 +540,16 @@ private struct HarnessAccountCard: View {
                             cliInstalled: { _ in row.cliInstalled }),
                         perform: perform)
                 }
+            }
+            if let history {
+                AccountHistorySection(
+                    history: app.accountHistory?.histories[
+                        model.historyKey(harness: row.name, profile: row.profile,
+                                         profiles: history.profiles)],
+                    codex: nil,
+                    harnessName: ownName,
+                    monthly: history.monthly,
+                    signIn: nil)
             }
         }
         .alert("Rename \(row.profile?.name ?? ownName)", isPresented: $renaming) {

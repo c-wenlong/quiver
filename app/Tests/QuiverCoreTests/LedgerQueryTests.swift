@@ -12,6 +12,25 @@ import Testing
         return (temp, ledger)
     }
 
+    /// The Accounts history sums one harness over chosen homes, or every
+    /// home but those other cards own.
+    @Test func dailyTokensSumChosenHomesOrAllButExcluded() async throws {
+        let (temp, ledger) = try await scannedFixture()
+        let home = temp.path("claude-home").path
+        let range = DateInterval(start: Date(timeIntervalSince1970: 0), end: Date(timeIntervalSince1970: 4_000_000_000))
+        let calendar = Calendar(identifier: .gregorian)
+        let all = await ledger.dailyTokens(harness: "claude", accountHomes: nil, in: range, calendar: calendar)
+        #expect(!all.isEmpty)
+        #expect(await ledger.dailyTokens(harness: "claude", accountHomes: [home],
+                                         in: range, calendar: calendar) == all)
+        #expect(await ledger.dailyTokens(harness: "claude", accountHome: home,
+                                         in: range, calendar: calendar) == all)
+        #expect(await ledger.dailyTokens(harness: "claude", accountHomes: nil, excluding: [home],
+                                         in: range, calendar: calendar).isEmpty)
+        #expect(await ledger.dailyTokens(harness: "claude", accountHomes: ["/elsewhere"],
+                                         in: range, calendar: calendar).isEmpty)
+    }
+
     @Test func dailyBucketsUseTheCallersCalendar() async throws {
         let (_, ledger) = try await scannedFixture()
         var calendar = Calendar(identifier: .gregorian)
