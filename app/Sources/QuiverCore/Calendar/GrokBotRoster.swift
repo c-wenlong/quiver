@@ -1,9 +1,10 @@
 import Foundation
 import os
 
-/// Grok Bot's local Bot list. The feed carries only a conversation id —
-/// which is the Bot's id — so calendar blocks for `grok-bot` look up the
-/// Bot's name here to group and title by Bot rather than "No folder".
+/// Grok Bot's local Bot list. The feed carries only a conversation id,
+/// which is the Bot's id, so a `grok-bot` session row looks up the Bot's
+/// name here. Blocks do not split by Bot: Bots hand one task between
+/// them, so every Bot shares one Calendar lane (`ProjectResolver`).
 ///
 /// Source: `~/Library/Application Support/Grok Bot/sand-client-persistence/`
 /// holds `*.blob` files whose stems are lowercase unpadded RFC 4648
@@ -12,28 +13,23 @@ import os
 /// `{"schemaVersion": n, "value": {"rows": [{"id", "name", …}]}}`. Only
 /// `id` and `name` are read — never `lastEntry` or any other field, and
 /// no other blob (transcripts, credentials) is ever opened. A missing
-/// directory, unreadable or malformed blob yields an empty map: labelling
-/// then falls back to the harness name and the short session id.
+/// directory, unreadable or malformed blob yields an empty map: a row
+/// then falls back to the short session id.
 public final class GrokBotRoster: Sendable {
-    /// The labels one session id resolves to: `projectKey` groups blocks
-    /// of the same Bot, `projectName` is the block's title and
-    /// `sessionTitle` the session row's label.
-    public typealias Labels = (projectKey: String, projectName: String, sessionTitle: String)
-
     /// The shared instance the calendar uses. Reads are cached and the
     /// roster file is only re-parsed when its modification date changes.
     public static let shared = GrokBotRoster()
 
     /// `grok-bot` sessions under a Bot that is not a top-level Bot of its
-    /// own: subagent runs share one project, not a group per subagent.
+    /// own: subagent runs, titled "Subagent".
     private static let subagentPrefix = "sand-subagent-"
     /// The filename key suffix marking the roster blob among the other
     /// persistence blobs (transcripts, secrets — none of which we open).
     private static let rosterSuffix = ".roster.last-roster"
 
     private let directory: URL
-    /// How long a lookup trusts the last disk check. Labels are read while
-    /// drawing rows and grouping blocks, so the folder listing and stat
+    /// How long a lookup trusts the last disk check. Titles are read while
+    /// drawing rows, so the folder listing and stat
     /// happen at most this often, never once per row.
     private let recheckInterval: TimeInterval
     /// Decoded id → name, with when the disk was last checked and the
@@ -51,26 +47,13 @@ public final class GrokBotRoster: Sendable {
         self.recheckInterval = recheckInterval
     }
 
-    /// The full label set for a `grok-bot` session id: a rostered Bot
-    /// groups under `grok-bot:<id>` and titles as the Bot's name; a
-    /// `sand-subagent-` id groups as "Subagents"; anything else is plain
-    /// "Grok Bot" with the usual session-id fallback.
-    public func labels(for sessionId: String) -> Labels {
-        if let name = names[sessionId], !name.isEmpty {
-            return ("grok-bot:\(sessionId)", name, name)
-        }
-        if sessionId.hasPrefix(Self.subagentPrefix) {
-            return ("Subagents", "Subagents", "Subagent")
-        }
-        let name = HarnessMark("grok-bot").name
-        return (name, name, CalendarFormat.sessionTitle(nil, sessionId: sessionId))
-    }
-
-    /// The project identity part of `labels(for:)`, for resolvers that
-    /// only group and never print session titles.
-    public func project(for sessionId: String) -> ProjectResolver.Identity {
-        let labels = labels(for: sessionId)
-        return (labels.projectKey, labels.projectName)
+    /// A `grok-bot` session row's title: the Bot's name when the roster
+    /// has it, "Subagent" for a `sand-subagent-` id, else the usual
+    /// session-id fallback.
+    public func title(for sessionId: String) -> String {
+        if let name = names[sessionId], !name.isEmpty { return name }
+        if sessionId.hasPrefix(Self.subagentPrefix) { return "Subagent" }
+        return CalendarFormat.sessionTitle(nil, sessionId: sessionId)
     }
 
     /// The roster's id → name map. Within `recheckInterval` of the last

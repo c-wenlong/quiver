@@ -58,60 +58,45 @@ import Testing
                                   extras: [(key: "user-1.transcripts",
                                             json: #"{"secret": "transcript data"}"#)])
         let roster = GrokBotRoster(directory: dir)
-        #expect(roster.labels(for: "bot-uuid-1").projectName == "Cortex")
-        #expect(roster.labels(for: "bot-uuid-2").projectName == "NUS")
+        #expect(roster.title(for: "bot-uuid-1") == "Cortex")
+        #expect(roster.title(for: "bot-uuid-2") == "NUS")
     }
 
-    @Test func aRosteredSessionLabelsAsItsBot() throws {
+    @Test func aSubagentSessionTitlesAsSubagent() throws {
         let roster = GrokBotRoster(directory: try persistence(json: rosterJSON))
-        let labels = roster.labels(for: "bot-uuid-1")
-        #expect(labels.projectKey == "grok-bot:bot-uuid-1")
-        #expect(labels.projectName == "Cortex")
-        #expect(labels.sessionTitle == "Cortex")
+        #expect(roster.title(for: "sand-subagent-0f9c2d1e") == "Subagent")
     }
 
-    @Test func aSubagentSessionGroupsAsSubagents() throws {
+    @Test func anUnknownSessionFallsBackToTheShortId() throws {
         let roster = GrokBotRoster(directory: try persistence(json: rosterJSON))
-        let labels = roster.labels(for: "sand-subagent-0f9c2d1e")
-        #expect(labels.projectKey == "Subagents")
-        #expect(labels.projectName == "Subagents")
-        #expect(labels.sessionTitle == "Subagent")
-    }
-
-    @Test func anUnknownSessionFallsBackToGrokBotAndTheShortId() throws {
-        let roster = GrokBotRoster(directory: try persistence(json: rosterJSON))
-        let uuid = "01234567-89ab-cdef-0123-456789abcdef"
-        let labels = roster.labels(for: uuid)
-        #expect(labels.projectKey == "Grok Bot")
-        #expect(labels.projectName == "Grok Bot")
-        #expect(labels.sessionTitle == "01234567…")
+        #expect(roster.title(for: "01234567-89ab-cdef-0123-456789abcdef") == "01234567…")
         // A slug-shaped id stays whole, like the shared fallback.
-        #expect(roster.labels(for: "friendly-session").sessionTitle == "friendly-session")
+        #expect(roster.title(for: "friendly-session") == "friendly-session")
     }
 
     @Test func missingDirectoryOrMalformedJSONGivesAnEmptyMap() throws {
         let missing = GrokBotRoster(
             directory: URL(fileURLWithPath: "/nonexistent/grok-bots"))
-        #expect(missing.labels(for: "bot-uuid-1").projectName == "Grok Bot")
+        #expect(missing.title(for: "bot-uuid-1") == "bot-uuid-1")
 
         for bad in ["not json", "{}", #"{"value": {"rows": "nope"}}"#,
                     #"{"value": {"rows": [{"id": 1, "name": 2}]}}"#] {
             let roster = GrokBotRoster(directory: try persistence(json: bad))
-            #expect(roster.labels(for: "bot-uuid-1").projectName == "Grok Bot")
+            #expect(roster.title(for: "bot-uuid-1") == "bot-uuid-1")
         }
     }
 
     @Test func lookupsWithinTheIntervalNeverTouchTheDisk() throws {
         let dir = try persistence(json: rosterJSON)
         let roster = GrokBotRoster(directory: dir, recheckInterval: 3600)
-        #expect(roster.labels(for: "bot-uuid-1").projectName == "Cortex")
+        #expect(roster.title(for: "bot-uuid-1") == "Cortex")
         // With the folder gone, a cached lookup still answers: nothing was
         // listed or read for it.
         try FileManager.default.removeItem(at: dir)
-        #expect(roster.labels(for: "bot-uuid-1").projectName == "Cortex")
+        #expect(roster.title(for: "bot-uuid-1") == "Cortex")
         // A zero interval checks the disk every time and sees it's gone.
         let eager = GrokBotRoster(directory: dir, recheckInterval: 0)
-        #expect(eager.labels(for: "bot-uuid-1").projectName == "Grok Bot")
+        #expect(eager.title(for: "bot-uuid-1") == "bot-uuid-1")
     }
 
     @Test func theRosterBlobIsFoundAmongOtherBlobs() throws {
@@ -123,32 +108,35 @@ import Testing
             (key: "user-1.secrets", json: #"{"key":"sk-secret"}"#),
         ])
         let roster = GrokBotRoster(directory: dir)
-        #expect(roster.labels(for: "bot-uuid-1").sessionTitle == "Cortex")
+        #expect(roster.title(for: "bot-uuid-1") == "Cortex")
     }
 
-    @Test func groupingUsesTheRosterPerSession() {
-        let resolver = ProjectResolver(gitDir: { _ in nil },
-                                       grokBot: { id in
-            id == "bot-uuid-1" ? ("grok-bot:bot-uuid-1", "Cortex")
-                               : ("Grok Bot", "Grok Bot")
-        })
+    /// Bots hand one task between them, so every Bot shares one lane:
+    /// overlapping or near Bots merge into one "Grok Bot" block that
+    /// lists each session, and other harnesses stay apart.
+    @Test func everyBotSharesOneGrokBotLane() {
+        let resolver = ProjectResolver(gitDir: { _ in nil })
         let grouped = resolver.group([
             ActivityBlock(harness: "grok-bot", accountHome: "", sessionId: "bot-uuid-1",
                           start: utc("2026-10-14T09:00:00Z"),
                           end: utc("2026-10-14T09:30:00Z"), responses: 1),
-            ActivityBlock(harness: "grok-bot", accountHome: "", sessionId: "other-id",
+            ActivityBlock(harness: "grok-bot", accountHome: "", sessionId: "sand-subagent-1",
                           start: utc("2026-10-14T09:10:00Z"),
                           end: utc("2026-10-14T09:40:00Z"), responses: 1),
+            ActivityBlock(harness: "grok-bot", accountHome: "", sessionId: "bot-uuid-2",
+                          start: utc("2026-10-14T09:45:00Z"),
+                          end: utc("2026-10-14T09:50:00Z"), responses: 2),
             ActivityBlock(harness: "claude", accountHome: "/h",
                           sessionId: "s1", start: utc("2026-10-14T09:00:00Z"),
                           end: utc("2026-10-14T09:30:00Z"), responses: 1),
         ], gap: CalendarModel.gap)
-        let byProject = Dictionary(grouping: grouped, by: \.project)
-        #expect(byProject["Cortex"]?.count == 1)
-        #expect(byProject["Cortex"]?.first?.projectKey == "grok-bot:bot-uuid-1")
-        #expect(byProject["Grok Bot"]?.count == 1)
-        #expect(byProject["No folder"]?.count == 1)  // the claude block, no cwd
-        // The two grok-bot projects do not merge even overlapping in time.
-        #expect(grouped.filter { $0.harness == "grok-bot" }.count == 2)
+        let grok = grouped.filter { $0.harness == "grok-bot" }
+        #expect(grok.count == 1)
+        #expect(grok.first?.project == "Grok Bot")
+        #expect(grok.first?.projectKey == "grok-bot")
+        #expect(Set(grok.first?.sessions.map(\.sessionId) ?? [])
+                == ["bot-uuid-1", "sand-subagent-1", "bot-uuid-2"])
+        #expect(grok.first?.responses == 4)
+        #expect(grouped.filter { $0.harness == "claude" }.count == 1)
     }
 }
