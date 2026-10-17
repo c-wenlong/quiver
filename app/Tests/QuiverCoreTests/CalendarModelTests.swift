@@ -621,6 +621,51 @@ private final class HeldActivity: ActivityProviding, @unchecked Sendable {
     }
 }
 
+/// Returns once the model's prefetches and snapshot saves have finished,
+/// or once the test is cancelled (its time limit), so a background task
+/// that never ends fails the test instead of hanging the suite.
+@MainActor
+private func settled(_ model: CalendarModel) async {
+    let gate = OnceGate()
+    await withTaskCancellationHandler {
+        await withCheckedContinuation { continuation in
+            gate.arm(continuation)
+            Task { @MainActor in
+                await model.backgroundWork()
+                gate.open()
+            }
+        }
+    } onCancel: {
+        gate.open()
+    }
+}
+
+/// A continuation resumed exactly once, by whichever of `open()` and
+/// `arm(_:)` comes second.
+private final class OnceGate: @unchecked Sendable {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var opened = false
+    private let lock = NSLock()
+    func arm(_ continuation: CheckedContinuation<Void, Never>) {
+        lock.lock()
+        if opened {
+            lock.unlock()
+            continuation.resume()
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+    func open() {
+        lock.lock()
+        opened = true
+        let waiting = continuation
+        continuation = nil
+        lock.unlock()
+        waiting?.resume()
+    }
+}
+
 /// A snapshot store the test fills and reads back.
 private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
     var saved: [CalendarSnapshot] = []
@@ -674,7 +719,10 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         #expect(model.blocks.isEmpty)
     }
 
-    @Test func prefetchFillsNeighbouringRangesWithoutPublishing() async throws {
+    // Each time limit below fails the test instead of hanging the suite
+    // if a prefetch or snapshot save never finishes.
+    @Test(.timeLimit(.minutes(1)))
+    func prefetchFillsNeighbouringRangesWithoutPublishing() async {
         let provider = FakeActivity(blocks: [block("2026-10-05T10:00:00Z", session: "prev"),
                                              block("2026-10-14T10:00:00Z", session: "now"),
                                              block("2026-10-21T10:00:00Z", session: "next")])
@@ -685,8 +733,8 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         // days' blocks are published too; the window clip is separate.
         #expect(model.blocks.map(\.project) == ["prev", "now", "next"])
         #expect(model.windowBlocks.map(\.project) == ["now"])
-        // Give the utility-priority prefetch tasks a moment.
-        try await Task.sleep(for: .milliseconds(300))
+        // Wait for the utility-priority prefetch tasks to land.
+        await settled(model)
         // Moving back a week publishes from the cache: the blocks appear
         // before the provider's load could run again.
         model.previous()
@@ -713,14 +761,15 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         #expect(held.calls >= 2)
     }
 
-    @Test func theSnapshotPersistsTheRecentRanges() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func theSnapshotPersistsTheRecentRanges() async throws {
         let spy = SnapSpy()
         let provider = FakeActivity(blocks: [block("2026-10-14T09:00:00Z")])
         let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") },
                                   calendar: calendar, snapshots: spy)
         await model.load()
-        try await Task.sleep(for: .milliseconds(200))
+        await settled(model)
         let saved = try #require(spy.saved.last)
         // The saved range is the render range, not the visible one.
         #expect(saved.ranges.contains {
@@ -791,7 +840,8 @@ extension CalendarCacheTests {
         #expect(dayAfter.duration == 23 * 3600)  // DST day
     }
 
-    @Test func aLatePrefetchDoesNotOverwriteFresherBlocks() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func aLatePrefetchDoesNotOverwriteFresherBlocks() async {
         let week = DateInterval(start: utc("2026-10-12T00:00:00Z"),
                                 end: utc("2026-10-19T00:00:00Z"))
         let nextWeek = DateInterval(start: week.end, end: utc("2026-10-26T00:00:00Z"))
@@ -812,14 +862,18 @@ extension CalendarCacheTests {
         // Let the prefetch land: the fresh write wins.
         provider.holdPrefetch = false
         provider.release()
-        try await Task.sleep(for: .milliseconds(200))
-        await model.load(force: true)
+        await settled(model)
+        // Step away and back: the paint comes from the cache alone, so a
+        // forced read cannot hide a prefetch that overwrote it.
+        model.previous()
+        model.next()
         #expect(model.blocks.map(\.project) == ["fresh"])
     }
 }
 
 extension CalendarCacheTests {
-    @Test func aFailingPrefetchKeepsTheProvidersCachedBlocks() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func aFailingPrefetchKeepsTheProvidersCachedBlocks() async {
         let flag = Flag()
         let good = FakeActivity(blocks: [block("2026-10-14T09:00:00Z", session: "a")])
         let flaky = TogglingActivity(blocks: [block("2026-10-14T10:00:00Z",
@@ -827,16 +881,16 @@ extension CalendarCacheTests {
         let model = CalendarModel(providers: [good, flaky], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         await model.load()
-        try await Task.sleep(for: .milliseconds(300))  // let prefetches land
+        await settled(model)  // let prefetches land
         #expect(model.blocks.count == 2)
         // Every cached range goes stale; the flaky provider now fails.
         flag.value = true
         model.noteScanCompleted()
         model.next()
         await model.load(force: true)
-        // Give the stale-range prefetch (back on the October 12 week) a
-        // moment to finish with the flaky provider failing.
-        try await Task.sleep(for: .milliseconds(300))
+        // Wait for the stale-range prefetch (back on the October 12 week)
+        // to finish with the flaky provider failing.
+        await settled(model)
         model.previous()
         // The stale cache paints synchronously and must still hold both
         // providers' blocks.
