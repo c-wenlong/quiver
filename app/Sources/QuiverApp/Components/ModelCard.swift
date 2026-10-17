@@ -80,18 +80,22 @@ struct ModelCard: View {
         }
     }
 
-    /// "Cost", the green→orange→purple scale with the model's name over
-    /// its dot, and the blended, input and output prices as tiles.
+    /// "Cost": the list price the ledger charges (LiteLLM, or the user's
+    /// own) as input, output and cache-read tiles, then Artificial
+    /// Analysis's blended price with the green→orange→purple scale and
+    /// the model's name over its dot, for comparison.
     @ViewBuilder private func cost(_ model: AALanguageModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Cost").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            HStack(spacing: 6) {
+                priceTile("Input", row.listPrice?.input, highlighted: true)
+                priceTile("Output", row.listPrice?.output)
+                priceTile("Cache read", row.listPrice?.cacheRead)
+            }
+            .help(row.listPrice.map { "\($0.key) in the price list" } ?? "No LiteLLM price for this model")
+            line("AA blended", model.priceBlended.map { Self.price($0) + " / 1M" })
             if let rank = row.costPercentile {
                 CostDotScale(name: title, rank: rank)
-            }
-            HStack(spacing: 6) {
-                priceTile("Blended", model.priceBlended, highlighted: true)
-                priceTile("Input", model.priceInput)
-                priceTile("Output", model.priceOutput)
             }
         }
     }

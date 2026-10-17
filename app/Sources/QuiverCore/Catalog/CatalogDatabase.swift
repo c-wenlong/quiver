@@ -453,6 +453,27 @@ extension CatalogDatabase {
     }
 }
 
+extension CatalogDatabase {
+    /// The rows in force of every key that names an AA model, by model id:
+    /// `prices(forModel:)` for all models in one query.
+    public func currentPricesByModel() -> [String: [PriceRow]] {
+        withDB { db in
+            let statement = try db.prepare("""
+                SELECT \(Self.priceColumns), a.model_id FROM prices p
+                JOIN model_aliases a ON a.name = p.key
+                WHERE a.model_id IS NOT NULL AND p.valid_to IS NULL
+                ORDER BY p.key
+                """)
+            var result: [String: [PriceRow]] = [:]
+            while try statement.step() {
+                guard let id = statement.text(9) else { continue }
+                result[id, default: []].append(Self.priceRow(from: statement))
+            }
+            return result
+        } ?? [:]
+    }
+}
+
 // MARK: - Artificial Analysis
 
 extension CatalogDatabase {
