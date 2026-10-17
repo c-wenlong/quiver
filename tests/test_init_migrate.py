@@ -75,6 +75,12 @@ class LayoutInvariantTest(unittest.TestCase):
         self.assertEqual(paths.MCP_SERVERS_DIR.parent, paths.MCP_DIR)
         self.assertIn("mcp/servers/", paths.GITIGNORE_BODY)
 
+    def test_usage_ledger_is_gitignored(self):
+        # The app keeps it under data/, which is otherwise versioned, but it
+        # holds personal usage (project paths, session ids) and ~30 MB of
+        # SQLite rewritten on every scan.
+        self.assertIn("data/ledger/", paths.GITIGNORE_BODY)
+
     def test_mcp_helpers_and_constants_agree(self):
         self.assertEqual(paths.mcp_dir_for(), paths.MCP_DIR)
         self.assertEqual(paths.mcp_servers_dir_for(), paths.MCP_SERVERS_DIR)
