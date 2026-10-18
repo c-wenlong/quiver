@@ -496,7 +496,8 @@ private struct PanelAccountRow: View {
                                   unavailable: failed, asOf: usage.fetchedAt)
                 }
                 .opacity(usage.isStale && !failed ? 0.55 : 1)
-                if usage.isStale { StatusLine(usage: usage, card: card) }
+                // A live reading still names when its sign-in lapses.
+                if usage.isStale || usage.signInExpiresAt != nil { StatusLine(usage: usage, card: card) }
             } else {
                 StatusLine(usage: card.usage, card: card)
             }
