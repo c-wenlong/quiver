@@ -88,6 +88,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Quiver's Pricing page lets you price harness-billed models.** Rows
+  Cursor or another harness bills itself (it logs a charge per request)
+  now open the price form like any other. A saved price fills the rate
+  columns and prices any harness that logs no charge; that harness's own
+  logged charge still sets its spend, as the form and the row's hover
+  text say. Such a row with no rates reads "Harness" instead of "Billed
+  by harness", which overflowed the Source column onto the cache write
+  rate.
+
 - **"Open app" on the Accounts page now focuses the account's own running
   instance.** Quiver tells desktop-app instances apart by their
   `--user-data-dir` argument, so opening the default account while another
