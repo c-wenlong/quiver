@@ -182,13 +182,15 @@ private struct ModelsContent: View {
     /// Why there are no rows: usage the matcher couldn't place is still
     /// usage, and a filtered Top 25 can simply miss every model.
     private var emptyText: String {
-        if !model.unmatched.isEmpty {
-            return model.unmatched.count == 1
-                ? "The model you used isn't on Artificial Analysis. Link it from the ⚠︎ button."
-                : "The models you used aren't on Artificial Analysis. Link them from the ⚠︎ button."
-        }
+        // First: linking can't help a filtered board the models miss.
         if !model.harnessFilter.isEmpty && model.scope == .top25 {
             return "None of the top 25 ran in these harnesses this period."
+        }
+        // A name the matcher missed may still be on AA, under another name.
+        if !model.unmatched.isEmpty {
+            return model.unmatched.count == 1
+                ? "Quiver couldn't match the model you used to Artificial Analysis. Link it from the ⚠︎ button."
+                : "Quiver couldn't match the models you used to Artificial Analysis. Link them from the ⚠︎ button."
         }
         return "No usage in this period."
     }
