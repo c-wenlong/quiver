@@ -41,23 +41,11 @@ private struct CalendarContent: View {
     /// The side panel's pointer state; `collapsed` mirrors the model's
     /// persisted choice. Same hover machinery as the window sidebar.
     @State private var panelHover = HoverExpansion()
-    /// The hovered segment or month entry whose card is up, one at a
-    /// time: keyed on the segment/entry id so a block split across two
-    /// day columns opens its card only where the pointer is.
-    @State private var cardKey: String?
-    @State private var cardTask: Task<Void, Never>?
-
-    /// 350 ms before a card opens; 150 ms of grace before it closes so
-    /// the pointer crossing to a neighbour swaps rather than flickers.
-    private static let cardShowDelay: Duration = .milliseconds(350)
-    private static let cardHideDelay: Duration = .milliseconds(150)
-    /// While a chip card is open, the pointer's screen position is
-    /// polled this often against the chip ∪ card safe region.
-    private static let cardPollInterval: Duration = .milliseconds(50)
-    /// The live views behind the open chip card's safe region.
-    @State private var cardGeometry = CardGeometry()
-    /// The pointer poller that owns an open chip card's lifetime.
-    @State private var cardWatch: Task<Void, Never>?
+    /// The hover card, one at a time: keyed on the segment/entry id so a
+    /// block split across two day columns opens its card only where the
+    /// pointer is. An object, so hover traffic redraws the anchors that
+    /// read it and never this body or its day columns.
+    @State private var cards = HoverCards()
 
     private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
 
@@ -106,7 +94,11 @@ private struct CalendarContent: View {
             .focusable()
             .focusEffectDisabled()
             .focused($focused)
-            .onAppear { focused = true }
+            .onAppear {
+                focused = true
+                cards.reduceMotion = reduceMotion
+            }
+            .onChange(of: reduceMotion) { cards.reduceMotion = reduceMotion }
             .onKeyPress { press in
                 if press.key == .leftArrow {
                     model.apply(CalendarModel.KeyCommand(arrow: .left))
@@ -333,6 +325,22 @@ private struct CalendarContent: View {
                                 } action: { _, offset in
                                     scrollOffset.x = offset
                                 }
+                                .onScrollPhaseChange { old, phase, context in
+                                    // Land only when a swipe comes to rest:
+                                    // re-centring the render window mid-swipe
+                                    // shifted the content under the momentum
+                                    // and skipped days. A programmatic scroll
+                                    // already targets the anchor, and the
+                                    // first layout's idle still reads offset
+                                    // zero, so neither lands.
+                                    guard phase == .idle,
+                                          old == .interacting || old == .decelerating
+                                    else { return }
+                                    let geometry = context.geometry
+                                    settle(offset: geometry.contentOffset.x
+                                               + geometry.contentInsets.leading,
+                                           columnWidth: columnWidth)
+                                }
                             }
                             .id("grid")
                         }
@@ -353,16 +361,6 @@ private struct CalendarContent: View {
             }
         }
         .onAppear { landed = model.visibleRange.start }
-        .onChange(of: landed) { _, day in
-            // The scroll settled on a target: it becomes the anchor, and
-            // every header/total/cache decision follows. A swipe never
-            // moves the vertical hour, so the new range counts as
-            // scrolled already.
-            if let day {
-                model.land(on: day)
-                scrolledRange = model.visibleRange
-            }
-        }
         .onChange(of: model.visibleRange) { _, range in
             // Keyboard, chevrons and mini-month clicks still move the
             // anchor; the scroll animates to the new leading target.
@@ -371,6 +369,20 @@ private struct CalendarContent: View {
                 landed = range.start
             }
         }
+    }
+
+    /// The scroll came to rest: its leading day becomes the anchor, and
+    /// every header/total/cache decision follows. `landed` is the scroll
+    /// view's own position binding and is never read in the body, so the
+    /// days it passes mid-swipe redraw nothing. A swipe never moves the
+    /// vertical hour, so the new range counts as scrolled already.
+    private func settle(offset: CGFloat, columnWidth: CGFloat) {
+        guard let day = model.settledLeadingDay(offset: Double(offset),
+                                                columnWidth: Double(columnWidth))
+        else { return }
+        landed = day
+        model.land(on: day)
+        scrolledRange = model.visibleRange
     }
 
     /// Day columns grouped into snap targets: one view per day for Day
@@ -401,14 +413,12 @@ private struct CalendarContent: View {
                            multiAccount: Set<String>) -> some View {
         DayColumn(model: model, day: day, now: now,
                   multiAccount: multiAccount,
+                  cards: cards,
                   color: { self.color(for: $0) },
                   title: { self.title(for: $0) },
-                  hover: { self.hoverCard(key: $0, inside: $1) },
-                  geometry: cardGeometry,
-                  card: { self.cardBinding(for: $0) },
                   cardRows: { self.cardRows(for: $0) },
-                  open: { self.open($0) },
-                  showCard: { self.openCard(key: $0) })
+                  open: { self.open($0) })
+        .equatable()
         .frame(width: width)
     }
 
@@ -458,11 +468,9 @@ private struct CalendarContent: View {
                     ForEach(weeks[row], id: \.self) { day in
                         MonthCell(model: model, day: day,
                                   entries: monthEntries(on: day),
+                                  cards: cards,
                                   color: { self.color(for: $0) },
                                   title: { self.title(for: $0) },
-                                  hover: { self.hoverCard(key: $0, inside: $1) },
-                                  geometry: cardGeometry,
-                                  card: { self.cardBinding(for: $0) },
                                   cardRows: { self.cardRows(for: $0) }) { block in
                             open(block)
                         } more: {
@@ -554,89 +562,6 @@ private struct CalendarContent: View {
         block.project
     }
 
-    /// The anchor under the pointer. A pending show or hide re-checks it
-    /// at fire time, so a stale event can never open or close the card
-    /// the pointer already left.
-    @State private var anchorInside: String?
-
-    /// Pointer entered or left a block, chip or month entry: the card
-    /// opens after a beat, and once any card is open the pointer poller
-    /// owns its lifetime — an anchor exit never schedules a hide, so a
-    /// slow crossing into the card cannot collapse it.
-    private func hoverCard(key: String, inside: Bool) {
-        if inside {
-            anchorInside = key
-        } else if anchorInside == key {
-            anchorInside = nil
-        }
-        cardTask?.cancel()
-        guard inside else {
-            // With a card open the poller decides when it closes; with
-            // no card open there is nothing to hide.
-            return
-        }
-        if cardKey != nil {
-            if cardKey != key { setCard(key) }
-            return
-        }
-        cardTask = Task { @MainActor in
-            try? await Task.sleep(for: Self.cardShowDelay)
-            guard !Task.isCancelled, anchorInside == key else { return }
-            withAnimation(reduceMotion ? nil : .default) { setCard(key) }
-        }
-    }
-
-    /// Opens or closes the card and starts or stops the pointer poller
-    /// that keeps an open card alive across the arrow gap, whatever the
-    /// anchor kind.
-    private func setCard(_ key: String?) {
-        cardKey = key
-        cardWatch?.cancel()
-        cardWatch = nil
-        guard let key else { return }
-        cardWatch = Task { @MainActor in
-            var region = HoverSafeRegion()
-            while !Task.isCancelled, cardKey == key {
-                region.anchor = cardGeometry.anchorRect(for: key)
-                region.card = cardGeometry.cardRect(for: key)
-                if region.update(point: NSEvent.mouseLocation, now: ContinuousClock.now) {
-                    withAnimation(reduceMotion ? nil : .default) { setCard(nil) }
-                    return
-                }
-                try? await Task.sleep(for: Self.cardPollInterval)
-            }
-        }
-    }
-
-    private func dismissCard() {
-        cardTask?.cancel()
-        setCard(nil)
-        anchorInside = nil
-    }
-
-    /// Tapping a "+N" chip opens its card at once; the hover delay only
-    /// exists so a passing pointer never pops a card.
-    private func openCard(key: String) {
-        cardTask?.cancel()
-        withAnimation(reduceMotion ? nil : .default) { setCard(key) }
-    }
-
-    /// Popover binding keyed on the segment's or entry's id: only the
-    /// hovered instance's card is up, and a click outside drops it.
-    /// AppKit can also resolve the binding to closed when the popover's
-    /// own window takes a mouse event; the pointer sitting inside the
-    /// card's safe region overrides that.
-    private func cardBinding(for key: String) -> Binding<Bool> {
-        Binding(get: { cardKey == key },
-                set: { newValue in
-                    guard !newValue else { return }
-                    if !cardGeometry.safeRect(for: key)
-                        .contains(NSEvent.mouseLocation) {
-                        dismissCard()
-                    }
-                })
-    }
-
     /// The card's session list: earliest first, capped at eight rows.
     private func cardRows(for block: ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int) {
@@ -646,7 +571,7 @@ private struct CalendarContent: View {
     /// One session opens its detail straight away; several open the
     /// project's session list first. Either way the hover card goes.
     private func open(_ block: ActivityBlock) {
-        dismissCard()
+        cards.dismiss()
         if block.sessions.count == 1, let ref = block.sessions.first {
             detail = session(for: ref, in: block)
         } else {
@@ -744,27 +669,34 @@ private struct DayHeaderStrip: View {
 
 /// One day column: hour lines and the day's segments laid out in their
 /// overlap lanes, with the red now-line when the column is today.
-private struct DayColumn: View {
+private struct DayColumn: View, Equatable {
     var model: CalendarModel
     var day: DateInterval
     var now: Date
     /// Harnesses carrying more than one account in the window; the page
     /// hands down one set so each segment need not recount accounts.
     var multiAccount: Set<String>
+    /// The page-level hover card each block and chip anchors.
+    var cards: HoverCards
     var color: (ActivityBlock) -> Color
     var title: (ActivityBlock) -> String
-    /// The page-level hover card: block + inside/outside on hover, the
-    /// popover binding and the capped session list to show.
-    var hover: (String, Bool) -> Void
-    /// Live views behind each chip and the open card, so the pointer
-    /// poller can read their screen rects.
-    var geometry: CardGeometry
-    var card: (String) -> Binding<Bool>
+    /// The capped session list a block's card shows.
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
-    /// Opens a card immediately, skipping the hover delay (chip taps).
-    var showCard: (String) -> Void
+
+    /// Redraw only when the column's own inputs move. The closures are
+    /// rebuilt on every page render and would otherwise redraw (and
+    /// re-lay-out) every column each time; they read live page state, so
+    /// skipping them loses nothing. Block and legend changes still reach
+    /// the column through its own observation of `model`. The minute
+    /// tick only matters to the column holding the now-line.
+    nonisolated static func == (lhs: DayColumn, rhs: DayColumn) -> Bool {
+        lhs.model === rhs.model && lhs.cards === rhs.cards
+            && lhs.day == rhs.day && lhs.multiAccount == rhs.multiAccount
+            && (lhs.now == rhs.now
+                || !(lhs.day.contains(lhs.now) || rhs.day.contains(rhs.now)))
+    }
 
     private static let clock: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
@@ -803,24 +735,13 @@ private struct DayColumn: View {
                               account: model.accountName(for: segment.block.accountHome),
                               multiAccount: multiAccount.contains(segment.block.harness))
                         .frame(width: lane - 2, height: height(from: segment.start, to: segment.end))
-                        .background(HoverRegionView { view, attached in
-                            geometry.register(chip: segment.id, view: view,
-                                              attached: attached)
-                        })
                         .onTapGesture { open(segment.block) }
-                        .onHover { inside in hover(segment.id, inside) }
-                        .popover(isPresented: card(segment.id),
-                                 attachmentAnchor: .rect(.bounds),
-                                 arrowEdge: .leading) {
+                        .hoverCard(cards, key: segment.id) {
                             let block = segment.block
                             let rows = cardRows(block)
                             BlockCard(block: block, model: model,
                                       active: block.end.timeIntervalSince(block.start),
                                       shown: rows.shown, more: rows.more)
-                                .background(HoverRegionView { view, attached in
-                                    geometry.register(card: segment.id, view: view,
-                                                      attached: attached)
-                                })
                         }
                         .padding(.leading, CGFloat(segment.lane) * lane + 1)
                         .padding(.top, y(segment.start))
@@ -830,19 +751,13 @@ private struct DayColumn: View {
                     OverflowChip(overflow: overflow, clock: Self.clock)
                         .frame(width: lane - 2,
                                height: height(from: overflow.start, to: overflow.end))
-                        .background(HoverRegionView { view, attached in
-                            geometry.register(chip: overflow.id, view: view,
-                                              attached: attached)
-                        })
                         .contentShape(.rect)
-                        .onTapGesture { showCard(overflow.id) }
-                        .onHover { inside in hover(overflow.id, inside) }
-                        .popover(isPresented: card(overflow.id),
-                                 attachmentAnchor: .rect(.bounds),
-                                 arrowEdge: .leading) {
+                        // A tap opens the card at once; the hover delay
+                        // only keeps a passing pointer from popping one.
+                        .onTapGesture { cards.open(overflow.id) }
+                        .hoverCard(cards, key: overflow.id) {
                             OverflowCard(overflow: overflow, model: model,
-                                         cardRows: cardRows, open: open,
-                                         geometry: geometry)
+                                         cardRows: cardRows, open: open)
                         }
                         .padding(.leading, CGFloat(overflow.lane) * lane + 1)
                         .padding(.top, y(overflow.start))
@@ -1143,13 +1058,10 @@ private struct MonthCell: View {
     var model: CalendarModel
     var day: Date
     var entries: [MonthLayout.Entry]
+    /// The page-level hover card each entry anchors.
+    var cards: HoverCards
     var color: (ActivityBlock) -> Color
     var title: (ActivityBlock) -> String
-    var hover: (String, Bool) -> Void
-    /// Live views behind each entry row and the open card, so the
-    /// pointer poller can read their screen rects.
-    var geometry: CardGeometry
-    var card: (String) -> Binding<Bool>
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
@@ -1190,23 +1102,12 @@ private struct MonthCell: View {
                 ForEach(split.shown) { entry in
                     MonthEntry(entry: entry, model: model,
                                color: color(entry.block), title: title(entry.block))
-                        .background(HoverRegionView { view, attached in
-                            geometry.register(chip: entry.id, view: view,
-                                              attached: attached)
-                        })
                         .onTapGesture { open(entry.block) }
-                        .onHover { inside in hover(entry.id, inside) }
-                        .popover(isPresented: card(entry.id),
-                                 attachmentAnchor: .rect(.bounds),
-                                 arrowEdge: .leading) {
+                        .hoverCard(cards, key: entry.id) {
                             let rows = cardRows(entry.block)
                             BlockCard(block: entry.block, model: model,
                                       active: entry.active,
                                       shown: rows.shown, more: rows.more)
-                                .background(HoverRegionView { view, attached in
-                                    geometry.register(card: entry.id, view: view,
-                                                      attached: attached)
-                                })
                         }
                 }
                 if split.more > 0 {
@@ -1404,9 +1305,6 @@ private struct OverflowCard: View {
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
-    /// Registers the card's view so the pointer poller can read the
-    /// popover window's frame.
-    var geometry: CardGeometry
 
     /// The row under the pointer; stays put when the pointer moves to
     /// the right pane, so the detail never flickers.
@@ -1461,8 +1359,6 @@ private struct OverflowCard: View {
                           shown: rows.shown, more: rows.more)
             }
         }
-        .background(HoverRegionView { view, attached in
-            geometry.register(card: overflow.id, view: view, attached: attached) })
     }
 
     private func row(_ block: ActivityBlock) -> some View {
@@ -1555,6 +1451,137 @@ private extension Array {
     /// Evenly sized groups, for the week-mode snap targets.
     func chunked(by size: Int) -> [[Element]] {
         stride(from: 0, to: count, by: Swift.max(1, size)).map { Array(self[$0..<Swift.min($0 + size, count)]) }
+    }
+}
+
+/// The page's one hover card: whose card is up, the pending show, and
+/// the pointer poller that owns an open card's lifetime. Only `key` is
+/// observed, and only `HoverCardAnchor` reads it, so pointer traffic
+/// redraws the anchors and never the page body or its day columns.
+@MainActor @Observable final class HoverCards {
+    /// The open card's anchor: a segment, "+N" chip or month entry id.
+    private(set) var key: String?
+    /// Live views behind each anchor and the open card.
+    @ObservationIgnored let geometry = CardGeometry()
+    @ObservationIgnored var reduceMotion = false
+    /// The anchor under the pointer. A pending show re-checks it at fire
+    /// time, so a stale event can never open a card the pointer left.
+    @ObservationIgnored private var inside: String?
+    @ObservationIgnored private var pending: (key: String, task: Task<Void, Never>)?
+    @ObservationIgnored private var watch: Task<Void, Never>?
+
+    /// While a card is open, the pointer's screen position is polled
+    /// this often against the anchor ∪ card safe region.
+    private static let pollInterval: Duration = .milliseconds(50)
+
+    /// Pointer entered or left an anchor. A card opens after a beat; with
+    /// another card up the swap waits too, so crossing a neighbour on the
+    /// way into the open card never steals it. Leaving an anchor only
+    /// drops its own pending show: once a card is open the poller
+    /// decides when it closes, so a slow crossing cannot collapse it.
+    func hover(_ key: String, inside entered: Bool) {
+        guard entered else {
+            if inside == key { inside = nil }
+            if pending?.key == key { cancelPending() }
+            return
+        }
+        inside = key
+        cancelPending()
+        guard let delay = HoverCardTiming.delay(entering: key, open: self.key) else { return }
+        pending = (key, Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled, inside == key else { return }
+            pending = nil
+            animated { self.set(key) }
+        })
+    }
+
+    /// Opens a card at once, skipping the hover delay ("+N" taps).
+    func open(_ key: String) {
+        cancelPending()
+        animated { set(key) }
+    }
+
+    func dismiss() {
+        cancelPending()
+        set(nil)
+        inside = nil
+    }
+
+    /// AppKit closed `key`'s popover: a click outside it, or its own
+    /// window taking a mouse event. The pointer still inside the card's
+    /// safe region overrides the second. A late close of a card already
+    /// swapped away must not dismiss the one that replaced it.
+    func closed(_ key: String) {
+        guard self.key == key,
+              !geometry.safeRect(for: key).contains(NSEvent.mouseLocation)
+        else { return }
+        dismiss()
+    }
+
+    private func cancelPending() {
+        pending?.task.cancel()
+        pending = nil
+    }
+
+    private func animated(_ change: () -> Void) {
+        withAnimation(reduceMotion ? nil : .default, change)
+    }
+
+    /// Opens or closes the card and starts or stops the pointer poller
+    /// that keeps an open card alive across the arrow gap.
+    private func set(_ key: String?) {
+        self.key = key
+        watch?.cancel()
+        watch = nil
+        guard let key else { return }
+        watch = Task { [weak self] in
+            var region = HoverSafeRegion()
+            while let self, !Task.isCancelled, self.key == key {
+                region.anchor = geometry.anchorRect(for: key)
+                region.card = geometry.cardRect(for: key)
+                if region.update(point: NSEvent.mouseLocation, now: ContinuousClock.now) {
+                    animated { self.set(nil) }
+                    return
+                }
+                try? await Task.sleep(for: Self.pollInterval)
+            }
+        }
+    }
+}
+
+/// Makes a view a hover-card anchor: registers its rect and the card's
+/// for the poller, reports the pointer, and presents `card` while this
+/// anchor's card is the open one.
+private struct HoverCardAnchor<Card: View>: ViewModifier {
+    var cards: HoverCards
+    var key: String
+    @ViewBuilder var card: () -> Card
+
+    func body(content: Content) -> some View {
+        // Read here, so a card opening redraws its anchors alone.
+        let shown = cards.key == key
+        content
+            .background(HoverRegionView { [cards, key] view, attached in
+                cards.geometry.register(chip: key, view: view, attached: attached)
+            })
+            .onHover { [cards, key] in cards.hover(key, inside: $0) }
+            .popover(isPresented: Binding(get: { shown },
+                                          set: { [cards, key] in if !$0 { cards.closed(key) } }),
+                     attachmentAnchor: .rect(.bounds),
+                     arrowEdge: .leading) {
+                card()
+                    .background(HoverRegionView { [cards, key] view, attached in
+                        cards.geometry.register(card: key, view: view, attached: attached)
+                    })
+            }
+    }
+}
+
+private extension View {
+    func hoverCard<Card: View>(_ cards: HoverCards, key: String,
+                               @ViewBuilder card: @escaping () -> Card) -> some View {
+        modifier(HoverCardAnchor(cards: cards, key: key, card: card))
     }
 }
 

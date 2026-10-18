@@ -288,6 +288,25 @@ private struct TogglingActivity: ActivityProviding {
         #expect(model.visibleRange == month)
     }
 
+    @Test func aSettledScrollOffsetRoundsToTheNearestSnapTarget() {
+        let model = model() // anchor 2026-10-14
+        model.mode = .days(4) // render days Oct 10 to Oct 21
+        #expect(model.settledLeadingDay(offset: 0, columnWidth: 100) == utc("2026-10-10T00:00:00Z"))
+        #expect(model.settledLeadingDay(offset: 240, columnWidth: 100) == utc("2026-10-12T00:00:00Z"))
+        #expect(model.settledLeadingDay(offset: 260, columnWidth: 100) == utc("2026-10-13T00:00:00Z"))
+        // Rubber-banding past either end clamps to the render days.
+        #expect(model.settledLeadingDay(offset: -50, columnWidth: 100) == utc("2026-10-10T00:00:00Z"))
+        #expect(model.settledLeadingDay(offset: 5000, columnWidth: 100) == utc("2026-10-21T00:00:00Z"))
+        // Week mode snaps whole weeks: render days start Monday Oct 5.
+        model.mode = .week
+        #expect(model.settledLeadingDay(offset: 1000, columnWidth: 100) == utc("2026-10-12T00:00:00Z"))
+        #expect(model.settledLeadingDay(offset: 1100, columnWidth: 100) == utc("2026-10-19T00:00:00Z"))
+        // No width yet, or a mode that never slides: nothing to land on.
+        #expect(model.settledLeadingDay(offset: 100, columnWidth: 0) == nil)
+        model.mode = .month
+        #expect(model.settledLeadingDay(offset: 100, columnWidth: 100) == nil)
+    }
+
     @Test func aSingleResponseBlockExactlyAtTheWindowStartCounts() async {
         // start == end == window.start: start < end fails, so a zero-length
         // block at the boundary needs its own clause or the day reads empty.
