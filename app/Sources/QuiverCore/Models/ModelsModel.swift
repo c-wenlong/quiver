@@ -171,8 +171,11 @@ public final class ModelsModel {
     public var metric: Metric = .intelligence
     public var scope: Scope = .yoursPlusTop
     public var period: OverviewPeriod = .month
-    /// Same filter as the Pricing page's; not persisted.
-    public var harnessFilter: String?
+    /// The harnesses whose models show; empty means every harness. While
+    /// any is picked, only models those harnesses ran are rows: the
+    /// leaderboard padding is nobody's usage, so it drops out. Not
+    /// persisted.
+    public var harnessFilter: Set<String> = []
     /// Whether the chart or the table shows.
     public enum ViewMode: String, Sendable { case chart, table }
     public var viewMode: ViewMode = .chart
@@ -323,7 +326,12 @@ public final class ModelsModel {
     /// from the slices already in memory, period refetches them.
     public func set(metric value: Metric) { metric = value; rebuild() }
     public func set(scope value: Scope) { scope = value; rebuild() }
-    public func set(harnessFilter value: String?) { harnessFilter = value; rebuild() }
+    public func set(harnessFilter value: Set<String>) { harnessFilter = value; rebuild() }
+    /// Adds or removes one harness from the filter.
+    public func toggle(harness: String) {
+        if harnessFilter.contains(harness) { harnessFilter.remove(harness) } else { harnessFilter.insert(harness) }
+        rebuild()
+    }
     public func set(viewMode value: ViewMode) { viewMode = value }
 
     public func set(period value: OverviewPeriod) async {
@@ -414,14 +422,15 @@ public final class ModelsModel {
         harnessOptions = harnessTokens
             .sorted { ($0.value, $0.key) > ($1.value, $1.key) }
             .map(\.key)
-        // A harness that left the period resets to All — before the rows
-        // are filtered, so the reset really does show everything again.
-        if let harnessFilter, harnessTokens[harnessFilter] == nil { self.harnessFilter = nil }
+        // A harness that left the period drops out of the filter, before
+        // the rows are filtered: once none is left, everything shows again.
+        let live = harnessFilter.filter { harnessTokens[$0] != nil }
+        if live != harnessFilter { harnessFilter = live }
 
         // Per logged model: total tokens and the harnesses that ran it.
         var byModel: [String: (tokens: Int, harnesses: [String], byHarness: [String: Int])] = [:]
         for slice in periodSlices {
-            guard harnessFilter == nil || slice.harness == harnessFilter else { continue }
+            guard harnessFilter.isEmpty || harnessFilter.contains(slice.harness) else { continue }
             var entry = byModel[slice.model] ?? (0, [], [:])
             entry.tokens += slice.totals.totalTokens
             if !entry.harnesses.contains(slice.harness) { entry.harnesses.append(slice.harness) }
@@ -501,15 +510,22 @@ public final class ModelsModel {
         let all: [Row]
         switch scope {
         case .yoursPlusTop:
-            // The real top ten, minus the ones already in `used`.
-            all = used + topAA(excluding: [], count: 10)
-                .filter { !matchedIDs.contains($0.id) }.map(leaderboardRow)
+            // The real top ten, minus the ones already in `used`. Under a
+            // harness filter the page lists what those harnesses ran: a
+            // leader nobody ran there is no answer to "what does Codex use".
+            all = harnessFilter.isEmpty
+                ? used + topAA(excluding: [], count: 10)
+                    .filter { !matchedIDs.contains($0.id) }.map(leaderboardRow)
+                : used
         case .yours:
             all = used
         case .top25:
             // Leaders only: `leaderboardRow` still reuses the used row
-            // for a model on the board, so its tokens stay marked.
-            all = topAA(excluding: [], count: 25).map(leaderboardRow)
+            // for a model on the board, so its tokens stay marked. Under
+            // a harness filter, only the leaders those harnesses ran.
+            let board = topAA(excluding: [], count: 25).map(leaderboardRow)
+            // Membership, not `used`: a run can log cost with no tokens.
+            all = harnessFilter.isEmpty ? board : board.filter { matchedIDs.contains($0.id) }
         }
         rows = Self.sort(all, by: metric)
     }
