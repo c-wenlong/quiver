@@ -185,11 +185,13 @@ public actor UsageService {
         _ status: UsageStatus, reading: StoredReading?, credential: UsageCredential, isStale: Bool = true
     ) -> AccountUsage {
         guard let reading else {
-            return AccountUsage(status: status, plan: credential.plan, email: credential.email)
+            return AccountUsage(status: status, plan: credential.plan, email: credential.email,
+                                signInExpiresAt: credential.expiresAt)
         }
         return AccountUsage(
             status: status, plan: reading.plan ?? credential.plan, email: reading.email ?? credential.email,
-            windows: reading.windows, fetchedAt: reading.fetchedAt, isStale: isStale)
+            windows: reading.windows, fetchedAt: reading.fetchedAt, isStale: isStale,
+            signInExpiresAt: credential.expiresAt)
     }
 
     private func lookUpCredential(_ key: AccountKey) async -> CredentialLookup {

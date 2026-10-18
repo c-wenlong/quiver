@@ -44,10 +44,14 @@ public struct AccountUsage: Sendable, Equatable, Codable {
     /// True when `windows` is an older reading shown because this fetch failed
     /// or was skipped (cooldown, expired login, network error).
     public var isStale: Bool
+    /// When the sign-in this reading used stops working, as the CLI stored
+    /// it with the credential. Claude only; Codex records none.
+    public var signInExpiresAt: Date?
 
     public init(
         status: UsageStatus, plan: String? = nil, email: String? = nil,
-        windows: [UsageWindow] = [], fetchedAt: Date? = nil, isStale: Bool = false
+        windows: [UsageWindow] = [], fetchedAt: Date? = nil, isStale: Bool = false,
+        signInExpiresAt: Date? = nil
     ) {
         self.status = status
         self.plan = plan
@@ -55,6 +59,7 @@ public struct AccountUsage: Sendable, Equatable, Codable {
         self.windows = windows
         self.fetchedAt = fetchedAt
         self.isStale = isStale
+        self.signInExpiresAt = signInExpiresAt
     }
 }
 

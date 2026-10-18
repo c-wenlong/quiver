@@ -139,6 +139,33 @@ public enum UsageFormat {
         return "\(minutes / (24 * 60))d ago"
     }
 
+    /// "Sign-in expires at 22:41", "Sign-in expired yesterday at 00:08":
+    /// when a sign-in lapses, said as a clock time, with the day named
+    /// only when it is not today.
+    public static func signIn(expiresAt: Date, now: Date, calendar: Calendar = .current) -> String {
+        let verb = expiresAt > now ? "expires" : "expired"
+        let time = calendar.dateComponents([.hour, .minute], from: expiresAt)
+        let clock = String(format: "%02d:%02d", time.hour ?? 0, time.minute ?? 0)
+        let day: String
+        if calendar.isDate(expiresAt, inSameDayAs: now) {
+            day = ""
+        } else if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+                  calendar.isDate(expiresAt, inSameDayAs: yesterday) {
+            day = "yesterday "
+        } else if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+                  calendar.isDate(expiresAt, inSameDayAs: tomorrow) {
+            day = "tomorrow "
+        } else {
+            let formatter = DateFormatter()
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "d MMM"
+            day = "on \(formatter.string(from: expiresAt)) "
+        }
+        return "Sign-in \(verb) \(day)at \(clock)"
+    }
+
     private static func compact(_ value: Double) -> String {
         let rounded = (value * 10).rounded() / 10
         return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
