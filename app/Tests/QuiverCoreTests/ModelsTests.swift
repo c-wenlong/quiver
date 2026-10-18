@@ -602,11 +602,66 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         ])
         await model.load()
         #expect(model.harnessOptions == ["codex", "claude"])
-        model.set(harnessFilter: "codex")
-        #expect(model.rows.filter(\.used).map(\.logged) == ["a"])
+        model.set(harnessFilter: ["codex"])
+        // Only codex's model: claude's "b" is a top-10 leader, but the
+        // filter asks what codex ran, so it no longer pads the chart.
+        #expect(model.rows.map(\.logged) == ["a"])
         // A filter whose harness vanished from the period resets itself.
-        model.set(harnessFilter: "pi")
-        #expect(model.harnessFilter == nil)
+        model.set(harnessFilter: ["pi"])
+        #expect(model.harnessFilter.isEmpty)
+        #expect(model.rows.map(\.logged) == ["a", "b"])
+    }
+
+    @Test func harnessFilterTakesSeveralHarnessesAndHoldsUnderEveryScope() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("a", "A", "a", creator: "openai", intelligence: 80),
+            entry("b", "B", "b", creator: "anthropic", intelligence: 70),
+            entry("c", "C", "c", creator: "google", intelligence: 60),
+            entry("lead", "Lead", "lead", creator: "xai", intelligence: 95),
+        ])
+        let model = makeModel(dir: dir, slices: [
+            slice("a", "codex", tokens: 100),
+            slice("b", "claude", tokens: 50),
+            slice("c", "gemini", tokens: 20),
+        ])
+        await model.load()
+        model.toggle(harness: "codex")
+        model.toggle(harness: "gemini")
+        #expect(model.harnessFilter == ["codex", "gemini"])
+        #expect(model.rows.map(\.logged) == ["a", "c"])
+        model.set(scope: .yours)
+        #expect(model.rows.map(\.logged) == ["a", "c"])
+        // Top 25 under a filter: the leaders those harnesses ran.
+        model.set(scope: .top25)
+        #expect(model.rows.map(\.logged) == ["a", "c"])
+        // Unticking the last harness is All again: the leader is back.
+        model.toggle(harness: "codex")
+        model.toggle(harness: "gemini")
+        #expect(model.harnessFilter.isEmpty)
+        #expect(model.rows.first?.aa?.id == "lead")
+        // Of two picks, only the one that left the period drops.
+        model.set(scope: .yoursPlusTop)
+        model.set(harnessFilter: ["codex", "pi"])
+        #expect(model.harnessFilter == ["codex"])
+    }
+
+    @Test func aFilteredTop25KeepsARunThatLoggedNoTokens() async throws {
+        // Pi and Cline can record a run's cost with zero tokens; the
+        // harness still ran that model, so the filtered board keeps it.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("a", "A", "a", creator: "openai", intelligence: 80),
+            entry("b", "B", "b", creator: "anthropic", intelligence: 70),
+        ])
+        let model = makeModel(dir: dir, slices: [
+            slice("a", "pi", tokens: 0),
+            slice("b", "claude", tokens: 50),
+        ])
+        await model.load()
+        model.set(scope: .top25)
+        model.set(harnessFilter: ["pi"])
+        #expect(model.rows.map(\.logged) == ["a"])
     }
 
     @Test func metricSortRunsBothDirectionsAndNilsSitLast() async throws {
@@ -829,13 +884,13 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                                 now: { Date(timeIntervalSince1970: 1_800_000_000) },
                                 calendar: Calendar(identifier: .gregorian))
         await model.load()
-        model.set(harnessFilter: "codex")
-        #expect(model.rows.filter(\.used).map(\.logged) == ["a"])
+        model.set(harnessFilter: ["codex"])
+        #expect(model.rows.map(\.logged) == ["a"])
         // The new period has no codex rows: the filter drops back to All
         // and the claude usage shows instead of an empty page.
         box.current = [slice("b", "claude", tokens: 50)]
         await model.set(period: .week)
-        #expect(model.harnessFilter == nil)
+        #expect(model.harnessFilter.isEmpty)
         #expect(model.rows.filter(\.used).map(\.logged) == ["b"])
     }
 

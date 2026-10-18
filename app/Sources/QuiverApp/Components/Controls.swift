@@ -137,6 +137,101 @@ extension SelectMenu {
     }
 }
 
+/// SelectMenu's face over a set of picks: each option toggles on its own,
+/// and the popover stays open so several can be ticked in one go. An empty
+/// set is the "all" row at the top. Options carry an optional harness id,
+/// drawn as the logo beside the title and, for one pick, on the face.
+struct MultiSelectMenu<Value: Hashable>: View {
+    /// The face and top row when nothing is picked: "All harnesses".
+    var allTitle: String
+    var options: [(value: Value, title: String, icon: String?)]
+    @Binding var selection: Set<Value>
+    /// The face for two or more picks: "2 harnesses".
+    var countTitle: (Int) -> String
+    @State private var open = false
+    @State private var hovering = false
+
+    /// The picks in option order, for a stable face.
+    private var picked: [(value: Value, title: String, icon: String?)] {
+        options.filter { selection.contains($0.value) }
+    }
+
+    private var current: String {
+        switch picked.count {
+        case 0: allTitle
+        case 1: picked[0].title
+        default: countTitle(picked.count)
+        }
+    }
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 6) {
+                ForEach(picked.prefix(3), id: \.value) { option in
+                    if let icon = option.icon, HarnessIcon.exists(for: icon) {
+                        HarnessIcon(harness: icon, size: 16)
+                    }
+                }
+                Text(current).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .font(Theme.bodySmall)
+            .padding(.horizontal, 12)
+            .frame(height: Theme.fieldHeight)
+            .fixedSize()
+            .background(Theme.field, in: .rect(cornerRadius: Theme.selectRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.selectRadius)
+                .strokeBorder(hovering ? Theme.borderHover : Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.selectRadius))
+        }
+        .plainButton(cornerRadius: Theme.selectRadius)
+        .onHover { hovering = $0 }
+        .fixedSize()
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
+                row(title: allTitle, icon: nil, on: selection.isEmpty) { selection = [] }
+                Divider().padding(.vertical, 4)
+                ForEach(options, id: \.value) { option in
+                    row(title: option.title, icon: option.icon, on: selection.contains(option.value)) {
+                        if selection.contains(option.value) { selection.remove(option.value) }
+                        else { selection.insert(option.value) }
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(minWidth: 200)
+        }
+    }
+
+    private func row(title: String, icon: String?, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: on ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(on ? Theme.accent : Theme.textMuted)
+                if let icon, HarnessIcon.exists(for: icon) { HarnessIcon(harness: icon, size: 16) }
+                Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 0)
+        .modifier(MultiSelectRowHover())
+    }
+}
+
+private struct MultiSelectRowHover: ViewModifier {
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(hovering ? Theme.rowHover : .clear)
+            .onHover { hovering = $0 }
+    }
+}
+
 /// Lays children out left to right and wraps, like inline text.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6

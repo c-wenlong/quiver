@@ -85,13 +85,13 @@ private struct ModelsContent: View {
                            selection: Binding(get: { model.scope },
                                               set: { model.set(scope: $0) }),
                            width: nil)
-                SelectMenu(options: [(value: String?.none, title: "All harnesses", icon: nil)]
-                           + model.harnessOptions.map {
-                               (value: $0, title: HarnessMark($0).name, icon: $0)
-                           },
-                           selection: Binding(get: { model.harnessFilter },
-                                              set: { model.set(harnessFilter: $0) }),
-                           width: nil)
+                MultiSelectMenu(allTitle: "All harnesses",
+                                options: model.harnessOptions.map {
+                                    (value: $0, title: HarnessMark($0).name, icon: $0)
+                                },
+                                selection: Binding(get: { model.harnessFilter },
+                                                   set: { model.set(harnessFilter: $0) }),
+                                countTitle: { "\($0) harnesses" })
                 SelectMenu(options: OverviewPeriod.allCases.map { ($0, $0.title) },
                            selection: Binding(get: { model.period },
                                               set: { value in
@@ -166,7 +166,10 @@ private struct ModelsContent: View {
                 EmptyCard(text: "No benchmark data yet.", icon: "cube.transparent")
             }
         } else if model.rows.isEmpty {
-            EmptyCard(text: "No usage in this period.", icon: "chart.bar")
+            EmptyCard(text: !model.harnessFilter.isEmpty && model.scope == .top25
+                      ? "None of the top 25 ran in these harnesses this period."
+                      : "No usage in this period.",
+                      icon: "chart.bar")
         } else {
             switch model.viewMode {
             case .chart: ChartCard(model: model)
