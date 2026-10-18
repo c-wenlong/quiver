@@ -334,9 +334,9 @@ struct ChartCard: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: Self.spacing) {
-                        ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                        ForEach(model.rows) { row in
                             BarColumn(row: row, metric: model.metric, peak: peak) { inside in
-                                if inside { hover.enter(index) } else { hover.leave(index) }
+                                if inside { hover.enter(row.id) } else { hover.leave(row.id) }
                             }
                             .frame(width: columnWidth - Self.spacing)
                         }
@@ -370,7 +370,7 @@ struct ChartCard: View {
     /// when the right would run out of the chart, top-aligned with the
     /// tallest bar and kept inside the chart area.
     @ViewBuilder private var hoverCard: some View {
-        if let index = hover.shown, model.rows.indices.contains(index) {
+        if let index = hover.index(in: model.rows.map(\.id)) {
             let left = strip.minX + Self.inset + leadingRoom + CGFloat(index) * columnWidth
             let right = left + columnWidth - Self.spacing
             let gap: CGFloat = 10

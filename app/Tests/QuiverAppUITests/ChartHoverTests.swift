@@ -72,51 +72,65 @@ private final class ManualSleep {
 
     @Test func theFirstCardWaitsTheOpenDelay() async {
         let (hover, sleep) = make()
-        hover.enter(2)
+        hover.enter("2")
         await sleep.started(1)
         #expect(hover.shown == nil)
         #expect(sleep.durations == [ChartHover.openDelay])
         sleep.fire(0)
         await hover.settle()
-        #expect(hover.shown == 2)
+        #expect(hover.shown == "2")
+    }
+
+    @Test func theCardFollowsItsModelWhenRowsChange() async {
+        let (hover, sleep) = make()
+        hover.enter("b")
+        await sleep.started(1)
+        sleep.fire(0)
+        await hover.settle()
+        #expect(hover.index(in: ["a", "b", "c"]) == 1)
+        // A rebuild drops "a": the card moves with "b", not index 1.
+        #expect(hover.index(in: ["b", "c"]) == 0)
+        #expect(hover.index(in: ["new", "c", "b"]) == 2)
+        // "b" is gone: no bar, so no card.
+        #expect(hover.index(in: ["a", "c"]) == nil)
     }
 
     @Test func withACardUpTheNextBarSwitchesAtOnce() async {
         let (hover, sleep) = make()
-        hover.enter(2)
+        hover.enter("2")
         await sleep.started(1)
         sleep.fire(0)
         await hover.settle()
-        hover.enter(3)
-        #expect(hover.shown == 3)
+        hover.enter("3")
+        #expect(hover.shown == "3")
         #expect(sleep.durations.count == 1, "no second wait")
     }
 
     @Test func enteringTheNextBarInsideTheCloseWindowSwitchesAndCancelsTheClose() async {
         let (hover, sleep) = make()
-        hover.enter(2)
+        hover.enter("2")
         await sleep.started(1)
         sleep.fire(0)
         await hover.settle()
-        hover.leave(2)
+        hover.leave("2")
         await sleep.started(2)
         #expect(sleep.durations.last == ChartHover.closeDelay)
-        #expect(hover.shown == 2, "the card outlives its bar")
-        hover.enter(3)
-        #expect(hover.shown == 3)
+        #expect(hover.shown == "2", "the card outlives its bar")
+        hover.enter("3")
+        #expect(hover.shown == "3")
         await sleep.cancelled(1)
         #expect(sleep.waiting == 0, "the close was cancelled")
         await hover.settle()
-        #expect(hover.shown == 3)
+        #expect(hover.shown == "3")
     }
 
     @Test func leavingClosesAfterTheCloseDelay() async {
         let (hover, sleep) = make()
-        hover.enter(2)
+        hover.enter("2")
         await sleep.started(1)
         sleep.fire(0)
         await hover.settle()
-        hover.leave(2)
+        hover.leave("2")
         await sleep.started(2)
         sleep.fire(1)
         await hover.settle()
@@ -125,21 +139,21 @@ private final class ManualSleep {
 
     @Test func aLateLeaveFromTheLastBarIsIgnored() async {
         let (hover, sleep) = make()
-        hover.enter(2)
+        hover.enter("2")
         await sleep.started(1)
         sleep.fire(0)
         await hover.settle()
-        hover.enter(3)
-        hover.leave(2)
-        #expect(hover.shown == 3)
+        hover.enter("3")
+        hover.leave("2")
+        #expect(hover.shown == "3")
         #expect(sleep.durations.count == 1)
     }
 
     @Test func leavingBeforeTheCardOpensCancelsIt() async {
         let (hover, sleep) = make()
-        hover.enter(2)
+        hover.enter("2")
         await sleep.started(1)
-        hover.leave(2)
+        hover.leave("2")
         await sleep.started(2)
         await sleep.cancelled(1)
         // The open wait is gone; only the close wait is left.
