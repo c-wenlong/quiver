@@ -293,25 +293,28 @@ struct StatusLine: View {
                 Text("Checking…")
             case .ok:
                 if let fetched = usage?.fetchedAt {
-                    Text("Fetched \(fetched, format: .relative(presentation: .named))\(usage?.isStale == true ? ", couldn't refresh" : "")")
+                    Text("Fetched \(fetched, format: .relative(presentation: .named))\(usage?.isStale == true ? ", couldn't refresh" : "")\(expiry(.upcoming).map { ". \($0)." } ?? "")")
                 } else {
-                    Text("No reading yet")
+                    Text("No reading yet\(expiry(.upcoming).map { ". \($0)." } ?? "")")
                 }
             case .signedOut:
                 Text("Signed out. Use Sign in from the menu.")
             case .expired:
+                // A 401 can come before the stored expiry; only a lapsed
+                // time is worth naming.
+                let expired = expiry(.lapsed) ?? "Sign-in expired"
                 if let card, card.profile.vendor == .claude {
                     if app.accounts.renewing.contains(card.id) {
                         Text("Renewing sign-in…")
                     } else if app.accounts.renewFailed.contains(card.id) {
                         Text("Couldn't renew the sign-in. Open the CLI once to sign in again.")
                     } else if app.accounts.cliOnPath[.claude] == true {
-                        Text("Sign-in expired. Press refresh to renew it.")
+                        Text("\(expired). Press refresh to renew it.")
                     } else {
-                        Text("Sign-in expired. Open the CLI once to refresh it.")
+                        Text("\(expired). Open the CLI once to refresh it.")
                     }
                 } else {
-                    Text("Sign-in expired. Open the CLI once to refresh it.")
+                    Text("\(expired). Open the CLI once to refresh it.")
                 }
             case .rateLimited(let until):
                 Text("Usage API busy until \(until, format: .dateTime.hour().minute())")
@@ -321,6 +324,18 @@ struct StatusLine: View {
         }
         .font(Theme.caption)
         .foregroundStyle(Theme.textSecondary)
+    }
+
+    private enum Expiry { case upcoming, lapsed }
+
+    /// "Sign-in expires at 22:41" while the sign-in still works, "Sign-in
+    /// expired yesterday at 00:08" once it lapsed; nil when the credential
+    /// records no expiry or it sits on the other side of now.
+    private func expiry(_ side: Expiry) -> String? {
+        guard let at = usage?.signInExpiresAt else { return nil }
+        let now = Date.now
+        guard (at > now) == (side == .upcoming) else { return nil }
+        return UsageFormat.signIn(expiresAt: at, now: now)
     }
 }
 

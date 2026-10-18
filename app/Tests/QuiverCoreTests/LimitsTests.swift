@@ -273,6 +273,26 @@ func reading(
         #expect(UsageFormat.ago(now - 3 * 86_400, now: now) == "3d ago")
         #expect(UsageFormat.ago(now + 10, now: now) == "just now")
     }
+
+    @Test func signInExpiryNamesTheDayOnlyWhenItIsNotToday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Singapore"))
+        // 2026-10-18 14:30 in Singapore.
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 18, hour: 14, minute: 30)))
+        func at(_ day: Int, _ hour: Int, _ minute: Int) throws -> Date {
+            try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour, minute: minute)))
+        }
+        #expect(UsageFormat.signIn(expiresAt: try at(18, 22, 41), now: now, calendar: calendar)
+                == "Sign-in expires at 22:41")
+        #expect(UsageFormat.signIn(expiresAt: try at(18, 0, 8), now: now, calendar: calendar)
+                == "Sign-in expired at 00:08")
+        #expect(UsageFormat.signIn(expiresAt: try at(17, 0, 8), now: now, calendar: calendar)
+                == "Sign-in expired yesterday at 00:08")
+        #expect(UsageFormat.signIn(expiresAt: try at(19, 6, 5), now: now, calendar: calendar)
+                == "Sign-in expires tomorrow at 06:05")
+        #expect(UsageFormat.signIn(expiresAt: try at(11, 9, 0), now: now, calendar: calendar)
+                == "Sign-in expired on 11 Oct at 09:00")
+    }
 }
 
 @Suite struct RefreshFreshWindowTests {

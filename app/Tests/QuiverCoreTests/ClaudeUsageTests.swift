@@ -59,6 +59,7 @@ import Testing
         #expect(abs(fiveHourReset.timeIntervalSince1970 - 1_791_727_200.512312) < 0.000_01)
         #expect(usage.windows[1].resetsAt == Date(timeIntervalSince1970: 1_792_051_200))
         #expect(usage.windows[2].resetsAt == Date(timeIntervalSince1970: 1_792_051_200))
+        #expect(usage.signInExpiresAt == usageEpoch.addingTimeInterval(3600))
     }
 
     @Test func scopedWeeklyLimitsFromTheLimitsArrayAreAdded() async throws {
@@ -156,6 +157,7 @@ import Testing
         #expect(usage.status == .expired)
         #expect(usage.plan == "Max 20x")
         #expect(usage.windows.isEmpty)
+        #expect(usage.signInExpiresAt == usageEpoch.addingTimeInterval(-1))
         #expect(h.transport.requests.isEmpty)
     }
 }
