@@ -213,8 +213,12 @@ public final class ModelsModel {
     /// The usage the last load saw, kept so the scope/metric pickers can
     /// rebuild rows without hitting the ledger again.
     private var periodSlices: [ModelUsage] = []
-    /// Bumped by every load and period switch so a slower older answer
-    /// cannot write its state over a newer one's.
+    /// Bumped by every load, so a newer load supersedes an older one's
+    /// remaining steps. A usage reload never bumps it: a ledger re-scan
+    /// landing mid-load must not cancel the load's key check and reads.
+    private var loadGeneration = 0
+    /// Bumped by every usage read, a load's or a reload's, so a slower
+    /// older answer cannot write its slices over a newer one's.
     private var usageGeneration = 0
     /// Whether a load has completed; the hover card's `loadIfNeeded`
     /// reads it so hovering never re-runs the fetch.
@@ -222,6 +226,9 @@ public final class ModelsModel {
     /// The overview scan counter the last usage read saw, so a ledger
     /// re-scan can flag the slices as stale without re-fetching AA data.
     private var loadedUsageStamp: Int?
+    /// The newest scan counter the page has passed in; a load marks only
+    /// the stamp it saw before its read as loaded.
+    private var requestedUsageStamp: Int?
 
     public init(store: ArtificialAnalysisStore,
                 keyReader: @escaping @Sendable () async -> String?,
@@ -245,29 +252,43 @@ public final class ModelsModel {
     /// than a week, a background refresh runs first — unless
     /// `allowRefresh` is off, as in the hover card's cached read.
     public func load(allowRefresh: Bool = true) async {
-        usageGeneration += 1
-        let generation = usageGeneration
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         // A superseded load leaves the flag to whichever load owns it.
-        defer { if generation == usageGeneration { isLoading = false } }
+        defer { if generation == loadGeneration { isLoading = false } }
         let key = await keyReader()
-        guard generation == usageGeneration else { return }
+        guard generation == loadGeneration else { return }
         hasKey = key != nil
         if allowRefresh && hasKey && store.llmsIsStale() {
-            await refresh()
-            guard generation == usageGeneration else { return }
+            // Unstructured, so leaving the page (which cancels the page's
+            // task) can't cancel the fetches mid-way and record every
+            // endpoint left as a "cancelled" failure.
+            await Task { await refresh() }.value
+            guard generation == loadGeneration else { return }
         }
         links = ModelMatcher.loadLinks(from: linksURL)
         allModels = store.languageModels() ?? []
         updatedAt = store.meta()[AAEndpoint.llms.rawValue]?.fetchedAt
             .map { Date(timeIntervalSince1970: $0) }
         await loadPrices()
-        guard generation == usageGeneration else { return }
+        guard generation == loadGeneration else { return }
+        usageGeneration += 1
+        let usage = usageGeneration
+        let covered = requestedUsageStamp
         let fresh = await slices(period.range(now: now(), calendar: calendar))
-        guard generation == usageGeneration else { return }
-        periodSlices = fresh
+        guard generation == loadGeneration else { return }
+        // A reload that started after this read has the newer slices.
+        if usage == usageGeneration { periodSlices = fresh }
         hasLoaded = true
+        loadedUsageStamp = covered
         rebuild()
+        // A scan that finished while the read was out isn't in it, and
+        // the page won't pass that stamp again: read once more.
+        if requestedUsageStamp != covered {
+            loadedUsageStamp = requestedUsageStamp
+            await reloadUsage()
+        }
     }
 
     /// Re-reads the current period's usage slices and rebuilds — the AA
@@ -275,11 +296,10 @@ public final class ModelsModel {
     public func reloadUsage() async {
         guard hasLoaded else { await load(allowRefresh: false); return }
         usageGeneration += 1
-        let generation = usageGeneration
+        let usage = usageGeneration
         let fresh = await slices(period.range(now: now(), calendar: calendar))
-        guard generation == usageGeneration else { return }
+        guard usage == usageGeneration else { return }
         periodSlices = fresh
-        isLoading = false
         rebuild()
     }
 
@@ -288,9 +308,11 @@ public final class ModelsModel {
     /// is the overview's scan counter; a new value means the ledger
     /// re-scanned and the slices need a reload.
     public func loadIfNeeded(usageStamp: Int? = nil) async {
+        if let usageStamp { requestedUsageStamp = usageStamp }
         if !hasLoaded {
+            // A load in flight records the stamp its read covers, and
+            // reads again if this one arrived after that read began.
             guard !isLoading else { return }
-            loadedUsageStamp = usageStamp
             await load(allowRefresh: false)
             return
         }

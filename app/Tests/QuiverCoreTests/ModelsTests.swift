@@ -775,6 +775,115 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(used.first?.tokens == 9)
     }
 
+    /// A key read that waits while closed, so a test can land a usage
+    /// reload in the middle of a load.
+    private final class KeyGate: @unchecked Sendable {
+        private struct State {
+            var open = true
+            var value: String?
+            var waiting: [CheckedContinuation<String?, Never>] = []
+        }
+        private let state = Mutex(State())
+        var pendingCount: Int { state.withLock { $0.waiting.count } }
+        func call() async -> String? {
+            await withCheckedContinuation { continuation in
+                let ready: String?? = state.withLock { state in
+                    if state.open { return .some(state.value) }
+                    state.waiting.append(continuation)
+                    return .none
+                }
+                if case .some(let value) = ready { continuation.resume(returning: value) }
+            }
+        }
+        func close() { state.withLock { $0.open = false } }
+        func open(with value: String?) {
+            let waiting = state.withLock { state in
+                state.open = true
+                state.value = value
+                defer { state.waiting = [] }
+                return state.waiting
+            }
+            for continuation in waiting { continuation.resume(returning: value) }
+        }
+    }
+
+    @Test func aUsageReloadMidLoadDoesNotCancelTheLoad() async throws {
+        // The page's two tasks: a revisit's load is waiting on the key
+        // when a ledger re-scan reloads the usage. The load must still
+        // pick up the key the user just saved.
+        let dir = try TempDir()
+        try writeLLMs(dir, [entry("a", "A", "a", creator: "openai", intelligence: 80)])
+        let gate = KeyGate()
+        let model = ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
+                                keyReader: { await gate.call() }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in [] },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian))
+        await model.load()
+        #expect(!model.hasKey)
+
+        gate.close()
+        let loading = Task { await model.load(allowRefresh: false) }
+        while gate.pendingCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+        await model.loadIfNeeded(usageStamp: 1)
+        gate.open(with: "key")
+        await loading.value
+        #expect(model.hasKey)
+        #expect(!model.isLoading)
+    }
+
+    /// Answers every endpoint after a short wait that throws once the
+    /// calling task is cancelled, like URLSession.
+    private final class SlowHTTP: HTTPTransport, @unchecked Sendable {
+        private let count = Mutex(0)
+        var requests: Int { count.withLock { $0 } }
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            count.withLock { $0 += 1 }
+            try await Task.sleep(for: .milliseconds(20))
+            let body = #"{"data":[{"id":"m","name":"M","slug":"m","model_creator":{"id":"c","name":"C","slug":"c"},"evaluations":{},"pricing":{}}]}"#
+            return (body.data(using: .utf8)!,
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])!)
+        }
+    }
+
+    @Test func leavingThePageMidRefreshRecordsNoCancelledFailures() async throws {
+        // No stored data, so the load's refresh runs; the page's task is
+        // cancelled (the user switched pages) after the first request.
+        let dir = try TempDir()
+        let transport = SlowHTTP()
+        let model = ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
+                                keyReader: { "key" }, transport: transport,
+                                linksURL: dir.path("links.json"),
+                                slices: { _ in [] })
+        let page = Task { await model.load() }
+        while transport.requests < 1 { try await Task.sleep(for: .milliseconds(2)) }
+        page.cancel()
+        await page.value
+        #expect(model.refreshError == nil)
+        #expect(transport.requests == AAEndpoint.allCases.count)
+        #expect(model.allModels.map(\.id) == ["m"])
+    }
+
+    @Test func aScanLandingAfterTheLoadsReadIsReadAgain() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [entry("a", "A", "a", creator: "openai", intelligence: 80)])
+        let gate = SlicesGate()
+        let model = gatedModel(dir: dir, gate: gate)
+        let loading = Task { await model.loadIfNeeded(usageStamp: 1) }
+        try await waitForCalls(gate, 1)
+        // Scan 2 finishes while the load's read (from before it) is out.
+        await model.loadIfNeeded(usageStamp: 2)
+        gate.resume(0, with: [slice("a", "claude", tokens: 10)])
+        try await waitForCalls(gate, 2)
+        gate.resume(1, with: [slice("a", "claude", tokens: 20)])
+        await loading.value
+        #expect(model.rows.filter(\.used).first?.tokens == 20)
+        // Scan 2 is now read: passing it again re-reads nothing.
+        await model.loadIfNeeded(usageStamp: 2)
+        #expect(gate.pendingCount == 2)
+    }
+
     @Test func aSecondConcurrentRefreshDoesNotDoubleTheFetches() async throws {
         let dir = try TempDir()
         let transport = StubHTTP()
