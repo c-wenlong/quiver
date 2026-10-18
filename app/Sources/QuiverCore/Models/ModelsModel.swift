@@ -221,8 +221,10 @@ public final class ModelsModel {
     /// older answer cannot write its slices over a newer one's.
     private var usageGeneration = 0
     /// Whether a load has completed; the hover card's `loadIfNeeded`
-    /// reads it so hovering never re-runs the fetch.
-    private var hasLoaded = false
+    /// reads it so hovering never re-runs the fetch, and the page shows a
+    /// loading card until then (`hasKey` reads false before the first
+    /// key check).
+    public private(set) var hasLoaded = false
     /// The overview scan counter the last usage read saw, so a ledger
     /// re-scan can flag the slices as stale without re-fetching AA data.
     private var loadedUsageStamp: Int?

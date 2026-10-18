@@ -675,6 +675,18 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(ModelsModel.sort(rows.shuffled(), by: .ttft).map(\.logged) == expected)
     }
 
+    @Test func hasLoadedFlipsOnlyOnceTheFirstLoadLands() async throws {
+        // The page shows a loading card until then, so a missing key
+        // isn't announced before the key was even read.
+        let dir = try TempDir()
+        let model = makeModel(dir: dir, key: nil)
+        #expect(!model.hasLoaded)
+        #expect(!model.hasKey)
+        await model.load()
+        #expect(model.hasLoaded)
+        #expect(!model.hasKey)
+    }
+
     @Test func metricSortRunsBothDirectionsAndNilsSitLast() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [

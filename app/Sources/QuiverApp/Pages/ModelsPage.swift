@@ -154,8 +154,12 @@ private struct ModelsContent: View {
     // MARK: - Content
 
     @ViewBuilder private var content: some View {
-        // Cached benchmarks still show after the key is removed.
-        if !model.hasKey && !model.isLoading && model.allModels.isEmpty {
+        if !model.hasLoaded && model.allModels.isEmpty {
+            // Before the first key check `hasKey` is false: wait for it
+            // rather than flash the no-key card on every launch.
+            LoadingCard(text: "Loading benchmarks…")
+        } else if !model.hasKey && !model.isLoading && model.allModels.isEmpty {
+            // Cached benchmarks still show after the key is removed.
             noKey
         } else if model.allModels.isEmpty {
             if model.isLoading || model.isRefreshing {
@@ -166,16 +170,29 @@ private struct ModelsContent: View {
                 EmptyCard(text: "No benchmark data yet.", icon: "cube.transparent")
             }
         } else if model.rows.isEmpty {
-            EmptyCard(text: !model.harnessFilter.isEmpty && model.scope == .top25
-                      ? "None of the top 25 ran in these harnesses this period."
-                      : "No usage in this period.",
-                      icon: "chart.bar")
+            EmptyCard(text: emptyText, icon: "chart.bar")
         } else {
             switch model.viewMode {
             case .chart: ChartCard(model: model)
             case .table: TableCard(model: model)
             }
         }
+    }
+
+    /// Why there are no rows: usage the matcher couldn't place is still
+    /// usage, and a filtered Top 25 can simply miss every model.
+    private var emptyText: String {
+        // First: linking can't help a filtered board the models miss.
+        if !model.harnessFilter.isEmpty && model.scope == .top25 {
+            return "None of the top 25 ran in these harnesses this period."
+        }
+        // A name the matcher missed may still be on AA, under another name.
+        if !model.unmatched.isEmpty {
+            return model.unmatched.count == 1
+                ? "Quiver couldn't match the model you used to Artificial Analysis. Link it from the ⚠︎ button."
+                : "Quiver couldn't match the models you used to Artificial Analysis. Link them from the ⚠︎ button."
+        }
+        return "No usage in this period."
     }
 
     /// No key: point at Settings › Services instead of an empty chart.
