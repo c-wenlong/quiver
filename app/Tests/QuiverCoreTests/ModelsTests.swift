@@ -609,6 +609,17 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.harnessFilter == nil)
     }
 
+    @Test func tiedValuesSortTheSameWhateverTheInputOrder() {
+        func row(_ name: String, tokens: Int) -> ModelsModel.Row {
+            ModelsModel.Row(logged: name, tokens: tokens, value: 50)
+        }
+        let rows = [row("b", tokens: 10), row("a", tokens: 10), row("big", tokens: 99), row("lead", tokens: 0)]
+        let expected = ["big", "b", "a", "lead"]
+        #expect(ModelsModel.sort(rows, by: .intelligence).map(\.logged) == expected)
+        #expect(ModelsModel.sort(rows.reversed(), by: .intelligence).map(\.logged) == expected)
+        #expect(ModelsModel.sort(rows.shuffled(), by: .ttft).map(\.logged) == expected)
+    }
+
     @Test func metricSortRunsBothDirectionsAndNilsSitLast() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [

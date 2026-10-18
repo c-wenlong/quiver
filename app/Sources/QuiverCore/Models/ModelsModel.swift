@@ -447,7 +447,9 @@ public final class ModelsModel {
         // Per AA model, the logged name with the most tokens: its ledger
         // price is the row's list price.
         var pricedNames: [String: String] = [:]
-        for (logged, entry) in byModel {
+        // Sorted, so which alias names a merged row (on a token tie) and
+        // the order rows enter the sort don't follow dictionary order.
+        for (logged, entry) in byModel.sorted(by: { $0.key < $1.key }) {
             let aa = ModelMatcher.match(logged, in: allModels, links: links)
             let parsed = ModelMatcher.parse(logged)
             guard let aa else {
@@ -530,11 +532,13 @@ public final class ModelsModel {
 
     /// Best first: descending for the indexes and speed, ascending for
     /// TTFT and cost; rows with no value sit last, used before unused.
+    /// Equal values fall back to tokens then name, so tied bars keep
+    /// their places across rebuilds instead of trading them.
     public static func sort(_ rows: [Row], by metric: Metric) -> [Row] {
         rows.sorted { a, b in
             switch (a.value, b.value) {
             case let (av?, bv?):
-                if av == bv { return a.used && !b.used }
+                if av == bv { return (a.tokens, a.logged) > (b.tokens, b.logged) }
                 return metric.higherIsBetter ? av > bv : av < bv
             case (_?, nil): return true
             case (nil, _?): return false

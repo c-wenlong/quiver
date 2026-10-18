@@ -10,10 +10,11 @@ final class ChartHover {
     static let openDelay: Duration = .milliseconds(400)
     static let closeDelay: Duration = .milliseconds(180)
 
-    /// The bar whose card shows, by index into the chart's rows.
-    private(set) var shown: Int?
+    /// The bar whose card shows, by its row's id: an index would point
+    /// at a different model once a rebuild adds or drops a row.
+    private(set) var shown: String?
     /// The bar waiting out the open delay.
-    @ObservationIgnored private var pending: Int?
+    @ObservationIgnored private var pending: String?
     /// The open or close wait in flight; a newer one cancels it.
     @ObservationIgnored private var wait: Task<Void, Never>?
     @ObservationIgnored private let sleep: @MainActor (Duration) async throws -> Void
@@ -22,8 +23,8 @@ final class ChartHover {
         self.sleep = sleep
     }
 
-    /// The pointer entered bar `index`.
-    func enter(_ index: Int) {
+    /// The pointer entered the bar with row id `index`.
+    func enter(_ index: String) {
         if index == shown {
             cancelWait()
             return
@@ -44,10 +45,10 @@ final class ChartHover {
         }
     }
 
-    /// The pointer left bar `index`. Leaving a bar that is neither shown
+    /// The pointer left the bar with row id `index`. Leaving a bar that is neither shown
     /// nor about to show changes nothing: the next bar's enter can arrive
     /// before this bar's leave.
-    func leave(_ index: Int) {
+    func leave(_ index: String) {
         guard (pending ?? shown) == index else { return }
         cancelWait()
         after(Self.closeDelay) { [weak self] in self?.shown = nil }
