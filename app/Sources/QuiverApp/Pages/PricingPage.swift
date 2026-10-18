@@ -159,8 +159,7 @@ private struct ProviderCard: View {
                 .padding(.bottom, 8)
             ForEach(shown) { row in
                 Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline)
-                PricingRow(row: row, columns: columns,
-                           clickable: !row.harnessBilled) { edit(row) }
+                PricingRow(row: row, columns: columns) { edit(row) }
             }
             if group.models.count > Self.foldLimit {
                 if !shown.isEmpty { Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline) }
@@ -188,8 +187,7 @@ private func perMillion(_ rate: Double?) -> String {
 private struct PricingRow: View {
     var row: PricingModel.PricedModel
     var columns: PricingColumns
-    var clickable = false
-    var edit: () -> Void = {}
+    var edit: () -> Void
     @Environment(AppModel.self) private var app
 
     private var rateColumns: [String] {
@@ -202,21 +200,27 @@ private struct PricingRow: View {
     }
 
     /// The dropped cache columns as hover text: "Cache read $0.20 · Cache
-    /// write $5.00 per 1M".
-    private var cacheHelp: String? {
-        guard !columns.cacheReadWrite else { return nil }
-        return "Cache read \(perMillion(row.rates?.cacheRead)) · "
-            + "Cache write \(perMillion(row.rates?.cacheWrite)) per 1M"
+    /// write $5.00 per 1M", then for a harness-billed row why its spend
+    /// ignores the rates.
+    private var help: String? {
+        var lines: [String] = []
+        if !columns.cacheReadWrite {
+            lines.append("Cache read \(perMillion(row.rates?.cacheRead)) · "
+                + "Cache write \(perMillion(row.rates?.cacheWrite)) per 1M")
+        }
+        if row.harnessBilled { lines.append(harnessBilledNote(row)) }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
+    /// Where the rates came from. A harness-billed row with no rates says
+    /// "Harness" rather than warning "No price": its spend is already known.
     private var sourceText: String {
-        if row.harnessBilled { return "Billed by harness" }
         if row.isFree { return "Free" }
         return switch row.source {
         case .yours: "Yours"
         case .quiver: "Quiver"
         case .liteLLM: "LiteLLM"
-        case nil: "No price"
+        case nil: row.harnessBilled ? "Harness" : "No price"
         }
     }
 
@@ -232,22 +236,18 @@ private struct PricingRow: View {
     }
 
     var body: some View {
-        if let cacheHelp {
-            wrapped.help(cacheHelp)
+        if let help {
+            wrapped.help(help)
         } else {
             wrapped
         }
     }
 
-    @ViewBuilder private var wrapped: some View {
-        if clickable {
-            Button(action: edit) { rowBody }
-                .plainButton(cornerRadius: 0)
-                .modifier(RowHover())
-                .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
-        } else {
-            rowBody
-        }
+    private var wrapped: some View {
+        Button(action: edit) { rowBody }
+            .plainButton(cornerRadius: 0)
+            .modifier(RowHover())
+            .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
     }
 
     private var sourceColor: some ShapeStyle {
@@ -289,9 +289,11 @@ private struct PricingRow: View {
                     .frame(width: Self.rateColumnWidth, alignment: .trailing)
             }
             if columns.source {
+                // Truncates inside its column rather than spilling over
+                // the cache write rate on its left.
                 Text(sourceText)
                     .foregroundStyle(sourceColor)
-                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(1).truncationMode(.tail)
                     .frame(width: 96, alignment: .trailing)
             }
             Text(UsageFormat.tokens(row.totals.totalTokens))
@@ -334,6 +336,12 @@ private struct RowHover: ViewModifier {
             .background(hovering ? Theme.rowHover : .clear)
             .onHover { hovering = $0 }
     }
+}
+
+/// "Spend uses the charge Cursor logs for each request, not these rates."
+private func harnessBilledNote(_ row: PricingModel.PricedModel) -> String {
+    let names = row.harnesses.map(UsageFormat.harness).joined(separator: " and ")
+    return "Spend uses the charge \(names) logs for each request, not these rates."
 }
 
 // MARK: - Price form
@@ -439,6 +447,13 @@ private struct PriceSheet: View {
                     Text("Price applies to every harness")
                         .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 }
+            }
+            if row.harnessBilled {
+                // A saved price fills the rate columns and prices any
+                // harness that logs no charge; the logged charge stays.
+                Text(harnessBilledNote(row))
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
                 rateField("Input", text: $input)

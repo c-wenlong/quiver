@@ -271,6 +271,27 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         _ = temp
     }
 
+    @Test func `a price saved for a harness-billed model shows, but its logged cost stays`() async throws {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        try store.upsert(LedgerRecord(key: "t:1", event: event("grok-4.7-high (Auto)",
+                                                             tokens: 1_000_000, loggedCost: 1.25)))
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let file = temp.url.appending(path: "config/pricing.json")
+        let model = PricingModel(
+            ledger: ledger, overrides: PricingOverrides(url: file),
+            makeCatalog: { try PricingCatalog(
+                liteLLM: Data("{}".utf8),
+                overrides: PricingOverrides(url: file).entries) },
+            apply: { catalog in await ledger.setPricing(catalog) })
+        try await model.save(key: "grok-4.7-high (Auto)", prices: .init(input: 3, output: 15))
+        let row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.harnessBilled && row.source == .yours && row.rates?.input == 3 / 1_000_000)
+        // The harness's own charge, not 1M input tokens at $3/1M.
+        #expect(row.totals.costUSD == 1.25)
+        #expect(await ledger.totals(in: allTime).costUSD == 1.25)
+    }
+
     @Test func `saving an override reprices the ledger`() async throws {
         let temp = try TempDir()
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
