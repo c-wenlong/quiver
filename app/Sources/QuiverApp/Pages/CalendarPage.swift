@@ -1454,100 +1454,31 @@ private extension Array {
     }
 }
 
-/// The page's one hover card: whose card is up, the pending show, and
-/// the pointer poller that owns an open card's lifetime. Only `key` is
-/// observed, and only `HoverCardAnchor` reads it, so pointer traffic
-/// redraws the anchors and never the page body or its day columns.
-@MainActor @Observable final class HoverCards {
-    /// The open card's anchor: a segment, "+N" chip or month entry id.
-    private(set) var key: String?
-    /// Live views behind each anchor and the open card.
-    @ObservationIgnored let geometry = CardGeometry()
-    @ObservationIgnored var reduceMotion = false
-    /// The anchor under the pointer. A pending show re-checks it at fire
-    /// time, so a stale event can never open a card the pointer left.
-    @ObservationIgnored private var inside: String?
-    @ObservationIgnored private var pending: (key: String, task: Task<Void, Never>)?
-    @ObservationIgnored private var watch: Task<Void, Never>?
+/// The page's hover card: `HoverCardState` fed by AppKit's pointer and
+/// the live views behind each anchor and card. Not observed itself;
+/// `key` reads through to the state, so only the anchors that read it
+/// redraw when a card opens or closes.
+@MainActor final class HoverCards {
+    let geometry: CardGeometry
+    let state: HoverCardState
+    var reduceMotion = false
 
-    /// While a card is open, the pointer's screen position is polled
-    /// this often against the anchor ∪ card safe region.
-    private static let pollInterval: Duration = .milliseconds(50)
-
-    /// Pointer entered or left an anchor. A card opens after a beat; with
-    /// another card up the swap waits too, so crossing a neighbour on the
-    /// way into the open card never steals it. Leaving an anchor only
-    /// drops its own pending show: once a card is open the poller
-    /// decides when it closes, so a slow crossing cannot collapse it.
-    func hover(_ key: String, inside entered: Bool) {
-        guard entered else {
-            if inside == key { inside = nil }
-            if pending?.key == key { cancelPending() }
-            return
-        }
-        inside = key
-        cancelPending()
-        guard let delay = HoverCardTiming.delay(entering: key, open: self.key) else { return }
-        pending = (key, Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard let self, !Task.isCancelled, inside == key else { return }
-            pending = nil
-            animated { self.set(key) }
-        })
-    }
-
-    /// Opens a card at once, skipping the hover delay ("+N" taps).
-    func open(_ key: String) {
-        cancelPending()
-        animated { set(key) }
-    }
-
-    func dismiss() {
-        cancelPending()
-        set(nil)
-        inside = nil
-    }
-
-    /// AppKit closed `key`'s popover: a click outside it, or its own
-    /// window taking a mouse event. The pointer still inside the card's
-    /// safe region overrides the second. A late close of a card already
-    /// swapped away must not dismiss the one that replaced it.
-    func closed(_ key: String) {
-        guard self.key == key,
-              !geometry.safeRect(for: key).contains(NSEvent.mouseLocation)
-        else { return }
-        dismiss()
-    }
-
-    private func cancelPending() {
-        pending?.task.cancel()
-        pending = nil
-    }
-
-    private func animated(_ change: () -> Void) {
-        withAnimation(reduceMotion ? nil : .default, change)
-    }
-
-    /// Opens or closes the card and starts or stops the pointer poller
-    /// that keeps an open card alive across the arrow gap.
-    private func set(_ key: String?) {
-        self.key = key
-        watch?.cancel()
-        watch = nil
-        guard let key else { return }
-        watch = Task { [weak self] in
-            var region = HoverSafeRegion()
-            while let self, !Task.isCancelled, self.key == key {
-                region.anchor = geometry.anchorRect(for: key)
-                region.card = geometry.cardRect(for: key)
-                if region.update(point: NSEvent.mouseLocation, now: ContinuousClock.now) {
-                    animated { self.set(nil) }
-                    return
-                }
-                try? await Task.sleep(for: Self.pollInterval)
-            }
+    init() {
+        let geometry = CardGeometry()
+        self.geometry = geometry
+        state = HoverCardState(
+            pointer: { NSEvent.mouseLocation },
+            rects: { (geometry.anchorRect(for: $0), geometry.cardRect(for: $0)) })
+        state.animate = { [unowned self] change in
+            withAnimation(reduceMotion ? nil : .default, change)
         }
     }
+
+    var key: String? { state.key }
+    func hover(_ key: String, inside: Bool) { state.hover(key, inside: inside) }
+    func open(_ key: String) { state.open(key) }
+    func dismiss() { state.dismiss() }
+    func closed(_ key: String) { state.closed(key) }
 }
 
 /// Makes a view a hover-card anchor: registers its rect and the card's
@@ -1627,12 +1558,6 @@ private extension View {
     /// poller gives a missing card its short pending grace.
     func cardRect(for key: String) -> CGRect? {
         cards[key]?.view?.window?.frame
-    }
-
-    /// Chip ∪ popover window in screen coordinates, covering the arrow
-    /// gap. `.null` (contains nothing) until either side is reported.
-    func safeRect(for key: String) -> CGRect {
-        (cardRect(for: key) ?? .null).union(anchorRect(for: key) ?? .null)
     }
 }
 
