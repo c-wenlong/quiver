@@ -524,7 +524,8 @@ public final class ModelsModel {
             // for a model on the board, so its tokens stay marked. Under
             // a harness filter, only the leaders those harnesses ran.
             let board = topAA(excluding: [], count: 25).map(leaderboardRow)
-            all = harnessFilter.isEmpty ? board : board.filter(\.used)
+            // Membership, not `used`: a run can log cost with no tokens.
+            all = harnessFilter.isEmpty ? board : board.filter { matchedIDs.contains($0.id) }
         }
         rows = Self.sort(all, by: metric)
     }

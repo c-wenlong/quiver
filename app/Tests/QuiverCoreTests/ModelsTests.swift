@@ -646,6 +646,24 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.harnessFilter == ["codex"])
     }
 
+    @Test func aFilteredTop25KeepsARunThatLoggedNoTokens() async throws {
+        // Pi and Cline can record a run's cost with zero tokens; the
+        // harness still ran that model, so the filtered board keeps it.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("a", "A", "a", creator: "openai", intelligence: 80),
+            entry("b", "B", "b", creator: "anthropic", intelligence: 70),
+        ])
+        let model = makeModel(dir: dir, slices: [
+            slice("a", "pi", tokens: 0),
+            slice("b", "claude", tokens: 50),
+        ])
+        await model.load()
+        model.set(scope: .top25)
+        model.set(harnessFilter: ["pi"])
+        #expect(model.rows.map(\.logged) == ["a"])
+    }
+
     @Test func metricSortRunsBothDirectionsAndNilsSitLast() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [
