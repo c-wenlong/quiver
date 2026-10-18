@@ -367,7 +367,7 @@ struct ChartCard: View {
     /// when the right would run out of the chart, top-aligned with the
     /// tallest bar and kept inside the chart area.
     @ViewBuilder private var hoverCard: some View {
-        if let id = hover.shown, let index = model.rows.firstIndex(where: { $0.id == id }) {
+        if let index = hover.index(in: model.rows.map(\.id)) {
             let left = strip.minX + Self.inset + leadingRoom + CGFloat(index) * columnWidth
             let right = left + columnWidth - Self.spacing
             let gap: CGFloat = 10

@@ -54,6 +54,13 @@ final class ChartHover {
         after(Self.closeDelay) { [weak self] in self?.shown = nil }
     }
 
+    /// Where the shown card's bar sits in `ids` (the chart's row ids, in
+    /// order) now: it follows its model when rows move, and is nil, so
+    /// the card hides, once that model is gone.
+    func index(in ids: [String]) -> Int? {
+        shown.flatMap { ids.firstIndex(of: $0) }
+    }
+
     /// Waits for the wait in flight to finish, for tests.
     func settle() async { await wait?.value }
 

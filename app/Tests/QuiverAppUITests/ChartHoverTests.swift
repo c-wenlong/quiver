@@ -81,6 +81,20 @@ private final class ManualSleep {
         #expect(hover.shown == "2")
     }
 
+    @Test func theCardFollowsItsModelWhenRowsChange() async {
+        let (hover, sleep) = make()
+        hover.enter("b")
+        await sleep.started(1)
+        sleep.fire(0)
+        await hover.settle()
+        #expect(hover.index(in: ["a", "b", "c"]) == 1)
+        // A rebuild drops "a": the card moves with "b", not index 1.
+        #expect(hover.index(in: ["b", "c"]) == 0)
+        #expect(hover.index(in: ["new", "c", "b"]) == 2)
+        // "b" is gone: no bar, so no card.
+        #expect(hover.index(in: ["a", "c"]) == nil)
+    }
+
     @Test func withACardUpTheNextBarSwitchesAtOnce() async {
         let (hover, sleep) = make()
         hover.enter("2")
