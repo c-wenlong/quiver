@@ -223,6 +223,9 @@ public final class ModelsModel {
     /// The overview scan counter the last usage read saw, so a ledger
     /// re-scan can flag the slices as stale without re-fetching AA data.
     private var loadedUsageStamp: Int?
+    /// The newest scan counter the page has passed in; a load marks only
+    /// the stamp it saw before its read as loaded.
+    private var requestedUsageStamp: Int?
 
     public init(store: ArtificialAnalysisStore,
                 keyReader: @escaping @Sendable () async -> String?,
@@ -269,12 +272,20 @@ public final class ModelsModel {
         guard generation == loadGeneration else { return }
         usageGeneration += 1
         let usage = usageGeneration
+        let covered = requestedUsageStamp
         let fresh = await slices(period.range(now: now(), calendar: calendar))
         guard generation == loadGeneration else { return }
         // A reload that started after this read has the newer slices.
         if usage == usageGeneration { periodSlices = fresh }
         hasLoaded = true
+        loadedUsageStamp = covered
         rebuild()
+        // A scan that finished while the read was out isn't in it, and
+        // the page won't pass that stamp again: read once more.
+        if requestedUsageStamp != covered {
+            loadedUsageStamp = requestedUsageStamp
+            await reloadUsage()
+        }
     }
 
     /// Re-reads the current period's usage slices and rebuilds — the AA
@@ -294,11 +305,10 @@ public final class ModelsModel {
     /// is the overview's scan counter; a new value means the ledger
     /// re-scanned and the slices need a reload.
     public func loadIfNeeded(usageStamp: Int? = nil) async {
+        if let usageStamp { requestedUsageStamp = usageStamp }
         if !hasLoaded {
-            // The load in flight reads the slices last, so it already
-            // covers this stamp; recording it keeps the next visit from
-            // taking an unchanged stamp for a re-scan.
-            loadedUsageStamp = usageStamp
+            // A load in flight records the stamp its read covers, and
+            // reads again if this one arrived after that read began.
             guard !isLoading else { return }
             await load(allowRefresh: false)
             return

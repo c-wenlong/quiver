@@ -810,6 +810,25 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.allModels.map(\.id) == ["m"])
     }
 
+    @Test func aScanLandingAfterTheLoadsReadIsReadAgain() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [entry("a", "A", "a", creator: "openai", intelligence: 80)])
+        let gate = SlicesGate()
+        let model = gatedModel(dir: dir, gate: gate)
+        let loading = Task { await model.loadIfNeeded(usageStamp: 1) }
+        try await waitForCalls(gate, 1)
+        // Scan 2 finishes while the load's read (from before it) is out.
+        await model.loadIfNeeded(usageStamp: 2)
+        gate.resume(0, with: [slice("a", "claude", tokens: 10)])
+        try await waitForCalls(gate, 2)
+        gate.resume(1, with: [slice("a", "claude", tokens: 20)])
+        await loading.value
+        #expect(model.rows.filter(\.used).first?.tokens == 20)
+        // Scan 2 is now read: passing it again re-reads nothing.
+        await model.loadIfNeeded(usageStamp: 2)
+        #expect(gate.pendingCount == 2)
+    }
+
     @Test func aSecondConcurrentRefreshDoesNotDoubleTheFetches() async throws {
         let dir = try TempDir()
         let transport = StubHTTP()
