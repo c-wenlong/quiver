@@ -57,8 +57,9 @@ public struct SweClient: Sendable {
         return data.harnesses
     }
 
-    func call<T: Decodable>(_ arguments: [String], allowFailure: Bool = false) async throws -> T {
-        let result = try await runner.run(arguments)
+    func call<T: Decodable>(_ arguments: [String], input: Data? = nil,
+                            allowFailure: Bool = false) async throws -> T {
+        let result = try await runner.run(arguments, input: input)
         // Cancelling stops the child, which then exits with a signal status
         // rather than throwing; that is a cancellation, not a swe failure.
         try Task.checkCancellation()

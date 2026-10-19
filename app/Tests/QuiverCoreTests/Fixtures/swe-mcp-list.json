@@ -25,7 +25,8 @@
           [
             "claude"
           ]
-        ]
+        ],
+        "secrets_missing": []
       },
       {
         "name": "fixture-stdio",
@@ -54,6 +55,9 @@
           [
             "codex"
           ]
+        ],
+        "secrets_missing": [
+          "SECRET_TOKEN"
         ]
       }
     ]

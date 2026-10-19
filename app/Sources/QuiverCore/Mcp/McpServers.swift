@@ -95,6 +95,9 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// From `swe mcp status` only: ok, error or unknown.
     public let health: String?
     public let detail: String?
+    /// `${NAME}` references in the hub's definition with no value in the
+    /// secrets file. Absent from an older swe, decoded as none missing.
+    public let secretsMissing: [String]
     /// Set only on a saved server, which keeps `summary` in place of the
     /// command line or URL.
     let savedSummary: String?
@@ -102,7 +105,8 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     public init(name: String, transport: String = "stdio", command: String? = nil, args: [String] = [],
                 url: String? = nil, envKeys: [String] = [], headerKeys: [String] = [],
                 harnesses: [String], conflict: Bool = false, variants: [[String]]? = nil,
-                health: String? = nil, detail: String? = nil, savedSummary: String? = nil) {
+                health: String? = nil, detail: String? = nil, secretsMissing: [String] = [],
+                savedSummary: String? = nil) {
         self.name = name
         self.transport = transport
         self.command = command
@@ -115,7 +119,32 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
         self.variants = variants
         self.health = health
         self.detail = detail
+        self.secretsMissing = secretsMissing
         self.savedSummary = savedSummary
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, transport, command, args, url, envKeys, headerKeys
+        case harnesses, conflict, variants, health, detail
+        case secretsMissing, savedSummary
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        transport = try container.decode(String.self, forKey: .transport)
+        command = try container.decodeIfPresent(String.self, forKey: .command)
+        args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        envKeys = try container.decodeIfPresent([String].self, forKey: .envKeys) ?? []
+        headerKeys = try container.decodeIfPresent([String].self, forKey: .headerKeys) ?? []
+        harnesses = try container.decode([String].self, forKey: .harnesses)
+        conflict = try container.decodeIfPresent(Bool.self, forKey: .conflict) ?? false
+        variants = try container.decodeIfPresent([[String]].self, forKey: .variants)
+        health = try container.decodeIfPresent(String.self, forKey: .health)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        secretsMissing = try container.decodeIfPresent([String].self, forKey: .secretsMissing) ?? []
+        savedSummary = try container.decodeIfPresent(String.self, forKey: .savedSummary)
     }
 
     /// The server as it may be written to disk. No command line or URL:
@@ -126,7 +155,8 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// reach the app at all.
     public var saved: McpServer {
         McpServer(name: name, transport: transport, envKeys: envKeys, headerKeys: headerKeys, harnesses: harnesses,
-                  conflict: conflict, variants: variants, savedSummary: savedSummary ?? outline)
+                  conflict: conflict, variants: variants, secretsMissing: secretsMissing,
+                  savedSummary: savedSummary ?? outline)
     }
 
     /// The program or the scheme and host, and "…" when there is more.
@@ -447,6 +477,21 @@ extension SweClient {
         if dryRun { args.append("--dry-run") }
         return try await call(args)
     }
+
+    /// `swe mcp secret set NAME` with the value on stdin: never in argv,
+    /// logs or the error text, where it would leak.
+    public func mcpSecretSet(name: String, value: String) async throws {
+        let _: McpSecretSetResult = try await call(
+            ["mcp", "secret", "set", name, "--json"],
+            input: Data((value + "\n").utf8))
+    }
+}
+
+/// `swe mcp secret set --json`: where the value landed, never the value.
+public struct McpSecretSetResult: Decodable, Sendable, Equatable {
+    public let name: String
+    public let path: String
+    public let created: Bool
 }
 
 @MainActor

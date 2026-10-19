@@ -12,6 +12,7 @@ Commands:
   edit <tool> <name>             Edit one server config in one tool
   validate [tool...]             Validate MCP config shape for one/all tools
   doctor                         Deep diagnostics
+  secret set NAME                Store a ${NAME} value in the secrets file
 
 Run 'swe mcp <command> help' for detailed help on each command.
 """
@@ -40,8 +41,10 @@ from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
 from quiver.mcp.inventory import server_inventory
+from quiver.mcp.secrets import load_secrets
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
+from quiver.mcp.secrets import set_secret
 from quiver.mcp.secrets import unresolved_names
 from quiver.paths import atomic_write_text, CONFIG_DIR, MCP_SOURCE_FILE
 from quiver.mcp.formats import (
@@ -468,13 +471,9 @@ def servers_for_source(name: str) -> dict:
     if not is_hub(name):
         return get_tool_servers(name)
     # The hub stores ${NAME} references; a harness needs the real value to
-    # start the server, and most never expand variables themselves.
-    servers = get_hub_servers()
-    missing = unresolved_names(servers)
-    if missing:
-        print(c("yellow", "  no value in ~/.quiver/secrets/mcp/.api_keys for: "
-                          + ", ".join(missing)))
-    return resolve_secrets(servers)
+    # start the server, and most never expand variables themselves. A name
+    # the store cannot satisfy is refused by sync before this is reached.
+    return resolve_secrets(get_hub_servers())
 
 
 def get_tool_servers(tool_name: str) -> dict:
@@ -1108,6 +1107,23 @@ def _sync(args, report: dict | None):
     if report is not None:
         report["selected"] = list(selected)
 
+    if is_hub(source):
+        # A ${NAME} the store can't satisfy would reach the server as a
+        # literal "${NAME}" string — refuse rather than write it. Works on
+        # the unresolved hub configs, not the already-resolved copies above.
+        secrets = load_secrets()
+        hub_servers = get_hub_servers()
+        missing: dict[str, list[str]] = {}
+        for server_name in selected:
+            for var in unresolved_names(hub_servers.get(server_name, {}), secrets):
+                missing.setdefault(var, []).append(server_name)
+        if missing:
+            for var in sorted(missing):
+                used_by = ", ".join(missing[var])
+                print(f"Not syncing: no value for {var} (used by {used_by}). "
+                      f"Set it with: swe mcp secret set {var}")
+            return 1
+
     print(f"\n{c('green', f'Selected {len(selected)} server(s)')} from {c('cyan', source)}")
     if dry_run:
         print(f"{c('yellow', 'Dry-run mode: no files will be modified.')}\n")
@@ -1219,6 +1235,43 @@ def _sync(args, report: dict | None):
         else:
             print(f"\n  {target}: nothing changed")
 
+    return 0
+
+
+def cmd_secret(args):
+    args, json_view = take_json_flag(list(args))
+    if args and args[0] in ("-h", "--help", "help"):
+        print(MCP_HELP["secret"])
+        return 0
+    # Under --json stdout is one document, so refusals go to stderr.
+    refusal = error_stream(json_view)
+    if not args or args[0] != "set":
+        if args:
+            print(f"Unknown secret command: {args[0]}", file=refusal)
+        print(f"Usage: {c('cyan', 'swe mcp secret set NAME')}", file=refusal)
+        return 1
+    rest = args[1:]
+    if len(rest) != 1 or rest[0].startswith("-"):
+        print(f"Usage: {c('cyan', 'swe mcp secret set NAME')}", file=refusal)
+        print("The value is read from stdin, never from a flag: "
+              "argv shows up in `ps`.", file=refusal)
+        return 1
+    name = rest[0]
+    if sys.stdin.isatty():
+        print(f"Paste the value for {name}, then press Enter.", file=sys.stderr)
+        value = sys.stdin.readline()
+    else:
+        value = sys.stdin.read()
+    if value.endswith("\n"):
+        value = value[:-1]
+    try:
+        path, created = set_secret(name, value)
+    except ValueError as exc:
+        print(c("red", str(exc)), file=refusal)
+        return 1
+    if json_view:
+        return emit({"name": name, "path": str(path), "created": created})
+    print(f"Saved {name} to {path}")
     return 0
 
 
@@ -1631,6 +1684,29 @@ MCP_HELP = {
   swe mcp validate opencode
   swe mcp validate oc cc""",
 
+    "secret": f"""\
+  {c('cyan', 'swe mcp secret set NAME')}       Store a ${'{'}NAME{'}'} value in ~/.quiver/secrets/mcp/.api_keys
+
+  mcp.json keeps ${'{'}NAME{'}'} references; the values live in the secrets
+  file, mode 600 and gitignored. Sync refuses to write a harness config
+  while a reference has no value.
+
+{c('bold', 'Reading the value')}
+  The value comes from stdin — never a flag, which `ps` would show:
+
+    printf %s "$MY_TOKEN" | swe mcp secret set MY_TOKEN
+
+  Piped input is read whole (one trailing newline is dropped); on a
+  terminal it asks for one line.
+
+{c('bold', 'Flags')}
+  --json              Print the result as one JSON document
+
+{c('bold', 'Examples')}
+  swe mcp secret set EXA_API_KEY < ~/.tokens/exa
+  printf %s "$TOKEN" | swe mcp secret set EXA_API_KEY
+  printf %s "$TOKEN" | swe mcp secret set EXA_API_KEY --json""",
+
     "doctor": f"""\
   {c('cyan', 'swe mcp doctor')}               Deep diagnostics for all configured servers
 
@@ -1665,6 +1741,7 @@ def cmd_help(args=None):
   {c('cyan', 'swe mcp diff')}         Compare two tools' configs
   {c('cyan', 'swe mcp edit')}         Edit one server config in one tool
   {c('cyan', 'swe mcp validate')}     Validate MCP config shape for one/all tools
+  {c('cyan', 'swe mcp secret set')}   Store a ${NAME} value in the secrets file
   {c('cyan', 'swe mcp doctor')}       Deep diagnostics
 
 {c('bold', 'Examples')}
@@ -1692,6 +1769,7 @@ COMMANDS = {
     "diff": cmd_diff,
     "edit": cmd_edit,
     "validate": cmd_validate,
+    "secret": cmd_secret,
     "doctor": cmd_doctor,
     "help": cmd_help,
 }

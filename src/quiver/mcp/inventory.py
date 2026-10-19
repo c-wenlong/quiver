@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from quiver.mcp.models import ServerRow
-from quiver.mcp.secrets import load_secrets, redact as redact_secrets, scrub_args, scrub_url
+from quiver.mcp.secrets import (
+    load_secrets,
+    redact as redact_secrets,
+    scrub_args,
+    scrub_url,
+    unresolved_names,
+)
 
 
 def transport_of(raw, canonical: dict) -> str:
@@ -53,9 +59,12 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
     command, arguments and URL are scrubbed, since a credential can sit in
     any of them (see ``quiver.mcp.secrets.scrub_url``).
     """
-    from quiver.mcp.cli import get_mcp_handler
+    from quiver.mcp.cli import get_hub_servers, get_mcp_handler
 
     secrets = load_secrets()
+    # Read once for every server: ``secrets_missing`` is the hub's own
+    # ``${NAME}`` references the store cannot satisfy.
+    hub = get_hub_servers()
     seen: dict[str, dict] = {}
     for tool, servers in tool_data.items():
         handler = get_mcp_handler(tool)
@@ -94,6 +103,8 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
             harnesses=entry["tools"],
             conflict=len(groups) > 1,
             variants=[tools for _, tools in groups],
+            secrets_missing=(unresolved_names(hub[name], secrets)
+                             if name in hub else []),
         )
         inventory.append((row.to_json(), entry["raw"]))
     return inventory

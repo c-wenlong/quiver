@@ -199,6 +199,9 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "mcp status": [
         ("--json", "Machine-readable output"),
     ],
+    "mcp secret set": [
+        ("--json", "Machine-readable output"),
+    ],
     "doctor": [
         ("--json", "Machine-readable output"),
     ],
@@ -297,6 +300,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "mcp": {
         "discover": "mcp discover", "sync": "mcp sync", "doctor": "mcp doctor",
         "list": "mcp list", "ls": "mcp list", "status": "mcp status",
+        "secret": "mcp secret set", "secret set": "mcp secret set",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
@@ -380,6 +384,9 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
     ("config", "setup"): [
         ("report", "Configure report models"),
     ],
+    ("mcp", "secret"): [
+        ("set", "Store a ${NAME} value from stdin"),
+    ],
 }
 
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
@@ -417,6 +424,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("diff", "Compare two tools' configs"),
         ("edit", "Edit one server in one tool"),
         ("validate", "Check config shapes"),
+        ("secret", "Store a ${NAME} value"),
         ("doctor", "Deep diagnostics"),
         ("help", "Detailed help for one command"),
     ],
