@@ -347,6 +347,10 @@ public final class AccountsModel {
         guard let login = HarnessAccess.loginCommand(for: harness) else {
             throw LaunchError.failed("\(harness) signs in from inside its own app or CLI.")
         }
+        let cli = AccountSignIn.cli(loginCommand: login)
+        if !CLIPath.contains(cli, path: await loginPath()) {
+            throw LaunchError.failed("\(cli) isn't installed. Install it first.")
+        }
         try await launcher.launch(LaunchPlanner.terminal(terminal(), running: login))
     }
 
@@ -367,7 +371,20 @@ public final class AccountsModel {
             try await openApp(profile)
             return
         }
+        // Defence in depth under the menu's Install: refuse to open a
+        // terminal that would answer "command not found".
+        if cliOnPath[profile.vendor] == false {
+            throw LaunchError.failed(
+                "\(LaunchPlanner.cliName(for: profile.vendor)) isn't installed. Install it first.")
+        }
         try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+    }
+
+    /// The CLI this account's Sign in runs, or nil when it signs in inside
+    /// its own app (a Cursor profile), which needs no CLI.
+    public func signInCLI(for profile: Profile) -> String? {
+        LaunchPlanner.cliLoginCommand(for: profile, paths: store.paths(for: profile)) == nil
+            ? nil : LaunchPlanner.cliName(for: profile.vendor)
     }
 
     public func folder(of profile: Profile) -> URL {
