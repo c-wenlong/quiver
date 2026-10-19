@@ -1741,7 +1741,7 @@ def cmd_help(args=None):
   {c('cyan', 'swe mcp diff')}         Compare two tools' configs
   {c('cyan', 'swe mcp edit')}         Edit one server config in one tool
   {c('cyan', 'swe mcp validate')}     Validate MCP config shape for one/all tools
-  {c('cyan', 'swe mcp secret set')}   Store a ${NAME} value in the secrets file
+  {c('cyan', 'swe mcp secret set')}   Store a ${{NAME}} value in the secrets file
   {c('cyan', 'swe mcp doctor')}       Deep diagnostics
 
 {c('bold', 'Examples')}

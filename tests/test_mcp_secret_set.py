@@ -81,6 +81,40 @@ class SetSecretTest(unittest.TestCase):
         self.assertTrue(link.is_symlink())
         self.assertEqual(real.read_text(), "export B='keep'\nexport A='v'\n")
 
+    def test_symlinked_store_leaves_the_real_folder_mode_alone(self):
+        from quiver.mcp import secrets
+
+        shared = self.home / "shared"
+        shared.mkdir(mode=0o755)
+        os.chmod(shared, 0o755)
+        link = self._file()
+        link.parent.mkdir(parents=True)
+        link.symlink_to(shared / ".api_keys")
+        secrets.set_secret("A", "v", home=self.home)
+        self.assertEqual(stat.S_IMODE(shared.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE((shared / ".api_keys").stat().st_mode), 0o600)
+
+    def test_keeps_crlf_lines_byte_for_byte(self):
+        from quiver.mcp import secrets
+
+        path = self._file()
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"# note\r\nexport A='old'\r\nexport B='keep'\r\n")
+        secrets.set_secret("A", "new", home=self.home)
+        self.assertEqual(path.read_bytes(), b"# note\r\nexport A='new'\r\nexport B='keep'\r\n")
+
+    def test_mcp_help_lists_secret_without_crashing(self):
+        import contextlib
+        import io
+
+        from quiver.mcp.cli import main
+
+        for argv in ([], ["help"], ["--help"]):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(main(argv), 0)
+            self.assertIn("Store a ${NAME} value", out.getvalue())
+
     def test_replaces_in_place_and_keeps_other_lines(self):
         from quiver.mcp import secrets
 

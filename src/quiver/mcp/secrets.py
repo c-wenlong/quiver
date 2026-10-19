@@ -322,41 +322,58 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
     line = render_secret_line(name, value)
 
     shown = secrets_file_for(home)
+    # Quiver's own folder is private; a store symlinked elsewhere keeps
+    # whatever access its real folder has.
+    shown.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not shown.parent.is_symlink():
+        os.chmod(shown.parent, 0o700)
     # The real file, so the swap below never replaces a symlink with a copy.
     path = Path(os.path.realpath(shown))
-    created = not path.exists()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        text = ""
-    lines = text.splitlines(keepends=True)
-    # Every line for the name, not just the first: load_secrets keeps the
-    # last one, so a stale duplicate further down would win.
-    replaced = False
-    for i, existing in enumerate(lines):
-        match = _EXPORT_RE.match(existing)
-        if match and match.group(1) == name:
-            lines[i] = line + "\n"
-            replaced = True
-    if not replaced:
-        if lines and not lines[-1].endswith("\n"):
-            lines[-1] += "\n"
-        lines.append(line + "\n")
 
-    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    import fcntl
+
+    # One writer at a time, Terminal and app alike: the lock file sits
+    # beside the store and is never replaced, so the swap can't bypass it.
+    lock_fd = os.open(path.parent / f".{path.name}.lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write("".join(lines))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except BaseException:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        created = not path.exists()
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+            # newline="" keeps CRLF and every other byte as it was.
+            with open(path, encoding="utf-8", newline="") as handle:
+                text = handle.read()
+        except FileNotFoundError:
+            text = ""
+        lines = text.splitlines(keepends=True)
+        # Every line for the name, not just the first: load_secrets keeps the
+        # last one, so a stale duplicate further down would win.
+        replaced = False
+        for i, existing in enumerate(lines):
+            body = existing.rstrip("\r\n")
+            match = _EXPORT_RE.match(body)
+            if match and match.group(1) == name:
+                lines[i] = line + (existing[len(body):] or "\n")
+                replaced = True
+        if not replaced:
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.append(line + "\n")
+
+        fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write("".join(lines))
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(lock_fd)
 
     # The store sits under secrets/, which must stay out of any `git add .`.
     from quiver.init.migrate import seal_secrets_dir
