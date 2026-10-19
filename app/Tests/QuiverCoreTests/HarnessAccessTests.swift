@@ -201,3 +201,43 @@ import Testing
         #expect(AccountSignIn.action(cli: m.signInCLI(for: cursor), harness: "cursor", installed: false) == .signIn)
     }
 }
+
+/// The row's installed answer, chosen per the fix in PR 404's review.
+@Suite struct SignInInstalledTests {
+    private let cliInstalled = ["cursor": false, "codex": true]
+
+    @Test func cursorRowReadsTheHarnessEntry() {
+        // cursor-agent is the cursor harness's own command, so the cursor
+        // key answers for it.
+        #expect(AccountSignIn.installed(harness: "cursor", cli: "cursor-agent",
+                                        cliInstalled: cliInstalled,
+                                        vendorInstalled: nil) == false)
+        #expect(AccountSignIn.action(cli: "cursor-agent", harness: "cursor",
+                                     installed: AccountSignIn.installed(
+                                        harness: "cursor", cli: "cursor-agent",
+                                        cliInstalled: cliInstalled,
+                                        vendorInstalled: nil))
+            == .install(harness: "cursor"))
+    }
+
+    @Test func codexRowReadsItsOwnFlag() {
+        #expect(AccountSignIn.installed(harness: "codex", cli: "codex",
+                                        cliInstalled: cliInstalled,
+                                        vendorInstalled: nil) == true)
+    }
+
+    @Test func copilotRowReadsTheLoginBinary() {
+        // gh is not the copilot harness's command; gh's own entry answers,
+        // and an unknown answer keeps Sign in.
+        #expect(AccountSignIn.installed(harness: "copilot", cli: "gh",
+                                        cliInstalled: cliInstalled,
+                                        vendorInstalled: nil) == nil)
+        #expect(AccountSignIn.action(cli: "gh", harness: "copilot",
+                                     installed: nil) == .signIn)
+    }
+
+    @Test func aVendorFallbackApplies() {
+        #expect(AccountSignIn.installed(harness: "codex", cli: "codex",
+                                        cliInstalled: [:], vendorInstalled: false) == false)
+    }
+}

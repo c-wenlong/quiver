@@ -560,12 +560,12 @@ private struct HarnessAccountCard: View {
                 } else {
                     EllipsisMenu {
                         if let login = HarnessAccess.loginCommand(for: row.name) {
-                            signInItem(name: row.name, harness: row.name,
-                                       cli: AccountSignIn.cli(loginCommand: login),
-                                       // The login binary, not the harness's own
-                                       // (Copilot signs in with gh).
-                                       installed: app.others.cliInstalled[AccountSignIn.cli(loginCommand: login)]
-                                           ?? (AccountSignIn.cli(loginCommand: login) == row.name ? row.cliInstalled : nil)) {
+                            let cli = AccountSignIn.cli(loginCommand: login)
+                            signInItem(name: row.name, harness: row.name, cli: cli,
+                                       installed: AccountSignIn.installed(
+                                           harness: row.name, cli: cli,
+                                           cliInstalled: app.others.cliInstalled,
+                                           vendorInstalled: row.cliInstalled)) {
                                 perform { try await model.signIn(harness: row.name) }
                             }
                             Divider()

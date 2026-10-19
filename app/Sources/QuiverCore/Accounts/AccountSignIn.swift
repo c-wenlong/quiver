@@ -25,4 +25,19 @@ public enum AccountSignIn {
     public static func cli(loginCommand: String) -> String {
         loginCommand.split(separator: " ").map(String.init).first ?? loginCommand
     }
+
+    /// Which installed answer applies to a harness row's Sign in.
+    /// `cliInstalled` is keyed by harness name, so a row whose login
+    /// binary is its harness's own command (cursor → cursor-agent via
+    /// `Vendor.cliCommand`) looks up its harness name, falling back to the
+    /// vendor's `cliOnPath` answer. A login run by a different binary
+    /// (copilot → gh) looks the binary up under its own name.
+    public static func installed(harness: String, cli: String,
+                                 cliInstalled: [String: Bool],
+                                 vendorInstalled: Bool?) -> Bool? {
+        if Vendor(rawValue: harness)?.cliCommand == cli {
+            return cliInstalled[harness] ?? vendorInstalled
+        }
+        return cliInstalled[cli]
+    }
 }
