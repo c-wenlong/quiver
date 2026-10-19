@@ -2,7 +2,9 @@ import Foundation
 import Observation
 
 /// Something Quiver can show usage for: one of swe's harnesses, or one of
-/// the extra providers TokenTracker lists (Antigravity, Kimi, Ark plans…).
+/// the extra harnesses TokenTracker lists (Antigravity, Kimi, Qoder…).
+/// Harnesses only: a model plan like Ark Coding Plan is a subscription on a
+/// model provider, not something that runs sessions.
 public struct Provider: Identifiable, Sendable, Equatable {
     public var id: String
     /// Its name and logo come from the harness tables (`HarnessMark`), so
@@ -39,8 +41,6 @@ public enum ProviderCatalog {
                  paths: ["/Applications/Qoder.app", "~/Applications/Qoder.app", "~/.qoder"]),
         Provider(id: "qoder-cn",
                  paths: ["/Applications/Qoder.app", "~/Applications/Qoder.app", "~/.qoder"]),
-        Provider(id: "ark-coding-plan", commands: ["arkcli"]),
-        Provider(id: "ark-agent-plan", commands: ["arkcli"]),
         Provider(id: "gemini"),
         Provider(id: "qwen-code"),
         Provider(id: "mistral-vibe"),

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe install --json` says how to uninstall each installed harness.**
+  Every entry carries `uninstall`: `{"via", "package", "command",
+  "available"}` read off where the binary resolves to (a Homebrew Caskroom
+  or Cellar, an npm `node_modules`, a uv tool, the Nix store), or null when
+  it isn't installed or a vendor script put it there. Quiver's Settings ›
+  Providers › Harnesses shows it when you click an installed harness, and
+  the install commands when you click a missing one; the Harnesses page's
+  Add harness button is gone. The same section gains an Inference tab with
+  the Ark plans (no longer listed as harnesses) and the API keys editor,
+  which leaves the sidebar.
+
 - **`swe harness usage-daily codex [--account-dir=<dir>] [--json]` reads a
   Codex account's per-day token usage.** It spawns `codex app-server` with
   `CODEX_HOME` at the account's home (`~/.codex` by default), runs the

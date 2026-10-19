@@ -24,7 +24,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .preferences: "How Quiver looks: light or dark, and its app icon."
         case .notifications: "Alerts when a usage limit runs low."
         case .updates: "Which version you're running and where updates come from."
-        case .providers: "Which harnesses show up across the app, and in what order."
+        case .providers: "Which harnesses show up across the app, and the inference plans and API keys behind them."
         case .services: "Keys for the services Quiver itself calls, kept in the Keychain."
         case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
         }

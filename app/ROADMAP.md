@@ -13,7 +13,7 @@ remembering CLI commands.
 | Look | The TokenTracker style package in design-systems (`systems/tokentracker`); values come from its `tokens.json`. Borderless sidebar on the window wash, rounded content panel, hairline cards, sentence case everywhere (no all caps), green only for money and "on" states, and a visible focus ring. |
 | Data that refreshes often | Native Swift: usage, cost, limits, account profiles |
 | Data that writes harness config | `swe … --json`, so the tested Python code stays the only writer |
-| Sidebar | Usage: Overview, Sessions. Manage: Accounts, API keys, Harnesses, Compute, Skills, AGENTS.md, MCP servers, Plugins. System: Menu bar, Widgets, Service status, Doctor, Settings |
+| Sidebar | Usage: Overview, Sessions. Manage: Accounts, Harnesses, Compute, Skills, AGENTS.md, MCP servers, Plugins. System: Menu bar, Widgets, Service status, Doctor, Settings |
 | Accounts page | Limits merged with Switchboard-style profiles: each account card has its limit bars, when they were fetched, and Open app / Terminal buttons |
 | Kept from TokenTracker | Sessions and Limits (the most important), menu bar and widgets, Skills (built on quiver hub), Service Status (extended to more services), Settings, Tokens overview. Claude IP Check at low priority. |
 | Out of scope | Leaderboard, Achievements, Pet, Cloud sync |
@@ -85,9 +85,9 @@ Modelled on TokenTracker's Sessions page.
 - [x] MCP servers: list by harness, diff, sync (`swe mcp sync --json`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
 - [x] Plugins: drift findings with one-click fixes (`swe find plugins --fix=<id>`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
 - [x] Plugins Explore: every plugin in every marketplace, install, uninstall, enable and disable per harness (`swe plugins`); plugin skills listed there, not on Skills
-- [x] Harnesses: discover installed ones, star and archive them ([#144](https://github.com/c-wenlong/quiver/pull/144))
+- [x] Harnesses: discover installed ones, star and archive them ([#144](https://github.com/c-wenlong/quiver/pull/144)); install and uninstall steps open from Settings › Providers › Harnesses
 - [ ] Launch a session in the right folder with one click
-- [x] API keys: the provider keys in `~/.api_keys`, masked until revealed, edited in place
+- [x] API keys: the provider keys in `~/.api_keys`, masked until revealed, edited in place; in Settings › Providers › Inference beside the inference plans
 
 ### M6. Menu bar, widgets and shipping
 - [x] Limits in the menu bar: the status item shows the tightest limit; the panel lists every account's windows and the other harnesses
