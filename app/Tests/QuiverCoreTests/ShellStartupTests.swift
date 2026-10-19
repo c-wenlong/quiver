@@ -63,6 +63,24 @@ import Testing
                 == ["[", "-f", "a b", "]", "&&", "source", "c d", ";", "x"])
     }
 
+    @Test func subshellsAndLiteralDollarsDoNotCount() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "literal-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let keys = root.appending(path: ".quiver/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        let rel = ".quiver/secrets/providers/.api_keys"
+        for line in [#"(source "$HOME/\#(rel)")"#,
+                     #"source "\$HOME/\#(rel)""#,
+                     #"source '$HOME/\#(rel)'"#,
+                     #"source \$HOME/\#(rel)"#] {
+            #expect(!ShellStartup.sources(line, keysFile: keys, home: root), "\(line)")
+        }
+        #expect(ShellStartup.sources(#"(true) && source "$HOME/\#(rel)""#, keysFile: keys, home: root))
+    }
+
     @Test func sourcesDetectsEveryForm() throws {
         // A real temp home: resolution only counts paths that exist.
         let root = FileManager.default.temporaryDirectory

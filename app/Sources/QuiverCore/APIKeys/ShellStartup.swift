@@ -74,7 +74,12 @@ public enum ShellStartup {
             // `[ -f X ] && source X` counts.
             let words = shellWords(line)
             var wanted = false
+            // A `source` inside `( … )` runs in a subshell, and the
+            // terminal keeps nothing it sets.
+            var depth = 0
             for word in words {
+                if word == "(" { depth += 1; wanted = false; continue }
+                if word == ")" { depth = max(0, depth - 1); wanted = false; continue }
                 if wanted, word != "&&", word != ";", word != "|", word != ")" {
                     if let url = sourcedURL(word, home: home),
                        url.resolvingSymlinksInPath().standardizedFileURL == target {
@@ -82,7 +87,7 @@ public enum ShellStartup {
                     }
                     wanted = false
                 }
-                if word == "source" || word == "." { wanted = true }
+                if (word == "source" || word == ".") && depth == 0 { wanted = true }
                 else if !["&&", ";", "|", "(", ")"].contains(word) { wanted = false }
             }
         }
@@ -92,6 +97,10 @@ public enum ShellStartup {
     /// A line split the way a shell reads it: quotes group and come off,
     /// `\\` escapes outside single quotes, and `&&` `;` `|` `(` `)` are
     /// separate words.
+    /// Stands in for a `\\$` so `sourcedURL` never expands it: the shell
+    /// reads an escaped dollar literally.
+    static let escapedDollar: Character = "\u{1}"
+
     static func shellWords(_ line: String) -> [String] {
         var words: [String] = []
         var word = ""
@@ -103,13 +112,14 @@ public enum ShellStartup {
         while i < chars.count {
             let ch = chars[i]
             if quote == "'" {
-                if ch == "'" { quote = nil } else { word.append(ch) }
+                // Single quotes expand nothing, `$` included.
+                if ch == "'" { quote = nil } else { word.append(ch == "$" ? escapedDollar : ch) }
             } else if quote == "\"" {
                 if ch == "\"" {
                     quote = nil
                 } else if ch == "\\", i + 1 < chars.count, "\"\\$`".contains(chars[i + 1]) {
                     i += 1
-                    word.append(chars[i])
+                    word.append(chars[i] == "$" ? escapedDollar : chars[i])
                 } else {
                     word.append(ch)
                 }
@@ -118,7 +128,7 @@ public enum ShellStartup {
                 open = true
             } else if ch == "\\", i + 1 < chars.count {
                 i += 1
-                word.append(chars[i])
+                word.append(chars[i] == "$" ? escapedDollar : chars[i])
                 open = true
             } else if ch == " " || ch == "\t" {
                 flush()
@@ -157,6 +167,7 @@ public enum ShellStartup {
         } else if !text.hasPrefix("/") {
             text = home.path + "/" + text
         }
+        text = text.replacingOccurrences(of: String(escapedDollar), with: "$")
         guard !text.isEmpty, !text.contains("*") else { return nil }
         return URL(fileURLWithPath: text)
     }
