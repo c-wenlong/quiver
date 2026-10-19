@@ -96,6 +96,12 @@ import Observation
         if let inside { schedule(inside, after: HoverCardTiming.afterScroll) }
     }
 
+    /// The scroll views went away (Month view replaced the grid) and
+    /// may never report coming to rest: nothing is moving any more.
+    public func scrollsRemoved() {
+        scrolling.removeAll()
+    }
+
     private func schedule(_ key: String, after delay: Duration) {
         cancelPending()
         let show = Task { [weak self, wait] in

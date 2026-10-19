@@ -353,8 +353,12 @@ private struct CalendarContent: View {
                             cards.scrollPhase("hours", from: old, to: phase)
                         }
                         .onAppear { scrollToFirstBlock(proxy) }
-                        // Month view replaces this grid; coming back must scroll again.
-                        .onDisappear { scrolledRange = nil }
+                        // Month view replaces this grid; coming back must scroll
+                        // again, and a swipe cut off mid-way never reports rest.
+                        .onDisappear {
+                            scrolledRange = nil
+                            cards.scrollsRemoved()
+                        }
                         .onChange(of: model.visibleWindowBlocks.isEmpty) {
                             scrollToFirstBlock(proxy)
                         }
@@ -1515,6 +1519,8 @@ private extension Array {
             state.scrollBegan(id)
         }
     }
+
+    func scrollsRemoved() { state.scrollsRemoved() }
 }
 
 /// Makes a view a hover-card anchor: registers its rect and the card's

@@ -160,4 +160,18 @@ import Testing
         state.open("chip") // a deliberate click, not a passing pointer
         #expect(state.key == "chip")
     }
+
+    @Test func removingAMovingGridUnblocksCards() async {
+        // Month view replaced the grid mid-swipe: neither scroll view
+        // reports coming to rest, so their removal has to clear them.
+        let state = state()
+        state.scrollBegan("days")
+        state.scrollBegan("hours")
+        state.scrollsRemoved()
+        state.hover("entry", inside: true)
+        gate.release()
+        await state.settled()
+        #expect(gate.requested == [HoverCardTiming.show])
+        #expect(state.key == "entry")
+    }
 }
