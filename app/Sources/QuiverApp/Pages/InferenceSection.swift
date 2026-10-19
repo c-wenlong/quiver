@@ -23,6 +23,10 @@ struct InferenceSection: View {
     @State private var renamingProvider = false
     @State private var providerBeingRenamed = ""
     @State private var providerDraft = ""
+    /// The startup file a confirmed "Add to" would edit, nil while asked.
+    @State private var confirmingSource: URL?
+    @State private var sourceError: String?
+    @State private var sourceAdded: String?
 
     static let firstWidth: CGFloat = 200
     static let compactFirstWidth: CGFloat = 150
@@ -39,8 +43,7 @@ struct InferenceSection: View {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Keys and plans").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                    Text("From \(displayPath(model.path)). New terminals pick up changes.")
-                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    Text(subtitle(model)).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: 12)
                 Button("Reload", systemImage: "arrow.clockwise") { actionError = nil; Task { await model.load() } }
@@ -58,6 +61,25 @@ struct InferenceSection: View {
             if let error = model.error ?? actionError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+            }
+            if case .notSourced(let rc) = model.sourcing, !model.rows.isEmpty {
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("New terminals don't get these keys. Quiver can add one line to \(rc.lastPathComponent).")
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                        if let added = sourceAdded {
+                            Text(added).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        }
+                        if let error = sourceError {
+                            Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                        }
+                        HStack {
+                            Spacer()
+                            Button("Add to \(rc.lastPathComponent)") { confirmingSource = rc }
+                                .primaryButton()
+                        }
+                    }
+                }
             }
             if !model.problems.isEmpty {
                 Card(title: "Lines that set nothing") {
@@ -125,6 +147,29 @@ struct InferenceSection: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Add a line to \(confirmingSource?.lastPathComponent ?? "the startup file")?",
+            isPresented: Binding(get: { confirmingSource != nil }, set: { if !$0 { confirmingSource = nil } })) {
+            Button("Add line") {
+                let model = app.apiKeys
+                sourceError = nil
+                Task {
+                    do {
+                        let backup = try await model.addSourceLine()
+                        sourceAdded = "Added to \(confirmingSource?.lastPathComponent ?? "the file"). "
+                            + "Backup at \(backup.path). Open a new terminal to use the keys."
+                    } catch {
+                        sourceError = error.localizedDescription
+                    }
+                    confirmingSource = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { confirmingSource = nil }
+        } message: {
+            if let rc = confirmingSource {
+                Text("Quiver appends \(app.apiKeys.sourceLine) to \(rc.path). Quiver backs up \(rc.lastPathComponent) first.")
+            }
         }
     }
 
@@ -229,6 +274,19 @@ struct InferenceSection: View {
         }
     }
 
+    private func subtitle(_ model: APIKeysModel) -> String {
+        switch model.sourcing {
+        case .sourced:
+            return "From \(displayPath(model.path)). New terminals pick up changes."
+        case .notSourced:
+            return "From \(displayPath(model.path)). New terminals don't read this file yet."
+        case .unsupportedShell:
+            return "From \(displayPath(model.path)). Add `source \(displayPath(model.path))` to your shell's startup file so new terminals get these keys."
+        case .unknown:
+            return "From \(displayPath(model.path))."
+        }
+    }
+
     private func footer(_ model: APIKeysModel) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
@@ -237,7 +295,7 @@ struct InferenceSection: View {
                     Text("· saved \(saved, format: .relative(presentation: .named))")
                 }
             }
-            if model.savedAt != nil {
+            if model.savedAt != nil && model.sourcing == .sourced {
                 Text("Terminals already open keep the old values until you run source \(displayPath(model.path)).")
             }
         }

@@ -652,8 +652,20 @@ public final class APIKeysModel {
         public var masked: String { APIKeyMask.mask(value) }
     }
 
+    /// Whether the shell's startup file reads the keys file, so a new
+    /// terminal picks changes up. `.unknown` until the first `load()`.
+    public enum Sourcing: Equatable {
+        case unknown
+        case sourced
+        /// The startup file that lacks the line.
+        case notSourced(file: URL)
+        /// No startup file is known for this shell name.
+        case unsupportedShell(String)
+    }
+
     public var search = ""
     public private(set) var rows: [Row] = []
+    public private(set) var sourcing: Sourcing = .unknown
     public private(set) var problems: [APIKeysFile.Problem] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
@@ -673,6 +685,11 @@ public final class APIKeysModel {
 
     private let store: APIKeysStore
     private let shell: ShellEnvironmentReading
+    /// The login shell name and environment (for $SHELL and ZDOTDIR) the
+    /// sourcing check reads; injectable so tests point at a temp home.
+    private let shellName: String
+    private let home: URL
+    private let processEnvironment: [String: String]
     private let checker: APIKeyChecker
     /// Where results persist between launches.
     private let checkCache: APIKeyCheckStore
@@ -689,9 +706,15 @@ public final class APIKeysModel {
     public init(store: APIKeysStore, shell: ShellEnvironmentReading,
                 checker: APIKeyChecker = APIKeyChecker(transport: URLSessionTransport()),
                 checkCache: APIKeyCheckStore,
-                defaults: UserDefaults = .standard) {
+                defaults: UserDefaults = .standard,
+                shellName: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh",
+                home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.store = store
         self.shell = shell
+        self.shellName = shellName
+        self.home = home
+        processEnvironment = environment
         self.checker = checker
         self.checkCache = checkCache
         checkSalt = APIKeyCheckStore.salt(from: defaults)
@@ -905,6 +928,38 @@ public final class APIKeysModel {
         } catch {
             self.error = error.localizedDescription
         }
+        refreshSourcing()
+    }
+
+    /// Cheap text check, no shell spawn: does the startup file for
+    /// `shellName` already source the keys file?
+    private func refreshSourcing() {
+        guard let rc = ShellStartup.startupFile(shell: shellName, home: home,
+                                                environment: processEnvironment)
+        else {
+            sourcing = .unsupportedShell(shellName)
+            return
+        }
+        let text = (try? String(contentsOf: rc.resolvingSymlinksInPath(), encoding: .utf8)) ?? ""
+        sourcing = ShellStartup.sources(text, keysFile: store.url, home: home)
+            ? .sourced : .notSourced(file: rc)
+    }
+
+    /// The exact line `addSourceLine` would write, for the prompt.
+    public var sourceLine: String {
+        ShellStartup.sourceLine(for: store.url, home: home)
+    }
+
+    /// Appends the one line to the startup file (backing it up first),
+    /// then reloads so the page shows the change. Returns the backup URL,
+    /// or the startup file when nothing needed backing up.
+    @discardableResult
+    public func addSourceLine() async throws -> URL {
+        let result = try ShellStartupWriter(home: home, backupDirectory: store.backupDirectory)
+            .addSource(keysFile: store.url, shell: shellName,
+                       environment: processEnvironment)
+        await load()
+        return result.backup ?? result.file
     }
 
     private func rebuild() {

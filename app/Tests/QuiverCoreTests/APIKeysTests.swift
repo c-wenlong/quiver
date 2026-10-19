@@ -700,6 +700,67 @@ struct FakeShell: ShellEnvironmentReading {
 }
 
 @MainActor
+@Suite struct APIKeysSourcingTests {
+    /// A model against a temp home: keys file and backup dir inside it,
+    /// shell name and environment fixed.
+    private func model(shell: String, environment: [String: String] = [:]) throws
+        -> (APIKeysModel, URL, URL) {
+        let home = FileManager.default.temporaryDirectory
+            .appending(path: "keysource-\(UUID().uuidString)")
+        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)
+        let store = APIKeysStore(url: keys, backupDirectory: home.appending(path: "backups"))
+        let model = APIKeysModel(store: store, shell: FakeShell(environment: [:]),
+                                 checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
+                                 defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
+                                 shellName: shell, home: home, environment: environment)
+        return (model, home, home.appending(path: ".zshrc"))
+    }
+
+    @Test func anRcWithoutTheLineIsNotSourced() async throws {
+        let (model, _, rc) = try model(shell: "/bin/zsh")
+        await model.load()
+        #expect(model.sourcing == .notSourced(file: rc))
+    }
+
+    @Test func addSourceLineMakesItSourced() async throws {
+        let (model, home, rc) = try model(shell: "/bin/zsh")
+        await model.load()
+        let backup = try await model.addSourceLine()
+        #expect(model.sourcing == .sourced)
+        #expect(backup == rc)  // the rc did not exist, so nothing was backed up
+        #expect(try String(contentsOf: rc, encoding: .utf8).contains(".api_keys"))
+        _ = home
+    }
+
+    @Test func anUnsupportedShellReportsItsName() async throws {
+        let (model, _, _) = try model(shell: "/bin/fish")
+        await model.load()
+        #expect(model.sourcing == .unsupportedShell("/bin/fish"))
+    }
+
+    @Test func zdotdirWinsForTheRcPath() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appending(path: "keysource-\(UUID().uuidString)")
+        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)
+        let model = APIKeysModel(
+            store: APIKeysStore(url: keys, backupDirectory: home.appending(path: "backups")),
+            shell: FakeShell(environment: [:]),
+            checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
+            defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
+            shellName: "/bin/zsh", home: home,
+            environment: ["ZDOTDIR": home.appending(path: "dots").path])
+        await model.load()
+        #expect(model.sourcing == .notSourced(file: home.appending(path: "dots/.zshrc")))
+    }
+}
+
+@MainActor
 @Suite struct APIKeysModelTests {
     func model(text: String, shell: [String: String]? = [:]) throws -> (APIKeysModel, URL) {
         let dir = FileManager.default.temporaryDirectory.appending(path: "keysmodel-\(UUID().uuidString)")
