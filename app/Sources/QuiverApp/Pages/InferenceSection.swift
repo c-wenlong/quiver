@@ -769,6 +769,7 @@ private struct KeyEditor: View {
                     Text("saved as").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     PopoverSelect(options: provider.envVars.map { ($0, $0, nil) },
                                   selection: $envVarChoice)
+                        .onChange(of: envVarChoice) { saveAnyway = false }
                 } else {
                     Text("saved as \(provider.envVars[0])")
                         .font(.system(size: 12, design: .monospaced))
@@ -892,7 +893,9 @@ private struct KeyEditor: View {
         Task {
             defer { working = false }
             var result = currentTest
-            if !value.isEmpty, result == nil {
+            // A move to another provider alone keeps the key it had, so
+            // it asks the provider nothing.
+            if canTest, result == nil {
                 testing = true
                 result = await test(name, value)
                 testing = false
