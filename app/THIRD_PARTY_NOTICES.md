@@ -89,6 +89,16 @@ Where each came from is in `Resources/harness-icons.tsv`:
   AI, Vercel, Nebius, NVIDIA and Cloudflare) and the model-lab marks
   for Meta and Ant Group come from LobeHub icons
   (`@lobehub/icons-static-svg`).
+- The inference plan and API provider marks for Tencent Cloud, Baidu
+  Cloud, Huawei Cloud, iFlytek, SenseNova, KwaiKAT, Ollama, Poe, ZenMux,
+  ElevenLabs and Atlas Cloud come from LobeHub icons
+  (`@lobehub/icons-static-svg`). Synthetic, CheapestInference, Standard
+  Compute, TaoToken, JD Cloud, State Cloud (China Telecom), SCNet, Charm,
+  LLM Gateway and UCloud come from each company's own site or brand kit;
+  China Unicom's from its logo file on English Wikipedia; Moore Threads'
+  is traced from its site's PNG, as no vector version is published. These
+  are trademarks of their owners, used only to name them; where each came
+  from is in `harness-icons.tsv`.
 - npm, Homebrew, Nix and uv come from Simple Icons (simple-icons,
   CC0-1.0); Routing.Run's
   planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).
