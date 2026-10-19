@@ -42,6 +42,23 @@ private struct FanPopover: View {
         Binding(get: { fans.level }, set: { fans.level = $0 })
     }
 
+    /// Switching on may install the helper (the one password prompt), so
+    /// it goes through `enableThreshold`; switching off is immediate.
+    private var thresholdOn: Binding<Bool> {
+        Binding(get: { fans.thresholdEnabled },
+                set: { on in
+                    if on {
+                        Task { await fans.enableThreshold() }
+                    } else {
+                        fans.thresholdEnabled = false
+                    }
+                })
+    }
+
+    private var threshold: Binding<Double> {
+        Binding(get: { fans.threshold }, set: { fans.threshold = $0 })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -63,7 +80,7 @@ private struct FanPopover: View {
                 }
                 Divider().overlay(Theme.border)
                 Tabs(options: [(false, "Automatic"), (true, "Manual")], selection: mode, style: .segmented)
-                if manual { manualControls }
+                if manual { manualControls } else { thresholdControls }
                 if case .failed(let message) = fans.phase {
                     Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
@@ -76,7 +93,9 @@ private struct FanPopover: View {
                 }
             }
         }
-        .onAppear { manual = fans.isHolding }
+        // The threshold's own hold is an automatic behaviour, so it opens
+        // on the Automatic side, where its switch lives.
+        .onAppear { manual = fans.isHolding && !fans.heldByThreshold }
         .task {
             while !Task.isCancelled {
                 await fans.refresh()
@@ -85,18 +104,66 @@ private struct FanPopover: View {
         }
     }
 
-    @ViewBuilder private var manualControls: some View {
+    /// The threshold's slider applies at once; Manual's waits for its button.
+    private var thresholdLevel: Binding<Double> {
+        Binding(get: { fans.level }, set: { fans.setThresholdLevel($0) })
+    }
+
+    /// The speed slider, shared by Manual and the threshold.
+    private func speedSlider(_ title: String, value: Binding<Double>) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Speed").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 Spacer()
                 if let rpm = fans.targetRPM {
                     Text("\(Self.rpm(rpm)) · \(Int((fans.level * 100).rounded()))%")
                         .font(Theme.bodySmall.monospacedDigit()).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Slider(value: level, in: 0...1)
+            Slider(value: value, in: 0...1)
                 .tint(Theme.accent)
+        }
+    }
+
+    @ViewBuilder private var thresholdControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Toggle("Turn fans up above", isOn: thresholdOn)
+                    .toggleStyle(.checkbox)
+                    .font(Theme.bodySmall)
+                    .disabled(fans.busy)
+                Spacer()
+                Text("\(Int(fans.threshold.rounded())) °C")
+                    .font(Theme.bodySmall.monospacedDigit())
+                    .foregroundStyle(fans.thresholdEnabled ? Theme.textPrimary : Theme.textSecondary)
+                Stepper("", value: threshold, in: FanControl.thresholdRange, step: 1)
+                    .labelsHidden()
+            }
+            if fans.thresholdEnabled {
+                speedSlider("Speed above it", value: thresholdLevel)
+            }
+            Text(thresholdCaption)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var thresholdCaption: String {
+        let line = "\(Int(fans.threshold.rounded())) °C"
+        let back = "\(Int(fans.releaseBelow.rounded())) °C"
+        if !fans.thresholdEnabled {
+            return "Optional: when the CPU passes \(line), Quiver holds the fans at a speed you pick, "
+                + "instead of waiting for macOS."
+                + (fans.helperInstalled ? "" : " Switching it on installs the fan helper, which asks for "
+                   + "your password once.")
+        }
+        return "When the CPU passes \(line), Quiver holds the fans at this speed until it drops to \(back). "
+            + "Works while Quiver is open."
+    }
+
+    @ViewBuilder private var manualControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            speedSlider("Speed", value: level)
             HStack {
                 Button(buttonTitle) { Task { await fans.applyManual() } }
                     .primaryButton()
@@ -122,7 +189,8 @@ private struct FanPopover: View {
     }
 
     private var status: String {
-        switch fans.phase {
+        if fans.heldByThreshold { return "Above \(Int(fans.threshold.rounded())) °C" }
+        return switch fans.phase {
         case .automatic, .failed: "Automatic"
         case .starting: "Taking over…"
         case .manual: "Manual"

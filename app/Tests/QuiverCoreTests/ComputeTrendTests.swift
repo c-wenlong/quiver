@@ -453,6 +453,13 @@ import Testing
         #expect(model.history.temperatures.last?[.battery] == 35)
         #expect(model.history.temperatures.last?[.gpu] == 61)
         #expect(model.history.temperatures.last?.fans == FanSummary(rpm: 3100, up: true))
+        // Each reading goes to the fan threshold as it is recorded.
+        var heard: [Double?] = []
+        model.onTemperature = { heard.append($0[.cpu]) }
+        thermometer.reading = TemperatureReading([.cpu: 81])
+        clock.now = Self.now.addingTimeInterval(20)
+        await model.trendTick(at: clock.now)
+        #expect(heard == [81])
         #expect(model.temperatureAvailable)
         #expect(model.history.isEmpty)
     }
