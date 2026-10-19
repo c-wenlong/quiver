@@ -135,6 +135,9 @@ private func applied(leftAlone: Bool) -> String {
         await setup.next(order: ["codex", "claude"])
         #expect(setup.step == .look)
 
+        // A run sent without --adopt reports adopted: null, as swe does.
+        runner.applied = applied(leftAlone: false).replacingOccurrences(
+            of: #""adopted": "/h/.claude/CLAUDE.md""#, with: #""adopted": null"#)
         setup.back()
         setup.back()
         setup.toggle("codex")
@@ -146,6 +149,16 @@ private func applied(leftAlone: Bool) -> String {
         #expect(applies.count == 2)
         #expect(applies.last == ["setup", "--apply", "--json", "--starred=codex,claude"],
                 "the second run stars the new picks and adopts nothing")
+
+        // The second run's outcome said adopted: null; a third run still
+        // must not adopt again.
+        setup.back()
+        setup.back()
+        setup.toggle("claude")
+        await setup.next(order: ["codex", "claude"])
+        await setup.next(order: ["codex", "claude"])
+        #expect(runner.calls.filter { $0.contains("--apply") }.last
+                == ["setup", "--apply", "--json", "--starred=codex"])
     }
 
     @Test func picksSweCannotStarHoldTheStep() async {

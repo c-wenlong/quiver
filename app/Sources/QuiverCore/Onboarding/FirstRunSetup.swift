@@ -174,6 +174,9 @@ public final class FirstRunSetupModel {
     /// The picks the last setup run starred. Changing them after going
     /// Back runs setup again, so what's saved matches what's ticked.
     private var appliedSelection: Set<String>?
+    /// Some run adopted the start file. Kept apart from `outcome`, which
+    /// each later run (sent without --adopt) replaces with adopted: null.
+    private var adopted = false
 
     private let swe: @Sendable () -> SweClient
     private var generation = 0
@@ -250,12 +253,12 @@ public final class FirstRunSetupModel {
         defer { applying = false }
         // Only the first run adopts: after it, AGENTS.md holds that text,
         // and swe refuses a second --adopt (rightly) as "your own text".
-        let adopted = outcome?.links?.adopted != nil
         let adopt: String? = if case .file(let path) = start, !adopted { path } else { nil }
         let picks = selected
         do {
             outcome = try await swe().applySetup(starred: starredList(order: order), adopt: adopt)
             appliedSelection = picks
+            if outcome?.links?.adopted != nil { adopted = true }
             if let error = outcome?.links?.error { applyError = error }
         } catch {
             applyError = error.localizedDescription
