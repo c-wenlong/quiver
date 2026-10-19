@@ -425,6 +425,21 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         self.assertIn("nothing ticked", out)
 
 
+    def test_a_refused_pick_prints_why_and_fails(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest import mock
+        from quiver.harness import discover_commands as dc
+        refused = [{"name": "cc", "reason": "already registered under 'claude'"}]
+        out = StringIO()
+        with patch.object(dc, "discover_harnesses", lambda **k: [self._finding("cc")]), \
+                patch.object(dc, "apply_findings", mock.Mock(return_value=([], refused))), \
+                redirect_stdout(out):
+            code = dc.cmd_discover(["--apply", "cc"])
+        self.assertEqual(code, 1)
+        self.assertIn("cc: already registered under 'claude'", out.getvalue())
+        self.assertNotIn("nothing ticked", out.getvalue())
+
 class OllamaIsNotAHarnessTest(unittest.TestCase):
     def test_ollama_on_path_is_not_a_finding(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -446,6 +461,17 @@ class OllamaIsNotAHarnessTest(unittest.TestCase):
 
 class ApplySkipTest(unittest.TestCase):
     """apply_findings never replaces a saved entry or steals an alias."""
+
+    def setUp(self):
+        # The registry is passed in, but a save would still hit the real
+        # harness.json; keep every write in memory.
+        saver = patch("quiver.harness.discover.save_registry")
+        saver.start()
+        self.addCleanup(saver.stop)
+        # live_version would spawn the made-up command.
+        version = patch("quiver.harness.discover.live_version", return_value=None)
+        version.start()
+        self.addCleanup(version.stop)
 
     def _finding(self, name, aliases=()):
         from quiver.harness.discover import HarnessFinding

@@ -181,9 +181,20 @@ def cmd_discover(args):
         if not opts["json"] and added:
             print(c("green", f"  ✓ Added {len(added)} tool(s) to registry: {', '.join(added)}"))
             print(c("dim", "  Run `swe list` to verify.\n"))
-        elif not opts["json"]:
+        elif not opts["json"] and not skipped:
             reason = "nothing ticked" if names is not None else "no new high-confidence matches"
             print(c("dim", f"  Nothing to add ({reason}).\n"))
+        if not opts["json"]:
+            for skip in skipped:
+                print(c("yellow", f"  ! {skip['name']}: {skip['reason']}"))
+            if skipped:
+                print()
+        # A name the user picked that was refused is a failure, not a no-op.
+        if names is not None and any(s["name"] in names and s["name"] not in added
+                                     for s in skipped):
+            data["applied"]["refused"] = True
+            if not opts["json"]:
+                return 1
     elif not opts["json"] and findings and findings[0].status == "new":
         actionable = [f for f in findings if f.status == "new"]
         if actionable and not sys.stdin.isatty():
