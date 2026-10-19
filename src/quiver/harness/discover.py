@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver.harness.catalog import EXCLUDE_BASENAMES, EXTRA_BIN_DIRS, HARNESS_CATALOG
-from quiver.harness.registry import load_registry, save_registry
+from quiver.harness.registry import load_registry, resolve, save_registry
 from quiver.harness.tools import live_version
 from quiver.init.layout import NOT_HARNESSES
 
@@ -388,11 +388,18 @@ def apply_findings(
     *,
     min_confidence: str = "high",
     names: set[str] | None = None,
-) -> list[str]:
-    """Add findings to harness.json; returns names added or updated.
+    registry: dict | None = None,
+) -> tuple[list[str], list[dict]]:
+    """Add findings to harness.json; returns ``(added, skipped)``.
 
     ``names`` picks findings by name and bypasses the confidence floor:
     naming a tool is a decision, the floor only stands in for one.
+
+    ``skipped`` names findings apply refused, with a reason: a name
+    already registered (a discovery match by command must never replace a
+    saved entry) or a name that is another harness's alias. An alias the
+    finding wants that belongs to a different harness is dropped, with
+    the drop noted, rather than taken over.
     """
     # min_confidence is a floor: "high" applies only sure things, "low"
     # applies everything. This map used to be inverted — --apply (high)
@@ -403,8 +410,10 @@ def apply_findings(
                "low": {"high", "medium", "low"}}
     conf_ok = allowed.get(min_confidence, {"high"})
 
-    registry = load_registry()
+    if registry is None:
+        registry = load_registry()
     added: list[str] = []
+    skipped: list[dict] = []
     for finding in findings:
         if finding.status != "new":
             continue
@@ -413,13 +422,31 @@ def apply_findings(
                 continue
         elif finding.confidence not in conf_ok:
             continue
+        owner = resolve(registry, finding.name)
+        if owner is not None:
+            skipped.append({
+                "name": finding.name,
+                "reason": f"already registered under '{owner}'",
+            })
+            continue
+        # Drop aliases another harness owns, never take them.
+        kept_aliases: list[str] = []
+        for alias in finding.aliases:
+            owner = resolve(registry, alias)
+            if owner is not None and owner != finding.name:
+                skipped.append({
+                    "name": finding.name,
+                    "reason": f"alias '{alias}' belongs to '{owner}'",
+                })
+            else:
+                kept_aliases.append(alias)
         version = live_version(finding.command) if finding.command else None
         entry = {
             "command": finding.command,
             "description": finding.description,
             "version": version,
             "tags": list(finding.tags) or ["agentic", "coding"],
-            "aliases": list(finding.aliases),
+            "aliases": kept_aliases,
             "added": datetime.now().isoformat(),
             "discovered_via": finding.source,
         }
@@ -439,4 +466,4 @@ def apply_findings(
         added.append(finding.name)
     if added:
         save_registry(registry)
-    return added
+    return added, skipped

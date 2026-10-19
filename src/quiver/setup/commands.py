@@ -294,7 +294,7 @@ def cmd_setup(args):
             print()
             return 130
         if answer in ("y", "yes"):
-            added_h = apply_findings(new_harness, min_confidence="high") if new_harness else []
+            added_h = apply_findings(new_harness, min_confidence="high")[0] if new_harness else []
             added_m = apply_mcp_findings(new_mcp).added if new_mcp else []
             added_s = apply_skills_symlink_hints(actionable_skills, home=home)
             print(c("green", f"\n  ✓ Harness: {', '.join(added_h) or '—'}"))
@@ -318,7 +318,7 @@ def _apply_all(new_harness, new_mcp, actionable_skills, home: Path,
     owner has a command or catalog entry.
     """
     applied = {
-        "harness": apply_findings(new_harness, min_confidence="high") if new_harness else [],
+        "harness": apply_findings(new_harness, min_confidence="high")[0] if new_harness else [],
         "mcp": apply_mcp_findings(new_mcp).added if new_mcp else [],
         "skills": apply_skills_symlink_hints(actionable_skills, home=home),
     }

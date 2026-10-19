@@ -100,14 +100,6 @@ extension SweClient {
         let data: InstallList = try await call(["install", "--json"])
         return data.harnesses
     }
-
-    /// `swe add <name> <command> [description]`: registers a harness that is
-    /// already installed. `swe add` has no --json, so this runs plain.
-    public func addHarness(_ name: String, command: String, description: String = "") async throws {
-        var arguments = ["add", name, command]
-        if !description.isEmpty { arguments.append(description) }
-        _ = try await runPlain(arguments)
-    }
 }
 
 /// The provider sheet's data: swe's installer catalog, looked up one
@@ -173,8 +165,8 @@ public final class InstallCatalogModel {
         await HarnessesModel.registryWrites.acquire()
         defer { HarnessesModel.registryWrites.release() }
         do {
-            try await swe.addHarness(harness.name, command: harness.command,
-                                     description: harness.description)
+            try await swe.addHarness(name: harness.name, command: harness.command,
+                                     description: harness.description, aliases: [], tags: [])
         } catch is CancellationError {
             return nil
         } catch {

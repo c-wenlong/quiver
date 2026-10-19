@@ -97,7 +97,7 @@ private let oldInstallJSON = #"""
 
     @Test func registerRunsSweAddThenReloads() async throws {
         let (model, runner) = model([
-            (["add"], CommandResult(status: 0, stdout: Data("  ✓ Added 'jules'".utf8), stderr: "")),
+            (["add"], CommandResult(status: 0, stdout: Data(#"{"schema": 1, "data": {"name": "jules", "command": "jules", "action": "added", "installed": true, "aliases": [], "tags": ["agentic", "coding"]}}"#.utf8), stderr: "")),
             (["install"], ok(installJSON)),
         ])
         await model.load()
@@ -105,13 +105,13 @@ private let oldInstallJSON = #"""
         let failure = await model.register(jules)
         #expect(failure == nil)
         #expect(runner.calls[0] == ["install", "--json"])
-        #expect(runner.calls[1] == ["add", "jules", "jules"])
+        #expect(runner.calls[1] == ["add", "jules", "jules", "--no-replace", "--json"])
         #expect(runner.calls[2] == ["install", "--json"])
     }
 
-    @Test func registerPassesTheDescriptionAsArgv() async throws {
+    @Test func registerPassesTheDescriptionAsAFlag() async throws {
         let runner = ScriptedRunner([
-            (["add"], CommandResult(status: 0, stdout: Data(), stderr: "")),
+            (["add"], CommandResult(status: 0, stdout: Data(#"{"schema": 1, "data": {"name": "gemini", "command": "gemini", "action": "added", "installed": true, "aliases": [], "tags": ["agentic", "coding"]}}"#.utf8), stderr: "")),
             (["install"], ok(#"""
             {"harnesses":[{"name":"gemini","command":"gemini",
              "installed":true,"path":"/usr/bin/gemini","description":"Google's Gemini CLI",
@@ -121,7 +121,8 @@ private let oldInstallJSON = #"""
         let model = InstallCatalogModel(swe: SweClient(runner: runner))
         await model.load()
         _ = await model.register(try #require(model.harness("gemini")))
-        #expect(runner.calls[1] == ["add", "gemini", "gemini", "Google's Gemini CLI"])
+        #expect(runner.calls[1] == ["add", "gemini", "gemini", "--description=Google's Gemini CLI",
+                                    "--no-replace", "--json"])
     }
 
     @Test func registerSurfacesTheErrorInline() async throws {

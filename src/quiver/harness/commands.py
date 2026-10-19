@@ -1189,6 +1189,10 @@ def _add_interactive(args: list[str]) -> int:
             while not draft["name"]:
                 print(c("red", "  name is required"))
                 draft["name"] = _ask("name", draft["name"])
+            if not _ADD_NAME.fullmatch(draft["name"]):
+                print(c("red", "  names start with a letter or digit; then . _ - too"))
+                draft["name"] = ""
+                continue
             owner = resolve(tools, draft["name"])
             if owner and owner != draft["name"]:
                 print(c("yellow", f"  ⚠ '{draft['name']}' is an alias of '{owner}' — choose a different name."))
@@ -1272,7 +1276,13 @@ def _add_interactive(args: list[str]) -> int:
         return 1
 
 
+# A registered harness name: starts alphanumeric, then these too.
+_ADD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 def cmd_add(args):
+    args, json_view = take_json_flag(list(args))
+    refusal = error_stream(json_view)
     # -i detection must run on the raw argv: a standalone -i can only be the
     # boolean flag now that long values require =, while an expanded
     # --description=-i would smuggle -i in as a value.
@@ -1283,13 +1293,19 @@ def cmd_add(args):
             args, {"--aliases", "--tags", "--description", "--command"}
         )
     except ValueError as exc:
-        print(c("red", str(exc)))
+        print(c("red", str(exc)), file=refusal)
         return 1
     if interactive:
+        # The form prompts and asks before overwriting; neither flag means
+        # anything there, so refuse rather than quietly ignore them.
+        if json_view or "--no-replace" in args:
+            print(c("red", "  -i can't be combined with --json or --no-replace."), file=refusal)
+            return 1
         return _add_interactive(args)
     if len(args) < 2:
-        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
-        print(c("dim", "  Interactive: swe add -i   ·   swe add <name> -i"))
+        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"),
+              file=refusal)
+        print(c("dim", "  Interactive: swe add -i   ·   swe add <name> -i"), file=refusal)
         return 1
     tools = load_registry()
     name = args[0]
@@ -1297,6 +1313,7 @@ def cmd_add(args):
     desc = ""
     tags = ["agentic", "coding"]
     aliases: list[str] = []
+    no_replace = False
 
     i = 2
     while i < len(args):
@@ -1309,17 +1326,35 @@ def cmd_add(args):
         elif args[i] == "--description":
             desc = args[i + 1]
             i += 2
+        elif args[i] == "--no-replace":
+            no_replace = True
+            i += 1
         elif args[i] == "--command":
-            print(c("red", "  --command only prefills swe add -i; the command is a positional arg here."))
+            print(c("red", "  --command only prefills swe add -i; the command is a positional arg here."),
+                  file=refusal)
             return 1
         elif args[i].startswith("-"):
-            print(c("red", f"  Unknown flag: {args[i]}"))
+            print(c("red", f"  Unknown flag: {args[i]}"), file=refusal)
             return 1
         else:
             desc = args[i]
             i += 1
     if command.startswith("-"):
-        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
+        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"),
+              file=refusal)
+        return 1
+    if not _ADD_NAME.fullmatch(name):
+        print(c("red", f"  {name!r} isn't a valid harness name: letters, digits,"
+                       " then . _ - too"), file=refusal)
+        return 1
+    if no_replace and resolve(tools, name):
+        print(c("red", f"  {name} is already registered"), file=refusal)
+        return 1
+    # An alias another harness answers to would redirect `swe use` and
+    # `swe remove` for that name.
+    collision = _alias_collision(tools, name, aliases)
+    if collision:
+        print(c("red", f"  {collision}"), file=refusal)
         return 1
 
     action = "Updated" if name in tools else "Added"
@@ -1333,7 +1368,12 @@ def cmd_add(args):
         **_kept_fields(tools.get(name)),
     }
     save_registry(tools)
-    status = c("green", "installed") if is_installed(command) else c("yellow", "not yet in PATH")
+    installed = is_installed(command)
+    if json_view:
+        return emit({"name": name, "command": command,
+                     "action": action.lower(), "installed": installed,
+                     "aliases": aliases, "tags": tags})
+    status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
     alias_str = f"  aliases: {', '.join(aliases)}" if aliases else ""
     print(f"  {c('green', '✓')} {action} '{name}' → '{command}' ({status}){alias_str}")
 

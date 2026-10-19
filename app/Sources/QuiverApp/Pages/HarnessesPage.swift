@@ -11,6 +11,10 @@ struct HarnessesPage: View {
     var body: some View {
         Page(title: "Harnesses",
              subtitle: "The AI coding CLIs swe knows about. Star the ones you use; archive the ones you've ruled out.") {
+            Button("Detect") { detecting = true }
+                .secondaryButton()
+            Button("Add harness", systemImage: "plus") { adding = true }
+                .primaryButton()
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model?.load() } }
                 .iconButton()
                 .keyboardShortcut("r", modifiers: .command)
@@ -23,6 +27,23 @@ struct HarnessesPage: View {
             model = harnesses
             await harnesses.load()
         }
+        .sheet(isPresented: $detecting) {
+            if let model { DetectSheet(model: model, reload: { await reload() }) }
+        }
+        .sheet(isPresented: $adding) {
+            if let model {
+                AddHarnessSheet(model: model, known: Set(model.all.map(\.name)), reload: { await reload() })
+            }
+        }
+    }
+
+    @State private var detecting = false
+    @State private var adding = false
+
+    /// Everything the page reloads after a registry change.
+    private func reload() async {
+        await model?.load()
+        await app.others.load()
     }
 }
 
