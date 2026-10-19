@@ -9,6 +9,8 @@ struct McpAddServerSheet: View {
     var harnesses: [String]
     /// The harnesses the grid compares: the "Add to" defaults.
     var active: [String]
+    /// Names already on the hub or a harness, for the Replace gate.
+    var existing: Set<String> = []
     var reload: () async -> Void
 
     @Environment(AppModel.self) private var app
@@ -36,9 +38,11 @@ struct McpAddServerSheet: View {
     @State private var working = false
     @State private var error: String?
 
-    init(harnesses: [String], active: [String], reload: @escaping () async -> Void) {
+    init(harnesses: [String], active: [String], existing: Set<String> = [],
+         reload: @escaping () async -> Void) {
         self.harnesses = harnesses
         self.active = active
+        self.existing = existing
         self.reload = reload
         _targets = State(initialValue: Set(active))
     }
@@ -94,6 +98,7 @@ struct McpAddServerSheet: View {
             FormField(kind == .command ? "Env vars" : "Headers") {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach($variables) { $variable in
+                        VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 8) {
                             TextField(kind == .command ? "NAME" : "Header",
                                       text: $variable.key)
@@ -119,6 +124,11 @@ struct McpAddServerSheet: View {
                                 variables.removeAll { $0.id == variable.id }
                             }
                             .labelStyle(.iconOnly).iconButton()
+                        }
+                        if variable.secret && !variable.key.isEmpty {
+                            Text("saved as ${\(mcpSecretName(server: name.isEmpty ? "SERVER" : name, key: variable.key))}")
+                                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        }
                         }
                     }
                     Button(kind == .command ? "Add variable" : "Add header",
@@ -166,13 +176,17 @@ struct McpAddServerSheet: View {
         error = nil
         defer { working = false }
         do {
+            // No secrets may land in the store for an add swe would
+            // refuse: check the name before mcpSecretSet runs.
+            if existing.contains(name) && !force {
+                error = "A server named \(name) already exists. Turn on Replace to overwrite it."
+                return
+            }
             var pairs: [(String, String)] = []
             for variable in variables where !variable.key.isEmpty {
                 var value = variable.value
                 if variable.secret && !value.hasPrefix("${") {
-                    let secretName = kind == .command
-                        ? variable.key
-                        : mcpHeaderSecretName(server: name, header: variable.key)
+                    let secretName = mcpSecretName(server: name, key: variable.key)
                     try await app.swe.mcpSecretSet(name: secretName, value: value)
                     value = "${\(secretName)}"
                 }

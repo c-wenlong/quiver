@@ -235,8 +235,9 @@ func fixture(_ name: String) throws -> Data {
         #expect(runner.calls == [["mcp", "remove", "s", "--from=quiver,claude", "--json"]])
     }
 
-    @Test func headerSecretNameDerivesAShellName() {
-        #expect(mcpHeaderSecretName(server: "my-srv", header: "X-Api-Key") == "MY_SRV_X_API_KEY")
+    @Test func secretNameDerivesAShellNameScopedToTheServer() {
+        #expect(mcpSecretName(server: "my-srv", key: "X-Api-Key") == "MY_SRV_X_API_KEY")
+        #expect(mcpSecretName(server: "1password", key: "Authorization") == "MCP_1PASSWORD_AUTHORIZATION")
     }
 
     @Test func commandLineSplitsLikeAShell() {
@@ -247,7 +248,8 @@ func fixture(_ name: String) throws -> Data {
         #expect(mcpCommandWords("a\\ b") == ["a b"])
         #expect(mcpCommandWords("\"\\$v \\`w\\`\"") == ["$v `w`"])
         #expect(mcpCommandWords("\"\\x\"") == ["\\x"])
-        #expect(mcpCommandWords("'a\\'") == nil)  // \ is literal in ''; unterminated
+        #expect(mcpCommandWords("run 'C:\\'") == ["run", "C:\\"])
+        #expect(mcpCommandWords("'a\\'") == ["a\\"])
         #expect(mcpCommandWords("'open") == nil)
         #expect(mcpCommandWords("\"open") == nil)
     }

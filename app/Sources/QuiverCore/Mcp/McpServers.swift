@@ -584,12 +584,17 @@ public func mcpCommandWords(_ line: String) -> [String]? {
         chars = chars.dropFirst()
         switch ch {
         case "\\":
+            if quote == "'" {
+                // \ is literal inside '…' and doesn't escape: 'C:\' is a
+                // complete quoted word ending on its own quote.
+                word += "\\"
+                open = true
+                continue
+            }
             guard let next = chars.first else { word += "\\"; continue }
             chars = chars.dropFirst()
-            if quote == "'" {
-                word += "\\" + String(next)  // ' is literal; \ does not escape
-            } else if quote == "\"" && next != "\"" && next != "\\"
-                        && next != "$" && next != "`" {
+            if quote == "\"" && next != "\"" && next != "\\"
+                && next != "$" && next != "`" {
                 word += "\\" + String(next)
             } else {
                 word += String(next)
@@ -628,12 +633,17 @@ public func mcpIsSecretName(_ name: String) -> Bool {
     return !bare.isEmpty && McpRedaction.secretFlagEndings.contains { bare.hasSuffix($0) }
 }
 
-/// The ${NAME} a header stores its value under: SERVER_HEADER in caps.
-public func mcpHeaderSecretName(server: String, header: String) -> String {
-    (server + "_" + header)
+/// The ${NAME} an env var or header stores its value under:
+/// SERVER_KEY in caps, non-alphanumeric runs collapsed to one `_`, and
+/// `MCP_` prepended when it would start with a digit (set_secret refuses
+/// those names). Server-scoped, so two servers can't collide.
+public func mcpSecretName(server: String, key: String) -> String {
+    var name = (server + "_" + key)
         .map { $0.isLetter || $0.isNumber ? Character($0.uppercased()) : "_" }
         .reduce(into: "") { out, ch in if ch != "_" || out.last != "_" { out.append(ch) } }
         .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+    if name.first?.isNumber == true { name = "MCP_" + name }
+    return name
 }
 
 @MainActor

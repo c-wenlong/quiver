@@ -221,6 +221,82 @@ class McpAddRemoveTest(unittest.TestCase):
         self.assertTrue(all(s["in_hub"] is True for s in one
                             if s["name"] == "shared"))
 
+    def test_error_branches(self):
+        cases = [
+            # bad flag, bare value flag, missing = in a pair, misuse
+            ["add", "s", "--bogus", "--", "c"],
+            ["add", "s", "--env", "--", "c"],          # bare --env
+            ["add", "s", "--env=NOEQUAL", "--", "c"],
+            ["add", "s", "--transport=sse", "--", "c"],
+            ["add", "s", "--url=https://x", "--transport=grpc"],
+            ["add", "s", "--to=nosuch", "--", "c"],
+            ["add", "s", "--to=bad/../x", "--", "c"],
+            ["add", "s", "--json", "--url=https://x", "--header=BROKEN"],
+            ["remove", "s"],                          # --from required
+            ["remove", "s", "--from=nosuch"],
+            ["remove", "s", "--from=bad/../x"],
+            ["remove", "s", "--bogus", "--from=claude"],
+            ["remove", "s", "extra", "--from=claude"],
+            ["add"],
+            ["add", "s", "extra", "--", "c"],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv):
+                r = self.run_mcp(*argv)
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(self.hub(), {})
+        self.assertEqual(self.claude(), {})
+
+    def test_plain_output_paths(self):
+        self.run_mcp("add", "s", "--to=claude", "--", "c")
+        r = self.run_mcp("remove", "s", "--from=quiver")
+        self.assertIn("Removed s from: quiver", r.stdout)
+        r = self.run_mcp("remove", "s", "--from=codex")
+        self.assertIn("not in: codex", r.stdout)
+        # Adding again while claude still holds it needs --force.
+        r = self.run_mcp("add", "s", "--to=claude", "--", "c")
+        self.assertEqual(r.returncode, 1)
+        r = self.run_mcp("add", "s", "--to=claude", "--force", "--", "c2")
+        self.assertIn("replaced in claude", r.stdout)
+        self.assertEqual(self.hub()["s"]["command"], "c2")
+
+    def test_remove_accepts_existing_names_with_spaces_or_underscore(self):
+        hub = self.home / ".quiver" / "mcp.json"
+        hub.write_text(json.dumps(
+            {"mcpServers": {"my server": {"command": "x"}, "_local": {"command": "y"}}}))
+        r = self.run_mcp("remove", "my server", "--from=quiver")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("my server", r.stdout)
+        r = self.run_mcp("remove", "_local", "--from=quiver")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.hub(), {})
+
+    def test_sse_refuses_a_format_that_cannot_express_it(self):
+        cfg = self.home / ".quiver" / "config"
+        tools = json.loads((cfg / "tools.json").read_text())
+        tools["opencode"] = {"aliases": ["oc"]}
+        (cfg / "tools.json").write_text(json.dumps(tools))
+        r = self.run_mcp("add", "r", "--url=https://x/sse", "--transport=sse",
+                         "--to=opencode")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("can't use an SSE", r.stdout + r.stderr)
+        self.assertNotIn("r", self.hub())
+
+    def test_sse_survives_to_a_capable_format(self):
+        r = self.run_mcp("add", "r", "--url=https://x/sse", "--transport=sse",
+                         "--to=claude")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.claude()["r"]["type"], "sse")
+        self.assertEqual(self.hub()["r"]["type"], "sse")
+
+    def test_sync_of_an_sse_hub_server_keeps_the_transport(self):
+        hub = self.home / ".quiver" / "mcp.json"
+        hub.write_text(json.dumps({"mcpServers": {
+            "r": {"url": "https://x/sse", "type": "sse"}}}))
+        r = self.run_mcp("sync", "quiver", "claude", "--no-interactive")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.claude()["r"]["type"], "sse")
+
     def test_hub_only_row_in_inventory(self):
         self.run_mcp("add", "only-hub", "--", "c")
         self.run_mcp("add", "shared", "--to=claude", "--", "c")

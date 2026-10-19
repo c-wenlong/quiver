@@ -115,6 +115,10 @@ class StandardMcpFormatHandler(McpFormatHandler):
             out["url"] = raw["url"]
         if "headers" in raw and isinstance(raw.get("headers"), dict):
             out["headers"] = dict(raw["headers"])
+        if raw.get("type") in ("http", "sse") and out.get("url"):
+            # Remote transport survives canonical: without it an SSE server
+            # read from one harness would be re-emitted as plain http.
+            out["type"] = raw["type"]
 
         return out
 
@@ -130,6 +134,9 @@ class StandardMcpFormatHandler(McpFormatHandler):
             out["env"] = dict(canonical["env"])
         if canonical.get("url"):
             out["url"] = canonical["url"]
+            # SSE must be marked or the target connects over http.
+            if canonical.get("type") == "sse":
+                out["type"] = "sse"
         if canonical.get("headers"):
             out["headers"] = dict(canonical["headers"])
         return out
@@ -228,9 +235,9 @@ class DroidMcpFormatHandler(StandardMcpFormatHandler):
     def emit(self, canonical: dict) -> dict:
         out = super().emit(canonical)
         if out.get("url"):
-            # Droid requires `type` for remote servers; default to the
-            # modern Streamable HTTP transport (sse is the legacy option).
-            out["type"] = "http"
+            # Droid requires `type` for remote servers; keep a canonical
+            # sse, and default to the modern Streamable HTTP transport.
+            out["type"] = "sse" if canonical.get("type") == "sse" else "http"
         return out
 
 

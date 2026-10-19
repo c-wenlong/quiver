@@ -115,14 +115,16 @@ struct McpServersPage: View {
             }
         }
         .sheet(isPresented: $adding) {
-            let (harnesses, active): ([String], [String]) = {
+            let (harnesses, active, names): ([String], [String], Set<String>) = {
                 if case .loaded(let inventory) = model.state {
                     return (inventory.harnesses,
-                            inventory.activeHarnesses.filter { !hidden.contains($0) })
+                            inventory.activeHarnesses.filter { !hidden.contains($0) },
+                            Set(inventory.servers.map(\.name)))
                 }
-                return ([], [])
+                return ([], [], [])
             }()
-            McpAddServerSheet(harnesses: harnesses, active: active) {
+            McpAddServerSheet(harnesses: harnesses, active: active,
+                              existing: names) {
                 await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
             }
         }
@@ -535,9 +537,10 @@ private struct ServerSheet: View {
         if !server.canSyncAlone {
             Text("swe can't sync a server whose name has a comma on its own. Use swe mcp sync in Terminal.")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-        } else if targets.missing.isEmpty && targets.differing.isEmpty && server.groups.count == 1 {
-            Text("Every harness already has this definition.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
         } else {
+            // The picker must come first: with several sources (a hub
+            // copy plus agreeing harnesses) the choice is still live even
+            // when there's nothing to copy from the current source.
             let sourceChoices = model.sources(for: server)
             if sourceChoices.count > 1 {
                 HStack(spacing: 10) {
@@ -553,6 +556,12 @@ private struct ServerSheet: View {
                 }
             } else if !sourceChoices.isEmpty {
                 HarnessFacts(label: "Copy from", harnesses: [source])
+            }
+            if targets.missing.isEmpty && targets.differing.isEmpty {
+                Text(source == "quiver"
+                     ? "Every harness already has this server."
+                     : "Every harness already has this definition.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(targets.missing, id: \.self) { harness in

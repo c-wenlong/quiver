@@ -546,11 +546,12 @@ def _merge_format_keys(existing: dict, converted: dict) -> dict:
     for k, v in existing.items():
         if k in _CANONICAL_SERVER_KEYS:
             continue
-        if k == "type" and ("url" in existing) != ("url" in converted):
+        if k == "type" and ("url" in converted
+                            or ("url" in existing) != ("url" in converted)):
             # "type" describes the transport (droid's sse/http, opencode's
-            # local/remote). Carrying it across a transport change — stdio
-            # command beside a stale "sse" — would contradict the
-            # connection itself, so the emit-time default stands.
+            # local/remote). The converted definition's transport is the
+            # source of truth: keeping a stale "sse" beside http — or a
+            # stale "http" beside sse — would lie about the connection.
             continue
         out[k] = v
     return out
@@ -1372,6 +1373,17 @@ def cmd_add(args):
         if env:
             canonical["env"] = env
 
+    # A format with no SSE marker can't be given one: refuse the target
+    # rather than silently downgrade the transport to http.
+    if canonical.get("type") == "sse":
+        incapable = [t for t in targets
+                     if get_tool_format(t) in ("opencode",)
+                     or get_tool_config(t).get("io_type") == "toml_region"]
+        if incapable:
+            print(c("red", f"{', '.join(incapable)} can't use an SSE server."),
+                  file=refusal)
+            return 1
+
     # A literal credential in mcp.json is versioned; nudge toward ${NAME}.
     for key, value in {**env, **headers}.items():
         if "${" not in value and _SECRET_FLAG_RE.search(key):
@@ -1453,7 +1465,9 @@ def cmd_remove(args):
             positional.append(arg)
             i += 1
 
-    if len(positional) != 1 or not _SERVER_NAME_RE.match(positional[0]) or not from_names:
+    # Remove accepts any existing key: names like "my server" or "_local"
+    # are legal in a config even though `add` wouldn't mint them.
+    if len(positional) != 1 or not positional[0] or not from_names:
         print(f"Usage: {c('cyan', 'swe mcp remove <name> --from=<place>[,<place>…]')}",
               file=refusal)
         return 1
