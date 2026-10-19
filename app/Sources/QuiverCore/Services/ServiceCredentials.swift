@@ -21,6 +21,8 @@ public struct KnownService: Sendable, Equatable, Identifiable {
     /// The Keychain account names this service needs, in display order.
     public var fields: [String]
     public var probe: Probe?
+    /// Where the user gets a key for it.
+    public var keyURL: URL
 }
 
 /// Quiver's own service credentials, kept in the login keychain under a
@@ -61,7 +63,8 @@ public actor ServiceCredentials {
             fields: ["DEVIN_API_KEY", "DEVIN_ORG_ID"],
             probe: .init(field: "DEVIN_API_KEY", label: "Test",
                          url: "https://api.devin.ai/v3/self",
-                         header: "Authorization", bearer: true)),
+                         header: "Authorization", bearer: true),
+            keyURL: URL(string: "https://app.devin.ai/settings/api")!),
         KnownService(
             id: "artificial-analysis", name: "Artificial Analysis",
             help: "From artificialanalysis.ai › Insights Platform › API keys. Free tier: 1,000 requests a day.",
@@ -69,7 +72,8 @@ public actor ServiceCredentials {
             probe: .init(field: "ARTIFICIAL_ANALYSIS_API_KEY",
                          label: "Test (uses 1 of 1,000 daily requests)",
                          url: "https://artificialanalysis.ai/api/v2/data/llms/models",
-                         header: "x-api-key", bearer: false)),
+                         header: "x-api-key", bearer: false),
+            keyURL: URL(string: "https://artificialanalysis.ai/api-reference")!),
     ]
 
     /// `services.json` under ~/.quiver/config: per-key dates, never values.
@@ -172,5 +176,19 @@ public actor ServiceCredentials {
         try? FileManager.default.createDirectory(
             at: metadataURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: metadataURL, options: .atomic)
+    }
+}
+
+/// Whether the Sessions page shows the Devin-key hint. Unknown status
+/// stays quiet, so statuses loading never flashes it.
+public enum DevinKeyHint {
+    /// A session row that means "this user has Devin": the CLI's own
+    /// sessions or the cloud ones imported with the key.
+    public static func isDevin(harness: String) -> Bool {
+        harness == "devin" || harness == DevinCloud.harness
+    }
+
+    public static func shows(hasDevin: Bool, keySet: Bool?, dismissed: Bool) -> Bool {
+        hasDevin && !dismissed && keySet == false
     }
 }

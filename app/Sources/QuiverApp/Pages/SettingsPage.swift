@@ -463,6 +463,9 @@ private struct ServicesCard: View {
                     Text(service.name).font(Theme.rowTitle).foregroundStyle(Theme.textStrong)
                 }
                 Text(service.help).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                Link(destination: service.keyURL) {
+                    Text("Get a key").font(Theme.caption).foregroundStyle(Theme.accent)
+                }
             }
             .padding(.vertical, 14)
             ForEach(service.fields, id: \.self) { field in

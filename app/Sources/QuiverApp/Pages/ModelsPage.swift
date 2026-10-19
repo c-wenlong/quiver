@@ -207,11 +207,18 @@ private struct ModelsContent: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 Text("The Models page needs a free Artificial Analysis API key to download benchmarks. 1,000 requests a day are free.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                Button("Open Settings › Services") {
-                    settingsSection = SettingsSection.services.rawValue
-                    app.selection = .settings
+                HStack(spacing: 12) {
+                    Button("Open Settings › Services") {
+                        settingsSection = SettingsSection.services.rawValue
+                        app.selection = .settings
+                    }
+                    .secondaryButton()
+                    if let aa = ServiceCredentials.services.first(where: { $0.id == "artificial-analysis" }) {
+                        Link(destination: aa.keyURL) {
+                            Text("Get a key").font(Theme.caption).foregroundStyle(Theme.accent)
+                        }
+                    }
                 }
-                .secondaryButton()
             }
         }
     }
