@@ -112,6 +112,9 @@ public struct ProcessRunner: CommandRunning {
                     return abandon(SweError.notInstalled(executable))
                 }
                 if let input {
+                    // A child that exits before reading (an older swe that
+                    // lacks the command) must not SIGPIPE the whole app.
+                    _ = fcntl(inputPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
                     // On a queue: a child that never reads stdin would
                     // otherwise block the caller once the pipe filled.
                     DispatchQueue.global(qos: .userInitiated).async {

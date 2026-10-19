@@ -59,6 +59,28 @@ class SetSecretTest(unittest.TestCase):
         seal = self.home / ".quiver" / "secrets" / ".gitignore"
         self.assertEqual(seal.read_text(), paths.SECRETS_GITIGNORE_BODY)
 
+    def test_replaces_every_duplicate_so_a_stale_later_line_cannot_win(self):
+        from quiver.mcp import secrets
+
+        path = self._file()
+        path.parent.mkdir(parents=True)
+        path.write_text("export A='one'\nexport A='two'\n")
+        secrets.set_secret("A", "fresh", home=self.home)
+        self.assertEqual(secrets.load_secrets(self.home)["A"], "fresh")
+
+    def test_writes_through_a_symlinked_store(self):
+        from quiver.mcp import secrets
+
+        real = self.home / "elsewhere" / ".api_keys"
+        real.parent.mkdir()
+        real.write_text("export B='keep'\n")
+        link = self._file()
+        link.parent.mkdir(parents=True)
+        link.symlink_to(real)
+        secrets.set_secret("A", "v", home=self.home)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(real.read_text(), "export B='keep'\nexport A='v'\n")
+
     def test_replaces_in_place_and_keeps_other_lines(self):
         from quiver.mcp import secrets
 

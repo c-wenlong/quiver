@@ -321,7 +321,9 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
         raise ValueError("a value can't span more than one line")
     line = render_secret_line(name, value)
 
-    path = secrets_file_for(home)
+    shown = secrets_file_for(home)
+    # The real file, so the swap below never replaces a symlink with a copy.
+    path = Path(os.path.realpath(shown))
     created = not path.exists()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -330,12 +332,15 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
     except FileNotFoundError:
         text = ""
     lines = text.splitlines(keepends=True)
+    # Every line for the name, not just the first: load_secrets keeps the
+    # last one, so a stale duplicate further down would win.
+    replaced = False
     for i, existing in enumerate(lines):
         match = _EXPORT_RE.match(existing)
         if match and match.group(1) == name:
             lines[i] = line + "\n"
-            break
-    else:
+            replaced = True
+    if not replaced:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
         lines.append(line + "\n")
@@ -358,5 +363,5 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
     seal_secrets_dir(home)
 
     if load_secrets(home).get(name) != value:
-        raise ValueError(f"the value could not be written in a form {path} reads back")
-    return path, created
+        raise ValueError(f"the value could not be written in a form {shown} reads back")
+    return shown, created
