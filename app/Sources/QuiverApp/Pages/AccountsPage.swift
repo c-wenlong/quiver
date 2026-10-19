@@ -153,11 +153,29 @@ private struct AccountCard: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmingRemove = false
+    @State private var installing: Provider?
+    /// Sign in, or Install first when its CLI isn't on PATH.
+    @ViewBuilder func signInItem(name: String, harness: String,
+                                 cli: String?, installed: Bool?,
+                                 run: @escaping () -> Void) -> some View {
+        if case .install(let h) = AccountSignIn.action(cli: cli, harness: harness, installed: installed) {
+            Button("Install \(HarnessMark(h).name)…") { installing = ProviderCatalog.provider(h) }
+        } else {
+            Button("Sign in…", action: run)
+        }
+    }
+    var installSheet: some View {
+        EmptyView().sheet(item: $installing) { p in
+            ProviderSetupSheet(provider: p, isInstalled: false)
+        }
+    }
 
     var body: some View {
         let profile = card.profile
         let model = app.accounts
         Card {
+            installSheet
+            installSheet
             HStack(spacing: 8) {
                 HarnessIcon(harness: profile.vendor.rawValue, size: 16)
                     .help(profile.vendor.title)
@@ -169,7 +187,12 @@ private struct AccountCard: View {
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
                 Spacer()
                 EllipsisMenu {
-                    Button("Sign in…") { perform { try await model.signIn(profile) } }
+                    signInItem(name: profile.name, harness: profile.vendor.rawValue,
+                               cli: LaunchPlanner.cliName(for: profile.vendor),
+                               installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
+                                   ?? model.cliOnPath[profile.vendor]) {
+                        perform { try await model.signIn(profile) }
+                    }
                     Button("Show folder in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([model.folder(of: profile)])
                     }
@@ -474,6 +497,22 @@ private struct HarnessAccountCard: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmingRemove = false
+    @State private var installing: Provider?
+    /// Sign in, or Install first when its CLI isn't on PATH.
+    @ViewBuilder func signInItem(name: String, harness: String,
+                                 cli: String?, installed: Bool?,
+                                 run: @escaping () -> Void) -> some View {
+        if case .install(let h) = AccountSignIn.action(cli: cli, harness: harness, installed: installed) {
+            Button("Install \(HarnessMark(h).name)…") { installing = ProviderCatalog.provider(h) }
+        } else {
+            Button("Sign in…", action: run)
+        }
+    }
+    var installSheet: some View {
+        EmptyView().sheet(item: $installing) { p in
+            ProviderSetupSheet(provider: p, isInstalled: false)
+        }
+    }
 
     var body: some View {
         let limit = row.limit
@@ -482,6 +521,8 @@ private struct HarnessAccountCard: View {
         let name = row.title
         let model = app.accounts
         Card {
+            installSheet
+            installSheet
             HStack(spacing: 8) {
                 HarnessIcon(harness: row.name, size: 16)
                     .help(ownName)
@@ -493,7 +534,12 @@ private struct HarnessAccountCard: View {
                     // An extra account: its name and folder are the profile's,
                     // so a rename writes profiles.json and Remove deletes them.
                     EllipsisMenu {
-                        Button("Sign in…") { perform { try await model.signIn(profile) } }
+                        signInItem(name: profile.name, harness: profile.vendor.rawValue,
+                                   cli: LaunchPlanner.cliName(for: profile.vendor),
+                                   installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
+                                       ?? model.cliOnPath[profile.vendor]) {
+                            perform { try await model.signIn(profile) }
+                        }
                         Button("Show folder in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([model.folder(of: profile)])
                         }
@@ -503,8 +549,13 @@ private struct HarnessAccountCard: View {
                     }
                 } else {
                     EllipsisMenu {
-                        if HarnessAccess.loginCommand(for: row.name) != nil {
-                            Button("Sign in…") { perform { try await model.signIn(harness: row.name) } }
+                        if let login = HarnessAccess.loginCommand(for: row.name) {
+                            signInItem(name: row.name, harness: row.name,
+                                       cli: AccountSignIn.cli(loginCommand: login),
+                                       installed: row.cliInstalled
+                                           ?? app.others.cliInstalled[AccountSignIn.cli(loginCommand: login)]) {
+                                perform { try await model.signIn(harness: row.name) }
+                            }
                             Divider()
                         }
                         Button("Rename…") { newName = name; renaming = true }

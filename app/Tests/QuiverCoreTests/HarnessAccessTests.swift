@@ -46,8 +46,16 @@ import Testing
     func model() throws -> AccountsModel {
         let root = FileManager.default.temporaryDirectory.appending(path: "access-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        // Real stub CLIs on the injected PATH: signIn refuses a missing one.
+        let bin = root.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for cli in ["claude", "codex", "devin", "cursor-agent", "gh", "freebuff"] {
+            FileManager.default.createFile(
+                atPath: bin.appending(path: cli).path, contents: Data("#!/bin/sh\n".utf8),
+                attributes: [.posixPermissions: 0o755])
+        }
         return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher, terminal: { .ghostty },
-                             loginPath: { "" }, running: running)
+                             loginPath: { bin.path }, running: running)
     }
 
     @Test func openingAHarnessAppOpensThatBundle() async throws {
@@ -111,5 +119,73 @@ import Testing
         #expect(model.cliOnPath.isEmpty)
         await model.load(force: false)
         #expect(model.cliOnPath == [.claude: true, .codex: false, .devin: false, .cursor: false])
+    }
+}
+
+/// The Accounts page's Sign in vs Install choice, from `AccountSignIn`.
+@Suite struct AccountSignInTests {
+    @Test func installedMeansSignIn() {
+        #expect(AccountSignIn.action(cli: "codex", harness: "codex",
+                                     installed: true) == .signIn)
+        #expect(AccountSignIn.action(cli: "claude", harness: "claude",
+                                     installed: true) == .signIn)
+    }
+
+    @Test func missingCLIAsksToInstallFirst() {
+        #expect(AccountSignIn.action(cli: "codex", harness: "codex",
+                                     installed: false) == .install(harness: "codex"))
+        #expect(AccountSignIn.action(cli: "cursor-agent", harness: "cursor",
+                                     installed: false) == .install(harness: "cursor"))
+        // Copilot signs in with gh; the sheet installs the harness.
+        #expect(AccountSignIn.action(cli: "gh", harness: "copilot",
+                                     installed: false) == .install(harness: "copilot"))
+    }
+
+    @Test func unknownOrAppSignInKeepsSignIn() {
+        // Data not loaded yet.
+        #expect(AccountSignIn.action(cli: "codex", harness: "codex",
+                                     installed: nil) == .signIn)
+        // Cursor profiles sign in inside their isolated app.
+        #expect(AccountSignIn.action(cli: nil, harness: "cursor",
+                                     installed: false) == .signIn)
+    }
+
+    @Test func cliTakesTheLoginCommandsFirstWord() {
+        #expect(AccountSignIn.cli(loginCommand: "gh auth login") == "gh")
+        #expect(AccountSignIn.cli(loginCommand: "devin auth login") == "devin")
+        #expect(AccountSignIn.cli(loginCommand: "cursor-agent login") == "cursor-agent")
+    }
+}
+
+@MainActor
+@Suite struct SignInInstallGuardTests {
+    let launcher = FakeLauncher()
+    let running = FakeRunningInstances()
+
+    private func model(path: String = "") throws -> AccountsModel {
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)")
+        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
+                             terminal: { .terminal }, loginPath: { path }, running: running)
+    }
+
+    @Test func aMissingHarnessCLIThrowsWithoutLaunching() async throws {
+        await #expect(throws: LaunchError.self) {
+            try await model().signIn(harness: "devin")
+        }
+        #expect(launcher.launched.isEmpty)
+    }
+
+    @Test func aMissingVendorCLIThrowsWithoutLaunching() async throws {
+        let m = try model()
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)")
+        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let work = try store.add(vendor: .codex, name: "Work")
+        let m2 = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
+                               terminal: { .terminal }, loginPath: { "" }, running: running)
+        await m2.load(force: true)
+        _ = m
+        await #expect(throws: LaunchError.self) { try await m2.signIn(work) }
+        #expect(launcher.launched.isEmpty)
     }
 }
