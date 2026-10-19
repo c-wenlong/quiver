@@ -13,7 +13,9 @@ private let installJSON = #"""
     {"via": "npm", "package": "@anthropic-ai/claude-code",
      "command": "npm install -g @anthropic-ai/claude-code", "available": true},
     {"via": "brew", "package": "claude-code",
-     "command": "brew install claude-code", "available": false}]},
+     "command": "brew install claude-code", "available": false}],
+  "uninstall": {"via": "cask", "package": "claude-code@latest",
+   "command": "brew uninstall --cask claude-code@latest", "available": true}},
  {"name": "gemini", "command": "gemini", "installed": false, "path": null,
   "description": "Google's Gemini CLI", "registered": false,
   "methods": [
@@ -63,7 +65,15 @@ private let oldInstallJSON = #"""
         #expect(all[1].methods[1].managerTitle == "Nix")
         #expect(all[0].methods[1].managerTitle == "Homebrew")
         #expect(all[2].methods[0].managerTitle == "Script")
+        // Logos: a cask is Homebrew too; a script has none.
+        #expect(all[0].uninstall?.logo == "homebrew")
+        #expect(all[1].methods.map(\.logo) == ["npm", "nix"])
+        #expect(all[2].methods[0].logo == nil)
+        #expect(["homebrew", "npm", "uv", "nix"].allSatisfy { HarnessIcons.icon(for: $0) != nil })
         #expect(all[0].path == "/opt/homebrew/bin/claude")
+        #expect(all[0].uninstall?.via == "cask")
+        #expect(all[0].uninstall?.managerTitle == "Homebrew cask")
+        #expect(all[1].uninstall == nil)
     }
 
     @Test func decodesTheOlderShapeWithDefaults() async throws {
@@ -74,41 +84,15 @@ private let oldInstallJSON = #"""
         }
         #expect(all[0].registered == false)
         #expect(all[0].description == "")
+        #expect(all[0].uninstall == nil)
     }
 
-    @Test func hidesRegisteredAndGroupsInstalledFirst() async throws {
+    @Test func looksUpOneHarnessByName() async throws {
         let (model, _) = model([(["install"], ok(installJSON))])
+        #expect(model.harness("gemini") == nil)        // nothing until loaded
         await model.load()
-        let groups = model.groups
-        #expect(groups.installed.map(\.name) == ["jules"])
-        #expect(groups.missing.map(\.name) == ["gemini"])
-    }
-
-    @Test func queryMatchesNameAndDescription() async throws {
-        let (model, _) = model([(["install"], ok(installJSON))])
-        await model.load()
-        model.query = "gem"
-        #expect(model.rows.map(\.name) == ["gemini"])
-        model.query = "google"          // only in the description
-        #expect(model.rows.map(\.name) == ["gemini"])
-        model.query = "claude"          // registered stays hidden even on a match
-        #expect(model.rows.isEmpty)
-    }
-
-    /// An older swe has no `registered` key; the page's harness list still
-    /// tells the model which names are taken, so claude stays hidden.
-    @Test func registeredNamesHideWhatAnOlderSweCannotFlag() async throws {
-        let runner = ScriptedRunner([(["install"], ok(#"""
-            {"harnesses":[{"name":"claude","command":"claude","installed":true,
-             "path":"/usr/local/bin/claude",
-             "methods":[{"via":"npm","package":"@anthropic-ai/claude-code",
-              "command":"npm install -g @anthropic-ai/claude-code","available":true}]}]}
-            """#))])
-        let model = InstallCatalogModel(swe: SweClient(runner: runner),
-                                        registeredNames: { ["claude"] })
-        await model.load()
-        #expect(model.rows.isEmpty)
-        #expect(model.everythingRegistered)
+        #expect(model.harness("gemini")?.methods.count == 2)
+        #expect(model.harness("antigravity") == nil)   // no installer on file
     }
 
     @Test func registerRunsSweAddThenReloads() async throws {
@@ -117,7 +101,7 @@ private let oldInstallJSON = #"""
             (["install"], ok(installJSON)),
         ])
         await model.load()
-        let jules = model.rows.first { $0.name == "jules" }!
+        let jules = try #require(model.harness("jules"))
         let failure = await model.register(jules)
         #expect(failure == nil)
         #expect(runner.calls[0] == ["install", "--json"])
@@ -136,7 +120,7 @@ private let oldInstallJSON = #"""
         ])
         let model = InstallCatalogModel(swe: SweClient(runner: runner))
         await model.load()
-        _ = await model.register(model.rows[0])
+        _ = await model.register(try #require(model.harness("gemini")))
         #expect(runner.calls[1] == ["add", "gemini", "gemini", "Google's Gemini CLI"])
     }
 
@@ -146,7 +130,7 @@ private let oldInstallJSON = #"""
             (["install"], ok(installJSON)),
         ])
         await model.load()
-        let failure = await model.register(model.rows.first { $0.name == "jules" }!)
+        let failure = await model.register(try #require(model.harness("jules")))
         #expect(failure != nil)
         #expect(model.actionError != nil)
     }
@@ -162,6 +146,20 @@ private let oldInstallJSON = #"""
         let line = InstallCatalogModel.installLine("gemini", via: "nix",
                                                  swe: "/opt/my tools/swe")
         #expect(line == "'/opt/my tools/swe' 'install' 'gemini' '--via=nix'")
+    }
+
+    /// Built from the package, each token quoted, for every method swe
+    /// reports an uninstall for; a script has none.
+    @Test func uninstallLinePerMethod() {
+        func line(_ via: String, _ package: String) -> String? {
+            InstallCatalogModel.uninstallLine(.init(via: via, package: package, command: "", available: true))
+        }
+        #expect(line("cask", "claude-code@latest") == "'brew' 'uninstall' '--cask' 'claude-code@latest'")
+        #expect(line("brew", "gemini-cli") == "'brew' 'uninstall' 'gemini-cli'")
+        #expect(line("npm", "@openai/codex") == "'npm' 'uninstall' '-g' '@openai/codex'")
+        #expect(line("uv", "aider-chat") == "'uv' 'tool' 'uninstall' 'aider-chat'")
+        #expect(line("nix", "codex") == "'nix' 'profile' 'remove' 'codex'")
+        #expect(line("script", "https://example.com/install.sh") == nil)
     }
 
     /// Two concurrent registrations share the registry gate with the page's

@@ -6,7 +6,9 @@ from quiver.harness.installers import (
     METHOD_TOOL,
     METHODS,
     Installer,
+    Uninstaller,
     installers_for,
+    uninstaller_for,
 )
 
 
@@ -62,3 +64,37 @@ class InstallerTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UninstallerTest(unittest.TestCase):
+    def test_reads_the_package_off_the_resolved_path(self):
+        cases = {
+            "/opt/homebrew/Caskroom/claude-code@latest/2.1.301/claude":
+                ("cask", "claude-code@latest", "brew uninstall --cask claude-code@latest"),
+            "/opt/homebrew/Cellar/gemini-cli/0.9.0/bin/gemini":
+                ("brew", "gemini-cli", "brew uninstall gemini-cli"),
+            "/Users/me/.nvm/versions/node/v22.1.0/lib/node_modules/@google/gemini-cli/dist/index.js":
+                ("npm", "@google/gemini-cli", "npm uninstall -g @google/gemini-cli"),
+            "/opt/homebrew/lib/node_modules/opencode-ai/bin/opencode":
+                ("npm", "opencode-ai", "npm uninstall -g opencode-ai"),
+            "/Users/me/.local/share/uv/tools/aider-chat/bin/aider":
+                ("uv", "aider-chat", "uv tool uninstall aider-chat"),
+        }
+        for path, (via, package, command) in cases.items():
+            remover = uninstaller_for("x", path)
+            self.assertEqual((remover.via, remover.package, remover.display()),
+                             (via, package, command), path)
+
+    def test_npm_under_a_homebrew_node_is_npm(self):
+        path = "/opt/homebrew/Cellar/node/22.1.0/lib/node_modules/@openai/codex/bin/codex.js"
+        self.assertEqual(uninstaller_for("codex", path), Uninstaller("npm", "@openai/codex"))
+
+    def test_nix_uses_the_table_attr(self):
+        path = "/nix/store/abc-codex-0.1/bin/codex"
+        self.assertEqual(uninstaller_for("codex", path), Uninstaller("nix", "codex"))
+        self.assertIsNone(uninstaller_for("forge", path))
+
+    def test_script_installs_and_missing_paths_have_none(self):
+        self.assertIsNone(uninstaller_for("claude", "/Users/me/.local/share/claude/versions/2.1/claude"))
+        self.assertIsNone(uninstaller_for("claude", None))
+        self.assertIsNone(uninstaller_for("claude", ""))

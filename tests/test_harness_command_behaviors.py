@@ -255,6 +255,7 @@ class HarnessProcessCommandTest(unittest.TestCase):
         self.assertEqual(harness["methods"][0]["command"], "brew install gemini-cli")
         self.assertEqual([m["available"] for m in harness["methods"]],
                          [True, False, False])
+        self.assertIsNone(harness["uninstall"])
         run.assert_not_called()
         save.assert_not_called()
 

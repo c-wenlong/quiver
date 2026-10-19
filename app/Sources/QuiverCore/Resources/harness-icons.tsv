@@ -26,6 +26,7 @@ gemini	color	TokenTracker dashboard/public/brand-logos/gemini.svg	MIT (TokenTrac
 goose	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/goose.svg	MIT (LobeHub icons); Block/goose Apache-2.0 repo	goose silhouette matches block/goose docs logo; mono
 grok	mono	TokenTracker dashboard/public/brand-logos/grok.svg	MIT (TokenTracker)	xAI Grok mark
 groq	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/groq.svg	MIT (LobeHub icons); Groq trademark	Groq mark
+homebrew	mono	https://unpkg.com/simple-icons@16.34.0/icons/homebrew.svg	CC0-1.0 (Simple Icons); Homebrew trademark	Homebrew mug, for brew and cask installs
 jules	mono	https://jules.google/docs/_astro/logo.CRRa4vtC.svg	trademark, no licence stated	Google Jules squid mark; shown in #B2A3FF on the docs site, kept mono; Illustrator export reduced to the mark, viewBox squared to 26
 kilo	mono	TokenTracker dashboard/public/brand-logos/kilo.svg	MIT (TokenTracker)	Kilo Code mark, glyph only
 kimi	mono	TokenTracker dashboard/public/brand-logos/kimi.svg	MIT (TokenTracker)	Moonshot Kimi mark (LobeHub icons)
@@ -35,6 +36,7 @@ meta	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/meta-color.s
 minimax	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/minimax-color.svg	MIT (LobeHub icons); MiniMax trademark	MiniMax colour mark
 mistral-vibe	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mistral-color.svg	MIT (LobeHub icons); Mistral AI trademark	Mistral colour mark
 nebius	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nebius.svg	MIT (LobeHub icons); Nebius trademark	Nebius mark
+nix	mono	https://unpkg.com/simple-icons@16.34.0/icons/nixos.svg	CC0-1.0 (Simple Icons); NixOS trademark	NixOS snowflake, for nix profile installs
 npm	mono	https://unpkg.com/simple-icons@16.34.0/icons/npm.svg	CC0-1.0 (Simple Icons); npm trademark	npm mark
 nvidia	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nvidia-color.svg	MIT (LobeHub icons); NVIDIA trademark	NVIDIA colour mark
 openai	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/openai.svg	MIT (LobeHub icons); OpenAI trademark	OpenAI mark
@@ -48,6 +50,7 @@ routing-run	mono	https://unpkg.com/@phosphor-icons/core@2.1.1/assets/bold/planet
 stepfun	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/stepfun-color.svg	MIT (LobeHub icons); StepFun trademark	StepFun colour mark
 together	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/together-color.svg	MIT (LobeHub icons); Together AI trademark	Together AI colour mark
 upstage	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/upstage-color.svg	MIT (LobeHub icons); Upstage trademark	Upstage colour mark
+uv	mono	https://unpkg.com/simple-icons@16.34.0/icons/uv.svg	CC0-1.0 (Simple Icons); Astral trademark	uv mark, for uv tool installs
 vercel	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/vercel.svg	MIT (LobeHub icons); Vercel trademark	Vercel mark
 xiaomimimo	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/xiaomimimo.svg	MIT (LobeHub icons); Xiaomi trademark	Xiaomi MiMo mark
 yi	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/yi.svg	MIT (LobeHub icons); 01.AI trademark	01.AI Yi mark

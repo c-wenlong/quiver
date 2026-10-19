@@ -15,7 +15,19 @@ public struct InstallMethod: Decodable, Sendable, Equatable {
         self.available = available
     }
 
-    /// The package manager's name on the badge.
+    /// The package manager's logo (a `HarnessIcons` id) in place of its
+    /// name; nil for a vendor script, which has none.
+    public var logo: String? {
+        switch via {
+        case "brew", "cask": "homebrew"
+        case "npm": "npm"
+        case "uv": "uv"
+        case "nix": "nix"
+        default: nil
+        }
+    }
+
+    /// The package manager's name, for its logo's tooltip and label.
     public var managerTitle: String {
         switch via {
         case "brew": "Homebrew"
@@ -30,9 +42,11 @@ public struct InstallMethod: Decodable, Sendable, Equatable {
 }
 
 /// One row of `swe install --json`: a harness swe can name an installer for.
-/// `registered` (the harness is already in harness.json) and `description`
-/// arrived after the first shape; an older swe leaves them out and the sheet
-/// degrades instead of failing.
+/// `registered` (the harness is already in harness.json), `description` and
+/// `uninstall` arrived after the first shape; an older swe leaves them out
+/// and the sheet degrades instead of failing. `uninstall` is how to remove
+/// it, read off where its binary resolves to, and nil when it isn't
+/// installed or a vendor script put it there.
 public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
     public var id: String { name }
     public let name: String
@@ -42,10 +56,12 @@ public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
     public let description: String
     public let path: String?
     public let methods: [InstallMethod]
+    public let uninstall: InstallMethod?
 
     public init(name: String, command: String, installed: Bool,
                 registered: Bool = false, description: String = "",
-                path: String? = nil, methods: [InstallMethod] = []) {
+                path: String? = nil, methods: [InstallMethod] = [],
+                uninstall: InstallMethod? = nil) {
         self.name = name
         self.command = command
         self.installed = installed
@@ -53,10 +69,11 @@ public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
         self.description = description
         self.path = path
         self.methods = methods
+        self.uninstall = uninstall
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, command, installed, registered, description, path, methods
+        case name, command, installed, registered, description, path, methods, uninstall
     }
 
     public init(from decoder: Decoder) throws {
@@ -68,6 +85,7 @@ public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
         description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
         path = try container.decodeIfPresent(String.self, forKey: .path)
         methods = try container.decodeIfPresent([InstallMethod].self, forKey: .methods) ?? []
+        uninstall = try container.decodeIfPresent(InstallMethod.self, forKey: .uninstall)
     }
 }
 
@@ -92,33 +110,23 @@ extension SweClient {
     }
 }
 
-/// The Add harness sheet's data: swe's installer catalog minus the harnesses
-/// already registered, grouped so the installed-but-unregistered ones come
-/// first (for those the action is Register, not an install command).
+/// The provider sheet's data: swe's installer catalog, looked up one
+/// harness at a time. Settings › Providers opens the sheet from a row: an
+/// installed harness gets its uninstall command (and Register when swe
+/// doesn't know it yet), a missing one its install commands.
 @MainActor
 @Observable
 public final class InstallCatalogModel {
     public private(set) var state: Loadable<[InstallableHarness]> = .idle
-    public var query = ""
     public private(set) var actionError: String?
     /// Names currently being registered, so their buttons can disable.
     public private(set) var registering: Set<String> = []
 
     private let swe: SweClient
-    /// Names the registry already knows, supplied by the page's harness
-    /// list. An older swe has no `registered` field, so without this the
-    /// sheet would offer Register for harnesses that are already in.
-    private let registeredNames: @MainActor () -> Set<String>
     private var generation = 0
 
-    public init(swe: SweClient,
-                registeredNames: @escaping @MainActor () -> Set<String> = { [] }) {
+    public init(swe: SweClient) {
         self.swe = swe
-        self.registeredNames = registeredNames
-    }
-
-    private func isRegistered(_ harness: InstallableHarness) -> Bool {
-        harness.registered || registeredNames().contains(harness.name)
     }
 
     public func load() async {
@@ -135,30 +143,11 @@ public final class InstallCatalogModel {
         }
     }
 
-    /// The rows to show: registered harnesses never appear, whatever the
-    /// query. The query matches the name and the catalog description.
-    public var rows: [InstallableHarness] {
-        guard case .loaded(let all) = state else { return [] }
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return all
-            .filter { !isRegistered($0) }
-            .filter {
-                needle.isEmpty
-                    || $0.name.lowercased().contains(needle)
-                    || $0.description.lowercased().contains(needle)
-            }
-    }
-
-    /// Installed-but-unregistered first, then the ones swe can't find on PATH.
-    public var groups: (installed: [InstallableHarness], missing: [InstallableHarness]) {
-        (rows.filter(\.installed), rows.filter { !$0.installed })
-    }
-
-    /// True when nothing swe knows about is still unregistered, so the sheet
-    /// can tell "all registered" apart from "the query hid everything".
-    public var everythingRegistered: Bool {
-        guard case .loaded(let all) = state else { return false }
-        return !all.contains { !isRegistered($0) }
+    /// The catalog row for one harness, nil until loaded or when swe has
+    /// no installer on file for it.
+    public func harness(_ name: String) -> InstallableHarness? {
+        guard case .loaded(let all) = state else { return nil }
+        return all.first { $0.name == name }
     }
 
     /// Report an action that failed outside a swe call (like opening the
@@ -172,10 +161,10 @@ public final class InstallCatalogModel {
         actionError = nil
     }
 
-    /// `swe add` the harness, then reload so it leaves the list. The write
-    /// takes the same gate as the page's edits so two registrations never
-    /// touch harness.json at once. Returns the error text for inline
-    /// display, or nil on success.
+    /// `swe add` the harness, then reload so the sheet sees it registered.
+    /// The write takes the same gate as the Harnesses page's edits so two
+    /// registry writes never touch harness.json at once. Returns the error
+    /// text for inline display, or nil on success.
     @discardableResult
     public func register(_ harness: InstallableHarness) async -> String? {
         actionError = nil
@@ -206,5 +195,21 @@ public final class InstallCatalogModel {
         [swe, "install", name, "--via=\(via)"]
             .map(LaunchPlanner.shellQuote)
             .joined(separator: " ")
+    }
+
+    /// The line Run hands to `runInTerminal(line:)` for an uninstall, or nil
+    /// for a method swe never reports for one. Built from the package rather
+    /// than run from `command`, so every token is quoted on its own.
+    public static func uninstallLine(_ method: InstallMethod) -> String? {
+        let argv: [String]
+        switch method.via {
+        case "brew": argv = ["brew", "uninstall", method.package]
+        case "cask": argv = ["brew", "uninstall", "--cask", method.package]
+        case "npm": argv = ["npm", "uninstall", "-g", method.package]
+        case "uv": argv = ["uv", "tool", "uninstall", method.package]
+        case "nix": argv = ["nix", "profile", "remove", method.package]
+        default: return nil
+        }
+        return argv.map(LaunchPlanner.shellQuote).joined(separator: " ")
     }
 }

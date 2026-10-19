@@ -2,19 +2,15 @@ import QuiverCore
 import SwiftUI
 
 /// Every AI coding CLI swe knows about. Starring and archiving go through
-/// `swe harness`, which owns harness.json.
+/// `swe harness`, which owns harness.json. Installing and uninstalling live
+/// in Settings › Providers, one sheet per provider row.
 struct HarnessesPage: View {
     @Environment(AppModel.self) private var app
     @State private var model: HarnessesModel?
-    @State private var adding = false
 
     var body: some View {
         Page(title: "Harnesses",
              subtitle: "The AI coding CLIs swe knows about. Star the ones you use; archive the ones you've ruled out.") {
-            Button("Add harness", systemImage: "plus") { adding = true }
-                .iconButton()
-                .help("Add harness")
-                .accessibilityLabel("Add harness")
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model?.load() } }
                 .iconButton()
                 .keyboardShortcut("r", modifiers: .command)
@@ -26,18 +22,6 @@ struct HarnessesPage: View {
             let harnesses = HarnessesModel(swe: app.swe)
             model = harnesses
             await harnesses.load()
-        }
-        // Closing the sheet reloads the list so anything just installed or
-        // registered shows up.
-        .sheet(isPresented: $adding, onDismiss: { Task { await model?.load() } }) {
-            AddHarnessSheet(model: InstallCatalogModel(swe: app.swe) {
-                // Registered under any state (archived included); older swe
-                // builds have no `registered` field to say so themselves.
-                guard case .loaded(let all) = model?.state else { return [] }
-                return Set(all.map(\.name))
-            }) {
-                await model?.load()
-            }
         }
     }
 }

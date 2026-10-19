@@ -34,7 +34,8 @@
             "command": "curl -fsSL https://aider.chat/install.sh | sh",
             "available": true
           }
-        ]
+        ],
+        "uninstall": null
       },
       {
         "name": "augment",
@@ -50,7 +51,8 @@
             "command": "npm install -g @augmentcode/auggie",
             "available": true
           }
-        ]
+        ],
+        "uninstall": null
       },
       {
         "name": "blackbox",
@@ -66,7 +68,30 @@
             "command": "npm install -g @blackbox_ai/blackbox-cli",
             "available": true
           }
-        ]
+        ],
+        "uninstall": null
+      },
+      {
+        "name": "claude",
+        "command": "claude",
+        "installed": true,
+        "path": "/opt/homebrew/bin/claude",
+        "description": "Anthropic's agentic coding CLI",
+        "registered": true,
+        "methods": [
+          {
+            "via": "cask",
+            "package": "claude-code",
+            "command": "brew install --cask claude-code",
+            "available": true
+          }
+        ],
+        "uninstall": {
+          "via": "cask",
+          "package": "claude-code@latest",
+          "command": "brew uninstall --cask claude-code@latest",
+          "available": true
+        }
       }
     ]
   }

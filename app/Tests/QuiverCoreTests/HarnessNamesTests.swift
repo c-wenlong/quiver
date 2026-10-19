@@ -48,8 +48,7 @@ import Testing
         #expect(Vendor.codex.title == "Codex")
         #expect(ProviderCatalog.provider("claude")?.name == "Claude")
         #expect(ProviderCatalog.provider("droid")?.name == "Factory Droid")
-        #expect(ProviderCatalog.provider("ark-coding-plan")?.icon == "ark-coding-plan")
-        #expect(HarnessIcons.icon(for: ProviderCatalog.provider("ark-coding-plan")!.icon) != nil)
+        #expect(ProviderCatalog.provider("commandcode")?.icon == "commandcode")
     }
 
     @Test func accountLabelsUseTheTable() {

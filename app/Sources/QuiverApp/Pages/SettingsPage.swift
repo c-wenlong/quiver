@@ -147,7 +147,7 @@ private struct SettingsSectionView: View {
             case .preferences: preferencesCard
             case .notifications: notificationsCard
             case .updates: updatesCard
-            case .providers: ProviderVisibilityCard(model: app.providers)
+            case .providers: ProvidersSection()
             case .services: ServicesCard(model: app.services)
             case .paths: pathsCard
             }

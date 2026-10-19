@@ -15,7 +15,7 @@ public enum HarnessIcons {
     /// Other names the same harness goes by.
     static let aliases = ["claude-code": "claude", "github-copilot": "copilot", "factory": "droid",
                           "qwen": "qwen-code", "mistral": "mistral-vibe", "codebuff": "freebuff",
-                          "ark-coding-plan": "ark", "ark-agent-plan": "ark", "command-code": "commandcode"]
+                          "command-code": "commandcode"]
 
     /// Ids with a bundled icon, sorted.
     public static let available: [String] = {
@@ -107,8 +107,7 @@ public struct HarnessMark: Equatable, Sendable {
                         "droid": "Factory Droid", "copilot": "GitHub Copilot", "lmstudio": "LM Studio",
                         "qwen-code": "Qwen Code", "mistral-vibe": "Mistral Vibe", "commandcode": "Command Code",
                         "qoder-cn": "Qoder CN", "grok-bot": "Grok Bot", "grok": "Grok Build",
-                        "kilo": "Kilo Code", "goose": "Goose", "aider": "Aider", "zcode": "ZCode",
-                        "ark-coding-plan": "Ark Coding Plan", "ark-agent-plan": "Ark Agent Plan"]
+                        "kilo": "Kilo Code", "goose": "Goose", "aider": "Aider", "zcode": "ZCode"]
 
     static func name(of harness: String) -> String {
         names[harness] ?? harness.prefix(1).uppercased() + harness.dropFirst()

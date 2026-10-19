@@ -260,5 +260,8 @@ import Testing
         #expect(aider.registered == false)
         #expect(aider.description == "Git-native pair programmer, commits every edit as it goes")
         #expect(aider.methods.map(\.via) == ["brew", "uv", "nix", "script"])
+        #expect(aider.uninstall == nil)
+        let claude = try #require(all.first { $0.name == "claude" })
+        #expect(claude.uninstall?.command == "brew uninstall --cask claude-code@latest")
     }
 }
