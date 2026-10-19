@@ -33,7 +33,7 @@ from pathlib import Path
 from quiver.find.plugin_drift import _harness_env
 from quiver.paths import cache_dir_for
 from quiver.plugins.models import ActionResult
-from quiver.plugins.catalog import ACTIONABLE, READERS
+from quiver.plugins.catalog import ACTIONABLE, READERS, _public
 
 ACTIONS = ("install", "uninstall", "enable", "disable")
 
@@ -42,6 +42,13 @@ ACTIONS = ("install", "uninstall", "enable", "disable")
 # would read as a flag.
 _NAME = r"[A-Za-z0-9_.][A-Za-z0-9_.+-]*"
 _REF = re.compile(f"({_NAME})@({_NAME})")
+
+# A marketplace source the CLIs share: owner/repo(@ref), an https:// or
+# git@ URL, or an existing local directory. Anything else is a typo.
+_REPO_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9_./-]+)?$")
+_SSH_URL = re.compile(r"^git@[A-Za-z0-9_.:-]+:[A-Za-z0-9_./-]+$")
+_SOURCE_FORMS = ("owner/repo, owner/repo@ref, https://…, git@host:…, "
+                 "or an existing folder")
 
 _VERBS = {
     "claude": {"install": "install", "uninstall": "uninstall",
@@ -160,6 +167,73 @@ def plugin_action(home: Path, action: str, ref: str, harness: str, run=None) -> 
         output=output or None,
         state={k: after[k] for k in ("installed", "enabled", "version")},
     ).to_json()
+
+
+def marketplace_source(source: str, home: Path) -> str:
+    """The source as the CLIs get it. Returns a validated form; raises
+    ActionError for anything that is not a repo ref, URL, or real dir."""
+    source = source.strip()
+    if source.startswith("-") or not source:
+        raise ActionError(f"not a marketplace source: {source!r}; use {_SOURCE_FORMS}")
+    folder = Path(source).expanduser()
+    # A path-looking source is a folder or nothing: `./plugins` must not
+    # pass as the GitHub repo "./plugins".
+    looks_like_path = source.startswith(("/", "~", "."))
+    if not looks_like_path and (_REPO_REF.fullmatch(source) or source.startswith("https://")
+                                or _SSH_URL.fullmatch(source)):
+        return source
+    if folder.is_dir():
+        return str(folder.resolve())
+    raise ActionError(f"not a marketplace source: {source!r}; use {_SOURCE_FORMS}")
+
+
+def marketplace_add(home: Path, source: str, harnesses: list[str], run=None) -> dict:
+    """`swe plugins marketplace add`: one harness CLI call per harness."""
+    run = run or subprocess.run
+    argv_source = marketplace_source(source, home)
+    # Every harness is checked before any CLI runs, so a typo in the second
+    # one can't leave the first registered and the command reporting failure.
+    for harness in harnesses:
+        if harness not in ACTIONABLE:
+            raise ActionError(
+                f"--harness must be one of {', '.join(ACTIONABLE)}, not {harness!r}")
+    results = []
+    for harness in harnesses:
+        if harness == "claude":
+            argv = ["claude", "plugin", "marketplace", "add",
+                    "--scope", "user", argv_source]
+        else:
+            argv = ["codex", "plugin", "marketplace", "add", argv_source]
+        try:
+            done = run(argv, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, timeout=120,
+                       env=_harness_env(home))
+            if done.returncode == 0:
+                results.append({"harness": harness, "ok": True,
+                                "detail": _tail(done.stdout, done.stderr)})
+            else:
+                results.append({"harness": harness, "ok": False,
+                                "detail": _tail(done.stderr, done.stdout)
+                                or "no output"})
+        except FileNotFoundError:
+            results.append({"harness": harness, "ok": False,
+                            "detail": f"{argv[0]} is not on PATH"})
+        except subprocess.TimeoutExpired:
+            results.append({"harness": harness, "ok": False,
+                            "detail": f"{argv[0]} did not finish in 2 minutes"})
+        except OSError as exc:
+            results.append({"harness": harness, "ok": False,
+                            "detail": f"couldn't run {argv[0]}: "
+                                      f"{exc.strerror or exc}"})
+    # Keep credentials a private https source carries out of every detail:
+    # scrub each URL inside the message, not the whole line.
+    for result in results:
+        result["detail"] = re.sub(
+            r"https?://[^\s\"']+",
+            lambda m: _public(m.group(0)) or m.group(0).split("//", 1)[0],
+            result["detail"])
+    # The CLI needed the real URL; what swe prints never carries its token.
+    return {"source": _public(argv_source), "results": results}
 
 
 # --------------------------------------------------------------------------
