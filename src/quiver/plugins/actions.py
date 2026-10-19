@@ -232,7 +232,8 @@ def marketplace_add(home: Path, source: str, harnesses: list[str], run=None) -> 
             r"https?://[^\s\"']+",
             lambda m: _public(m.group(0)) or m.group(0).split("//", 1)[0],
             result["detail"])
-    return {"source": argv_source, "results": results}
+    # The CLI needed the real URL; what swe prints never carries its token.
+    return {"source": _public(argv_source), "results": results}
 
 
 # --------------------------------------------------------------------------

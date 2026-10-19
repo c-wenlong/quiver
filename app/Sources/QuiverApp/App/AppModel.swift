@@ -311,6 +311,9 @@ final class AppModel {
     let pluginCatalog: PluginCatalogModel
     /// The Plugins page's tab, so another page can open Explore.
     var pluginsTab: PluginsTab = .health
+    /// The user picked a Plugins tab this session, so an empty hub no
+    /// longer moves them to Explore.
+    var pluginsTabChosen = false
     /// Quiver's display names for marketplaces and plugins, from
     /// ~/.quiver/config/plugin-display-names.json.
     var primitiveNames: PluginDisplayNames

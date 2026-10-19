@@ -13,6 +13,9 @@ struct AddMarketplaceSheet: View {
     @State private var harnesses: [String] = ["claude", "codex"]
     @State private var chosen: Set<String> = ["claude", "codex"]
     @State private var working = false
+    /// The installed-harness lookup is still running; the toggles wait for
+    /// it so its answer can't undo a choice made meanwhile.
+    @State private var lookingUp = true
     @State private var error: String?
     /// One line per harness after a run, in swe's words.
     @State private var results: [MarketplaceAddReply.Result]?
@@ -49,6 +52,7 @@ struct AddMarketplaceSheet: View {
                                                  else { chosen.remove(harness) }
                                              }))
                             .toggleStyle(.checkbox)
+                            .disabled(lookingUp)
                     }
                 }
             }
@@ -93,12 +97,13 @@ struct AddMarketplaceSheet: View {
                         }
                     }
                     .primaryButton()
-                    .disabled(working || source.isEmpty || chosen.isEmpty)
+                    .disabled(working || lookingUp || source.isEmpty || chosen.isEmpty)
                 }
             }
         }
         .sheetScaffold(width: 480)
         .task {
+            defer { lookingUp = false }
             // Only harnesses that can register a marketplace get a toggle.
             if let listed = try? await app.swe.harnesses(withUsage: false) {
                 let installed = listed.filter {

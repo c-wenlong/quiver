@@ -93,6 +93,12 @@ class MarketplaceAddTest(unittest.TestCase):
             marketplace_add(self.home, "owner/repo", ["claude", "gemini"], run=run)
         self.assertEqual(calls, [])
 
+    def test_https_source_token_never_printed(self):
+        run, calls = self.run_with([(0, "ok\n", "")])
+        result = marketplace_add(self.home, "https://u:tok@host/x/m.git", ["claude"], run=run)
+        self.assertIn("https://u:tok@host/x/m.git", calls[0])
+        self.assertNotIn("tok", result["source"])
+
     def test_unknown_harness_refused(self):
         with self.assertRaises(ActionError):
             marketplace_add(self.home, "owner/repo", ["gemini"])

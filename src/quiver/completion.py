@@ -131,7 +131,6 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--harness=", "Which harnesses register it: claude,codex"),
         ("--json", "Print the result as JSON"),
     ],
-    "plugins marketplace": [("add", "Register a plugin marketplace")],
     "find mcp": [
         ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
         ("--scope=global", "Global roots only"),
@@ -405,6 +404,9 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
     ],
     ("mcp", "secret"): [
         ("set", "Store a ${NAME} value from stdin"),
+    ],
+    ("plugins", "marketplace"): [
+        ("add", "Register a plugin marketplace"),
     ],
 }
 

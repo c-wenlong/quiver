@@ -22,8 +22,6 @@ struct PluginsPage: View {
     private static let foldLimit = 8
     /// Harnesses whose drift cards are unfolded.
     @State private var opened: Set<String> = []
-    /// A tab the user picked this session overrides the empty-health default.
-    @State private var userChoseTab = false
     /// The Add marketplace sheet's visibility.
     @State private var addingMarketplace = false
 
@@ -65,7 +63,7 @@ struct PluginsPage: View {
                  // Reselecting Explore while a plugin detail is open goes
                  // back to the list, through the detail's unsaved ask.
                  onSelect: { tab in
-                    userChoseTab = true
+                    app.pluginsTabChosen = true
                     if tab == .explore { app.navReselects += 1 }
                  })
             switch app.pluginsTab {
@@ -79,7 +77,7 @@ struct PluginsPage: View {
             await model.loadIfStale(swe: app.swe, for: app.swePath)
             // An empty hub gives Health an empty page; open Explore once,
             // never over a tab the user picked.
-            if !userChoseTab, case .loaded(let report) = model.state,
+            if !app.pluginsTabChosen, case .loaded(let report) = model.state,
                PluginsFirstTab.explore(report: report) {
                 app.pluginsTab = .explore
             }
