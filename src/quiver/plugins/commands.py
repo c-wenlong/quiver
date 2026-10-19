@@ -16,7 +16,7 @@ from quiver.plugins.actions import ACTIONS, ActionError, plugin_action
 from quiver.plugins.catalog import ACTIONABLE, build_catalog
 from quiver.table import Table
 
-SUBCOMMANDS = ("catalog", *ACTIONS)
+SUBCOMMANDS = ("catalog", "marketplace", *ACTIONS)
 _DONE = {"install": "installed", "uninstall": "uninstalled",
          "enable": "enabled", "disable": "disabled"}
 
@@ -46,9 +46,47 @@ def cmd_plugins(args) -> int:
     rest = args[1:]
     if sub == "catalog":
         return _catalog(rest, json_view, fail)
+    if sub == "marketplace":
+        return _marketplace(rest, json_view, fail)
     if sub in ACTIONS:
         return _action(sub, rest, json_view, fail)
     return fail(c("red", f"Unknown subcommand: {sub}. Use one of {', '.join(SUBCOMMANDS)}."))
+
+
+def _marketplace(rest: list[str], json_view: bool, fail) -> int:
+    """Only `add` for now: register a source in each --harness."""
+    from quiver.plugins.actions import ActionError, marketplace_add
+
+    if not rest or rest[0] != "add":
+        return fail(c("red", "Usage: swe plugins marketplace add <source> "
+                             "--harness=<claude|codex>[,…] [--json]"))
+    rest = rest[1:]
+    source, harnesses = None, []
+    for arg in rest:
+        if arg.startswith("--harness="):
+            harnesses = [h for h in arg[10:].split(",") if h]
+        elif arg.startswith("--"):
+            return fail(c("red", f"Unknown flag: {arg}"))
+        elif source is None:
+            source = arg
+        else:
+            return fail(c("red", f"Unexpected arg: {arg}"))
+    if source is None:
+        return fail(c("red", "Usage: swe plugins marketplace add <source> "
+                             "--harness=<claude|codex>[,…] [--json]"))
+    if not harnesses:
+        return fail(c("red", f"--harness is required: --harness={'|'.join(ACTIONABLE)}"))
+    try:
+        result = marketplace_add(Path.home(), source, harnesses)
+    except ActionError as exc:
+        return fail(c("red", str(exc)))
+    if json_view:
+        emit(result)
+    else:
+        for r in result["results"]:
+            mark = c("green", "✓") if r["ok"] else c("red", "✗")
+            print(f"  {mark} {r['harness']}: {r['detail']}")
+    return 0 if all(r["ok"] for r in result["results"]) else 1
 
 
 def _catalog(rest: list[str], json_view: bool, fail) -> int:

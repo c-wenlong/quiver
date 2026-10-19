@@ -519,6 +519,35 @@ extension SweClient {
     public func run(_ action: PluginAction) async throws -> PluginActionResult {
         try await call(action.arguments)
     }
+
+    /// `swe plugins marketplace add`: exits 1 when any harness failed yet
+    /// still prints the document, so allow the failure and decode anyway.
+    public func addMarketplace(source: String, harnesses: [String]) async throws -> MarketplaceAddReply {
+        try await call(["plugins", "marketplace", "add", source,
+                        "--harness=\(harnesses.joined(separator: ","))", "--json"],
+                       allowFailure: true)
+    }
+}
+
+/// Plugins opens on Explore instead of Health when the health report has
+/// nothing to act on — an empty hub gives the drift tab an empty page.
+public enum PluginsFirstTab {
+    public static func explore(report: PluginDriftReport?) -> Bool {
+        guard let report else { return false }
+        return report.sources == 0 && report.drift.isEmpty
+    }
+}
+
+/// `swe plugins marketplace add --json`: one result per harness asked.
+public struct MarketplaceAddReply: Codable, Sendable, Equatable {
+    public let source: String
+    public let results: [Result]
+
+    public struct Result: Codable, Sendable, Equatable {
+        public let harness: String
+        public let ok: Bool
+        public let detail: String?
+    }
 }
 
 // MARK: - Where each skill is shown

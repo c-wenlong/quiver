@@ -127,6 +127,11 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--harness=codex", "Act in Codex"),
         ("--json", "Print the result as JSON"),
     ],
+    "plugins marketplace add": [
+        ("--harness=", "Which harnesses register it: claude,codex"),
+        ("--json", "Print the result as JSON"),
+    ],
+    "plugins marketplace": [("add", "Register a plugin marketplace")],
     "find mcp": [
         ("--root", "Search ~/ instead of cwd"), ("-r", "Short for --root"),
         ("--scope=global", "Global roots only"),
@@ -333,7 +338,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "mcp": "find mcp", "mcps": "find mcp", "servers": "find mcp",
     },
     "plugins": {
-        "catalog": "plugins catalog",
+        "catalog": "plugins catalog", "marketplace": "plugins marketplace add",
         # every action takes the same flags
         "install": "plugins install", "uninstall": "plugins install",
         "enable": "plugins install", "disable": "plugins install",
@@ -452,6 +457,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     ],
     "plugins": [
         ("catalog", "Every plugin in every registered marketplace"),
+        ("marketplace", "Add a marketplace source to a harness"),
         ("install", "Install a plugin in one harness"),
         ("uninstall", "Uninstall a plugin from one harness"),
         ("enable", "Enable an installed plugin"),
