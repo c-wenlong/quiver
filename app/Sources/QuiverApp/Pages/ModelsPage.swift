@@ -170,7 +170,11 @@ private struct ModelsContent: View {
                 EmptyCard(text: "No benchmark data yet.", icon: "cube.transparent")
             }
         } else if model.rows.isEmpty {
-            EmptyCard(text: emptyText, icon: "chart.bar")
+            if model.usagePending {
+                LoadingCard(text: "Reading your usage…")
+            } else {
+                EmptyCard(text: emptyText, icon: "chart.bar")
+            }
         } else {
             switch model.viewMode {
             case .chart: ChartCard(model: model)
@@ -676,9 +680,16 @@ private struct TableRow: View {
                 .frame(width: columns.price, alignment: .leading)
             CostScale(model: row.aa, rank: row.costPercentile)
                 .frame(width: columns.cost, alignment: .leading)
-            Text(row.tokens > 0 ? UsageFormat.tokens(row.tokens) : "—")
-                .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textSecondary)
-                .frame(width: columns.tokens, alignment: .trailing)
+            Group {
+                if model.usagePending {
+                    // The usage read is still out: a spinner, not "—".
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Text(row.tokens > 0 ? UsageFormat.tokens(row.tokens) : "—")
+                }
+            }
+            .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textSecondary)
+            .frame(width: columns.tokens, alignment: .trailing)
         }
         .padding(.vertical, 8)
     }
