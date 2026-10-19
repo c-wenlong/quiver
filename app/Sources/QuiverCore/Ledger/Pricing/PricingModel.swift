@@ -32,6 +32,10 @@ public final class PricingModel {
         /// applied. Empty events without one (Cursor's feed logs some for
         /// Grok Bot) cost nothing either way and don't count against it.
         public var harnessBilled: Bool
+        /// The billers (as `PricingModel.biller(of:)` names them) whose
+        /// logged charges price part of this row's usage: all of it when
+        /// `harnessBilled`, otherwise the rest goes by `source`.
+        public var billedBy: [String] = []
         /// What the model resolves to in the catalog, nil when unpriced.
         public var entry: String?
         public var source: PricingCatalog.Source?
@@ -48,6 +52,20 @@ public final class PricingModel {
         /// The downloaded price under any user override, nil when the
         /// model has no LiteLLM or Quiver price at all.
         public var listPrice: ListPrice?
+        /// Where the row's spend comes from, as the Source column shows it:
+        /// a harness-billed row is billed by its harness (Cursor for Grok
+        /// Bot) whatever price is saved, since no rate applies to it.
+        public var spendSource: SpendSource {
+            if harnessBilled { return .billed(by: billedBy) }
+            if isFree { return .free }
+            return switch source {
+            case .yours: .yours
+            case .quiver: .quiver
+            case .liteLLM: .liteLLM
+            case nil: .unpriced
+            }
+        }
+
         /// What deleting this row's saved price does: with a list price
         /// under it the override resets to the list price, without it the
         /// price goes away entirely.
@@ -55,6 +73,27 @@ public final class PricingModel {
             guard let listPrice else { return .remove }
             return .resetToList(listPrice)
         }
+    }
+
+    /// Where a row's spend comes from.
+    public enum SpendSource: Sendable, Equatable {
+        /// Each request's logged charge, from these harness ids (billers,
+        /// not runners: Grok Bot's charges come from Cursor).
+        case billed(by: [String])
+        case free
+        case yours
+        /// Quiver's bundled list, filling in or correcting LiteLLM's.
+        case quiver
+        /// LiteLLM's API price list.
+        case liteLLM
+        case unpriced
+    }
+
+    /// The harness whose charge a harness's logged costs are: Grok Bot
+    /// signs in with the Cursor account and its charges arrive through
+    /// Cursor's usage feed; every other harness bills its own usage.
+    public nonisolated static func biller(of harness: String) -> String {
+        harness == "grok-bot" ? "cursor" : harness
     }
 
     /// The price a model would have without the user's overrides.
@@ -160,6 +199,7 @@ public final class PricingModel {
             let billed = slice.harnessBilled || slice.totals.totalTokens == 0
             anyLogged[slice.model, default: false] = anyLogged[slice.model, default: false]
                 || slice.harnessBilled
+            let biller = slice.harnessBilled ? Self.biller(of: slice.harness) : nil
             // A logged "fast" dim tier and a `-fast` name suffix both
             // charge a multiplier the row names.
             var sliceTiers: [String] = []
@@ -167,6 +207,7 @@ public final class PricingModel {
             if var row = merged[slice.model] {
                 row.totals.add(slice.totals)
                 row.harnessBilled = row.harnessBilled && billed
+                if let biller, !row.billedBy.contains(biller) { row.billedBy.append(biller) }
                 row.unpricedTokens += slice.totals.unpricedTokens
                 if !row.harnesses.contains(slice.harness) { row.harnesses.append(slice.harness) }
                 for tier in sliceTiers where !row.tiers.contains(tier) {
@@ -197,6 +238,7 @@ public final class PricingModel {
                     tiers: tiers.sorted(), isFree: isFree,
                     unpricedTokens: slice.totals.unpricedTokens,
                     listPrice: listPrice)
+                if let biller { merged[slice.model]?.billedBy = [biller] }
                 order.append(slice.model)
             }
         }

@@ -120,3 +120,10 @@ public struct HarnessMark: Equatable, Sendable {
         id == "claude" ? "Claude" : HarnessMark(id).name
     }
 }
+
+/// Marks for the Pricing page's price sources that aren't harnesses.
+public enum PricingSourceIcons {
+    /// LiteLLM's monogram as a single-colour mark (source and licence are
+    /// in the SVG's comment).
+    public static let liteLLM: URL? = CoreResources.url("source-litellm", "svg")
+}
