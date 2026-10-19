@@ -48,7 +48,7 @@ half never mix:
   skills/            the shared skill tree, symlinked into every skills root
   hooks/<harness>/   hook scripts, each file symlinked into that harness only
   config/            registry (harness.json), catalogs, link records (versioned)
-  secrets/.api_keys  credential values, mode 600           (NOT gitignored)
+  secrets/.api_keys  MCP credential values, mode 600          (gitignored)
   mcp.json           server definitions, ${REF} placeholders    (versioned)
   mcp/servers/       server checkouts, ~2.7 GB of nested repos (gitignored)
   reports/           generated daily and weekly reports
@@ -86,11 +86,14 @@ so a machine's actual state can never land in this repo by accident.
 `~/.quiver` carries its own `.gitignore` — written by `swe init` from
 `paths.GITIGNORE_BODY`, and listing `cache/`, `backups/`, `data/ledger/` (the
 app's usage ledger: personal and ~30 MB), `data/devin-cloud/` (your Devin
-session titles and links) and `mcp/servers/` —
-plus its own git history, independent of this one. Note what that list does
-*not* cover: `secrets/.api_keys` holds resolved credential values, and it is
-**not** ignored, so an operator versioning `~/.quiver` has to add `secrets/`
-by hand before the first commit.
+session titles and links), `secrets/` (the MCP credential values) and
+`mcp/servers/` —
+plus its own git history, independent of this one. `swe init` writes that
+file only when there is none, so it never rewrites one the operator has
+edited; a root created before `secrets/` joined the list has to add the line
+by hand before versioning `~/.quiver`. Provider API keys are a separate
+store at `~/.api_keys` (`providers/keys.py`), outside
+`~/.quiver` entirely.
 
 ## The core idea: one file, many names
 
@@ -148,11 +151,10 @@ module that touches it — `load_registry()`, `save_registry()`,
 `state_of()`, `is_active()`, `starred_names()`, `archived_names()`,
 `active_names()`, and the read-only `load_registry_if_present()` that
 `swe find` uses, so a look-only command can never seed the file on a
-machine that has never run a write. (`load_registry()`'s default seeding
-deep-copies `DEFAULT_TOOLS` before saving now, not shallow-copies it — a
-shallow copy handed out the same nested per-harness dicts the module-level
-default holds, so starring or archiving a harness on a fresh machine used
-to mutate `DEFAULT_TOOLS` itself for the rest of the process.)
+machine that has never run a write. On a machine with neither
+`harness.json` nor a legacy `tools.json`, `load_registry()` saves an empty
+registry rather than seeding defaults: only `swe discover` knows what is
+installed, matching against `HARNESS_CATALOG`.
 
 Each entry carries the harness's own fields (command, aliases, tags, ...)
 plus:

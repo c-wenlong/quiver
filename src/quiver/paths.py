@@ -156,6 +156,10 @@ data/ledger/
 # message times of your own sessions. Personal, and rewritten on each sync.
 data/devin-cloud/
 
+# Credential values for the ${NAME} references in mcp.json (mcp/secrets.py).
+# Keeping them out is what makes the rest of the hub safe to commit.
+secrets/
+
 # MCP server checkouts: ~2.7 GB of nested git repos and build output.
 # mcp.json records what they are, so this can be rebuilt from a clone.
 mcp/servers/

@@ -85,6 +85,13 @@ class LayoutInvariantTest(unittest.TestCase):
         # Titles and links of the user's own Devin sessions.
         self.assertIn("data/devin-cloud/", paths.GITIGNORE_BODY)
 
+    def test_mcp_secrets_are_gitignored(self):
+        # Resolved MCP tokens. A user who runs `git init` in ~/.quiver must
+        # not commit them on the first `git add .`.
+        from quiver.mcp import secrets
+
+        self.assertIn(f"{secrets.SECRETS_DIRNAME}/", paths.GITIGNORE_BODY.splitlines())
+
     def test_mcp_helpers_and_constants_agree(self):
         self.assertEqual(paths.mcp_dir_for(), paths.MCP_DIR)
         self.assertEqual(paths.mcp_servers_dir_for(), paths.MCP_SERVERS_DIR)
