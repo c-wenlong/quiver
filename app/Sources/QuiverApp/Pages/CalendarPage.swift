@@ -707,7 +707,8 @@ private struct DayColumn: View, Equatable {
     /// rebuilt on every page render and would otherwise redraw (and
     /// re-lay-out) every column each time; they read live page state, so
     /// skipping them loses nothing. Block and legend changes still reach
-    /// the column through its own observation of `model`. The minute
+    /// the column through its own observation of its day's slice and the
+    /// legend's hidden sets. The minute
     /// tick only matters to the column holding the now-line.
     nonisolated static func == (lhs: DayColumn, rhs: DayColumn) -> Bool {
         lhs.model === rhs.model && lhs.cards === rhs.cards
@@ -728,8 +729,10 @@ private struct DayColumn: View, Equatable {
         GeometryReader { geo in
             // 18pt of minimum height at 48pt per hour is 22.5 minutes:
             // short blocks get a lane and a readable sliver of height.
+            // Only this day's slice is read, so a new render range
+            // redraws the columns whose blocks changed and no others.
             let layout = CalendarLayout.layout(
-                model.visibleBlocks, day: day,
+                model.blocks(on: day).blocks.filter(model.isShown), day: day,
                 minimumDuration: 18 / 48 * 3600,
                 maxLanes: Swift.max(2, Int(geo.size.width / Self.minimumLaneWidth)))
             ZStack(alignment: .topLeading) {

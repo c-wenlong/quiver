@@ -401,7 +401,10 @@ private struct TogglingActivity: ActivityProviding {
         #expect(model.blocks.count == 1)
         #expect(model.loadError == nil)
 
+        // A fresh cached range asks no provider; a finished scan is what
+        // sends the next load back to them.
         fail.value = true
+        model.noteScanCompleted()
         await model.load()
         // The last good blocks stay; the error is on the model.
         #expect(model.blocks.count == 1)
@@ -965,5 +968,137 @@ extension CalendarCacheTests {
                                   now: { utc("2026-10-14T12:00:00Z") },
                                   calendar: calendar, restored: snap)
         #expect(model.blocks.count == 1)
+    }
+}
+
+/// Records every range a provider is asked for.
+private actor RecordingActivity: ActivityProviding {
+    private(set) var ranges: [DateInterval] = []
+    let blocks: [ActivityBlock]
+    init(blocks: [ActivityBlock] = []) { self.blocks = blocks }
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        force: Bool) throws -> [ActivityBlock] {
+        ranges.append(range)
+        return blocks.filter { $0.end >= range.start && $0.start < range.end }
+    }
+}
+
+@MainActor
+@Suite struct CalendarSessionCacheTests {
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        c.firstWeekday = 2
+        return c
+    }
+
+    private func freshDefaults() -> UserDefaults {
+        let name = "CalendarSessionCacheTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    private func block(_ start: String, hours: Double = 1, session: String = "s",
+                       responses: Int = 1) -> ActivityBlock {
+        let start = utc(start)
+        var block = ActivityBlock(harness: "claude", accountHome: "/h", sessionId: session,
+                                  start: start, end: start.addingTimeInterval(hours * 3600),
+                                  responses: responses)
+        block.project = session
+        return block
+    }
+
+    private func widened(_ start: String, _ end: String) -> DateInterval {
+        DateInterval(start: utc(start).addingTimeInterval(-CalendarModel.edgeLookout),
+                     end: utc(end).addingTimeInterval(CalendarModel.edgeLookout))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aLandingOnCachedDaysAsksNoProvider() async {
+        let provider = RecordingActivity(blocks: [block("2026-10-16T09:00:00Z", session: "a"),
+                                                  block("2026-10-25T09:00:00Z", session: "b")])
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .days(9)
+        await model.load()
+        await settled(model) // the neighbour prefetch reaches 9 days past each edge
+        let asked = await provider.ranges.count
+        // A swipe of three days: every day of the new render range is
+        // cached, so the blocks are up at once and nothing is read.
+        model.land(on: utc("2026-10-17T00:00:00Z"))
+        #expect(model.blocks.map(\.project) == ["a", "b"])
+        await model.load()
+        #expect(await provider.ranges.count == asked)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aLoadReadsOnlyTheDaysItLacks() async {
+        let provider = RecordingActivity()
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .days(3) // render range Oct 11 to Oct 20
+        await model.load()
+        await settled(model) // prefetched Oct 8 to 10 and Oct 20 to 22
+        let asked = await provider.ranges.count
+        // Render range Oct 17 to Oct 26: only Oct 23 to 25 is new.
+        model.go(to: utc("2026-10-20T12:00:00Z"))
+        await model.load()
+        let ranges = await provider.ranges
+        #expect(ranges[asked] == widened("2026-10-23T00:00:00Z", "2026-10-26T00:00:00Z"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aDayIsReadAgainOnceItOutlivesItsLifetime() async {
+        final class Clock: @unchecked Sendable { var now = utc("2026-10-14T12:00:00Z") }
+        let clock = Clock()
+        let provider = RecordingActivity()
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { clock.now }, calendar: calendar)
+        model.mode = .day
+        await model.load()
+        await settled(model)
+        let asked = await provider.ranges.count
+        await model.load()
+        #expect(await provider.ranges.count == asked) // still fresh
+        clock.now = clock.now.addingTimeInterval(CalendarModel.dayLifetime + 1)
+        await model.load()
+        #expect(await provider.ranges.count > asked)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aLandingRedrawsOnlyTheDaysWhoseBlocksChanged() async {
+        let provider = RecordingActivity(blocks: [block("2026-10-14T09:00:00Z", session: "a"),
+                                                  block("2026-10-20T09:00:00Z", session: "b")])
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .days(3) // render range Oct 11 to Oct 19
+        await model.load()
+        await settled(model)
+        let oct14 = DateInterval(start: utc("2026-10-14T00:00:00Z"), duration: 86400)
+        let slice = model.blocks(on: oct14)
+        #expect(slice.blocks.map(\.project) == ["a"])
+        final class Flag: @unchecked Sendable { var fired = false }
+        let notified = Flag()
+        withObservationTracking { _ = slice.blocks } onChange: { notified.fired = true }
+        // Render range Oct 12 to Oct 20 brings Oct 20's block in: the
+        // published list changes, Oct 14's slice does not.
+        model.land(on: utc("2026-10-15T00:00:00Z"))
+        #expect(model.blocks.map(\.project) == ["a", "b"])
+        #expect(!notified.fired)
+        #expect(model.blocks(on: oct14) === slice)
+    }
+
+    @Test func aBlockFiledUnderTwoDaysOrCutTwiceShowsOnce() {
+        // Filed under both days it touches: the same block twice.
+        let night = block("2026-10-14T23:00:00Z", hours: 2, session: "night")
+        // One long block read twice, cut at different lookout edges: the
+        // read holding more responses wins.
+        let short = block("2026-10-16T00:00:00Z", hours: 20, session: "bot", responses: 40)
+        let full = block("2026-10-15T20:00:00Z", hours: 30, session: "bot", responses: 70)
+        // A separate block of the same project, after a gap, stays.
+        let later = block("2026-10-17T12:00:00Z", session: "bot")
+        let merged = CalendarModel.merged([night, short, night, full, later])
+        #expect(merged == [full, night, later].sorted { $0.start < $1.start })
     }
 }

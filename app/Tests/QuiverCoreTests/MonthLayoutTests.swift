@@ -234,23 +234,27 @@ import Testing
         // The load plus both neighbour prefetches make three calls.
         var ranges = await provider.wait(for: 3)
         let expectedNext = model.range(for: model.shiftedAnchor(1, mode: .month), mode: .month)
-        // The query widens by a day each side for edge-spanning blocks.
-        #expect(ranges.contains(DateInterval(
-            start: expectedNext.start.addingTimeInterval(-CalendarModel.edgeLookout),
-            end: expectedNext.end.addingTimeInterval(CalendarModel.edgeLookout))))
         #expect(expectedNext == DateInterval(start: utc("2026-10-26T00:00:00Z"),
                                            end: utc("2026-12-07T00:00:00Z")))
-        // The same for a 3-day span.
-        await provider.reset()
-        model.mode = .days(3)
-        await model.load()
-        ranges = await provider.wait(for: 3)
-        // Neighbours are keyed by render range: the 3-day window with a
-        // further 3 days of buffer on each side.
-        let next = model.renderRange(for: model.shiftedAnchor(1, mode: .days(3)),
-                                     mode: .days(3))
+        // October's six weeks already cover Oct 26 to Nov 8, so the
+        // prefetch reads only the days after them, widened by a day each
+        // side for edge-spanning blocks.
         #expect(ranges.contains(DateInterval(
-            start: next.start.addingTimeInterval(-CalendarModel.edgeLookout),
+            start: model.visibleRange.end.addingTimeInterval(-CalendarModel.edgeLookout),
+            end: expectedNext.end.addingTimeInterval(CalendarModel.edgeLookout))))
+        // The same for a 3-day span, on a model with nothing cached.
+        let days = Calls()
+        let threeDay = CalendarModel(providers: [days], defaults: freshDefaults(),
+                                     now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        threeDay.mode = .days(3)
+        await threeDay.load()
+        ranges = await days.wait(for: 3)
+        // The next span's render range reaches 3 days past this one's;
+        // only those days are read.
+        let next = threeDay.renderRange(for: threeDay.shiftedAnchor(1, mode: .days(3)),
+                                        mode: .days(3))
+        #expect(ranges.contains(DateInterval(
+            start: threeDay.renderRange.end.addingTimeInterval(-CalendarModel.edgeLookout),
             end: next.end.addingTimeInterval(CalendarModel.edgeLookout))))
     }
 
