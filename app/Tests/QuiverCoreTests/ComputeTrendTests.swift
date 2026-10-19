@@ -234,6 +234,12 @@ import Testing
         func times() -> [Int32: UInt64] { table }
     }
 
+    final class FakeThermometer: TemperatureSampling, @unchecked Sendable {
+        var reading: TemperatureReading?
+        init(_ reading: TemperatureReading?) { self.reading = reading }
+        func read() -> TemperatureReading? { reading }
+    }
+
     /// A GPU sampler whose next times() call parks until `release()`, so
     /// a tick can be held open across the write half of the work.
     final class GateGPU: GPUSampling, @unchecked Sendable {
@@ -367,10 +373,11 @@ import Testing
 
     @MainActor
     private func model(sampler: CountingSampler, gpu: any GPUSampling = FakeGPU([:]),
+                       temperature: any TemperatureSampling = FakeThermometer(nil),
                        clock: Clock,
                        sleep: (@Sendable (Duration) async throws -> Void)? = nil) -> ComputeModel {
         ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                     gpu: gpu, clock: { clock.now },
+                     gpu: gpu, temperature: temperature, clock: { clock.now },
                      sleep: sleep ?? { _ in },
                      defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                      selfPID: 99)
@@ -429,10 +436,56 @@ import Testing
         #expect(model.history.points(for: "claude").last?.gpuPercent == 30)
     }
 
+    @MainActor @Test func aTickRecordsTheMacsTemperatures() async {
+        let clock = Clock(Self.now)
+        let thermometer = FakeThermometer(nil)
+        let model = model(sampler: CountingSampler([]), temperature: thermometer, clock: clock)
+        // No sensors: nothing recorded, and the tab can say so.
+        await model.trendTick(at: Self.now)
+        #expect(model.history.temperatures.isEmpty)
+        #expect(!model.temperatureAvailable)
+        // Recorded even with no harness running: the Mac is still warm.
+        thermometer.reading = TemperatureReading(cpu: 58, hottest: 61, battery: 35)
+        clock.now = Self.now.addingTimeInterval(10)
+        await model.trendTick(at: clock.now)
+        #expect(model.history.temperatures.map(\.cpu) == [58])
+        #expect(model.history.temperatures.last?.battery == 35)
+        #expect(model.temperatureAvailable)
+        #expect(model.history.isEmpty)
+    }
+
+    @Test func theTemperatureRingKeepsOnePointPerTickAndItsCapacity() {
+        var history = ComputeHistory()
+        let at = Self.now
+        history.appendTemperature(TemperaturePoint(at: at, cpu: 50, battery: nil))
+        history.appendTemperature(TemperaturePoint(at: at, cpu: 52, battery: nil))
+        #expect(history.temperatures.map(\.cpu) == [52])
+        for i in 1...ComputeHistory.capacity + 5 {
+            history.appendTemperature(TemperaturePoint(at: at.addingTimeInterval(Double(i)), cpu: Double(i),
+                                                       battery: nil))
+        }
+        #expect(history.temperatures.count == ComputeHistory.capacity)
+        // The window ends at the newest point and spans `window` intervals.
+        let shown = history.temperatureWindow(interval: .threeSeconds)
+        #expect(shown.last?.cpu == Double(ComputeHistory.capacity + 5))
+        #expect(shown.count == ComputeHistory.window * 3 + 1)
+    }
+
+    @Test func temperaturesAgeOutWhenTheSensorsStopAnswering() {
+        var history = ComputeHistory()
+        history.appendTemperature(TemperaturePoint(at: Self.now, cpu: 50, battery: nil))
+        #expect(history.temperatureWindow(interval: .threeSeconds).count == 1)
+        // Ticks keep coming with no reading; the old one slides off.
+        let later = Self.now.addingTimeInterval(Double(ComputeHistory.window) * 3 + 1)
+        history.recordTick(later)
+        #expect(history.temperatureWindow(interval: .threeSeconds).isEmpty)
+        #expect(history.temperatureEnd == later)
+    }
+
     @MainActor @Test func noGPUAnswerMeansNilPointsAndNoAvailability() async {
         let clock = Clock(Self.now)
         let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
-        let model = model(sampler: sampler, gpu: FakeGPU([:]), clock: clock)
+        let model = model(sampler: sampler, gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: clock)
         await model.loadMatchers()
         await model.trendTick(at: Self.now)
         #expect(model.history.points(for: "claude").last?.gpuPercent == nil)
@@ -446,7 +499,7 @@ import Testing
         let clock = Clock(Self.now)
         let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
                                  defaults: defaults, selfPID: 99)
         await model.loadMatchers()
         await model.trendTick(at: Self.now)
@@ -464,7 +517,7 @@ import Testing
         let clock = Clock(Self.now)
         let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
         let model = ComputeModel(sampler: sampler, matchers: { empty.calls += 1; return [] },
-                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
                                  defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                                  selfPID: 99)
         for _ in 0..<5 { await model.trendTick(at: clock.now) }
@@ -478,7 +531,7 @@ import Testing
         let clock = Clock(Self.now)
         let model = ComputeModel(sampler: CountingSampler([]),
                                  matchers: { failing.calls += 1; throw LoaderError() },
-                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
                                  defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                                  selfPID: 99)
         await model.trendTick(at: clock.now)
@@ -516,7 +569,7 @@ import Testing
         let claudeBin = "/opt/homebrew/bin/claude"
         let sampler = GateSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
                                  defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                                  selfPID: 99)
         await model.loadMatchers()
@@ -586,7 +639,7 @@ import Testing
         let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
         let parked = Parked()
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                                 gpu: FakeGPU([:]), clock: { clock.now },
+                                 gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
                                  sleep: { d in try await parked.call(d) },
                                  defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                                  selfPID: 99)
@@ -627,7 +680,7 @@ import Testing
         let sampler = CountingSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
         let gpu = GateGPU([10: 1_000])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                                 gpu: gpu, clock: { clock.now },
+                                 gpu: gpu, temperature: FakeThermometer(nil), clock: { clock.now },
                                  defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                                  selfPID: 99)
         await model.loadMatchers()
@@ -663,7 +716,7 @@ import Testing
         let sampler = CountingSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
         let gpu = GateGPU([10: 1_000])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                                 gpu: gpu, clock: { clock.now },
+                                 gpu: gpu, temperature: FakeThermometer(nil), clock: { clock.now },
                                  sleep: { _ in throw CancellationError() },
                                  defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
                                  selfPID: 99)

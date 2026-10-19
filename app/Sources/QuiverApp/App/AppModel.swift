@@ -250,6 +250,9 @@ final class AppModel {
     let providers: ProviderVisibilityModel
     /// What the starred harnesses are running right now (the Compute page).
     let compute: ComputeModel
+    /// The Compute page's fan popover; a manual speed lives in a root
+    /// helper that `fan/control.json` steers.
+    let fans: FanControl
     /// Nil when the ledger is unavailable, like `overview`.
     let sessions: SessionsModel?
     /// Kept for `hideTrivialSessions`; nil with `sessions`.
@@ -565,6 +568,7 @@ final class AppModel {
                 commandExists: { ProviderDetection.commandExists($0, path: shellPath) },
                 pathExists: { FileManager.default.fileExists(atPath: $0) }))
         })
+        fans = FanControl(control: quiver.appending(path: "fan/control.json"))
         compute = ComputeModel(sampler: ProcessSampler(), matchers: { [apps] in
             // The swe chosen in Settings right now, like ProviderVisibility.
             let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)

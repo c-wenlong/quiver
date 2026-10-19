@@ -61,6 +61,19 @@ public struct TrendPoint: Sendable, Equatable {
     }
 }
 
+/// The Mac's temperatures at one tick, for the Temperature tab.
+public struct TemperaturePoint: Sendable, Equatable {
+    public var at: Date
+    public var cpu: Double?
+    public var battery: Double?
+
+    public init(at: Date, cpu: Double?, battery: Double?) {
+        self.at = at
+        self.cpu = cpu
+        self.battery = battery
+    }
+}
+
 /// The running history behind the Compute page's trend card: a ring of
 /// points per harness, in memory only. A stopped harness simply gets no
 /// new points, so its line slides off the left edge as time moves on and
@@ -72,6 +85,8 @@ public struct ComputeHistory: Sendable, Equatable {
     public static let window = 120
 
     public private(set) var series: [String: [TrendPoint]] = [:]
+    /// The whole Mac's temperatures, one point per tick that read them.
+    public private(set) var temperatures: [TemperaturePoint] = []
     /// The newest tick, whether or not any harness was running at it.
     public private(set) var lastTick: Date?
 
@@ -97,6 +112,32 @@ public struct ComputeHistory: Sendable, Equatable {
             points.removeFirst(points.count - Self.capacity)
         }
         series[harness] = points
+    }
+
+    /// Same ring rules as a harness's points: one point per `at`, the
+    /// oldest dropped past `capacity`.
+    public mutating func appendTemperature(_ point: TemperaturePoint) {
+        recordTick(point.at)
+        if temperatures.last?.at == point.at {
+            temperatures[temperatures.count - 1] = point
+        } else {
+            temperatures.append(point)
+        }
+        if temperatures.count > Self.capacity {
+            temperatures.removeFirst(temperatures.count - Self.capacity)
+        }
+    }
+
+    /// Where the temperature chart's x range ends: the newest tick, read
+    /// or not, so readings age out even once the sensors stop answering.
+    public var temperatureEnd: Date? { lastTick ?? temperatures.last?.at }
+
+    /// The temperature points in the `window` intervals ending at
+    /// `temperatureEnd`, oldest first.
+    public func temperatureWindow(interval: TrendInterval) -> [TemperaturePoint] {
+        guard let end = temperatureEnd else { return [] }
+        let range = window(endingAt: end, interval: interval)
+        return temperatures.filter { range.contains($0.at) }
     }
 
     /// Whether any point has been recorded yet.
