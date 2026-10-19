@@ -93,8 +93,13 @@ private struct SessionsContent: View {
         } else if groups.isEmpty {
             // Every matching row can be trivial: the footer still shows
             // what was hidden and offers "Show" to reveal them.
-            EmptyCard(text: model.rows.isEmpty ? "No sessions listed." : "No sessions match these filters.",
-                      icon: "clock")
+            if model.rows.isEmpty {
+                EmptyCard(text: "No sessions listed.", icon: "clock",
+                          actionTitle: "Open Harnesses") { app.selection = .harnesses }
+            } else {
+                EmptyCard(text: "No sessions match these filters.", icon: "clock",
+                          actionTitle: "Clear filters") { model.filter = .init() }
+            }
             hiddenFooter
         } else {
             VStack(spacing: 0) {

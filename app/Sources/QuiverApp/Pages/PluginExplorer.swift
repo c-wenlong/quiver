@@ -54,15 +54,8 @@ struct PluginExplorer: View {
         if !catalog.errors.isEmpty { Card { Problems(problems: catalog.errors) } }
         if index.total == 0 {
             EmptyCard(text: "No plugin marketplaces registered in Claude Code, Codex or Cursor.",
-                      icon: "puzzlepiece.extension")
-            // A plain button for now: EmptyCard's optional action lands in
-            // the skills PR; this keeps the diff mergeable either way.
-            HStack {
-                Spacer()
-                Button("Add marketplace", systemImage: "plus", action: addMarketplace)
-                    .secondaryButton()
-                Spacer()
-            }
+                      icon: "puzzlepiece.extension",
+                      actionTitle: "Add marketplace", action: addMarketplace)
         } else if sources.isEmpty {
             EmptyCard(text: "No plugins match.", icon: "puzzlepiece.extension")
         } else {

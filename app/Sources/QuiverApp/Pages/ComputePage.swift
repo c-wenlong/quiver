@@ -64,7 +64,13 @@ struct ComputePage: View {
             TrendCard()
             if let error = model.error { ErrorCard(message: error) }
             if model.usages.isEmpty && model.orphans.isEmpty {
-                EmptyCard(text: "Nothing a starred harness runs is up right now.", icon: "cpu")
+                if model.notRunning.isEmpty {
+                    EmptyCard(text: "Nothing is starred. Star a harness to watch what it runs.",
+                              icon: "cpu",
+                              actionTitle: "Open Harnesses") { app.selection = .harnesses }
+                } else {
+                    EmptyCard(text: "Nothing a starred harness runs is up right now.", icon: "cpu")
+                }
             }
             ForEach(model.usages) { usage in
                 HarnessCard(usage: usage, rows: model.processes[usage.harness] ?? [])

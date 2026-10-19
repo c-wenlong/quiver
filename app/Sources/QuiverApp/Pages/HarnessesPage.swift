@@ -20,7 +20,7 @@ struct HarnessesPage: View {
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Refresh (⌘R)")
         } content: {
-            if let model { HarnessList(model: model) }
+            if let model { HarnessList(model: model, detect: { detecting = true }) }
         }
         .task(id: app.swePath) {
             let harnesses = HarnessesModel(swe: app.swe)
@@ -49,6 +49,8 @@ struct HarnessesPage: View {
 
 private struct HarnessList: View {
     @Bindable var model: HarnessesModel
+    /// Detect sheet, owned by the page.
+    var detect: () -> Void
 
     var body: some View {
         switch model.state {
@@ -72,8 +74,16 @@ private struct HarnessList: View {
             if let error = model.actionError { ErrorCard(message: error) }
             if rows.isEmpty {
                 Card {
-                    Text(emptyText(all: all))
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    HStack {
+                        Text(emptyText(all: all))
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                        if all.isEmpty {
+                            Button("Detect", action: detect)
+                                .secondaryButton()
+                                .hoverTip("Scan this Mac for harnesses to register")
+                        }
+                    }
                 }
             } else {
                 let shown = model.shown
@@ -98,7 +108,7 @@ private struct HarnessList: View {
     }
 
     private func emptyText(all: [Harness]) -> String {
-        if all.isEmpty { return "No harnesses registered yet. Run swe discover --apply to register what is installed." }
+        if all.isEmpty { return "No harnesses registered yet." }
         if !model.query.isEmpty { return "No harnesses match." }
         return model.scope == .archived ? "Nothing archived." : "Every harness is archived."
     }
