@@ -836,7 +836,6 @@ private struct KeyEditor: View {
                     Button(testing ? "Testing…" : "Test", action: testTapped)
                         .secondaryButton()
                         .disabled(testing || freeFormName && nameProblem != nil)
-                        .help("Ask the provider whether this key works")
                 }
             }
             if let result = currentTest {
