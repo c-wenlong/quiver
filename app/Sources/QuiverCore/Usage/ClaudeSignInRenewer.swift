@@ -34,6 +34,10 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
     var workingDirectory: URL
     let environment: @Sendable () async -> [String: String]
     var isExecutable: @Sendable (String) -> Bool
+    /// Awaited once the child is running, before its timeout starts.
+    /// Tests hold it until a slow-starting child is ready; it does
+    /// nothing otherwise.
+    var launched: @Sendable (Process) async -> Void = { _ in }
 
     public init(timeout: Duration = .seconds(45),
                 sigtermGrace: Duration = .seconds(5),
@@ -109,6 +113,7 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         } catch {
             return false
         }
+        await launched(process)
         if await Self.exits(process, within: timeout) {
             return process.terminationStatus == 0
         }
