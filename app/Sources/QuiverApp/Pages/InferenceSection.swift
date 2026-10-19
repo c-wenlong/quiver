@@ -627,6 +627,9 @@ private struct KeyEditor: View {
     @State private var testing = false
     /// A rejected test showed; the next click saves regardless.
     @State private var saveAnyway = false
+    /// The test-then-save in flight; closing the sheet cancels it, so a
+    /// Cancel during the test never saves.
+    @State private var saveTask: Task<Void, Never>?
 
     init(draft: KeyDraft, providers: [String], rows: [APIKeysModel.Row],
          save: @escaping (String, String, String, APIKeyCheckResult?) async throws -> Void,
@@ -709,7 +712,8 @@ private struct KeyEditor: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(draft.isNew ? "Add a key" : "Edit \(originalName)").font(Theme.sectionTitle).tracking(-0.5)
             Group {
-                if draft.isNew { providerPicker } else { providerField }
+                if draft.isNew { providerPicker }
+                if freeFormName { providerField }
                 if let picked { knownProviderFields(picked) }
                 if freeFormName { variableField }
                 valueField
@@ -743,6 +747,7 @@ private struct KeyEditor: View {
         .padding(24)
         .frame(width: 520)
         .background(Theme.panel)
+        .onDisappear { saveTask?.cancel() }
     }
 
     /// The catalog picker a new key starts with, "Other provider" last.
@@ -785,9 +790,10 @@ private struct KeyEditor: View {
         }
     }
 
-    /// The edit path's provider row: free text plus the existing groups.
+    /// Free text plus the existing groups: the edit path's provider row,
+    /// and the name an "Other provider" key files under.
     private var providerField: some View {
-        FormField("Provider") {
+        FormField(draft.isNew ? "Provider name" : "Provider") {
             HStack(spacing: 8) {
                 // Another group's name moves the key to the end of it.
                 TextField("ANTHROPIC", text: $draft.provider).quiverField()
@@ -889,7 +895,7 @@ private struct KeyEditor: View {
         let name = finalName
         let provider = finalProvider
         let value = draft.value
-        Task {
+        saveTask = Task {
             defer { working = false }
             var result = currentTest
             // A move to another provider alone keeps the key it had, so
@@ -901,6 +907,7 @@ private struct KeyEditor: View {
                 testResult = result
                 testedFor = (name, value)
             }
+            guard !Task.isCancelled else { return }
             if case .rejected = result, !saveAnyway {
                 saveAnyway = true
                 return
