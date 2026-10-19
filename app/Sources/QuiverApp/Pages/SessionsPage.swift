@@ -31,6 +31,20 @@ private struct SessionsContent: View {
     private static let foldLimit = 10
     /// Days the user has unfolded.
     @State private var openedDays: Set<Date> = []
+    /// Dismissed hints stay dismissed.
+    @AppStorage("devinKeyHintDismissed") private var devinKeyHintDismissed = false
+    @AppStorage("settingsSection") private var settingsSection = ""
+
+    /// The Devin-key hint, until the user has Devin and a key, or closes it.
+    private var showDevinHint: Bool {
+        DevinKeyHint.shows(
+            // Cloud-only users count too: their stored sessions stop
+            // updating once the key is gone.
+            hasDevin: model.rows.contains { DevinKeyHint.isDevin(harness: $0.session.harness) }
+                || app.others.cliInstalled["devin"] == true,
+            keySet: app.services.statuses["DEVIN_API_KEY"]?.isSet,
+            dismissed: devinKeyHintDismissed)
+    }
 
     var body: some View {
         Page(title: "Sessions", subtitle: "Local and cloud sessions, usage and estimated cost.") {
@@ -66,6 +80,31 @@ private struct SessionsContent: View {
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
+            if showDevinHint {
+                Card {
+                    HStack(spacing: 10) {
+                        Label("Devin cloud sessions need a Devin API key. Local Devin sessions still show.",
+                              systemImage: "info.circle")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                        Button("Open Settings › Services") {
+                            settingsSection = SettingsSection.services.rawValue
+                            app.selection = .settings
+                        }
+                        .secondaryButton()
+                        if let devin = ServiceCredentials.services.first(where: { $0.id == "devin" }) {
+                            Link(destination: devin.keyURL) {
+                                Text("Get a key").font(Theme.caption).foregroundStyle(Theme.accent)
+                            }
+                        }
+                        Button { devinKeyHintDismissed = true } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .iconButton()
+                        .hoverTip("Don't show this again")
+                    }
+                }
+            }
             if model.isCapped {
                 Card {
                     Label("Showing the most recent \(model.rows.count) sessions; older ones are left out.",
@@ -76,7 +115,11 @@ private struct SessionsContent: View {
             list
         }
         // Opening the page again within a minute shows the same list.
-        .task(id: app.swePath) { await model.loadIfStale(for: app.swePath) }
+        .task(id: app.swePath) {
+            async let keyStatus: Void = app.services.reload()
+            await model.loadIfStale(for: app.swePath)
+            await keyStatus
+        }
         // New usage from a scan, without listing the sessions again.
         .task(id: app.overview?.completedScans) {
             await model.refreshUsage(ledgerScanned: (app.overview?.completedScans ?? 0) > 0)
