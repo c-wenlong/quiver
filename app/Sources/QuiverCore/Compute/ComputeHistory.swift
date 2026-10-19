@@ -72,10 +72,19 @@ public struct ComputeHistory: Sendable, Equatable {
     public static let window = 120
 
     public private(set) var series: [String: [TrendPoint]] = [:]
+    /// The newest tick, whether or not any harness was running at it.
+    public private(set) var lastTick: Date?
 
     public init() {}
 
+    /// Notes a tick's time. A tick with nothing running adds no point,
+    /// but still marks the earlier readings as no longer current.
+    public mutating func recordTick(_ at: Date) {
+        lastTick = max(lastTick ?? at, at)
+    }
+
     public mutating func append(_ harness: String, _ point: TrendPoint) {
+        recordTick(point.at)
         var points = series[harness] ?? []
         // Two ticks reusing one sample agree on `at`; the second replaces
         // the first so a sample makes one point, not two sharing an x.

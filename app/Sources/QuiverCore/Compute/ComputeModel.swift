@@ -253,6 +253,16 @@ public final class ComputeModel {
         }
     }
 
+    /// The popup's Refresh on the Compute tab: restart the loop so it
+    /// ticks now. A tick still in flight belongs to the old generation
+    /// and is dropped before it touches the GPU meter or the history, so
+    /// two ticks never race on the GPU baseline.
+    public func tickTrendsNow() {
+        trendGeneration += 1
+        trendTask?.cancel()
+        startTrendLoop()
+    }
+
     /// Whether a tick from `generation` lost its loop: its task is dead
     /// or a newer loop has taken over, so it must not write shared state.
     private func replaced(_ generation: Int?) -> Bool {
@@ -283,6 +293,9 @@ public final class ComputeModel {
         let gpuAt = clock()
         if !times.isEmpty { gpuAvailable = true }
         let gpuPercent = gpuMeter.update(times, at: gpuAt)
+        // Recorded even when nothing runs, so "now" moves past the last
+        // harness that stopped.
+        history.recordTick(sampledAt ?? now)
         for (harness, procs) in attribution.byHarness where !procs.isEmpty {
             history.append(harness, TrendPoint(
                 at: sampledAt ?? now,

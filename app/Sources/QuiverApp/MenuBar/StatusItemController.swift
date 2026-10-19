@@ -182,23 +182,65 @@ struct MenuBarContent: View {
     var openMain: () -> Void
     /// Closes the panel without opening anything: what a launched row does.
     var dismiss: () -> Void = {}
+    /// The Menu bar page's preview: draw this tab, whatever the popup
+    /// itself has open, even while the tab is switched off.
+    var previewTab: PopupTab? = nil
+
+    private var tab: PopupTab { previewTab ?? app.popupTabs.current }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Refresh, open and quit as icons beside the title, so the panel
-            // has no button row at the bottom.
+            // The tabs where the title was; refresh, open and quit as
+            // icons beside them, so the panel has no button row at the
+            // bottom.
             HStack(spacing: 12) {
-                Text("Quiver").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                PopupTabBar(current: tab)
                 Spacer()
-                PanelIconButton(title: "Refresh", symbol: "arrow.clockwise") {
-                    Task { await app.accounts.refreshFromButton() }
-                    Task { await app.others.load(refreshFailed: true) }
-                    Task { await app.overview?.load(scan: true) }
-                }
-                .disabled(app.accounts.isLoading)
+                PanelIconButton(title: "Refresh", symbol: "arrow.clockwise") { tab.refresh(app) }
+                    .disabled(tab.isRefreshing(app))
                 PanelIconButton(title: "Open Quiver", symbol: "macwindow", action: openMain)
                 PanelIconButton(title: "Quit Quiver", symbol: "power") { NSApp.terminate(nil) }
             }
+            tab.content(openMain: openMain, dismiss: dismiss)
+        }
+        .padding(16)
+        .frame(width: 340)
+        // TokenTracker's dialog: bg.dialog at radius 16 with the 1px ring in
+        // the border colour; the drop comes from the panel's window shadow,
+        // which follows this shape. Solid rather than glass, so the theme's
+        // text colours keep their contrast whatever the wallpaper is.
+        .background(Theme.dialog, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: Theme.cardRadius))
+    }
+}
+
+/// The shown tabs as a segmented control, or the one tab's name alone
+/// when only one is switched on.
+private struct PopupTabBar: View {
+    @Environment(AppModel.self) private var app
+    var current: PopupTab
+
+    var body: some View {
+        let tabs = app.popupTabs.visible
+        if tabs.count > 1 {
+            Tabs(options: tabs.map { ($0, $0.title) },
+                 selection: Binding(get: { current }, set: { app.popupTabs.selected = $0 }),
+                 style: .segmented)
+        } else {
+            Text(current.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+        }
+    }
+}
+
+/// The Usage tab: the incidents line, every shown limit, and spend.
+struct UsageTabContent: View {
+    @Environment(AppModel.self) private var app
+    var openMain: () -> Void
+    var dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
             if app.popup.showIncidents { ServiceStatusMenuLine(openMain: openMain) }
             // Everything else stays put; the limits scroll once there are
             // more than the screen can hold.
@@ -212,15 +254,6 @@ struct MenuBarContent: View {
                 SpendDonut(slices: spend)
             }
         }
-        .padding(16)
-        .frame(width: 340)
-        // TokenTracker's dialog: bg.dialog at radius 16 with the 1px ring in
-        // the border colour; the drop comes from the panel's window shadow,
-        // which follows this shape. Solid rather than glass, so the theme's
-        // text colours keep their contrast whatever the wallpaper is.
-        .background(Theme.dialog, in: .rect(cornerRadius: Theme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(.rect(cornerRadius: Theme.cardRadius))
     }
 
     /// The screen's height less the header, status line and spend donut.

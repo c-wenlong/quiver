@@ -77,9 +77,17 @@ final class AppModel {
         }
     }
 
-    /// What the menu bar popup lists.
+    /// Which tabs the menu bar popup has, in what order, and which is open.
+    var popupTabs = PopupTabs(defaults: .standard) {
+        didSet { popupTabs.save(to: .standard) }
+    }
+    /// What the popup's Usage tab lists.
     var popup = MenuBarPopup(defaults: .standard) {
         didSet { popup.save(to: .standard) }
+    }
+    /// What the popup's Compute tab charts.
+    var computePopup = ComputePopup(defaults: .standard) {
+        didSet { computePopup.save(to: .standard) }
     }
     /// What each desktop widget lists; a change rewrites their snapshot
     /// and redraws them right away.
