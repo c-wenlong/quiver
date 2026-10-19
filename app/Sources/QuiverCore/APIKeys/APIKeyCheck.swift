@@ -86,6 +86,9 @@ public struct APIKeyProbe: Equatable, Sendable {
                         method: "POST", body: Data("{}".utf8), auth: .bearer,
                         worksOnBadRequest: true),
             "ROUTING_RUN_API_KEY")
+        for plan in InferenceCatalog.all {
+            if let probe = InferenceCatalog.probe(for: plan) { put(probe, plan.keyName) }
+        }
         return table
     }()
 
@@ -94,6 +97,9 @@ public struct APIKeyProbe: Equatable, Sendable {
     /// Why a key can't be checked: NVIDIA's API answers a free request
     /// without reading the key, or Quiver doesn't know the provider.
     public static func noCheckReason(forName name: String) -> String {
+        if let plan = InferenceCatalog.plan(forKey: name) {
+            return "\(plan.name) reads the request before the key, so an empty request can't check it."
+        }
         if name == "NVIDIA_API_KEY" {
             return "NVIDIA's API doesn't check the key on a free request."
         }

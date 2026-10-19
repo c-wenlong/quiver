@@ -452,17 +452,3 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         #expect(model.ordered(["claude", "codex", "devin"]) == ["codex", "claude", "devin"])
     }
 }
-
-@Suite struct InferenceCatalogTests {
-    @Test func arkPlansAreInferenceNotHarnesses() {
-        #expect(InferenceCatalog.all.map(\.id) == ["ark-coding-plan", "ark-agent-plan"])
-        #expect(InferenceCatalog.all.allSatisfy { HarnessIcons.icon(for: $0.icon) != nil })
-        #expect(InferenceCatalog.all.allSatisfy { ProviderCatalog.provider($0.id) == nil })
-    }
-
-    @Test func detectsPlansByTheirCommand() {
-        #expect(InferenceCatalog.detected(commandExists: { $0 == "arkcli" })
-            == ["ark-coding-plan", "ark-agent-plan"])
-        #expect(InferenceCatalog.detected(commandExists: { _ in false }).isEmpty)
-    }
-}

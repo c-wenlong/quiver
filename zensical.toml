@@ -14,6 +14,7 @@ nav = [
       { "Overview" = "app/index.md" },
       { "Roadmap" = "app/roadmap.md" },
       { "Architecture" = "app/architecture.md" },
+      { "Coding plans" = "app/coding-plans.md" },
   ] },
   { "Architecture" = [
       { "Overview" = "architecture/index.md" },
