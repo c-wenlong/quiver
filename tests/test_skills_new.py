@@ -41,8 +41,8 @@ class SkillsNewTest(unittest.TestCase):
         self.assertEqual(
             self.skill("my-skill").read_text(),
             "---\n"
-            "name: my-skill\n"
-            "description: Describe when an agent should use this skill.\n"
+            "name: 'my-skill'\n"
+            "description: 'Describe when an agent should use this skill.'\n"
             "---\n"
             "\n"
             "# my-skill\n"
@@ -83,6 +83,46 @@ class SkillsNewTest(unittest.TestCase):
             self.assertEqual(parse_skill_md(self.skill(name))[1], desc)
         # Single-quoted YAML: the quote is doubled, nothing else escaped.
         self.assertIn("description: 'it''s \"quoted\"'", self.skill("s0").read_text())
+
+    def test_yaml_lookalikes_stay_text(self):
+        from quiver.skills.discovery import parse_skill_md
+
+        code, out, err = self.run_skills("new", "123", "--description=true")
+        self.assertEqual(code, 0, out + err)
+        text = self.skill("123").read_text()
+        self.assertIn("name: '123'\n", text)
+        self.assertIn("description: 'true'\n", text)
+        self.assertEqual(parse_skill_md(self.skill("123")), ("123", "true"))
+
+    def test_carriage_return_refused(self):
+        code, _, _ = self.run_skills("new", "s", "--description=a\rb")
+        self.assertEqual(code, 1)
+        self.assertFalse(self.skill("s").parent.exists())
+
+    def test_failed_write_leaves_no_folder(self):
+        from quiver.skills import create as create_mod
+
+        with mock.patch.object(create_mod.tempfile, "mkstemp", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                create_mod.create("s", home=self.home)
+        self.assertFalse(self.skill("s").parent.exists())
+
+    def test_help_and_usage_errors(self):
+        code, out, _ = self.run_skills("new", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("swe skills new", out)
+        self.assertEqual(self.run_skills("new")[0], 1)
+        self.assertEqual(self.run_skills("new", "a", "b")[0], 1)
+        self.assertEqual(self.run_skills("new", "a", "--bogus")[0], 1)
+        self.assertEqual(self.run_skills("new", "a", "--description")[0], 1)
+
+    def test_discovery_reads_double_quoted_values(self):
+        from quiver.skills.discovery import parse_skill_md
+
+        md = self.home / "x" / "SKILL.md"
+        md.parent.mkdir()
+        md.write_text('---\nname: "x"\ndescription: "say \\"hi\\" \\\\ ok"\n---\n')
+        self.assertEqual(parse_skill_md(md), ("x", 'say "hi" \\ ok'))
 
     def test_existing_name_refused_and_untouched(self):
         self.skill("s").parent.mkdir()

@@ -22,6 +22,10 @@ def cmd_skills_new(args):
     from quiver.skills.create import create
 
     args, json_view = take_json_flag(list(args))
+    if args and args[0] in ("-h", "--help", "help"):
+        from quiver.skills.help_text import print_skills_new_help
+        print_skills_new_help()
+        return 0
     refusal = error_stream(json_view)
     try:
         args = expand_value_flags(args, {"--description"})

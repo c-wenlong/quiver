@@ -2,6 +2,7 @@
 
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -14,7 +15,7 @@ _MAX_DESCRIPTION = 1024
 
 _TEMPLATE = """\
 ---
-name: {name}
+name: {quoted_name}
 description: {description}
 ---
 
@@ -37,20 +38,14 @@ def validate_name(name: str) -> str | None:
 
 
 def description_line(description: str) -> str:
-    """The description as one YAML scalar.
+    """The text as one YAML string scalar.
 
-    Harnesses parse frontmatter as real YAML, so text that YAML would read
-    differently goes in single quotes, with ``'`` doubled as YAML wants;
-    discovery's reader undoes exactly that.
+    Harnesses parse frontmatter as real YAML, where a bare ``123``,
+    ``true``, ``null`` or ``~`` is not text, so every value goes in single
+    quotes, with ``'`` doubled as YAML wants; discovery's reader undoes
+    exactly that.
     """
-    if description and (
-        ":" in description or "#" in description or '"' in description
-        or "'" in description or "\\" in description
-        or description != description.strip()
-        or description[0] in "!&*[]{}|>%@`,?-"
-    ):
-        return "'" + description.replace("'", "''") + "'"
-    return description
+    return "'" + description.replace("'", "''") + "'"
 
 
 def create(name: str, description: str | None = None,
@@ -63,13 +58,14 @@ def create(name: str, description: str | None = None,
     if problem := validate_name(name):
         raise ValueError(problem)
     if description is not None:
-        if "\n" in description:
+        if "\n" in description or "\r" in description:
             raise ValueError("the description must be one line")
         if len(description) > _MAX_DESCRIPTION:
             raise ValueError(
                 f"the description is over {_MAX_DESCRIPTION} characters")
     text = _TEMPLATE.format(
         name=name,
+        quoted_name=description_line(name),
         description=description_line(description or _DEFAULT_DESCRIPTION),
     )
 
@@ -87,15 +83,14 @@ def create(name: str, description: str | None = None,
     folder.mkdir()
 
     target = folder / "SKILL.md"
-    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".SKILL.md.")
+    tmp = None
     try:
+        fd, tmp = tempfile.mkstemp(dir=folder, prefix=".SKILL.md.")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
         os.replace(tmp, target)
     except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        # Leave nothing behind, or a retry would find the name taken.
+        shutil.rmtree(folder, ignore_errors=True)
         raise
     return target, False
