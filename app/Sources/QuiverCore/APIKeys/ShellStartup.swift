@@ -64,6 +64,10 @@ public enum ShellStartup {
     /// same name doesn't.
     public static func sources(_ rcText: String, keysFile: URL, home: URL) -> Bool {
         let target = keysFile.resolvingSymlinksInPath().standardizedFileURL
+        // Braces of a function body still open: a `source` in a function
+        // only runs if something calls it, so it doesn't count.
+        var functionDepth = 0
+        var functionPending = false
         for raw in rcText.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
@@ -79,7 +83,24 @@ public enum ShellStartup {
             // terminal keeps nothing it sets.
             var depth = 0
             var wanted = false
-            for word in words {
+            var index = 0
+            while index < words.count {
+                let word = words[index]
+                index += 1
+                // `name() {` and `function name {` open a function body.
+                if atCommand, word == "function" {
+                    functionPending = true; atCommand = false; continue
+                }
+                if word == "(", index < words.count, words[index] == ")" {
+                    index += 1
+                    functionPending = true; atCommand = false; wanted = false; continue
+                }
+                if word == "{", functionPending || functionDepth > 0 {
+                    functionDepth += 1; functionPending = false; atCommand = true; continue
+                }
+                if word == "}", functionDepth > 0 {
+                    functionDepth -= 1; atCommand = false; continue
+                }
                 switch word {
                 case "(":
                     depth += 1; atCommand = true; wanted = false; continue
@@ -100,7 +121,7 @@ public enum ShellStartup {
                     continue
                 }
                 if atCommand {
-                    if (word == "source" || word == ".") && depth == 0 { wanted = true }
+                    if (word == "source" || word == "."), depth == 0, functionDepth == 0 { wanted = true }
                     atCommand = ["then", "do", "else", "if", "elif", "while", "until", "!", "{"].contains(word)
                 }
             }

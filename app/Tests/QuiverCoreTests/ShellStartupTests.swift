@@ -80,6 +80,13 @@ import Testing
         }
         #expect(ShellStartup.sources(#"(true) && source "$HOME/\#(rel)""#, keysFile: keys, home: root))
         #expect(!ShellStartup.sources(#"echo source "$HOME/\#(rel)""#, keysFile: keys, home: root))
+        for body in [#"load_keys() {\#n  source "$HOME/\#(rel)"\#n}"#,
+                     #"function load_keys {\#n  source "$HOME/\#(rel)"\#n}"#,
+                     #"load_keys() { source "$HOME/\#(rel)"; }"#] {
+            #expect(!ShellStartup.sources(body, keysFile: keys, home: root), "\(body)")
+        }
+        #expect(ShellStartup.sources(#"f() {\#n  echo hi\#n}\#nsource "$HOME/\#(rel)""#,
+                                     keysFile: keys, home: root))
         #expect(ShellStartup.sources(#"if [ -f "$HOME/\#(rel)" ]; then source "$HOME/\#(rel)"; fi"#,
                                      keysFile: keys, home: root))
         #expect(ShellStartup.sources(#"source "$HOME/\#(rel)" # keys"#, keysFile: keys, home: root))
