@@ -23,6 +23,7 @@ struct ComputePage: View {
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
             .help("Refresh (⌘R)")
+            FanButton()
             Button("Settings", systemImage: "gearshape") { showingSettings = true }
                 .iconButton()
                 .help("Settings")
@@ -79,6 +80,7 @@ struct ComputePage: View {
             await model.loadMatchers()
             while !Task.isCancelled {
                 await model.refresh()
+                await app.fans.refresh()
                 try? await Task.sleep(for: .seconds(3))
             }
         }
@@ -99,15 +101,17 @@ struct ComputePage: View {
 // MARK: - Trends
 
 /// RAM, CPU and GPU over time behind tabs: one line per harness that has
-/// gone above the page's flag threshold. Points come from ComputeModel's
-/// trend sampler, which ticks whether the page is open or not.
+/// gone above the page's flag threshold. The Temperature tab draws the
+/// whole Mac instead. Points come from ComputeModel's trend sampler,
+/// which ticks whether the page is open or not.
 private struct TrendCard: View {
     @Environment(AppModel.self) private var app
-    @State private var tab = TrendMetric(
-        rawValue: UserDefaults.standard.string(forKey: Self.tabKey) ?? "") ?? .ram
+    /// A TrendMetric's raw value, or `temperatureTab`.
+    @State private var tab = UserDefaults.standard.string(forKey: Self.tabKey) ?? TrendMetric.ram.rawValue
     @State private var hovered: Date?
 
     private static let tabKey = "computeTrendTab"
+    static let temperatureTab = "temperature"
 
     private var model: ComputeModel { app.compute }
 
@@ -115,36 +119,54 @@ private struct TrendCard: View {
     /// retained point, the same set on every tab.
     private var shown: [String] { model.history.shown(above: model.limits.memoryBytes) }
 
-    private var tabSelection: Binding<TrendMetric> {
+    private var tabSelection: Binding<String> {
         Binding(get: { tab },
-                set: { tab = $0; UserDefaults.standard.set($0.rawValue, forKey: Self.tabKey) })
+                set: { tab = $0; UserDefaults.standard.set($0, forKey: Self.tabKey) })
     }
 
     private var interval: Binding<TrendInterval> {
         Binding(get: { model.trendInterval }, set: { model.trendInterval = $0 })
     }
 
+    private var tabOptions: [(value: String, title: String)] {
+        TrendMetric.allCases.map { ($0.rawValue, $0.title) } + [(Self.temperatureTab, "Temperature")]
+    }
+
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    Tabs(options: TrendMetric.allCases.map { ($0, $0.title) },
-                         selection: tabSelection, style: .segmented)
+                    Tabs(options: tabOptions, selection: tabSelection, style: .segmented)
                     Spacer(minLength: 8)
                     SelectMenu(options: TrendInterval.allCases.map { ($0, $0.title) },
                                selection: interval, width: 150)
                 }
-                if model.history.isEmpty {
-                    placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")
-                } else if tab == .gpu && !model.gpuAvailable {
-                    placeholder("GPU time isn't available on this Mac.")
-                } else if shown.isEmpty {
-                    placeholder("No harness has gone above "
-                                + ComputeSummary.bytes(model.limits.memoryBytes) + " yet.")
+                if tab == Self.temperatureTab {
+                    temperature
                 } else {
-                    TrendChart(metric: tab, harnesses: shown, hovered: $hovered)
+                    let metric = TrendMetric(rawValue: tab) ?? .ram
+                    if model.history.isEmpty {
+                        placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")
+                    } else if metric == .gpu && !model.gpuAvailable {
+                        placeholder("GPU time isn't available on this Mac.")
+                    } else if shown.isEmpty {
+                        placeholder("No harness has gone above "
+                                    + ComputeSummary.bytes(model.limits.memoryBytes) + " yet.")
+                    } else {
+                        TrendChart(metric: metric, harnesses: shown, hovered: $hovered)
+                    }
                 }
             }
+        }
+    }
+
+    @ViewBuilder private var temperature: some View {
+        if !model.history.temperatures.isEmpty {
+            TemperatureChart(hovered: $hovered)
+        } else if model.history.lastTick == nil {
+            placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")
+        } else {
+            placeholder("Temperature sensors aren't available on this Mac.")
         }
     }
 

@@ -30,6 +30,7 @@ be rebuilt; deleting them loses user state.
 | `data/ledger/backups/ledger-YYYY-MM-DD.sqlite` | app | SQLite, one file each | a copy of the ledger per local day through SQLite's online backup API, newest 7 kept | `Ledger.keepBackedUp` (hourly check) | restore by hand: quit Quiver, copy one over `ledger.sqlite` |
 | `data/catalog/catalog.sqlite` | app | SQLite (WAL) | the model catalog: every price each LiteLLM key has held, Artificial Analysis models and raw feeds, the price-key to AA-model join, and a row per fetch (see below). Price history exists only here: a dropped file reprices past usage at today's rates. `QUIVER_CATALOG_DB` overrides the path | `PricingStore`, `ArtificialAnalysisStore` | ledger pricing, Pricing and Models pages |
 | `skills/`, `hooks/`, `plugins/`, `AGENTS.md`, `.linkignore` | swe | files and symlinks | shared instruction/skill/hook/plugin trees | `swe init`, `swe skills`, `swe plugins` | the harnesses that link them |
+| `fan/control.json` | app | JSON `{level, owner, requested}`, folder mode 700 | the Compute page's manual fan request: a level from 0 (each fan's minimum) to 1 (its maximum), the requesting Quiver's pid and when it was asked. No level means automatic | `FanControl` (QuiverCore) | the root fan helper (`Quiver --fan-daemon`, run by launchd from `/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist`), which holds the fans only while that pid is a running Quiver |
 | `reports/` | swe | markdown + JSON | generated reports, `session-summaries/`, `exclusions.json`, `cursors.json`, `followups.json` | `reports/store.py` (atomic writes, malformed state raises) | `swe report` |
 
 Legacy registry names `tools.json`, `stars.json`, `archived.json` (pre
@@ -79,7 +80,7 @@ every key below is live.
 | `popupHiddenHarnesses`, `popupHiddenWindows`, `popupHarnessOrder` | legacy popup keys, read-only migration fallbacks; keep until the new keys have covered every install |
 | `mcpHiddenHarnesses` | harness columns hidden on the MCP page |
 | `providerOrder`, `providerDisabled` | provider list order and switches |
-| `computeTrendInterval`, `computeTrendTab`, `computeMemoryLimitGB`, `computeOrphanAgeMinutes` | Compute page preferences |
+| `computeTrendInterval`, `computeTrendTab`, `computeMemoryLimitGB`, `computeOrphanAgeMinutes`, `fanManualLevel` | Compute page preferences (`computeTrendTab` also takes `temperature`) |
 | `refreshFreshMinutes` | the "Refresh only what failed for" window (default 5, clamped to 1..120) |
 | `customStatusServices` | user-added status services |
 | `apiKeyCheckSalt` | salt for cached key-check results (not a secret itself) |

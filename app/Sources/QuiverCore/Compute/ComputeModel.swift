@@ -65,6 +65,8 @@ public final class ComputeModel {
     /// Whether this Mac has ever answered a GPU read; the GPU tab explains
     /// rather than drawing flat lines when it has not.
     public private(set) var gpuAvailable = false
+    /// Whether this Mac's temperature sensors have ever answered.
+    public private(set) var temperatureAvailable = false
 
     /// The thresholds the flags and suggestions follow.
     public var limits: ComputeLimits {
@@ -93,6 +95,7 @@ public final class ComputeModel {
 
     private let sampler: any ProcessSampling
     private let gpuSampler: any GPUSampling
+    private let temperatureSampler: any TemperatureSampling
     private let matcherLoader: @Sendable () async throws -> [HarnessMatcher]
     private let managedPIDLoader: @Sendable () async -> Set<Int32>
     private let signaller: any ProcessSignaller
@@ -137,12 +140,14 @@ public final class ComputeModel {
                 managedPIDs: @escaping @Sendable () async -> Set<Int32> = { [] },
                 signaller: any ProcessSignaller = SystemSignaller(),
                 gpu: any GPUSampling = GPUSampler(),
+                temperature: any TemperatureSampling = HIDTemperatureSampler(),
                 clock: @escaping @Sendable () -> Date = { .now },
                 sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                 defaults: UserDefaults = .standard,
                 selfPID: Int32 = getpid()) {
         self.sampler = sampler
         gpuSampler = gpu
+        temperatureSampler = temperature
         matcherLoader = matchers
         managedPIDLoader = managedPIDs
         self.signaller = signaller
@@ -287,8 +292,8 @@ public final class ComputeModel {
             if replaced(generation) { return }
             accept(sampled)
         }
-        let gpu = gpuSampler
-        let times = await runOffPool { gpu.times() }
+        let gpu = gpuSampler, thermometer = temperatureSampler
+        let (times, reading) = await runOffPool { (gpu.times(), thermometer.read()) }
         if replaced(generation) { return }
         let gpuAt = clock()
         if !times.isEmpty { gpuAvailable = true }
@@ -296,6 +301,11 @@ public final class ComputeModel {
         // Recorded even when nothing runs, so "now" moves past the last
         // harness that stopped.
         history.recordTick(sampledAt ?? now)
+        if let reading {
+            temperatureAvailable = true
+            history.appendTemperature(TemperaturePoint(at: sampledAt ?? now, cpu: reading.cpu,
+                                                       battery: reading.battery))
+        }
         for (harness, procs) in attribution.byHarness where !procs.isEmpty {
             history.append(harness, TrendPoint(
                 at: sampledAt ?? now,
