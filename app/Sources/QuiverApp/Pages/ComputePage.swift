@@ -1,4 +1,3 @@
-import Charts
 import QuiverCore
 import SwiftUI
 
@@ -99,91 +98,37 @@ struct ComputePage: View {
 
 // MARK: - Trends
 
-/// RAM, CPU and GPU over time: one line per harness that has gone above
-/// the page's flag threshold, drawn in the harness's colour with its icon
-/// riding the line's right end. Points come from ComputeModel's trend
-/// sampler, which ticks whether the page is open or not.
+/// RAM, CPU and GPU over time behind tabs: one line per harness that has
+/// gone above the page's flag threshold. Points come from ComputeModel's
+/// trend sampler, which ticks whether the page is open or not.
 private struct TrendCard: View {
     @Environment(AppModel.self) private var app
-    @State private var tab = UserDefaults.standard.string(forKey: Self.tabKey) ?? "ram"
+    @State private var tab = TrendMetric(
+        rawValue: UserDefaults.standard.string(forKey: Self.tabKey) ?? "") ?? .ram
     @State private var hovered: Date?
-    @State private var bubbleSize: CGSize = .zero
 
     private static let tabKey = "computeTrendTab"
 
     private var model: ComputeModel { app.compute }
 
-    /// The y axis's fixed top, from the plotted values only: RAM rounds
-    /// up to the next 2 GB with the threshold plus a step as its floor,
-    /// CPU and GPU to the next 25% (GPU at least 100%). Nothing the
-    /// hover state touches feeds it, so the scale cannot move under the
-    /// cursor.
-    private var yTop: Double {
-        let limitGB = Double(model.limits.memoryBytes) / Double(UInt64(1) << 30)
-        let values = shown.flatMap { series($0).map { value(of: $0) } }
-        switch tab {
-        case "cpu": return TrendScale.top(values, step: 25, floor: 25)
-        case "gpu": return TrendScale.top(values, step: 25, floor: 100)
-        default: return TrendScale.top(values, step: 2, floor: limitGB + 2)
-        }
-    }
-
     /// The harnesses the card draws: above the flag threshold at any
     /// retained point, the same set on every tab.
     private var shown: [String] { model.history.shown(above: model.limits.memoryBytes) }
 
-    private var tabSelection: Binding<String> {
+    private var tabSelection: Binding<TrendMetric> {
         Binding(get: { tab },
-                set: { tab = $0; UserDefaults.standard.set($0, forKey: Self.tabKey) })
+                set: { tab = $0; UserDefaults.standard.set($0.rawValue, forKey: Self.tabKey) })
     }
 
     private var interval: Binding<TrendInterval> {
         Binding(get: { model.trendInterval }, set: { model.trendInterval = $0 })
     }
 
-    /// The one x range every series is clipped to: `window` intervals
-    /// ending at the newest recorded point, so a stopped harness's line
-    /// slides off the left edge instead of holding it open.
-    private var chartWindow: ClosedRange<Date>? {
-        guard let end = model.history.latest else { return nil }
-        return model.history.window(endingAt: end, interval: model.trendInterval)
-    }
-
-    /// The harness's points in the visible window. The GPU tab drops
-    /// points recorded before the GPU counters ever answered, so the
-    /// line does not dip to zero for "no reading".
-    private func series(_ harness: String) -> [TrendPoint] {
-        guard let range = chartWindow else { return [] }
-        let points = model.history.window(for: harness, in: range)
-        return tab == "gpu" ? points.filter { $0.gpuPercent != nil } : points
-    }
-
-    private func value(of point: TrendPoint) -> Double {
-        switch tab {
-        case "cpu": point.cpuPercent
-        case "gpu": point.gpuPercent ?? 0
-        default: Double(point.memoryBytes) / Double(UInt64(1) << 30)
-        }
-    }
-
-    private func formatted(_ point: TrendPoint) -> String {
-        switch tab {
-        case "cpu": "\(ComputePage.cpu(point.cpuPercent))%"
-        case "gpu": point.gpuPercent.map { "\(ComputePage.cpu($0))%" } ?? "-"
-        default: ComputeSummary.bytes(point.memoryBytes)
-        }
-    }
-
-    /// The line's colour: the app's one harness colour.
-    private func colour(of harness: String) -> Color {
-        Color(rgb: HarnessColor.of(harness))
-    }
-
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    Tabs(options: [("ram", "RAM"), ("cpu", "CPU"), ("gpu", "GPU")],
+                    Tabs(options: TrendMetric.allCases.map { ($0, $0.title) },
                          selection: tabSelection, style: .segmented)
                     Spacer(minLength: 8)
                     SelectMenu(options: TrendInterval.allCases.map { ($0, $0.title) },
@@ -191,13 +136,13 @@ private struct TrendCard: View {
                 }
                 if model.history.isEmpty {
                     placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")
-                } else if tab == "gpu" && !model.gpuAvailable {
+                } else if tab == .gpu && !model.gpuAvailable {
                     placeholder("GPU time isn't available on this Mac.")
                 } else if shown.isEmpty {
                     placeholder("No harness has gone above "
                                 + ComputeSummary.bytes(model.limits.memoryBytes) + " yet.")
                 } else {
-                    chart
+                    TrendChart(metric: tab, harnesses: shown, hovered: $hovered)
                 }
             }
         }
@@ -207,128 +152,6 @@ private struct TrendCard: View {
         Text(text)
             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             .frame(maxWidth: .infinity, minHeight: 180)
-    }
-
-    private var chart: some View {
-        let limitGB = Double(model.limits.memoryBytes) / Double(UInt64(1) << 30)
-        // The chart only renders once a point exists, so latest is set.
-        let domain = chartWindow ?? Date.now.addingTimeInterval(-60)...Date.now
-        return Chart {
-            ForEach(shown, id: \.self) { harness in
-                let points = series(harness)
-                ForEach(points, id: \.at) { point in
-                    LineMark(x: .value("Time", point.at), y: .value("Value", value(of: point)),
-                             series: .value("Harness", harness))
-                        .foregroundStyle(colour(of: harness))
-                        .interpolationMethod(.monotone)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                }
-                if let last = points.last {
-                    PointMark(x: .value("Time", last.at), y: .value("Value", value(of: last)))
-                        .foregroundStyle(colour(of: harness))
-                        .symbolSize(16)
-                        .annotation(position: .trailing, alignment: .center,
-                                    overflowResolution: .init(x: .disabled, y: .disabled)) {
-                            HarnessIcon(harness: harness, size: 16)
-                        }
-                }
-            }
-            if tab == "ram" {
-                RuleMark(y: .value("Flag", limitGB))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
-                    .foregroundStyle(Theme.warning)
-                    .annotation(position: .top, alignment: .leading, spacing: 4) {
-                        Text("Flag above \(ComputeSummary.bytes(model.limits.memoryBytes))")
-                            .font(Theme.caption).foregroundStyle(Theme.warning)
-                    }
-            }
-            // An x-only rule cannot touch the y domain, and the bubble it
-            // used to carry now lives in the overlay where no chart mark
-            // or annotation can grow the scale.
-            if let hovered {
-                RuleMark(x: .value("Time", hovered))
-                    .foregroundStyle(Theme.border)
-            }
-        }
-        .chartXScale(domain: domain)
-        .chartYScale(domain: 0...yTop)
-        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
-        .chartYAxis {
-            AxisMarks { value in
-                AxisGridLine()
-                AxisValueLabel { axisLabel(value) }
-            }
-        }
-        .padding(.trailing, 22)
-        .frame(height: 180)
-        .chartOverlay { proxy in hoverOverlay(proxy) }
-    }
-
-    private func axisLabel(_ value: AxisValue) -> some View {
-        let number = value.as(Double.self) ?? 0
-        if tab == "ram" {
-            return Text("\(number.formatted(.number.precision(.fractionLength(1)))) GB")
-        }
-        return Text("\(Int(number.rounded()))%")
-    }
-
-    private func hoverOverlay(_ proxy: ChartProxy) -> some View {
-        GeometryReader { geometry in
-            Rectangle().fill(.clear).contentShape(.rect)
-                .onContinuousHover { phase in
-                    switch phase {
-                    case .active(let point):
-                        guard let plot = proxy.plotFrame else { return }
-                        let x = point.x - geometry[plot].origin.x
-                        hovered = proxy.value(atX: x, as: Date.self)
-                    case .ended:
-                        hovered = nil
-                    }
-                }
-            // The readout rides the overlay: positioned against the plot
-            // and clamped inside it, never a mark the scales can see.
-            if let hovered, let plot = proxy.plotFrame,
-               let x = proxy.position(forX: hovered) {
-                bubble(at: hovered)
-                    .fixedSize()
-                    .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
-                    .position(bubbleOrigin(atX: x, plot: geometry[plot]))
-                    .allowsHitTesting(false)
-            }
-        }
-    }
-
-    /// The bubble's center at the hovered x, just under the plot's top
-    /// edge, slid sideways until it clears both edges of the plot.
-    private func bubbleOrigin(atX x: CGFloat, plot: CGRect) -> CGPoint {
-        let half = bubbleSize.width / 2
-        let px = plot.origin.x + x
-        let lo = plot.minX + half + 4, hi = plot.maxX - half - 4
-        let cx = lo <= hi ? min(max(px, lo), hi) : plot.midX
-        return CGPoint(x: cx, y: plot.minY + bubbleSize.height / 2 + 4)
-    }
-
-    /// Each shown harness's value at the point nearest the hovered time.
-    private func bubble(at time: Date) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(shown, id: \.self) { harness in
-                if let point = series(harness).min(by: {
-                    abs($0.at.timeIntervalSince(time)) < abs($1.at.timeIntervalSince(time))
-                }) {
-                    HStack(spacing: 6) {
-                        HarnessIcon(harness: harness, size: 12)
-                        Text(UsageFormat.harness(harness))
-                        Spacer()
-                        Text(formatted(point)).monospacedDigit()
-                    }
-                }
-            }
-        }
-        .font(Theme.caption).foregroundStyle(Theme.textPrimary)
-        .padding(8)
-        .background(Theme.panel, in: .rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
-        .fixedSize()
     }
 }
 

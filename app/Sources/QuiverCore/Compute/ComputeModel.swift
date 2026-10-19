@@ -253,6 +253,12 @@ public final class ComputeModel {
         }
     }
 
+    /// One trend point now, outside the loop's timing: the popup's
+    /// Refresh on the Compute tab. Reuses a sample taken moments ago.
+    public func tickTrends() async {
+        await trendTick(at: clock())
+    }
+
     /// Whether a tick from `generation` lost its loop: its task is dead
     /// or a newer loop has taken over, so it must not write shared state.
     private func replaced(_ generation: Int?) -> Bool {
