@@ -218,6 +218,12 @@ secrets/
 mcp/servers/
 """
 
+# Written into secrets/ itself, so the folder stays out of git even when the
+# root .gitignore above is missing the line or excepts a path under it.
+SECRETS_GITIGNORE_BODY = """# Credential values. Never versioned, whatever ../.gitignore says.
+*
+"""
+
 
 def legacy_config_dir() -> Path | None:
     """The old ~/.config/swe root, if this machine still has one."""

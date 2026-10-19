@@ -825,7 +825,9 @@ final class AppModel {
     private static func keysModel(path: String) -> APIKeysModel {
         // One backup of the previous version, private to you, under ~/.quiver.
         let backups = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".quiver/backups/api-keys")
-        return APIKeysModel(store: APIKeysStore(url: keysFile(path: path), backupDirectory: backups),
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return APIKeysModel(store: APIKeysStore(url: keysFile(path: path), backupDirectory: backups,
+                                                sealedFolder: APIKeysStore.secretsFolder(home: home)),
                             shell: LoginShellEnvironment(),
                             checkCache: APIKeyCheckStore(url: FileManager.default.homeDirectoryForCurrentUser
                                 .appending(path: ".quiver/cache/api-key-checks.json")))

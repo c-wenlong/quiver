@@ -98,9 +98,12 @@ Both credential stores are shell-style `export NAME=value` files, each in
 its own folder under `secrets/`. Provider keys used to sit at `~/.api_keys`
 and MCP values at `secrets/.api_keys`; `swe init` moves each file into its
 folder (`init/migrate.move_secrets`) and leaves a symlink at `~/.api_keys`,
-because shell profiles source that path. It moves the provider file only
-when `secrets/` is gitignored, so an older `.gitignore` never pulls keys into
-a versioned tree. Until then every reader (`paths.provider_keys_path_for`,
+because shell profiles source that path. Before anything lands there,
+`secrets/` gets its own `.gitignore` of `*` (`seal_secrets_dir`; the app's
+`APIKeysStore` does the same before a first save). Git lets that file win
+over the root one, so an older root `.gitignore`, or one with a
+`!secrets/...` exception, never puts keys in a commit. Until a machine is
+moved, every reader (`paths.provider_keys_path_for`,
 `paths.mcp_secrets_path_for`, the app's `APIKeysStore.defaultURL`) falls back
 to the old path.
 

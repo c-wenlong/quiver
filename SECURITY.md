@@ -46,10 +46,9 @@ of which hold credentials. The sensitive paths:
   mode 600. `~/.api_keys` is a symlink to it once `swe init` has moved it. `swe
   providers` records metadata only and never reads the raw key into the
   registry.
-- The `.gitignore` that `swe init` writes lists `secrets/`. It never rewrites
-  an existing one, so if your `~/.quiver` predates that, add `secrets/`
-  yourself before your next commit. `swe init` will not move `~/.api_keys`
-  in until you do.
+- `secrets/` carries its own `.gitignore` of `*`, written by `swe init` and by
+  the app before its first save, so git skips it whatever `~/.quiver/.gitignore`
+  says. The root `.gitignore` that `swe init` writes lists `secrets/` too.
 - Harness MCP configs written by `swe mcp sync` contain *resolved* tokens and
   are mode 600 for that reason. Review `--dry-run` output before syncing in a
   shared environment.

@@ -135,7 +135,9 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
     does not exist, so a second run, a directory of per-provider files, or
     a machine holding both copies is left alone and reported instead. The
     readers fall back to the old paths, so skipping a move breaks nothing.
-    Returns one note per move made (or, with ``apply=False``, planned).
+    Before anything lands in secrets/, the folder is sealed (see
+    ``seal_secrets_dir``). Returns one note per change made (or, with
+    ``apply=False``, planned).
     """
     import os
 
@@ -146,27 +148,24 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
         (paths.legacy_mcp_secrets_file_for(home), paths.mcp_secrets_file_for(home),
          False, "secrets/.api_keys", "secrets/mcp/.api_keys"),
     )
+    planned = []
     for old, new, link_back, old_label, new_label in moves:
         if old.is_symlink() or not old.is_file():
             continue
         if new.exists() or new.is_symlink():
             notes.append(f"{old_label} and {new_label} both exist, merge them by hand")
             continue
-        # ~/.api_keys sits outside ~/.quiver. Moving it in must not
-        # put provider keys into a tree the user versions, so a root whose
-        # .gitignore predates secrets/ keeps its keys where they are.
-        # A plan-only run on a fresh root has no .gitignore yet; the real
-        # run writes GITIGNORE_BODY, which lists secrets/, before moving.
-        will_be_ignored = not apply and not (paths.quiver_dir_for(home) / ".gitignore").exists()
-        if link_back and not (will_be_ignored or secrets_ignored(home)):
-            notes.append(f"{old_label} stays put until ~/.quiver/.gitignore lists secrets/")
-            continue
-        notes.append(f"move {old_label} to {new_label}")
+        planned.append((old, new, link_back, f"move {old_label} to {new_label}"))
+
+    secrets_dir = paths.secrets_dir_for(home)
+    if planned or secrets_dir.is_dir():
+        notes.extend(seal_secrets_dir(home, apply=apply))
+    for old, new, link_back, note in planned:
+        notes.append(note)
         if not apply:
             continue
-        for folder in (new.parent.parent, new.parent):
-            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-            os.chmod(folder, 0o700)
+        new.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(new.parent, 0o700)
         # Same volume (both under $HOME), so this is a rename: the file
         # keeps its inode and is never copied. Hand-made stores are not
         # always 600, and these hold every key, so tighten on the way in.
@@ -177,32 +176,22 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
     return notes
 
 
-_SECRETS_IGNORE_LINES = {"secrets", "secrets/", "/secrets", "/secrets/",
-                         "secrets/*", "/secrets/*", "secrets/**", "/secrets/**"}
+def seal_secrets_dir(home: Path | None = None, *, apply: bool = True) -> list[str]:
+    """Give secrets/ (mode 700) its own ``.gitignore`` that ignores everything.
 
-
-def secrets_ignored(home: Path | None = None) -> bool:
-    """Whether ~/.quiver keeps secrets/ out of git.
-
-    True when its .gitignore lists secrets/ outright, or when the root is a
-    git checkout and git itself ignores a file there (a global excludes
-    file, or a pattern this check does not spell out).
+    The root .gitignore is the user's to edit and `swe init` never rewrites
+    it, so an older hub may lack secrets/ or carry a ``!secrets/...``
+    exception. Git lets a deeper .gitignore override the root one, so this
+    file keeps every key out of a `git add .` whatever the root says.
     """
-    import subprocess
+    import os
 
-    root = paths.quiver_dir_for(home)
-    try:
-        lines = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
-    except (FileNotFoundError, OSError, UnicodeDecodeError):
-        lines = []
-    if any(line.strip() in _SECRETS_IGNORE_LINES for line in lines):
-        return True
-    if not (root / ".git").exists():
-        return False
-    probe = paths.provider_keys_file_for(home).relative_to(root)
-    try:
-        result = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(probe)],
-                                capture_output=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0
+    secrets_dir = paths.secrets_dir_for(home)
+    seal = secrets_dir / ".gitignore"
+    if seal.is_file() and seal.read_text(encoding="utf-8", errors="replace") == paths.SECRETS_GITIGNORE_BODY:
+        return []
+    if apply:
+        secrets_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(secrets_dir, 0o700)
+        seal.write_text(paths.SECRETS_GITIGNORE_BODY, encoding="utf-8")
+    return ["seal secrets/ with its own .gitignore"]

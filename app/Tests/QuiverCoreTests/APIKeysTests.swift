@@ -583,15 +583,31 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(APIKeysStore.defaultURL(home: home) == current)
     }
 
-    @Test func aFirstSaveCreatesItsFolderPrivately() throws {
-        let dir = try temp()
-        let url = dir.appending(path: "secrets/providers/.api_keys")
-        let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
+    @Test func aFirstSaveCreatesItsFolderPrivatelyAndSealsIt() throws {
+        let home = try temp()
+        let url = APIKeysStore.defaultURL(home: home)
+        let secrets = APIKeysStore.secretsFolder(home: home)
+        let store = APIKeysStore(url: url, backupDirectory: home.appending(path: "backups"), sealedFolder: secrets)
         var (file, stamp) = try store.load()
         try file.set(name: "A", value: "1", provider: "P")
         try store.save(file, over: stamp)
-        let mode = try FileManager.default.attributesOfItem(atPath: url.deletingLastPathComponent().path)[.posixPermissions]
-        #expect((mode as? NSNumber)?.intValue == 0o700)
+        for folder in [secrets, url.deletingLastPathComponent()] {
+            let mode = try FileManager.default.attributesOfItem(atPath: folder.path)[.posixPermissions]
+            #expect((mode as? NSNumber)?.intValue == 0o700)
+        }
+        // An old hub's root .gitignore may not cover secrets/; this one does.
+        #expect(try String(contentsOf: secrets.appending(path: ".gitignore"), encoding: .utf8) == APIKeysStore.sealBody)
+    }
+
+    @Test func aFileOutsideTheSealedFolderLeavesItAlone() throws {
+        let home = try temp()
+        let url = home.appending(path: "dotfiles/api_keys")
+        let secrets = APIKeysStore.secretsFolder(home: home)
+        let store = APIKeysStore(url: url, backupDirectory: home.appending(path: "backups"), sealedFolder: secrets)
+        var (file, stamp) = try store.load()
+        try file.set(name: "A", value: "1", provider: "P")
+        try store.save(file, over: stamp)
+        #expect(!FileManager.default.fileExists(atPath: secrets.path))
     }
 
     @Test func aFileThatIsNotUTF8IsNotRewritten() throws {
