@@ -24,7 +24,10 @@ private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
             #expect(InferenceCatalog.plan(forKey: name) == nil, "\(name)")
         }
         #expect(plans.allSatisfy { !$0.endpoints.isEmpty })
-        #expect(plans.compactMap(\.logo).allSatisfy { HarnessIcons.icon(for: $0) != nil })
+        // Every plan draws its vendor's logo; none falls back to a blank square.
+        for plan in plans {
+            #expect(plan.logo.flatMap { HarnessIcons.icon(for: $0) } != nil, "\(plan.name) has no logo")
+        }
         #expect(plans.allSatisfy { ProviderCatalog.provider($0.id) == nil })
     }
 

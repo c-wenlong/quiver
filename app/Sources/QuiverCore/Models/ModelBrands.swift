@@ -95,6 +95,33 @@ public enum ModelBrands {
         .init(id: "featherless", name: "Featherless AI", icon: "featherless", keywords: ["featherless"]),
         .init(id: "routing-run", name: "Routing.Run", icon: "routing-run",
               keywords: ["routing", "routingrun"]),
+        // Inference plan vendors and API key providers, so a key filed
+        // under their name shows the logo too.
+        .init(id: "tencent", name: "Tencent", icon: "tencentcloud", keywords: ["tencent", "hunyuan", "tokenhub"]),
+        .init(id: "baidu", name: "Baidu", icon: "baiducloud", keywords: ["baidu", "qianfan", "ernie"]),
+        .init(id: "huawei", name: "Huawei", icon: "huaweicloud", keywords: ["huawei", "pangu", "modelarts"]),
+        .init(id: "iflytek", name: "Astron (iFlytek)", icon: "iflytek", keywords: ["iflytek", "xfyun", "astron"]),
+        .init(id: "sensetime", name: "SenseTime", icon: "sensenova", keywords: ["sensetime", "sensenova"]),
+        .init(id: "kuaishou", name: "Kuaishou", icon: "kwaikat",
+              keywords: ["kuaishou", "kwaikat", "kwaipilot", "streamlake"]),
+        .init(id: "ollama", name: "Ollama", icon: "ollama", keywords: ["ollama"]),
+        .init(id: "poe", name: "Poe", icon: "poe", keywords: ["poe"]),
+        .init(id: "synthetic", name: "Synthetic", icon: "synthetic", keywords: ["synthetic"]),
+        .init(id: "zenmux", name: "ZenMux", icon: "zenmux", keywords: ["zenmux"]),
+        .init(id: "atlascloud", name: "Atlas Cloud", icon: "atlascloud", keywords: ["atlascloud"]),
+        .init(id: "taotoken", name: "TaoToken", icon: "taotoken", keywords: ["taotoken"]),
+        .init(id: "elevenlabs", name: "ElevenLabs", icon: "elevenlabs", keywords: ["elevenlabs"]),
+        .init(id: "jdcloud", name: "JD Cloud", icon: "jdcloud", keywords: ["jdcloud", "joybuilder"]),
+        .init(id: "mthreads", name: "Moore Threads", icon: "mthreads", keywords: ["mthreads", "kuae"]),
+        .init(id: "ucloud", name: "UCloud", icon: "ucloud", keywords: ["ucloud", "compshare"]),
+        .init(id: "unicom", name: "China Unicom", icon: "unicom", keywords: ["unicom", "cucloud"]),
+        .init(id: "ctyun", name: "China Telecom", icon: "ctyun", keywords: ["ctyun", "telecom"]),
+        .init(id: "scnet", name: "SCNet", icon: "scnet", keywords: ["scnet"]),
+        .init(id: "charm", name: "Charm", icon: "charm", keywords: ["charm", "hyper"]),
+        .init(id: "llmgateway", name: "LLM Gateway", icon: "llmgateway", keywords: ["llmgateway", "devpass"]),
+        .init(id: "standardcompute", name: "Standard Compute", icon: "standardcompute", keywords: ["stdcmpt"]),
+        .init(id: "cheapestinference", name: "CheapestInference", icon: "cheapestinference",
+              keywords: ["cheapestinference"]),
     ]
 
     /// Anything no brand claims: a dark grey that recedes behind the
