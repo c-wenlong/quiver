@@ -32,11 +32,12 @@ private struct PricingContent: View {
             if !model.unpriced.isEmpty {
                 UnpricedBadge(unpriced: model.unpriced) { editing = $0 }
             }
-            SelectMenu(options: [(value: String?.none, title: "All harnesses", icon: nil)]
-                       + model.harnessOptions.map {
-                           (value: $0, title: HarnessMark($0).name, icon: $0)
-                       },
-                       selection: $model.harnessFilter, width: nil)
+            MultiSelectMenu(allTitle: "All harnesses",
+                            options: model.harnessOptions.map {
+                                (value: $0, title: HarnessMark($0).name, icon: $0)
+                            },
+                            selection: $model.harnessFilter,
+                            countTitle: { "\($0) harnesses" })
             // A compact select, not the header-wide tab strip, so the
             // trailing controls fit at every window width.
             SelectMenu(options: OverviewPeriod.allCases.map { ($0, $0.title) },
@@ -441,7 +442,7 @@ private struct PriceSheet: View {
                         .font(Theme.caption).foregroundStyle(Theme.textMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if model.harnessFilter != nil {
+                if !model.harnessFilter.isEmpty {
                     // One price per model: a saved rate reprices every
                     // harness's usage of it, filter or not.
                     Text("Price applies to every harness")
