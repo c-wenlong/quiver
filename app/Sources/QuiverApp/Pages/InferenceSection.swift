@@ -18,12 +18,18 @@ struct InferenceSection: View {
     @State private var stateFilter = StateFilter.all
     @State private var kindFilter = KindFilter.all
     @State private var query = ""
+    @State private var tableWidth: CGFloat = 0
     /// The provider whose heading is being renamed, and its draft name.
     @State private var renamingProvider = false
     @State private var providerBeingRenamed = ""
     @State private var providerDraft = ""
 
     static let firstWidth: CGFloat = 200
+    static let compactFirstWidth: CGFloat = 150
+    static let typeWidth: CGFloat = 100
+    /// Below this table width the Type column folds under the name, so
+    /// the value keeps its room in a narrow window.
+    static let compactBelow: CGFloat = 680
     static let statusWidth: CGFloat = 120
 
     var body: some View {
@@ -154,11 +160,14 @@ struct InferenceSection: View {
 
     private func table(_ all: [InferenceItem]) -> some View {
         let rows = visible(all)
+        let compact = tableWidth > 0 && tableWidth < Self.compactBelow
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Color.clear.frame(width: 12, height: 1)
-                Text("Provider or plan").frame(width: Self.firstWidth, alignment: .leading)
-                Text("Variable and value").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Provider or plan").frame(width: compact ? Self.compactFirstWidth : Self.firstWidth,
+                                                alignment: .leading)
+                Text("Value").frame(maxWidth: .infinity, alignment: .leading)
+                if !compact { Text("Type").frame(width: Self.typeWidth, alignment: .leading) }
                 Text("Status").frame(width: Self.statusWidth, alignment: .leading)
             }
             .font(Theme.tableHeader).foregroundStyle(Theme.textSecondary)
@@ -173,12 +182,13 @@ struct InferenceSection: View {
                 ReorderableRows(rows, showsDividers: true) { id, before in
                     app.inferenceOrder.move(id, before: before ?? after(rows, all: all, moving: id), in: all)
                 } row: { item in
-                    row(item)
+                    row(item, compact: compact)
                 }
             }
         }
         .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tableWidth = $0 }
     }
 
     /// Dropped below the last shown row: land just after it in the full
@@ -189,10 +199,10 @@ struct InferenceSection: View {
         return all[(index + 1)...].first { $0.id != id }?.id
     }
 
-    private func row(_ item: InferenceItem) -> some View {
+    private func row(_ item: InferenceItem, compact: Bool) -> some View {
         let model = app.apiKeys
         return InferenceRow(
-            item: item, isRevealed: revealed.contains(item.id),
+            item: item, compact: compact, isRevealed: revealed.contains(item.id),
             check: item.key.flatMap { model.check(for: $0) }, isChecking: model.checking.contains(item.id),
             recheck: { Task { await model.check(name: item.id) } },
             toggleReveal: {
@@ -245,6 +255,8 @@ struct InferenceSection: View {
 /// buttons and the status opens the key.
 private struct InferenceRow: View {
     var item: InferenceItem
+    /// Narrow table: the type goes under the name instead of its own column.
+    var compact = false
     var isRevealed: Bool
     var check: APIKeyCheck?
     var isChecking: Bool
@@ -260,9 +272,13 @@ private struct InferenceRow: View {
         item.plan?.logo ?? item.key.flatMap { APIKeyProviderLogo.logoID(for: $0.provider) }
     }
 
-    private var subtitle: String {
-        if let plan = item.plan { return "Coding plan · \(plan.vendor)" }
-        return "API key"
+    private var type: String { item.kind == .plan ? "Coding plan" : "API key" }
+
+    /// A plan's vendor under its name; a key's heading is its name already.
+    /// A narrow table puts the type there too.
+    private var subtitle: String? {
+        guard compact else { return item.plan?.vendor }
+        return [type, item.plan?.vendor].compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -275,13 +291,15 @@ private struct InferenceRow: View {
                 .frame(width: 16, height: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    if let subtitle {
+                        Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    }
                 }
             }
-            .frame(width: InferenceSection.firstWidth, alignment: .leading)
+            .frame(width: compact ? InferenceSection.compactFirstWidth : InferenceSection.firstWidth,
+                   alignment: .leading)
+            // The variable name lives in the editor; the row shows the value.
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.id).font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(item.hasKey ? Theme.textPrimary : Theme.textMuted)
                 HStack(spacing: 6) {
                     Text(valueText)
                         .font(.system(size: 12, design: .monospaced))
@@ -298,6 +316,11 @@ private struct InferenceRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if !compact {
+                Text(type)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .frame(width: InferenceSection.typeWidth, alignment: .leading)
+            }
             Group {
                 if let key = item.key, item.hasKey {
                     StatusLabel(status: key.status, check: check, isChecking: isChecking, recheck: recheck)
@@ -426,10 +449,11 @@ private struct PlanKeyEditor: View {
             }
             HStack {
                 if exists {
-                    Button("Remove key", role: .destructive) { confirmingRemove = true }
+                    Button("Delete", role: .destructive) { confirmingRemove = true }
                         .secondaryButton()
-                        .confirmationDialog("Remove the \(plan.name) key?", isPresented: $confirmingRemove) {
-                            Button("Remove", role: .destructive) { run { try await remove() } }
+                        .help("Delete the \(plan.name) key from the keys file")
+                        .confirmationDialog("Delete the \(plan.name) key?", isPresented: $confirmingRemove) {
+                            Button("Delete", role: .destructive) { run { try await remove() } }
                         }
                 }
                 Spacer()
@@ -608,8 +632,10 @@ private struct KeyEditor: View {
                     if !providers.isEmpty {
                         // "" is a real choice (ungrouped keys); it still
                         // needs a label in the menu.
-                        SelectMenu(options: providers.map { ($0, $0.isEmpty ? "Ungrouped" : $0) },
-                                   selection: $draft.provider, width: nil, title: "Existing")
+                        PopoverSelect(options: providers.map {
+                                          ($0, $0.isEmpty ? "Ungrouped" : $0, APIKeyProviderLogo.logoID(for: $0))
+                                      },
+                                      selection: $draft.provider, title: "Existing")
                     }
                 }
             }
@@ -641,12 +667,15 @@ private struct KeyEditor: View {
             HStack {
                 if !draft.isNew {
                     if confirmingRemove {
-                        Text("Remove \(originalName)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        Button("Remove", role: .destructive) { run { try await remove(originalName) } }
+                        Text("Delete \(originalName)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1).truncationMode(.middle)
+                        Button("Delete", role: .destructive) { run { try await remove(originalName) } }
                             .secondaryButton()
                         Button("Keep") { confirmingRemove = false }.secondaryButton()
                     } else {
-                        Button("Remove…") { confirmingRemove = true }.secondaryButton()
+                        Button("Delete", role: .destructive) { confirmingRemove = true }
+                            .secondaryButton()
+                            .help("Delete \(originalName) from the keys file")
                     }
                 }
                 Spacer()
