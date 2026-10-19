@@ -141,7 +141,11 @@ private struct SessionsContent: View {
                           actionTitle: "Open Harnesses") { app.selection = .harnesses }
             } else {
                 EmptyCard(text: "No sessions match these filters.", icon: "clock",
-                          actionTitle: "Clear filters") { model.filter = .init() }
+                          actionTitle: "Clear filters") {
+                    model.filter = .init()
+                    // The default window is 90 days; clearing means all time.
+                    model.filter.window = .all
+                }
             }
             hiddenFooter
         } else {

@@ -64,7 +64,8 @@ struct ComputePage: View {
             TrendCard()
             if let error = model.error { ErrorCard(message: error) }
             if model.usages.isEmpty && model.orphans.isEmpty {
-                if model.notRunning.isEmpty {
+                // Only a successful read of the stars can say there are none.
+                if model.matchersLoaded && model.matchers.isEmpty {
                     EmptyCard(text: "Nothing is starred. Star a harness to watch what it runs.",
                               icon: "cpu",
                               actionTitle: "Open Harnesses") { app.selection = .harnesses }

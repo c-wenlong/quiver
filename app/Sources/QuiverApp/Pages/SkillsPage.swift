@@ -294,8 +294,6 @@ private struct HarnessLinksPanel: View {
     var model: SkillsModel
     var sharedDir: String
     @State private var selected: SkillRoot.ID?
-    @State private var linking = false
-    @State private var linkError: String?
 
     var body: some View {
         let roots = model.roots
@@ -317,30 +315,13 @@ private struct HarnessLinksPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if roots.isEmpty {
+                    // No harness is known yet, so there is nothing to link;
+                    // registering one is the step that helps.
                     HStack(spacing: 10) {
-                        Text("No harness skills folders found.")
+                        Text("No harness skills folders found. Register a harness first.")
                             .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        if linking {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Button("Set up") {
-                                linking = true
-                                Task {
-                                    do {
-                                        try await app.swe.runInit()
-                                        await model.load(for: app.swePath)
-                                    } catch {
-                                        linkError = error.localizedDescription
-                                    }
-                                    linking = false
-                                }
-                            }
+                        Button("Open Harnesses") { app.selection = .harnesses }
                             .secondaryButton()
-                            .hoverTip("Runs swe init, which links what is missing")
-                        }
-                    }
-                    if let linkError {
-                        Text(linkError).font(Theme.caption).foregroundStyle(Theme.dangerText)
                     }
                 } else {
                     FlowLayout(spacing: 6, lineSpacing: 6) {
