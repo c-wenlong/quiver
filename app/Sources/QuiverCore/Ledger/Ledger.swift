@@ -601,6 +601,12 @@ public actor Ledger {
                 connection = try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
             }
             let db = connection!
+            // One read transaction: both queries see the same commit, so a
+            // scan landing between them can't add a model whose price
+            // changes the first query never split on.
+            try db.execute("BEGIN")
+            // A transaction left open would fail every later BEGIN.
+            defer { if (try? db.execute("COMMIT")) == nil { try? db.execute("ROLLBACK") } }
             let used = pricing.hasHistory ? try db.modelsAndTiers() : []
             return try db.pricedGroups(
                 in: range, by: [.harness, .model], thresholds: pricing.thresholds,
