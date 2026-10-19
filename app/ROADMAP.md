@@ -133,7 +133,7 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [x] Skills: New skill (writes `~/.quiver/skills/<name>/SKILL.md`) and Link all. Needs `swe skills new --json`. ([#401](https://github.com/c-wenlong/quiver/pull/401))
 - [x] Plugins: Add marketplace (GitHub owner/repo or path) through `swe plugins marketplace add --json`. Open Explore first when the hub is empty. ([#402](https://github.com/c-wenlong/quiver/pull/402))
 - [x] Harnesses: a Detect and register button (`swe setup --apply --json`), and a form for a custom harness. ([#403](https://github.com/c-wenlong/quiver/pull/403); harness discovery instead of `swe setup --apply`)
-- [ ] Accounts: Sign in opens a terminal that says "command not found" when the CLI isn't installed. Show Install there instead.
+- [x] Accounts: Sign in opens a terminal that says "command not found" when the CLI isn't installed. Show Install there instead. ([#404](https://github.com/c-wenlong/quiver/pull/404))
 - [ ] Empty states: `EmptyCard` is a label only, and several pages tell users to run a command. Give each a button.
 - [ ] Doctor: check for a missing `~/.quiver`, a missing AGENTS.md, unlinked harnesses and an empty registry. Each finding gets a Run button.
 - [ ] Services: Sessions and Models say when a Devin or Artificial Analysis key is needed, and link to Settings › Services and the token page.
