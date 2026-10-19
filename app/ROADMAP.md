@@ -129,7 +129,7 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [ ] API keys: a provider picker built from `providers/defaults.py` and `APIKeyCheck.swift`, with a "Get a key" link instead of the free-text Provider and Variable fields. Test a key before saving.
 - [ ] API keys: offer to add `source ~/.api_keys` to `~/.zshrc` (back it up, ask first). Nothing does this today, so saved keys reach no new terminal, and the page subtitle claims they do.
 - [ ] MCP servers: an Add server sheet (stdio command, args and env, or http url and headers) and Remove. `swe mcp` has neither, and `swe mcp edit` needs `$EDITOR`. Needs `swe mcp add|remove --json`.
-- [ ] MCP secrets: `${NAME}` values live in `~/.quiver/secrets/.api_keys`, which nothing writes. Add `swe mcp secret set NAME` (0600) and a paste field per unresolved name. `swe mcp sync` writes the literal `${NAME}` into harness configs when a value is missing; refuse instead.
+- [x] MCP secrets: `${NAME}` values live in `~/.quiver/secrets/.api_keys`, which nothing writes. Add `swe mcp secret set NAME` (0600) and a paste field per unresolved name. `swe mcp sync` writes the literal `${NAME}` into harness configs when a value is missing; refuse instead. ([#398](https://github.com/c-wenlong/quiver/pull/398))
 - [ ] Skills: New skill (writes `~/.quiver/skills/<name>/SKILL.md`) and Link all. Needs `swe skills new --json`.
 - [ ] Plugins: Add marketplace (GitHub owner/repo or path) through `swe plugins marketplace add --json`. Open Explore first when the hub is empty.
 - [ ] Harnesses: a Detect and register button (`swe setup --apply --json`), and a form for a custom harness.
