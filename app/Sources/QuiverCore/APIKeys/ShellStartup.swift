@@ -69,10 +69,10 @@ public enum ShellStartup {
             if line.isEmpty || line.hasPrefix("#") { continue }
             // A trailing comment doesn't count for or against.
             if let hash = line.firstIndex(of: "#") { line = String(line[..<hash]) }
-            // Split on `&&`/`;` too: `[ -f X ] && source X` counts.
-            let words = line.replacingOccurrences(of: "&&", with: " && ")
-                .replacingOccurrences(of: ";", with: " ; ")
-                .components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            // Shell words, so a quoted path with spaces or escapes stays
+            // one argument; `&&`, `;` and `|` are words of their own, so
+            // `[ -f X ] && source X` counts.
+            let words = shellWords(line)
             var wanted = false
             for word in words {
                 if wanted, word != "&&", word != ";", word != "|", word != ")" {
@@ -89,18 +89,61 @@ public enum ShellStartup {
         return false
     }
 
-    /// The argument of a `source`/`dot` command as a file URL: quotes
-    /// stripped, a leading `~`, `$HOME` or `${HOME}` expanded, absolute
-    /// paths as is, anything relative taken against home.
+    /// A line split the way a shell reads it: quotes group and come off,
+    /// `\\` escapes outside single quotes, and `&&` `;` `|` `(` `)` are
+    /// separate words.
+    static func shellWords(_ line: String) -> [String] {
+        var words: [String] = []
+        var word = ""
+        var open = false
+        var quote: Character?
+        let chars = Array(line)
+        var i = 0
+        func flush() { if open { words.append(word) }; word = ""; open = false }
+        while i < chars.count {
+            let ch = chars[i]
+            if quote == "'" {
+                if ch == "'" { quote = nil } else { word.append(ch) }
+            } else if quote == "\"" {
+                if ch == "\"" {
+                    quote = nil
+                } else if ch == "\\", i + 1 < chars.count, "\"\\$`".contains(chars[i + 1]) {
+                    i += 1
+                    word.append(chars[i])
+                } else {
+                    word.append(ch)
+                }
+            } else if ch == "'" || ch == "\"" {
+                quote = ch
+                open = true
+            } else if ch == "\\", i + 1 < chars.count {
+                i += 1
+                word.append(chars[i])
+                open = true
+            } else if ch == " " || ch == "\t" {
+                flush()
+            } else if ch == "&", i + 1 < chars.count, chars[i + 1] == "&" {
+                flush()
+                words.append("&&")
+                i += 1
+            } else if ";|()".contains(ch) {
+                flush()
+                words.append(String(ch))
+            } else {
+                word.append(ch)
+                open = true
+            }
+            i += 1
+        }
+        flush()
+        return words
+    }
+
+    /// The argument of a `source`/`dot` command as a file URL: a leading
+    /// `~`, `$HOME` or `${HOME}` expanded, absolute paths as is, anything
+    /// relative taken against home.
     private static func sourcedURL(_ argument: String, home: URL) -> URL? {
         var text = argument
-        if text.count > 1,
-           (text.hasPrefix("\"") && text.hasSuffix("\"")
-            || text.hasPrefix("'") && text.hasSuffix("'")) {
-            text = String(text.dropFirst().dropLast())
-        }
-        // `"$HOME/…"`: the path is quoted, not escaped.
-        text = text.replacingOccurrences(of: "\\\"", with: "\"")
         if text.hasPrefix("~/") {
             text = home.path + text.dropFirst(1)
         } else if text == "~" {

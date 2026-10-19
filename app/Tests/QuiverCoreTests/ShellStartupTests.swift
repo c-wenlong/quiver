@@ -45,6 +45,24 @@ import Testing
             == #"[ -f "/opt/we\$ird/k\`.api_keys" ] && source "/opt/we\$ird/k\`.api_keys""#)
     }
 
+    @Test func sourcesRecognisesItsOwnLineForAnAwkwardPath() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "awkward-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["My Keys/.api_keys", "a$b \"c\"/k\\eys"] {
+            let keys = root.appending(path: name)
+            try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+            for home in [root, URL(fileURLWithPath: "/nonexistent-home")] {
+                let line = ShellStartup.sourceLine(for: keys, home: home)
+                #expect(ShellStartup.sources(line, keysFile: keys, home: home), "\(line)")
+            }
+        }
+        #expect(ShellStartup.shellWords(#"[ -f "a b" ] && source 'c d';x"#)
+                == ["[", "-f", "a b", "]", "&&", "source", "c d", ";", "x"])
+    }
+
     @Test func sourcesDetectsEveryForm() throws {
         // A real temp home: resolution only counts paths that exist.
         let root = FileManager.default.temporaryDirectory
