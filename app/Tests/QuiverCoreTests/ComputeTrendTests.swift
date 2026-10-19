@@ -445,11 +445,12 @@ import Testing
         #expect(model.history.temperatures.isEmpty)
         #expect(!model.temperatureAvailable)
         // Recorded even with no harness running: the Mac is still warm.
-        thermometer.reading = TemperatureReading(cpu: 58, hottest: 61, battery: 35)
+        thermometer.reading = TemperatureReading([.cpu: 58, .gpu: 61, .battery: 35])
         clock.now = Self.now.addingTimeInterval(10)
         await model.trendTick(at: clock.now)
-        #expect(model.history.temperatures.map(\.cpu) == [58])
-        #expect(model.history.temperatures.last?.battery == 35)
+        #expect(model.history.temperatures.map { $0[.cpu] } == [58])
+        #expect(model.history.temperatures.last?[.battery] == 35)
+        #expect(model.history.temperatures.last?[.gpu] == 61)
         #expect(model.temperatureAvailable)
         #expect(model.history.isEmpty)
     }
@@ -457,23 +458,39 @@ import Testing
     @Test func theTemperatureRingKeepsOnePointPerTickAndItsCapacity() {
         var history = ComputeHistory()
         let at = Self.now
-        history.appendTemperature(TemperaturePoint(at: at, cpu: 50, battery: nil))
-        history.appendTemperature(TemperaturePoint(at: at, cpu: 52, battery: nil))
-        #expect(history.temperatures.map(\.cpu) == [52])
+        history.appendTemperature(TemperaturePoint(at: at, values: [.cpu: 50]))
+        history.appendTemperature(TemperaturePoint(at: at, values: [.cpu: 52]))
+        #expect(history.temperatures.map { $0[.cpu] } == [52])
         for i in 1...ComputeHistory.capacity + 5 {
-            history.appendTemperature(TemperaturePoint(at: at.addingTimeInterval(Double(i)), cpu: Double(i),
-                                                       battery: nil))
+            history.appendTemperature(TemperaturePoint(at: at.addingTimeInterval(Double(i)),
+                                                       values: [.cpu: Double(i)]))
         }
         #expect(history.temperatures.count == ComputeHistory.capacity)
         // The window ends at the newest point and spans `window` intervals.
         let shown = history.temperatureWindow(interval: .threeSeconds)
-        #expect(shown.last?.cpu == Double(ComputeHistory.capacity + 5))
+        #expect(shown.last?[.cpu] == Double(ComputeHistory.capacity + 5))
         #expect(shown.count == ComputeHistory.window * 3 + 1)
+    }
+
+    @MainActor @Test func temperatureLinesDefaultToFourAndPersist() {
+        let defaults = UserDefaults(suiteName: "trend-\(UUID().uuidString)")!
+        let model = ComputeModel(sampler: CountingSampler([]), matchers: { [] }, gpu: FakeGPU([:]),
+                                 temperature: FakeThermometer(nil), defaults: defaults, selfPID: 99)
+        #expect(model.temperatureLines == [.cpu, .gpu, .ssd, .battery])
+        model.toggleTemperatureLine(.airflow)
+        model.toggleTemperatureLine(.ssd)
+        #expect(defaults.stringArray(forKey: ComputeModel.temperatureLinesKey) == ["cpu", "gpu", "battery", "airflow"])
+        // A fresh model reads the choice back; unknown names are skipped,
+        // and switching every line off stays off.
+        defaults.set(["gpu", "fan-speed"], forKey: ComputeModel.temperatureLinesKey)
+        #expect(ComputeModel.loadTemperatureLines(defaults) == [.gpu])
+        defaults.set([String](), forKey: ComputeModel.temperatureLinesKey)
+        #expect(ComputeModel.loadTemperatureLines(defaults).isEmpty)
     }
 
     @Test func temperaturesAgeOutWhenTheSensorsStopAnswering() {
         var history = ComputeHistory()
-        history.appendTemperature(TemperaturePoint(at: Self.now, cpu: 50, battery: nil))
+        history.appendTemperature(TemperaturePoint(at: Self.now, values: [.cpu: 50]))
         #expect(history.temperatureWindow(interval: .threeSeconds).count == 1)
         // Ticks keep coming with no reading; the old one slides off.
         let later = Self.now.addingTimeInterval(Double(ComputeHistory.window) * 3 + 1)
