@@ -131,8 +131,9 @@ private struct FanPopover: View {
 
     private var temperatureLine: String? {
         guard let point = app.compute.history.temperatures.last else { return nil }
-        let parts = [point.cpu.map { "CPU \(TemperatureChart.formatted($0))" },
-                     point.battery.map { "battery \(TemperatureChart.formatted($0))" }].compactMap { $0 }
+        let parts = [ThermalComponent.cpu, .gpu, .battery].compactMap { component in
+            point[component].map { "\(component.title) \(TemperatureChart.formatted($0))" }
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

@@ -11,16 +11,56 @@ import Testing
     @Test func theDieSensorsAverageAndJunkSensorsDrop() {
         let reading = TemperatureReading.summarise([
             ("PMU tdie1", 50), ("PMU tdie2", 60), ("PMU tdie2", 70),
-            ("PMU tdev1", -9202.9), ("PMU tcal", 51.8),
+            ("PMU tdev1", -9202.9), ("PMU tcal", 51.8), ("NAND CH0 temp", 45),
             ("gas gauge battery", 34), ("gas gauge battery", 36),
         ])
-        #expect(reading == TemperatureReading(cpu: 60, hottest: 70, battery: 35))
+        #expect(reading == TemperatureReading([.cpu: 60, .ssd: 45, .battery: 35]))
     }
 
     @Test func noKnownSensorMeansNoReading() {
         #expect(TemperatureReading.summarise([]) == nil)
-        #expect(TemperatureReading.summarise([("PMU tdev1", -9000), ("NAND CH0 temp", 45)]) == nil)
-        #expect(TemperatureReading.summarise([("gas gauge battery", 30)])?.cpu == nil)
+        #expect(TemperatureReading.summarise([("PMU tdev1", -9000), ("PMU tcal", 50)]) == nil)
+        #expect(TemperatureReading.summarise([("gas gauge battery", 30)])?[.cpu] == nil)
+    }
+
+    @Test func chipNamesParse() {
+        #expect(ThermalKeys.chip("Apple M4 Pro")! == (4, "pro"))
+        #expect(ThermalKeys.chip("Apple M1")! == (1, "base"))
+        #expect(ThermalKeys.chip("Apple M3 Ultra")! == (3, "ultra"))
+        #expect(ThermalKeys.chip("Apple A18 Pro")! == (18, "a18pro"))
+        #expect(ThermalKeys.chip("Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz") == nil)
+        #expect(ThermalKeys.chip("") == nil)
+    }
+
+    @Test func eachChipGetsItsOwnGPUKeys() {
+        let pro = ThermalKeys.keys(forBrand: "Apple M4 Pro")
+        #expect(pro[.gpu]?.contains("Tg1U") == true && pro[.gpu]?.contains("Tg0G") == false)
+        let base = ThermalKeys.keys(forBrand: "Apple M4")
+        #expect(base[.gpu]?.contains("Tg0G") == true && base[.gpu]?.contains("Tg1U") == false)
+        #expect(ThermalKeys.keys(forBrand: "Apple M2")[.gpu] == ["Tg0f", "Tg0j"])
+        // An unknown chip: the shared keys only, so HID fills the CPU.
+        let unknown = ThermalKeys.keys(forBrand: "Apple M9 Max")
+        #expect(unknown[.cpu] == nil && unknown[.gpu] == nil)
+        #expect(unknown[.ssd] == ["TH0x"] && unknown[.display] == ["TL0P"])
+    }
+
+    @Test func smcKeysFoldPerComponentAndSkipJunk() {
+        let smc = FakeSMC()
+        smc.put("Tp01", 70); smc.put("Tp05", 80); smc.put("Te05", 60)
+        smc.put("Tg1U", 55); smc.put("Tg0K", 65)
+        smc.put("TH0x", 40)
+        // An unused sensor answers about 8 °C; it must not drag a mean down.
+        smc.put("TaLP", 8.3); smc.put("TaRF", 8.3)
+        let reading = ThermalKeys.read(ThermalKeys.keys(forBrand: "Apple M4 Pro"), from: smc)
+        #expect(reading == TemperatureReading([.cpu: 70, .gpu: 60, .ssd: 40]))
+        #expect(ThermalKeys.read(ThermalKeys.keys(forBrand: "Apple M4 Pro"), from: FakeSMC()) == nil)
+    }
+
+    @Test func smcReadingsWinAndHIDFillsTheGaps() {
+        let smc = TemperatureReading([.cpu: 70, .gpu: 60])
+        let hid = TemperatureReading([.cpu: 55, .battery: 33])
+        #expect(smc.filling(from: hid) == TemperatureReading([.cpu: 70, .gpu: 60, .battery: 33]))
+        #expect(smc.filling(from: nil) == smc)
     }
 
     // MARK: SMC values
@@ -488,6 +528,7 @@ import Testing
         }
 
         func number(_ key: String) -> Double? { values[key]?.number }
+        func put(_ key: String, _ celsius: Double) { values[key] = SMCValue(type: "flt ", bytes: SMCValue.float(celsius)) }
         func set(_ key: String, _ value: UInt8) { values[key]?.bytes = [value] }
 
         func rename(_ key: String, to other: String) {

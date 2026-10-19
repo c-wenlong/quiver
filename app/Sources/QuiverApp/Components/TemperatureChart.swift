@@ -2,9 +2,28 @@ import Charts
 import QuiverCore
 import SwiftUI
 
-/// The whole Mac's temperatures over the trend window: the CPU (the mean
-/// of the SoC die sensors) and the battery, one line each, with the same
-/// hover rule and readout as the harness charts.
+extension ThermalComponent {
+    /// Fixed per component, never by rank, so switching a line off does
+    /// not repaint the others. Slots 1 to 7 of the dataviz categorical
+    /// palette, checked for colour-blind separation on the card in both
+    /// themes; three sit under 3:1 on white, so every line also carries
+    /// its name at its end and in the legend.
+    var colour: Color {
+        switch self {
+        case .cpu: Color(light: "#2a78d6", dark: "#3987e5")
+        case .gpu: Color(light: "#eb6834", dark: "#d95926")
+        case .memory: Color(light: "#1baf7a", dark: "#199e70")
+        case .ssd: Color(light: "#eda100", dark: "#c98500")
+        case .battery: Color(light: "#e87ba4", dark: "#d55181")
+        case .airflow: Color(light: "#008300", dark: "#008300")
+        case .display: Color(light: "#6250d6", dark: "#9085e9")
+        }
+    }
+}
+
+/// The whole Mac's temperatures over the trend window: one line per
+/// component that answered and is switched on, with the same hover rule
+/// and readout as the harness charts. The legend above switches lines.
 struct TemperatureChart: View {
     @Environment(AppModel.self) private var app
     var height: CGFloat = 180
@@ -12,27 +31,16 @@ struct TemperatureChart: View {
     @State private var pointerInside = false
     @State private var bubbleSize: CGSize = .zero
 
-    /// One line on the chart.
-    enum Sensor: String, CaseIterable {
-        case cpu = "CPU", battery = "Battery"
-
-        func value(_ point: TemperaturePoint) -> Double? {
-            switch self {
-            case .cpu: point.cpu
-            case .battery: point.battery
-            }
-        }
-
-        var colour: Color {
-            switch self {
-            case .cpu: Theme.warning
-            case .battery: Theme.accentFill
-            }
-        }
-    }
+    private var model: ComputeModel { app.compute }
 
     private var points: [TemperaturePoint] {
-        app.compute.history.temperatureWindow(interval: app.compute.trendInterval)
+        model.history.temperatureWindow(interval: model.trendInterval)
+    }
+
+    /// Every component with a reading in the window, in palette order.
+    private func available(_ points: [TemperaturePoint]) -> [ThermalComponent] {
+        let present = Set(points.flatMap(\.values.keys))
+        return ThermalComponent.allCases.filter(present.contains)
     }
 
     /// Ten-degree steps around the plotted values, at least 30 °C tall,
@@ -49,27 +57,76 @@ struct TemperatureChart: View {
 
     var body: some View {
         let points = self.points
-        let values = points.flatMap { point in Sensor.allCases.compactMap { $0.value(point) } }
+        let available = available(points)
+        let shown = available.filter(model.temperatureLines.contains)
+        VStack(alignment: .leading, spacing: 10) {
+            legend(available, latest: points.last)
+            if shown.isEmpty {
+                Text("Every line is off. Pick one above.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: height)
+            } else {
+                chart(points, shown: shown)
+            }
+        }
+    }
+
+    /// One chip per component: its colour, name and latest reading. A
+    /// chip that is off keeps its name but drops its colour.
+    private func legend(_ components: [ThermalComponent], latest: TemperaturePoint?) -> some View {
+        HStack(spacing: 6) {
+            ForEach(components, id: \.self) { component in
+                let on = model.temperatureLines.contains(component)
+                Button {
+                    model.toggleTemperatureLine(component)
+                } label: {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(on ? component.colour : Color.clear)
+                            .overlay(Circle().strokeBorder(on ? Color.clear : Theme.borderStrong, lineWidth: 1))
+                            .frame(width: 8, height: 8)
+                        Text(component.title)
+                            .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
+                        if let value = latest?[component] {
+                            Text(Self.formatted(value)).monospacedDigit()
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    .font(Theme.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(on ? Theme.subtle : Color.clear, in: .capsule)
+                    .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+                    .contentShape(.capsule)
+                }
+                .plainButton(cornerRadius: 12)
+                .help(on ? "Hide \(component.title)" : "Show \(component.title)")
+            }
+        }
+    }
+
+    private func chart(_ points: [TemperaturePoint], shown: [ThermalComponent]) -> some View {
+        let values = points.flatMap { point in shown.compactMap { point[$0] } }
         // The same x range as the harness charts: the whole window, so
         // the first minutes draw from the right rather than stretched.
-        let end = app.compute.history.temperatureEnd ?? .now
-        let domain = app.compute.history.window(endingAt: end, interval: app.compute.trendInterval)
-        Chart {
-            ForEach(Sensor.allCases, id: \.self) { sensor in
-                ForEach(points.filter { sensor.value($0) != nil }, id: \.at) { point in
-                    LineMark(x: .value("Time", point.at), y: .value("°C", sensor.value(point) ?? 0),
-                             series: .value("Sensor", sensor.rawValue))
-                        .foregroundStyle(sensor.colour)
+        let end = model.history.temperatureEnd ?? .now
+        let domain = model.history.window(endingAt: end, interval: model.trendInterval)
+        return Chart {
+            ForEach(shown, id: \.self) { component in
+                ForEach(points.filter { $0[component] != nil }, id: \.at) { point in
+                    LineMark(x: .value("Time", point.at), y: .value("°C", point[component] ?? 0),
+                             series: .value("Component", component.title))
+                        .foregroundStyle(component.colour)
                         .interpolationMethod(.monotone)
                         .lineStyle(StrokeStyle(lineWidth: 2))
                 }
-                if let last = points.last(where: { sensor.value($0) != nil }), let value = sensor.value(last) {
+                if let last = points.last(where: { $0[component] != nil }), let value = last[component] {
                     PointMark(x: .value("Time", last.at), y: .value("°C", value))
-                        .foregroundStyle(sensor.colour)
+                        .foregroundStyle(component.colour)
                         .symbolSize(16)
                         .annotation(position: .trailing, alignment: .center, spacing: 6,
                                     overflowResolution: .init(x: .disabled, y: .disabled)) {
-                            Text(sensor.rawValue)
+                            Text(component.title)
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         }
                 }
@@ -90,12 +147,13 @@ struct TemperatureChart: View {
                 AxisValueLabel { Text("\(Int((value.as(Double.self) ?? 0).rounded())) °C") }
             }
         }
-        .padding(.trailing, 56)
+        .padding(.trailing, 64)
         .frame(height: height)
-        .chartOverlay { proxy in hoverOverlay(proxy, points: points) }
+        .chartOverlay { proxy in hoverOverlay(proxy, points: points, shown: shown) }
     }
 
-    private func hoverOverlay(_ proxy: ChartProxy, points: [TemperaturePoint]) -> some View {
+    private func hoverOverlay(_ proxy: ChartProxy, points: [TemperaturePoint],
+                              shown: [ThermalComponent]) -> some View {
         GeometryReader { geometry in
             Rectangle().fill(.clear).contentShape(.rect)
                 .onContinuousHover { phase in
@@ -114,7 +172,7 @@ struct TemperatureChart: View {
                let nearest = points.min(by: {
                    abs($0.at.timeIntervalSince(hovered)) < abs($1.at.timeIntervalSince(hovered))
                }) {
-                bubble(nearest)
+                bubble(nearest, shown: shown)
                     .fixedSize()
                     .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
                     .position(bubbleOrigin(atX: x, plot: geometry[plot]))
@@ -132,13 +190,13 @@ struct TemperatureChart: View {
         return CGPoint(x: cx, y: plot.minY + bubbleSize.height / 2 + 4)
     }
 
-    private func bubble(_ point: TemperaturePoint) -> some View {
+    private func bubble(_ point: TemperaturePoint, shown: [ThermalComponent]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Sensor.allCases, id: \.self) { sensor in
-                if let value = sensor.value(point) {
+            ForEach(shown, id: \.self) { component in
+                if let value = point[component] {
                     HStack(spacing: 6) {
-                        Circle().fill(sensor.colour).frame(width: 8, height: 8)
-                        Text(sensor.rawValue)
+                        Circle().fill(component.colour).frame(width: 8, height: 8)
+                        Text(component.title)
                         Spacer()
                         Text(Self.formatted(value)).monospacedDigit()
                     }

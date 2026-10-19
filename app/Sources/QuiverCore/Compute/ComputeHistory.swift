@@ -61,17 +61,18 @@ public struct TrendPoint: Sendable, Equatable {
     }
 }
 
-/// The Mac's temperatures at one tick, for the Temperature tab.
+/// The Mac's temperatures at one tick, for the Temperature tab: one
+/// value per component that answered.
 public struct TemperaturePoint: Sendable, Equatable {
     public var at: Date
-    public var cpu: Double?
-    public var battery: Double?
+    public var values: [ThermalComponent: Double]
 
-    public init(at: Date, cpu: Double?, battery: Double?) {
+    public init(at: Date, values: [ThermalComponent: Double]) {
         self.at = at
-        self.cpu = cpu
-        self.battery = battery
+        self.values = values
     }
+
+    public subscript(_ component: ThermalComponent) -> Double? { values[component] }
 }
 
 /// The running history behind the Compute page's trend card: a ring of
