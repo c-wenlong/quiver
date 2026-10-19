@@ -353,7 +353,7 @@ public final class SkillsModel {
         if !failures.isEmpty { parts.append(failures.joined(separator: "; ")) }
         if !skipped.isEmpty {
             let names = skipped.map { "\($0.name) (\($0.explanation))" }.joined(separator: ", ")
-            parts.append("\(skipped.count) needs a look: \(names)")
+            parts.append("\(skipped.count) \(skipped.count == 1 ? "needs" : "need") a look: \(names)")
         }
         linkAllSummary = parts.joined(separator: " ")
     }

@@ -73,6 +73,17 @@ class SkillsNewTest(unittest.TestCase):
         self.assertEqual(name, "s")
         self.assertEqual(parsed, desc)
 
+    def test_description_with_both_quotes_round_trips_as_yaml(self):
+        from quiver.skills.discovery import parse_skill_md
+
+        for i, desc in enumerate(["it's \"quoted\"", "- starts with a dash", "ends with '"]):
+            name = f"s{i}"
+            code, out, err = self.run_skills("new", name, f"--description={desc}")
+            self.assertEqual(code, 0, out + err)
+            self.assertEqual(parse_skill_md(self.skill(name))[1], desc)
+        # Single-quoted YAML: the quote is doubled, nothing else escaped.
+        self.assertIn("description: 'it''s \"quoted\"'", self.skill("s0").read_text())
+
     def test_existing_name_refused_and_untouched(self):
         self.skill("s").parent.mkdir()
         self.skill("s").write_text("custom\n")

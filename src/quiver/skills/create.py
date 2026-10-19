@@ -37,14 +37,19 @@ def validate_name(name: str) -> str | None:
 
 
 def description_line(description: str) -> str:
-    """The description as one safe YAML scalar."""
+    """The description as one YAML scalar.
+
+    Harnesses parse frontmatter as real YAML, so text that YAML would read
+    differently goes in single quotes, with ``'`` doubled as YAML wants;
+    discovery's reader undoes exactly that.
+    """
     if description and (
         ":" in description or "#" in description or '"' in description
-        or "'" in description or description != description.strip()
+        or "'" in description or "\\" in description
+        or description != description.strip()
+        or description[0] in "!&*[]{}|>%@`,?-"
     ):
-        # discovery's frontmatter reader strips the outer quotes but never
-        # unescapes, so escaping would change what it reads back.
-        return f'"{description}"'
+        return "'" + description.replace("'", "''") + "'"
     return description
 
 

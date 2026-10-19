@@ -60,6 +60,17 @@ def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple
     return roots
 
 
+def _unquote(val: str) -> str:
+    """A one-line YAML scalar's text: one matching pair of quotes comes off,
+    with YAML's escapes for that style (``''`` in single quotes, ``\\"`` and
+    ``\\\\`` in double quotes). A bare value is returned as written."""
+    if len(val) >= 2 and val[0] == val[-1] == "'":
+        return val[1:-1].replace("''", "'")
+    if len(val) >= 2 and val[0] == val[-1] == '"':
+        return re.sub(r'\\(["\\])', r"\1", val[1:-1])
+    return val
+
+
 def parse_skill_md(md_path: Path) -> tuple[str, str]:
     """Return (name, description) from SKILL.md YAML frontmatter."""
     name, desc = None, ""
@@ -82,9 +93,9 @@ def parse_skill_md(md_path: Path) -> tuple[str, str]:
                     key = match.group(1).lower()
                     val = match.group(2).strip()
                     if key == "name":
-                        name = val.strip("\"'")
+                        name = _unquote(val)
                     elif key == "description" and val and val not in (">", ">-", "|", "|-"):
-                        desc = val.strip("\"'")
+                        desc = _unquote(val)
                 elif key == "description" and line.strip():
                     buf.append(line)
             if key == "description" and buf and not desc:
