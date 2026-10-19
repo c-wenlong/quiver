@@ -1298,8 +1298,9 @@ def cmd_add(args):
     if interactive:
         return _add_interactive(args)
     if len(args) < 2:
-        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"))
-        print(c("dim", "  Interactive: swe add -i   ·   swe add <name> -i"))
+        print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"),
+              file=refusal)
+        print(c("dim", "  Interactive: swe add -i   ·   swe add <name> -i"), file=refusal)
         return 1
     tools = load_registry()
     name = args[0]
@@ -1341,7 +1342,7 @@ def cmd_add(args):
         print(c("red", f"  {name!r} isn't a valid harness name: letters, digits,"
                        " then . _ - too"), file=refusal)
         return 1
-    if no_replace and name in tools:
+    if no_replace and resolve(tools, name):
         print(c("red", f"  {name} is already registered"), file=refusal)
         return 1
 
