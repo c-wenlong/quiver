@@ -75,6 +75,9 @@ class _SessionFixture:
     timestamp: int   # milliseconds since epoch
 
 
+_FIXTURE_HOME = "/home/fixture-user"
+
+
 def _sessions_fixture(now_ms: int):
     """Build session fixtures with deterministic relative-time diffs.
 
@@ -85,7 +88,10 @@ def _sessions_fixture(now_ms: int):
       - session C: ~3h ago   → "3h ago"
       - session D: ~2d ago   → "2d ago"
     """
-    # Use Path.home() so the tilde-substitution path matches.
+    # Use the home dir so the tilde-substitution path matches. Callers pin
+    # HOME to _FIXTURE_HOME: --search matches on the path, so a real HOME that
+    # happens to contain "claude" (a temp dir under a claude-* folder) would
+    # make every fixture session match.
     home = os.path.expanduser("~")
     project_a = os.path.join(home, "ProjectA")
     project_b = os.path.join(home, "Documents", "ProjectB")  # longer path
@@ -273,9 +279,11 @@ def _run_cmd_session(args):
     # Now in ms = some far-future stable point so the relative-time
     # math is deterministic across test runs.
     now_ms = 1_700_000_000_000  # 2023-11-14 in ms; no semaphore on it.
-    sessions = _sessions_fixture(now_ms)
+    with patch.dict(os.environ, {"HOME": _FIXTURE_HOME}):
+        sessions = _sessions_fixture(now_ms)
 
     patches = [
+        patch.dict(os.environ, {"HOME": _FIXTURE_HOME}),
         patch(
             "quiver.sessions.commands.get_all_sessions",
             return_value=list(sessions),

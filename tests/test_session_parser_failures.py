@@ -47,6 +47,7 @@ def _cursor_home(tmp: str, uuid: str = "f36fd647-90f5-454e-b460-1f37ce0653b9",
 class CursorParserTest(unittest.TestCase):
     def setUp(self):
         failures.clear()
+        self.addCleanup(failures.clear)
 
     def test_finds_a_session(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -107,6 +108,9 @@ class CursorParserTest(unittest.TestCase):
 class FailureReportingTest(unittest.TestCase):
     def setUp(self):
         failures.clear()
+        # failures is process-global; without this the last test's records
+        # show up in the "parser(s) failed" footer of whatever runs next.
+        self.addCleanup(failures.clear)
 
     def test_a_raising_parser_is_recorded_not_swallowed(self):
         import quiver.sessions.aggregator as agg
