@@ -528,7 +528,7 @@ extension PricingModelTests {
             event("claude-opus-5-5", tokens: 100, harness: "codex"),
         ], catalog: priced)
         await model.load()
-        model.harnessFilter = "codex"
+        model.harnessFilter = ["codex"]
         await model.load()
         let rows = model.groups.flatMap(\.models)
         #expect(rows.map(\.model).sorted() == ["claude-opus-5-5", "gpt-5"])
@@ -546,9 +546,45 @@ extension PricingModelTests {
         await ledger.setPricing(priced)
         await model.load()
         #expect(model.unpriced.map(\.model).sorted() == ["gpt-5", "kimi-k2", "swe-2-max"])
-        model.harnessFilter = "codex"
+        model.harnessFilter = ["codex"]
         await model.load()
         #expect(model.unpriced.map(\.model) == ["kimi-k2", "gpt-5"])
+        _ = temp
+    }
+
+    @Test func `two picked harnesses keep both their models and no others`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex"),
+            event("claude-opus-5-5", tokens: 100, harness: "codex"),
+            event("claude-opus-5-5", tokens: 20, harness: "gemini"),
+            event("gemini-2.5-pro", tokens: 70, harness: "gemini"),
+        ], catalog: priced)
+        await model.load()
+        model.harnessFilter = ["claude", "codex"]
+        await model.load()
+        let rows = model.groups.flatMap(\.models)
+        #expect(rows.map(\.model).sorted() == ["claude-opus-5-5", "claude-sonnet-4-6", "gpt-5"])
+        // gemini's share of a shared model stays out too.
+        #expect(rows.first { $0.model == "claude-opus-5-5" }?.harnesses == ["codex"])
+        #expect(model.groups.reduce(0) { $0 + $1.tokens } == 450)
+        _ = temp
+    }
+
+    @Test func `a picked harness that vanished drops out and the rest stay`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
+            event("gpt-5", tokens: 300, harness: "codex",
+                  at: Date().addingTimeInterval(-60 * 86_400)),
+        ], catalog: priced)
+        model.period = .allTime
+        await model.load()
+        model.harnessFilter = ["claude", "codex"]
+        await model.load()
+        model.period = .today
+        await model.load()
+        #expect(model.harnessFilter == ["claude"])
+        #expect(model.groups.flatMap(\.models).map(\.model) == ["claude-sonnet-4-6"])
         _ = temp
     }
 
@@ -560,12 +596,12 @@ extension PricingModelTests {
         ], catalog: priced)
         model.period = .allTime
         await model.load()
-        model.harnessFilter = "codex"
+        model.harnessFilter = ["codex"]
         await model.load()
         #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
         model.period = .today
         await model.load()
-        #expect(model.harnessFilter == nil)
+        #expect(model.harnessFilter.isEmpty)
         #expect(model.harnessOptions == ["claude"])
         _ = temp
     }
@@ -619,7 +655,7 @@ extension PricingModelTests {
             })
         model.period = .allTime
         await model.load()
-        model.harnessFilter = "codex"
+        model.harnessFilter = ["codex"]
         await model.load()
 
         // The stale "today" load (no codex in it) parks on the gate; its
@@ -636,7 +672,7 @@ extension PricingModelTests {
         await model.load()
         waiter.resume()
         await stale.value
-        #expect(model.harnessFilter == "codex")
+        #expect(model.harnessFilter == ["codex"])
         #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
     }
 
@@ -646,7 +682,7 @@ extension PricingModelTests {
             event("swe-2-medium", tokens: 100, harness: "codex"),
         ], catalog: priced)
         await model.load()
-        model.harnessFilter = "codex"
+        model.harnessFilter = ["codex"]
         await model.load()
         // The sheet warns that a saved price applies to every harness, so
         // the names it lists must too.

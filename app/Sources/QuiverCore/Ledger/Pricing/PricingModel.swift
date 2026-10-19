@@ -79,10 +79,10 @@ public final class PricingModel {
     /// Harnesses with usage in the selected period, most tokens first:
     /// the filter menu's options after its "All harnesses" row.
     public private(set) var harnessOptions: [String] = []
-    /// When set, every list on the page shows only this harness's usage.
-    /// A selection whose usage vanished (a period change) falls back to
-    /// all on the next load. Not persisted.
-    public var harnessFilter: String?
+    /// The picked harnesses: every list on the page shows only their
+    /// usage, and an empty set shows all. A pick whose usage vanished (a
+    /// period change) drops out on the next load. Not persisted.
+    public var harnessFilter: Set<String> = []
     public private(set) var groups: [ProviderGroup] = []
     /// Models with unpriced tokens, largest first; the warning button's list.
     public private(set) var unpriced: [PricedModel] = []
@@ -142,11 +142,9 @@ public final class PricingModel {
         harnessOptions = byHarness
             .sorted { ($0.value, $0.key) > ($1.value, $1.key) }
             .map(\.key)
-        if let harnessFilter, byHarness[harnessFilter] == nil {
-            self.harnessFilter = nil
-        }
-        let filter = harnessFilter
-        let slices = filter == nil ? all : all.filter { $0.harness == filter }
+        let live = harnessFilter.filter { byHarness[$0] != nil }
+        if live != harnessFilter { harnessFilter = live }
+        let slices = live.isEmpty ? all : all.filter { live.contains($0.harness) }
         let catalog = await ledger.catalog()
         guard generation == loadGeneration else { return }
         var merged: [String: PricedModel] = [:]
