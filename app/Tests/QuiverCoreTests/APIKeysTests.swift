@@ -569,6 +569,47 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(try String(contentsOf: real, encoding: .utf8) == "export A=\"2\"\n")
     }
 
+    @Test func theDefaultFileSitsUnderQuiverSecrets() throws {
+        let home = try temp()
+        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        #expect(APIKeysStore.defaultURL(home: home) == current)
+        // An unmigrated machine keeps editing the file it already has.
+        let legacy = home.appending(path: ".api_keys")
+        try "export A=\"1\"\n".write(to: legacy, atomically: true, encoding: .utf8)
+        #expect(APIKeysStore.defaultURL(home: home) == legacy)
+        try FileManager.default.createDirectory(at: current.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "export A=\"1\"\n".write(to: current, atomically: true, encoding: .utf8)
+        #expect(APIKeysStore.defaultURL(home: home) == current)
+    }
+
+    @Test func aFirstSaveCreatesItsFolderPrivatelyAndSealsIt() throws {
+        let home = try temp()
+        let url = APIKeysStore.defaultURL(home: home)
+        let secrets = APIKeysStore.secretsFolder(home: home)
+        let store = APIKeysStore(url: url, backupDirectory: home.appending(path: "backups"), sealedFolder: secrets)
+        var (file, stamp) = try store.load()
+        try file.set(name: "A", value: "1", provider: "P")
+        try store.save(file, over: stamp)
+        for folder in [secrets, url.deletingLastPathComponent()] {
+            let mode = try FileManager.default.attributesOfItem(atPath: folder.path)[.posixPermissions]
+            #expect((mode as? NSNumber)?.intValue == 0o700)
+        }
+        // An old hub's root .gitignore may not cover secrets/; this one does.
+        #expect(try String(contentsOf: secrets.appending(path: ".gitignore"), encoding: .utf8) == APIKeysStore.sealBody)
+    }
+
+    @Test func aFileOutsideTheSealedFolderLeavesItAlone() throws {
+        let home = try temp()
+        let url = home.appending(path: "dotfiles/api_keys")
+        let secrets = APIKeysStore.secretsFolder(home: home)
+        let store = APIKeysStore(url: url, backupDirectory: home.appending(path: "backups"), sealedFolder: secrets)
+        var (file, stamp) = try store.load()
+        try file.set(name: "A", value: "1", provider: "P")
+        try store.save(file, over: stamp)
+        #expect(!FileManager.default.fileExists(atPath: secrets.path))
+    }
+
     @Test func aFileThatIsNotUTF8IsNotRewritten() throws {
         let dir = try temp()
         let url = dir.appending(path: ".api_keys")

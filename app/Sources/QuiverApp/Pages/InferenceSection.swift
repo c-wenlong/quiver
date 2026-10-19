@@ -2,7 +2,7 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// Settings › Providers › Inference: every key in `~/.api_keys` and every
+/// Settings › Providers › Inference: every key in the API keys file and every
 /// plan Quiver knows, in one list you can drag into your own order and
 /// filter by what the key is known to be and by kind. A key is masked
 /// until revealed; a click on a row opens it.

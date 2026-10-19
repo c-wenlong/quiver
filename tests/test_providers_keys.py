@@ -78,11 +78,15 @@ class ReadKeyTest(unittest.TestCase):
 
 
 class DefaultKeysDirTest(unittest.TestCase):
-    def test_default_keys_dir_points_to_dot_api_keys(self):
-        self.assertEqual(default_keys_dir(Path("/tmp/home")), Path("/tmp/home/.api_keys"))
+    def test_default_keys_dir_sits_under_quiver_secrets(self):
+        self.assertEqual(default_keys_dir(Path("/tmp/does-not-exist-home")),
+                         Path("/tmp/does-not-exist-home/.quiver/secrets/providers/.api_keys"))
 
-    def test_default_keys_dir_defaults_to_home(self):
-        self.assertEqual(default_keys_dir(), Path.home() / ".api_keys")
+    def test_an_unmigrated_home_keeps_reading_dot_api_keys(self):
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".api_keys").write_text("export OPENAI_API_KEY=sk-test\n")
+            self.assertEqual(default_keys_dir(home), home / ".api_keys")
 
 
 class ReadShellExportKeysTest(unittest.TestCase):

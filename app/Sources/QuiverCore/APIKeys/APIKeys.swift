@@ -34,7 +34,7 @@ public enum APIKeysError: Error, Equatable, LocalizedError {
 }
 
 /// A shell file of `export NAME="value"` lines grouped under `# PROVIDER`
-/// comments, as `~/.api_keys` is. Edits rewrite only the lines they touch;
+/// comments, as the API keys file is. Edits rewrite only the lines they touch;
 /// every other line, comment and blank line comes back exactly as it was.
 public struct APIKeysFile: Equatable, Sendable {
     public struct Entry: Equatable, Sendable, Identifiable {
@@ -477,9 +477,35 @@ public struct APIKeysStore: Sendable {
     /// and swap; tests use it to edit the file at the worst moment.
     var beforeReplace: (@Sendable () -> Void)?
 
-    public init(url: URL, backupDirectory: URL) {
+    /// A folder that must never be versioned, such as ~/.quiver/secrets.
+    /// A save into it first gives it its own `.gitignore` of `*`, which git
+    /// lets win over whatever the hub's root `.gitignore` says.
+    public let sealedFolder: URL?
+
+    public init(url: URL, backupDirectory: URL, sealedFolder: URL? = nil) {
         self.url = url
         self.backupDirectory = backupDirectory
+        self.sealedFolder = sealedFolder
+    }
+
+    /// The same text `swe init` writes (`paths.SECRETS_GITIGNORE_BODY`).
+    static let sealBody = "# Credential values. Never versioned, whatever ../.gitignore says.\n*\n"
+
+    /// ~/.quiver/secrets, where the default keys file lives.
+    public static func secretsFolder(home: URL) -> URL {
+        home.appending(path: ".quiver/secrets")
+    }
+
+    /// ~/.quiver/secrets/providers/.api_keys, or ~/.api_keys on a machine
+    /// `swe init` has not migrated yet. After the move ~/.api_keys is a
+    /// symlink to the new file, so either path edits the same keys.
+    public static func defaultURL(home: URL) -> URL {
+        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let legacy = home.appending(path: ".api_keys")
+        let manager = FileManager.default
+        let currentIsThere = manager.fileExists(atPath: current.path)
+            || (try? manager.destinationOfSymbolicLink(atPath: current.path)) != nil
+        return !currentIsThere && manager.fileExists(atPath: legacy.path) ? legacy : current
     }
 
     /// The real file behind a symlink, so a save doesn't replace the link.
@@ -522,7 +548,10 @@ public struct APIKeysStore: Sendable {
                 backupTemp = try preparePrivately(previous, beside: backup)
                 prepared.append(backupTemp!)
             }
-            try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try seal(around: target)
+            // Private like the file: on a fresh machine this creates secrets/.
+            try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
             let targetTemp = try preparePrivately(Data(file.text.utf8), beside: target)
             prepared.append(targetTemp)
 
@@ -536,6 +565,17 @@ public struct APIKeysStore: Sendable {
         } catch {
             throw APIKeysError.unwritable(error.localizedDescription)
         }
+    }
+
+    private func seal(around target: URL) throws {
+        guard let folder = sealedFolder?.resolvingSymlinksInPath(),
+              target.path.hasPrefix(folder.path + "/") else { return }
+        let manager = FileManager.default
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true,
+                                    attributes: [.posixPermissions: 0o700])
+        let seal = folder.appending(path: ".gitignore")
+        guard (try? String(contentsOf: seal, encoding: .utf8)) != Self.sealBody else { return }
+        try Self.sealBody.write(to: seal, atomically: true, encoding: .utf8)
     }
 
     /// A temp file created 600 beside `destination`, so the secret is never
