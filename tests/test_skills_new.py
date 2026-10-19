@@ -112,6 +112,8 @@ class SkillsNewTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("swe skills new", out)
         self.assertEqual(self.run_skills("new")[0], 1)
+        self.assertEqual(self.run_skills("new", "help")[0], 0)
+        self.assertTrue(self.skill("help").exists())
         self.assertEqual(self.run_skills("new", "a", "b")[0], 1)
         self.assertEqual(self.run_skills("new", "a", "--bogus")[0], 1)
         self.assertEqual(self.run_skills("new", "a", "--description")[0], 1)
