@@ -137,6 +137,124 @@ extension SelectMenu {
     }
 }
 
+/// SelectMenu's face over one pick from a list drawn by Quiver, not the
+/// system menu: each row has its logo, a check on the current one, and the
+/// app's own hover. A click picks it and closes the list; a long list
+/// scrolls. For lists whose rows carry logos (providers, harnesses).
+struct PopoverSelect<Value: Hashable>: View {
+    var options: [(value: Value, title: String, icon: String?)]
+    @Binding var selection: Value
+    /// What the face shows; the selected option's title when nil.
+    var title: String? = nil
+    @State private var open = false
+    @State private var hovering = false
+    /// The row the arrow keys are on; Return picks it.
+    @State private var highlighted: Value?
+    @FocusState private var listFocused: Bool
+
+    private var current: (title: String, icon: String?) {
+        let picked = options.first { $0.value == selection }
+        return (title ?? picked?.title ?? "", title == nil ? picked?.icon : nil)
+    }
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 6) {
+                if let icon = current.icon, HarnessIcon.exists(for: icon) { HarnessIcon(harness: icon, size: 16) }
+                Text(current.title).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .font(Theme.bodySmall)
+            .padding(.horizontal, 12)
+            .frame(height: Theme.fieldHeight)
+            .fixedSize()
+            .background(Theme.field, in: .rect(cornerRadius: Theme.selectRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.selectRadius)
+                .strokeBorder(hovering ? Theme.borderHover : Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.selectRadius))
+        }
+        .plainButton(cornerRadius: Theme.selectRadius)
+        .onHover { hovering = $0 }
+        .fixedSize()
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            // Opens on the current pick, so it isn't below the fold. The
+            // arrow keys move the highlight, like the system menu's.
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(options, id: \.value) { option in
+                            row(option).id(option.value)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+                .focusable()
+                .focusEffectDisabled()
+                .focused($listFocused)
+                .onAppear {
+                    highlighted = selection
+                    listFocused = true
+                    proxy.scrollTo(selection, anchor: .center)
+                }
+                .onKeyPress(.upArrow) { step(-1, proxy) }
+                .onKeyPress(.downArrow) { step(1, proxy) }
+                .onKeyPress(.return) {
+                    guard let highlighted else { return .ignored }
+                    pick(highlighted)
+                    return .handled
+                }
+            }
+            .frame(minWidth: 220, maxHeight: 360)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private func pick(_ value: Value) {
+        selection = value
+        open = false
+    }
+
+    private func step(_ by: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
+        guard !options.isEmpty else { return .ignored }
+        let index = options.firstIndex { $0.value == highlighted } ?? (by > 0 ? -1 : options.count)
+        let next = options[min(max(index + by, 0), options.count - 1)].value
+        highlighted = next
+        proxy.scrollTo(next)
+        return .handled
+    }
+
+    private func row(_ option: (value: Value, title: String, icon: String?)) -> some View {
+        let on = option.value == selection
+        return Button {
+            pick(option.value)
+        } label: {
+            HStack(spacing: 8) {
+                Group {
+                    if let icon = option.icon, HarnessIcon.exists(for: icon) {
+                        HarnessIcon(harness: icon, size: 16)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(width: 16, height: 16)
+                Text(option.title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Spacer(minLength: 12)
+                Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .opacity(on ? 1 : 0)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(option.value == highlighted ? Theme.rowHover : .clear)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 0)
+        .onHover { if $0 { highlighted = option.value } }
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
 /// SelectMenu's face over a set of picks: each option toggles on its own,
 /// and the popover stays open so several can be ticked in one go. An empty
 /// set is the "all" row at the top. Options carry an optional harness id,
