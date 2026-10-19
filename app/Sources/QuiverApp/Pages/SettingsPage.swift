@@ -399,7 +399,9 @@ private struct SettingsSectionView: View {
         SettingsCard {
             PathRow(title: "swe executable", placeholder: "/opt/homebrew/bin/swe",
                     stored: app.swePath, draft: $drafts.swe, running: SweLocation.executable(override: app.swePath),
-                    hint: "Empty uses the swe your login shell finds.") { app.swePath = $0 }
+                    hint: SweLocation.bundled == nil
+                        ? "Empty uses the swe your login shell finds."
+                        : "Empty uses the swe that comes with Quiver.") { app.swePath = $0 }
             SettingsDivider()
             PathRow(title: "API keys file", placeholder: "~/.api_keys",
                     stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,

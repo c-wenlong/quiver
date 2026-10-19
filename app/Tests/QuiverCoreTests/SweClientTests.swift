@@ -102,13 +102,42 @@ func fixture(_ name: String) throws -> Data {
 }
 
 @Suite struct SweLocationTests {
-    @Test func aChosenPathWinsOverPATH() {
-        #expect(SweLocation.executable(override: "/opt/quiver/bin/swe") == "/opt/quiver/bin/swe")
+    @Test func aChosenPathWinsOverTheBundledOneAndPATH() {
+        #expect(SweLocation.executable(override: "/opt/quiver/bin/swe", bundled: "/A/swe")
+            == "/opt/quiver/bin/swe")
+        #expect(SweLocation.executable(override: "/opt/quiver/bin/swe", bundled: nil)
+            == "/opt/quiver/bin/swe")
     }
 
-    @Test func blankOrMissingOverrideMeansPATH() {
-        #expect(SweLocation.executable(override: nil) == "swe")
-        #expect(SweLocation.executable(override: "  ") == "swe")
+    @Test func blankOrMissingOverrideMeansTheBundledSwe() {
+        #expect(SweLocation.executable(override: nil, bundled: "/A/swe") == "/A/swe")
+        #expect(SweLocation.executable(override: "  ", bundled: "/A/swe") == "/A/swe")
+    }
+
+    @Test func withoutABundledSweItIsWhateverPATHFinds() {
+        #expect(SweLocation.executable(override: nil, bundled: nil) == "swe")
+        #expect(SweLocation.executable(override: "  ", bundled: nil) == "swe")
+    }
+
+    @Test func theBundledSweIsFoundOnlyWhenItIsExecutable() throws {
+        let app = FileManager.default.temporaryDirectory
+            .appending(path: "SweLocationTests-\(UUID().uuidString).app")
+        defer { try? FileManager.default.removeItem(at: app) }
+        let bin = app.appending(path: "Contents/Resources/swe/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try Data("""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <plist version="1.0"><dict>
+            <key>CFBundleIdentifier</key><string>com.example.swe-location-tests</string>
+            </dict></plist>
+            """.utf8).write(to: app.appending(path: "Contents/Info.plist"))
+        let shim = bin.appending(path: "swe")
+        try Data("#!/bin/sh\n".utf8).write(to: shim)
+        let bundle = try #require(Bundle(url: app))
+        #expect(SweLocation.bundled(in: bundle) == nil)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+        #expect(SweLocation.bundled(in: bundle) == shim.path)
     }
 }
 

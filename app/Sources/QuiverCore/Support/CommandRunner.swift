@@ -21,15 +21,16 @@ public protocol CommandRunning: Sendable {
 /// Runs a real executable, with the PATH a login shell would have.
 ///
 /// A GUI app launched from Finder or the Dock inherits launchd's minimal
-/// PATH, so `swe` (a pip console script, often under ~/.local/bin or a
-/// venv) and the harness CLIs it shells out to would not be found. With no
-/// environment given, the login shell's is resolved on first use, off the
-/// main thread, and cached.
+/// PATH, so a `swe` on PATH (a pip console script, often under ~/.local/bin
+/// or a venv) and the harness CLIs swe shells out to would not be found.
+/// With no environment given, the login shell's is resolved on first use,
+/// off the main thread, and cached.
 public struct ProcessRunner: CommandRunning {
     public var executable: String
     public var environment: [String: String]?
 
-    public init(executable: String = "swe", environment: [String: String]? = nil) {
+    public init(executable: String = SweLocation.executable(override: nil),
+                environment: [String: String]? = nil) {
         self.executable = executable
         self.environment = environment
     }
