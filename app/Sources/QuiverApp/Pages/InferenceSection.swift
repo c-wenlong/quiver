@@ -62,17 +62,17 @@ struct InferenceSection: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
             }
+            if let added = sourceAdded {
+                Text(added).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            if let error = sourceError {
+                Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+            }
             if case .notSourced(let rc) = model.sourcing, !model.rows.isEmpty {
                 Card {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("New terminals don't get these keys. Quiver can add one line to \(rc.lastPathComponent).")
                             .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                        if let added = sourceAdded {
-                            Text(added).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        }
-                        if let error = sourceError {
-                            Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                        }
                         HStack {
                             Spacer()
                             Button("Add to \(rc.lastPathComponent)") { confirmingSource = rc }
@@ -152,12 +152,15 @@ struct InferenceSection: View {
             "Add a line to \(confirmingSource?.lastPathComponent ?? "the startup file")?",
             isPresented: Binding(get: { confirmingSource != nil }, set: { if !$0 { confirmingSource = nil } })) {
             Button("Add line") {
+                // confirmSource may be cleared by dismissal before the
+                // task finishes, so capture the file name now.
+                let rc = confirmingSource
                 let model = app.apiKeys
                 sourceError = nil
                 Task {
                     do {
                         let backup = try await model.addSourceLine()
-                        sourceAdded = "Added to \(confirmingSource?.lastPathComponent ?? "the file"). "
+                        sourceAdded = "Added to \(rc?.lastPathComponent ?? "the file"). "
                             + "Backup at \(backup.path). Open a new terminal to use the keys."
                     } catch {
                         sourceError = error.localizedDescription

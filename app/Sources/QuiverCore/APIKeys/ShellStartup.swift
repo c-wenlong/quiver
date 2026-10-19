@@ -96,6 +96,10 @@ public struct ShellStartupWriter: Sendable {
     public enum Error: Swift.Error, Equatable {
         /// No startup file is known for this shell.
         case unsupportedShell(String)
+        /// The file exists but isn't UTF-8, so appending would destroy it.
+        case unreadable(URL)
+        /// The backup could not be written; the rc is left alone.
+        case backupFailed(URL)
     }
 
     /// Appends the source line to the shell's startup file. Already
@@ -111,21 +115,34 @@ public struct ShellStartupWriter: Sendable {
         }
         let real = rc.resolvingSymlinksInPath()
         let manager = FileManager.default
-        let existing = (try? String(contentsOf: real, encoding: .utf8)) ?? ""
+        var existing = ""
+        var oldData: Data?
+        if let data = manager.contents(atPath: real.path) {
+            // Appending decoded text would replace unreadable bytes with
+            // just our line; refuse instead.
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw Error.unreadable(real)
+            }
+            existing = text
+            oldData = data
+        }
         let line = ShellStartup.sourceLine(for: keysFile, home: home)
         if ShellStartup.sources(existing, keysFile: keysFile, home: home) {
             return (rc, nil)
         }
 
         var backup: URL?
-        if let data = manager.contents(atPath: real.path) {
+        if let data = oldData {
             try manager.createDirectory(at: backupDirectory, withIntermediateDirectories: true,
                                         attributes: [.posixPermissions: 0o700])
             try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: backupDirectory.path)
             let stamp = Self.stampFormatter.string(from: now())
-            backup = backupDirectory.appending(path: "\(rc.lastPathComponent).\(stamp).bak")
-            manager.createFile(atPath: backup!.path, contents: data,
-                               attributes: [.posixPermissions: 0o600])
+            let target = backupDirectory.appending(path: "\(rc.lastPathComponent).\(stamp).bak")
+            guard manager.createFile(atPath: target.path, contents: data,
+                                     attributes: [.posixPermissions: 0o600]) else {
+                throw Error.backupFailed(target)
+            }
+            backup = target
         }
 
         let mode = (try? manager.attributesOfItem(atPath: real.path)[.posixPermissions] as? Int) ?? 0o644
@@ -146,6 +163,9 @@ public struct ShellStartupWriter: Sendable {
     private static let stampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .current
         return formatter
     }()
 }

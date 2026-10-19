@@ -127,6 +127,32 @@ import Testing
         #expect((try? FileManager.default.contentsOfDirectory(atPath: backups.path)) ?? [] == [])
     }
 
+    @Test func aNonUtf8RcThrowsAndStaysUntouched() throws {
+        let (home, backups, keys, rc) = try home()
+        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
+        let bad = Data([0xff, 0xfe, 0x61])
+        try bad.write(to: rc)
+        #expect(throws: ShellStartupWriter.Error.self) {
+            try ShellStartupWriter(home: home, backupDirectory: backups)
+                .addSource(keysFile: keys, shell: "/bin/zsh")
+        }
+        #expect(try Data(contentsOf: rc) == bad)
+    }
+
+    @Test func aFailedBackupLeavesTheRcAlone() throws {
+        let (home, backups, keys, rc) = try home()
+        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
+        try "x\n".write(to: rc, atomically: true, encoding: .utf8)
+        // A file where the backups folder should be can't hold one.
+        let blocker = home.appending(path: "blocker")
+        try "b".write(to: blocker, atomically: true, encoding: .utf8)
+        #expect(throws: Error.self) {
+            try ShellStartupWriter(home: home, backupDirectory: blocker)
+                .addSource(keysFile: keys, shell: "/bin/zsh")
+        }
+        #expect(try String(contentsOf: rc, encoding: .utf8) == "x\n")
+    }
+
     @Test func anUnsupportedShellThrows() throws {
         let (home, backups, keys, _) = try home()
         defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
