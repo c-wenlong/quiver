@@ -22,6 +22,8 @@ struct PluginsPage: View {
     private static let foldLimit = 8
     /// Harnesses whose drift cards are unfolded.
     @State private var opened: Set<String> = []
+    /// The Add marketplace sheet's visibility.
+    @State private var addingMarketplace = false
 
     /// App-wide, so a check outlives a trip to another page and the last
     /// report shows at once.
@@ -47,6 +49,8 @@ struct PluginsPage: View {
                     .keyboardShortcut("r", modifiers: .command)
                     .help("Check again (⌘R)")
             case .explore:
+                Button("Add marketplace", systemImage: "plus") { addingMarketplace = true }
+                    .primaryButton()
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await refreshExplore() } }
                     .iconButton()
                     .disabled(catalog.running != nil)
@@ -58,14 +62,29 @@ struct PluginsPage: View {
                  selection: $app.pluginsTab, style: .underline,
                  // Reselecting Explore while a plugin detail is open goes
                  // back to the list, through the detail's unsaved ask.
-                 onSelect: { tab in if tab == .explore { app.navReselects += 1 } })
+                 onSelect: { tab in
+                    app.pluginsTabChosen = true
+                    if tab == .explore { app.navReselects += 1 }
+                 })
             switch app.pluginsTab {
             case .health: health
             case .explore:
-                PluginExplorer(model: catalog, openHealth: { app.pluginsTab = .health }) { confirmingAction = $0 }
+                PluginExplorer(model: catalog, openHealth: { app.pluginsTab = .health },
+                               addMarketplace: { addingMarketplace = true }) { confirmingAction = $0 }
             }
         }
-        .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
+        .task(id: app.swePath) {
+            await model.loadIfStale(swe: app.swe, for: app.swePath)
+            // An empty hub gives Health an empty page; open Explore once,
+            // never over a tab the user picked.
+            if !app.pluginsTabChosen, case .loaded(let report) = model.state,
+               PluginsFirstTab.explore(report: report) {
+                app.pluginsTab = .explore
+            }
+        }
+        .sheet(isPresented: $addingMarketplace) {
+            AddMarketplaceSheet()
+        }
         .task(id: ExploreLoad(swePath: app.swePath, open: app.pluginsTab == .explore)) {
             if app.pluginsTab == .explore { await openExplore() }
         }

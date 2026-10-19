@@ -227,6 +227,8 @@ class CompletionEngineTest(unittest.TestCase):
     def test_nested_subcommands(self):
         from quiver.completion import get_completions
 
+        self.assertEqual(
+            [c for c, _ in get_completions(["plugins", "marketplace", ""])], ["add"])
         actions = [c for c, _ in get_completions(["report", "followup", ""])]
         self.assertIn("work", actions)
         self.assertIn("done", actions)
