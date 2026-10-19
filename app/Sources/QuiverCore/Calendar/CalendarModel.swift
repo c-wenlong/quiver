@@ -460,12 +460,14 @@ public final class CalendarModel {
         if force {
             failed = await read(days, force: true)
         } else {
+            // A running read's error counts like this load's own: the
+            // days it covers are still missing or stale if it failed.
             let running = Set(days.compactMap { inFlight[dayKey($0)] })
-            let needed = days.filter(needsRead)
-            let reading = needed.isEmpty ? nil
-                : Task { await self.read(needed, force: false) }
-            for task in running { _ = await task.value }
-            failed = await reading?.value ?? nil
+            let reads = runs(of: days.filter(needsRead)).map { run in
+                Task { await self.read(run, force: false) }
+            }
+            for task in running { if let error = await task.value { failed = error } }
+            for task in reads { if let error = await task.value { failed = error } }
         }
         guard mine == generation else { return }
         publish(composed(range) ?? [])
@@ -485,8 +487,22 @@ public final class CalendarModel {
         return entry.stale || now().timeIntervalSince(entry.fetched) > Self.dayLifetime
     }
 
+    /// Consecutive days as separate runs, so a read never spans fresh
+    /// days sitting between two missing ones.
+    private func runs(of days: [DateInterval]) -> [[DateInterval]] {
+        var runs: [[DateInterval]] = []
+        for day in days {
+            if let last = runs.last?.last, last.end == day.start {
+                runs[runs.count - 1].append(day)
+            } else {
+                runs.append([day])
+            }
+        }
+        return runs
+    }
+
     /// Reads every provider once for the span from the first to the last
-    /// of `days`, widened by the lookout so a block straddling an edge
+    /// of `days` (one run of consecutive days), widened by the lookout so a block straddling an edge
     /// keeps its real ends, and stores each day's slice. Registered in
     /// `inFlight` for those days until it lands. Returns the last
     /// provider error, nil when every provider answered.
@@ -584,28 +600,24 @@ public final class CalendarModel {
         composedByProvider(range).map { Self.merged($0.values.flatMap { $0 }) }
     }
 
-    /// One list from several reads: a block filed under each day it
-    /// touches appears once, and two reads that cut one long block at
-    /// different lookout edges keep the one holding more responses. A
-    /// project's real blocks never overlap (grouping merges them), so an
-    /// overlap within one project is the same block read twice.
+    /// One list from several reads. A block filed under each day it
+    /// touches appears once, and pieces of one long block that two reads
+    /// cut at different lookout edges join back into one. A project's
+    /// real blocks never overlap (grouping merges them), so an overlap
+    /// within one project is the same block read more than once.
     static func merged(_ blocks: [ActivityBlock]) -> [ActivityBlock] {
-        var seen = Set<String>()
         var byProject: [String: [ActivityBlock]] = [:]
-        for block in blocks where seen.insert(block.id).inserted {
+        for block in blocks {
             let project = block.projectKey.isEmpty ? block.project : block.projectKey
             byProject["\(block.harness)|\(block.accountHome)|\(project)", default: []].append(block)
         }
         var out: [ActivityBlock] = []
         for list in byProject.values {
-            let sorted = list.sorted { $0.start < $1.start }
+            let sorted = list.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end > $1.end }
             var current = sorted[0]
             for block in sorted.dropFirst() {
                 if block.start <= current.end {
-                    if (block.responses, block.end.timeIntervalSince(block.start))
-                        > (current.responses, current.end.timeIntervalSince(current.start)) {
-                        current = block
-                    }
+                    current = joined(current, block)
                 } else {
                     out.append(current)
                     current = block
@@ -616,6 +628,42 @@ public final class CalendarModel {
         return out.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
     }
 
+    /// Two overlapping reads of one block. Each is exact inside the span
+    /// it read, so a piece covering the other is the whole story; one
+    /// with the larger count wins a tie. Pieces each reaching past the
+    /// other join: the block runs from the earlier start to the later
+    /// end, and each session from its earliest start to its latest end.
+    /// Both reads counted the responses where they overlap, so a session
+    /// keeps the larger count rather than the sum, and the block's count
+    /// is its sessions' total; it can under-count by what the shorter
+    /// piece alone saw.
+    private static func joined(_ a: ActivityBlock, _ b: ActivityBlock) -> ActivityBlock {
+        func covers(_ x: ActivityBlock, _ y: ActivityBlock) -> Bool {
+            x.start <= y.start && x.end >= y.end
+        }
+        if covers(a, b) && covers(b, a) { return a.responses >= b.responses ? a : b }
+        if covers(a, b) { return a }
+        if covers(b, a) { return b }
+        var block = a
+        block.start = min(a.start, b.start)
+        block.end = max(a.end, b.end)
+        var sessions = a.sessions
+        for session in b.sessions {
+            if let i = sessions.firstIndex(where: { $0.sessionId == session.sessionId }) {
+                sessions[i].start = min(sessions[i].start, session.start)
+                sessions[i].end = max(sessions[i].end, session.end)
+                sessions[i].responses = max(sessions[i].responses, session.responses)
+                sessions[i].cwd = sessions[i].cwd ?? session.cwd
+            } else {
+                sessions.append(session)
+            }
+        }
+        block.sessions = sessions.sorted { $0.start < $1.start }
+        block.responses = max(a.responses, b.responses,
+                              block.sessions.reduce(0) { $0 + $1.responses })
+        return block
+    }
+
     /// The days one mode step either side would add, read quietly so a
     /// swipe or step lands on cached days. A swipe moves at most one
     /// window, so these cover every day the next landing can expose.
@@ -623,10 +671,10 @@ public final class CalendarModel {
     private func prefetchNeighbours() {
         for neighbour in [renderRange(for: shiftedAnchor(-1, mode: mode), mode: mode),
                           renderRange(for: shiftedAnchor(1, mode: mode), mode: mode)] {
-            let needed = days(in: neighbour).filter(needsRead)
-            guard !needed.isEmpty else { continue }
-            inBackground(priority: .utility) { [weak self] in
-                _ = await self?.read(needed, force: false, priority: .utility)
+            for run in runs(of: days(in: neighbour).filter(needsRead)) {
+                inBackground(priority: .utility) { [weak self] in
+                    _ = await self?.read(run, force: false, priority: .utility)
+                }
             }
         }
     }

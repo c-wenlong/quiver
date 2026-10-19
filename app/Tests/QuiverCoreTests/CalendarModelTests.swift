@@ -983,6 +983,61 @@ private actor RecordingActivity: ActivityProviding {
     }
 }
 
+/// Answers its first read; every later read waits for `release()` and
+/// then fails, so a test can hold a prefetch and fail it later.
+private final class LaterReadsFail: ActivityProviding, @unchecked Sendable {
+    struct Failure: LocalizedError {
+        var errorDescription: String? { "prefetch failed" }
+    }
+    private let lock = NSLock()
+    private var calls = 0
+    private var open = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+    private var arrivals: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func release() {
+        let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            open = true
+            defer { held = [] }
+            return held
+        }
+        waiting.forEach { $0.resume() }
+    }
+
+    /// Returns once `count` reads have started.
+    func started(_ count: Int) async {
+        await withCheckedContinuation { continuation in
+            let now = lock.withLock { () -> Bool in
+                if calls >= count { return true }
+                arrivals.append((count, continuation))
+                return false
+            }
+            if now { continuation.resume() }
+        }
+    }
+
+    func activityBlocks(in range: DateInterval, gap: TimeInterval,
+                        force: Bool) async throws -> [ActivityBlock] {
+        let (n, ready) = lock.withLock { () -> (Int, [CheckedContinuation<Void, Never>]) in
+            calls += 1
+            let ready = arrivals.filter { calls >= $0.count }.map(\.continuation)
+            arrivals.removeAll { calls >= $0.count }
+            return (calls, ready)
+        }
+        ready.forEach { $0.resume() }
+        if n == 1 { return [] }
+        await withCheckedContinuation { continuation in
+            let wait = lock.withLock { () -> Bool in
+                if open { return false }
+                held.append(continuation)
+                return true
+            }
+            if !wait { continuation.resume() }
+        }
+        throw Failure()
+    }
+}
+
 @MainActor
 @Suite struct CalendarSessionCacheTests {
     private var calendar: Calendar {
@@ -1087,6 +1142,57 @@ private actor RecordingActivity: ActivityProviding {
         #expect(model.blocks.map(\.project) == ["a", "b"])
         #expect(!notified.fired)
         #expect(model.blocks(on: oct14) === slice)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aFailedPrefetchTheLoadWaitedForSetsTheError() async {
+        let provider = LaterReadsFail()
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .day // render range Oct 13 to Oct 15
+        await model.load()
+        #expect(model.loadError == nil)
+        // Both neighbour prefetches (Oct 12, Oct 16) are reading, held.
+        await provider.started(3)
+        // Oct 14 to Oct 16: only Oct 16 is new, and a prefetch already
+        // reads it, so the load waits for that read instead of its own.
+        model.land(on: utc("2026-10-15T00:00:00Z"))
+        async let load: () = model.load()
+        provider.release()
+        await load
+        #expect(model.loadError == "prefetch failed")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func missingDaysOnBothSidesAreReadAsTwoRuns() async {
+        let provider = RecordingActivity()
+        let model = CalendarModel(providers: [provider], defaults: freshDefaults(),
+                                  now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
+        model.mode = .day
+        await model.load()
+        await settled(model) // Oct 12 to Oct 16 are cached
+        let asked = await provider.ranges.count
+        model.mode = .week // render range Oct 5 to Oct 25
+        await model.load()
+        let reads = Array(await provider.ranges.dropFirst(asked))
+        // Oct 5 to 11 and Oct 17 to 25, never the fresh days between.
+        #expect(reads.contains(widened("2026-10-05T00:00:00Z", "2026-10-12T00:00:00Z")))
+        #expect(reads.contains(widened("2026-10-17T00:00:00Z", "2026-10-26T00:00:00Z")))
+        #expect(!reads.contains { $0.contains(utc("2026-10-14T12:00:00Z")) })
+    }
+
+    @Test func piecesEachReachingPastTheOtherJoin() {
+        // Two reads cut one all-day block at different edges, each with
+        // days the other lacks: neither may be dropped.
+        let first = block("2026-10-10T00:00:00Z", hours: 240, session: "bot", responses: 100)
+        let second = block("2026-10-19T00:00:00Z", hours: 96, session: "bot", responses: 20)
+        let merged = CalendarModel.merged([first, second])
+        #expect(merged.count == 1)
+        #expect(merged.first?.start == utc("2026-10-10T00:00:00Z"))
+        #expect(merged.first?.end == utc("2026-10-23T00:00:00Z"))
+        #expect(merged.first?.sessions.map(\.sessionId) == ["bot"])
+        #expect(merged.first?.sessions.first?.end == utc("2026-10-23T00:00:00Z"))
+        #expect(merged.first?.responses == 100)
     }
 
     @Test func aBlockFiledUnderTwoDaysOrCutTwiceShowsOnce() {
