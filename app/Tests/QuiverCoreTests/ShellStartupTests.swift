@@ -49,7 +49,7 @@ import Testing
         let root = FileManager.default.temporaryDirectory
             .appending(path: "awkward-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        for name in ["My Keys/.api_keys", "a$b \"c\"/k\\eys"] {
+        for name in ["My Keys/.api_keys", "a$b \"c\"/k\\eys", "Keys#1/.api_keys"] {
             let keys = root.appending(path: name)
             try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
@@ -79,6 +79,10 @@ import Testing
             #expect(!ShellStartup.sources(line, keysFile: keys, home: root), "\(line)")
         }
         #expect(ShellStartup.sources(#"(true) && source "$HOME/\#(rel)""#, keysFile: keys, home: root))
+        #expect(!ShellStartup.sources(#"echo source "$HOME/\#(rel)""#, keysFile: keys, home: root))
+        #expect(ShellStartup.sources(#"if [ -f "$HOME/\#(rel)" ]; then source "$HOME/\#(rel)"; fi"#,
+                                     keysFile: keys, home: root))
+        #expect(ShellStartup.sources(#"source "$HOME/\#(rel)" # keys"#, keysFile: keys, home: root))
     }
 
     @Test func sourcesDetectsEveryForm() throws {

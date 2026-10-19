@@ -65,30 +65,44 @@ public enum ShellStartup {
     public static func sources(_ rcText: String, keysFile: URL, home: URL) -> Bool {
         let target = keysFile.resolvingSymlinksInPath().standardizedFileURL
         for raw in rcText.components(separatedBy: .newlines) {
-            var line = raw.trimmingCharacters(in: .whitespaces)
+            let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
-            // A trailing comment doesn't count for or against.
-            if let hash = line.firstIndex(of: "#") { line = String(line[..<hash]) }
-            // Shell words, so a quoted path with spaces or escapes stays
-            // one argument; `&&`, `;` and `|` are words of their own, so
-            // `[ -f X ] && source X` counts.
+            // Shell words, so a quoted path with spaces, escapes or `#`
+            // stays one argument and a trailing comment drops off; `&&`,
+            // `;`, `|` and parentheses are words of their own.
             let words = shellWords(line)
-            var wanted = false
+            // Only a `source` in command position runs: first on the line,
+            // after a separator, or after a keyword like `then`.
+            // `echo source X` prints, it doesn't load.
+            var atCommand = true
             // A `source` inside `( … )` runs in a subshell, and the
             // terminal keeps nothing it sets.
             var depth = 0
+            var wanted = false
             for word in words {
-                if word == "(" { depth += 1; wanted = false; continue }
-                if word == ")" { depth = max(0, depth - 1); wanted = false; continue }
-                if wanted, word != "&&", word != ";", word != "|", word != ")" {
+                switch word {
+                case "(":
+                    depth += 1; atCommand = true; wanted = false; continue
+                case ")":
+                    depth = max(0, depth - 1); atCommand = false; wanted = false; continue
+                case "&&", ";", "|":
+                    atCommand = true; wanted = false; continue
+                default:
+                    break
+                }
+                if wanted {
                     if let url = sourcedURL(word, home: home),
                        url.resolvingSymlinksInPath().standardizedFileURL == target {
                         return true
                     }
                     wanted = false
+                    atCommand = false
+                    continue
                 }
-                if (word == "source" || word == ".") && depth == 0 { wanted = true }
-                else if !["&&", ";", "|", "(", ")"].contains(word) { wanted = false }
+                if atCommand {
+                    if (word == "source" || word == ".") && depth == 0 { wanted = true }
+                    atCommand = ["then", "do", "else", "if", "elif", "while", "until", "!", "{"].contains(word)
+                }
             }
         }
         return false
@@ -130,6 +144,9 @@ public enum ShellStartup {
                 i += 1
                 word.append(chars[i] == "$" ? escapedDollar : chars[i])
                 open = true
+            } else if ch == "#", !open {
+                // An unquoted `#` starting a word begins a comment.
+                break
             } else if ch == " " || ch == "\t" {
                 flush()
             } else if ch == "&", i + 1 < chars.count, chars[i + 1] == "&" {
