@@ -8,6 +8,7 @@ struct PluginExplorer: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: PluginCatalogModel
     var openHealth: () -> Void
+    var addMarketplace: () -> Void = {}
     var confirm: (PluginAction) -> Void
     /// The plugin open in its detail page, nil while the list shows.
     @State private var opened: ExplorePlugin?
@@ -54,6 +55,14 @@ struct PluginExplorer: View {
         if index.total == 0 {
             EmptyCard(text: "No plugin marketplaces registered in Claude Code, Codex or Cursor.",
                       icon: "puzzlepiece.extension")
+            // A plain button for now: EmptyCard's optional action lands in
+            // the skills PR; this keeps the diff mergeable either way.
+            HStack {
+                Spacer()
+                Button("Add marketplace", systemImage: "plus", action: addMarketplace)
+                    .secondaryButton()
+                Spacer()
+            }
         } else if sources.isEmpty {
             EmptyCard(text: "No plugins match.", icon: "puzzlepiece.extension")
         } else {
