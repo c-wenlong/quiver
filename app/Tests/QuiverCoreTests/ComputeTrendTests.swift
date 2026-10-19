@@ -490,21 +490,39 @@ import Testing
         #expect(ComputeModel.loadTemperatureLines(defaults).isEmpty)
     }
 
-    @Test func fanSpansCoverUpTicksAndJoinAcrossOneSlowTick() {
-        func point(_ seconds: Double, up: Bool?) -> TemperaturePoint {
-            TemperaturePoint(at: Self.now.addingTimeInterval(seconds), values: [.cpu: 70],
-                             fans: up.map { FanSummary(rpm: $0 ? 4000 : 2317, up: $0) })
-        }
-        let at = { (seconds: Double) in Self.now.addingTimeInterval(seconds) }
-        // Ten-second ticks: up at 10 and 20, a tick 13 s late at 33 still
-        // joins, then down, then a lone up tick at 70.
-        let points = [point(0, up: false), point(10, up: true), point(20, up: true), point(33, up: true),
-                      point(40, up: false), point(50, up: nil), point(70, up: true)]
-        let spans = ComputeHistory.fanSpans(points, interval: .tenSeconds)
-        #expect(spans == [at(5)...at(38), at(65)...at(75)])
-        // Up ticks two intervals apart stay separate.
-        #expect(ComputeHistory.fanSpans([point(0, up: true), point(20, up: true)], interval: .tenSeconds).count == 2)
-        #expect(ComputeHistory.fanSpans([point(0, up: false)], interval: .tenSeconds).isEmpty)
+    private func fanPoint(_ seconds: Double, up: Bool?) -> TemperaturePoint {
+        TemperaturePoint(at: Self.now.addingTimeInterval(seconds), values: [.cpu: 70],
+                         fans: up.map { FanSummary(rpm: $0 ? 4000 : 2317, up: $0) })
+    }
+
+    private func at(_ seconds: Double) -> Date { Self.now.addingTimeInterval(seconds) }
+
+    @Test func fanSpansReachHalfwayToTheirNeighbours() {
+        // Up at 10, 20 and a late 33 join; the down tick at 40 ends it.
+        // The lone up tick at 70 reaches halfway back to the reading at 50
+        // (which had no fan data) and as far again ahead.
+        let points = [fanPoint(0, up: false), fanPoint(10, up: true), fanPoint(20, up: true),
+                      fanPoint(33, up: true), fanPoint(40, up: false), fanPoint(50, up: nil),
+                      fanPoint(70, up: true)]
+        #expect(ComputeHistory.fanSpans(points, interval: .tenSeconds) == [at(5)...at(36.5), at(60)...at(80)])
+        #expect(ComputeHistory.fanSpans([fanPoint(0, up: false)], interval: .tenSeconds).isEmpty)
+        #expect(ComputeHistory.fanSpans([fanPoint(0, up: true)], interval: .tenSeconds) == [at(-5)...at(5)])
+    }
+
+    @Test func changingTheIntervalNeverReshadesOldReadings() {
+        // Recorded every 10 s: up, down, up. A minute-long picker must
+        // not join them across the down reading or widen them.
+        let points = [fanPoint(0, up: true), fanPoint(10, up: false), fanPoint(20, up: true)]
+        let expected = [at(-5)...at(5), at(15)...at(25)]
+        #expect(ComputeHistory.fanSpans(points, interval: .tenSeconds) == expected)
+        #expect(ComputeHistory.fanSpans(points, interval: .oneMinute) == expected)
+        #expect(ComputeHistory.fanSpans(points, interval: .fiveMinutes) == expected)
+    }
+
+    @Test func aLongGapIsNotShadedAsUp() {
+        // The Mac slept an hour between two up readings.
+        let spans = ComputeHistory.fanSpans([fanPoint(0, up: true), fanPoint(3600, up: true)], interval: .tenSeconds)
+        #expect(spans == [at(-150)...at(150), at(3450)...at(3750)])
     }
 
     @Test func temperaturesAgeOutWhenTheSensorsStopAnswering() {

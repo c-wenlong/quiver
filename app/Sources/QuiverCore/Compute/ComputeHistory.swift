@@ -145,25 +145,32 @@ public struct ComputeHistory: Sendable, Equatable {
     }
 
     /// The stretches of time the fans ran up, for the chart's shading.
-    /// Each up point stands for half an interval either side of it, so a
-    /// lone tick still shows; up points no more than an interval and a
-    /// half apart join into one span, so a single slow tick does not
-    /// split it.
+    /// Each up point reaches halfway to its neighbours, using the spacing
+    /// the points were actually recorded at, so changing the interval
+    /// picker never re-spaces old readings. A down point between two up
+    /// ones keeps them apart, and no point reaches more than
+    /// `maxReach` toward a neighbour, so a gap (the Mac asleep) is not
+    /// shaded as up. A point with no neighbours spans `interval`.
     public static func fanSpans(_ points: [TemperaturePoint], interval: TrendInterval) -> [ClosedRange<Date>] {
-        let half = interval.seconds / 2
+        let sorted = points.sorted { $0.at < $1.at }
         var spans: [ClosedRange<Date>] = []
-        var lastUp: Date?
-        for point in points.sorted(by: { $0.at < $1.at }) where point.fans?.up == true {
-            let end = point.at.addingTimeInterval(half)
-            if let lastUp, let open = spans.last, point.at.timeIntervalSince(lastUp) <= interval.seconds * 1.5 {
-                spans[spans.count - 1] = open.lowerBound...end
+        for (index, point) in sorted.enumerated() where point.fans?.up == true {
+            let before = index > 0 ? point.at.timeIntervalSince(sorted[index - 1].at) / 2 : nil
+            let after = index + 1 < sorted.count ? sorted[index + 1].at.timeIntervalSince(point.at) / 2 : nil
+            let left = min(before ?? after ?? interval.seconds / 2, maxReach)
+            let right = min(after ?? before ?? interval.seconds / 2, maxReach)
+            let span = point.at.addingTimeInterval(-left)...point.at.addingTimeInterval(right)
+            if let last = spans.last, span.lowerBound <= last.upperBound {
+                spans[spans.count - 1] = last.lowerBound...max(last.upperBound, span.upperBound)
             } else {
-                spans.append(point.at.addingTimeInterval(-half)...end)
+                spans.append(span)
             }
-            lastUp = point.at
         }
         return spans
     }
+
+    /// Half the longest interval: the furthest one reading speaks for.
+    static let maxReach = TrendInterval.fiveMinutes.seconds / 2
 
     /// Whether any point has been recorded yet.
     public var isEmpty: Bool {
