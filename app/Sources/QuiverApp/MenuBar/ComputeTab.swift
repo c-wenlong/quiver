@@ -8,7 +8,7 @@ struct ComputeTabContent: View {
     @Environment(AppModel.self) private var app
     @State private var hovered: Date?
 
-    private static let chartHeight: CGFloat = 84
+    private static let chartHeight: CGFloat = 96
 
     /// Harnesses with a point in the window, in the dragged order, less
     /// the ones switched off.
@@ -22,7 +22,7 @@ struct ComputeTabContent: View {
         let model = app.compute
         let metrics = app.computePopup.visibleMetrics
         let (active, shown) = harnesses(model)
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 10) {
             if model.history.isEmpty {
                 note("Collecting, the first points arrive within \(model.trendInterval.span).")
             } else if metrics.isEmpty {
@@ -32,15 +32,16 @@ struct ComputeTabContent: View {
             } else if shown.isEmpty {
                 note("Every running harness is hidden in Menu bar.")
             } else {
+                // One box per chart, so each reads on its own.
                 ForEach(metrics) { metric in
                     // Room under the header for the axis's top label.
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 14) {
                         HStack {
-                            Text(metric.title).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            Text(metric.title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                             Spacer()
                             if let total = model.history.total(of: metric, harnesses: shown) {
                                 Text(TrendChart.formatted(total, metric))
-                                    .font(Theme.caption.monospacedDigit())
+                                    .font(Theme.bodySmall.monospacedDigit())
                                     .foregroundStyle(Theme.textPrimary)
                             }
                         }
@@ -48,9 +49,13 @@ struct ComputeTabContent: View {
                             note("GPU time isn't available on this Mac.", height: 40)
                         } else {
                             TrendChart(metric: metric, harnesses: shown, height: Self.chartHeight,
-                                       showsXAxis: metric == metrics.last, hovered: $hovered)
+                                       hovered: $hovered)
                         }
                     }
+                    .padding(12)
+                    .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                        .strokeBorder(Theme.border, lineWidth: 1))
                 }
             }
         }
