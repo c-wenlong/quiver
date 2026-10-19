@@ -307,6 +307,28 @@ private struct TogglingActivity: ActivityProviding {
         #expect(model.settledLeadingDay(offset: 100, columnWidth: 100) == nil)
     }
 
+    @Test func theRestingDayKeepsItsPlaceAfterTheRenderDaysRecentre() {
+        // Landing re-centres the render days while the scroll view keeps
+        // its pixel offset: resting on Oct 7 at 300pt re-centres Oct 7 to
+        // column 4, so 300pt would now read Oct 6. The page scrolls to
+        // `leadingOffset` instead, which reads Oct 7 again.
+        let model = model() // anchor 2026-10-14
+        model.mode = .days(4) // render days Oct 10 to Oct 21
+        #expect(model.leadingOffset(of: utc("2026-10-14T00:00:00Z"), columnWidth: 100) == 400)
+        let rested = model.settledLeadingDay(offset: 300, columnWidth: 100)!
+        #expect(rested == utc("2026-10-13T00:00:00Z"))
+        model.land(on: utc("2026-10-07T00:00:00Z")) // render days Oct 3 to Oct 14
+        let x = model.leadingOffset(of: model.visibleRange.start, columnWidth: 100)!
+        #expect(x == 400)
+        #expect(model.settledLeadingDay(offset: x, columnWidth: 100) == utc("2026-10-07T00:00:00Z"))
+        // Week mode: the visible week is always the second of three.
+        model.mode = .week
+        #expect(model.leadingOffset(of: model.visibleRange.start, columnWidth: 100) == 700)
+        // Not a column, or no width yet.
+        #expect(model.leadingOffset(of: utc("2027-01-01T00:00:00Z"), columnWidth: 100) == nil)
+        #expect(model.leadingOffset(of: model.visibleRange.start, columnWidth: 0) == nil)
+    }
+
     @Test func aSingleResponseBlockExactlyAtTheWindowStartCounts() async {
         // start == end == window.start: start < end fails, so a zero-length
         // block at the boundary needs its own clause or the day reads empty.

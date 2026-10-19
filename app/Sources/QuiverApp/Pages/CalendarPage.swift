@@ -241,9 +241,12 @@ private struct CalendarContent: View {
 
     // MARK: - Week grid
 
-    /// The landed horizontal scroll target: a leading day, or a week
-    /// start in week mode where the week is the scroll unit.
-    @State private var landed: Date?
+    /// The horizontal scroll's position: moved by id for keyboard,
+    /// chevron and mini-month steps, by offset after a swipe lands.
+    @State private var position = ScrollPosition(idType: Date.self)
+    /// The range start a landed swipe already put back in place, so the
+    /// range change it causes is not animated a second time.
+    @State private var settledStart: Date?
     /// The columns' horizontal scroll offset. Only `DayHeaderStrip`
     /// reads it, so a scroll tick re-renders the strip alone instead of
     /// invalidating CalendarContent's body (and every `DayColumn`).
@@ -318,7 +321,7 @@ private struct CalendarContent: View {
                                     columns(now: context.date, width: columnWidth)
                                 }
                                 .scrollTargetBehavior(.viewAligned)
-                                .scrollPosition(id: $landed, anchor: .leading)
+                                .scrollPosition($position, anchor: .leading)
                                 .scrollIndicators(.hidden)
                                 .onScrollGeometryChange(for: CGFloat.self) {
                                     $0.contentOffset.x + $0.contentInsets.leading
@@ -360,29 +363,44 @@ private struct CalendarContent: View {
                 }
             }
         }
-        .onAppear { landed = model.visibleRange.start }
+        .onAppear { position.scrollTo(id: model.visibleRange.start, anchor: .leading) }
         .onChange(of: model.visibleRange) { _, range in
             // Keyboard, chevrons and mini-month clicks still move the
             // anchor; the scroll animates to the new leading target.
-            guard landed != range.start else { return }
+            defer { settledStart = nil }
+            guard range.start != settledStart else { return }
             withAnimation(reduceMotion ? nil : .snappy) {
-                landed = range.start
+                position.scrollTo(id: range.start, anchor: .leading)
             }
         }
     }
 
     /// The scroll came to rest: its leading day becomes the anchor, and
-    /// every header/total/cache decision follows. `landed` is the scroll
-    /// view's own position binding and is never read in the body, so the
-    /// days it passes mid-swipe redraw nothing. A swipe never moves the
-    /// vertical hour, so the new range counts as scrolled already.
+    /// every header/total/cache decision follows. `position` is never
+    /// read in the body, so the days a swipe passes redraw nothing. A
+    /// swipe never moves the vertical hour, so the new range counts as
+    /// scrolled already.
+    ///
+    /// Landing re-centres the render days around the new anchor, and the
+    /// scroll view keeps its pixel offset when its content changes, so
+    /// left alone the resting day slid a few columns either way (let go
+    /// on the 7th, end up on the 4th or the 10th). The same update puts
+    /// the offset back on the resting day's new column.
     private func settle(offset: CGFloat, columnWidth: CGFloat) {
         guard let day = model.settledLeadingDay(offset: Double(offset),
                                                 columnWidth: Double(columnWidth))
         else { return }
-        landed = day
+        let before = model.visibleRange.start
         model.land(on: day)
         scrolledRange = model.visibleRange
+        let start = model.visibleRange.start
+        guard start != before,
+              let x = model.leadingOffset(of: start, columnWidth: Double(columnWidth))
+        else { return }
+        settledStart = start
+        withTransaction(Transaction(animation: nil)) {
+            position.scrollTo(x: CGFloat(x))
+        }
     }
 
     /// Day columns grouped into snap targets: one view per day for Day
