@@ -12,6 +12,7 @@ struct McpServersPage: View {
     @Environment(AppModel.self) private var app
     @State private var filter: McpFilter = .all
     @State private var selected: McpServer?
+    @State private var adding = false
     /// Harnesses left out of the comparison, remembered on this Mac.
     @State private var hidden = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenKey) ?? [])
 
@@ -46,6 +47,9 @@ struct McpServersPage: View {
             .secondaryButton()
             .disabled(model.checkingHealth)
             .help("Run each server's command check and reach each URL")
+            Button("Add server", systemImage: "plus") { adding = true }
+                .primaryButton()
+                .hoverTip("Add a server to the Quiver hub, and optionally to harnesses")
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth) }
                 Task { await app.mcpRepo.load() }
@@ -61,7 +65,10 @@ struct McpServersPage: View {
                 ErrorCard(message: message)
                 folderOnlyRows(hubKnown: false)
             case .loaded(let inventory) where inventory.servers.isEmpty:
-                Card { Label("No MCP servers in any harness config.", systemImage: "powerplug").foregroundStyle(Theme.textSecondary) }
+                Card { VStack(alignment: .leading, spacing: 10) {
+                    Label("No MCP servers in any harness config.", systemImage: "powerplug").foregroundStyle(Theme.textSecondary)
+                    Button("Add server", systemImage: "plus") { adding = true }.secondaryButton()
+                } }
                 folderOnlyRows(hubKnown: true)
             case .loaded(let inventory):
                 let compared = inventory.activeHarnesses.filter { !hidden.contains($0) }
@@ -105,6 +112,18 @@ struct McpServersPage: View {
                             active: inventory.activeHarnesses.filter { !hidden.contains($0) }, model: model) {
                     await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
                 }
+            }
+        }
+        .sheet(isPresented: $adding) {
+            let (harnesses, active): ([String], [String]) = {
+                if case .loaded(let inventory) = model.state {
+                    return (inventory.harnesses,
+                            inventory.activeHarnesses.filter { !hidden.contains($0) })
+                }
+                return ([], [])
+            }()
+            McpAddServerSheet(harnesses: harnesses, active: active) {
+                await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
             }
         }
     }
@@ -397,12 +416,13 @@ private struct ServerSheet: View {
     /// The pasted value per missing ${NAME}, cleared after it is saved.
     @State private var secretDrafts: [String: String] = [:]
     @State private var savingSecret: String?
+    @State private var confirmingRemove = false
 
     /// The server as the latest load has it, so a finished sync shows its effect.
     var server: McpServer { model.server(named: initial.name) ?? initial }
     var source: String {
-        if let sourceHarness, server.harnesses.contains(sourceHarness) { return sourceHarness }
-        return server.groups.first?.first ?? ""
+        if let sourceHarness, model.sources(for: server).contains(sourceHarness) { return sourceHarness }
+        return model.sources(for: server).first ?? ""
     }
     var targets: SyncTargets { model.targets(for: server, from: source, in: harnesses) }
 
@@ -447,6 +467,11 @@ private struct ServerSheet: View {
         }
         .sheetScaffold()
         .onAppear(perform: resetChoice)
+        .confirmationDialog("Remove \(server.name)?", isPresented: $confirmingRemove) {
+            Button("Remove", role: .destructive) { Task { await removeServer() } }
+        } message: {
+            Text("It goes from \(harnessNames(server.harnesses + (server.inHub ? ["quiver"] : []))).")
+        }
         .confirmationDialog("Replace their definitions?", isPresented: $confirmingOverwrite) {
             Button("Replace", role: .destructive) { Task { await run(dryRun: false) } }
         } message: {
@@ -510,20 +535,20 @@ private struct ServerSheet: View {
         } else if targets.missing.isEmpty && targets.differing.isEmpty && server.groups.count == 1 {
             Text("Every harness already has this definition.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
         } else {
-            if server.groups.count > 1 {
+            let sourceChoices = model.sources(for: server)
+            if sourceChoices.count > 1 {
                 HStack(spacing: 10) {
                     Text("Copy from").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .frame(width: detailLabelWidth, alignment: .leading)
-                    SelectMenu(options: server.groups.enumerated().map { index, group in
-                                   (group.first ?? "", "Definition \(variantLetter(index)) (\(harnessNames(group)))",
-                                    group.first)
+                    SelectMenu(options: sourceChoices.map { choice in
+                                   (choice, choice == "quiver" ? "Quiver hub" : HarnessMark(choice).name, choice)
                                },
                                selection: Binding(
-                                   get: { server.group(of: source).flatMap { server.groups[$0].first } ?? source },
+                                   get: { source },
                                    set: { sourceHarness = $0; resetChoice() }),
                                width: 366)
                 }
-            } else {
+            } else if !sourceChoices.isEmpty {
                 HarnessFacts(label: "Copy from", harnesses: [source])
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -544,6 +569,8 @@ private struct ServerSheet: View {
             Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).fixedSize(horizontal: false, vertical: true)
         }
         HStack {
+            Button("Remove…", role: .destructive) { confirmingRemove = true }
+                .secondaryButton()
             if running { ProgressView().controlSize(.small) }
             if secretsBlockSync {
                 Text("Set the values above first.")
@@ -587,6 +614,21 @@ private struct ServerSheet: View {
         chosen = Set(targets.missing).intersection(active)
         approvedReplace = []
         preview = nil
+    }
+
+    private func removeServer() async {
+        running = true
+        error = nil
+        defer { running = false }
+        do {
+            _ = try await app.swe.mcpRemove(
+                name: server.name,
+                from: server.harnesses + (server.inHub ? ["quiver"] : []))
+            await reload()
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private func run(dryRun: Bool) async {

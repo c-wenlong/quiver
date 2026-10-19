@@ -192,6 +192,80 @@ func fixture(_ name: String) throws -> Data {
     }
 }
 
+@Suite struct McpAddRemoveTests {
+    private func swe() -> (SweClient, FakeRunner) {
+        let runner = FakeRunner(.init(
+            status: 0,
+            stdout: Data(#"{"schema":1,"data":{"name":"s","hub":"added","targets":[],"removed":[],"absent":[]}}"#.utf8),
+            stderr: ""))
+        return (SweClient(runner: runner), runner)
+    }
+
+    @Test func addCommandArgv() async throws {
+        let (swe, runner) = swe()
+        _ = try await swe.mcpAdd(McpServerSpec(
+            name: "gh", kind: .command(command: "npx", args: ["-y", "gh-mcp"],
+                                       env: [("TOK", "${TOK}")])),
+                               to: ["claude", "codex"], force: true)
+        #expect(runner.calls == [[
+            "mcp", "add", "gh", "--env=TOK=${TOK}", "--", "npx", "-y", "gh-mcp",
+            "--json", "--to=claude,codex", "--force"]])
+    }
+
+    @Test func addUrlArgvWithSseAndHeaders() async throws {
+        let (swe, runner) = swe()
+        _ = try await swe.mcpAdd(McpServerSpec(
+            name: "r", kind: .url(url: "https://x/mcp", transport: "sse",
+                                  headers: [("Authorization", "Bearer ${TOK}")])),
+                               to: [], force: false)
+        #expect(runner.calls == [[
+            "mcp", "add", "r", "--url=https://x/mcp", "--transport=sse",
+            "--header=Authorization=Bearer ${TOK}", "--json"]])
+    }
+
+    @Test func removeArgv() async throws {
+        let (swe, runner) = swe()
+        _ = try await swe.mcpRemove(name: "s", from: ["quiver", "claude"])
+        #expect(runner.calls == [["mcp", "remove", "s", "--from=quiver,claude", "--json"]])
+    }
+
+    @Test func headerSecretNameDerivesAShellName() {
+        #expect(mcpHeaderSecretName(server: "my-srv", header: "X-Api-Key") == "MY_SRV_X_API_KEY")
+    }
+
+    @Test func commandLineSplitsLikeAShell() {
+        #expect(mcpShellWords("npx -y @a/b --flag=x") == ["npx", "-y", "@a/b", "--flag=x"])
+        // Quotes group words but stay part of them, like shellWords has
+        // always done for scrubbing.
+        #expect(mcpShellWords("run 'two words'") == ["run", "'two words'"])
+    }
+
+    @Test func theHubIsARealSyncSource() async {
+        let model = await McpModel()
+        let hubOnly = McpServer(name: "s", harnesses: [], inHub: true)
+        #expect(await model.sources(for: hubOnly) == ["quiver"])
+        let targets = await model.targets(for: hubOnly, from: "quiver",
+                                          in: ["claude", "codex"])
+        #expect(targets.missing == ["claude", "codex"])
+        #expect(targets.differing == [])
+        let shared = McpServer(name: "s", harnesses: ["claude"],
+                               variants: [["claude"]], inHub: true)
+        let targets2 = await model.targets(for: shared, from: "quiver",
+                                           in: ["claude", "codex"])
+        #expect(targets2.missing == ["codex"])
+        #expect(targets2.differing == ["claude"])
+    }
+
+    @Test func inHubDefaultsFalseForAnOlderSwe() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let server = try decoder.decode(
+            McpServer.self,
+            from: Data(#"{"name":"a","transport":"stdio","harnesses":["claude"]}"#.utf8))
+        #expect(server.inHub == false)
+    }
+}
+
 @Suite struct LoginShellPathTests {
     @Test func pathIsReadFromTheLoginShellEnvironment() {
         let env = "HOME=/Users/k\nPATH=/opt/homebrew/bin:/usr/bin\nSHELL=/bin/zsh\n"

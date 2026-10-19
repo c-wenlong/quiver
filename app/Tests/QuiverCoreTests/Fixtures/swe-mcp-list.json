@@ -26,7 +26,28 @@
             "claude"
           ]
         ],
-        "secrets_missing": []
+        "secrets_missing": [],
+        "in_hub": true
+      },
+      {
+        "name": "fixture-hub-only",
+        "transport": "stdio",
+        "command": "hub-only-bin",
+        "args": [
+          "--opt"
+        ],
+        "url": null,
+        "env_keys": [
+          "HUB_TOKEN"
+        ],
+        "header_keys": [],
+        "harnesses": [],
+        "conflict": false,
+        "variants": [],
+        "secrets_missing": [
+          "HUB_TOKEN"
+        ],
+        "in_hub": true
       },
       {
         "name": "fixture-stdio",
@@ -58,7 +79,8 @@
         ],
         "secrets_missing": [
           "SECRET_TOKEN"
-        ]
+        ],
+        "in_hub": true
       }
     ]
   }

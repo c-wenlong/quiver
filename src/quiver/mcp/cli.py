@@ -11,6 +11,8 @@ Commands:
   diff <tool1> <tool2>           Compare two tools' configs
   edit <tool> <name>             Edit one server config in one tool
   validate [tool...]             Validate MCP config shape for one/all tools
+  add <name> ...                 Add a server to the hub (and harnesses)
+  remove <name> --from=...       Remove a server from the hub or harnesses
   doctor                         Deep diagnostics
   secret set NAME                Store a ${NAME} value in the secrets file
 
@@ -41,6 +43,8 @@ from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
 from quiver.mcp.inventory import server_inventory
+from quiver.flags import expand_value_flags
+from quiver.mcp.secrets import _SECRET_FLAG_RE
 from quiver.mcp.secrets import load_secrets
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
@@ -1238,6 +1242,273 @@ def _sync(args, report: dict | None):
     return 0
 
 
+_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
+
+
+def cmd_add(args):
+    args, json_view = take_json_flag(list(args))
+    if args and args[0] in ("-h", "--help", "help"):
+        print(MCP_HELP["add"])
+        return 0
+    refusal = error_stream(json_view)
+
+    command_tail = None
+    if "--" in args:
+        cut = args.index("--")
+        # Everything after `--` is the command and its args, verbatim.
+        command_tail, args = args[cut + 1:], args[:cut]
+    try:
+        args = expand_value_flags(
+            args, {"--to", "--env", "--header", "--url", "--transport"})
+    except ValueError as exc:
+        print(c("red", str(exc)), file=refusal)
+        return 1
+
+    positional: list[str] = []
+    to_names: list[str] = []
+    env_pairs: list[str] = []
+    header_pairs: list[str] = []
+    url = transport = None
+    force = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("--to", "--env", "--header", "--url", "--transport"):
+            value = args[i + 1]
+            i += 2
+            if arg == "--to":
+                to_names += [s for s in value.split(",") if s]
+            elif arg == "--env":
+                env_pairs.append(value)
+            elif arg == "--header":
+                header_pairs.append(value)
+            elif arg == "--url":
+                url = value
+            else:
+                transport = value
+        elif arg == "--force":
+            force = True
+            i += 1
+        elif arg.startswith("--"):
+            print(f"Unknown flag: {arg}", file=refusal)
+            return 1
+        else:
+            positional.append(arg)
+            i += 1
+
+    if len(positional) != 1 or not _SERVER_NAME_RE.match(positional[0]):
+        print(f"Usage: {c('cyan', 'swe mcp add <name> (--url=<url> | -- <command> [args…])')}",
+              file=refusal)
+        print("A name is letters, digits, . _ @ - and can't start with _ . @ -.",
+              file=refusal)
+        return 1
+    name = positional[0]
+
+    if (url is None) == (not command_tail):
+        print("Give exactly one of --url=<url> or `-- <command> [args…]`.",
+              file=refusal)
+        return 1
+    if url is not None:
+        if env_pairs:
+            print("--env only applies to a command server; use --header with --url.",
+                  file=refusal)
+            return 1
+        if transport not in (None, "http", "sse"):
+            print("--transport must be http or sse.", file=refusal)
+            return 1
+    else:
+        if header_pairs:
+            print("--header only applies to a --url server.", file=refusal)
+            return 1
+        if transport is not None:
+            print("--transport only applies to a --url server.", file=refusal)
+            return 1
+
+    def _pairs(raw: list[str], flag: str) -> dict[str, str] | None:
+        out = {}
+        for pair in raw:
+            key, sep, value = pair.partition("=")
+            if not sep:
+                print(f"{flag} takes KEY=VALUE pairs: {pair!r} has no =", file=refusal)
+                return None
+            out[key] = value
+        return out
+
+    env = _pairs(env_pairs, "--env")
+    headers = _pairs(header_pairs, "--header")
+    if env is None or headers is None:
+        return 1
+
+    registry = load_registry()
+    targets: list[str] = []
+    for place in to_names:
+        if is_hub(place):
+            continue  # the hub is always written
+        resolved = resolve_tool_arg(registry, place)
+        if _unsafe_registry_name(resolved):
+            print(c("red", f"Unsafe harness name in registry: {place}"), file=refusal)
+            return 1
+        if not resolved:
+            print(f"Unknown target tool: {place}", file=refusal)
+            return 1
+        if resolved not in targets:
+            targets.append(resolved)
+
+    if url is not None:
+        canonical: dict = {"url": url}
+        if transport == "sse":
+            canonical["type"] = "sse"
+        if headers:
+            canonical["headers"] = headers
+    else:
+        canonical = {"command": command_tail[0]}
+        if len(command_tail) > 1:
+            canonical["args"] = command_tail[1:]
+        if env:
+            canonical["env"] = env
+
+    # A literal credential in mcp.json is versioned; nudge toward ${NAME}.
+    for key, value in {**env, **headers}.items():
+        if "${" not in value and _SECRET_FLAG_RE.search(key):
+            print(c("yellow",
+                    f"  {key} looks like a credential and goes into mcp.json, "
+                    f"which is versioned. Use ${{{key}}} and swe mcp secret set {key}."),
+                  file=sys.stderr)
+
+    # What the hub stores; values already in the secrets file become ${NAME}.
+    hub_entry = redact_secrets(canonical)
+
+    # Every conflict is found before anything is written.
+    hub = get_hub_servers()
+    conflicts = ["quiver"] if name in hub else []
+    target_servers = {t: get_tool_servers(t) for t in targets}
+    conflicts += [t for t in targets if name in target_servers[t]]
+    if conflicts and not force:
+        print(c("red", f"{name} already exists in: {', '.join(conflicts)}. "
+                       "Re-run with --force to replace."), file=refusal)
+        return 1
+
+    # A ${NAME} a harness can't satisfy must not be written as the literal.
+    if targets:
+        secrets = load_secrets()
+        missing = unresolved_names(canonical, secrets)
+        if missing:
+            for var in missing:
+                print(f"Not adding: no value for {var} (used by {name}). "
+                      f"Set it with: swe mcp secret set {var}", file=refusal)
+            return 1
+
+    hub_status = "replaced" if name in hub else "added"
+    hub[name] = hub_entry
+    save_hub_servers(hub)
+
+    results = []
+    resolved_entry = resolve_secrets(canonical)
+    for target in targets:
+        converted = convert_server_for_target(resolved_entry, "quiver", target)
+        servers = target_servers[target]
+        status = "replaced" if name in servers else "added"
+        servers[name] = (_merge_format_keys(servers[name], converted)
+                         if status == "replaced" else converted)
+        get_tool_saver(target)(servers, get_tool_config(target)["path"])
+        results.append({"name": target, "status": status})
+
+    if json_view:
+        return emit({"name": name, "hub": hub_status, "targets": results})
+    print(f"{hub_status.capitalize()} {name} in the Quiver hub (~/.quiver/mcp.json)")
+    for r in results:
+        print(f"  {r['status']} in {r['name']}")
+    return 0
+
+
+def cmd_remove(args):
+    args, json_view = take_json_flag(list(args))
+    if args and args[0] in ("-h", "--help", "help"):
+        print(MCP_HELP["remove"])
+        return 0
+    refusal = error_stream(json_view)
+    try:
+        args = expand_value_flags(args, {"--from"})
+    except ValueError as exc:
+        print(c("red", str(exc)), file=refusal)
+        return 1
+
+    positional: list[str] = []
+    from_names: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--from":
+            from_names += [s for s in args[i + 1].split(",") if s]
+            i += 2
+        elif arg.startswith("--"):
+            print(f"Unknown flag: {arg}", file=refusal)
+            return 1
+        else:
+            positional.append(arg)
+            i += 1
+
+    if len(positional) != 1 or not _SERVER_NAME_RE.match(positional[0]) or not from_names:
+        print(f"Usage: {c('cyan', 'swe mcp remove <name> --from=<place>[,<place>…]')}",
+              file=refusal)
+        return 1
+    name = positional[0]
+
+    registry = load_registry()
+    places: list[str] = []
+    if any(p.lower() == "all" for p in from_names):
+        # The hub plus every harness whose config names the server.
+        places.append("quiver")
+        for tool in get_mcp_tools(registry):
+            if name in get_tool_servers(tool):
+                places.append(tool)
+    else:
+        for place in from_names:
+            if is_hub(place):
+                resolved = "quiver"
+            else:
+                resolved = resolve_tool_arg(registry, place)
+                if _unsafe_registry_name(resolved):
+                    print(c("red", f"Unsafe harness name in registry: {place}"),
+                          file=refusal)
+                    return 1
+                if not resolved:
+                    print(f"Unknown place: {place}", file=refusal)
+                    return 1
+            if resolved not in places:
+                places.append(resolved)
+
+    removed: list[str] = []
+    absent: list[str] = []
+    for place in places:
+        if place == "quiver":
+            hub = get_hub_servers()
+            if name in hub:
+                del hub[name]
+                save_hub_servers(hub)
+                removed.append("quiver")
+            else:
+                absent.append("quiver")
+            continue
+        servers = get_tool_servers(place)
+        if name not in servers:
+            absent.append(place)
+            continue
+        del servers[name]
+        get_tool_saver(place)(servers, get_tool_config(place)["path"])
+        removed.append(place)
+
+    if json_view:
+        code = emit({"name": name, "removed": removed, "absent": absent})
+    else:
+        if removed:
+            print(f"Removed {name} from: {', '.join(removed)}")
+        if absent:
+            print(f"{name} not in: {', '.join(absent)}")
+        code = 0
+    return code if removed else 1
+
+
 def cmd_secret(args):
     args, json_view = take_json_flag(list(args))
     if args and args[0] in ("-h", "--help", "help"):
@@ -1684,6 +1955,47 @@ MCP_HELP = {
   swe mcp validate opencode
   swe mcp validate oc cc""",
 
+    "add": f"""\
+  {c('cyan', 'swe mcp add <name> -- <command> [args…]')}     Add a stdio server
+  {c('cyan', 'swe mcp add <name> --url=<url>')}              Add an http server
+
+  The hub (~/.quiver/mcp.json) is always written; --to also writes the
+  given harnesses in their own format. --env goes with a command,
+  --header with a URL. A ${'{'}NAME{'}'} value stays a reference in the
+  hub and resolves when a harness is written — a name with no value in
+  the secrets file refuses before anything is written.
+
+{c('bold', 'Flags')}
+  --to=a,b            Also write these harnesses
+  --env=K=V           Env pair for a command server (repeatable)
+  --header=K=V        Header pair for a URL server (repeatable)
+  --transport=sse     Legacy SSE instead of streamable http
+  --force             Replace an existing server of the same name
+  --json              Print the result as one JSON document
+
+{c('bold', 'Examples')}
+  swe mcp add github -- npx -y @modelcontextprotocol/server-github
+  swe mcp add notion --env=NOTION_TOKEN='${'{'}NOTION_TOKEN{'}'}' -- npx -y @notionhq/notion-mcp-server
+  swe mcp add remote --url=https://mcp.example.com/sse --transport=sse \\
+      --header='Authorization=Bearer ${'{'}MCP_TOKEN{'}'}' --to=claude,codex""",
+
+    "remove": f"""\
+  {c('cyan', 'swe mcp remove <name> --from=<place>[,<place>…]')}   Remove a server
+
+  Places are harness names, the hub (quiver/hub/mcp.json), or
+  {c('cyan', 'all')} (the hub plus every harness whose config names the server).
+  Places that don't have the server are reported absent; removing
+  nothing exits 1.
+
+{c('bold', 'Flags')}
+  --from=a,b          Required: where to remove from
+  --json              Print the result as one JSON document
+
+{c('bold', 'Examples')}
+  swe mcp remove github --from=quiver
+  swe mcp remove github --from=claude,codex
+  swe mcp remove github --from=all""",
+
     "secret": f"""\
   {c('cyan', 'swe mcp secret set NAME')}       Store a ${'{'}NAME{'}'} value in ~/.quiver/secrets/mcp/.api_keys
 
@@ -1741,6 +2053,8 @@ def cmd_help(args=None):
   {c('cyan', 'swe mcp diff')}         Compare two tools' configs
   {c('cyan', 'swe mcp edit')}         Edit one server config in one tool
   {c('cyan', 'swe mcp validate')}     Validate MCP config shape for one/all tools
+  {c('cyan', 'swe mcp add')}          Add a server to the hub (and harnesses)
+  {c('cyan', 'swe mcp remove')}       Remove a server from the hub or harnesses
   {c('cyan', 'swe mcp secret set')}   Store a ${{NAME}} value in the secrets file
   {c('cyan', 'swe mcp doctor')}       Deep diagnostics
 
@@ -1769,6 +2083,8 @@ COMMANDS = {
     "diff": cmd_diff,
     "edit": cmd_edit,
     "validate": cmd_validate,
+    "add": cmd_add,
+    "remove": cmd_remove,
     "secret": cmd_secret,
     "doctor": cmd_doctor,
     "help": cmd_help,

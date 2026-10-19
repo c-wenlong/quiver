@@ -105,6 +105,34 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
             variants=[tools for _, tools in groups],
             secrets_missing=(unresolved_names(hub[name], secrets)
                              if name in hub else []),
+            in_hub=name in hub,
         )
         inventory.append((row.to_json(), entry["raw"]))
+
+    # Servers only the hub holds: no harness defines them, so they get a
+    # row with empty harnesses/variants, built from the hub's own entry.
+    handler = get_mcp_handler("quiver")
+    for name in sorted(set(hub) - set(seen)):
+        raw = hub[name]
+        canonical = handler.parse(raw) if isinstance(raw, dict) else {}
+        env = canonical.get("env") or {}
+        headers = canonical.get("headers") or {}
+        row = ServerRow(
+            name=name,
+            transport=transport_of(raw, canonical),
+            command=(redact_secrets(str(canonical["command"]), secrets)
+                     if canonical.get("command") else None),
+            args=scrub_args(canonical.get("args") or [], secrets),
+            url=(scrub_url(str(canonical["url"]), secrets)
+                 if canonical.get("url") else None),
+            env_keys=sorted(str(k) for k in env),
+            header_keys=sorted(str(k) for k in headers),
+            harnesses=[],
+            conflict=False,
+            variants=[],
+            secrets_missing=unresolved_names(raw, secrets),
+            in_hub=True,
+        )
+        inventory.append((row.to_json(), raw))
+    inventory.sort(key=lambda pair: pair[0]["name"])
     return inventory
