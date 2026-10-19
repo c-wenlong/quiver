@@ -72,9 +72,10 @@ struct TemperatureChart: View {
     }
 
     /// One chip per component: its colour, name and latest reading. A
-    /// chip that is off keeps its name but drops its colour.
+    /// chip that is off keeps its name but drops its colour. The chips
+    /// wrap onto a second row rather than shrink in a narrow window.
     private func legend(_ components: [ThermalComponent], latest: TemperaturePoint?) -> some View {
-        HStack(spacing: 6) {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
             ForEach(components, id: \.self) { component in
                 let on = model.temperatureLines.contains(component)
                 Button {
@@ -100,6 +101,7 @@ struct TemperatureChart: View {
                     .contentShape(.capsule)
                 }
                 .plainButton(cornerRadius: 12)
+                .fixedSize()
                 .help(on ? "Hide \(component.title)" : "Show \(component.title)")
             }
         }
