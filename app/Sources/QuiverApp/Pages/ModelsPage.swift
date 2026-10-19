@@ -531,7 +531,8 @@ private struct BarColumn: View {
 
 /// The same rows as a table: who ran it, the headline benchmarks, the
 /// LiteLLM list price the ledger charges, AA's blended price and cost
-/// rank beside it, and the user's tokens.
+/// rank beside it, and the user's tokens. The benchmark columns head with
+/// an icon; it and the two price headers open a tip naming the measure.
 struct TableCard: View {
     @Bindable var model: ModelsModel
     @State private var width: CGFloat = 0
@@ -561,23 +562,21 @@ struct TableCard: View {
         HStack(spacing: TableColumns.gap) {
             Text("Model").frame(width: columns.model, alignment: .leading)
             Text("Ran in").frame(width: columns.ranIn, alignment: .leading)
-            Text("Provider").frame(width: columns.provider, alignment: .leading)
-            Text("Intelligence").frame(width: columns.intelligence, alignment: .trailing)
-            Text("Terminal-Bench").frame(width: columns.coding, alignment: .trailing)
-                .help("Terminal-Bench 4.0: agentic coding and terminal tasks passed, run by Artificial Analysis")
-            Text("Speed").frame(width: columns.speed, alignment: .trailing)
+            iconHeader(.intelligence).frame(width: columns.intelligence, alignment: .trailing)
+            iconHeader(.coding).frame(width: columns.coding, alignment: .trailing)
+            iconHeader(.reasoning).frame(width: columns.reasoning, alignment: .trailing)
+            iconHeader(.speed).frame(width: columns.speed, alignment: .trailing)
             // The picked metric shows when it has no column of its own.
             if model.showsExtraMetric {
-                Text(model.metric == .ttft ? "TTFT" : model.metric == .reasoning ? "HLE" : model.metric.title)
-                    .frame(width: columns.extra, alignment: .trailing)
-                    .help(model.metric.chartTitle)
+                iconHeader(model.metric).frame(width: columns.extra, alignment: .trailing)
             }
-            HStack(spacing: 4) {
-                Text("Cost / 1M")
-                Text("in · out · cache").foregroundStyle(Theme.textMuted)
-            }
-            .frame(width: columns.price, alignment: .leading)
-            Text("AA blended").frame(width: columns.cost, alignment: .leading)
+            Text("Cost / 1M")
+                .hoverTip(ColumnTip.listPrice.text, title: ColumnTip.listPrice.title)
+                .padding(.leading, TableColumns.priceInset)
+                .frame(width: columns.price, alignment: .leading)
+            Text("AA blended")
+                .hoverTip(ColumnTip.blended.text, title: ColumnTip.blended.title)
+                .frame(width: columns.cost, alignment: .leading)
             Text("Your tokens").frame(width: columns.tokens, alignment: .trailing)
         }
         .font(Theme.caption).foregroundStyle(Theme.tableHeaderText)
@@ -586,51 +585,110 @@ struct TableCard: View {
     }
 }
 
+/// A benchmark column's header: the metric's icon, with a tip naming
+/// what it measures.
+@MainActor private func iconHeader(_ metric: ModelsModel.Metric) -> some View {
+    let tip = ColumnTip.of(metric)
+    // No padding around the glyph: its right edge lines up with the
+    // right-aligned figures under it.
+    return Image(systemName: tip.icon)
+        .font(.system(size: 13))
+        .hoverTip(tip.text, title: tip.title)
+}
+
+/// What a header's tip says: "<Domain>: <measure>" in bold, then a line
+/// on what the number means.
+struct ColumnTip: Equatable {
+    var icon: String
+    var title: String
+    var text: String
+
+    static func of(_ metric: ModelsModel.Metric) -> ColumnTip {
+        switch metric {
+        case .intelligence:
+            ColumnTip(icon: "brain",
+                      title: "Intelligence: Artificial Analysis Intelligence Index",
+                      text: "A blend of Artificial Analysis's independent evaluations: reasoning, knowledge, coding and agentic tasks. Higher is better.")
+        case .coding:
+            ColumnTip(icon: "terminal",
+                      title: "Coding: Terminal-Bench 4.0",
+                      text: "Percent of agentic coding and terminal tasks passed, run by Artificial Analysis. It replaces their Coding Index, which stopped covering new models in September 2026.")
+        case .reasoning:
+            ColumnTip(icon: "graduationcap",
+                      title: "Reasoning: Humanity's Last Exam",
+                      text: "Percent of expert-level questions answered correctly, about 40% of them maths. It replaces Artificial Analysis's Maths Index, retired in January 2026.")
+        case .speed:
+            ColumnTip(icon: "gauge.with.dots.needle.67percent",
+                      title: "Speed: Median output speed",
+                      text: "Output tokens per second (t/s), the median across the providers Artificial Analysis tests.")
+        case .ttft:
+            ColumnTip(icon: "timer",
+                      title: "Latency: Time to first token",
+                      text: "Median seconds until the first token arrives, lower is better.")
+        case .cost:
+            blended
+        }
+    }
+
+    static let listPrice = ColumnTip(
+        icon: "dollarsign",
+        title: "Cost: LiteLLM list price",
+        text: "Per 1M tokens: input · output · cache read. The price the ledger charges your usage; hover a row's price for its key and cache-write rate.")
+
+    static let blended = ColumnTip(
+        icon: "dollarsign",
+        title: "Cost: Artificial Analysis blended price",
+        text: "One price per 1M tokens, weighting input to output 3 to 1. The bar ranks it against every priced model on Artificial Analysis, cheapest on the left.")
+}
+
 /// The table's column widths: each column has a floor that fits its
 /// content and a weight for its share of any room above the floors, so
 /// the model name no longer takes half the table while cost and the
 /// figures are squeezed. Below the floors' sum the table scrolls.
 struct TableColumns: Equatable {
     static let gap: CGFloat = 14
+    /// Extra room before the left-aligned prices, so they don't run into
+    /// the right-aligned speed figures beside them.
+    static let priceInset: CGFloat = 12
 
     /// (floor, weight) per column, in display order.
     static let model = (min: 180.0, weight: 24.0)
     static let ranIn = (min: 56.0, weight: 6.0)
-    static let provider = (min: 78.0, weight: 9.0)
-    static let intelligence = (min: 72.0, weight: 8.0)
-    static let coding = (min: 100.0, weight: 7.0)
-    static let speed = (min: 64.0, weight: 8.0)
-    static let extra = (min: 56.0, weight: 7.0)
-    static let price = (min: 150.0, weight: 12.0)
+    static let intelligence = (min: 40.0, weight: 6.0)
+    static let coding = (min: 40.0, weight: 6.0)
+    static let reasoning = (min: 40.0, weight: 6.0)
+    static let speed = (min: 40.0, weight: 6.0)
+    static let extra = (min: 44.0, weight: 6.0)
+    static let price = (min: 162.0, weight: 12.0)
     static let cost = (min: 130.0, weight: 16.0)
     static let tokens = (min: 76.0, weight: 9.0)
 
-    var model: CGFloat, ranIn: CGFloat, provider: CGFloat, intelligence: CGFloat
-    var coding: CGFloat, speed: CGFloat, extra: CGFloat, price: CGFloat, cost: CGFloat, tokens: CGFloat
+    var model: CGFloat, ranIn: CGFloat, intelligence: CGFloat, coding: CGFloat
+    var reasoning: CGFloat, speed: CGFloat, extra: CGFloat, price: CGFloat, cost: CGFloat, tokens: CGFloat
 
     /// Every column plus the gaps between them.
     var total: CGFloat {
-        let columns = [model, ranIn, provider, intelligence, coding, speed, extra, price, cost, tokens]
+        let columns = [model, ranIn, intelligence, coding, reasoning, speed, extra, price, cost, tokens]
         let shown = columns.filter { $0 > 0 }
         return shown.reduce(0, +) + Self.gap * CGFloat(max(shown.count - 1, 0))
     }
 
     static func widths(for available: CGFloat, extraMetric: Bool) -> TableColumns {
-        let specs = [model, ranIn, provider, intelligence, coding, speed,
+        let specs = [model, ranIn, intelligence, coding, reasoning, speed,
                      extraMetric ? extra : (min: 0, weight: 0), price, cost, tokens]
         let count = specs.filter { $0.min > 0 }.count
         let floors = specs.map(\.min).reduce(0, +) + gap * CGFloat(count - 1)
         let room = max(0, available - floors)
         let weights = specs.map(\.weight).reduce(0, +)
         let w = specs.map { CGFloat($0.min) + (weights > 0 ? room * CGFloat($0.weight) / CGFloat(weights) : 0) }
-        return TableColumns(model: w[0], ranIn: w[1], provider: w[2], intelligence: w[3],
-                            coding: w[4], speed: w[5], extra: w[6], price: w[7], cost: w[8], tokens: w[9])
+        return TableColumns(model: w[0], ranIn: w[1], intelligence: w[2], coding: w[3],
+                            reasoning: w[4], speed: w[5], extra: w[6], price: w[7], cost: w[8], tokens: w[9])
     }
 }
 
 extension ModelsModel {
     /// The picked metric gets a table column when no fixed one shows it.
-    var showsExtraMetric: Bool { metric == .reasoning || metric == .ttft }
+    var showsExtraMetric: Bool { metric == .ttft }
 }
 
 private struct TableRow: View {
@@ -662,21 +720,22 @@ private struct TableRow: View {
                 }
             }
             .frame(width: columns.ranIn, alignment: .leading)
-            Text(vendor.name).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .frame(width: columns.provider, alignment: .leading)
             metric(row.aa?.intelligence).frame(width: columns.intelligence, alignment: .trailing)
-            metric(row.aa?.coding, unit: "%", missing: AALanguageModel.noCodingScore)
+            metric(row.aa?.coding, missing: AALanguageModel.noCodingScore)
                 .frame(width: columns.coding, alignment: .trailing)
-            metric(row.aa?.speed, unit: "t/s").frame(width: columns.speed, alignment: .trailing)
+            metric(row.aa?.reasoning, missing: AALanguageModel.noReasoningScore)
+                .frame(width: columns.reasoning, alignment: .trailing)
+            metric(row.aa?.speed).frame(width: columns.speed, alignment: .trailing)
             if model.showsExtraMetric {
-                Text(row.value.map(model.metric.format) ?? "—")
+                // The unit lives in the header's tip, as for the others.
+                Text(row.value.map { String(format: "%.2f", $0) } ?? "—")
                     .font(Theme.bodySmall).monospacedDigit()
                     .foregroundStyle(row.value == nil ? Theme.textMuted : Theme.textPrimary)
                     .frame(width: columns.extra, alignment: .trailing)
                     .help(row.value == nil ? model.metric.missingNote ?? "" : "")
             }
             ListPriceCell(price: row.listPrice)
+                .padding(.leading, TableColumns.priceInset)
                 .frame(width: columns.price, alignment: .leading)
             CostScale(model: row.aa, rank: row.costPercentile)
                 .frame(width: columns.cost, alignment: .leading)
@@ -695,17 +754,11 @@ private struct TableRow: View {
     }
 
     /// A figure, or "—" when Artificial Analysis has none, with `missing`
-    /// as the dash's hover note.
-    @ViewBuilder private func metric(_ value: Double?, unit: String? = nil,
-                                     missing: String? = nil) -> some View {
+    /// as the dash's hover note. Units are in the header's tip.
+    @ViewBuilder private func metric(_ value: Double?, missing: String? = nil) -> some View {
         if let value {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("\(Int(value.rounded()))")
-                    .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
-                if let unit {
-                    Text(unit).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                }
-            }
+            Text("\(Int(value.rounded()))")
+                .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
         } else {
             Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
                 .help(missing ?? "")

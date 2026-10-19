@@ -101,6 +101,16 @@ struct ModelChartLayoutTests {
         }
     }
 
+    /// Every benchmark header tip reads "<Domain>: <measure>" over a
+    /// line of explanation, and has an icon to stand in the header.
+    @Test(arguments: ModelsModel.Metric.allCases)
+    func everyMetricHasAHeaderTip(metric: ModelsModel.Metric) {
+        let tip = ColumnTip.of(metric)
+        #expect(!tip.icon.isEmpty)
+        #expect(tip.title.split(separator: ":").count == 2)
+        #expect(!tip.text.isEmpty)
+    }
+
     /// Columns never drop below their floors; room above the floors is
     /// shared by weight, so the table fills the card exactly and the model
     /// name gets about a quarter of the extra width, not all of it.
