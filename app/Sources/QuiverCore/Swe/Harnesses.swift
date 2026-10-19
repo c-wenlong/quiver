@@ -34,6 +34,64 @@ extension SweClient {
     public func restore(_ name: String) async throws -> HarnessStateChange {
         try await call(["harness", "archive", name, "--json"])
     }
+
+    /// `swe harness discover --json`: findings, nothing applied.
+    public func discoverHarnesses() async throws -> HarnessDiscovery {
+        try await call(["harness", "discover", "--json"])
+    }
+
+    /// `swe harness discover --apply <names>`: registers exactly those.
+    public func registerHarnesses(_ names: [String]) async throws -> HarnessDiscovery {
+        try await call(["harness", "discover", "--apply"] + names + ["--json"])
+    }
+
+    /// `swe add` for the app's form: never overwrites (--no-replace).
+    @discardableResult
+    public func addHarness(name: String, command: String, description: String,
+                           aliases: [String], tags: [String]) async throws -> HarnessAddReply {
+        var argv = ["add", name, command]
+        if !description.isEmpty { argv.append("--description=\(description)") }
+        if !aliases.isEmpty { argv.append("--aliases=\(aliases.joined(separator: ","))") }
+        if !tags.isEmpty { argv.append("--tags=\(tags.joined(separator: ","))") }
+        return try await call(argv + ["--no-replace", "--json"])
+    }
+}
+
+/// `swe harness discover --json`: rows, and `applied.added` after --apply.
+public struct HarnessDiscovery: Decodable, Sendable {
+    public let findings: [Finding]
+    public let applied: Applied?
+
+    public struct Finding: Decodable, Sendable, Identifiable {
+        public var id: String { name }
+        public let name: String
+        public let command: String
+        public let path: String?
+        public let confidence: String
+        public let status: String
+        public let description: String?
+    }
+
+    public struct Applied: Decodable, Sendable {
+        public let added: [String]
+    }
+
+    /// What the Detect sheet offers: new matches only, high-confidence
+    /// ones ticked by default (they are catalog hits, not guesses).
+    public static func selection(_ findings: [Finding]) -> (rows: [Finding], checked: Set<String>) {
+        let new = findings.filter { $0.status == "new" }
+        return (new, Set(new.filter { $0.confidence == "high" }.map(\.name)))
+    }
+}
+
+/// `swe add --json`: what the registry now holds for the name.
+public struct HarnessAddReply: Decodable, Sendable {
+    public let name: String
+    public let command: String
+    public let action: String
+    public let installed: Bool
+    public let aliases: [String]
+    public let tags: [String]
 }
 
 /// What `swe edit <name> --json` reports back.
