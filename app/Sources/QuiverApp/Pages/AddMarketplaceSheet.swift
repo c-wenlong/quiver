@@ -88,7 +88,10 @@ struct AddMarketplaceSheet: View {
                                     source: source, harnesses: harnesses.filter { chosen.contains($0) })
                                 results = reply.results
                                 if reply.results.contains(where: \.ok) {
+                                    // Health's "not added" findings change too.
+                                    async let health: Void = app.plugins.load(swe: app.swe, for: app.swePath)
                                     await app.pluginCatalog.load(swe: app.swe, for: app.swePath)
+                                    await health
                                 }
                             } catch {
                                 self.error = error.localizedDescription
