@@ -56,6 +56,16 @@ import Testing
         #expect(ThermalKeys.read(ThermalKeys.keys(forBrand: "Apple M4 Pro"), from: FakeSMC()) == nil)
     }
 
+    @Test func aFanCountsAsUpOnlyClearOfItsIdleDrift() {
+        func fan(_ actual: Double) -> FanReading { FanReading(index: 0, actual: actual, minimum: 2317, maximum: 7826) }
+        // An M4 Pro's second fan idles near 2,500 against a 2,317 floor.
+        #expect(FanSummary.from([fan(2317), fan(2509)]) == FanSummary(rpm: 2509, up: false))
+        #expect(FanSummary.from([fan(2317), fan(2700)]) == FanSummary(rpm: 2700, up: true))
+        // Spun down is not up; no fans is no summary.
+        #expect(FanSummary.from([fan(0)])?.up == false)
+        #expect(FanSummary.from([]) == nil)
+    }
+
     @Test func smcReadingsWinAndHIDFillsTheGaps() {
         let smc = TemperatureReading([.cpu: 70, .gpu: 60])
         let hid = TemperatureReading([.cpu: 55, .battery: 33])

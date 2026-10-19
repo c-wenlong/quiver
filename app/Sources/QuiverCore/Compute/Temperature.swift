@@ -26,12 +26,43 @@ public enum ThermalComponent: String, CaseIterable, Codable, Sendable, Comparabl
     }
 }
 
+/// What the fans were doing at one moment.
+public struct FanSummary: Sendable, Equatable {
+    /// The fastest fan's speed.
+    public var rpm: Double
+    /// Whether any fan ran clearly faster than its idle floor.
+    public var up: Bool
+
+    public init(rpm: Double, up: Bool) {
+        self.rpm = rpm
+        self.up = up
+    }
+
+    /// How far above its minimum a fan must run to count as up. A fan
+    /// can idle a little over its floor (an M4 Pro's second fan sits near
+    /// 2,500 rpm against a 2,317 minimum), so any rpm over it is not
+    /// enough; 15% clears that idle drift.
+    public static let upMargin = 0.15
+
+    /// Nil on a Mac without fans or when the SMC does not answer.
+    public static func from(_ fans: [FanReading]) -> FanSummary? {
+        guard let fastest = fans.map(\.actual).max() else { return nil }
+        let up = fans.contains { $0.minimum > 0 && $0.actual > $0.minimum * (1 + upMargin) }
+        return FanSummary(rpm: fastest, up: up)
+    }
+}
+
 /// The Mac's temperatures at one moment, in degrees Celsius: one value
-/// per component that answered, the mean of that component's sensors.
+/// per component that answered, the mean of that component's sensors,
+/// and what the fans were doing.
 public struct TemperatureReading: Sendable, Equatable {
     public var values: [ThermalComponent: Double]
+    public var fans: FanSummary?
 
-    public init(_ values: [ThermalComponent: Double]) { self.values = values }
+    public init(_ values: [ThermalComponent: Double], fans: FanSummary? = nil) {
+        self.values = values
+        self.fans = fans
+    }
 
     public subscript(_ component: ThermalComponent) -> Double? { values[component] }
 
@@ -61,7 +92,7 @@ public struct TemperatureReading: Sendable, Equatable {
 
     /// `self` with `other` filling the components `self` lacks.
     public func filling(from other: TemperatureReading?) -> TemperatureReading {
-        TemperatureReading(values.merging(other?.values ?? [:]) { mine, _ in mine })
+        TemperatureReading(values.merging(other?.values ?? [:]) { mine, _ in mine }, fans: fans ?? other?.fans)
     }
 }
 
@@ -243,9 +274,12 @@ public struct MacTemperatureSampler: TemperatureSampling {
     }
 
     public func read() -> TemperatureReading? {
-        let smc = AppleSMC().flatMap { ThermalKeys.read(keys, from: $0) }
+        let smc = AppleSMC()
+        let temperatures = smc.flatMap { ThermalKeys.read(keys, from: $0) }
         let fallback = hid.read()
-        guard smc != nil || fallback != nil else { return nil }
-        return (smc ?? TemperatureReading([:])).filling(from: fallback)
+        guard temperatures != nil || fallback != nil else { return nil }
+        var reading = (temperatures ?? TemperatureReading([:])).filling(from: fallback)
+        reading.fans = smc.flatMap { FanSummary.from(FanKeys.read($0)) }
+        return reading
     }
 }

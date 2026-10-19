@@ -59,14 +59,15 @@ struct TemperatureChart: View {
         let points = self.points
         let available = available(points)
         let shown = available.filter(model.temperatureLines.contains)
+        let spans = ComputeHistory.fanSpans(points, interval: model.trendInterval)
         VStack(alignment: .leading, spacing: 10) {
-            legend(available, latest: points.last)
+            legend(available, latest: points.last, fansShown: !spans.isEmpty)
             if shown.isEmpty {
                 Text("Every line is off. Pick one above.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, minHeight: height)
             } else {
-                chart(points, shown: shown)
+                chart(points, shown: shown, spans: spans)
             }
         }
     }
@@ -74,7 +75,8 @@ struct TemperatureChart: View {
     /// One chip per component: its colour, name and latest reading. A
     /// chip that is off keeps its name but drops its colour. The chips
     /// wrap onto a second row rather than shrink in a narrow window.
-    private func legend(_ components: [ThermalComponent], latest: TemperaturePoint?) -> some View {
+    private func legend(_ components: [ThermalComponent], latest: TemperaturePoint?,
+                        fansShown: Bool) -> some View {
         FlowLayout(spacing: 6, lineSpacing: 6) {
             ForEach(components, id: \.self) { component in
                 let on = model.temperatureLines.contains(component)
@@ -104,16 +106,41 @@ struct TemperatureChart: View {
                 .fixedSize()
                 .help(on ? "Hide \(component.title)" : "Show \(component.title)")
             }
+            // A key, not a switch: the shading explains itself here.
+            if fansShown {
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2).fill(Self.fanShade).frame(width: 12, height: 10)
+                    Text("Fans up").foregroundStyle(Theme.textSecondary)
+                }
+                .font(Theme.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .fixedSize()
+                .help("Shaded where a fan ran more than 15% above its minimum speed.")
+            }
         }
     }
 
-    private func chart(_ points: [TemperaturePoint], shown: [ThermalComponent]) -> some View {
+    /// Grey, so it reads as background and never as an eighth series.
+    static let fanShade = Theme.textSecondary.opacity(0.14)
+
+    private func chart(_ points: [TemperaturePoint], shown: [ThermalComponent],
+                       spans: [ClosedRange<Date>]) -> some View {
         let values = points.flatMap { point in shown.compactMap { point[$0] } }
+        let yDomain = Self.domain(values)
         // The same x range as the harness charts: the whole window, so
         // the first minutes draw from the right rather than stretched.
         let end = model.history.temperatureEnd ?? .now
         let domain = model.history.window(endingAt: end, interval: model.trendInterval)
         return Chart {
+            // First, so every line draws over the shading. Its y runs the
+            // fixed scale, so it can never move the axis.
+            ForEach(spans, id: \.lowerBound) { span in
+                RectangleMark(xStart: .value("Start", max(span.lowerBound, domain.lowerBound)),
+                              xEnd: .value("End", min(span.upperBound, domain.upperBound)),
+                              yStart: .value("°C", yDomain.lowerBound), yEnd: .value("°C", yDomain.upperBound))
+                    .foregroundStyle(Self.fanShade)
+            }
             ForEach(shown, id: \.self) { component in
                 ForEach(points.filter { $0[component] != nil }, id: \.at) { point in
                     LineMark(x: .value("Time", point.at), y: .value("°C", point[component] ?? 0),
@@ -139,7 +166,7 @@ struct TemperatureChart: View {
             }
         }
         .chartXScale(domain: domain)
-        .chartYScale(domain: Self.domain(values))
+        .chartYScale(domain: yDomain)
         .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
         .chartYAxis {
             // The scale sits on the left, so the line names at the right
@@ -203,6 +230,17 @@ struct TemperatureChart: View {
                         Text(Self.formatted(value)).monospacedDigit()
                     }
                 }
+            }
+            if let fans = point.fans {
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2).fill(fans.up ? Self.fanShade : Color.clear)
+                        .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.borderStrong, lineWidth: 1))
+                        .frame(width: 8, height: 8)
+                    Text("Fans")
+                    Spacer()
+                    Text("\(Int(fans.rpm.rounded()).formatted()) rpm").monospacedDigit()
+                }
+                .foregroundStyle(Theme.textSecondary)
             }
         }
         .font(Theme.caption).foregroundStyle(Theme.textPrimary)
