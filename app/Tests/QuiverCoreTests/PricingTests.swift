@@ -330,19 +330,28 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2", tokens: 1_000_000)))
         let ledger = try Ledger(directory: temp.path("cache"))
         let file = temp.url.appending(path: "config/pricing.json")
+        let firstRead = OSAllocatedUnfairLock(initialState: false)
         let builds = OSAllocatedUnfairLock(initialState: 0)
+        let release = DispatchSemaphore(value: 0)
         let model = PricingModel(
             ledger: ledger, overrides: PricingOverrides(url: file),
             makeCatalog: {
-                // The first build reads the file, then stalls past the
-                // second save: the order a Cancel-and-save-again gives.
+                // The first build reads the old prices, then holds until the
+                // second save has applied: the older build finishes last,
+                // the order a Cancel-and-save-again can give.
                 let entries = PricingOverrides(url: file).entries
-                if builds.withLock({ $0 += 1; return $0 }) == 1 { Thread.sleep(forTimeInterval: 0.3) }
+                if builds.withLock({ $0 += 1; return $0 }) == 1 {
+                    firstRead.withLock { $0 = true }
+                    _ = release.wait(timeout: .now() + 5)
+                }
                 return try PricingCatalog(liteLLM: Data("{}".utf8), overrides: entries)
             },
-            apply: { catalog in await ledger.setPricing(catalog) })
+            apply: { catalog in
+                await ledger.setPricing(catalog)
+                release.signal()
+            })
         async let first: Void = model.save(key: "swe-2", prices: .init(input: 1, output: 1))
-        try await Task.sleep(for: .milliseconds(100))
+        while !firstRead.withLock({ $0 }) { try await Task.sleep(for: .milliseconds(5)) }
         try await model.save(key: "swe-2", prices: .init(input: 5, output: 5))
         try await first
         #expect(await ledger.totals(in: allTime).costUSD == 5)
