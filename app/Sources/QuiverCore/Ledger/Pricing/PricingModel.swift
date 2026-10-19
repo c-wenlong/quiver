@@ -237,8 +237,14 @@ public final class PricingModel {
         try await reprice()
     }
 
+    /// Rebuilds the catalog off the main actor (reading the price list
+    /// and its history takes most of a second), hands it to `apply`, then
+    /// reloads this page's rows. `apply` is expected to return once the
+    /// ledger prices with the new catalog; slower redraws elsewhere (the
+    /// Overview's figures) belong in the background, not on this path.
     private func reprice() async throws {
-        let catalog = try makeCatalog()
+        let makeCatalog = self.makeCatalog
+        let catalog = try await Task.detached(priority: .userInitiated) { try makeCatalog() }.value
         await apply(catalog)
         await load()
     }

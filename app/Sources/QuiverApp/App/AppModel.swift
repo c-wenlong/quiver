@@ -492,7 +492,13 @@ final class AppModel {
                 ledger: ledger,
                 overrides: PricingOverrides(url: quiver.appending(path: "config/pricing.json")),
                 makeCatalog: { try pricing.load() },
-                apply: { catalog in await overviewModel?.pricingUpdated(catalog) })
+                // The ledger takes the catalog at once; the Overview's
+                // figures (seconds of queries) redraw behind the closed
+                // price sheet rather than holding it open.
+                apply: { catalog in
+                    ledger.setPricing(catalog)
+                    Task { @MainActor in await overviewModel?.pricingUpdated(catalog) }
+                })
             // Benchmark data + the user's own per-model usage, for the
             // Models page and the hover cards everywhere else.
             models = ModelsModel(

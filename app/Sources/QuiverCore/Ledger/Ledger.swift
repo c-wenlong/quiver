@@ -196,7 +196,9 @@ public actor Ledger {
         reader = JSONLReader(maxLineBytes: maxLineBytes)
     }
 
-    public func setPricing(_ catalog: PricingCatalog) {
+    /// Nonisolated: the catalog sits behind its own lock, so a saved
+    /// price lands at once instead of queueing behind a running scan.
+    public nonisolated func setPricing(_ catalog: PricingCatalog) {
         pricingState.withLock { $0 = catalog }
     }
 

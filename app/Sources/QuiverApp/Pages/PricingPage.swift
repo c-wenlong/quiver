@@ -367,8 +367,12 @@ private struct PriceSheet: View {
     @State private var output = ""
     @State private var cacheRead = ""
     @State private var cacheWrite = ""
-    @State private var saving = false
+    /// What the sheet is writing now ("Saving…"), nil when idle: the
+    /// spinner's label, and the lock on both writing buttons.
+    @State private var working: String?
     @State private var saveError: String?
+
+    private var saving: Bool { working != nil }
 
     /// Editing one of the user's own prices rather than adding a new one.
     private var editing: Bool { row.source == .yours }
@@ -486,6 +490,15 @@ private struct PriceSheet: View {
                         .disabled(saving)
                 }
                 Spacer()
+                if let working {
+                    // The sheet closes by itself once the write lands;
+                    // Cancel just closes it sooner, the write still runs.
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(working).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                    .transition(.opacity)
+                }
                 Button("Cancel", role: .cancel) { dismiss() }
                     .secondaryButton()
                 Button("Save") { save() }
@@ -494,6 +507,7 @@ private struct PriceSheet: View {
                     .disabled(!valid || saving)
             }
         }
+        .animation(.easeOut(duration: Theme.fadeDuration), value: working)
         .sheetScaffold(width: Theme.formSheetWidth, padding: Theme.formSheetPadding)
     }
 
@@ -505,36 +519,37 @@ private struct PriceSheet: View {
     }
 
     private func save() {
-        guard let input = number(input), let output = number(output) else { return }
+        guard !saving, let input = number(input), let output = number(output) else { return }
         let key = key.trimmingCharacters(in: .whitespaces)
         let prices = PricingOverrides.Prices(
             input: input, output: output,
             cacheRead: number(cacheRead, orBlankAs: 0) ?? 0,
             cacheWrite: number(cacheWrite, orBlankAs: 0) ?? 0)
-        saving = true
-        saveError = nil
-        Task {
-            do {
-                try await model.save(key: key, prices: prices,
-                                     replacing: editing ? originalKey : nil)
-                dismiss()
-            } catch {
-                saveError = error.localizedDescription
-                saving = false
-            }
+        write("Saving…") {
+            try await model.save(key: key, prices: prices,
+                                 replacing: editing ? originalKey : nil)
         }
     }
 
     private func remove() {
-        saving = true
+        guard !saving else { return }
+        write(row.resetKind == .remove ? "Removing…" : "Resetting…") {
+            try await model.remove(matching: row.model)
+        }
+    }
+
+    /// Runs one write with the spinner showing `label`, then closes the
+    /// sheet, or keeps it open with the error.
+    private func write(_ label: String, _ body: @escaping @MainActor () async throws -> Void) {
+        working = label
         saveError = nil
         Task {
             do {
-                try await model.remove(matching: row.model)
+                try await body()
                 dismiss()
             } catch {
                 saveError = error.localizedDescription
-                saving = false
+                working = nil
             }
         }
     }
