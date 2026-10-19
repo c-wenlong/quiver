@@ -71,9 +71,8 @@ struct DetectSheet: View {
                             error = nil
                             Task {
                                 do {
-                                    let reply = try await app.swe.registerHarnesses(
+                                    registered = try await model.register(
                                         rows.filter { checked.contains($0.name) }.map(\.name))
-                                    registered = reply.applied?.added ?? []
                                     await reload()
                                 } catch { self.error = error.localizedDescription }
                                 working = false
@@ -101,6 +100,7 @@ struct DetectSheet: View {
 /// `swe add <name> <command>` as a form. --no-replace keeps swe from
 /// overwriting an existing entry; the field warns before swe sees it.
 struct AddHarnessSheet: View {
+    var model: HarnessesModel
     /// Names already in the registry, so a duplicate can't be submitted.
     var known: Set<String>
     var reload: () async -> Void
@@ -163,7 +163,7 @@ struct AddHarnessSheet: View {
                     error = nil
                     Task {
                         do {
-                            try await app.swe.addHarness(
+                            try await model.add(
                                 name: name, command: command,
                                 description: description,
                                 aliases: csv(aliases), tags: csv(tags))

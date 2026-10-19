@@ -32,7 +32,7 @@ struct HarnessesPage: View {
         }
         .sheet(isPresented: $adding) {
             if let model {
-                AddHarnessSheet(known: Set(model.all.map(\.name)), reload: { await reload() })
+                AddHarnessSheet(model: model, known: Set(model.all.map(\.name)), reload: { await reload() })
             }
         }
     }

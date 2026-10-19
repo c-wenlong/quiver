@@ -186,6 +186,23 @@ public final class HarnessesModel {
         self.swe = swe
     }
 
+    /// Registers discovered harnesses by name, behind the registry gate;
+    /// returns the names swe added.
+    public func register(_ names: [String]) async throws -> [String] {
+        await gate.acquire()
+        defer { gate.release() }
+        return try await swe.registerHarnesses(names).applied?.added ?? []
+    }
+
+    /// Adds a custom harness behind the registry gate; never overwrites.
+    public func add(name: String, command: String, description: String,
+                    aliases: [String], tags: [String]) async throws {
+        await gate.acquire()
+        defer { gate.release() }
+        try await swe.addHarness(name: name, command: command, description: description,
+                                 aliases: aliases, tags: tags)
+    }
+
     public func load() async {
         generation += 1
         let mine = generation
