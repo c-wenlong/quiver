@@ -151,7 +151,8 @@ struct ProviderSetupSheet: View {
                 .help(method.command)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
-            CopyButton(help: "Copy the \(method.managerTitle) command") { copyToPasteboard(method.command) }
+            CopyButton(title: "Copy \(method.managerTitle) command",
+                       help: "Copy the \(method.managerTitle) command") { copyToPasteboard(method.command) }
                 .iconButton()
             Button("Run in Terminal", systemImage: "terminal") {
                 guard let line else { return }
