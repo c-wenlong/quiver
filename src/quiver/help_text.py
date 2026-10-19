@@ -87,6 +87,7 @@ HELP = {
   {c('cyan', 'swe add <name> <cmd> --tags=t1,t2')}    Set tags
   {c('cyan', 'swe add -i')}                           Interactive form (walk each field)
   {c('cyan', 'swe add <name> -i')}                    Interactive, pre-filled name
+  {c('cyan', 'swe add <name> <cmd> --no-replace --json')}  For the app: refuse existing names
 
   The {c('dim', 'registry')} is one file, {c('bold', '~/.quiver/config/harness.json')}, listing every
   tool quiver knows. Adding a tool here does not install it — it tells

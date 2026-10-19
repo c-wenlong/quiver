@@ -34,6 +34,86 @@ extension SweClient {
     public func restore(_ name: String) async throws -> HarnessStateChange {
         try await call(["harness", "archive", name, "--json"])
     }
+
+    /// `swe harness discover --json`: findings, nothing applied.
+    public func discoverHarnesses() async throws -> HarnessDiscovery {
+        try await call(["harness", "discover", "--json"])
+    }
+
+    /// `swe harness discover --apply <names>`: registers exactly those.
+    public func registerHarnesses(_ names: [String]) async throws -> HarnessDiscovery {
+        try await call(["harness", "discover", "--apply"] + names + ["--json"])
+    }
+
+    /// `swe add` for the app's form: never overwrites (--no-replace).
+    @discardableResult
+    public func addHarness(name: String, command: String, description: String,
+                           aliases: [String], tags: [String]) async throws -> HarnessAddReply {
+        var argv = ["add", name, command]
+        if !description.isEmpty { argv.append("--description=\(description)") }
+        if !aliases.isEmpty { argv.append("--aliases=\(aliases.joined(separator: ","))") }
+        if !tags.isEmpty { argv.append("--tags=\(tags.joined(separator: ","))") }
+        return try await call(argv + ["--no-replace", "--json"])
+    }
+}
+
+/// `swe harness discover --json`: rows, and `applied.added` after --apply.
+public struct HarnessDiscovery: Decodable, Sendable {
+    public let findings: [Finding]
+    public let applied: Applied?
+
+    public struct Finding: Decodable, Sendable, Identifiable {
+        public var id: String { name }
+        public let name: String
+        public let command: String
+        public let path: String?
+        public let confidence: String
+        public let status: String
+        public let description: String?
+    }
+
+    public struct Applied: Decodable, Sendable {
+        public let added: [String]
+        /// Findings apply refused: a name already registered, or an alias
+        /// belonging to another harness. Absent from an older swe.
+        public let skipped: [Skipped]
+
+        public struct Skipped: Decodable, Sendable, Identifiable {
+            public var id: String { name + reason }
+            public let name: String
+            public let reason: String
+        }
+
+        private enum CodingKeys: String, CodingKey { case added, skipped }
+
+        public init(added: [String], skipped: [Skipped]) {
+            self.added = added
+            self.skipped = skipped
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let box = try decoder.container(keyedBy: CodingKeys.self)
+            added = try box.decode([String].self, forKey: .added)
+            skipped = try box.decodeIfPresent([Skipped].self, forKey: .skipped) ?? []
+        }
+    }
+
+    /// What the Detect sheet offers: new matches only, high-confidence
+    /// ones ticked by default (they are catalog hits, not guesses).
+    public static func selection(_ findings: [Finding]) -> (rows: [Finding], checked: Set<String>) {
+        let new = findings.filter { $0.status == "new" }
+        return (new, Set(new.filter { $0.confidence == "high" }.map(\.name)))
+    }
+}
+
+/// `swe add --json`: what the registry now holds for the name.
+public struct HarnessAddReply: Decodable, Sendable {
+    public let name: String
+    public let command: String
+    public let action: String
+    public let installed: Bool
+    public let aliases: [String]
+    public let tags: [String]
 }
 
 /// What `swe edit <name> --json` reports back.
@@ -126,6 +206,24 @@ public final class HarnessesModel {
 
     public init(swe: SweClient) {
         self.swe = swe
+    }
+
+    /// Registers those names behind the registry gate; the reply also
+    /// says which names were refused, and why.
+    public func register(_ names: [String]) async throws -> HarnessDiscovery.Applied {
+        await gate.acquire()
+        defer { gate.release() }
+        return try await swe.registerHarnesses(names).applied
+            ?? .init(added: [], skipped: [])
+    }
+
+    /// Adds a custom harness behind the registry gate; never overwrites.
+    public func add(name: String, command: String, description: String,
+                    aliases: [String], tags: [String]) async throws {
+        await gate.acquire()
+        defer { gate.release() }
+        try await swe.addHarness(name: name, command: command, description: description,
+                                 aliases: aliases, tags: tags)
     }
 
     public func load() async {

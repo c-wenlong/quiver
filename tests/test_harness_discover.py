@@ -102,7 +102,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             with p1, p2, p3, patch("quiver.harness.discover.live_version", return_value="9.9.9"):
                 save_registry(minimal)
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
-                added = apply_findings(findings, min_confidence="high")
+                added, _ = apply_findings(findings, min_confidence="high")
                 self.assertIn("kiro", added)
                 registry = load_registry()
                 self.assertIn("kiro", registry)
@@ -126,7 +126,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             with p1, p2, p3, patch("quiver.harness.discover.live_version", return_value="1.0"):
                 save_registry(minimal)
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
-                added = apply_findings(findings, min_confidence="high")
+                added, _ = apply_findings(findings, min_confidence="high")
                 self.assertIn("opencode", added)
                 self.assertIn("kiro", added)
                 registry = load_registry()
@@ -267,7 +267,7 @@ class HomeScanTest(unittest.TestCase):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = discover_harnesses(path_env="", home=home)
-                added = apply_findings(findings, min_confidence="low")
+                added, _ = apply_findings(findings, min_confidence="low")
                 registry = load_registry()
             self.assertIn("fancytool", added)
             entry = registry["fancytool"]
@@ -291,7 +291,7 @@ class ConfidenceFloorTest(unittest.TestCase):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = discover_harnesses(path_env="", home=home)
-                added = apply_findings(findings, min_confidence="high")
+                added, _ = apply_findings(findings, min_confidence="high")
                 registry = load_registry()
             self.assertNotIn("fancytool", added)
             self.assertNotIn("fancytool", registry)
@@ -335,7 +335,7 @@ class ApplyByNameTest(unittest.TestCase):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = self._findings(home)
-                added = apply_findings(findings, min_confidence="high",
+                added, _ = apply_findings(findings, min_confidence="high",
                                        names={"fancytool"})
                 registry = load_registry()
             self.assertEqual(added, ["fancytool"])
@@ -357,7 +357,7 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         from io import StringIO
         from unittest import mock
         from quiver.harness import discover_commands as dc
-        apply = mock.Mock(return_value=[])
+        apply = mock.Mock(return_value=([], []))
         out = StringIO()
         with patch.object(dc, "discover_harnesses", lambda **k: findings), \
                 patch.object(dc, "apply_findings", apply), \
@@ -425,6 +425,21 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         self.assertIn("nothing ticked", out)
 
 
+    def test_a_refused_pick_prints_why_and_fails(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest import mock
+        from quiver.harness import discover_commands as dc
+        refused = [{"name": "cc", "reason": "already registered under 'claude'"}]
+        out = StringIO()
+        with patch.object(dc, "discover_harnesses", lambda **k: [self._finding("cc")]), \
+                patch.object(dc, "apply_findings", mock.Mock(return_value=([], refused))), \
+                redirect_stdout(out):
+            code = dc.cmd_discover(["--apply", "cc"])
+        self.assertEqual(code, 1)
+        self.assertIn("cc: already registered under 'claude'", out.getvalue())
+        self.assertNotIn("nothing ticked", out.getvalue())
+
 class OllamaIsNotAHarnessTest(unittest.TestCase):
     def test_ollama_on_path_is_not_a_finding(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -443,3 +458,46 @@ class OllamaIsNotAHarnessTest(unittest.TestCase):
                 found = {f.name for f in discover_harnesses(path_env=str(bindir), home=home)}
             self.assertNotIn("ollama", found)
             self.assertNotIn("ollama", HARNESS_CATALOG)
+
+class ApplySkipTest(unittest.TestCase):
+    """apply_findings never replaces a saved entry or steals an alias."""
+
+    def setUp(self):
+        # The registry is passed in, but a save would still hit the real
+        # harness.json; keep every write in memory.
+        saver = patch("quiver.harness.discover.save_registry")
+        saver.start()
+        self.addCleanup(saver.stop)
+        # live_version would spawn the made-up command.
+        version = patch("quiver.harness.discover.live_version", return_value=None)
+        version.start()
+        self.addCleanup(version.stop)
+
+    def _finding(self, name, aliases=()):
+        from quiver.harness.discover import HarnessFinding
+        return HarnessFinding(name=name, command=name + "-cli",
+                              path="/bin/" + name, confidence="high",
+                              source="catalog", status="new", aliases=aliases)
+
+    def test_registered_name_is_skipped_not_overwritten(self):
+        reg = {"factory": {"command": "custom-cmd", "description": "mine"}}
+        added, skipped = apply_findings([self._finding("factory")], registry=reg)
+        self.assertEqual(added, [])
+        self.assertEqual(skipped[0]["name"], "factory")
+        self.assertIn("already registered", skipped[0]["reason"])
+        self.assertEqual(reg["factory"]["command"], "custom-cmd")
+
+    def test_registered_alias_owner_is_skipped(self):
+        reg = {"claude": {"command": "claude", "aliases": ["cc"]}}
+        added, skipped = apply_findings([self._finding("cc")], registry=reg)
+        self.assertEqual(added, [])
+        self.assertIn("'claude'", skipped[0]["reason"])
+
+    def test_colliding_alias_is_dropped_not_taken(self):
+        reg = {"claude": {"command": "claude", "aliases": ["cc"]}}
+        added, skipped = apply_findings(
+            [self._finding("newcli", aliases=("cc", "nc"))], registry=reg)
+        self.assertEqual(added, ["newcli"])
+        self.assertEqual(reg["newcli"]["aliases"], ["nc"])
+        self.assertTrue(any("cc" in s["reason"] for s in skipped))
+        self.assertEqual(reg["claude"]["aliases"], ["cc"])

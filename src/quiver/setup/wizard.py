@@ -142,7 +142,7 @@ def _stage_harnesses(
         return StageOutcome("harnesses", SECTION_LABELS["harnesses"], "skipped", f"{len(new)} available")
 
     backup = backup_file(HARNESS_FILE)
-    added = apply_findings(new, min_confidence="high")
+    added, _ = apply_findings(new, min_confidence="high")
     print(c("green", f"  Saved {len(added)} harness(es): {', '.join(added) or 'none'}"))
     return StageOutcome(
         "harnesses",
