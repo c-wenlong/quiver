@@ -142,6 +142,38 @@ public final class FanControl {
     }
 
     public static let levelKey = "fanManualLevel"
+
+    /// The optional rule: above `threshold` °C on the CPU, hold the fans
+    /// at `level` until it falls `thresholdHysteresis` below. Only while
+    /// Quiver runs, like any manual speed.
+    public var thresholdEnabled: Bool {
+        didSet {
+            defaults.set(thresholdEnabled, forKey: Self.thresholdEnabledKey)
+            if !thresholdEnabled && heldByThreshold { restoreAutomatic() }
+        }
+    }
+
+    public var threshold: Double {
+        didSet {
+            let clamped = min(max(threshold, Self.thresholdRange.lowerBound), Self.thresholdRange.upperBound)
+            if clamped != threshold { threshold = clamped; return }
+            defaults.set(threshold, forKey: Self.thresholdKey)
+        }
+    }
+
+    /// Whether the speed being held is the threshold's, not the user's.
+    public private(set) var heldByThreshold = false
+
+    public static let thresholdEnabledKey = "fanThresholdEnabled"
+    public static let thresholdKey = "fanThresholdCelsius"
+    public static let thresholdRange = 50.0...100.0
+    public static let defaultThreshold = 80.0
+    /// How far below the threshold the CPU must fall before the fans go
+    /// back, so a reading hovering at the line does not flap them.
+    public static let thresholdHysteresis = 5.0
+
+    /// Where the fans go back to macOS.
+    public var releaseBelow: Double { threshold - Self.thresholdHysteresis }
     /// How long `starting` may last before the request counts as failed.
     /// Taking the fans on an M4 takes up to about ten seconds.
     static let startTimeout: TimeInterval = 20
@@ -175,6 +207,8 @@ public final class FanControl {
         self.defaults = defaults
         helperInstalled = false
         level = defaults.object(forKey: Self.levelKey) as? Double ?? 0.5
+        thresholdEnabled = defaults.bool(forKey: Self.thresholdEnabledKey)
+        threshold = defaults.object(forKey: Self.thresholdKey) as? Double ?? Self.defaultThreshold
     }
 
     /// The helper is installed, steered by this control file, and loaded:
@@ -245,10 +279,17 @@ public final class FanControl {
         }
     }
 
+    /// The user's Set speed: hold the fans at `level`, and from then on
+    /// the speed is theirs, not the threshold's.
+    public func applyManual() async {
+        heldByThreshold = false
+        await hold()
+    }
+
     /// Hold the fans at `level`. The installed helper picks the request up
     /// within a second; the first time, this installs it, which asks for
     /// the password once.
-    public func applyManual() async {
+    private func hold() async {
         do {
             try FanControlFile(level: level, owner: owner, requested: clock()).write(to: control)
         } catch {
@@ -256,18 +297,13 @@ public final class FanControl {
             return
         }
         if !helperInstalled {
-            busy = true
-            defer { busy = false }
-            do {
-                try await installer.install(executable: executable, control: control)
-                helperInstalled = true
-                // Same as removal: check again once the prompt is done.
-                installUnchecked = true
-            } catch FanHelperInstallError.cancelled {
+            switch await installHelper() {
+            case .installed: break
+            case .cancelled:
                 phase = clearRequest() ?? .automatic
                 return
-            } catch {
-                phase = clearRequest() ?? .failed(error.localizedDescription)
+            case .failed(let message):
+                phase = clearRequest() ?? .failed(message)
                 return
             }
         }
@@ -278,10 +314,69 @@ public final class FanControl {
         await refresh()
     }
 
+    private enum Install { case installed, cancelled, failed(String) }
+
+    /// One password prompt.
+    private func installHelper() async -> Install {
+        busy = true
+        defer { busy = false }
+        do {
+            try await installer.install(executable: executable, control: control)
+            helperInstalled = true
+            // Same as removal: check again once the prompt is done.
+            installUnchecked = true
+            return .installed
+        } catch FanHelperInstallError.cancelled {
+            return .cancelled
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
     /// Hand the fans back to macOS. The helper sees the empty request
     /// within a second and sets every fan to automatic.
     public func restoreAutomatic() {
+        heldByThreshold = false
         phase = clearRequest() ?? .automatic
+    }
+
+    /// Switch the threshold on, installing the helper first if it is not
+    /// there: the rule acts from the background, where a password prompt
+    /// must never appear, so the one prompt happens here, on a click.
+    public func enableThreshold() async {
+        if installUnchecked { await refresh() }
+        if !helperInstalled {
+            switch await installHelper() {
+            case .installed: break
+            case .cancelled: return
+            case .failed(let message):
+                phase = .failed(message)
+                return
+            }
+        }
+        thresholdEnabled = true
+    }
+
+    /// The rule, run on each trend tick with the CPU's temperature. It
+    /// takes the fans only from Automatic (a speed the user set wins) and
+    /// only once the helper is installed; it gives them back once the CPU
+    /// is `thresholdHysteresis` below the line, or as soon as anything
+    /// else (the user, a failure) has moved them off its speed.
+    public func checkTemperature(_ cpu: Double?) async {
+        guard thresholdEnabled, let cpu else { return }
+        if heldByThreshold {
+            if !isHolding {
+                heldByThreshold = false
+            } else if cpu <= releaseBelow {
+                restoreAutomatic()
+            }
+            return
+        }
+        guard phase == .automatic, cpu >= threshold else { return }
+        if installUnchecked { await refresh() }
+        guard helperInstalled else { return }
+        await hold()
+        heldByThreshold = isHolding
     }
 
     /// Fans back to automatic, then the helper uninstalled (one password).

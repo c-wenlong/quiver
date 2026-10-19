@@ -498,6 +498,107 @@ import Testing
         #expect(!fans.helperInstalled)
     }
 
+    // MARK: The threshold
+
+    @MainActor private func installedControl(_ smc: FakeSMC = FakeSMC.twoFans()) async -> (FanControl, URL, FakeInstaller) {
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, url) = control(smc, installer: installer)
+        await fans.refresh()
+        return (fans, url, installer)
+    }
+
+    @MainActor @Test func theThresholdHoldsAboveTheLineAndLetsGoFiveBelow() async {
+        let (fans, url, _) = await installedControl()
+        fans.thresholdEnabled = true
+        fans.threshold = 80
+        fans.level = 0.6
+        await fans.checkTemperature(79)
+        #expect(FanControlFile.request(at: url) == nil)
+        await fans.checkTemperature(80)
+        #expect(fans.heldByThreshold)
+        #expect(FanControlFile.request(at: url)?.level == 0.6)
+        // Hovering just under the line keeps the fans up.
+        await fans.checkTemperature(77)
+        #expect(fans.heldByThreshold)
+        await fans.checkTemperature(75)
+        #expect(!fans.heldByThreshold)
+        #expect(fans.phase == .automatic)
+        #expect(FanControlFile.request(at: url) == nil)
+    }
+
+    @MainActor @Test func aSpeedTheUserSetWinsOverTheThreshold() async {
+        let (fans, url, _) = await installedControl()
+        fans.thresholdEnabled = true
+        fans.level = 1
+        await fans.applyManual()
+        await fans.checkTemperature(95)
+        await fans.checkTemperature(40)
+        // Neither the hot nor the cool reading touched the user's speed.
+        #expect(!fans.heldByThreshold)
+        #expect(fans.isHolding)
+        #expect(FanControlFile.request(at: url)?.level == 1)
+        // And taking over a threshold hold makes it the user's.
+        fans.restoreAutomatic()
+        await fans.checkTemperature(90)
+        #expect(fans.heldByThreshold)
+        await fans.applyManual()
+        #expect(!fans.heldByThreshold)
+        await fans.checkTemperature(40)
+        #expect(fans.isHolding)
+    }
+
+    @MainActor @Test func theThresholdNeverPromptsFromTheBackground() async {
+        let installer = FakeInstaller()
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer)
+        fans.thresholdEnabled = true
+        await fans.checkTemperature(99)
+        #expect(installer.installs == 0)
+        #expect(FanControlFile.request(at: url) == nil)
+        #expect(!fans.heldByThreshold)
+    }
+
+    @MainActor @Test func switchingTheThresholdOnInstallsTheHelperOnce() async {
+        let installer = FakeInstaller()
+        installer.error = .cancelled
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer)
+        await fans.enableThreshold()
+        #expect(!fans.thresholdEnabled)
+        installer.error = nil
+        await fans.enableThreshold()
+        #expect(fans.thresholdEnabled)
+        #expect(installer.installs == 2)
+        // Switching it on sets no speed by itself.
+        #expect(FanControlFile.request(at: url) == nil)
+    }
+
+    @MainActor @Test func switchingTheThresholdOffWhileHoldingHandsTheFansBack() async {
+        let (fans, url, _) = await installedControl()
+        fans.thresholdEnabled = true
+        await fans.checkTemperature(90)
+        #expect(fans.heldByThreshold)
+        fans.thresholdEnabled = false
+        #expect(!fans.heldByThreshold)
+        #expect(fans.phase == .automatic)
+        #expect(FanControlFile.request(at: url) == nil)
+    }
+
+    @MainActor @Test func theThresholdIsClampedAndRemembered() async {
+        let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
+        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let fans = FanControl(control: url, reader: { [] }, installer: FakeInstaller(),
+                              isInstalled: { _ in false }, defaults: defaults)
+        #expect(fans.threshold == 80 && !fans.thresholdEnabled)
+        fans.threshold = 140
+        #expect(fans.threshold == 100)
+        fans.threshold = 72
+        fans.thresholdEnabled = true
+        let again = FanControl(control: url, reader: { [] }, installer: FakeInstaller(),
+                               isInstalled: { _ in false }, defaults: defaults)
+        #expect(again.threshold == 72 && again.thresholdEnabled)
+        #expect(again.releaseBelow == 67)
+    }
+
     @MainActor @Test func removingTheHelperHandsTheFansBackFirst() async {
         let smc = FakeSMC.twoFans()
         let installer = FakeInstaller()

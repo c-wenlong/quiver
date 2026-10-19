@@ -75,6 +75,10 @@ public final class ComputeModel {
 
     public static let temperatureLinesKey = "computeTemperatureLines"
 
+    /// Runs with each tick's temperatures; AppModel points it at the fan
+    /// threshold, so the rule works whether or not the page is open.
+    public var onTemperature: (@MainActor (TemperatureReading) -> Void)?
+
     /// The thresholds the flags and suggestions follow.
     public var limits: ComputeLimits {
         didSet {
@@ -331,6 +335,7 @@ public final class ComputeModel {
             temperatureAvailable = true
             history.appendTemperature(TemperaturePoint(at: sampledAt ?? now, values: reading.values,
                                                        fans: reading.fans))
+            onTemperature?(reading)
         }
         for (harness, procs) in attribution.byHarness where !procs.isEmpty {
             history.append(harness, TrendPoint(

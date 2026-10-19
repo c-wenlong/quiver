@@ -127,7 +127,10 @@ struct TemperatureChart: View {
     private func chart(_ points: [TemperaturePoint], shown: [ThermalComponent],
                        spans: [ClosedRange<Date>]) -> some View {
         let values = points.flatMap { point in shown.compactMap { point[$0] } }
-        let yDomain = Self.domain(values)
+        // The user's fan threshold, when set: kept inside the scale so its
+        // line is always on the chart.
+        let threshold = app.fans.thresholdEnabled ? app.fans.threshold : nil
+        let yDomain = Self.domain(values + (threshold.map { [$0] } ?? []))
         // The same x range as the harness charts: the whole window, so
         // the first minutes draw from the right rather than stretched.
         let end = model.history.temperatureEnd ?? .now
@@ -140,6 +143,16 @@ struct TemperatureChart: View {
                               xEnd: .value("End", min(span.upperBound, domain.upperBound)),
                               yStart: .value("°C", yDomain.lowerBound), yEnd: .value("°C", yDomain.upperBound))
                     .foregroundStyle(Self.fanShade)
+            }
+            if let threshold {
+                // Neutral, not amber: amber is the SSD line's colour.
+                RuleMark(y: .value("Threshold", threshold))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
+                    .foregroundStyle(Theme.textSecondary)
+                    .annotation(position: .top, alignment: .leading, spacing: 4) {
+                        Text("Fans up above \(Self.formatted(threshold))")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
             }
             ForEach(shown, id: \.self) { component in
                 ForEach(points.filter { $0[component] != nil }, id: \.at) { point in
