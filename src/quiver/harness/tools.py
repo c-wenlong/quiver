@@ -53,8 +53,14 @@ def extract_version_number(text: str) -> str | None:
 
 
 def live_version(command: str) -> str | None:
-    """Probe a CLI for a bare version number (no harness/tool name prefix)."""
-    candidates = ("version", "--version", "-v", "-V")
+    """Probe a CLI for a bare version number (no harness/tool name prefix).
+
+    Never probes a bare ``version`` subcommand: agent CLIs such as Claude Code
+    and Cline read a lone positional argument as a prompt, so ``claude version``
+    starts a real (billable) session. Every registered harness answers one of
+    these flags.
+    """
+    candidates = ("--version", "-v", "-V")
     for flag in candidates:
         try:
             result = subprocess.run(
