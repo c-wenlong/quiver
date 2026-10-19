@@ -8,6 +8,7 @@ import SwiftUI
 /// never written from here.
 struct SkillsPage: View {
     @Environment(AppModel.self) private var app
+    @State private var adding = false
 
     /// App-wide, so a list outlives a trip to another page and the last
     /// one shows at once.
@@ -21,6 +22,8 @@ struct SkillsPage: View {
             if case .loaded(let inventory) = model.inventory {
                 HarnessLinksSummary(model: model, sharedDir: inventory.sharedDir)
             }
+            Button("New skill", systemImage: "plus") { adding = true }
+                .primaryButton()
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
                     async let catalog: Void = app.pluginCatalog.load(swe: app.swe, for: app.swePath)
@@ -32,7 +35,7 @@ struct SkillsPage: View {
             .keyboardShortcut("r", modifiers: .command)
             .help("Refresh (⌘R)")
         } content: {
-            InstalledSkills(model: model) {
+            InstalledSkills(model: model, newSkill: { adding = true }) {
                 app.pluginsTab = .explore
                 app.selection = .plugins
             }
@@ -44,6 +47,80 @@ struct SkillsPage: View {
             await model.loadIfStale(for: app.swePath)
             await catalog
         }
+        .sheet(isPresented: $adding) {
+            NewSkillSheet()
+        }
+    }
+}
+
+/// Writes ~/.quiver/skills/<name>/SKILL.md through `swe skills new`.
+private struct NewSkillSheet: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var description = ""
+    @State private var error: String?
+    @State private var working = false
+    @State private var created: String?
+
+    static let nameRule = /^[a-z0-9]+(-[a-z0-9]+)*$/
+    var nameProblem: String? {
+        if name.isEmpty { return "Lowercase, digits and single hyphens: my-skill" }
+        if name.count > 64 { return "At most 64 characters" }
+        return name.wholeMatch(of: Self.nameRule) == nil
+            ? "Lowercase letters, digits, and single hyphens between them" : nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("New skill").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+            FormField("Name") {
+                TextField("my-skill", text: $name)
+                    .quiverField(monospaced: true)
+                if let nameProblem {
+                    Text(nameProblem).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                }
+            }
+            FormField("Description") {
+                TextField("When should an agent use this skill?", text: $description)
+                    .quiverField()
+            }
+            if let created {
+                Text("Created \(displayPath(created))")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            if let error {
+                Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+            }
+            HStack {
+                Spacer()
+                if let created, let editor = app.editor {
+                    Button("Open in \(editor.name)") {
+                        NSWorkspace.shared.open([URL(fileURLWithPath: created)],
+                                                withApplicationAt: editor.appURL,
+                                                configuration: .init())
+                    }
+                    .secondaryButton()
+                }
+                Button(created == nil ? "Close" : "Done") { dismiss() }
+                    .secondaryButton()
+                if created == nil {
+                    Button("Create") {
+                        working = true
+                        error = nil
+                        Task {
+                            do {
+                                created = try await app.skills.create(name: name, description: description).path
+                            } catch { self.error = error.localizedDescription }
+                            working = false
+                        }
+                    }
+                    .primaryButton()
+                    .disabled(working || nameProblem != nil)
+                }
+            }
+        }
+        .sheetScaffold(width: 420)
     }
 }
 
@@ -52,6 +129,7 @@ struct SkillsPage: View {
 private struct InstalledSkills: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: SkillsModel
+    var newSkill: () -> Void
     var openPlugins: () -> Void
     /// The skill open in its detail page, nil while the list shows.
     @State private var opened: Skill?
@@ -91,7 +169,8 @@ private struct InstalledSkills: View {
             EmptyCard(text: empty ? "No skills on this Mac yet."
                           : model.listedSkills.isEmpty ? "Every skill on this Mac ships inside a plugin."
                           : "No skills match.",
-                      icon: "sparkles")
+                      icon: "sparkles",
+                      actionTitle: empty ? "New skill" : nil, action: empty ? newSkill : nil)
         } else {
             // Straight on the panel, like TokenTracker's lists: hairlines
             // between rows, no card around them.
@@ -248,6 +327,19 @@ private struct HarnessLinksPanel: View {
                         }
                     }
                     LinkLegend()
+                    let (targets, _) = SkillsModel.linkAllTargets(roots)
+                    if !targets.isEmpty {
+                        Button("Link all (\(targets.count))") {
+                            Task { await model.linkAll() }
+                        }
+                        .secondaryButton()
+                        .disabled(!model.busy.isEmpty)
+                    }
+                }
+                if let summary = model.linkAllSummary {
+                    Text(summary)
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 // A link or unlink started here reports back here too, since
                 // the page's own error card is behind the popover.

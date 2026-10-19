@@ -16,6 +16,52 @@ from quiver.skills.layout_commands import (
 from quiver.table import Table
 
 
+def cmd_skills_new(args):
+    """Create a SKILL.md skeleton in the shared skills root."""
+    from quiver.flags import expand_value_flags
+    from quiver.skills.create import create
+
+    args, json_view = take_json_flag(list(args))
+    # Only the flags: "help" is a valid skill name and must reach create().
+    if args and args[0] in ("-h", "--help"):
+        from quiver.skills.help_text import print_skills_new_help
+        print_skills_new_help()
+        return 0
+    refusal = error_stream(json_view)
+    try:
+        args = expand_value_flags(args, {"--description"})
+    except ValueError as exc:
+        print(c("red", str(exc)), file=refusal)
+        return 1
+    positional = []
+    description = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--description":
+            description = args[i + 1]
+            i += 2
+        elif arg.startswith("--"):
+            print(c("red", f"Unknown flag: {arg}"), file=refusal)
+            return 1
+        else:
+            positional.append(arg)
+            i += 1
+    if len(positional) != 1:
+        print(c("red", "Usage: swe skills new <name> [--description=<text>]"),
+              file=refusal)
+        return 1
+    try:
+        path, _ = create(positional[0], description)
+    except ValueError as exc:
+        print(c("red", f"  {exc}"), file=refusal)
+        return 1
+    if json_view:
+        return emit({"name": positional[0], "path": str(path)})
+    print(c("green", f"  ✓ Created {positional[0]}: {path}"))
+    return 0
+
+
 def _superseded_by_find(name: str, args) -> int:
     """`swe skills tree` and `swe skills scope list` both drew a layout map.
 
@@ -56,6 +102,8 @@ def cmd_skills(args):
         return cmd_skills_unlink(args[1:])
     if args[0] == "move":
         return cmd_skills_move(args[1:])
+    if args[0] == "new":
+        return cmd_skills_new(args[1:])
     if args[0] == "hub":
         return cmd_skills_hub(args[1:])
 
