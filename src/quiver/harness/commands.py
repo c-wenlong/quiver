@@ -1552,7 +1552,7 @@ def cmd_doctor(args):
         else:
             print(c("red", message))
         return 1
-    from quiver.harness.doctor import collect_findings
+    from quiver.harness.doctor import collect_findings, setup_findings
     from quiver.harness.drift import run_drift_checks
     from quiver.harness.path_health import (
         find_off_path_tools,
@@ -1570,7 +1570,8 @@ def cmd_doctor(args):
     orphans = find_off_path_tools(tools)
     drift = run_drift_checks()
     report = DoctorReport(
-        collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift))
+        collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift)
+        + setup_findings(home))
     failed = not report.ok
 
     if json_view:

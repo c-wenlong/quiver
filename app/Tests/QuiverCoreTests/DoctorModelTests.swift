@@ -103,3 +103,66 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(report.findings.map(\.check) == ["new"])
     }
 }
+
+/// `action` on a doctor finding: decode, unknown → nil, and `run` argv.
+@MainActor
+@Suite struct DoctorActionTests {
+    let findings = Data(#"""
+    {"schema": 1, "data": {"ok": false, "findings": [
+      {"check": "setup.registry", "severity": "warning", "message": "No harnesses registered",
+       "fix": "swe harness discover --apply", "action": "discover"},
+      {"check": "setup.future", "severity": "warning", "message": "new thing",
+       "fix": "swe fix-future", "action": "warp"},
+      {"check": "plain", "severity": "warning", "message": "no action", "fix": null}
+    ]}}
+    """#.utf8)
+
+    @Test func actionDecodesAndUnknownBecomesNil() async throws {
+        let model = DoctorModel(swe: SweClient(runner: FakeRunner(.init(status: 1, stdout: findings, stderr: ""))))
+        await model.load()
+        guard case .loaded(let report) = model.state else {
+            Issue.record("expected loaded"); return
+        }
+        #expect(report.findings.map(\.action) == [.discover, nil, nil])
+    }
+
+    @Test func runCallsTheActionsSweCommand() async throws {
+        let runner = RoutingRunner([
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+            (["init"], .init(status: 0, stdout: Data(), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = DoctorReport.Finding(check: "setup.unlinked", severity: .warning,
+                                         message: "not linked", fix: "swe init", action: .`init`)
+        await model.run(finding)
+        #expect(runner.calls.contains(["init"]))
+        // A successful run re-reads the report.
+        #expect(runner.calls.last == ["doctor", "--json"])
+        #expect(model.running.isEmpty)
+        #expect(model.runErrors.isEmpty)
+    }
+
+    @Test func discoverActionRunsDiscoverApply() async throws {
+        let runner = RoutingRunner([
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+            (["harness", "discover"], .init(status: 0, stdout: Data("ok".utf8), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.run(DoctorReport.Finding(
+            check: "setup.registry", severity: .warning, message: "none",
+            fix: "swe harness discover --apply", action: .discover))
+        #expect(runner.calls.contains(["harness", "discover", "--apply", "--json"]))
+    }
+
+    @Test func aFailureRecordsTheErrorAndClearsRunning() async throws {
+        let runner = RoutingRunner([
+            (["init"], .init(status: 1, stdout: Data(), stderr: "link would overwrite")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = DoctorReport.Finding(check: "setup.unlinked", severity: .warning,
+                                         message: "not linked", fix: "swe init", action: .`init`)
+        await model.run(finding)
+        #expect(model.running.isEmpty)
+        #expect(model.runErrors[finding.id] == "link would overwrite")
+    }
+}

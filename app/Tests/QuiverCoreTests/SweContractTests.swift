@@ -197,13 +197,15 @@ import Testing
         let (swe, _) = try client("swe-doctor")
         let report = try await swe.doctor()
         #expect(report.ok == false)
-        #expect(report.findings.count == 3)
-        let off = try #require(report.findings.last)
+        #expect(report.findings.count == 4)
+        let off = report.findings[2]
         #expect(off.check == "off-path")
         #expect(off.severity == .error)
         #expect(off.fix == "swe install fixturetool")
         #expect(off.harness == "fixturetool")
         #expect(report.findings[0].harness == nil)
+        let linked = try #require(report.findings.last)
+        #expect(linked.action == .`init`)
     }
 
     @Test func initCheckDecodesLinkStates() async throws {
