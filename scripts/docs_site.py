@@ -30,6 +30,7 @@ PAGES: list[tuple[str, str]] = [
     ("app/README.md", "app/index.md"),
     ("app/ROADMAP.md", "app/roadmap.md"),
     ("docs/app-architecture.md", "app/architecture.md"),
+    ("docs/coding-plans.md", "app/coding-plans.md"),
     ("ARCHITECTURE.md", "architecture/index.md"),
     ("docs/backend-architecture.md", "architecture/backend-architecture.md"),
     ("docs/data-model.md", "architecture/data-model.md"),

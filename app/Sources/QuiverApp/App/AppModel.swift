@@ -248,6 +248,8 @@ final class AppModel {
     let serviceStatus: ServiceStatusModel
     /// Which providers show, in what order (Settings).
     let providers: ProviderVisibilityModel
+    /// The order of Settings › Providers › Inference's rows.
+    let inferenceOrder = InferenceOrder(store: UserDefaultsStore())
     /// What the starred harnesses are running right now (the Compute page).
     let compute: ComputeModel
     /// Nil when the ledger is unavailable, like `overview`.

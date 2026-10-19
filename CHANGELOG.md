@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Coding plans in Settings › Providers › Inference.** 35 subscription
+  plans (Ark, GLM, Kimi Code, MiniMax, Qwen, Step, MiMo, Tencent, JD Cloud,
+  iFlytek, Huawei Cloud, Synthetic, Ollama Cloud, Vercel Token Pass and more)
+  sit in one list with your API keys. Click a plan to paste its key: Quiver
+  saves it to `~/.api_keys` under the plan's own variable and shows where the
+  plan is served and where to get a key. Plan keys are checked against the
+  plan's own endpoint. The list filters by status (valid, invalid, not
+  checked, no key) and type (coding plan, API key), drags into your own
+  order, and opens a row on click; reveal and copy sit beside each value.
+  Sources and the plans left out are in `docs/coding-plans.md`.
+
 - **`swe install --json` says how to uninstall each installed harness.**
   Every entry carries `uninstall`: `{"via", "package", "command",
   "available"}` read off where the binary resolves to (a Homebrew Caskroom
