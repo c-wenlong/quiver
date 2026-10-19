@@ -138,13 +138,16 @@ public final class FanControl {
     /// The level the slider shows, 0 (the fans' minimum) to 1 (their
     /// maximum). Kept in UserDefaults so the last choice comes back.
     public var level: Double {
-        didSet {
-            defaults.set(level, forKey: Self.levelKey)
-            // The threshold's controls have no Set button: a new speed
-            // reaches the fans it holds at once. A speed the user set
-            // stays theirs until they press Update speed.
-            if heldByThreshold { try? request().write(to: control) }
-        }
+        didSet { defaults.set(level, forKey: Self.levelKey) }
+    }
+
+    /// The threshold's own slider. Its controls have no Set button, so a
+    /// new speed reaches the fans the threshold holds at once. The Manual
+    /// slider sets `level` alone and waits for Update speed, even while
+    /// the threshold holds.
+    public func setThresholdLevel(_ value: Double) {
+        level = value
+        if heldByThreshold { try? request().write(to: control) }
     }
 
     public static let levelKey = "fanManualLevel"

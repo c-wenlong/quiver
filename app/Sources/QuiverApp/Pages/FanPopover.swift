@@ -104,8 +104,13 @@ private struct FanPopover: View {
         }
     }
 
+    /// The threshold's slider applies at once; Manual's waits for its button.
+    private var thresholdLevel: Binding<Double> {
+        Binding(get: { fans.level }, set: { fans.setThresholdLevel($0) })
+    }
+
     /// The speed slider, shared by Manual and the threshold.
-    private func speedSlider(_ title: String) -> some View {
+    private func speedSlider(_ title: String, value: Binding<Double>) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
@@ -115,7 +120,7 @@ private struct FanPopover: View {
                         .font(Theme.bodySmall.monospacedDigit()).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Slider(value: level, in: 0...1)
+            Slider(value: value, in: 0...1)
                 .tint(Theme.accent)
         }
     }
@@ -135,7 +140,7 @@ private struct FanPopover: View {
                     .labelsHidden()
             }
             if fans.thresholdEnabled {
-                speedSlider("Speed above it")
+                speedSlider("Speed above it", value: thresholdLevel)
             }
             Text(thresholdCaption)
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -158,7 +163,7 @@ private struct FanPopover: View {
 
     @ViewBuilder private var manualControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            speedSlider("Speed")
+            speedSlider("Speed", value: level)
             HStack {
                 Button(buttonTitle) { Task { await fans.applyManual() } }
                     .primaryButton()

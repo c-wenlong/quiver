@@ -621,12 +621,17 @@ import Testing
         fans.level = 0.4
         await fans.checkTemperature(90)
         #expect(FanControlFile.request(at: url)?.level == 0.4)
-        fans.level = 0.9
+        fans.setThresholdLevel(0.9)
         #expect(FanControlFile.request(at: url)?.level == 0.9)
-        // A speed the user set waits for their Update speed.
+        // The Manual slider waits for Update speed, even mid-hold.
+        fans.level = 0.3
+        #expect(FanControlFile.request(at: url)?.level == 0.9)
         await fans.applyManual()
-        fans.level = 0.2
-        #expect(FanControlFile.request(at: url)?.level == 0.9)
+        #expect(FanControlFile.request(at: url)?.level == 0.3)
+        // And once the speed is the user's, the threshold slider does not
+        // reach it either.
+        fans.setThresholdLevel(0.2)
+        #expect(FanControlFile.request(at: url)?.level == 0.3)
     }
 
     @MainActor @Test func aSuccessfulRetryLetsTheRuleAct() async {
