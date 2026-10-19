@@ -4,7 +4,8 @@
 #   app/script/build-app.sh [debug|release]   # default: release
 #
 # Writes app/build/Quiver.app with the widget extension embedded at
-# Contents/PlugIns/QuiverWidgets.appex. Open it with
+# Contents/PlugIns/QuiverWidgets.appex and swe, with a Python of its own,
+# at Contents/Resources/swe (see bundle-swe.sh). Open it with
 # `open app/build/Quiver.app`.
 #
 # Output: QUIVER_BUILD_DIR overrides where the bundle lands
@@ -73,6 +74,9 @@ check_core_resources() {
   done
 }
 check_core_resources "$bundle"
+
+# swe and its Python, so the app works on a Mac that has neither.
+"$here/script/bundle-swe.sh" "$bundle"
 
 # App icons: light is the bundle's icon; Settings can switch the Dock icon
 # to dark at runtime. Both come from square art in Icons/.
@@ -189,7 +193,14 @@ if [ -z "$identity" ] || [ "$identity" = "-" ]; then
   echo "build-app: ad-hoc signing; privacy grants won't survive a rebuild" >&2
   identity="-"
 fi
-# Inside out: the extension with its sandbox, then the app around it.
+# Inside out: the bundled Python's binaries, the extension with its sandbox,
+# then the app around them. The Python sits in Resources, where codesign
+# would only hash its binaries as data, so each is signed as code first.
+find "$bundle/Contents/Resources/swe" -type f | while IFS= read -r file; do
+  if file -b "$file" | grep -q '^Mach-O'; then
+    codesign --force --sign "$identity" "$file" >/dev/null
+  fi
+done
 codesign --force --sign "$identity" --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
 codesign --force --sign "$identity" "$bundle" >/dev/null
 echo "$bundle"

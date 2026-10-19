@@ -15,9 +15,14 @@ swift test                      # QuiverCore unit tests
 open build/Quiver.app
 ```
 
-The app runs `swe … --json`, so it needs a quiver with JSON output (M0).
-If the `swe` your login shell finds is older, the app says so; point it at
-a newer one in Settings.
+The app runs `swe … --json`. `build-app.sh` puts a copy of `swe` inside
+the bundle (`Contents/Resources/swe`, with a standalone Python 3.13 from
+python-build-standalone; see `script/bundle-swe.sh`), so a Mac with no
+Python or quiver installed still works. The first build downloads that
+Python (about 25 MB, pinned by checksum) into `~/.quiver/cache/build/python`.
+Settings › Paths can point the app at another `swe` instead, such as an
+editable install you're working on. `swift run` builds have no bundle and
+use the `swe` on your login shell's PATH.
 
 ## Install
 
@@ -46,6 +51,7 @@ installs somewhere else.
 | `Sources/QuiverWidgets` | The WidgetKit extension: usage limits, usage summary, activity heatmap, top models |
 | `Tests/QuiverCoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
 | `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/Quiver.app` |
+| `script/bundle-swe.sh` | Puts `swe` and its own Python into the bundle; `build-app.sh` runs it and signs the Python binaries |
 | `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Apple Development identity if you have one, else ad-hoc) |
 | `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.quiver/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
