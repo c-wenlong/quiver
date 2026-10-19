@@ -1,15 +1,17 @@
 """Key discovery and masking helpers.
 
-The key directory is, by convention, ``~/.api_keys/`` (override via the
-``--api-keys-dir`` CLI flag). Quiver never writes a key string to disk;
+The key store is ``~/.quiver/secrets/providers/.api_keys`` (override via
+the ``--api-keys-dir`` CLI flag). A machine `swe init` has not migrated yet
+still reads ``~/.api_keys``, which after the move is a symlink to the new
+file. Quiver never writes a key string to disk;
 keys are read into memory only for the duration of a single command and
 must always pass through ``mask_key()`` before being printed.
 
 Two on-disk layouts are supported:
 
-* **Directory layout** \u2014 ``~/.api_keys/<slug>``, one file per provider
+* **Directory layout** \u2014 ``<store>/<slug>``, one file per provider
   holding just the key string.
-* **Shell-export layout** \u2014 ``~/.api_keys`` is a single shell-style
+* **Shell-export layout** \u2014 the store is a single shell-style
   file holding ``export FOO_API_KEY=...`` lines.
 """
 
@@ -18,18 +20,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Tuple
 
-from quiver.paths import DEFAULT_API_KEYS_DIR
+from quiver.paths import provider_keys_path_for
 
 
 def default_keys_dir(home: Path | None = None) -> Path:
-    """Return the default keys directory (``~/.api_keys``).
+    """Return the default key store: the file under ~/.quiver/secrets/providers/,
+    or ``~/.api_keys`` on a machine that has not migrated yet.
 
     Honors an optional override ``home`` so tests can patch the location
     without touching the real filesystem.
     """
-    if home is None:
-        return DEFAULT_API_KEYS_DIR
-    return home / DEFAULT_API_KEYS_DIR.name
+    return provider_keys_path_for(home)
 
 
 def find_key_file(provider_info: dict, keys_dir: Path) -> Path | None:

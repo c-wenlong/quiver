@@ -5,7 +5,7 @@ prints one ``{"schema": 1, "data": ...}`` document and nothing else. These
 run the real CLI against a throwaway HOME with fixture harness configs.
 
 MCP configs carry API keys in ``env`` and ``headers``, and the hub keeps
-``${REF}`` placeholders that resolve from ``~/.quiver/secrets/.api_keys``.
+``${REF}`` placeholders that resolve from ``~/.quiver/secrets/mcp/.api_keys``.
 Nothing here may ever put a secret value on stdout.
 """
 

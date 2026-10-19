@@ -121,3 +121,88 @@ def write_gitignore(home: Path | None = None) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(paths.GITIGNORE_BODY, encoding="utf-8")
     return target
+
+
+def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
+    """Move both credential stores into their own folders under secrets/.
+
+    Provider keys go from ``~/.api_keys`` to ``secrets/providers/.api_keys``
+    and leave a symlink behind, since shell profiles source the old path.
+    MCP secrets go from ``secrets/.api_keys`` to ``secrets/mcp/.api_keys``;
+    only quiver reads that file, so nothing is left behind.
+
+    A move happens only when the old path is a regular file and the new one
+    does not exist, so a second run, a directory of per-provider files, or
+    a machine holding both copies is left alone and reported instead. The
+    readers fall back to the old paths, so skipping a move breaks nothing.
+    Returns one note per move made (or, with ``apply=False``, planned).
+    """
+    import os
+
+    notes: list[str] = []
+    moves = (
+        (paths.legacy_provider_keys_for(home), paths.provider_keys_file_for(home),
+         True, "~/.api_keys", "secrets/providers/.api_keys"),
+        (paths.legacy_mcp_secrets_file_for(home), paths.mcp_secrets_file_for(home),
+         False, "secrets/.api_keys", "secrets/mcp/.api_keys"),
+    )
+    for old, new, link_back, old_label, new_label in moves:
+        if old.is_symlink() or not old.is_file():
+            continue
+        if new.exists() or new.is_symlink():
+            notes.append(f"{old_label} and {new_label} both exist, merge them by hand")
+            continue
+        # ~/.api_keys sits outside ~/.quiver. Moving it in must not
+        # put provider keys into a tree the user versions, so a root whose
+        # .gitignore predates secrets/ keeps its keys where they are.
+        # A plan-only run on a fresh root has no .gitignore yet; the real
+        # run writes GITIGNORE_BODY, which lists secrets/, before moving.
+        will_be_ignored = not apply and not (paths.quiver_dir_for(home) / ".gitignore").exists()
+        if link_back and not (will_be_ignored or secrets_ignored(home)):
+            notes.append(f"{old_label} stays put until ~/.quiver/.gitignore lists secrets/")
+            continue
+        notes.append(f"move {old_label} to {new_label}")
+        if not apply:
+            continue
+        for folder in (new.parent.parent, new.parent):
+            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(folder, 0o700)
+        # Same volume (both under $HOME), so this is a rename: the file
+        # keeps its inode and is never copied. Hand-made stores are not
+        # always 600, and these hold every key, so tighten on the way in.
+        shutil.move(str(old), str(new))
+        os.chmod(new, 0o600)
+        if link_back:
+            old.symlink_to(new)
+    return notes
+
+
+_SECRETS_IGNORE_LINES = {"secrets", "secrets/", "/secrets", "/secrets/",
+                         "secrets/*", "/secrets/*", "secrets/**", "/secrets/**"}
+
+
+def secrets_ignored(home: Path | None = None) -> bool:
+    """Whether ~/.quiver keeps secrets/ out of git.
+
+    True when its .gitignore lists secrets/ outright, or when the root is a
+    git checkout and git itself ignores a file there (a global excludes
+    file, or a pattern this check does not spell out).
+    """
+    import subprocess
+
+    root = paths.quiver_dir_for(home)
+    try:
+        lines = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        lines = []
+    if any(line.strip() in _SECRETS_IGNORE_LINES for line in lines):
+        return True
+    if not (root / ".git").exists():
+        return False
+    probe = paths.provider_keys_file_for(home).relative_to(root)
+    try:
+        result = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(probe)],
+                                capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0

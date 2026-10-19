@@ -34,7 +34,7 @@ public enum APIKeysError: Error, Equatable, LocalizedError {
 }
 
 /// A shell file of `export NAME="value"` lines grouped under `# PROVIDER`
-/// comments, as `~/.api_keys` is. Edits rewrite only the lines they touch;
+/// comments, as the API keys file is. Edits rewrite only the lines they touch;
 /// every other line, comment and blank line comes back exactly as it was.
 public struct APIKeysFile: Equatable, Sendable {
     public struct Entry: Equatable, Sendable, Identifiable {
@@ -482,6 +482,18 @@ public struct APIKeysStore: Sendable {
         self.backupDirectory = backupDirectory
     }
 
+    /// ~/.quiver/secrets/providers/.api_keys, or ~/.api_keys on a machine
+    /// `swe init` has not migrated yet. After the move ~/.api_keys is a
+    /// symlink to the new file, so either path edits the same keys.
+    public static func defaultURL(home: URL) -> URL {
+        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let legacy = home.appending(path: ".api_keys")
+        let manager = FileManager.default
+        let currentIsThere = manager.fileExists(atPath: current.path)
+            || (try? manager.destinationOfSymbolicLink(atPath: current.path)) != nil
+        return !currentIsThere && manager.fileExists(atPath: legacy.path) ? legacy : current
+    }
+
     /// The real file behind a symlink, so a save doesn't replace the link.
     var target: URL { url.resolvingSymlinksInPath() }
 
@@ -522,7 +534,9 @@ public struct APIKeysStore: Sendable {
                 backupTemp = try preparePrivately(previous, beside: backup)
                 prepared.append(backupTemp!)
             }
-            try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Private like the file: on a fresh machine this creates secrets/.
+            try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
             let targetTemp = try preparePrivately(Data(file.text.utf8), beside: target)
             prepared.append(targetTemp)
 

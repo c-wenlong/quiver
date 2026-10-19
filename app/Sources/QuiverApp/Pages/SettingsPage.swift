@@ -401,9 +401,9 @@ private struct SettingsSectionView: View {
                     stored: app.swePath, draft: $drafts.swe, running: SweLocation.executable(override: app.swePath),
                     hint: "Empty uses the swe your login shell finds.") { app.swePath = $0 }
             SettingsDivider()
-            PathRow(title: "API keys file", placeholder: "~/.api_keys",
+            PathRow(title: "API keys file", placeholder: "~/.quiver/secrets/providers/.api_keys",
                     stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,
-                    hint: "Empty uses ~/.api_keys.") { app.apiKeysPath = $0 }
+                    hint: "Empty uses ~/.quiver/secrets/providers/.api_keys.") { app.apiKeysPath = $0 }
             SettingsDivider()
             PathRow(title: "MCP servers folder", placeholder: "~/.quiver/mcp/servers",
                     stored: app.mcpServersPath, draft: $drafts.mcpServers,
@@ -522,7 +522,7 @@ private struct ServiceFieldRow: View {
 
     var body: some View {
         SettingRow(title: field,
-                   detail: status.isSet && !editing ? savedDetail : "In the Keychain, not in ~/.api_keys.") {
+                   detail: status.isSet && !editing ? savedDetail : "In the Keychain, not in the API keys file.") {
             if status.isSet && !editing {
                 HStack(spacing: 8) {
                     Button("Replace") { editing = true; draft = "" }

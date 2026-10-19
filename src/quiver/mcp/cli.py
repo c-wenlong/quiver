@@ -472,7 +472,7 @@ def servers_for_source(name: str) -> dict:
     servers = get_hub_servers()
     missing = unresolved_names(servers)
     if missing:
-        print(c("yellow", "  no value in ~/.quiver/secrets/.api_keys for: "
+        print(c("yellow", "  no value in ~/.quiver/secrets/mcp/.api_keys for: "
                           + ", ".join(missing)))
     return resolve_secrets(servers)
 

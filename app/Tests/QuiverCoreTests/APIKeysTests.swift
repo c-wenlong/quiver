@@ -569,6 +569,31 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(try String(contentsOf: real, encoding: .utf8) == "export A=\"2\"\n")
     }
 
+    @Test func theDefaultFileSitsUnderQuiverSecrets() throws {
+        let home = try temp()
+        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        #expect(APIKeysStore.defaultURL(home: home) == current)
+        // An unmigrated machine keeps editing the file it already has.
+        let legacy = home.appending(path: ".api_keys")
+        try "export A=\"1\"\n".write(to: legacy, atomically: true, encoding: .utf8)
+        #expect(APIKeysStore.defaultURL(home: home) == legacy)
+        try FileManager.default.createDirectory(at: current.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "export A=\"1\"\n".write(to: current, atomically: true, encoding: .utf8)
+        #expect(APIKeysStore.defaultURL(home: home) == current)
+    }
+
+    @Test func aFirstSaveCreatesItsFolderPrivately() throws {
+        let dir = try temp()
+        let url = dir.appending(path: "secrets/providers/.api_keys")
+        let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
+        var (file, stamp) = try store.load()
+        try file.set(name: "A", value: "1", provider: "P")
+        try store.save(file, over: stamp)
+        let mode = try FileManager.default.attributesOfItem(atPath: url.deletingLastPathComponent().path)[.posixPermissions]
+        #expect((mode as? NSNumber)?.intValue == 0o700)
+    }
+
     @Test func aFileThatIsNotUTF8IsNotRewritten() throws {
         let dir = try temp()
         let url = dir.appending(path: ".api_keys")

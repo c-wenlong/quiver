@@ -48,7 +48,8 @@ half never mix:
   skills/            the shared skill tree, symlinked into every skills root
   hooks/<harness>/   hook scripts, each file symlinked into that harness only
   config/            registry (harness.json), catalogs, link records (versioned)
-  secrets/.api_keys  MCP credential values, mode 600          (gitignored)
+  secrets/providers/.api_keys  provider API keys, mode 600    (gitignored)
+  secrets/mcp/.api_keys        MCP credential values, mode 600 (gitignored)
   mcp.json           server definitions, ${REF} placeholders    (versioned)
   mcp/servers/       server checkouts, ~2.7 GB of nested repos (gitignored)
   reports/           generated daily and weekly reports
@@ -86,14 +87,22 @@ so a machine's actual state can never land in this repo by accident.
 `~/.quiver` carries its own `.gitignore` — written by `swe init` from
 `paths.GITIGNORE_BODY`, and listing `cache/`, `backups/`, `data/ledger/` (the
 app's usage ledger: personal and ~30 MB), `data/devin-cloud/` (your Devin
-session titles and links), `secrets/` (the MCP credential values) and
-`mcp/servers/` —
+session titles and links), `secrets/` (provider API keys and MCP credential
+values) and `mcp/servers/` —
 plus its own git history, independent of this one. `swe init` writes that
 file only when there is none, so it never rewrites one the operator has
 edited; a root created before `secrets/` joined the list has to add the line
-by hand before versioning `~/.quiver`. Provider API keys are a separate
-store at `~/.api_keys` (`providers/keys.py`), outside
-`~/.quiver` entirely.
+by hand before versioning `~/.quiver`.
+
+Both credential stores are shell-style `export NAME=value` files, each in
+its own folder under `secrets/`. Provider keys used to sit at `~/.api_keys`
+and MCP values at `secrets/.api_keys`; `swe init` moves each file into its
+folder (`init/migrate.move_secrets`) and leaves a symlink at `~/.api_keys`,
+because shell profiles source that path. It moves the provider file only
+when `secrets/` is gitignored, so an older `.gitignore` never pulls keys into
+a versioned tree. Until then every reader (`paths.provider_keys_path_for`,
+`paths.mcp_secrets_path_for`, the app's `APIKeysStore.defaultURL`) falls back
+to the old path.
 
 ## The core idea: one file, many names
 
@@ -327,7 +336,7 @@ TTLs and the app's ledger schema lives in
 ## MCP
 
 `~/.quiver/mcp.json` is the hub. Credentials are stored as `${NAME}`
-references; values live in `~/.quiver/secrets/.api_keys` (mode 600,
+references; values live in `~/.quiver/secrets/mcp/.api_keys` (mode 600,
 gitignored). Resolution happens when a harness config is written, not by
 exporting to the environment, because Claude and Cursor launch from the Dock
 and never read a shell profile.

@@ -378,7 +378,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe providers remove <name>')}
       Unregister a provider (does not delete your key file)
 
-  Keys live as plain-text files in {c('bold', '~/.api_keys/')} (override
+  Keys live in {c('bold', '~/.quiver/secrets/providers/.api_keys')} (override
   with --api-keys-dir=DIR). quiver stores metadata only — never the
   raw key. Run {c('cyan', 'swe providers --help')} for full key-storage and masking details."""
     ),

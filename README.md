@@ -308,7 +308,7 @@ Idempotent — safe to re-run. Uses a hidden `swe __complete` command for dynami
 | `swe providers add <name> [desc] [--url URL] [--env ENV, …] [--file NAME]` | Register a provider in `~/.quiver/config/providers.json` |
 | `swe providers remove <name>` | Unregister a provider (does **not** delete your key file) |
 
-Keys live as plain-text files in `~/.api_keys/` (one per provider, filename = canonical slug). quiver stores **metadata only** — never the key string itself. Mask format: `first8 + *** + last4 + (len=N)`; short keys fall back to `first3 + *** + (len=N)`; missing keys render as `-`. Override the keys dir per-invocation with `--api-keys-dir=DIR`.
+Keys live in `~/.quiver/secrets/providers/.api_keys`, a shell-style file of `export NAME=value` lines (gitignored, mode 600). `swe init` moves an existing `~/.api_keys` there and leaves a symlink behind, so a shell profile that sources it keeps working. quiver stores **metadata only** — never the key string itself. Mask format: `first8 + *** + last4 + (len=N)`; short keys fall back to `first3 + *** + (len=N)`; missing keys render as `-`. Override the store per-invocation with `--api-keys-dir=DIR`, a shell-style file or a directory of per-provider files named by slug.
 
 Built-in providers (27): `openai`, `anthropic`, `gemini`, `deepseek`, `zai`, `minimax`, `kimi`, `qwen`, `mimo`, `xai`, `stepfun`, `groq`, `upstage`, `cerebras`, `mistral`, `routing_run`, `opencode_zen`, `openrouter`, `together_ai`, `fireworks_ai`, `vercel_gateway`, `nebius`, `featherless`, `cohere`, `perplexity`, `github`, `huggingface`. Add your own with `swe providers add`.
 

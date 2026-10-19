@@ -5,6 +5,7 @@ kinds of thing and they are separated so the whole directory can be a git repo:
 
   authored     AGENTS.md, .linkignore, skills/, hooks/, config/   worth versioning
   regenerable  cache/, backups/              gitignored
+  credentials  secrets/                      gitignored, mode 700
 
 The root sits in ``$HOME`` rather than ``$HOME/.config`` on purpose. Quiver's
 job is managing coding harnesses, and 24 of the 28 harness config directories
@@ -36,6 +37,12 @@ MCP_SERVERS_SUBDIR = "servers"
 COMPLETIONS_SUBDIR = "completions"
 REPORTS_SUBDIR = "reports"
 BACKUPS_SUBDIR = "backups"
+SECRETS_SUBDIR = "secrets"
+# One shell-style `export NAME=value` file per store, each in its own
+# folder under secrets/ so the two can never be confused or merged.
+SECRETS_BASENAME = ".api_keys"
+PROVIDER_SECRETS_SUBDIR = "providers"
+MCP_SECRETS_SUBDIR = "mcp"
 
 
 def quiver_dir_for(home: Path | None = None) -> Path:
@@ -97,6 +104,56 @@ def backups_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / BACKUPS_SUBDIR
 
 
+def secrets_dir_for(home: Path | None = None) -> Path:
+    """Credential values, mode 700 and gitignored. Nothing else goes here."""
+    return quiver_dir_for(home) / SECRETS_SUBDIR
+
+
+def provider_keys_file_for(home: Path | None = None) -> Path:
+    """LLM provider API keys, read by `swe providers` and the app's key editor."""
+    return secrets_dir_for(home) / PROVIDER_SECRETS_SUBDIR / SECRETS_BASENAME
+
+
+def mcp_secrets_file_for(home: Path | None = None) -> Path:
+    """The values behind the ``${NAME}`` references in mcp.json."""
+    return secrets_dir_for(home) / MCP_SECRETS_SUBDIR / SECRETS_BASENAME
+
+
+def legacy_provider_keys_for(home: Path | None = None) -> Path:
+    """Where provider keys lived before secrets/providers/: ``~/.api_keys``.
+
+    After `swe init` moves the file it leaves a symlink here, because shell
+    profiles source this path. It may also be a directory of per-provider
+    files, which `swe init` leaves in place.
+    """
+    return (home or Path.home()) / SECRETS_BASENAME
+
+
+def legacy_mcp_secrets_file_for(home: Path | None = None) -> Path:
+    """Where MCP secrets lived before secrets/mcp/."""
+    return secrets_dir_for(home) / SECRETS_BASENAME
+
+
+def _current_or_legacy(current: Path, legacy: Path) -> Path:
+    # A machine `swe init` has not migrated yet keeps reading its old file.
+    # Once the new one exists, or when neither does, the new one wins.
+    if current.exists() or current.is_symlink():
+        return current
+    if legacy.exists():
+        return legacy
+    return current
+
+
+def provider_keys_path_for(home: Path | None = None) -> Path:
+    """The provider key store to read: the new file, else ``~/.api_keys``."""
+    return _current_or_legacy(provider_keys_file_for(home), legacy_provider_keys_for(home))
+
+
+def mcp_secrets_path_for(home: Path | None = None) -> Path:
+    """The MCP secrets file to read: the new one, else secrets/.api_keys."""
+    return _current_or_legacy(mcp_secrets_file_for(home), legacy_mcp_secrets_file_for(home))
+
+
 QUIVER_DIR = quiver_dir_for()
 AGENTS_FILE = agents_file_for()
 LINKIGNORE_FILE = linkignore_file_for()
@@ -135,11 +192,6 @@ SESSION_CACHE_FILE = CACHE_DIR / "session_cache.json"
 RATE_LIMITS_CACHE_FILE = CACHE_DIR / "rate_limits_cache.json"
 SESSION_COUNTS_CACHE_FILE = CACHE_DIR / "session_counts.json"
 
-# Documented convention for the plain-text API-key directory. The actual
-# runtime path can be overridden via `swe providers --api-keys-dir=DIR`.
-DEFAULT_API_KEYS_DIRNAME = ".api_keys"
-DEFAULT_API_KEYS_DIR = Path.home() / DEFAULT_API_KEYS_DIRNAME
-
 # Pre-0.2.7 root. Only referenced by the migration path.
 LEGACY_CONFIG_DIR = Path.home() / ".config" / "swe"
 
@@ -156,8 +208,9 @@ data/ledger/
 # message times of your own sessions. Personal, and rewritten on each sync.
 data/devin-cloud/
 
-# Credential values for the ${NAME} references in mcp.json (mcp/secrets.py).
-# Keeping them out is what makes the rest of the hub safe to commit.
+# Credential values: provider API keys in secrets/providers/ and the values
+# behind mcp.json's ${NAME} references in secrets/mcp/. Keeping them out is
+# what makes the rest of the hub safe to commit.
 secrets/
 
 # MCP server checkouts: ~2.7 GB of nested git repos and build output.

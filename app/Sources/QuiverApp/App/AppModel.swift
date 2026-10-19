@@ -201,7 +201,7 @@ final class AppModel {
     let agentsMd = AgentsModel()
     private(set) var apiKeys: APIKeysModel
 
-    /// The shell file of API keys; empty means ~/.api_keys.
+    /// The shell file of API keys; empty means ~/.quiver/secrets/providers/.api_keys.
     var apiKeysPath: String {
         didSet {
             UserDefaults.standard.set(apiKeysPath, forKey: "apiKeysPath")
@@ -811,7 +811,7 @@ final class AppModel {
     static func keysFile(path: String) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let trimmed = path.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return home.appending(path: ".api_keys") }
+        guard !trimmed.isEmpty else { return APIKeysStore.defaultURL(home: home) }
         return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
     }
 
