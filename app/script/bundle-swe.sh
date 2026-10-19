@@ -48,14 +48,21 @@ tarball="$cache/$archive"
 verify() { [ "$(shasum -a 256 "$1" | cut -d' ' -f1)" = "$sha256" ]; }
 if [ ! -f "$tarball" ] || ! verify "$tarball"; then
   echo "bundle-swe: downloading Python $python_version ($triple)" >&2
-  partial="$tarball.partial"
-  curl --fail --location --silent --show-error --retry 3 -o "$partial" "$url"
+  # A download of its own, renamed into place only once verified: several
+  # sessions build at once, and a shared temporary name let one build
+  # overwrite or move another's half-written file.
+  partial="$(mktemp "$cache/$archive.XXXXXX")"
+  if ! curl --fail --location --silent --show-error --retry 3 -o "$partial" "$url"; then
+    rm -f "$partial"
+    echo "bundle-swe: couldn't download $url" >&2
+    exit 1
+  fi
   if ! verify "$partial"; then
     rm -f "$partial"
     echo "bundle-swe: checksum mismatch for $archive" >&2
     exit 1
   fi
-  mv "$partial" "$tarball"
+  mv -f "$partial" "$tarball"
 fi
 
 dest="$bundle/Contents/Resources/swe"
