@@ -48,6 +48,27 @@ public final class PricingModel {
         /// The downloaded price under any user override, nil when the
         /// model has no LiteLLM or Quiver price at all.
         public var listPrice: ListPrice?
+        /// Where the row's spend comes from, as the Source column shows it:
+        /// a harness-billed row is billed by its harness (Cursor for Grok
+        /// Bot) whatever price is saved, since no rate applies to it.
+        public var spendSource: SpendSource {
+            if harnessBilled {
+                var billers: [String] = []
+                for harness in harnesses {
+                    let biller = PricingModel.biller(of: harness)
+                    if !billers.contains(biller) { billers.append(biller) }
+                }
+                return .billed(by: billers)
+            }
+            if isFree { return .free }
+            return switch source {
+            case .yours: .yours
+            case .quiver: .quiver
+            case .liteLLM: .liteLLM
+            case nil: .unpriced
+            }
+        }
+
         /// What deleting this row's saved price does: with a list price
         /// under it the override resets to the list price, without it the
         /// price goes away entirely.
@@ -55,6 +76,27 @@ public final class PricingModel {
             guard let listPrice else { return .remove }
             return .resetToList(listPrice)
         }
+    }
+
+    /// Where a row's spend comes from.
+    public enum SpendSource: Sendable, Equatable {
+        /// Each request's logged charge, from these harness ids (billers,
+        /// not runners: Grok Bot's charges come from Cursor).
+        case billed(by: [String])
+        case free
+        case yours
+        /// Quiver's bundled list, filling in or correcting LiteLLM's.
+        case quiver
+        /// LiteLLM's API price list.
+        case liteLLM
+        case unpriced
+    }
+
+    /// The harness whose charge a harness's logged costs are: Grok Bot
+    /// signs in with the Cursor account and its charges arrive through
+    /// Cursor's usage feed; every other harness bills its own usage.
+    public nonisolated static func biller(of harness: String) -> String {
+        harness == "grok-bot" ? "cursor" : harness
     }
 
     /// The price a model would have without the user's overrides.

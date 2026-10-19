@@ -1,3 +1,4 @@
+import AppKit
 import QuiverCore
 import SwiftUI
 
@@ -209,30 +210,16 @@ private struct PricingRow: View {
     }
 
     /// The dropped cache columns as hover text: "Cache read $0.20 · Cache
-    /// write $5.00 per 1M", then for a harness-billed row why its spend
-    /// ignores the rates.
+    /// write $5.00 per 1M". With no Source column, where the spend comes
+    /// from follows, since there's no mark to hover.
     private var help: String? {
         var lines: [String] = []
         if !columns.cacheReadWrite {
             lines.append("Cache read \(perMillion(row.rates?.cacheRead)) · "
                 + "Cache write \(perMillion(row.rates?.cacheWrite)) per 1M")
         }
-        if row.harnessBilled { lines.append(harnessBilledNote(row)) }
+        if !columns.source { lines.append(sourceHelp(row)) }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
-    }
-
-    /// Where the spend comes from: for a harness-billed row the charge its
-    /// biller logs ("Cursor bills"), whatever price is saved, since no
-    /// rate applies to it; otherwise where the rates came from.
-    private var sourceText: String {
-        if row.harnessBilled { return "\(billers(row)) bills" }
-        if row.isFree { return "Free" }
-        return switch row.source {
-        case .yours: "Yours"
-        case .quiver: "Quiver"
-        case .liteLLM: "LiteLLM"
-        case nil: "No price"
-        }
     }
 
     /// Charged tiers show the base rates plus what each applies:
@@ -262,8 +249,7 @@ private struct PricingRow: View {
     }
 
     private var sourceColor: some ShapeStyle {
-        row.source == nil && !row.harnessBilled && !row.isFree
-            ? Theme.warningText : Theme.textSecondary
+        row.spendSource == .unpriced ? Theme.warningText : Theme.textSecondary
     }
 
     private var rowBody: some View {
@@ -288,7 +274,7 @@ private struct PricingRow: View {
                 }
                 // With no Source column, a caption under the name says it.
                 if !columns.source {
-                    Text(sourceText).font(Theme.caption).foregroundStyle(sourceColor)
+                    Text(sourceName(row)).font(Theme.caption).foregroundStyle(sourceColor)
                         .lineLimit(1)
                 }
             }
@@ -302,12 +288,8 @@ private struct PricingRow: View {
                     .frame(width: Self.rateColumnWidth, alignment: .trailing)
             }
             if columns.source {
-                // Truncates inside its column rather than spilling over
-                // the cache write rate on its left.
-                Text(sourceText)
-                    .foregroundStyle(sourceColor)
-                    .lineLimit(1).truncationMode(.tail)
-                    .frame(width: 96, alignment: .trailing)
+                SourceMark(row: row)
+                    .frame(width: Self.sourceColumnWidth, alignment: .trailing)
             }
             Text(UsageFormat.tokens(row.totals.totalTokens))
                 .lineLimit(1).fixedSize(horizontal: true, vertical: false)
@@ -320,6 +302,8 @@ private struct PricingRow: View {
 
     /// Wide enough for "$50.00" on a value and "Cache write" on the header.
     static let rateColumnWidth: CGFloat = 76
+    /// Wide enough for the "Source" header over one or two marks.
+    static let sourceColumnWidth: CGFloat = 56
 
     static func header(columns: PricingColumns) -> some View {
         HStack(spacing: 10) {
@@ -332,7 +316,7 @@ private struct PricingRow: View {
                     .frame(width: rateColumnWidth, alignment: .trailing)
             }
             if columns.source {
-                Text("Source").frame(width: 96, alignment: .trailing)
+                Text("Source").frame(width: sourceColumnWidth, alignment: .trailing)
             }
             Text("Tokens").frame(width: 68, alignment: .trailing)
         }
@@ -351,16 +335,96 @@ private struct RowHover: ViewModifier {
     }
 }
 
-/// Who bills a harness-billed row: Grok Bot signs in with the Cursor
-/// account and its charges arrive through Cursor's usage feed, so Cursor;
-/// any other harness bills its own usage. Each name once.
+/// Who bills a harness-billed row ("Cursor", or "Cursor and Devin").
 private func billers(_ row: PricingModel.PricedModel) -> String {
     var names: [String] = []
     for harness in row.harnesses {
-        let name = harness == "grok-bot" ? "Cursor" : UsageFormat.harness(harness)
+        let name = UsageFormat.harness(PricingModel.biller(of: harness))
         if !names.contains(name) { names.append(name) }
     }
     return names.joined(separator: " and ")
+}
+
+/// The source in a word or two: the caption under a narrow row's name and
+/// the mark's accessibility label.
+private func sourceName(_ row: PricingModel.PricedModel) -> String {
+    switch row.spendSource {
+    case .billed: "\(billers(row)) bills"
+    case .free: "Free"
+    case .yours: "Your price"
+    case .quiver: "Quiver"
+    case .liteLLM: "LiteLLM"
+    case .unpriced: "No price"
+    }
+}
+
+/// The Source mark's hover text: whose price the spend uses.
+private func sourceHelp(_ row: PricingModel.PricedModel) -> String {
+    switch row.spendSource {
+    case .billed:
+        let billed = "Billed by \(billers(row)): spend uses the charge \(billers(row)) logs for each request."
+        return switch row.source {
+        case .yours: billed + " Your saved price is kept but not used."
+        case .liteLLM, .quiver: billed + " The rates shown are the API list price, for comparison."
+        case nil: billed
+        }
+    case .free: return "Free model: priced at $0."
+    case .yours: return "Your price: spend uses the rates you saved."
+    case .quiver: return "API pricing from Quiver's own list, which fills in or corrects LiteLLM's."
+    case .liteLLM: return "API pricing from LiteLLM's price list."
+    case .unpriced: return "No price: these tokens aren't in your spend. Click the row to set one."
+    }
+}
+
+/// The Source column's mark, with `sourceHelp` on hover: the biller's
+/// logo, LiteLLM's, Quiver's app icon, or a symbol for your own price, a
+/// free model and a missing price.
+private struct SourceMark: View {
+    var row: PricingModel.PricedModel
+    static let size: CGFloat = 16
+
+    var body: some View {
+        mark
+            .contentShape(.rect)
+            .help(sourceHelp(row))
+            .accessibilityElement()
+            .accessibilityLabel(sourceName(row))
+    }
+
+    @ViewBuilder private var mark: some View {
+        switch row.spendSource {
+        case .billed(let harnesses):
+            HStack(spacing: 3) {
+                ForEach(harnesses.prefix(2), id: \.self) { HarnessIcon(harness: $0, size: Self.size) }
+            }
+        case .liteLLM:
+            if let image = Self.liteLLM {
+                Image(nsImage: image).renderingMode(.template).resizable().interpolation(.high)
+                    .scaledToFit().foregroundStyle(Theme.textPrimary)
+                    .frame(width: Self.size, height: Self.size)
+            } else {
+                Text("LiteLLM").foregroundStyle(Theme.textSecondary)
+            }
+        case .quiver:
+            Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high)
+                .frame(width: Self.size + 2, height: Self.size + 2)
+        case .yours:
+            symbol("person.crop.circle", Theme.textSecondary)
+        case .free:
+            symbol("gift", Theme.textSecondary)
+        case .unpriced:
+            symbol("exclamationmark.triangle", Theme.warningText)
+        }
+    }
+
+    private func symbol(_ name: String, _ color: Color) -> some View {
+        Image(systemName: name).font(.system(size: 13)).foregroundStyle(color)
+            .frame(width: Self.size, height: Self.size)
+    }
+
+    @MainActor private static let liteLLM: NSImage? = PricingSourceIcons.liteLLM
+        .flatMap(NSImage.init(contentsOf:))
+        .map { image in image.isTemplate = true; return image }
 }
 
 /// "Spend uses the charge Cursor logs for each request, not these rates."
