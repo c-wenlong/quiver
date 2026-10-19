@@ -137,6 +137,18 @@ class InspectTest(unittest.TestCase):
             status = inspect("claude", Path(".claude/CLAUDE.md"), agents_file(home), home)
             self.assertEqual(status.state, "conflict")
 
+    def test_a_looping_shared_copy_is_a_conflict_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            (home / ".claude/CLAUDE.md").write_text("rules\n")
+            loop = home / ".quiver/loop"
+            agents_file(home).parent.mkdir(parents=True, exist_ok=True)
+            agents_file(home).symlink_to(loop)
+            loop.symlink_to(agents_file(home))
+
+            status = inspect("claude", Path(".claude/CLAUDE.md"), agents_file(home), home)
+            self.assertEqual(status.state, "conflict")
+
     def test_plan_returns_both_lists(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)

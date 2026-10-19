@@ -513,7 +513,9 @@ def _is_same_file(path: Path, canonical: Path) -> bool:
     """
     try:
         return canonical.resolve() == path.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
+        # A symlink loop: RuntimeError before Python 3.13, OSError after.
+        # Either way, not a file worth absorbing.
         return True
 
 
