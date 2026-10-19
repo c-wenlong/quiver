@@ -175,7 +175,6 @@ private struct AccountCard: View {
         let model = app.accounts
         Card {
             installSheet
-            installSheet
             HStack(spacing: 8) {
                 HarnessIcon(harness: profile.vendor.rawValue, size: 16)
                     .help(profile.vendor.title)
@@ -521,7 +520,6 @@ private struct HarnessAccountCard: View {
         let name = row.title
         let model = app.accounts
         Card {
-            installSheet
             installSheet
             HStack(spacing: 8) {
                 HarnessIcon(harness: row.name, size: 16)
