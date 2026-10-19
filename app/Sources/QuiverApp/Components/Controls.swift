@@ -148,6 +148,9 @@ struct PopoverSelect<Value: Hashable>: View {
     var title: String? = nil
     @State private var open = false
     @State private var hovering = false
+    /// The row the arrow keys are on; Return picks it.
+    @State private var highlighted: Value?
+    @FocusState private var listFocused: Bool
 
     private var current: (title: String, icon: String?) {
         let picked = options.first { $0.value == selection }
@@ -176,7 +179,8 @@ struct PopoverSelect<Value: Hashable>: View {
         .onHover { hovering = $0 }
         .fixedSize()
         .popover(isPresented: $open, arrowEdge: .bottom) {
-            // Opens on the current pick, so it isn't below the fold.
+            // Opens on the current pick, so it isn't below the fold. The
+            // arrow keys move the highlight, like the system menu's.
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -186,18 +190,45 @@ struct PopoverSelect<Value: Hashable>: View {
                     }
                     .padding(.vertical, 6)
                 }
-                .onAppear { proxy.scrollTo(selection, anchor: .center) }
+                .focusable()
+                .focusEffectDisabled()
+                .focused($listFocused)
+                .onAppear {
+                    highlighted = selection
+                    listFocused = true
+                    proxy.scrollTo(selection, anchor: .center)
+                }
+                .onKeyPress(.upArrow) { step(-1, proxy) }
+                .onKeyPress(.downArrow) { step(1, proxy) }
+                .onKeyPress(.return) {
+                    guard let highlighted else { return .ignored }
+                    pick(highlighted)
+                    return .handled
+                }
             }
             .frame(minWidth: 220, maxHeight: 360)
             .fixedSize(horizontal: true, vertical: false)
         }
     }
 
+    private func pick(_ value: Value) {
+        selection = value
+        open = false
+    }
+
+    private func step(_ by: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
+        guard !options.isEmpty else { return .ignored }
+        let index = options.firstIndex { $0.value == highlighted } ?? (by > 0 ? -1 : options.count)
+        let next = options[min(max(index + by, 0), options.count - 1)].value
+        highlighted = next
+        proxy.scrollTo(next)
+        return .handled
+    }
+
     private func row(_ option: (value: Value, title: String, icon: String?)) -> some View {
         let on = option.value == selection
         return Button {
-            selection = option.value
-            open = false
+            pick(option.value)
         } label: {
             HStack(spacing: 8) {
                 Group {
@@ -215,10 +246,11 @@ struct PopoverSelect<Value: Hashable>: View {
                     .opacity(on ? 1 : 0)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(option.value == highlighted ? Theme.rowHover : .clear)
             .contentShape(.rect)
         }
         .plainButton(cornerRadius: 0)
-        .modifier(MultiSelectRowHover())
+        .onHover { if $0 { highlighted = option.value } }
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
