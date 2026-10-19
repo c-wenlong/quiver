@@ -99,12 +99,23 @@ final class FakeRunningInstances: RunningInstances {
         root = FileManager.default.temporaryDirectory.appending(path: "accounts-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        // Real stub CLIs on the injected PATH: signIn refuses when they
+        // aren't executable, like a missing install.
+        bin = root.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for cli in ["claude", "codex", "devin", "cursor-agent", "gh", "freebuff"] {
+            FileManager.default.createFile(
+                atPath: bin.appending(path: cli).path, contents: Data("#!/bin/sh\n".utf8),
+                attributes: [.posixPermissions: 0o755])
+        }
     }
+
+    private var bin: URL!
 
     func model(terminal: TerminalApp = .terminal,
                installedApp: @escaping (String) -> String? = { _ in nil }) -> AccountsModel {
         AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal },
-                      loginPath: { "" }, running: running, installedApp: installedApp)
+                      loginPath: { [bin] in bin.path }, running: running, installedApp: installedApp)
     }
 
     let reading = AccountUsage(
