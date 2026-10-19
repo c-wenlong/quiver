@@ -1,6 +1,7 @@
 """cmd_setup: the non-interactive print path and argument refusals."""
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -29,7 +30,16 @@ def _hint(action="symlink"):
                              command="ln -s", reason="diverged")
 
 
-class SetupCommandTest(unittest.TestCase):
+class _SetupHarness(unittest.TestCase):
+    def setUp(self):
+        # --apply now links into the home it finds, so every run gets its own.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+        home_patch = patch.object(Path, "home", staticmethod(lambda: self.home))
+        home_patch.start()
+        self.addCleanup(home_patch.stop)
+
     def _run(self, args, findings=(), mcp=(), hints=(), apply_map=None):
         """Run cmd_setup with discovery mocked and stdin forced non-tty."""
         from quiver.setup import commands as sc
@@ -54,6 +64,7 @@ class SetupCommandTest(unittest.TestCase):
             code = cmd_setup(args)
         return code, out.getvalue(), mocks
 
+class SetupCommandTest(_SetupHarness):
     def test_nothing_to_do_is_clean(self):
         code, out, _ = self._run([])
         self.assertEqual(code, 0)
@@ -163,6 +174,148 @@ class SetupCommandTest(unittest.TestCase):
         self.assertEqual(code, 0)
         apply_h.assert_called_once()
         self.assertIn("kiro", out.getvalue())
+
+
+class SetupLinksTest(_SetupHarness):
+    """--apply links AGENTS.md and skills; --adopt starts AGENTS.md from a file."""
+
+    def _json(self, args):
+        code, out, _ = self._run(args + ["--json"])
+        self.assertEqual(code, 0, out)
+        return json.loads(out)["data"]
+
+    def test_apply_on_a_blank_home_seeds_and_links(self):
+        (self.home / ".claude").mkdir()
+        applied = self._json(["--apply"])["applied"]
+
+        agents = self.home / ".quiver" / "AGENTS.md"
+        self.assertTrue(agents.is_file())
+        self.assertTrue((self.home / ".quiver" / ".gitignore").is_file())
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        self.assertTrue(claude_md.is_symlink())
+        self.assertEqual(claude_md.resolve(), agents.resolve())
+        rows = applied["links"]["rows"]
+        self.assertIn({"kind": "instructions", "harness": "claude",
+                       "path": str(claude_md), "result": "linked", "detail": ""}, rows)
+        self.assertIsNone(applied["links"]["adopted"])
+
+    def test_apply_leaves_a_real_instruction_file_alone(self):
+        (self.home / ".claude").mkdir()
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.write_text("my own rules\n")
+        applied = self._json(["--apply"])["applied"]
+
+        self.assertFalse(claude_md.is_symlink())
+        self.assertEqual(claude_md.read_text(), "my own rules\n")
+        results = {r["path"]: r["result"] for r in applied["links"]["rows"]}
+        self.assertEqual(results[str(claude_md)], "blocked")
+
+    def test_preview_offers_real_instruction_files_to_adopt(self):
+        (self.home / ".claude").mkdir()
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.write_text("my own rules\n")
+        preview = self._json([])["instructions"]
+
+        self.assertFalse(preview["agents_file_exists"])
+        self.assertFalse(preview["agents_file_customised"])
+        self.assertEqual(preview["adopt_candidates"],
+                         [{"harness": "claude", "path": str(claude_md)}])
+        self.assertFalse((self.home / ".quiver" / "AGENTS.md").exists(),
+                         "the preview must not write")
+
+    def test_adopt_starts_agents_md_from_the_file_and_links_it(self):
+        (self.home / ".claude").mkdir()
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.write_text("my own rules\n")
+        applied = self._json(["--apply", f"--adopt={claude_md}"])["applied"]
+
+        agents = self.home / ".quiver" / "AGENTS.md"
+        self.assertEqual(agents.read_text(), "my own rules\n")
+        self.assertTrue(claude_md.is_symlink())
+        self.assertEqual(claude_md.read_text(), "my own rules\n")
+        self.assertEqual(applied["links"]["adopted"], str(claude_md))
+        backups = list((self.home / ".quiver" / "backups").rglob("*CLAUDE.md*"))
+        self.assertTrue(backups, "the original is backed up before it becomes a link")
+
+    def test_adopt_is_refused_once_agents_md_has_your_own_text(self):
+        (self.home / ".quiver").mkdir()
+        (self.home / ".quiver" / "AGENTS.md").write_text("already mine\n")
+        source = self.home / "rules.md"
+        source.write_text("other rules\n")
+        code, out, mocks = self._run(["--apply", f"--adopt={source}"])
+
+        self.assertEqual(code, 1)
+        self.assertIn("already has your own text", out)
+        mocks["apply_findings"].assert_not_called()
+        self.assertEqual((self.home / ".quiver" / "AGENTS.md").read_text(), "already mine\n")
+
+    def test_starred_sets_exactly_the_ticked_harnesses(self):
+        from quiver.harness import registry
+        reg = {"claude": {"command": "claude"}, "codex": {"command": "codex"},
+               "droid": {"command": "droid", "state": "starred", "pin": 1}}
+        saved = {}
+        with patch.object(registry, "load_registry", lambda: saved.get("reg", reg)), \
+                patch.object(registry, "save_registry",
+                             lambda tools: saved.__setitem__("reg", tools)):
+            applied = self._json(["--apply", "--starred=codex,claude,qwen-code,nonesuch"])["applied"]
+        final = saved["reg"]
+        self.assertEqual(applied["starred"], {"starred": ["codex", "claude", "qwen-code"],
+                                              "registered": ["qwen-code"],
+                                              "unknown": ["nonesuch"]})
+        self.assertEqual(final["codex"]["state"], "starred")
+        self.assertEqual(final["codex"]["pin"], 1)
+        self.assertEqual(final["claude"]["pin"], 2)
+        self.assertEqual(final["qwen-code"]["command"], "qwen")
+        self.assertNotEqual(final["droid"].get("state"), "starred")
+
+    def test_a_linking_failure_exits_nonzero_and_keeps_what_was_applied(self):
+        (self.home / ".quiver" / ".linkignore").mkdir(parents=True)
+        code, out, mocks = self._run(["--apply", "--json"])
+
+        self.assertEqual(code, 1)
+        applied = json.loads(out)["data"]["applied"]
+        self.assertIn("cannot read", applied["links"]["error"])
+        self.assertEqual(applied["harness"], [])
+        mocks["apply_findings"].assert_not_called()  # nothing new was found
+
+    def test_text_apply_reports_links_and_a_linking_failure(self):
+        (self.home / ".claude").mkdir()
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.write_text("my own rules\n")
+        code, out, _ = self._run(["--apply", f"--adopt={claude_md}"])
+        self.assertEqual(code, 0)
+        self.assertIn("link(s)", out)
+        self.assertIn("AGENTS.md started from", out)
+
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "AGENTS.md").write_text("other rules\n")
+        code, out, _ = self._run(["--apply"])
+        self.assertEqual(code, 0)
+        self.assertIn("left alone", out)
+
+        (self.home / ".quiver" / ".linkignore").unlink()
+        (self.home / ".quiver" / ".linkignore").mkdir()
+        code, out, _ = self._run(["--apply"])
+        self.assertEqual(code, 1)
+        self.assertIn("Nothing was linked", out)
+
+    def test_preview_leaves_out_files_adopt_would_refuse(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "CLAUDE.md").write_bytes(b"\xff\xfe not text")
+        preview = self._json([])["instructions"]
+        self.assertEqual(preview["adopt_candidates"], [])
+
+    def test_starred_needs_apply(self):
+        code, out, _ = self._run(["--starred=claude"])
+        self.assertEqual(code, 1)
+        self.assertIn("--starred only works with --apply", out)
+
+    def test_adopt_needs_apply(self):
+        source = self.home / "rules.md"
+        source.write_text("rules\n")
+        code, out, _ = self._run([f"--adopt={source}"])
+        self.assertEqual(code, 1)
+        self.assertIn("--adopt only works with --apply", out)
 
 
 if __name__ == "__main__":

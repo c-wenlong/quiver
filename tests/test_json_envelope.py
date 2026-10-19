@@ -134,7 +134,12 @@ class SetupEnvelopeTest(unittest.TestCase):
         from quiver.mcp.discover import MergeResult
         merge = MergeResult(added=[], updated=[], orphaned=[], pruned=[])
         out = StringIO()
-        with patch.object(sc, "discover_harnesses", lambda: []), \
+        # --apply links into the home it finds; keep that out of the real one.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        with patch.object(Path, "home", staticmethod(lambda: home)), \
+                patch.object(sc, "discover_harnesses", lambda: []), \
                 patch.object(sc, "discover_mcp_servers", lambda **k: []), \
                 patch.object(sc, "skills_symlink_hints", lambda **k: []), \
                 patch.object(sc, "apply_findings", mock.Mock(return_value=[])), \
@@ -158,7 +163,7 @@ class SetupEnvelopeTest(unittest.TestCase):
         self.assertEqual(code, 0)
         doc = _decode_one_document(raw)
         self.assertEqual(doc["schema"], 1)
-        self.assertEqual(sorted(doc["data"]["applied"]), ["harness", "mcp", "skills"])
+        self.assertEqual(sorted(doc["data"]["applied"]), ["harness", "links", "mcp", "skills"])
 
 
 if __name__ == "__main__":

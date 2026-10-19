@@ -113,6 +113,42 @@ class InspectTest(unittest.TestCase):
             self.assertEqual(status.state, "conflict")
             self.assertIn("--force", status.detail)
 
+    def test_absorb_when_a_real_file_already_matches_the_shared_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            agents_file(home).parent.mkdir(parents=True, exist_ok=True)
+            agents_file(home).write_text("same rules\n")
+            (home / ".claude/CLAUDE.md").write_text("same rules\n")
+
+            status = inspect("claude", Path(".claude/CLAUDE.md"), agents_file(home), home)
+            self.assertEqual(status.state, "absorb")
+            self.assertIn("same text", status.detail)
+
+    def test_no_absorb_when_the_shared_copy_is_a_link_to_the_file_itself(self):
+        # Absorbing would replace CLAUDE.md with a link to AGENTS.md, which
+        # links back to CLAUDE.md: a loop with no text at either end.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            claude_md = home / ".claude/CLAUDE.md"
+            claude_md.write_text("rules\n")
+            agents_file(home).parent.mkdir(parents=True, exist_ok=True)
+            agents_file(home).symlink_to(claude_md)
+
+            status = inspect("claude", Path(".claude/CLAUDE.md"), agents_file(home), home)
+            self.assertEqual(status.state, "conflict")
+
+    def test_a_looping_shared_copy_is_a_conflict_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            (home / ".claude/CLAUDE.md").write_text("rules\n")
+            loop = home / ".quiver/loop"
+            agents_file(home).parent.mkdir(parents=True, exist_ok=True)
+            agents_file(home).symlink_to(loop)
+            loop.symlink_to(agents_file(home))
+
+            status = inspect("claude", Path(".claude/CLAUDE.md"), agents_file(home), home)
+            self.assertEqual(status.state, "conflict")
+
     def test_plan_returns_both_lists(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)
