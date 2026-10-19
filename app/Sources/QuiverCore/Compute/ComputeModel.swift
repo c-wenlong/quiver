@@ -68,6 +68,13 @@ public final class ComputeModel {
     /// Whether this Mac's temperature sensors have ever answered.
     public private(set) var temperatureAvailable = false
 
+    /// The Temperature tab's switched-on lines; kept in UserDefaults.
+    public var temperatureLines: Set<ThermalComponent> {
+        didSet { defaults.set(temperatureLines.sorted().map(\.rawValue), forKey: Self.temperatureLinesKey) }
+    }
+
+    public static let temperatureLinesKey = "computeTemperatureLines"
+
     /// The thresholds the flags and suggestions follow.
     public var limits: ComputeLimits {
         didSet {
@@ -140,7 +147,7 @@ public final class ComputeModel {
                 managedPIDs: @escaping @Sendable () async -> Set<Int32> = { [] },
                 signaller: any ProcessSignaller = SystemSignaller(),
                 gpu: any GPUSampling = GPUSampler(),
-                temperature: any TemperatureSampling = HIDTemperatureSampler(),
+                temperature: any TemperatureSampling = MacTemperatureSampler(),
                 clock: @escaping @Sendable () -> Date = { .now },
                 sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                 defaults: UserDefaults = .standard,
@@ -157,6 +164,25 @@ public final class ComputeModel {
         self.selfPID = selfPID
         limits = ComputeLimits(defaults: defaults)
         trendInterval = TrendInterval(defaults: defaults)
+        temperatureLines = Self.loadTemperatureLines(defaults)
+    }
+
+    /// The saved lines, or the default four before the user has picked.
+    /// Names this build does not know are skipped.
+    static func loadTemperatureLines(_ defaults: UserDefaults) -> Set<ThermalComponent> {
+        guard let saved = defaults.stringArray(forKey: temperatureLinesKey) else {
+            return Set(ThermalComponent.shownByDefault)
+        }
+        return Set(saved.compactMap(ThermalComponent.init(rawValue:)))
+    }
+
+    /// Switch one Temperature line on or off.
+    public func toggleTemperatureLine(_ component: ThermalComponent) {
+        if temperatureLines.contains(component) {
+            temperatureLines.remove(component)
+        } else {
+            temperatureLines.insert(component)
+        }
     }
 
     /// Who to look for. Runs on page appear and on Refresh, not per tick.
@@ -303,8 +329,7 @@ public final class ComputeModel {
         history.recordTick(sampledAt ?? now)
         if let reading {
             temperatureAvailable = true
-            history.appendTemperature(TemperaturePoint(at: sampledAt ?? now, cpu: reading.cpu,
-                                                       battery: reading.battery))
+            history.appendTemperature(TemperaturePoint(at: sampledAt ?? now, values: reading.values))
         }
         for (harness, procs) in attribution.byHarness where !procs.isEmpty {
             history.append(harness, TrendPoint(
