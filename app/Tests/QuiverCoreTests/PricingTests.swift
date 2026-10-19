@@ -285,6 +285,53 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         _ = temp
     }
 
+    @Test func `a harness-billed row is billed by its biller, Grok Bot's by Cursor`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("grok-bot-default", tokens: 90, loggedCost: 1.2, harness: "grok-bot"),
+            event("composer-2", tokens: 90, loggedCost: 0.5, harness: "cursor"),
+            event("swe-2", tokens: 90, loggedCost: 0.3, harness: "devin"),
+            event("swe-2", tokens: 90, loggedCost: 0.3, harness: "grok-bot"),
+        ], catalog: priced)
+        await model.load()
+        let rows = Dictionary(uniqueKeysWithValues: model.groups.flatMap(\.models).map { ($0.model, $0) })
+        #expect(rows["grok-bot-default"]?.spendSource == .billed(by: ["cursor"]))
+        #expect(rows["composer-2"]?.spendSource == .billed(by: ["cursor"]))
+        #expect(rows["swe-2"]?.spendSource == .billed(by: ["devin", "cursor"])
+                || rows["swe-2"]?.spendSource == .billed(by: ["cursor", "devin"]))
+        _ = temp
+    }
+
+    @Test func `a mixed row names who bills its logged part`() async throws {
+        // Cursor logs a charge; Claude Code's tokens of the same model don't.
+        let (_, model, temp) = try makeModel([
+            event("claude-sonnet-4-6", tokens: 90, loggedCost: 1.2, harness: "cursor"),
+            event("claude-sonnet-4-6", tokens: 90, harness: "claude"),
+            event("gemini-2.5-pro", tokens: 90, harness: "claude"),
+        ], catalog: priced)
+        await model.load()
+        let rows = Dictionary(uniqueKeysWithValues: model.groups.flatMap(\.models).map { ($0.model, $0) })
+        let mixed = try #require(rows["claude-sonnet-4-6"])
+        #expect(!mixed.harnessBilled && mixed.billedBy == ["cursor"])
+        // The mark follows the price for the uncharged part, not the biller.
+        if case .billed = mixed.spendSource { Issue.record("a mixed row is not billed") }
+        #expect(rows["gemini-2.5-pro"]?.billedBy == [])
+        _ = temp
+    }
+
+    @Test func `a row's spend source follows its price when nothing bills it`() {
+        func row(source: PricingCatalog.Source?, free: Bool = false) -> PricingModel.PricedModel {
+            PricingModel.PricedModel(
+                model: "m", totals: UsageTotals(), harnesses: ["claude"], harnessBilled: false,
+                entry: nil, source: source, rates: nil, tiers: [], isFree: free,
+                unpricedTokens: 0, listPrice: nil)
+        }
+        #expect(row(source: .liteLLM).spendSource == .liteLLM)
+        #expect(row(source: .quiver).spendSource == .quiver)
+        #expect(row(source: .yours).spendSource == .yours)
+        #expect(row(source: nil).spendSource == .unpriced)
+        #expect(row(source: nil, free: true).spendSource == .free)
+    }
+
     @Test func `a model with uncharged tokens is not harness-billed`() async throws {
         let (_, model, temp) = try makeModel([
             event("billed-model", tokens: 90, loggedCost: 1.2),

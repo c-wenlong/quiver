@@ -32,6 +32,14 @@ import Testing
         #expect(Set(fromTokenTracker).isSubset(of: Set(HarnessIcons.available)))
     }
 
+    @Test func theLiteLLMMarkDrawsAndIsNoHarness() throws {
+        let url = try #require(PricingSourceIcons.liteLLM)
+        let image = try #require(NSImage(contentsOf: url))
+        let bitmap = try #require(render(image))
+        #expect(coverage(bitmap) > 0.08)
+        #expect(!HarnessIcons.available.contains("litellm"))
+    }
+
     @Test func brandColoursAreKeptWhereTokenTrackerShowsThem() throws {
         for id in inColour {
             #expect(HarnessIcons.icon(for: id)?.isColor == true, "\(id)")
