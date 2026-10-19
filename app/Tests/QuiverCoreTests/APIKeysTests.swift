@@ -838,6 +838,68 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(cache.load(for: url)["NEW_KEY"] == check)
         #expect(cache.load(for: url)["OLD_KEY"] == nil)
     }
+
+    /// A model whose checks go to `transport`, so a verdict is chosen.
+    private func model(text: String, transport: FakeTransport) throws -> (APIKeysModel, URL) {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keystest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return (APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+                             shell: FakeShell(environment: [:]),
+                             checker: APIKeyChecker(transport: transport),
+                             checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                             defaults: UserDefaults(suiteName: "keystest-\(UUID().uuidString)")!), url)
+    }
+
+    @Test func aTestReturnsTheVerdictAndPersistsNothing() async throws {
+        let transport = FakeTransport()
+        transport.reply(401, body: Data(#"{"error":{"message":"bad key"}}"#.utf8))
+        let (model, url) = try model(text: "", transport: transport)
+        await model.load()
+        let result = await model.test(name: "OPENAI_API_KEY", value: "sk-fake-TEST-9999")
+        guard case .rejected(let status, _) = result else {
+            Issue.record("expected rejected, got \(result)")
+            return
+        }
+        #expect(status == 401)
+        #expect(model.checks.isEmpty)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "")
+    }
+
+    @Test func aTestWithoutAProbeIsNoCheck() async throws {
+        let transport = FakeTransport()
+        let (model, _) = try model(text: "", transport: transport)
+        await model.load()
+        let result = await model.test(name: "SWEBENCH_API_KEY", value: "v")
+        #expect(result == .noCheck("Quiver doesn't know how to check this key."))
+        #expect(transport.requests.isEmpty)
+    }
+
+    @Test func savingWithAVerdictKeepsItCurrentForTheValue() async throws {
+        let transport = FakeTransport()
+        let (model, _) = try model(text: "", transport: transport)
+        await model.load()
+        try await model.set(name: "OPENAI_API_KEY", value: "sk-saved-TEST-1", provider: "OPENAI",
+                            tested: .works)
+        let row = try #require(model.rows.first { $0.name == "OPENAI_API_KEY" })
+        #expect(model.check(for: row)?.result == .works)
+        // A different value must not inherit the verdict.
+        try await model.set(name: "OPENAI_API_KEY", value: "sk-saved-TEST-2", provider: "OPENAI")
+        let changed = try #require(model.rows.first { $0.name == "OPENAI_API_KEY" })
+        #expect(model.check(for: changed) == nil)
+    }
+
+    @Test func anUpdateWithARenameStoresTheVerdictUnderTheNewName() async throws {
+        let transport = FakeTransport()
+        let (model, _) = try model(text: "export OLD_KEY=\"v1\"\n", transport: transport)
+        await model.load()
+        try await model.update(name: "OLD_KEY", newName: "OPENAI_API_KEY",
+                               provider: "OPENAI", value: "sk-new-TEST-1", tested: .works)
+        #expect(model.checks["OLD_KEY"] == nil)
+        let row = try #require(model.rows.first { $0.name == "OPENAI_API_KEY" })
+        #expect(model.check(for: row)?.result == .works)
+    }
 }
 
 @Suite struct APIKeyProviderLogoTests {
