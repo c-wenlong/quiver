@@ -189,3 +189,71 @@ def installers_for(name: str) -> list[Installer]:
     """Known installers for ``name`` in METHODS order; empty when unknown."""
     spec = INSTALLERS.get(name) or {}
     return [Installer(via, spec[via]) for via in METHODS if via in spec]
+
+
+@dataclass(frozen=True)
+class Uninstaller:
+    via: str
+    package: str  # cask token, formula, npm package, uv tool, or nix profile element
+
+    def display(self) -> str:
+        """The uninstall command as a person would type it."""
+        if self.via == "brew":
+            return f"brew uninstall {self.package}"
+        if self.via == "cask":
+            return f"brew uninstall --cask {self.package}"
+        if self.via == "npm":
+            return f"npm uninstall -g {self.package}"
+        if self.via == "uv":
+            return f"uv tool uninstall {self.package}"
+        if self.via == "nix":
+            return f"nix profile remove {self.package}"
+        raise ValueError(f"unknown uninstall method: {self.via}")
+
+
+def _segment_after(parts: list[str], marker: str) -> str | None:
+    """The path segment right after ``marker``, or None when absent."""
+    if marker in parts:
+        index = parts.index(marker)
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    return None
+
+
+def uninstaller_for(name: str, real_path: str | None) -> Uninstaller | None:
+    """How to remove an installed harness, read off where its binary lives.
+
+    ``real_path`` is the binary with symlinks resolved. The package comes
+    from the path itself, not the install table, because the table only
+    says what swe would install: a cask installed as ``claude-code@latest``
+    lives in ``Caskroom/claude-code@latest``. A vendor script leaves no
+    such trace, so it returns None rather than guessing a file to delete.
+    """
+    if not real_path:
+        return None
+    parts = real_path.split("/")
+    # A Homebrew keg owns everything under it, a Node CLI bundled in its
+    # libexec/node_modules included. Only node's own keg holds packages npm
+    # installed, when the npm prefix was left inside it.
+    cask = _segment_after(parts, "Caskroom")
+    if cask:
+        return Uninstaller("cask", cask)
+    formula = _segment_after(parts, "Cellar")
+    if formula and formula != "node" and not formula.startswith("node@"):
+        return Uninstaller("brew", formula)
+    if "node_modules" in parts:
+        index = len(parts) - 1 - parts[::-1].index("node_modules")
+        rest = parts[index + 1:]
+        if rest and rest[0].startswith("@") and len(rest) > 1:
+            return Uninstaller("npm", f"{rest[0]}/{rest[1]}")
+        if rest:
+            return Uninstaller("npm", rest[0])
+    if "uv" in parts:
+        uv = parts.index("uv")
+        if uv + 2 < len(parts) and parts[uv + 1] == "tools":
+            return Uninstaller("uv", parts[uv + 2])
+    if real_path.startswith("/nix/store/"):
+        attr = (INSTALLERS.get(name) or {}).get("nix")
+        if attr:
+            return Uninstaller("nix", attr)
+    return None

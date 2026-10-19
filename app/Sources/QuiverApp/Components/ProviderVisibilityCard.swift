@@ -3,10 +3,12 @@ import SwiftUI
 
 /// Settings' provider list, after TokenTracker's: drag to reorder, a switch
 /// per installed provider, Enable all / Disable all. Providers that aren't
-/// installed are greyed out and their switch is off and locked.
+/// installed are greyed out and their switch is off and locked. A click on
+/// a row opens its install or uninstall steps.
 struct ProviderVisibilityCard: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: ProviderVisibilityModel
+    @State private var opened: ProviderVisibilityModel.Row?
 
     var body: some View {
         SettingsCard {
@@ -41,11 +43,17 @@ struct ProviderVisibilityCard: View {
                     model.moveToEnd(id)
                 }
             } row: { row in
-                ProviderRow(row: row, checked: model.hasChecked, failed: model.checkError != nil) {
+                ProviderRow(row: row, checked: model.hasChecked, failed: model.checkError != nil,
+                            open: { opened = row }) {
                     model.setEnabled(row.id, $0)
                 }
             }
             .padding(.vertical, 8)
+        }
+        // Closing the sheet rechecks, so an install or uninstall run from
+        // it shows up in the switches.
+        .sheet(item: $opened, onDismiss: { Task { await model.load() } }) { row in
+            ProviderSetupSheet(provider: row.provider, isInstalled: row.isInstalled)
         }
         // Once per swe: this card is rebuilt on every visit and at the
         // 720pt layout flip, and each check starts a swe process.
@@ -57,6 +65,7 @@ private struct ProviderRow: View {
     var row: ProviderVisibilityModel.Row
     var checked: Bool
     var failed = false
+    var open: () -> Void
     var toggle: (Bool) -> Void
     @State private var hovering = false
 
@@ -86,9 +95,14 @@ private struct ProviderRow: View {
         .frame(height: 44)
         .background(hovering ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
         .contentShape(.rect)
+        // The switch keeps its own click; anywhere else opens the steps.
+        .onTapGesture(perform: open)
         .onHover { hovering = $0 }
+        .help(row.isInstalled ? "Click for how to uninstall \(row.provider.name)"
+                              : "Click for how to install \(row.provider.name)")
         .accessibilityElement(children: .combine)
         .accessibilityHint(row.isInstalled ? "Drag to reorder" : "Not installed")
+        .accessibilityAction(named: row.isInstalled ? "Uninstall steps" : "Install steps", open)
     }
 }
 

@@ -45,6 +45,10 @@ and the fixture that pins the shape. Fixtures live under
   `unavailable: true` when the provider left that meter unread — the
   figures are the last known values, and `as_of` (epoch seconds) is when
   they were read; absent keys mean a normal, current window.
+- `InstallableHarness`: `uninstall` is an install-method object (`via`,
+  `package`, `command`, `available`) for an installed harness whose binary
+  resolves into a package manager's tree, else null. `via` is `cask`,
+  `brew`, `npm`, `uv` or `nix`; a vendor script install has none.
 - `McpInventory`: `harnesses` lists every config read; `servers` carry
   `args`, `command`, `conflict`, `detail`, `env_keys`, `harnesses`,
   `header_keys`, `health` (a string, not an object), `name`, `transport`,

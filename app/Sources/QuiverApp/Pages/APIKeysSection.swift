@@ -3,7 +3,9 @@ import QuiverCore
 import SwiftUI
 
 /// The keys in `~/.api_keys`, grouped by provider, masked until revealed.
-struct APIKeysPage: View {
+/// Lives in Settings › Providers › Inference, under the inference plans:
+/// keys are configuration, like the plans they pay for.
+struct APIKeysSection: View {
     @Environment(AppModel.self) private var app
     @State private var editing: KeyDraft?
     @State private var revealed: Set<String> = []
@@ -15,19 +17,26 @@ struct APIKeysPage: View {
 
     var body: some View {
         @Bindable var model = app.apiKeys
-        Page(title: "API keys", subtitle: "From \(displayPath(model.path)). New terminals pick up changes.") {
-            Button("Reload", systemImage: "arrow.clockwise") { actionError = nil; Task { await model.load() } }
-                .iconButton()
-                .disabled(model.isLoading)
-                .keyboardShortcut("r", modifiers: .command)
-                .help("Read the file and the shell again (⌘R)")
-            Button("Check keys", systemImage: "checkmark.shield") { Task { await model.checkAll() } }
-                .secondaryButton()
-                .disabled(model.isChecking)
-                .help("Send each key to its own provider to see if it still works")
-            Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
-                .primaryButton()
-        } content: {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("API keys").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    Text("From \(displayPath(model.path)). New terminals pick up changes.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 12)
+                Button("Reload", systemImage: "arrow.clockwise") { actionError = nil; Task { await model.load() } }
+                    .iconButton()
+                    .disabled(model.isLoading)
+                    .keyboardShortcut("r", modifiers: .command)
+                    .help("Read the file and the shell again (⌘R)")
+                Button("Check keys", systemImage: "checkmark.shield") { Task { await model.checkAll() } }
+                    .secondaryButton()
+                    .disabled(model.isChecking)
+                    .help("Send each key to its own provider to see if it still works")
+                Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
+                    .primaryButton()
+            }
             if let error = model.error ?? actionError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(Theme.bodySmall).foregroundStyle(Theme.warningText)

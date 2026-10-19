@@ -89,7 +89,8 @@ Where each came from is in `Resources/harness-icons.tsv`:
   AI, Vercel, Nebius, NVIDIA and Cloudflare) and the model-lab marks
   for Meta and Ant Group come from LobeHub icons
   (`@lobehub/icons-static-svg`).
-- npm comes from Simple Icons (simple-icons, CC0-1.0); Routing.Run's
+- npm, Homebrew, Nix and uv come from Simple Icons (simple-icons,
+  CC0-1.0); Routing.Run's
   planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).
 - Continue comes from its repository (continuedev/continue,
   `docs/logo/light.svg`); aider from its repository (Aider-AI/aider,

@@ -339,8 +339,6 @@ struct PageView: View {
             ModelsPage()
         case .plugins:
             PluginsPage()
-        case .apiKeys:
-            APIKeysPage()
         case .menuBar:
             MenuBarPage()
         case .widgets:

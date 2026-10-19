@@ -101,17 +101,19 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         let ids = ProviderCatalog.all.map(\.id)
         // TokenTracker's order first.
         #expect(Array(ids.prefix(5)) == ["claude", "codex", "devin", "cursor", "antigravity"])
-        for id in ["kimi", "zcode", "commandcode", "qoder", "qoder-cn", "ark-coding-plan", "ark-agent-plan", "gemini",
+        for id in ["kimi", "zcode", "commandcode", "qoder", "qoder-cn", "gemini",
                    "qwen-code", "goose", "droid"] {
             #expect(ids.contains(id), "\(id)")
         }
         #expect(Set(ids).count == ids.count)
+        // Model plans are subscriptions, not harnesses.
+        #expect(ProviderCatalog.provider("ark-coding-plan") == nil)
+        #expect(ProviderCatalog.provider("ark-agent-plan") == nil)
         #expect(ProviderCatalog.provider("copilot")?.name == "GitHub Copilot")
     }
 
     @Test func everyProviderHasALogoOrAnInitial() {
         let withLogo = ProviderCatalog.all.filter { HarnessIcons.icon(for: $0.icon) != nil }.map(\.id)
-        #expect(withLogo.contains("ark-agent-plan"))
         #expect(Set(ProviderCatalog.all.map(\.id)).subtracting(withLogo).isEmpty)
     }
 }
@@ -122,10 +124,10 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
     @Test func harnessesComeFromSweAndTheRestFromTheirOwnSigns() {
         let found = ProviderDetection.installed(
             sweHarnesses: ["claude", "codex", "devin"],
-            commandExists: { $0 == "arkcli" },
+            commandExists: { $0 == "kimi" },
             pathExists: { ["/Users/k/.zcode", "/Applications/Qoder.app"].contains($0) },
             home: home)
-        #expect(found == ["claude", "codex", "devin", "zcode", "qoder", "qoder-cn", "ark-coding-plan", "ark-agent-plan"])
+        #expect(found == ["claude", "codex", "devin", "kimi", "zcode", "qoder", "qoder-cn"])
     }
 
     @Test func aListedButUninstalledHarnessDoesNotCount() async throws {
@@ -448,5 +450,19 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         let model = await model(installed: ["claude", "codex"])
         model.move("codex", before: "claude")
         #expect(model.ordered(["claude", "codex", "devin"]) == ["codex", "claude", "devin"])
+    }
+}
+
+@Suite struct InferenceCatalogTests {
+    @Test func arkPlansAreInferenceNotHarnesses() {
+        #expect(InferenceCatalog.all.map(\.id) == ["ark-coding-plan", "ark-agent-plan"])
+        #expect(InferenceCatalog.all.allSatisfy { HarnessIcons.icon(for: $0.icon) != nil })
+        #expect(InferenceCatalog.all.allSatisfy { ProviderCatalog.provider($0.id) == nil })
+    }
+
+    @Test func detectsPlansByTheirCommand() {
+        #expect(InferenceCatalog.detected(commandExists: { $0 == "arkcli" })
+            == ["ark-coding-plan", "ark-agent-plan"])
+        #expect(InferenceCatalog.detected(commandExists: { _ in false }).isEmpty)
     }
 }

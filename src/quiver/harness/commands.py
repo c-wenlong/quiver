@@ -1671,12 +1671,13 @@ def _install_method_available(via: str) -> bool:
 def _install_json(names: list[str], tools: dict) -> dict:
     """The ``swe install --json`` document for the given registry names."""
     from quiver.harness.catalog import HARNESS_CATALOG
-    from quiver.harness.installers import installers_for
+    from quiver.harness.installers import METHOD_TOOL, installers_for, uninstaller_for
 
     harnesses = []
     for name in names:
         command = _install_command_name(name, tools)
         path = shutil.which(command)
+        remover = uninstaller_for(name, os.path.realpath(path)) if path else None
         harnesses.append({
             "name": name,
             "command": command,
@@ -1690,6 +1691,14 @@ def _install_json(names: list[str], tools: dict) -> dict:
                 "command": inst.display(),
                 "available": _install_method_available(inst.via),
             } for inst in installers_for(name)],
+            # How to remove it, read off where the binary resolves to; null
+            # when it isn't installed or a vendor script put it there.
+            "uninstall": None if remover is None else {
+                "via": remover.via,
+                "package": remover.package,
+                "command": remover.display(),
+                "available": shutil.which(METHOD_TOOL[remover.via]) is not None,
+            },
         })
     return {"harnesses": harnesses}
 
