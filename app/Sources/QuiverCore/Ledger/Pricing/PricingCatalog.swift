@@ -74,29 +74,41 @@ public struct PricingCatalog: Sendable {
         self.overrideIndex = [:]
         self.listIndex = [:]
         // Bare keys win over provider-prefixed ones, then shorter prefixes.
-        let ordered = { (keys: Dictionary<String, ModelRates>.Keys) in
-            keys.sorted { lhs, rhs in
-                let l = (Self.prefixRank(lhs), lhs), r = (Self.prefixRank(rhs), rhs)
-                return l < r
-            }
+        // Ranked once, not per comparison, and each key's forms worked out
+        // once for all three indexes: a 3,000-key list otherwise spends
+        // most of a second here, on every saved price.
+        let rankOrder = { (keys: Dictionary<String, ModelRates>.Keys) in
+            keys.map { (rank: Self.prefixRank($0), key: $0) }
+                .sorted { ($0.rank, $0.key) < ($1.rank, $1.key) }
+                .map(\.key)
+        }
+        let ordered = rankOrder(entries.keys)
+        let listOrdered = rankOrder(self.listEntries.keys)
+        var formsByPass: [[String: [String]]] = [[:], [:]]
+        for key in ordered {
+            formsByPass[0][key] = Self.forms(of: key, stripDates: false)
+            formsByPass[1][key] = Self.forms(of: key, stripDates: true)
+        }
+        func forms(_ key: String, pass: Int) -> [String] {
+            formsByPass[pass][key] ?? Self.forms(of: key, stripDates: pass == 1)
         }
         for pass in 0..<2 {
-            for key in ordered(entries.keys) {
-                for form in Self.forms(of: key, stripDates: pass == 1) where index[form] == nil {
+            for key in ordered {
+                for form in forms(key, pass: pass) where index[form] == nil {
                     index[form] = key
                 }
             }
         }
         for pass in 0..<2 {
-            for key in ordered(entries.keys) where sources[key] == .yours {
-                for form in Self.forms(of: key, stripDates: pass == 1) where overrideIndex[form] == nil {
+            for key in ordered where sources[key] == .yours {
+                for form in forms(key, pass: pass) where overrideIndex[form] == nil {
                     overrideIndex[form] = key
                 }
             }
         }
         for pass in 0..<2 {
-            for key in ordered(self.listEntries.keys) {
-                for form in Self.forms(of: key, stripDates: pass == 1) where listIndex[form] == nil {
+            for key in listOrdered {
+                for form in forms(key, pass: pass) where listIndex[form] == nil {
                     listIndex[form] = key
                 }
             }
@@ -375,19 +387,11 @@ public struct PricingCatalog: Sendable {
     static func forms(of key: String, stripDates: Bool, stripEffort: Bool = false) -> [String] {
         var name = bareName(key)
         // Bedrock: `us.anthropic.claude-…-v1:0`, `anthropic.claude-…`.
-        if let range = name.range(of: #"^([a-z]{2,4}\.)?anthropic\."#, options: .regularExpression) {
-            name.removeSubrange(range)
-        }
-        if let range = name.range(of: #"-v\d+(:\d+)?$"#, options: .regularExpression) { name.removeSubrange(range) }
-        if let range = name.range(of: #"\[[^\]]*\]$"#, options: .regularExpression) { name.removeSubrange(range) }
+        for pattern in Patterns.cleanup { pattern.removeFirstMatch(in: &name) }
         var forms = [name]
         if stripDates {
             var undated = name
-            for pattern in [#"@\d{8}$"#, #"-\d{4}-\d{2}-\d{2}$"#, #"-\d{8}$"#] {
-                if let range = undated.range(of: pattern, options: .regularExpression) {
-                    undated.removeSubrange(range)
-                }
-            }
+            for pattern in Patterns.dates { pattern.removeFirstMatch(in: &undated) }
             if undated != name { forms.append(undated) }
         }
         for form in forms where form.contains(".") || form.contains("@") {
@@ -398,14 +402,41 @@ public struct PricingCatalog: Sendable {
         // Only for looked-up names: a catalog key never lends its price this way.
         if stripEffort {
             for form in forms {
-                if let range = form.range(of: #"-(minimal|low|medium|high|xhigh|max)$"#, options: .regularExpression) {
-                    var bare = form
-                    bare.removeSubrange(range)
-                    forms.append(bare)
-                }
+                var bare = form
+                if Patterns.effort.removeFirstMatch(in: &bare) { forms.append(bare) }
             }
         }
         return forms
+    }
+
+    /// `forms`' patterns, compiled once: `String.range(of:options:
+    /// .regularExpression)` compiles its pattern on every call, and
+    /// `forms` runs thousands of times per catalog and per lookup.
+    private enum Patterns {
+        /// Bedrock's `us.anthropic.claude-…-v1:0` and `anthropic.claude-…`
+        /// prefix, a `-v1:0` version suffix, a `[1m]` bracket suffix.
+        static let cleanup = [#"^([a-z]{2,4}\.)?anthropic\."#, #"-v\d+(:\d+)?$"#, #"\[[^\]]*\]$"#]
+            .map(Pattern.init)
+        static let dates = [#"@\d{8}$"#, #"-\d{4}-\d{2}-\d{2}$"#, #"-\d{8}$"#].map(Pattern.init)
+        static let effort = Pattern(#"-(minimal|low|medium|high|xhigh|max)$"#)
+    }
+
+    private struct Pattern: @unchecked Sendable {
+        let regex: NSRegularExpression
+
+        init(_ pattern: String) {
+            regex = try! NSRegularExpression(pattern: pattern)
+        }
+
+        /// Removes the first match from `text`; whether there was one.
+        @discardableResult
+        func removeFirstMatch(in text: inout String) -> Bool {
+            let whole = NSRange(text.startIndex..., in: text)
+            guard let match = regex.firstMatch(in: text, range: whole),
+                  let range = Range(match.range, in: text) else { return false }
+            text.removeSubrange(range)
+            return true
+        }
     }
 
     // MARK: - Decoding one entry
