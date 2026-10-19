@@ -399,11 +399,12 @@ private struct SourceMark: View {
     static let size: CGFloat = 16
 
     var body: some View {
+        // `hoverTip`, not `.help`: a tooltip inside the row's button never
+        // shows. The tip opens on a short rest and pins on click (the click
+        // stays on the mark rather than opening the price sheet).
         mark
-            .contentShape(.rect)
-            .help(sourceHelp(row))
-            .accessibilityElement()
-            .accessibilityLabel(sourceName(row))
+            .padding(4)
+            .hoverTip(sourceHelp(row), title: sourceName(row))
     }
 
     @ViewBuilder private var mark: some View {
