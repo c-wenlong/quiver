@@ -103,7 +103,33 @@ final class LimitsMonitor {
 
     func checkNotificationPermission() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
+        notificationStatus = settings.authorizationStatus
         notificationsBlocked = settings.authorizationStatus == .denied
+    }
+
+    /// macOS's answer for Quiver, as of the last check. The setup window
+    /// shows Allow, Allowed or Open System Settings from it.
+    private(set) var notificationStatus: UNAuthorizationStatus = .notDetermined
+
+    /// Ask macOS now, from a button, rather than at the first 90% crossing
+    /// with no context. Asks only once; after a no, System Settings is the
+    /// only way back.
+    func requestNotifications() async {
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        await checkNotificationPermission()
+    }
+
+    /// A sample of what a limit notification looks like.
+    func sendTestNotification() async {
+        await requestNotifications()
+        guard notificationStatus == .authorized || notificationStatus == .provisional else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Claude is at 90% of its 5-hour limit"
+        content.body = "This is a test. Quiver tells you like this when a limit nears or resets."
+        content.sound = .default
+        content.threadIdentifier = "limits"
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "test", content: content, trigger: nil))
     }
 
     private func post(_ alert: LimitAlert, now: Date) {
