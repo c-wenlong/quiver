@@ -95,10 +95,17 @@ public struct SetupOutcome: Decodable, Sendable, Equatable {
     public let starred: Starred?
     public let links: Links?
 
+    /// Picks swe has no registry or catalog entry for, so it couldn't
+    /// star them (Settings › Providers knows a few more than swe does).
+    public var unstarred: [String] { starred?.unknown ?? [] }
+
     /// Paths setup left as they were, so the user can deal with them.
     public var leftAlone: [SetupPreview.LinkRow] {
         (links?.rows ?? []).filter(\.isLeftAlone)
     }
+
+    /// Something the user should read before moving on.
+    public var needsReading: Bool { !leftAlone.isEmpty || !unstarred.isEmpty }
 }
 
 private struct SetupApplied: Decodable { let applied: SetupOutcome }
@@ -164,6 +171,9 @@ public final class FirstRunSetupModel {
     public private(set) var applying = false
     public private(set) var outcome: SetupOutcome?
     public private(set) var applyError: String?
+    /// The picks the last setup run starred. Changing them after going
+    /// Back runs setup again, so what's saved matches what's ticked.
+    private var appliedSelection: Set<String>?
 
     private let swe: @Sendable () -> SweClient
     private var generation = 0
@@ -217,9 +227,9 @@ public final class FirstRunSetupModel {
     /// setup left alone, keep you there to read about them, and a second
     /// Continue moves on.
     public func next(order: [String]) async {
-        if step == .links && outcome == nil {
+        if step == .links && needsApply {
             await apply(order: order)
-            if applyError != nil || !(outcome?.leftAlone.isEmpty ?? true) { return }
+            if applyError != nil || outcome?.needsReading == true { return }
         }
         if let following = Step(rawValue: step.rawValue + 1) { step = following }
     }
@@ -229,13 +239,23 @@ public final class FirstRunSetupModel {
         order.filter(selected.contains) + selected.subtracting(order).sorted()
     }
 
+    /// Setup hasn't run, failed, or ran with picks since changed.
+    public var needsApply: Bool {
+        outcome == nil || applyError != nil || appliedSelection != selected
+    }
+
     func apply(order: [String]) async {
         applying = true
         applyError = nil
         defer { applying = false }
-        let adopt: String? = if case .file(let path) = start { path } else { nil }
+        // Only the first run adopts: after it, AGENTS.md holds that text,
+        // and swe refuses a second --adopt (rightly) as "your own text".
+        let adopted = outcome?.links?.adopted != nil
+        let adopt: String? = if case .file(let path) = start, !adopted { path } else { nil }
+        let picks = selected
         do {
             outcome = try await swe().applySetup(starred: starredList(order: order), adopt: adopt)
+            appliedSelection = picks
             if let error = outcome?.links?.error { applyError = error }
         } catch {
             applyError = error.localizedDescription

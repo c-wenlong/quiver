@@ -121,10 +121,11 @@ private struct Content: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Button("Skip setup") { app.closeFirstRunSetup() }
+            Button("Skip setup") { app.closeFirstRunSetup(reload: model.outcome != nil) }
                 .buttonStyle(.plain)
                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 .help("Close this and set things up later from Settings › General")
+                .disabled(model.applying)
             Spacer()
             if model.step != .agents {
                 Button("Back", systemImage: "chevron.left") { model.back() }
@@ -133,7 +134,7 @@ private struct Content: View {
             }
             Button(continueTitle) {
                 if model.step == .notifications {
-                    app.closeFirstRunSetup()
+                    app.closeFirstRunSetup(reload: model.outcome != nil)
                 } else {
                     Task { await model.next(order: app.providers.rows.map(\.provider.id)) }
                 }
@@ -152,7 +153,7 @@ private struct Content: View {
     private var continueTitle: String {
         switch model.step {
         case .links where model.applying: "Setting up…"
-        case .links where model.outcome == nil: "Set up"
+        case .links where model.needsApply: "Set up"
         case .notifications: "Start using Quiver"
         default: "Continue"
         }
@@ -284,6 +285,8 @@ private struct LinksStep: View {
                 LoadingCard(text: "Checking what each agent already has…")
             case .failed(let message):
                 ErrorCard(message: message)
+                Button("Try again") { Task { await model.load() } }
+                    .secondaryButton()
             case .loaded(let preview):
                 if let error = model.applyError { ErrorCard(message: error) }
                 if let outcome = model.outcome { done(outcome) }
@@ -346,8 +349,16 @@ private struct LinksStep: View {
 
     private func done(_ outcome: SetupOutcome) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Set up. These stay as they are:", systemImage: "checkmark.circle")
+            Label("Set up. A few things to know:", systemImage: "checkmark.circle")
                 .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            if !outcome.unstarred.isEmpty {
+                Text("Not starred, since swe has no entry for them yet: \(outcome.unstarred.map { HarnessMark.accountName($0) }.joined(separator: ", ")). Settings › Providers still shows their usage.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !outcome.leftAlone.isEmpty {
+                Text("These stay as they are:").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
             ForEach(outcome.leftAlone, id: \.path) { row in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Self.tilde(row.path)).font(.system(size: 12, design: .monospaced))
@@ -364,7 +375,7 @@ private struct LinksStep: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
-        .opacity(outcome.leftAlone.isEmpty ? 0 : 1)
+        .opacity(outcome.needsReading ? 1 : 0)
     }
 
     private func row(icon: String, title: String, detail: String,

@@ -137,14 +137,19 @@ final class AppModel {
     /// AGENTS.md that hasn't finished or skipped it, or from Settings.
     var showsFirstRunSetup = false
 
-    /// Setup finished or skipped: never offered at launch again, and the
-    /// pages that read stars, harnesses and links load afresh.
-    func closeFirstRunSetup() {
+    /// Setup finished or skipped: never offered at launch again. When it
+    /// ran, every page whose data it changed loads afresh (stars,
+    /// harnesses, skills links, MCP servers), since their own 60-second
+    /// staleness checks would keep showing what was there before.
+    func closeFirstRunSetup(reload: Bool = false) {
         UserDefaults.standard.set(true, forKey: FirstRun.defaultsKey)
         showsFirstRunSetup = false
-        Task { [others, providers] in
+        guard reload else { return }
+        Task { [others, providers, skills, mcp, swe, swePath] in
             await others.load()
             await providers.load()
+            await skills.load(for: swePath)
+            await mcp.load(swe: swe, for: swePath)
         }
     }
 

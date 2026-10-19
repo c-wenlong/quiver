@@ -127,6 +127,43 @@ private func applied(leftAlone: Bool) -> String {
         #expect(setup.step == .look)
     }
 
+    @Test func changedPicksAfterGoingBackRunSetupAgainWithoutAdopt() async {
+        let runner = SetupRunner(preview: previewJSON, applied: applied(leftAlone: false))
+        let setup = model(runner, starred: ["claude"])
+        await setup.load()
+        await setup.next(order: ["codex", "claude"])
+        await setup.next(order: ["codex", "claude"])
+        #expect(setup.step == .look)
+
+        setup.back()
+        setup.back()
+        setup.toggle("codex")
+        #expect(setup.needsApply)
+        await setup.next(order: ["codex", "claude"])
+        await setup.next(order: ["codex", "claude"])
+        #expect(setup.step == .look)
+        let applies = runner.calls.filter { $0.contains("--apply") }
+        #expect(applies.count == 2)
+        #expect(applies.last == ["setup", "--apply", "--json", "--starred=codex,claude"],
+                "the second run stars the new picks and adopts nothing")
+    }
+
+    @Test func picksSweCannotStarHoldTheStep() async {
+        let runner = SetupRunner(preview: previewJSON, applied: """
+            {"applied": {"harness": [], "mcp": [], "skills": [],
+             "starred": {"starred": ["claude"], "registered": [], "unknown": ["antigravity"]},
+             "links": {"adopted": null, "rows": []}}}
+            """)
+        let setup = model(runner, starred: ["claude", "antigravity"])
+        await setup.load()
+        await setup.next(order: [])
+        await setup.next(order: [])
+        #expect(setup.step == .links)
+        #expect(setup.outcome?.unstarred == ["antigravity"])
+        await setup.next(order: [])
+        #expect(setup.step == .look)
+    }
+
     @Test func aLinkErrorIsShownAndHoldsTheStep() async {
         let runner = SetupRunner(preview: previewJSON, applied: """
             {"applied": {"harness": [], "mcp": [], "skills": [],
