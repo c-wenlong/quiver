@@ -289,7 +289,11 @@ private struct InferenceRow: View {
                         .lineLimit(1).truncationMode(.middle)
                     if item.hasKey {
                         smallButton(isRevealed ? "Hide" : "Reveal", isRevealed ? "eye.slash" : "eye", action: toggleReveal)
-                        smallButton("Copy", "doc.on.doc", action: copy)
+                        CopyButton(help: "Copy the value", iconSize: 10, copy: copy)
+                            .foregroundStyle(Theme.textMuted)
+                            .buttonStyle(.plain)
+                            .frame(width: 16, height: 16)
+                            .contentShape(.rect)
                     }
                 }
             }
@@ -333,7 +337,7 @@ private struct InferenceRow: View {
             .buttonStyle(.plain)
             .frame(width: 16, height: 16)
             .contentShape(.rect)
-            .help(title == "Copy" ? "Copy the value" : (isRevealed ? "Hide the value" : "Show the value"))
+            .help(isRevealed ? "Hide the value" : "Show the value")
     }
 }
 
