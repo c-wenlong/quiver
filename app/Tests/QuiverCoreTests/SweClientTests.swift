@@ -7,11 +7,20 @@ import Testing
 final class FakeRunner: CommandRunning, @unchecked Sendable {
     var reply: CommandResult
     private(set) var calls: [[String]] = []
+    /// stdin per call, matching `calls` by index; nil when none was sent.
+    private(set) var inputs: [Data?] = []
 
     init(_ reply: CommandResult) { self.reply = reply }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
         calls.append(arguments)
+        inputs.append(nil)
+        return reply
+    }
+
+    func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+        calls.append(arguments)
+        inputs.append(input)
         return reply
     }
 }
@@ -138,6 +147,48 @@ func fixture(_ name: String) throws -> Data {
 
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
         #expect(SweLocation.bundled(in: bundle) == shim.path)
+    }
+}
+
+@Suite struct McpSecretSetTests {
+    private let reply = CommandResult(
+        status: 0,
+        stdout: Data(#"{"schema":1,"data":{"name":"MY_TOKEN","path":"/x/.api_keys","created":true}}"#.utf8),
+        stderr: "")
+
+    @Test func theValueTravelsOnStdinNeverArgv() async throws {
+        let runner = FakeRunner(reply)
+        try await SweClient(runner: runner).mcpSecretSet(name: "MY_TOKEN", value: "s3cr3t-fixture")
+        #expect(runner.calls == [["mcp", "secret", "set", "MY_TOKEN", "--json"]])
+        #expect(runner.inputs == [Data("s3cr3t-fixture\n".utf8)])
+        // Nowhere on argv.
+        #expect(runner.calls.flatMap { $0 }.allSatisfy { !$0.contains("s3cr3t") })
+    }
+
+    @Test func aRefusalRaisesCommandFailed() async throws {
+        let runner = FakeRunner(.init(status: 1, stdout: Data(),
+                                      stderr: "empty value; pipe one in"))
+        await #expect(throws: SweError.self) {
+            try await SweClient(runner: runner).mcpSecretSet(name: "A", value: "")
+        }
+    }
+}
+
+@Suite struct McpServerSecretsMissingTests {
+    private func decode(_ json: String) throws -> McpServer {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(McpServer.self, from: Data(json.utf8))
+    }
+
+    @Test func secretsMissingDecodes() throws {
+        let server = try decode(#"{"name":"a","transport":"stdio","harnesses":["claude"],"secrets_missing":["FOO","BAR"]}"#)
+        #expect(server.secretsMissing == ["FOO", "BAR"])
+    }
+
+    @Test func anOlderSweWithoutTheFieldDecodesAsNone() throws {
+        let server = try decode(#"{"name":"a","transport":"stdio","harnesses":["claude"]}"#)
+        #expect(server.secretsMissing == [])
     }
 }
 

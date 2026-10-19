@@ -274,7 +274,15 @@ private struct ServerRow: View {
                             .help(server.detail ?? "Healthy")
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(server.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(server.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                            if !server.secretsMissing.isEmpty {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Theme.warningText)
+                                    .hoverTip("Needs a value for \(server.secretsMissing.joined(separator: ", "))")
+                            }
+                        }
                         secondary
                     }
                 }
@@ -386,6 +394,9 @@ private struct ServerSheet: View {
     @State private var error: String?
     @State private var running = false
     @State private var confirmingOverwrite = false
+    /// The pasted value per missing ${NAME}, cleared after it is saved.
+    @State private var secretDrafts: [String: String] = [:]
+    @State private var savingSecret: String?
 
     /// The server as the latest load has it, so a finished sync shows its effect.
     var server: McpServer { model.server(named: initial.name) ?? initial }
@@ -427,6 +438,10 @@ private struct ServerSheet: View {
                 let missing = server.missing(from: active)
                 if !missing.isEmpty { HarnessFacts(label: "Missing from", harnesses: missing) }
             }
+            if !server.secretsMissing.isEmpty {
+                Divider().overlay(Theme.border)
+                needsValues
+            }
             Divider().overlay(Theme.border)
             syncForm
         }
@@ -437,6 +452,54 @@ private struct ServerSheet: View {
         } message: {
             Text("\(harnessNames(approvedReplace.intersection(targets.differing).sorted())) will get \(HarnessMark(source).name)'s definition of \(server.name) instead of their own.")
         }
+    }
+
+    /// Paste fields for the hub's unresolved ${NAME} references. swe
+    /// refuses to sync while one is missing, so these come first.
+    private var needsValues: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Needs values").font(Theme.cardTitle)
+            ForEach(server.secretsMissing, id: \.self) { name in
+                HStack(spacing: 8) {
+                    Text(name)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    SecureField("Paste the value",
+                                text: Binding(get: { secretDrafts[name] ?? "" },
+                                              set: { secretDrafts[name] = $0 }))
+                        .quiverField(monospaced: true)
+                    Button(savingSecret == name ? "Saving…" : "Save") {
+                        Task { await saveSecret(name) }
+                    }
+                    .secondaryButton()
+                    .disabled((secretDrafts[name] ?? "").isEmpty || savingSecret != nil)
+                }
+            }
+            Text("Saved to ~/.quiver/secrets/mcp/.api_keys, never versioned. "
+                 + "Sync fills these in when it writes a harness config.")
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func saveSecret(_ name: String) async {
+        let value = secretDrafts[name] ?? ""
+        guard !value.isEmpty else { return }
+        savingSecret = name
+        error = nil
+        defer { savingSecret = nil }
+        do {
+            try await app.swe.mcpSecretSet(name: name, value: value)
+            secretDrafts[name] = ""
+            await reload()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Sync from the hub is refused by swe while a ${NAME} has no value.
+    private var secretsBlockSync: Bool {
+        source == "quiver" && !server.secretsMissing.isEmpty
     }
 
     @ViewBuilder private var syncForm: some View {
@@ -482,13 +545,17 @@ private struct ServerSheet: View {
         }
         HStack {
             if running { ProgressView().controlSize(.small) }
+            if secretsBlockSync {
+                Text("Set the values above first.")
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
+            }
             Spacer()
             Button(done == nil ? "Cancel" : "Close", role: .cancel) { dismiss() }
                 .secondaryButton()
             if done == nil && server.canSyncAlone {
                 Button("Preview") { Task { await run(dryRun: true) } }
                     .secondaryButton()
-                    .disabled(chosen.isEmpty || running)
+                    .disabled(chosen.isEmpty || running || secretsBlockSync)
                 Button("Sync") {
                     if targets.needsOverwrite(approvedReplace) {
                         confirmingOverwrite = true
@@ -498,7 +565,7 @@ private struct ServerSheet: View {
                 }
                 .primaryButton()
                 .keyboardShortcut(.defaultAction)
-                .disabled(chosen.isEmpty || running)
+                .disabled(chosen.isEmpty || running || secretsBlockSync)
             }
         }
     }

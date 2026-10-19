@@ -16,6 +16,17 @@ public struct CommandResult: Sendable, Equatable {
 /// Runs `swe` with arguments. The seam tests replace with a fake.
 public protocol CommandRunning: Sendable {
     func run(_ arguments: [String]) async throws -> CommandResult
+    /// `input` goes to the child's stdin, then stdin closes. Secret values
+    /// travel this way, never through argv, which `ps` would show.
+    func run(_ arguments: [String], input: Data?) async throws -> CommandResult
+}
+
+public extension CommandRunning {
+    /// Conformers that can't feed stdin still compile; the run goes
+    /// without input. The real runner overrides it.
+    func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+        try await run(arguments)
+    }
 }
 
 /// Runs a real executable, with the PATH a login shell would have.
@@ -36,6 +47,10 @@ public struct ProcessRunner: CommandRunning {
     }
 
     public func run(_ arguments: [String]) async throws -> CommandResult {
+        try await run(arguments, input: nil)
+    }
+
+    public func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
         let env: [String: String]
         if let environment {
             env = environment
@@ -54,7 +69,8 @@ public struct ProcessRunner: CommandRunning {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [executable] + arguments
         process.environment = env
-        process.standardInput = FileHandle.nullDevice
+        let inputPipe = Pipe()
+        process.standardInput = input != nil ? inputPipe : FileHandle.nullDevice
         let out = Pipe()
         let err = Pipe()
         process.standardOutput = out
@@ -94,6 +110,17 @@ public struct ProcessRunner: CommandRunning {
                     guard try gate.launch() else { return abandon(CancellationError()) }
                 } catch {
                     return abandon(SweError.notInstalled(executable))
+                }
+                if let input {
+                    // A child that exits before reading (an older swe that
+                    // lacks the command) must not SIGPIPE the whole app.
+                    _ = fcntl(inputPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                    // On a queue: a child that never reads stdin would
+                    // otherwise block the caller once the pipe filled.
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        try? inputPipe.fileHandleForWriting.write(contentsOf: input)
+                        try? inputPipe.fileHandleForWriting.close()
+                    }
                 }
                 group.notify(queue: .global()) {
                     continuation.resume(returning: CommandResult(

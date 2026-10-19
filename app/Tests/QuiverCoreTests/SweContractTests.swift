@@ -114,10 +114,12 @@ import Testing
         #expect(stdio.variants == [["claude"], ["codex"]])
         #expect(stdio.health == nil)
         #expect(stdio.detail == nil)
+        #expect(stdio.secretsMissing == ["SECRET_TOKEN"])
         let http = try #require(inventory.servers.first { $0.name == "fixture-http" })
         #expect(http.transport == "http")
         #expect(http.url == "https://fixture.example/mcp")
         #expect(http.headerKeys == ["Authorization"])
+        #expect(http.secretsMissing == [])
     }
 
     @Test func mcpStatusAddsHealthAndDetail() async throws {
