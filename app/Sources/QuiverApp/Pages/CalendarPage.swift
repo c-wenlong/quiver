@@ -635,12 +635,11 @@ private struct DayHeaderStrip: View {
         HStack(spacing: 0) {
             Color.clear.frame(width: axisWidth, height: 0)
             ZStack(alignment: .leading) {
-                HStack(spacing: 0) {
-                    ForEach(days, id: \.start) { day in
-                        dayHeader(day, width: columnWidth)
-                    }
-                }
-                .offset(x: -offset.x)
+                // The row never reads the offset, so a scroll frame
+                // re-runs only the slide below, not 27 formatted headers.
+                DayHeaderRow(days: days, columnWidth: columnWidth, now: now)
+                    .equatable()
+                    .modifier(HeaderSlide(offset: offset))
             }
             .frame(width: gridWidth, alignment: .leading)
             .clipped()
@@ -648,6 +647,38 @@ private struct DayHeaderStrip: View {
         .padding(.vertical, 8)
         .overlay(alignment: .bottom) {
             Rectangle().fill(Theme.border).frame(height: 1)
+        }
+    }
+}
+
+/// Slides the header row by the columns' scroll offset; the only view
+/// that reads it.
+private struct HeaderSlide: ViewModifier {
+    var offset: HeaderOffset
+    func body(content: Content) -> some View {
+        content.offset(x: -offset.x)
+    }
+}
+
+/// The day headers in one row.
+private struct DayHeaderRow: View, Equatable {
+    var days: [DateInterval]
+    var columnWidth: CGFloat
+    var now: Date
+
+    /// `now` is read fresh on every page render; only which day it falls
+    /// on changes the row.
+    nonisolated static func == (lhs: DayHeaderRow, rhs: DayHeaderRow) -> Bool {
+        lhs.days == rhs.days && lhs.columnWidth == rhs.columnWidth
+            && lhs.days.firstIndex { $0.contains(lhs.now) }
+                == rhs.days.firstIndex { $0.contains(rhs.now) }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(days, id: \.start) { day in
+                dayHeader(day, width: columnWidth)
+            }
         }
     }
 
@@ -1535,9 +1566,17 @@ private struct HoverCardAnchor<Card: View>: ViewModifier {
         // Read here, so a card opening redraws its anchors alone.
         let shown = cards.key == key
         content
-            .background(HoverRegionView { [cards, key] view, attached in
-                cards.geometry.register(chip: key, view: view, attached: attached)
-            })
+            // The rect only matters while this anchor's card is open, so
+            // only that anchor carries the AppKit view that reports it:
+            // one view, not one per block for every hover hit test to
+            // walk through.
+            .background {
+                if shown {
+                    HoverRegionView { [cards, key] view, attached in
+                        cards.geometry.register(chip: key, view: view, attached: attached)
+                    }
+                }
+            }
             .onHover { [cards, key] in cards.hover(key, inside: $0) }
             .popover(isPresented: Binding(get: { shown },
                                           set: { [cards, key] in if !$0 { cards.closed(key) } }),
