@@ -15,6 +15,15 @@ public enum ShellStartup {
             }
             return home.appending(path: ".zshrc")
         case "bash":
+            // Bash reads the first of these that exists; writing to
+            // .bash_profile beside an existing .bash_login would shadow
+            // it, so pick the first present and default only when none is.
+            for file in [".bash_profile", ".bash_login", ".profile"] {
+                let candidate = home.appending(path: file)
+                if FileManager.default.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
+            }
             return home.appending(path: ".bash_profile")
         default:
             return nil
@@ -48,26 +57,65 @@ public enum ShellStartup {
     private static let marker = "# Added by Quiver: provider API keys for new terminals"
 
     /// True when the rc text already sources the keys file: a non-comment
-    /// line that runs `source` or `.` and mentions the file. The file can
-    /// be named by its path, a `~`/`$HOME` form, or just `.api_keys`, since
-    /// the legacy `~/.api_keys` is a symlink to the migrated location.
+    /// line whose `source` or `.` argument, unquoted and with `~`/`$HOME`
+    /// expanded, resolves to the keys file itself. `~/.api_keys` counts
+    /// only when that path resolves to the keys file, which is how the
+    /// legacy symlink after migration counts and an unrelated file of the
+    /// same name doesn't.
     public static func sources(_ rcText: String, keysFile: URL, home: URL) -> Bool {
-        let path = keysFile.path
-        var mentions = [path, ".api_keys"]
-        for alias in ["~", "$HOME"] where path.hasPrefix(home.path + "/") {
-            mentions.append(alias + path.dropFirst(home.path.count))
-        }
+        let target = keysFile.resolvingSymlinksInPath().standardizedFileURL
         for raw in rcText.components(separatedBy: .newlines) {
             var line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
             // A trailing comment doesn't count for or against.
             if let hash = line.firstIndex(of: "#") { line = String(line[..<hash]) }
-            let isSource = line.contains("source")
-                || line.hasPrefix(". ") || line.hasPrefix(".\"") || line.hasPrefix(".'")
-            guard isSource else { continue }
-            if mentions.contains(where: { line.contains($0) }) { return true }
+            // Split on `&&`/`;` too: `[ -f X ] && source X` counts.
+            let words = line.replacingOccurrences(of: "&&", with: " && ")
+                .replacingOccurrences(of: ";", with: " ; ")
+                .components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            var wanted = false
+            for word in words {
+                if wanted, word != "&&", word != ";", word != "|", word != ")" {
+                    if let url = sourcedURL(word, home: home),
+                       url.resolvingSymlinksInPath().standardizedFileURL == target {
+                        return true
+                    }
+                    wanted = false
+                }
+                if word == "source" || word == "." { wanted = true }
+                else if !["&&", ";", "|", "(", ")"].contains(word) { wanted = false }
+            }
         }
         return false
+    }
+
+    /// The argument of a `source`/`dot` command as a file URL: quotes
+    /// stripped, a leading `~`, `$HOME` or `${HOME}` expanded, absolute
+    /// paths as is, anything relative taken against home.
+    private static func sourcedURL(_ argument: String, home: URL) -> URL? {
+        var text = argument
+        if text.count > 1,
+           (text.hasPrefix("\"") && text.hasSuffix("\"")
+            || text.hasPrefix("'") && text.hasSuffix("'")) {
+            text = String(text.dropFirst().dropLast())
+        }
+        // `"$HOME/…"`: the path is quoted, not escaped.
+        text = text.replacingOccurrences(of: "\\\"", with: "\"")
+        if text.hasPrefix("~/") {
+            text = home.path + text.dropFirst(1)
+        } else if text == "~" {
+            text = home.path
+        } else if text.hasPrefix("$HOME/") {
+            text = home.path + text.dropFirst(5)
+        } else if text.hasPrefix("${HOME}/") {
+            text = home.path + text.dropFirst(7)
+        } else if text == "$HOME" || text == "${HOME}" {
+            text = home.path
+        } else if !text.hasPrefix("/") {
+            text = home.path + "/" + text
+        }
+        guard !text.isEmpty, !text.contains("*") else { return nil }
+        return URL(fileURLWithPath: text)
     }
 
     /// The rc text plus the marked line. Empty text gets no leading blank
@@ -100,6 +148,8 @@ public struct ShellStartupWriter: Sendable {
         case unreadable(URL)
         /// The backup could not be written; the rc is left alone.
         case backupFailed(URL)
+        /// The rc changed between the read and the write; try again.
+        case changedOnDisk(URL)
 
         public var errorDescription: String? {
             switch self {
@@ -109,6 +159,8 @@ public struct ShellStartupWriter: Sendable {
                 "\(file.path) isn't plain UTF-8 text, so Quiver left it alone. Add the line in an editor."
             case .backupFailed(let file):
                 "Couldn't write the backup at \(file.path), so Quiver didn't change your startup file."
+            case .changedOnDisk(let file):
+                "\(file.path) changed while Quiver was editing it. Try again."
             }
         }
     }
@@ -128,14 +180,25 @@ public struct ShellStartupWriter: Sendable {
         let manager = FileManager.default
         var existing = ""
         var oldData: Data?
-        if let data = manager.contents(atPath: real.path) {
+        do {
+            oldData = try Data(contentsOf: real)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            oldData = nil
+        } catch let error as NSError where error.domain == NSPOSIXErrorDomain
+                                        && error.code == ENOENT {
+            oldData = nil
+        } catch {
+            // Readable-or-missing was the old assumption; an unreadable
+            // existing file must never read as empty and be replaced.
+            throw Error.unreadable(real)
+        }
+        if let data = oldData {
             // Appending decoded text would replace unreadable bytes with
             // just our line; refuse instead.
             guard let text = String(data: data, encoding: .utf8) else {
                 throw Error.unreadable(real)
             }
             existing = text
-            oldData = data
         }
         let line = ShellStartup.sourceLine(for: keysFile, home: home)
         if ShellStartup.sources(existing, keysFile: keysFile, home: home) {
@@ -156,6 +219,9 @@ public struct ShellStartupWriter: Sendable {
             backup = target
         }
 
+        // A ZDOTDIR folder may not exist yet; the temp file needs it.
+        try manager.createDirectory(at: real.deletingLastPathComponent(),
+                                    withIntermediateDirectories: true)
         let mode = (try? manager.attributesOfItem(atPath: real.path)[.posixPermissions] as? Int) ?? 0o644
         let text = ShellStartup.appending(existing, line: line)
         let temp = real.deletingLastPathComponent()
@@ -164,12 +230,23 @@ public struct ShellStartupWriter: Sendable {
                                  attributes: [.posixPermissions: mode]) else {
             throw CocoaError(.fileWriteUnknown)
         }
+        beforeReplace()
+        // A concurrent edit between the read and now would be lost: check
+        // the bytes one last time and abort rather than clobber them.
+        if manager.contents(atPath: real.path) != oldData {
+            try? manager.removeItem(at: temp)
+            throw Error.changedOnDisk(real)
+        }
         guard rename(temp.path, real.path) == 0 else {
             try? manager.removeItem(at: temp)
             throw CocoaError(.fileWriteUnknown)
         }
         return (rc, backup)
     }
+
+    /// Runs between the temp write and the rename; tests edit the rc here
+    /// to prove the concurrent-edit guard.
+    public var beforeReplace: @Sendable () -> Void = {}
 
     private static let stampFormatter: DateFormatter = {
         let formatter = DateFormatter()

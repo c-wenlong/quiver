@@ -18,6 +18,24 @@ import Testing
         #expect(ShellStartup.startupFile(shell: "/opt/homebrew/bin/fish", home: home) == nil)
     }
 
+    @Test func bashReadsTheFirstLoginFileThatExists() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "bashrc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let write = { (name: String) throws -> URL in
+            let url = root.appending(path: name)
+            try "x".write(to: url, atomically: true, encoding: .utf8)
+            return url
+        }
+        #expect(ShellStartup.startupFile(shell: "bash", home: root)
+            == root.appending(path: ".bash_profile"))
+        let login = try write(".bash_login")
+        #expect(ShellStartup.startupFile(shell: "bash", home: root) == login)
+        let profile = try write(".bash_profile")
+        #expect(ShellStartup.startupFile(shell: "bash", home: root) == profile)
+    }
+
     @Test func sourceLineUsesHomeWhenInsideAndEscapesOtherwise() {
         let inside = home.appending(path: ".quiver/secrets/providers/.api_keys")
         #expect(ShellStartup.sourceLine(for: inside, home: home)
@@ -27,24 +45,42 @@ import Testing
             == #"[ -f "/opt/we\$ird/k\`.api_keys" ] && source "/opt/we\$ird/k\`.api_keys""#)
     }
 
-    @Test func sourcesDetectsEveryForm() {
-        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
-        let legacy = home.appending(path: ".api_keys")
+    @Test func sourcesDetectsEveryForm() throws {
+        // A real temp home: resolution only counts paths that exist.
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "sources-\(UUID().uuidString)")
+        let keys = root.appending(path: ".quiver/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // The legacy ~/.api_keys symlinked to the migrated file counts.
+        try FileManager.default.createSymbolicLink(
+            atPath: root.appending(path: ".api_keys").path,
+            withDestinationPath: keys.path)
         for rc in [
             "source ~/.api_keys\n",
             ". \"$HOME/.quiver/secrets/providers/.api_keys\"\n",
+            ". \"${HOME}/.quiver/secrets/providers/.api_keys\"\n",
             "[ -f ~/.api_keys ] && source ~/.api_keys\n",
-            "export A=1\nsource \(legacy.path)\n",
+            "export A=1\nsource \(keys.path)\n",
         ] {
-            #expect(ShellStartup.sources(rc, keysFile: keys, home: home), "\(rc)")
+            #expect(ShellStartup.sources(rc, keysFile: keys, home: root), "\(rc)")
         }
+        // An unrelated file that merely shares the name does not.
+        let other = root.appending(path: "other/.api_keys")
+        try FileManager.default.createDirectory(at: other.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "x".write(to: other, atomically: true, encoding: .utf8)
         for rc in [
             "# source ~/.api_keys\n",
-            "export A=1 # source ~/.api_keys\n".replacingOccurrences(of: "export A=1 ", with: "# "),
+            "# x # source ~/.api_keys\n",
             "source ~/.profile\n",
+            "source \(other.path)\n",
+            "source /absent/.api_keys\n",
             "",
         ] {
-            #expect(!ShellStartup.sources(rc, keysFile: keys, home: home), "\(rc)")
+            #expect(!ShellStartup.sources(rc, keysFile: keys, home: root), "\(rc)")
         }
     }
 
@@ -151,6 +187,34 @@ import Testing
                 .addSource(keysFile: keys, shell: "/bin/zsh")
         }
         #expect(try String(contentsOf: rc, encoding: .utf8) == "x\n")
+    }
+
+    @Test func anUnreadableRcThrowsAndStaysUntouched() throws {
+        guard geteuid() != 0 else { return }  // root reads mode-000 anyway
+        let (home, backups, keys, rc) = try home()
+        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
+        try "x\n".write(to: rc, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: rc.path)
+        #expect(throws: ShellStartupWriter.Error.self) {
+            try ShellStartupWriter(home: home, backupDirectory: backups)
+                .addSource(keysFile: keys, shell: "/bin/zsh")
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rc.path)
+        #expect(try Data(contentsOf: rc) == Data("x\n".utf8))
+    }
+
+    @Test func aConcurrentEditAbortsTheWrite() throws {
+        let (home, backups, keys, rc) = try home()
+        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
+        try "x\n".write(to: rc, atomically: true, encoding: .utf8)
+        var writer = ShellStartupWriter(home: home, backupDirectory: backups)
+        writer.beforeReplace = {
+            try? "someone else\n".write(to: rc, atomically: true, encoding: .utf8)
+        }
+        #expect(throws: ShellStartupWriter.Error.changedOnDisk(rc.resolvingSymlinksInPath())) {
+            try writer.addSource(keysFile: keys, shell: "/bin/zsh")
+        }
+        #expect(try String(contentsOf: rc, encoding: .utf8) == "someone else\n")
     }
 
     @Test func anUnsupportedShellThrows() throws {

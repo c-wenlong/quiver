@@ -159,9 +159,11 @@ struct InferenceSection: View {
                 sourceError = nil
                 Task {
                     do {
-                        let backup = try await model.addSourceLine()
-                        sourceAdded = "Added to \(rc?.lastPathComponent ?? "the file"). "
-                            + "Backup at \(backup.path). Open a new terminal to use the keys."
+                        let result = try await model.addSourceLine()
+                        let file = result.file.lastPathComponent
+                        sourceAdded = "Added to \(file)."
+                            + (result.backup.map { " Backup at \($0.path)." } ?? "")
+                            + " Open a new terminal to use the keys."
                     } catch {
                         sourceError = error.localizedDescription
                     }

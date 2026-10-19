@@ -744,6 +744,14 @@ public final class APIKeysModel {
         environment = await shell.freshEnvironment()
         shellRead = true
         rebuild()
+        refreshSourcing()
+    }
+
+    /// The login shell's environment when read (ZDOTDIR set in .zshenv
+    /// only shows there, never in a Finder-launched process), the
+    /// process's otherwise.
+    private var shellEnvironment: [String: String] {
+        environment ?? processEnvironment
     }
 
     public func set(name: String, value: String, provider: String,
@@ -935,7 +943,7 @@ public final class APIKeysModel {
     /// `shellName` already source the keys file?
     private func refreshSourcing() {
         guard let rc = ShellStartup.startupFile(shell: shellName, home: home,
-                                                environment: processEnvironment)
+                                                environment: shellEnvironment)
         else {
             sourcing = .unsupportedShell(shellName)
             return
@@ -951,15 +959,15 @@ public final class APIKeysModel {
     }
 
     /// Appends the one line to the startup file (backing it up first),
-    /// then reloads so the page shows the change. Returns the backup URL,
-    /// or the startup file when nothing needed backing up.
+    /// then reloads so the page shows the change. Returns the startup
+    /// file and the backup made, nil when none existed to back up.
     @discardableResult
-    public func addSourceLine() async throws -> URL {
+    public func addSourceLine() async throws -> (file: URL, backup: URL?) {
         let result = try ShellStartupWriter(home: home, backupDirectory: store.backupDirectory)
             .addSource(keysFile: store.url, shell: shellName,
-                       environment: processEnvironment)
+                       environment: shellEnvironment)
         await load()
-        return result.backup ?? result.file
+        return result
     }
 
     private func rebuild() {

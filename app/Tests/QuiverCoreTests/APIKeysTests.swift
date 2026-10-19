@@ -728,9 +728,10 @@ struct FakeShell: ShellEnvironmentReading {
     @Test func addSourceLineMakesItSourced() async throws {
         let (model, home, rc) = try model(shell: "/bin/zsh")
         await model.load()
-        let backup = try await model.addSourceLine()
+        let result = try await model.addSourceLine()
         #expect(model.sourcing == .sourced)
-        #expect(backup == rc)  // the rc did not exist, so nothing was backed up
+        #expect(result.file == rc)
+        #expect(result.backup == nil)  // the rc did not exist, so nothing was backed up
         #expect(try String(contentsOf: rc, encoding: .utf8).contains(".api_keys"))
         _ = home
     }
@@ -750,13 +751,18 @@ struct FakeShell: ShellEnvironmentReading {
         try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)
         let model = APIKeysModel(
             store: APIKeysStore(url: keys, backupDirectory: home.appending(path: "backups")),
-            shell: FakeShell(environment: [:]),
+            // ZDOTDIR in the login shell's environment wins over the
+            // process's, as it will on a Finder-launched app.
+            shell: FakeShell(environment: ["ZDOTDIR": home.appending(path: "dots").path]),
             checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
             defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
-            shellName: "/bin/zsh", home: home,
-            environment: ["ZDOTDIR": home.appending(path: "dots").path])
+            shellName: "/bin/zsh", home: home, environment: [:])
         await model.load()
         #expect(model.sourcing == .notSourced(file: home.appending(path: "dots/.zshrc")))
+        // The write lands in the same ZDOTDIR file the prompt showed.
+        _ = try await model.addSourceLine()
+        #expect(model.sourcing == .sourced)
+        #expect(FileManager.default.fileExists(atPath: home.appending(path: "dots/.zshrc").path))
     }
 }
 
