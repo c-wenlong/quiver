@@ -24,6 +24,11 @@ private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
             #expect(InferenceCatalog.plan(forKey: name) == nil, "\(name)")
         }
         #expect(plans.allSatisfy { !$0.endpoints.isEmpty })
+        // A key filed under the vendor's name finds the same logo.
+        for plan in plans {
+            #expect(APIKeyProviderLogo.logoID(for: plan.vendor) != nil, "\(plan.vendor) has no brand")
+        }
+        #expect(APIKeyProviderLogo.logoID(for: "Moore Threads") == "mthreads")
         // Every plan draws its vendor's logo; none falls back to a blank square.
         for plan in plans {
             #expect(plan.logo.flatMap { HarnessIcons.icon(for: $0) } != nil, "\(plan.name) has no logo")
