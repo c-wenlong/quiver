@@ -331,13 +331,18 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
     path = Path(os.path.realpath(shown))
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-    import fcntl
+    try:
+        import fcntl
+    except ImportError:
+        # Windows has no fcntl; the save still runs, just unlocked.
+        fcntl = None
 
     # One writer at a time, Terminal and app alike: the lock file sits
     # beside the store and is never replaced, so the swap can't bypass it.
     lock_fd = os.open(path.parent / f".{path.name}.lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
         created = not path.exists()
         try:
             # newline="" keeps CRLF and every other byte as it was.
