@@ -61,4 +61,23 @@ import Testing
         // Empty hours hit nothing.
         #expect(g.item(at: CGPoint(x: 20, y: 100)) == nil)
     }
+
+    @Test func whereFramesOverlapTheOneDrawnLastWins() {
+        // The canvas draws items in order, so a later item covers an
+        // earlier one; the pointer must find the one on top.
+        let under = block("2026-10-14T09:00:00Z", minutes: 120, session: "under")
+        let over = block("2026-10-14T10:00:00Z", minutes: 30, session: "over")
+        let layout = CalendarLayout.DayLayout(segments: [
+            .init(block: under, start: under.start, end: under.end, lane: 0, laneCount: 1),
+            .init(block: over, start: over.start, end: over.end, lane: 0, laneCount: 1),
+        ], overflows: [])
+        let g = DayColumnGeometry(layout: layout, day: day, calendar: calendar,
+                                  width: 100, hourHeight: 48)
+        let point = CGPoint(x: 50, y: 492) // 10:15
+        #expect(g.items.allSatisfy { $0.frame.contains(point) })
+        guard case .segment(let segment)? = g.item(at: point)?.kind else {
+            Issue.record("expected a segment"); return
+        }
+        #expect(segment.block.project == "over")
+    }
 }
