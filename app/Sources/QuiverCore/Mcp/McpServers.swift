@@ -494,9 +494,11 @@ extension SweClient {
     /// Adds `spec` to the hub, and to each of `harnesses` when asked.
     public func mcpAdd(_ spec: McpServerSpec, to harnesses: [String],
                        force: Bool) async throws -> McpAddResult {
-        var args = ["mcp", "add", spec.name] + spec.arguments + ["--json"]
+        var args = ["mcp", "add", spec.name] + spec.flags
+            + ["--json"]
         if !harnesses.isEmpty { args += ["--to=" + harnesses.joined(separator: ",")] }
         if force { args.append("--force") }
+        args += spec.tail
         return try await call(args)
     }
 
@@ -528,16 +530,25 @@ public struct McpServerSpec: Sendable {
         self.kind = kind
     }
 
-    /// The words after `mcp add <name>`; the command tail always follows a
-    /// bare `--` so swe never interprets it.
-    public var arguments: [String] {
+    /// The `--env`/`--url`/`--transport`/`--header` flags, which all come
+    /// before any `--` tail.
+    public var flags: [String] {
         switch kind {
-        case .command(let command, let args, let env):
-            return env.flatMap { ["--env=\($0.0)=\($0.1)"] } + ["--", command] + args
+        case .command(_, _, let env):
+            return env.flatMap { ["--env=\($0.0)=\($0.1)"] }
         case .url(let url, let transport, let headers):
             var out = ["--url=\(url)"]
             if transport != "http" { out.append("--transport=\(transport)") }
             return out + headers.flatMap { ["--header=\($0.0)=\($0.1)"] }
+        }
+    }
+
+    /// The bare `--` plus command and args, or empty for a URL server.
+    /// Must be the last words on the line: swe never interprets them.
+    public var tail: [String] {
+        switch kind {
+        case .command(let command, let args, _): return ["--", command] + args
+        case .url: return []
         }
     }
 }
@@ -560,9 +571,55 @@ public struct McpRemoveResult: Decodable, Sendable, Equatable {
     public let absent: [String]
 }
 
-/// A typed MCP command line as command + args, split like a shell.
-public func mcpShellWords(_ line: String) -> [String] {
-    McpRedaction.shellWords(line)
+/// A typed MCP command line as command + args, split like a shell: quotes
+/// group and unquote, backslash escapes outside double quotes also escape
+/// `"` `\` `$` ``` ` ``` inside, and nil means an unterminated quote.
+public func mcpCommandWords(_ line: String) -> [String]? {
+    var words: [String] = []
+    var word = ""
+    var open = false
+    var quote: Character = " "
+    var chars = line[line.startIndex...]
+    while let ch = chars.first {
+        chars = chars.dropFirst()
+        switch ch {
+        case "\\":
+            guard let next = chars.first else { word += "\\"; continue }
+            chars = chars.dropFirst()
+            if quote == "'" {
+                word += "\\" + String(next)  // ' is literal; \ does not escape
+            } else if quote == "\"" && next != "\"" && next != "\\"
+                        && next != "$" && next != "`" {
+                word += "\\" + String(next)
+            } else {
+                word += String(next)
+            }
+            open = true
+        case "'":
+            if quote == "\"" { word += "'"; open = true; continue }
+            if quote == "'" { quote = " " } else if !open || quote == " " { quote = "'" }
+            open = true
+        case "\"":
+            if quote == "'" { word += "\""; open = true; continue }
+            if quote == "\"" { quote = " " } else if quote == " " { quote = "\"" }
+            open = true
+        case " ", "\t", "\n":
+            // The `where` on a multi-pattern case binds only the last
+            // pattern, so the quote check lives in the body.
+            if quote == " " {
+                if open { words.append(word); word = ""; open = false }
+            } else {
+                word.append(ch)
+                open = true
+            }
+        default:
+            word.append(ch)
+            open = true
+        }
+    }
+    if quote != " " { return nil }
+    if open { words.append(word) }
+    return words
 }
 
 /// Whether a flag or key name looks like it holds a credential.
@@ -662,7 +719,7 @@ public final class McpModel {
     /// hub when mcp.json holds the server.
     public func sources(for server: McpServer) -> [String] {
         var out = server.groups.map { $0.first ?? "" }.filter { !$0.isEmpty }
-        if server.inHub && !out.contains("quiver") { out.insert("quiver", at: 0) }
+        if server.inHub && !out.contains("quiver") { out.append("quiver") }
         return out
     }
 

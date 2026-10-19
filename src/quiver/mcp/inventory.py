@@ -47,7 +47,7 @@ def identity_of(raw, canonical: dict) -> tuple:
     )
 
 
-def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
+def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[dict, object]]:
     """One ``(json_row, first_raw_config)`` per server name, sorted by name.
 
     ``tool_data`` maps each tool to its raw ``{name: config}``. The row is
@@ -111,8 +111,10 @@ def server_inventory(tool_data: dict) -> list[tuple[dict, object]]:
 
     # Servers only the hub holds: no harness defines them, so they get a
     # row with empty harnesses/variants, built from the hub's own entry.
+    # Only when every harness was listed — with a target a server merely
+    # absent from that one config is not hub-only.
     handler = get_mcp_handler("quiver")
-    for name in sorted(set(hub) - set(seen)):
+    for name in sorted(set(hub) - set(seen)) if include_hub else ():
         raw = hub[name]
         canonical = handler.parse(raw) if isinstance(raw, dict) else {}
         env = canonical.get("env") or {}

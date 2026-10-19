@@ -470,12 +470,15 @@ private struct ServerSheet: View {
         .confirmationDialog("Remove \(server.name)?", isPresented: $confirmingRemove) {
             Button("Remove", role: .destructive) { Task { await removeServer() } }
         } message: {
-            Text("It goes from \(harnessNames(server.harnesses + (server.inHub ? ["quiver"] : []))).")
+            let places = server.harnesses.map { HarnessMark($0).name }
+                + (server.inHub ? ["Quiver hub"] : [])
+            Text("It goes from \(places.joined(separator: ", ")).")
         }
         .confirmationDialog("Replace their definitions?", isPresented: $confirmingOverwrite) {
             Button("Replace", role: .destructive) { Task { await run(dryRun: false) } }
         } message: {
-            Text("\(harnessNames(approvedReplace.intersection(targets.differing).sorted())) will get \(HarnessMark(source).name)'s definition of \(server.name) instead of their own.")
+            let sourceName = source == "quiver" ? "Quiver hub" : HarnessMark(source).name
+            Text("\(harnessNames(approvedReplace.intersection(targets.differing).sorted())) will get \(sourceName)'s definition of \(server.name) instead of their own.")
         }
     }
 

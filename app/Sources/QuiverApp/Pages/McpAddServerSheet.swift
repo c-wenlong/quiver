@@ -21,6 +21,8 @@ struct McpAddServerSheet: View {
         var key = ""
         var value = ""
         var secret = false
+        /// Once the user flips the switch, key edits stop re-deriving it.
+        var secretTouched = false
     }
 
     @State private var name = ""
@@ -43,11 +45,20 @@ struct McpAddServerSheet: View {
 
     private static let namePattern = /^[A-Za-z0-9][A-Za-z0-9_.@-]*$/
 
-    private var words: [String] { mcpShellWords(commandLine) }
+    /// nil means an unclosed quote, which the field hint reports.
+    private var words: [String]? { mcpCommandWords(commandLine) }
+
+    private var commandHint: String? {
+        guard let words, !words.isEmpty else { return words == nil ? "Unclosed quote" : nil }
+        return "command \(words[0])"
+            + (words.count > 1 ? " · args \(words.dropFirst().joined(separator: " "))" : "")
+    }
 
     private var saveDisabled: Bool {
         working || name.wholeMatch(of: Self.namePattern) == nil
-            || (kind == .command ? words.isEmpty : url.trimmingCharacters(in: .whitespaces).isEmpty)
+            || (kind == .command
+                ? (words?.isEmpty ?? true)
+                : url.trimmingCharacters(in: .whitespaces).isEmpty)
     }
 
     var body: some View {
@@ -63,8 +74,7 @@ struct McpAddServerSheet: View {
                 .pickerStyle(.segmented).labelsHidden()
             }
             if kind == .command {
-                FormField("Command", hint: words.isEmpty ? nil :
-                            "command \(words[0])" + (words.count > 1 ? " · args \(words.dropFirst().joined(separator: " "))" : "")) {
+                FormField("Command", hint: commandHint, problem: words == nil) {
                     TextField("npx -y @modelcontextprotocol/server-github", text: $commandLine)
                         .quiverField(monospaced: true)
                 }
@@ -96,10 +106,14 @@ struct McpAddServerSheet: View {
                                 }
                             }
                             .quiverField(monospaced: true)
-                            Toggle("Secret", isOn: $variable.secret)
+                            Toggle("Secret", isOn: Binding(
+                                get: { variable.secret },
+                                set: { variable.secret = $0; variable.secretTouched = true }))
                                 .toggleStyle(.switch).controlSize(.mini)
                                 .onChange(of: variable.key) { _, key in
-                                    variable.secret = mcpIsSecretName(key)
+                                    if !variable.secretTouched {
+                                        variable.secret = mcpIsSecretName(key)
+                                    }
                                 }
                             Button("Remove", systemImage: "minus.circle") {
                                 variables.removeAll { $0.id == variable.id }
@@ -166,6 +180,7 @@ struct McpAddServerSheet: View {
             }
             let spec: McpServerSpec
             if kind == .command {
+                guard let words, !words.isEmpty else { return }
                 spec = McpServerSpec(name: name, kind: .command(
                     command: words[0], args: Array(words.dropFirst()), env: pairs))
             } else {

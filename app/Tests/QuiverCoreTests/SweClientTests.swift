@@ -208,8 +208,13 @@ func fixture(_ name: String) throws -> Data {
                                        env: [("TOK", "${TOK}")])),
                                to: ["claude", "codex"], force: true)
         #expect(runner.calls == [[
-            "mcp", "add", "gh", "--env=TOK=${TOK}", "--", "npx", "-y", "gh-mcp",
-            "--json", "--to=claude,codex", "--force"]])
+            "mcp", "add", "gh", "--env=TOK=${TOK}", "--json",
+            "--to=claude,codex", "--force", "--", "npx", "-y", "gh-mcp"]])
+        // The `--` tail is last: swe reads everything after it verbatim.
+        let call = try #require(runner.calls.first)
+        let dash = try #require(call.firstIndex(of: "--"))
+        #expect(Array(call[dash...]) == ["--", "npx", "-y", "gh-mcp"])
+        #expect(call[..<dash].contains("--json"))
     }
 
     @Test func addUrlArgvWithSseAndHeaders() async throws {
@@ -221,6 +226,7 @@ func fixture(_ name: String) throws -> Data {
         #expect(runner.calls == [[
             "mcp", "add", "r", "--url=https://x/mcp", "--transport=sse",
             "--header=Authorization=Bearer ${TOK}", "--json"]])
+        #expect(!runner.calls[0].contains("--"))
     }
 
     @Test func removeArgv() async throws {
@@ -234,22 +240,31 @@ func fixture(_ name: String) throws -> Data {
     }
 
     @Test func commandLineSplitsLikeAShell() {
-        #expect(mcpShellWords("npx -y @a/b --flag=x") == ["npx", "-y", "@a/b", "--flag=x"])
-        // Quotes group words but stay part of them, like shellWords has
-        // always done for scrubbing.
-        #expect(mcpShellWords("run 'two words'") == ["run", "'two words'"])
+        #expect(mcpCommandWords("npx -y @a/b --flag=x") == ["npx", "-y", "@a/b", "--flag=x"])
+        #expect(mcpCommandWords("run 'two words'") == ["run", "two words"])
+        #expect(mcpCommandWords("--x=\"a b\" y") == ["--x=a b", "y"])
+        #expect(mcpCommandWords("a\"b\"c") == ["abc"])
+        #expect(mcpCommandWords("a\\ b") == ["a b"])
+        #expect(mcpCommandWords("\"\\$v \\`w\\`\"") == ["$v `w`"])
+        #expect(mcpCommandWords("\"\\x\"") == ["\\x"])
+        #expect(mcpCommandWords("'a\\'") == nil)  // \ is literal in ''; unterminated
+        #expect(mcpCommandWords("'open") == nil)
+        #expect(mcpCommandWords("\"open") == nil)
     }
 
     @Test func theHubIsARealSyncSource() async {
         let model = await McpModel()
         let hubOnly = McpServer(name: "s", harnesses: [], inHub: true)
         #expect(await model.sources(for: hubOnly) == ["quiver"])
+        let shared = McpServer(name: "s", harnesses: ["claude"],
+                               variants: [["claude"]], inHub: true)
+        // The harness group wins; the hub is the default only when no
+        // harness defines the server.
+        #expect(await model.sources(for: shared) == ["claude", "quiver"])
         let targets = await model.targets(for: hubOnly, from: "quiver",
                                           in: ["claude", "codex"])
         #expect(targets.missing == ["claude", "codex"])
         #expect(targets.differing == [])
-        let shared = McpServer(name: "s", harnesses: ["claude"],
-                               variants: [["claude"]], inHub: true)
         let targets2 = await model.targets(for: shared, from: "quiver",
                                            in: ["claude", "codex"])
         #expect(targets2.missing == ["codex"])

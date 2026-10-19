@@ -752,7 +752,7 @@ def cmd_list(args):
         # Every harness that was read, server or not, so a caller can draw
         # the whole matrix and see which harnesses lack a server.
         return emit({"harnesses": list(tool_data),
-                     "servers": [row for row, _ in server_inventory(tool_data)]})
+                     "servers": [row for row, _ in server_inventory(tool_data, include_hub=target is None)]})
 
     if not all_servers:
         print("No MCP servers found.")
@@ -849,7 +849,7 @@ def cmd_status(args):
 
     if json_view:
         rows = []
-        for row, first_cfg in server_inventory(tool_data):
+        for row, first_cfg in server_inventory(tool_data, include_hub=target is None):
             row["health"], row["detail"] = probe_server_health(
                 row["name"], first_cfg)
             rows.append(row)
@@ -1246,17 +1246,18 @@ _SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
 
 
 def cmd_add(args):
+    # Split at the first `--` before any flag handling, so a command arg
+    # like `--json` or `--to=y` stays part of the command, verbatim.
+    command_tail = None
+    if "--" in args:
+        cut = args.index("--")
+        command_tail, args = args[cut + 1:], args[:cut]
     args, json_view = take_json_flag(list(args))
     if args and args[0] in ("-h", "--help", "help"):
         print(MCP_HELP["add"])
         return 0
     refusal = error_stream(json_view)
 
-    command_tail = None
-    if "--" in args:
-        cut = args.index("--")
-        # Everything after `--` is the command and its args, verbatim.
-        command_tail, args = args[cut + 1:], args[:cut]
     try:
         args = expand_value_flags(
             args, {"--to", "--env", "--header", "--url", "--transport"})
@@ -1350,6 +1351,10 @@ def cmd_add(args):
             return 1
         if not resolved:
             print(f"Unknown target tool: {place}", file=refusal)
+            return 1
+        if get_tool_saver(resolved) is None:
+            print(c("red", f"No MCP backend registered for {resolved}"),
+                  file=refusal)
             return 1
         if resolved not in targets:
             targets.append(resolved)
@@ -1474,6 +1479,10 @@ def cmd_remove(args):
                     return 1
                 if not resolved:
                     print(f"Unknown place: {place}", file=refusal)
+                    return 1
+                if resolved != "quiver" and get_tool_saver(resolved) is None:
+                    print(c("red", f"No MCP backend registered for {resolved}"),
+                          file=refusal)
                     return 1
             if resolved not in places:
                 places.append(resolved)

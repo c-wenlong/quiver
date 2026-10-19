@@ -167,6 +167,60 @@ class McpAddRemoveTest(unittest.TestCase):
         self.assertEqual(self.hub(), {})
         self.assertEqual(self.claude(), {})
 
+    def test_command_tail_keeps_flag_like_words(self):
+        # The split at `--` happens before --json/--to parsing, so words
+        # shaped like flags stay part of the command verbatim.
+        r = self.run_mcp("add", "x", "--", "tool", "--json", "--to=y", "a,b")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.hub()["x"]["args"], ["--json", "--to=y", "a,b"])
+        self.assertNotIn('"schema"', r.stdout)  # plain output, not JSON
+
+    def _in_home(self):
+        """Run in-process cmd_* against the throwaway HOME."""
+        from unittest import mock
+
+        from quiver.mcp import cli
+
+        return mock.patch.multiple(
+            cli,
+            MCP_SOURCE_FILE=self.home / ".quiver" / "mcp.json",
+        ), mock.patch.dict(os.environ, {"HOME": str(self.home)})
+
+    def test_to_without_a_backend_refuses_before_writing(self):
+        from unittest import mock
+        from quiver.mcp import cli
+
+        env_patch, home_patch = self._in_home()
+        with env_patch, home_patch, \
+             mock.patch.object(cli, "get_tool_saver", return_value=None):
+            code = cli.cmd_add(["s", "--to=claude", "--", "c"])
+        self.assertEqual(code, 1)
+        self.assertNotIn("s", self.hub())
+
+    def test_remove_without_a_backend_refuses(self):
+        from unittest import mock
+        from quiver.mcp import cli
+
+        self.run_mcp("add", "s", "--to=claude", "--", "c")
+        before = self.claude()
+        env_patch, home_patch = self._in_home()
+        with env_patch, home_patch, \
+             mock.patch.object(cli, "get_tool_saver", return_value=None):
+            code = cli.cmd_remove(["s", "--from=claude"])
+        self.assertEqual(code, 1)
+        self.assertEqual(self.claude(), before)
+
+    def test_hub_only_rows_only_when_listing_everything(self):
+        self.run_mcp("add", "only-hub", "--", "c")
+        self.run_mcp("add", "shared", "--to=claude", "--", "c")
+        all_rows = json.loads(self.run_mcp("list", "--json").stdout)["data"]["servers"]
+        self.assertIn("only-hub", [s["name"] for s in all_rows])
+        one = json.loads(
+            self.run_mcp("list", "claude", "--json").stdout)["data"]["servers"]
+        self.assertNotIn("only-hub", [s["name"] for s in one])
+        self.assertTrue(all(s["in_hub"] is True for s in one
+                            if s["name"] == "shared"))
+
     def test_hub_only_row_in_inventory(self):
         self.run_mcp("add", "only-hub", "--", "c")
         self.run_mcp("add", "shared", "--to=claude", "--", "c")
