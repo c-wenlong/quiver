@@ -1592,7 +1592,7 @@ def cmd_doctor(args):
         else:
             print(c("red", message))
         return 1
-    from quiver.harness.doctor import collect_findings
+    from quiver.harness.doctor import collect_findings, setup_findings
     from quiver.harness.drift import run_drift_checks
     from quiver.harness.path_health import (
         find_off_path_tools,
@@ -1609,8 +1609,10 @@ def cmd_doctor(args):
     which_npm = shutil.which("npm")
     orphans = find_off_path_tools(tools)
     drift = run_drift_checks()
+    setup = setup_findings(home)
     report = DoctorReport(
-        collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift))
+        collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift)
+        + setup)
     failed = not report.ok
 
     if json_view:
@@ -1687,6 +1689,14 @@ def cmd_doctor(args):
             icon, color = ("✗", "red") if finding.severity == "error" else ("!", "yellow")
             print(f"    {c(color, icon)} [{finding.area}] {finding.message}")
     print()
+
+    if setup:
+        print(c("bold", "  Setup"))
+        for finding in setup:
+            print(f"    {c('yellow', '!')} {finding.message}")
+            if finding.fix:
+                print(c("dim", f"        fix: {finding.fix}"))
+        print()
     print(c("dim", "  Related: swe check  ·  swe install <name>  ·  swe help doctor\n"))
 
     return 1 if failed else 0

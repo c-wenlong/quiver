@@ -27,7 +27,7 @@ struct DoctorPage: View {
                 let shown = RowFold.visible(report.findings, limit: Self.foldLimit, expanded: showsAll)
                 Card(title: report.findings.count == 1 ? "1 finding" : "\(report.findings.count) findings") {
                     ForEach(shown) { finding in
-                        FindingRow(finding: finding)
+                        if let model { FindingRow(finding: finding, model: model) }
                         if finding != shown.last { Divider().overlay(Theme.border) }
                     }
                     if RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit) > 0 {
@@ -58,7 +58,9 @@ struct DoctorPage: View {
 }
 
 private struct FindingRow: View {
+    @Environment(AppModel.self) private var app
     var finding: DoctorReport.Finding
+    @Bindable var model: DoctorModel
 
     /// 12/16 mono, for check ids and fix commands.
     private static let mono = Font.system(size: 12, design: .monospaced)
@@ -91,6 +93,37 @@ private struct FindingRow: View {
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        if finding.action != nil {
+                            if model.running.contains(finding.id) {
+                                ProgressView().controlSize(.small)
+                                Text("Running…").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            } else {
+                                Button("Run") {
+                                    Task {
+                                        await model.run(finding)
+                                        await app.others.load()
+                                        await app.skills.load(for: app.swePath)
+                                    }
+                                }
+                                .primaryButton()
+                                .disabled(!model.running.isEmpty)
+                            }
+                        } else if fix.hasPrefix("swe ") {
+                            Button("Run in Terminal", systemImage: "terminal") {
+                                Task {
+                                    do {
+                                        try await app.accounts.runInTerminal(
+                                            line: DoctorModel.terminalLine(
+                                                fix: fix,
+                                                swe: SweLocation.executable(override: app.swePath)))
+                                    } catch {
+                                        model.noteError(error.localizedDescription, for: finding.id)
+                                    }
+                                }
+                            }
+                            .secondaryButton()
+                            .hoverTip("Runs \(fix) in a new terminal")
+                        }
                         CopyButton(help: "Copy the command") { copyToPasteboard(fix) }
                             .iconButton()
                     }
@@ -101,6 +134,10 @@ private struct FindingRow: View {
                     // bg.code is the card's own #171717 in dark; the hairline keeps the block's edge.
                     .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
                     .padding(.top, 4)
+                    if let error = model.runErrors[finding.id] {
+                        Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                            .padding(.leading, 12)
+                    }
                 }
             }
         }

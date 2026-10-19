@@ -52,3 +52,55 @@ def collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
             "error" if finding.severity == "error" else "warning",
             finding.message))
     return findings
+
+
+def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
+    """Setup-state checks ``swe doctor`` runs after the path probes.
+
+    They short-circuit so the user fixes the root cause first: no hub, no
+    shared AGENTS.md, an empty registry (which makes the per-harness link
+    check meaningless). Every one is a warning, so ``ok`` and the exit
+    status stay untouched.
+    """
+    from quiver import paths
+    from quiver.harness.registry import is_active, load_registry_readonly
+    from quiver.init.layout import link_states
+
+    home = home or Path.home()
+    if not paths.quiver_dir_for(home).is_dir():
+        return [DoctorFinding(
+            "setup.hub", "warning",
+            "~/.quiver doesn't exist yet, so nothing is shared between harnesses",
+            "swe setup --apply", action="setup")]
+    if not (paths.quiver_dir_for(home) / "AGENTS.md").is_file():
+        return [DoctorFinding(
+            "setup.agents-md", "warning",
+            "No shared AGENTS.md in ~/.quiver",
+            "swe setup --apply", action="setup")]
+
+    registry = load_registry_readonly()
+    if not registry:
+        return [DoctorFinding(
+            "setup.registry", "warning",
+            "No harnesses registered",
+            "swe harness discover --apply", action="discover")]
+
+    findings: list[DoctorFinding] = []
+    states = link_states(home)
+    for name, entry in registry.items():
+        if not is_active(entry):
+            continue
+        wanted = []
+        per = states.get(name, {})
+        if per.get("agents") in ("create", "relink"):
+            wanted.append("the shared AGENTS.md")
+        if per.get("skills") in ("create", "relink"):
+            wanted.append("skills")
+        if wanted:
+            from quiver.harness.models import display_name
+            title = display_name(entry) or name
+            findings.append(DoctorFinding(
+                "setup.unlinked", "warning",
+                f"{title} doesn't read {' or '.join(wanted)} yet",
+                "swe init", harness=name, action="init"))
+    return findings
