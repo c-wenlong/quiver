@@ -108,4 +108,17 @@ extension HoverSafeRegionTests {
         #expect(!closing(&region, away, t0.advanced(by: .milliseconds(400))))
         #expect(closing(&region, away, t0.advanced(by: .milliseconds(550))))
     }
+
+    @Test func crossingANeighbourWaitsBeforeSwappingTheOpenCard() {
+        // No card up: the usual show delay.
+        #expect(HoverCardTiming.delay(entering: "a", open: nil) == HoverCardTiming.show)
+        // Back on the open card's own anchor: nothing to schedule.
+        #expect(HoverCardTiming.delay(entering: "a", open: "a") == nil)
+        // A neighbour while "a" is up: a swap waits instead of firing on
+        // entry, so a pointer passing through on its way into the card
+        // leaves before it fires.
+        let swap = HoverCardTiming.delay(entering: "b", open: "a")
+        #expect(swap == HoverCardTiming.swap)
+        #expect(HoverCardTiming.swap > .zero)
+    }
 }
