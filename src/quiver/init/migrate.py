@@ -127,9 +127,11 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
     """Move both credential stores into their own folders under secrets/.
 
     Provider keys go from ``~/.api_keys`` to ``secrets/providers/.api_keys``
-    and leave a symlink behind, since shell profiles source the old path.
-    MCP secrets go from ``secrets/.api_keys`` to ``secrets/mcp/.api_keys``;
-    only quiver reads that file, so nothing is left behind.
+    and MCP secrets from ``secrets/.api_keys`` to ``secrets/mcp/.api_keys``.
+    Each leaves a symlink behind: shell profiles source ``~/.api_keys``, and
+    a machine can run an older swe beside this one (a Nix-pinned build, say)
+    whose `swe mcp sync` still reads ``secrets/.api_keys``. Without the link
+    that sync would write every ``${NAME}`` into harness configs unresolved.
 
     A move happens only when the old path is a regular file and the new one
     does not exist, so a second run, a directory of per-provider files, or
@@ -144,23 +146,23 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
     notes: list[str] = []
     moves = (
         (paths.legacy_provider_keys_for(home), paths.provider_keys_file_for(home),
-         True, "~/.api_keys", "secrets/providers/.api_keys"),
+         "~/.api_keys", "secrets/providers/.api_keys"),
         (paths.legacy_mcp_secrets_file_for(home), paths.mcp_secrets_file_for(home),
-         False, "secrets/.api_keys", "secrets/mcp/.api_keys"),
+         "secrets/.api_keys", "secrets/mcp/.api_keys"),
     )
     planned = []
-    for old, new, link_back, old_label, new_label in moves:
+    for old, new, old_label, new_label in moves:
         if old.is_symlink() or not old.is_file():
             continue
         if new.exists() or new.is_symlink():
             notes.append(f"{old_label} and {new_label} both exist, merge them by hand")
             continue
-        planned.append((old, new, link_back, f"move {old_label} to {new_label}"))
+        planned.append((old, new, f"move {old_label} to {new_label}"))
 
     secrets_dir = paths.secrets_dir_for(home)
     if planned or secrets_dir.is_dir():
         notes.extend(seal_secrets_dir(home, apply=apply))
-    for old, new, link_back, note in planned:
+    for old, new, note in planned:
         notes.append(note)
         if not apply:
             continue
@@ -171,8 +173,16 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
         # always 600, and these hold every key, so tighten on the way in.
         shutil.move(str(old), str(new))
         os.chmod(new, 0o600)
-        if link_back:
-            old.symlink_to(new)
+        old.symlink_to(new)
+
+    # A root moved by a swe that predates the link has secrets/mcp/ and no
+    # old path at all. Backfill the link there; ~/.api_keys is left alone,
+    # since a home that never had one gains nothing from a new file in it.
+    old_mcp, new_mcp = paths.legacy_mcp_secrets_file_for(home), paths.mcp_secrets_file_for(home)
+    if new_mcp.is_file() and not (old_mcp.exists() or old_mcp.is_symlink()):
+        notes.append("link secrets/.api_keys to secrets/mcp/.api_keys")
+        if apply:
+            old_mcp.symlink_to(new_mcp)
     return notes
 
 
