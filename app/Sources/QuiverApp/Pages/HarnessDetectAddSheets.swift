@@ -31,6 +31,8 @@ struct DetectSheet: View {
                     Text("Every harness on this Mac is already registered.")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 } else {
+                    // A Mac with many matches scrolls here; the buttons stay put.
+                    ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(rows) { finding in
                             Toggle(isOn: Binding(
@@ -53,6 +55,9 @@ struct DetectSheet: View {
                             .toggleStyle(.checkbox)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 360)
                 }
             } else {
                 ProgressView().controlSize(.small)

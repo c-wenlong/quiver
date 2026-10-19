@@ -75,5 +75,20 @@ class AddJsonTest(unittest.TestCase):
                 self.assertNotIn(name, self.registry())
 
 
+    def test_alias_owned_by_another_harness_refused(self):
+        self.run_add("claude", "claude")
+        code, out, err = self.run_add("mycli", "mycli", "--aliases=claude", "--json")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("already used by 'claude'", err)
+        self.assertNotIn("mycli", self.registry())
+
+    def test_interactive_refuses_the_app_flags(self):
+        for flags in (["--json"], ["--no-replace"]):
+            with self.subTest(flags=flags):
+                code, out, err = self.run_add("x", "-i", *flags)
+                self.assertEqual(code, 1)
+                self.assertIn("can't be combined", out + err)
+
 if __name__ == "__main__":
     unittest.main()

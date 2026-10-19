@@ -1296,6 +1296,11 @@ def cmd_add(args):
         print(c("red", str(exc)), file=refusal)
         return 1
     if interactive:
+        # The form prompts and asks before overwriting; neither flag means
+        # anything there, so refuse rather than quietly ignore them.
+        if json_view or "--no-replace" in args:
+            print(c("red", "  -i can't be combined with --json or --no-replace."), file=refusal)
+            return 1
         return _add_interactive(args)
     if len(args) < 2:
         print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"),
@@ -1344,6 +1349,12 @@ def cmd_add(args):
         return 1
     if no_replace and resolve(tools, name):
         print(c("red", f"  {name} is already registered"), file=refusal)
+        return 1
+    # An alias another harness answers to would redirect `swe use` and
+    # `swe remove` for that name.
+    collision = _alias_collision(tools, name, aliases)
+    if collision:
+        print(c("red", f"  {collision}"), file=refusal)
         return 1
 
     action = "Updated" if name in tools else "Added"
