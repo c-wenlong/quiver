@@ -475,6 +475,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe plugins uninstall <ref> --harness=claude|codex')}
   {c('cyan', 'swe plugins enable <ref> --harness=claude|codex')}
   {c('cyan', 'swe plugins disable <ref> --harness=claude|codex')}
+  {c('cyan', 'swe plugins marketplace add <source> --harness=claude,codex')}
 
   A {c('bold', 'ref')} is {c('cyan', '<plugin>@<marketplace>')}, the name both CLIs use. The catalog
   lists installed and uninstalled plugins alike, plus anything installed

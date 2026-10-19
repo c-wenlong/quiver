@@ -96,6 +96,10 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--mkdir", "Leave an empty directory behind"),
         ("--json", "Print the result as JSON"),
     ],
+    "skills new": [
+        ("--description=", "One-line description"),
+        ("--json", "Print the result as JSON"),
+    ],
     "skills move": [
         ("--from=", "Source scope"), ("--to=", "Destination scope"),
         ("--force", "Back up and replace an existing destination"),
@@ -125,6 +129,10 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "plugins install": [
         ("--harness=claude", "Act in Claude Code"),
         ("--harness=codex", "Act in Codex"),
+        ("--json", "Print the result as JSON"),
+    ],
+    "plugins marketplace add": [
+        ("--harness=", "Which harnesses register it: claude,codex"),
         ("--json", "Print the result as JSON"),
     ],
     "find mcp": [
@@ -321,7 +329,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
         "move": "skills move", "discover": "skills discover",
-        "hub": "skills hub",
+        "hub": "skills hub", "new": "skills new",
     },
     "sk": {
         "link": "skills link", "unlink": "skills unlink",
@@ -335,7 +343,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "mcp": "find mcp", "mcps": "find mcp", "servers": "find mcp",
     },
     "plugins": {
-        "catalog": "plugins catalog",
+        "catalog": "plugins catalog", "marketplace": "plugins marketplace add",
         # every action takes the same flags
         "install": "plugins install", "uninstall": "plugins install",
         "enable": "plugins install", "disable": "plugins install",
@@ -403,6 +411,9 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
     ("mcp", "secret"): [
         ("set", "Store a ${NAME} value from stdin"),
     ],
+    ("plugins", "marketplace"): [
+        ("add", "Register a plugin marketplace"),
+    ],
 }
 
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
@@ -454,6 +465,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     ],
     "plugins": [
         ("catalog", "Every plugin in every registered marketplace"),
+        ("marketplace", "Add a marketplace source to a harness"),
         ("install", "Install a plugin in one harness"),
         ("uninstall", "Uninstall a plugin from one harness"),
         ("enable", "Enable an installed plugin"),
@@ -467,6 +479,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("link", "Point a harness at a shared skills root"),
         ("unlink", "Remove a skills-root symlink"),
         ("move", "Move a skill between scope roots"),
+        ("new", "Create a SKILL.md in the hub"),
         ("discover", "Find skills not yet cataloged"),
         ("hub", "Plugins the quiver hub offers"),
         ("catalog", "Manage extra skills directories"),
@@ -480,6 +493,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("link", "Point a harness at a shared skills root"),
         ("unlink", "Remove a skills-root symlink"),
         ("move", "Move a skill between scope roots"),
+        ("new", "Create a SKILL.md in the hub"),
         ("discover", "Find skills not yet cataloged"),
         ("hub", "Plugins the quiver hub offers"),
         ("catalog", "Manage extra skills directories"),

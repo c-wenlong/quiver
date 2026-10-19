@@ -162,9 +162,24 @@ extension SweClient {
     public func unlink(_ root: SkillRoot) async throws {
         let _: LinkReply = try await call(["skills", "unlink", root.path, "--json"])
     }
+
+    /// Writes ~/.quiver/skills/<name>/SKILL.md. No force flag: an existing
+    /// name refuses.
+    public func newSkill(name: String, description: String) async throws -> NewSkillReply {
+        var args = ["skills", "new", name]
+        if !description.isEmpty { args.append("--description=\(description)") }
+        args.append("--json")
+        return try await call(args)
+    }
 }
 
 struct LinkReply: Decodable { let action: String }
+
+/// `swe skills new <name>`: the SKILL.md path it wrote.
+public struct NewSkillReply: Decodable {
+    public let name: String
+    public let path: String
+}
 
 /// The Skills page: the skills that stand alone, and the per-harness links.
 /// Skills that ship inside a plugin are listed with it on the Plugins page.
@@ -281,8 +296,72 @@ public final class SkillsModel {
         await change(root) { try await $0.unlink(root) }
     }
 
-    private func change(_ root: SkillRoot, _ work: (SweClient) async throws -> Void) async {
-        guard !busy.contains(root.path) else { return }
+    /// What "Link all" can safely take on: loose folders that cost nothing
+    /// to point at the shared root. `skipped` holds the ones a person
+    /// should look at (a folder with unique skills, an explicit keep, a
+    /// conflict) or that swe would only touch deliberately (archived).
+    public static func linkAllTargets(_ roots: [SkillRoot]) -> (link: [SkillRoot], skipped: [SkillRoot]) {
+        var link: [SkillRoot] = []
+        var skipped: [SkillRoot] = []
+        for root in roots {
+            switch (root.link, root.archived) {
+            case (.notLinked, false) where !root.linkNeedsForce:
+                link.append(root)
+            case (.notLinked, false):
+                skipped.append(root)
+            case (.blocked, _):
+                // keep/conflict mean the folder holds work only a person
+                // can judge; name it so the summary can ask for a look.
+                if root.state == "keep" || root.state == "conflict" {
+                    skipped.append(root)
+                }
+            default:
+                continue
+            }
+        }
+        return (link, skipped)
+    }
+
+    /// What the last Link all left behind, shown as a caption.
+    public private(set) var linkAllSummary: String?
+
+    /// Creates a skill in the shared root through the same one-at-a-time
+    /// path as a link, then reloads so it shows in the list.
+    public func create(name: String, description: String) async throws -> NewSkillReply {
+        let (swe, source) = (swe, sweSource)
+        let reply = try await swe.newSkill(name: name, description: description)
+        await reload(through: swe, source)
+        return reply
+    }
+
+    /// Links every root `linkAllTargets` clears, one at a time through
+    /// `link`; failures land in the summary without stopping the rest.
+    public func linkAll() async {
+        let (targets, skipped) = SkillsModel.linkAllTargets(roots)
+        var linked = 0
+        var failures: [String] = []
+        for root in targets {
+            let message = await change(root) { try await $0.link(root) }
+            if let message {
+                failures.append("\(root.name): \(message)")
+            } else {
+                linked += 1
+            }
+        }
+        var parts: [String] = []
+        if linked > 0 || failures.isEmpty { parts.append("Linked \(linked) \(linked == 1 ? "harness" : "harnesses").") }
+        if !failures.isEmpty { parts.append(failures.joined(separator: "; ")) }
+        if !skipped.isEmpty {
+            let names = skipped.map { "\($0.name) (\($0.explanation))" }.joined(separator: ", ")
+            parts.append("\(skipped.count) \(skipped.count == 1 ? "needs" : "need") a look: \(names)")
+        }
+        linkAllSummary = parts.joined(separator: " ")
+    }
+
+    /// The failure's message on error, nil on success. Cancels quietly.
+    private func change(_ root: SkillRoot,
+                        _ work: (SweClient) async throws -> Void) async -> String? {
+        guard !busy.contains(root.path) else { return nil }
         let (swe, source) = (swe, sweSource)
         busy.insert(root.path)
         defer { busy.remove(root.path) }
@@ -290,15 +369,18 @@ public final class SkillsModel {
         await gate.acquire()
         defer { gate.release() }
         actionError = nil
+        var failure: String?
         do {
             try await work(swe)
         } catch is CancellationError {
-            return
+            return nil
         } catch {
-            actionError = error.localizedDescription
+            failure = error.localizedDescription
+            actionError = failure
         }
         // Reload either way: a failed change may still have moved something.
         await reload(through: swe, source)
+        return failure
     }
 
     /// Lists again after a change made through `swe`, unless another swe

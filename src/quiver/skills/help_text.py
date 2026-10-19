@@ -23,6 +23,9 @@ def print_skills_overview():
   {c('cyan', 'swe find skills -r --scope=all')} Include vendored and project-local roots
   {c('dim', 'swe skills tree and swe skills scope list now forward here.')}
 
+{c('bold', 'Create')}
+  {c('cyan', 'swe skills new <name> [--description=…]')} Write a SKILL.md in the hub
+
 {c('bold', 'Layout & symlinks')}
   {c('cyan', 'swe skills link <harness> [target]')}   Link codex/cursor/claude → shared
   {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break link; optional empty dir
@@ -79,6 +82,20 @@ def print_skills_discover_help():
   {c('cyan', 'swe skills discover --all')}        Include already-registered catalogs
 
 {c('bold', 'See also')}  {c('cyan', 'swe skills catalog add .')} for manual registration
+"""
+    )
+
+
+def print_skills_new_help():
+    print(
+        f"""
+  {c('bold', 'swe skills new')} — Create a SKILL.md in the shared skills root
+
+  {c('cyan', 'swe skills new my-skill')}                        Skeleton at ~/.quiver/skills/my-skill/SKILL.md
+  {c('cyan', 'swe skills new my-skill --description="Use when: X"')}
+  {c('cyan', '--json')}                          Print the result as JSON (errors go to stderr)
+
+{c('bold', 'Name')}  lowercase letters, digits, single hyphens between them (64 chars max)
 """
     )
 
@@ -174,6 +191,7 @@ SKILLS_HELP_TOPICS = {
     "discover": print_skills_discover_help,
     "hub": print_skills_hub_help,
     "link": print_skills_link_help,
+    "new": print_skills_new_help,
     "unlink": print_skills_unlink_help,
     "move": print_skills_move_help,
     "tree": print_skills_tree_help,
