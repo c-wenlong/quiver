@@ -28,7 +28,9 @@ public final class PricingModel {
         public var totals: UsageTotals
         /// The harnesses that ran it, most tokens first.
         public var harnesses: [String]
-        /// Every event carried a logged cost, so no price list applied.
+        /// Every event with tokens carried a logged cost, so no price list
+        /// applied. Empty events without one (Cursor's feed logs some for
+        /// Grok Bot) cost nothing either way and don't count against it.
         public var harnessBilled: Bool
         /// What the model resolves to in the catalog, nil when unpriced.
         public var entry: String?
@@ -151,14 +153,20 @@ public final class PricingModel {
         guard generation == loadGeneration else { return }
         var merged: [String: PricedModel] = [:]
         var order: [String] = []
+        // Per model: whether any slice carried a logged cost. A model whose
+        // slices are all empty and unbilled is not harness-billed.
+        var anyLogged: [String: Bool] = [:]
         for slice in slices {
+            let billed = slice.harnessBilled || slice.totals.totalTokens == 0
+            anyLogged[slice.model, default: false] = anyLogged[slice.model, default: false]
+                || slice.harnessBilled
             // A logged "fast" dim tier and a `-fast` name suffix both
             // charge a multiplier the row names.
             var sliceTiers: [String] = []
             if let tier = slice.tier, !tier.isEmpty { sliceTiers.append(tier) }
             if var row = merged[slice.model] {
                 row.totals.add(slice.totals)
-                row.harnessBilled = row.harnessBilled && slice.harnessBilled
+                row.harnessBilled = row.harnessBilled && billed
                 row.unpricedTokens += slice.totals.unpricedTokens
                 if !row.harnesses.contains(slice.harness) { row.harnesses.append(slice.harness) }
                 for tier in sliceTiers where !row.tiers.contains(tier) {
@@ -184,7 +192,7 @@ public final class PricingModel {
                     .map { ListPrice(rates: $0.rates, source: $0.source) }
                 merged[slice.model] = PricedModel(
                     model: slice.model, totals: slice.totals, harnesses: [slice.harness],
-                    harnessBilled: slice.harnessBilled,
+                    harnessBilled: billed,
                     entry: entry, source: source, rates: rates,
                     tiers: tiers.sorted(), isFree: isFree,
                     unpricedTokens: slice.totals.unpricedTokens,
@@ -192,6 +200,7 @@ public final class PricingModel {
                 order.append(slice.model)
             }
         }
+        for (model, logged) in anyLogged where !logged { merged[model]?.harnessBilled = false }
         let rows = merged.values.sorted { ($0.totals.totalTokens, $0.model) > ($1.totals.totalTokens, $1.model) }
         unpriced = rows.filter { $0.unpricedTokens > 0 }
             .sorted { ($0.unpricedTokens, $0.model) > ($1.unpricedTokens, $1.model) }

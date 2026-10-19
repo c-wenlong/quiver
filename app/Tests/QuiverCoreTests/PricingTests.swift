@@ -272,6 +272,36 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         _ = temp
     }
 
+    @Test func `empty events without a charge leave a model harness-billed`() async throws {
+        // Cursor's feed logs some Grok Bot events with no tokens and no
+        // charge; they cost nothing either way.
+        let (_, model, temp) = try makeModel([
+            event("billed-model", tokens: 90, loggedCost: 1.2),
+            event("billed-model", tokens: 0),
+        ], catalog: priced)
+        await model.load()
+        let row = try #require(model.groups.flatMap(\.models).first)
+        #expect(row.harnessBilled && row.totals.costUSD == 1.2)
+        _ = temp
+    }
+
+    @Test func `a model with uncharged tokens is not harness-billed`() async throws {
+        let (_, model, temp) = try makeModel([
+            event("billed-model", tokens: 90, loggedCost: 1.2),
+            event("billed-model", tokens: 10),
+        ], catalog: priced)
+        await model.load()
+        #expect(model.groups.flatMap(\.models).first?.harnessBilled == false)
+        _ = temp
+    }
+
+    @Test func `a model with only empty uncharged events is not harness-billed`() async throws {
+        let (_, model, temp) = try makeModel([event("billed-model", tokens: 0)], catalog: priced)
+        await model.load()
+        #expect(model.groups.flatMap(\.models).first?.harnessBilled == false)
+        _ = temp
+    }
+
     @Test func `a price saved for a harness-billed model shows, but its logged cost stays`() async throws {
         let temp = try TempDir()
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
