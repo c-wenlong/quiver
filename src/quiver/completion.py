@@ -202,6 +202,19 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "mcp secret set": [
         ("--json", "Machine-readable output"),
     ],
+    "mcp add": [
+        ("--to=", "Also write these harnesses"),
+        ("--env=", "Env pair KEY=VALUE (repeatable)"),
+        ("--header=", "Header pair KEY=VALUE (repeatable)"),
+        ("--url=", "Server URL for an http server"),
+        ("--transport=", "http or sse"),
+        ("--force", "Replace an existing server"),
+        ("--json", "Machine-readable output"),
+    ],
+    "mcp remove": [
+        ("--from=", "Where to remove from (required)"),
+        ("--json", "Machine-readable output"),
+    ],
     "doctor": [
         ("--json", "Machine-readable output"),
     ],
@@ -301,6 +314,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "discover": "mcp discover", "sync": "mcp sync", "doctor": "mcp doctor",
         "list": "mcp list", "ls": "mcp list", "status": "mcp status",
         "secret": "mcp secret set", "secret set": "mcp secret set",
+        "add": "mcp add", "remove": "mcp remove",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
@@ -424,6 +438,8 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("diff", "Compare two tools' configs"),
         ("edit", "Edit one server in one tool"),
         ("validate", "Check config shapes"),
+        ("add", "Add a server to the hub"),
+        ("remove", "Remove a server"),
         ("secret", "Store a ${NAME} value"),
         ("doctor", "Deep diagnostics"),
         ("help", "Detailed help for one command"),

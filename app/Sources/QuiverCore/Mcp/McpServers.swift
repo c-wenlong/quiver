@@ -98,6 +98,9 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// `${NAME}` references in the hub's definition with no value in the
     /// secrets file. Absent from an older swe, decoded as none missing.
     public let secretsMissing: [String]
+    /// Whether ~/.quiver/mcp.json defines this server. A hub-only row has
+    /// no harnesses; an older swe sends nothing and decodes false.
+    public let inHub: Bool
     /// Set only on a saved server, which keeps `summary` in place of the
     /// command line or URL.
     let savedSummary: String?
@@ -106,7 +109,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
                 url: String? = nil, envKeys: [String] = [], headerKeys: [String] = [],
                 harnesses: [String], conflict: Bool = false, variants: [[String]]? = nil,
                 health: String? = nil, detail: String? = nil, secretsMissing: [String] = [],
-                savedSummary: String? = nil) {
+                inHub: Bool = false, savedSummary: String? = nil) {
         self.name = name
         self.transport = transport
         self.command = command
@@ -120,13 +123,14 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
         self.health = health
         self.detail = detail
         self.secretsMissing = secretsMissing
+        self.inHub = inHub
         self.savedSummary = savedSummary
     }
 
     private enum CodingKeys: String, CodingKey {
         case name, transport, command, args, url, envKeys, headerKeys
         case harnesses, conflict, variants, health, detail
-        case secretsMissing, savedSummary
+        case secretsMissing, inHub, savedSummary
     }
 
     public init(from decoder: Decoder) throws {
@@ -144,6 +148,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
         health = try container.decodeIfPresent(String.self, forKey: .health)
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         secretsMissing = try container.decodeIfPresent([String].self, forKey: .secretsMissing) ?? []
+        inHub = try container.decodeIfPresent(Bool.self, forKey: .inHub) ?? false
         savedSummary = try container.decodeIfPresent(String.self, forKey: .savedSummary)
     }
 
@@ -156,7 +161,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     public var saved: McpServer {
         McpServer(name: name, transport: transport, envKeys: envKeys, headerKeys: headerKeys, harnesses: harnesses,
                   conflict: conflict, variants: variants, secretsMissing: secretsMissing,
-                  savedSummary: savedSummary ?? outline)
+                  inHub: inHub, savedSummary: savedSummary ?? outline)
     }
 
     /// The program or the scheme and host, and "…" when there is more.
@@ -485,6 +490,22 @@ extension SweClient {
             ["mcp", "secret", "set", name, "--json"],
             input: Data((value + "\n").utf8))
     }
+
+    /// Adds `spec` to the hub, and to each of `harnesses` when asked.
+    public func mcpAdd(_ spec: McpServerSpec, to harnesses: [String],
+                       force: Bool) async throws -> McpAddResult {
+        var args = ["mcp", "add", spec.name] + spec.flags
+            + ["--json"]
+        if !harnesses.isEmpty { args += ["--to=" + harnesses.joined(separator: ",")] }
+        if force { args.append("--force") }
+        args += spec.tail
+        return try await call(args)
+    }
+
+    /// Removes `name` from each place; swe reports `quiver` for the hub.
+    public func mcpRemove(name: String, from places: [String]) async throws -> McpRemoveResult {
+        try await call(["mcp", "remove", name, "--from=" + places.joined(separator: ","), "--json"])
+    }
 }
 
 /// `swe mcp secret set --json`: where the value landed, never the value.
@@ -492,6 +513,137 @@ public struct McpSecretSetResult: Decodable, Sendable, Equatable {
     public let name: String
     public let path: String
     public let created: Bool
+}
+
+/// What `swe mcp add` writes, before it becomes argv.
+public struct McpServerSpec: Sendable {
+    public enum Kind: Sendable {
+        case command(command: String, args: [String], env: [(String, String)])
+        case url(url: String, transport: String, headers: [(String, String)])
+    }
+
+    public let name: String
+    public let kind: Kind
+
+    public init(name: String, kind: Kind) {
+        self.name = name
+        self.kind = kind
+    }
+
+    /// The `--env`/`--url`/`--transport`/`--header` flags, which all come
+    /// before any `--` tail.
+    public var flags: [String] {
+        switch kind {
+        case .command(_, _, let env):
+            return env.flatMap { ["--env=\($0.0)=\($0.1)"] }
+        case .url(let url, let transport, let headers):
+            var out = ["--url=\(url)"]
+            if transport != "http" { out.append("--transport=\(transport)") }
+            return out + headers.flatMap { ["--header=\($0.0)=\($0.1)"] }
+        }
+    }
+
+    /// The bare `--` plus command and args, or empty for a URL server.
+    /// Must be the last words on the line: swe never interprets them.
+    public var tail: [String] {
+        switch kind {
+        case .command(let command, let args, _): return ["--", command] + args
+        case .url: return []
+        }
+    }
+}
+
+/// `swe mcp add --json`: what landed where.
+public struct McpAddResult: Decodable, Sendable, Equatable {
+    public struct Target: Decodable, Sendable, Equatable {
+        public let name: String
+        public let status: String
+    }
+    public let name: String
+    public let hub: String
+    public let targets: [Target]
+}
+
+/// `swe mcp remove --json`.
+public struct McpRemoveResult: Decodable, Sendable, Equatable {
+    public let name: String
+    public let removed: [String]
+    public let absent: [String]
+}
+
+/// A typed MCP command line as command + args, split like a shell: quotes
+/// group and unquote, backslash escapes outside double quotes also escape
+/// `"` `\` `$` ``` ` ``` inside, and nil means an unterminated quote.
+public func mcpCommandWords(_ line: String) -> [String]? {
+    var words: [String] = []
+    var word = ""
+    var open = false
+    var quote: Character = " "
+    var chars = line[line.startIndex...]
+    while let ch = chars.first {
+        chars = chars.dropFirst()
+        switch ch {
+        case "\\":
+            if quote == "'" {
+                // \ is literal inside '…' and doesn't escape: 'C:\' is a
+                // complete quoted word ending on its own quote.
+                word += "\\"
+                open = true
+                continue
+            }
+            guard let next = chars.first else { word += "\\"; continue }
+            chars = chars.dropFirst()
+            if quote == "\"" && next != "\"" && next != "\\"
+                && next != "$" && next != "`" {
+                word += "\\" + String(next)
+            } else {
+                word += String(next)
+            }
+            open = true
+        case "'":
+            if quote == "\"" { word += "'"; open = true; continue }
+            if quote == "'" { quote = " " } else if !open || quote == " " { quote = "'" }
+            open = true
+        case "\"":
+            if quote == "'" { word += "\""; open = true; continue }
+            if quote == "\"" { quote = " " } else if quote == " " { quote = "\"" }
+            open = true
+        case " ", "\t", "\n":
+            // The `where` on a multi-pattern case binds only the last
+            // pattern, so the quote check lives in the body.
+            if quote == " " {
+                if open { words.append(word); word = ""; open = false }
+            } else {
+                word.append(ch)
+                open = true
+            }
+        default:
+            word.append(ch)
+            open = true
+        }
+    }
+    if quote != " " { return nil }
+    if open { words.append(word) }
+    return words
+}
+
+/// Whether a flag or key name looks like it holds a credential.
+public func mcpIsSecretName(_ name: String) -> Bool {
+    let bare = name.filter { $0 != "-" && $0 != "_" }.lowercased()
+    return !bare.isEmpty && McpRedaction.secretFlagEndings.contains { bare.hasSuffix($0) }
+}
+
+/// The ${NAME} an env var or header stores its value under:
+/// SERVER_KEY in caps, non-alphanumeric runs collapsed to one `_`, and
+/// `MCP_` prepended when it would start with a digit (set_secret refuses
+/// those names). Server-scoped, so two servers can't collide.
+public func mcpSecretName(server: String, key: String) -> String {
+    var name = (server + "_" + key)
+        .map { $0.isLetter || $0.isNumber ? Character($0.uppercased()) : "_" }
+        .reduce(into: "") { out, ch in if ch != "_" || out.last != "_" { out.append(ch) } }
+        .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+    if name.first?.isNumber == true { name = "MCP_" + name }
+    return name
 }
 
 @MainActor
@@ -573,7 +725,26 @@ public final class McpModel {
     /// What a sync of `server` from `source` can reach: harnesses without
     /// the server (picked by default) and ones with a different definition
     /// (left for the user to opt into, since that overwrites theirs).
+    /// The source choices a sheet offers: each definition group, plus the
+    /// hub when mcp.json holds the server.
+    public func sources(for server: McpServer) -> [String] {
+        var out = server.groups.map { $0.first ?? "" }.filter { !$0.isEmpty }
+        if server.inHub && !out.contains("quiver") { out.append("quiver") }
+        return out
+    }
+
     public func targets(for server: McpServer, from source: String, in harnesses: [String]) -> SyncTargets {
+        if source == "quiver" {
+            // The hub isn't a matrix column: every harness lacks it, and
+            // one with its own copy gets it replaced only with approval.
+            var missing: [String] = []
+            var differing: [String] = []
+            for harness in harnesses {
+                if server.harnesses.contains(harness) { differing.append(harness) }
+                else { missing.append(harness) }
+            }
+            return SyncTargets(missing: missing, differing: differing)
+        }
         let sourceGroup = server.group(of: source)
         var missing: [String] = []
         var differing: [String] = []

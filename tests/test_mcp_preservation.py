@@ -45,11 +45,17 @@ class MergeFormatKeysTest(unittest.TestCase):
         self.assertEqual(merged["autoApprove"], ["*"])
 
     def test_sse_type_not_forced_to_http(self):
-        existing = {"url": "https://a/mcp", "type": "sse"}
-        converted = {"url": "https://a/mcp", "type": "http"}
+        # The source definition's transport wins: converted "sse" must not
+        # be downgraded by an existing "http", and a converted http drops a
+        # stale "sse" rather than inheriting it.
         self.assertEqual(
-            _merge_format_keys(existing, converted)["type"], "sse"
+            _merge_format_keys({"url": "https://a/mcp", "type": "http"},
+                               {"url": "https://a/mcp", "type": "sse"})["type"],
+            "sse",
         )
+        merged = _merge_format_keys({"url": "https://a/mcp", "type": "sse"},
+                                    {"url": "https://a/mcp"})
+        self.assertNotIn("type", merged)
 
     def test_canonical_fields_update(self):
         existing = {"command": "a", "env": {"OLD": "1"}, "timeout": 30}
