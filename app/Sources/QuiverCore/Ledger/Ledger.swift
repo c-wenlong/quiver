@@ -151,13 +151,19 @@ public struct ScanReport: Sendable, Equatable {
 ///   and each event pays the rate its price entry had when it happened.
 public actor Ledger {
     let store: LedgerStore
-    private var pricing: PricingCatalog
+    /// The catalog in force, behind a lock so the off-actor usage read
+    /// prices with it without waiting for the actor.
+    private let pricingState: OSAllocatedUnfairLock<PricingCatalog>
+    private nonisolated var pricing: PricingCatalog { pricingState.withLock { $0 } }
     private let reader: JSONLReader
     /// The ledger file's path and a lazily opened read-only connection to
     /// it, so the calendar's block query never queues behind a scan on
     /// the write connection or this actor.
     let activityURL: URL
     let activityConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
+    /// Another read-only connection, for the Pricing and Models pages'
+    /// per-model usage: their first open must not wait out a scan either.
+    let usageConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
     /// Settings' "Hide accidental sessions": whether the calendar drops
     /// trivial sessions. Outside the actor because the block query runs
     /// on its own read connection.
@@ -186,17 +192,18 @@ public actor Ledger {
         activityURL = directory.appendingPathComponent(LedgerLocation.fileName)
         store = try LedgerStore(url: activityURL)
         self.backups = LedgerBackups(directory: backups ?? directory.appendingPathComponent("backups"))
-        self.pricing = pricing
+        pricingState = OSAllocatedUnfairLock(initialState: pricing)
         reader = JSONLReader(maxLineBytes: maxLineBytes)
     }
 
     public func setPricing(_ catalog: PricingCatalog) {
-        pricing = catalog
+        pricingState.withLock { $0 = catalog }
     }
 
     /// The catalog currently in force, for views that look models up
     /// directly (the Pricing page).
-    public func catalog() -> PricingCatalog { pricing }
+    /// Nonisolated, so a page opening mid-scan doesn't wait for it.
+    public nonisolated func catalog() async -> PricingCatalog { pricing }
 
     // MARK: - Backups
 
@@ -578,16 +585,31 @@ public actor Ledger {
     }
 
     /// Usage per model and harness inside `range`, priced like the other
-    /// queries, for the Pricing page's per-model rows.
-    public func byModelHarness(in range: DateInterval) -> [ModelUsage] {
-        guard let groups = try? store.groups(
-            in: range, by: [.harness, .model], thresholds: pricing.thresholds,
-            priceChanges: priceChanges(in: range))
-        else { return [] }
-        return groups.map { group in
+    /// queries, for the Pricing and Models pages' per-model rows.
+    ///
+    /// Off the actor and the main thread, on its own read-only
+    /// connection: a WAL reader never waits behind a scan on the write
+    /// connection, so these pages fill in while the logs are still read.
+    @concurrent
+    public nonisolated func byModelHarness(in range: DateInterval) async -> [ModelUsage] {
+        let pricing = self.pricing
+        let groups = try? usageConnection.withLock { connection throws -> [LedgerStore.PricedGroup] in
+            if connection == nil {
+                let path = activityURL.path
+                    .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                    ?? activityURL.path
+                connection = try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
+            }
+            let db = connection!
+            let used = pricing.hasHistory ? try db.modelsAndTiers() : []
+            return try db.pricedGroups(
+                in: range, by: [.harness, .model], thresholds: pricing.thresholds,
+                priceChanges: Self.priceChanges(in: range, used: used, pricing: pricing))
+        }
+        return (groups ?? []).map { group in
             ModelUsage(model: group.model, harness: group.dimensions[.harness] ?? "",
                        tier: group.tier,
-                       totals: price(group), harnessBilled: group.hasLoggedCost)
+                       totals: Self.price(group, pricing: pricing), harnessBilled: group.hasLoggedCost)
         }
     }
 
@@ -632,7 +654,16 @@ public actor Ledger {
     /// the ledger holds changed. Splitting the query there keeps every
     /// group inside one price; other entries' changes split nothing.
     private func priceChanges(in range: DateInterval) -> [Double] {
+        let pricing = self.pricing
         guard pricing.hasHistory, let used = try? store.modelsAndTiers() else { return [] }
+        return Self.priceChanges(in: range, used: used, pricing: pricing)
+    }
+
+    /// `priceChanges(in:)` for the models and tiers `used`, priced by
+    /// `pricing`: shared with the off-actor read.
+    private static func priceChanges(in range: DateInterval, used: [(model: String, tier: String)],
+                                     pricing: PricingCatalog) -> [Double] {
+        guard pricing.hasHistory else { return [] }
         var entries = Set<String>()
         for (model, tier) in used {
             if case .priced(_, let entry, _, _) = pricing.resolve(model: model, tier: tier) {
@@ -644,6 +675,10 @@ public actor Ledger {
     }
 
     private func price(_ group: LedgerStore.PricedGroup) -> UsageTotals {
+        Self.price(group, pricing: pricing)
+    }
+
+    private static func price(_ group: LedgerStore.PricedGroup, pricing: PricingCatalog) -> UsageTotals {
         var totals = UsageTotals()
         let t = group.tokens
         totals.inputTokens = t.input

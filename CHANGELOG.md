@@ -88,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Quiver's Pricing and Models pages open without the wait.** Their
+  per-model usage read now runs on its own read-only ledger connection,
+  off the main thread, instead of queueing behind a log scan (up to 3s
+  on a busy ledger). Pricing runs one load on open instead of three in
+  a row. Models draws the benchmarks at once and shows a spinner in the
+  token cells until usage lands, rather than "No usage in this period".
+  Its row build matches every logged name through one parsed index
+  instead of re-parsing the whole Artificial Analysis list per name,
+  which froze the window for over a second.
+
 - **Quiver's Pricing page lets you price harness-billed models.** Rows
   Cursor or another harness bills itself (it logs a charge per request)
   now open the price form like any other. A saved price fills the rate
