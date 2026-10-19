@@ -133,6 +133,26 @@ final class AppModel {
         NSApp.applicationIconImage = NSImage(contentsOf: url)
     }
 
+    /// The first-run setup window: open at launch on a Mac with no shared
+    /// AGENTS.md that hasn't finished or skipped it, or from Settings.
+    var showsFirstRunSetup = false
+
+    /// Setup finished or skipped: never offered at launch again. When it
+    /// ran, every page whose data it changed loads afresh (stars,
+    /// harnesses, skills links, MCP servers), since their own 60-second
+    /// staleness checks would keep showing what was there before.
+    func closeFirstRunSetup(reload: Bool = false) {
+        UserDefaults.standard.set(true, forKey: FirstRun.defaultsKey)
+        showsFirstRunSetup = false
+        guard reload else { return }
+        Task { [others, providers, skills, mcp, swe, swePath] in
+            await others.load()
+            await providers.load()
+            await skills.load(for: swePath)
+            await mcp.load(swe: swe, for: swePath)
+        }
+    }
+
     /// Light, dark, or macOS's own setting (the default).
     var appearance: AppearanceMode {
         didSet {
@@ -644,6 +664,11 @@ final class AppModel {
             statusPolling = Task { [serviceStatus] in await serviceStatus.keepFresh() }
         }
         guard watchers.isEmpty else { return }
+        if FirstRun.shouldOffer(
+            done: UserDefaults.standard.bool(forKey: FirstRun.defaultsKey),
+            agentsFileExists: FileManager.default.fileExists(atPath: FirstRun.agentsFile().path)) {
+            showsFirstRunSetup = true
+        }
         if let overview { refreshing = Task { await overview.keepFresh() } }
         if let ledger, backingUp == nil { backingUp = Task { await ledger.keepBackedUp() } }
         watchers = [

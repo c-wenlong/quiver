@@ -107,6 +107,11 @@ struct MainWindow: View {
         }
         .background(Theme.wash)
         .ignoresSafeArea(.container, edges: .top)
+        .sheet(isPresented: Binding(
+            get: { model.showsFirstRunSetup },
+            set: { if !$0 { model.closeFirstRunSetup() } })) {
+            FirstRunSetupSheet().environment(model)
+        }
         .overlay(alignment: .topLeading) {
             Sidebar(width: sidebarWidth)
             // The resize strip lives only while the sidebar is pinned
