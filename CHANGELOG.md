@@ -229,6 +229,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the old hour steps persist, and clamped to a minute through a year.
   The legacy hours setting still loads.
 
+### Security
+
+- **The `server` extra now requires `mcp>=1.30.0,<2`** (was `>=1.0.0`),
+  the first 1.x release patched for
+  [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv)
+  (CVE-2026-59951): a stateful Streamable HTTP server never reclaimed
+  sessions, so a client could grow its memory without bound. Quiver's
+  session server (`python -m quiver.mcp_server`) runs over stdio, which
+  the advisory lists as unaffected, so there was no live exposure; the
+  floor only keeps a fresh install off the vulnerable range.
+
 ## [1.0.0] - 2026-10-13
 
 First stable release. `swe` and the Quiver macOS app share one data model
