@@ -335,11 +335,11 @@ private struct RowHover: ViewModifier {
     }
 }
 
-/// Who bills a harness-billed row ("Cursor", or "Cursor and Devin").
+/// Who bills the row's logged charges ("Cursor", or "Cursor and Devin").
 private func billers(_ row: PricingModel.PricedModel) -> String {
     var names: [String] = []
-    for harness in row.harnesses {
-        let name = UsageFormat.harness(PricingModel.biller(of: harness))
+    for biller in row.billedBy {
+        let name = UsageFormat.harness(biller)
         if !names.contains(name) { names.append(name) }
     }
     return names.joined(separator: " and ")
@@ -368,12 +368,27 @@ private func sourceHelp(_ row: PricingModel.PricedModel) -> String {
         case .liteLLM, .quiver: billed + " The rates shown are the API list price, for comparison."
         case nil: billed
         }
-    case .free: return "Free model: priced at $0."
-    case .yours: return "Your price: spend uses the rates you saved."
-    case .quiver: return "API pricing from Quiver's own list, which fills in or corrects LiteLLM's."
-    case .liteLLM: return "API pricing from LiteLLM's price list."
-    case .unpriced: return "No price: these tokens aren't in your spend. Click the row to set one."
+    default:
+        break
     }
+    // Part of a mixed row's usage may still carry a logged charge: the
+    // sentence then speaks only for the rest, and says who bills that part.
+    let mixed = !row.billedBy.isEmpty
+    let rest = mixed ? "usage without a logged charge" : "spend"
+    var text = switch row.spendSource {
+    case .free: mixed ? "Free model: usage without a logged charge is priced at $0."
+                      : "Free model: priced at $0."
+    case .yours: "Your price: \(rest) uses the rates you saved."
+    case .quiver: "API pricing from Quiver's own list, which fills in or corrects LiteLLM's"
+        + (mixed ? ", for usage without a logged charge." : ".")
+    case .liteLLM: "API pricing from LiteLLM's price list" + (mixed ? ", for usage without a logged charge." : ".")
+    case .unpriced: mixed
+        ? "No price: usage without a logged charge isn't in your spend. Click the row to set one."
+        : "No price: these tokens aren't in your spend. Click the row to set one."
+    case .billed: ""
+    }
+    if mixed { text += " Usage billed by \(billers(row)) uses the charge \(billers(row)) logs." }
+    return text
 }
 
 /// The Source column's mark, with `sourceHelp` on hover: the biller's
