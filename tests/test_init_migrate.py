@@ -23,6 +23,7 @@ from quiver.init.migrate import (
     DROP,
     apply_migration,
     plan_migration,
+    move_secrets,
     write_gitignore,
 )
 
@@ -277,6 +278,152 @@ class GitignoreTest(unittest.TestCase):
             self.assertEqual(target.read_text(), "# hand edited\n")
 
 
+def _keys(path: Path, text: str = 'export OPENAI_API_KEY="sk-test"\n') -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    path.chmod(0o600)
+    return path
+
+
+class SecretsLayoutTest(unittest.TestCase):
+    def test_each_store_has_its_own_folder_under_secrets(self):
+        home = Path("/tmp/does-not-exist-home")
+        secrets_dir = home / ".quiver" / "secrets"
+        self.assertEqual(paths.provider_keys_file_for(home), secrets_dir / "providers" / ".api_keys")
+        self.assertEqual(paths.mcp_secrets_file_for(home), secrets_dir / "mcp" / ".api_keys")
+
+    def test_a_fresh_machine_reads_the_new_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self.assertEqual(paths.provider_keys_path_for(home), paths.provider_keys_file_for(home))
+            self.assertEqual(paths.mcp_secrets_path_for(home), paths.mcp_secrets_file_for(home))
+
+    def test_an_unmigrated_machine_keeps_reading_its_old_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            old_keys = _keys(home / ".api_keys")
+            old_mcp = _keys(home / ".quiver" / "secrets" / ".api_keys")
+            self.assertEqual(paths.provider_keys_path_for(home), old_keys)
+            self.assertEqual(paths.mcp_secrets_path_for(home), old_mcp)
+
+    def test_mcp_secrets_load_from_either_place(self):
+        from quiver.mcp import secrets
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            _keys(home / ".quiver" / "secrets" / ".api_keys", "export TOKEN=old\n")
+            self.assertEqual(secrets.load_secrets(home), {"TOKEN": "old"})
+            _keys(paths.mcp_secrets_file_for(home), "export TOKEN=new\n")
+            self.assertEqual(secrets.load_secrets(home), {"TOKEN": "new"})
+
+
+class MoveSecretsTest(unittest.TestCase):
+    def _home(self, tmp: str) -> Path:
+        home = Path(tmp)
+        write_gitignore(home)
+        return home
+
+    def test_moves_both_stores_and_links_the_provider_file_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            _keys(home / ".api_keys")
+            loose = _keys(home / ".quiver" / "secrets" / ".api_keys", "export TOKEN=x\n")
+            loose.chmod(0o644)
+
+            notes = move_secrets(home)
+
+            self.assertEqual(len(notes), 3)
+            new_keys = paths.provider_keys_file_for(home)
+            self.assertEqual(new_keys.read_text(), 'export OPENAI_API_KEY="sk-test"\n')
+            self.assertEqual(new_keys.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(new_keys.parent.stat().st_mode & 0o777, 0o700)
+            # Shell profiles that `source ~/.api_keys` keep working.
+            self.assertTrue((home / ".api_keys").is_symlink())
+            self.assertEqual((home / ".api_keys").resolve(), new_keys.resolve())
+            self.assertEqual(paths.mcp_secrets_file_for(home).read_text(), "export TOKEN=x\n")
+            self.assertEqual(paths.mcp_secrets_file_for(home).stat().st_mode & 0o777, 0o600)
+            self.assertFalse((home / ".quiver" / "secrets" / ".api_keys").exists())
+
+    def test_a_second_run_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            _keys(home / ".api_keys")
+            move_secrets(home)
+            self.assertEqual(move_secrets(home), [])
+
+    def test_plan_only_moves_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            _keys(home / ".api_keys")
+            notes = move_secrets(home, apply=False)
+            self.assertEqual(notes, ["seal secrets/ with its own .gitignore",
+                                     "move ~/.api_keys to secrets/providers/.api_keys"])
+            self.assertFalse(paths.secrets_dir_for(home).exists())
+            self.assertFalse((home / ".api_keys").is_symlink())
+            self.assertFalse(paths.provider_keys_file_for(home).exists())
+
+    def test_both_copies_are_left_for_the_user_to_merge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            _keys(home / ".api_keys", "export A=old\n")
+            _keys(paths.provider_keys_file_for(home), "export A=new\n")
+            notes = move_secrets(home)
+            self.assertIn("merge them by hand", notes[0])
+            self.assertEqual((home / ".api_keys").read_text(), "export A=old\n")
+            self.assertFalse((home / ".api_keys").is_symlink())
+
+    def test_a_directory_of_key_files_stays_put(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            _keys(home / ".api_keys" / "openai", "sk-test\n")
+            self.assertEqual(move_secrets(home), [])
+            self.assertTrue((home / ".api_keys").is_dir())
+            self.assertEqual(paths.provider_keys_path_for(home), home / ".api_keys")
+
+    def test_moved_keys_stay_out_of_git_whatever_the_root_gitignore_says(self):
+        # An older hand-edited .gitignore without secrets/, plus an explicit
+        # exception: the folder's own .gitignore still wins.
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            root = home / ".quiver"
+            root.mkdir()
+            (root / ".gitignore").write_text("cache/\n!secrets/providers/.api_keys\n")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            _keys(home / ".api_keys")
+            move_secrets(home)
+            self.assertTrue((home / ".api_keys").is_symlink())
+            for rel in ("secrets/providers/.api_keys", "secrets/.gitignore"):
+                ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", rel])
+                self.assertEqual(ignored.returncode, 0, rel)
+
+    def test_an_existing_secrets_dir_is_sealed_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            paths.secrets_dir_for(home).mkdir(parents=True)
+            self.assertEqual(move_secrets(home), ["seal secrets/ with its own .gitignore"])
+            self.assertEqual((paths.secrets_dir_for(home) / ".gitignore").read_text(),
+                             paths.SECRETS_GITIGNORE_BODY)
+            self.assertEqual(paths.secrets_dir_for(home).stat().st_mode & 0o777, 0o700)
+            self.assertEqual(move_secrets(home), [])
+
+    def test_the_app_seals_secrets_with_the_same_text(self):
+        source = (Path(__file__).resolve().parents[1] / "app" / "Sources" / "QuiverCore"
+                  / "APIKeys" / "APIKeys.swift")
+        if not source.is_file():
+            self.skipTest("app sources are not in this tree (the Nix build ships src/ and tests/)")
+        swift = source.read_text()
+        body = paths.SECRETS_GITIGNORE_BODY.replace("\n", "\\n")
+        self.assertIn(f'static let sealBody = "{body}"', swift)
+
+    def test_nothing_to_seal_on_a_machine_without_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            self.assertEqual(move_secrets(home), [])
+            self.assertFalse(paths.secrets_dir_for(home).exists())
+
+
 class CmdInitMigrationTest(unittest.TestCase):
     def _run(self, home, args):
         with mock.patch.object(Path, "home", staticmethod(lambda: home)):
@@ -305,6 +452,18 @@ class CmdInitMigrationTest(unittest.TestCase):
             self._run(home, ["--check", "--migrate"])
             self.assertTrue((home / ".config" / "swe").is_dir())
             self.assertFalse((home / ".quiver" / "config").exists())
+
+    def test_init_moves_the_key_stores_and_check_only_reports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            _keys(home / ".api_keys")
+            _, out = self._run(home, ["--check"])
+            self.assertIn("move ~/.api_keys to secrets/providers/.api_keys", out)
+            self.assertFalse((home / ".api_keys").is_symlink())
+            self._run(home, [])
+            self.assertTrue((home / ".api_keys").is_symlink())
+            self.assertTrue(paths.provider_keys_file_for(home).is_file())
 
     def test_init_writes_a_gitignore(self):
         with tempfile.TemporaryDirectory() as tmp:

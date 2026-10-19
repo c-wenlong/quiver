@@ -24,7 +24,7 @@ public struct KnownService: Sendable, Equatable, Identifiable {
 }
 
 /// Quiver's own service credentials, kept in the login keychain under a
-/// service of their own — apart from `~/.api_keys`, which is for the
+/// service of their own — apart from the API keys file, which is for the
 /// harnesses. Only dates live in the metadata file; values never leave
 /// the keychain or appear in errors.
 public actor ServiceCredentials {

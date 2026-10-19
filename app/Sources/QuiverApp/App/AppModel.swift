@@ -201,7 +201,7 @@ final class AppModel {
     let agentsMd = AgentsModel()
     private(set) var apiKeys: APIKeysModel
 
-    /// The shell file of API keys; empty means ~/.api_keys.
+    /// The shell file of API keys; empty means ~/.quiver/secrets/providers/.api_keys.
     var apiKeysPath: String {
         didSet {
             UserDefaults.standard.set(apiKeysPath, forKey: "apiKeysPath")
@@ -811,7 +811,7 @@ final class AppModel {
     static func keysFile(path: String) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let trimmed = path.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return home.appending(path: ".api_keys") }
+        guard !trimmed.isEmpty else { return APIKeysStore.defaultURL(home: home) }
         return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
     }
 
@@ -825,7 +825,9 @@ final class AppModel {
     private static func keysModel(path: String) -> APIKeysModel {
         // One backup of the previous version, private to you, under ~/.quiver.
         let backups = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".quiver/backups/api-keys")
-        return APIKeysModel(store: APIKeysStore(url: keysFile(path: path), backupDirectory: backups),
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return APIKeysModel(store: APIKeysStore(url: keysFile(path: path), backupDirectory: backups,
+                                                sealedFolder: APIKeysStore.secretsFolder(home: home)),
                             shell: LoginShellEnvironment(),
                             checkCache: APIKeyCheckStore(url: FileManager.default.homeDirectoryForCurrentUser
                                 .appending(path: ".quiver/cache/api-key-checks.json")))

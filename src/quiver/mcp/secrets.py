@@ -2,7 +2,8 @@
 
 ``~/.quiver/mcp.json`` records which servers exist and is worth versioning.
 Credentials are not, so the hub stores ``${NAME}`` references and the values
-live in ``~/.quiver/secrets/.api_keys``, mode 600 and gitignored.
+live in ``~/.quiver/secrets/mcp/.api_keys``, mode 600 and gitignored. A machine
+`swe init` has not migrated yet still reads ``~/.quiver/secrets/.api_keys``.
 
 Resolution happens when a harness config is written, not by exporting to the
 environment: Claude and Cursor launch from the Dock and never
@@ -19,10 +20,10 @@ import os
 import re
 from pathlib import Path
 
-from quiver.paths import quiver_dir_for
+from quiver import paths
 
-SECRETS_DIRNAME = "secrets"
-SECRETS_BASENAME = ".api_keys"
+SECRETS_DIRNAME = paths.SECRETS_SUBDIR
+SECRETS_BASENAME = paths.SECRETS_BASENAME
 
 # export NAME=value, with optional quotes. Comments and blanks are skipped.
 _EXPORT_RE = re.compile(r"""^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$""")
@@ -30,11 +31,11 @@ _REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def secrets_dir_for(home: Path | None = None) -> Path:
-    return quiver_dir_for(home) / SECRETS_DIRNAME
+    return paths.mcp_secrets_file_for(home).parent
 
 
 def secrets_file_for(home: Path | None = None) -> Path:
-    return secrets_dir_for(home) / SECRETS_BASENAME
+    return paths.mcp_secrets_path_for(home)
 
 
 def load_secrets(home: Path | None = None) -> dict[str, str]:

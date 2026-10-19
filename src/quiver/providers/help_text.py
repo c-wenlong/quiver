@@ -24,10 +24,12 @@ def print_providers_help() -> None:
       of being re-added the next time defaults merge in.
 
 {c('bold', 'Key storage')}
-  By default, keys live as plain-text files in {c('bold', '~/.api_keys/')}
-  (override per-invocation with {c('cyan', '--api-keys-dir=DIR')}).
-  One file per provider, filename matches the canonical slug —
-  e.g. {c('cyan', '~/.api_keys/openai')} holds the OpenAI key as a single line.
+  By default, keys live in {c('bold', '~/.quiver/secrets/providers/.api_keys')},
+  one {c('cyan', 'export OPENAI_API_KEY=...')} line per key. {c('cyan', 'swe init')} moves
+  an old {c('bold', '~/.api_keys')} there and leaves a symlink behind.
+  Override per-invocation with {c('cyan', '--api-keys-dir=DIR')}: a file like that,
+  or a directory with one file per provider named by its slug —
+  e.g. {c('cyan', 'DIR/openai')} holding the OpenAI key as a single line.
 
   {c('bold', 'quiver NEVER stores the key string')} — only the filename pointer
   and provider metadata. Mask format:

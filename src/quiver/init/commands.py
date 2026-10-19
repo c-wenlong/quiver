@@ -22,7 +22,7 @@ from quiver.init.manage import (
     new_harnesses,
     register,
 )
-from quiver.init.migrate import apply_migration, plan_migration, write_gitignore
+from quiver.init.migrate import apply_migration, move_secrets, plan_migration, write_gitignore
 from quiver.init.models import LinkRow
 from quiver.init.layout import (
     LinkIgnoreError,
@@ -332,6 +332,7 @@ def cmd_init(args) -> int:
             )
     if not check_only:
         write_gitignore(home)
+    scaffold.extend(move_secrets(home, apply=not check_only))
 
     instructions, skills = plan(home, patterns)
     # An uninstalled harness the registry does not know is noise: quiver can
