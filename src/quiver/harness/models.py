@@ -101,13 +101,16 @@ class HarnessRow:
 class DoctorFinding:
     """One ``swe doctor --json`` row. ``harness`` names the registry
     harness a finding is about, so the app can show its logo; it is left
-    out of rows that are about the machine rather than one harness."""
+    out of rows that are about the machine rather than one harness.
+    ``action``, when set, is the swe command the app may offer to run:
+    "setup", "init", or "discover"."""
 
     check: str
     severity: str
     message: str
     fix: str | None = None
     harness: str | None = None
+    action: str | None = None
 
     def to_json(self) -> dict:
         finding = {
@@ -118,6 +121,8 @@ class DoctorFinding:
         }
         if self.harness:
             finding["harness"] = self.harness
+        if self.action:
+            finding["action"] = self.action
         return finding
 
 

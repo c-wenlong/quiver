@@ -103,3 +103,141 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(report.findings.map(\.check) == ["new"])
     }
 }
+
+/// `action` on a doctor finding: decode, unknown → nil, and `run` argv.
+@MainActor
+@Suite struct DoctorActionTests {
+    let findings = Data(#"""
+    {"schema": 1, "data": {"ok": false, "findings": [
+      {"check": "setup.registry", "severity": "warning", "message": "No harnesses registered",
+       "fix": "swe harness discover --apply", "action": "discover"},
+      {"check": "setup.future", "severity": "warning", "message": "new thing",
+       "fix": "swe fix-future", "action": "warp"},
+      {"check": "plain", "severity": "warning", "message": "no action", "fix": null}
+    ]}}
+    """#.utf8)
+
+    @Test func actionDecodesAndUnknownBecomesNil() async throws {
+        let model = DoctorModel(swe: SweClient(runner: FakeRunner(.init(status: 1, stdout: findings, stderr: ""))))
+        await model.load()
+        guard case .loaded(let report) = model.state else {
+            Issue.record("expected loaded"); return
+        }
+        #expect(report.findings.map(\.action) == [.discover, nil, nil])
+    }
+
+    @Test func runCallsTheActionsSweCommand() async throws {
+        let runner = RoutingRunner([
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+            (["init"], .init(status: 0, stdout: Data(), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = DoctorReport.Finding(check: "setup.unlinked", severity: .warning,
+                                         message: "not linked", fix: "swe init", action: .`init`)
+        await model.run(finding)
+        #expect(runner.calls.contains(["init"]))
+        // A successful run re-reads the report.
+        #expect(runner.calls.last == ["doctor", "--json"])
+        #expect(model.running.isEmpty)
+        #expect(model.runErrors.isEmpty)
+    }
+
+    @Test func discoverActionRunsDiscoverApply() async throws {
+        let runner = RoutingRunner([
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+            (["harness", "discover"], .init(status: 0, stdout: Data("ok".utf8), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.run(DoctorReport.Finding(
+            check: "setup.registry", severity: .warning, message: "none",
+            fix: "swe harness discover --apply", action: .discover))
+        #expect(runner.calls.contains(["harness", "discover", "--apply", "--json"]))
+    }
+
+    @Test func setupActionLeavesTheStarsAlone() async throws {
+        let runner = RoutingRunner([
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+            (["setup"], .init(status: 0, stdout: Data(#"{"schema": 1, "data": {"applied": {}}}"#.utf8), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.run(DoctorReport.Finding(
+            check: "setup.agents-md", severity: .warning, message: "none",
+            fix: "swe setup --apply", action: .setup))
+        // No --starred: an empty one would unstar every harness.
+        #expect(runner.calls.contains(["setup", "--apply", "--json"]))
+    }
+
+    @Test func aFailureRecordsTheErrorAndClearsRunning() async throws {
+        let runner = RoutingRunner([
+            (["init"], .init(status: 1, stdout: Data(), stderr: "link would overwrite")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = DoctorReport.Finding(check: "setup.unlinked", severity: .warning,
+                                         message: "not linked", fix: "swe init", action: .`init`)
+        await model.run(finding)
+        #expect(model.running.isEmpty)
+        #expect(model.runErrors[finding.id] == "link would overwrite")
+    }
+}
+
+/// The run guard, failure reload, and the terminal line rewrite.
+@MainActor
+@Suite struct DoctorRunDetailsTests {
+    private func doctorData() -> Data {
+        Data(#"{"schema": 1, "data": {"ok": true, "findings": []}}"#.utf8)
+    }
+
+    @Test func aSecondRunWaitsWhileOneIsInFlight() async throws {
+        // Not directly observable without a suspendable runner; the guard
+        // is `running.isEmpty`, so a finding queued mid-run returns at once.
+        let runner = RoutingRunner([
+            (["init"], .init(status: 0, stdout: Data(), stderr: "")),
+            (["doctor"], .init(status: 0, stdout: doctorData(), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        model.running = ["setup.unlinked x"]
+        await model.run(DoctorReport.Finding(
+            check: "setup.unlinked", severity: .warning, message: "y",
+            fix: "swe init", action: .`init`))
+        #expect(!runner.calls.contains(["init"]))
+    }
+
+    @Test func aFailedRunStillReloadsAndKeepsTheError() async throws {
+        let runner = RoutingRunner([
+            (["init"], .init(status: 1, stdout: Data(), stderr: "boom")),
+            (["doctor"], .init(status: 0, stdout: doctorData(), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = DoctorReport.Finding(check: "setup.unlinked", severity: .warning,
+                                         message: "x", fix: "swe init", action: .`init`)
+        await model.run(finding)
+        #expect(runner.calls.last == ["doctor", "--json"])
+        #expect(model.runErrors[finding.id] == "boom")
+        #expect(model.running.isEmpty)
+    }
+
+    @Test func aSetupWithALinkErrorRecordsIt() async throws {
+        let setupData = Data(#"""
+        {"schema": 1, "data": {"applied": {"harness": [], "mcp": [],
+         "links": {"adopted": null, "error": "codex AGENTS.md is a real file", "rows": []}}}}
+        """#.utf8)
+        let runner = RoutingRunner([
+            (["setup"], .init(status: 1, stdout: setupData, stderr: "")),
+            (["doctor"], .init(status: 0, stdout: doctorData(), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = DoctorReport.Finding(check: "setup.agents-md", severity: .warning,
+                                         message: "x", fix: "swe setup --apply", action: .setup)
+        await model.run(finding)
+        #expect(model.runErrors[finding.id] == "codex AGENTS.md is a real file")
+    }
+
+    @Test func terminalLineSwapsSweForTheQuotedExecutable() {
+        #expect(DoctorModel.terminalLine(fix: "swe init", swe: "/a b/swe")
+            == "'/a b/swe' init")
+        #expect(DoctorModel.terminalLine(fix: "swe doctor", swe: "/opt/swe")
+            == "'/opt/swe' doctor")
+        #expect(DoctorModel.terminalLine(fix: "export PATH=x", swe: "/opt/swe")
+            == "export PATH=x")
+    }
+}

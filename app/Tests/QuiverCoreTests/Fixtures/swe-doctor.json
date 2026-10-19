@@ -21,6 +21,14 @@
         "message": "fixturetool (no-such-tool-fixture) is at /opt/tools/bin/fixturetool [registry], not on PATH",
         "fix": "swe install fixturetool",
         "harness": "fixturetool"
+      },
+      {
+        "check": "setup.unlinked",
+        "severity": "warning",
+        "message": "Codex doesn't read the shared AGENTS.md yet",
+        "fix": "swe init",
+        "harness": "codex",
+        "action": "init"
       }
     ]
   }
