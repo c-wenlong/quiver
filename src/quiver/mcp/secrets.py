@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from pathlib import Path
 
 from quiver import paths
@@ -279,3 +280,110 @@ def scrub_args(args, secrets: dict[str, str] | None = None) -> list[str]:
 def store_env(home: Path | None = None) -> dict[str, str]:
     """The store merged over os.environ, for callers that want a full env."""
     return {**os.environ, **load_secrets(home)}
+
+
+_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def render_secret_line(name: str, value: str) -> str:
+    """The ``export NAME=…`` line ``load_secrets`` reads back as ``value``.
+
+    ``load_secrets`` strips matching outer quotes but never unescapes, so
+    single quotes serve any value without ``'`` and double quotes any
+    without ``"`` ``\\`` ``$`` or a backtick. A value holding both raises.
+    """
+    if "'" not in value:
+        return f"export {name}='{value}'"
+    if not any(ch in value for ch in "\"\\$`"):
+        return f'export {name}="{value}"'
+    raise ValueError(
+        "the value has both quote kinds, and the secrets file can't escape them")
+
+
+def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, bool]:
+    """Write ``name=value`` into the MCP secrets file; return (path, created).
+
+    An existing ``NAME`` line is replaced in place and every other line is
+    kept byte-for-byte. The file is mode 600 in a mode-700 ``secrets/``,
+    sealed with its own ``.gitignore`` the way ``swe init`` leaves it, and
+    swapped in atomically so a reader never sees a half-written store.
+
+    Raises :class:`ValueError` on a bad name, an empty or multi-line value,
+    or a value no line here could store (see :func:`render_secret_line`).
+    """
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError(
+            f"{name} isn't a valid variable name: letters, digits and "
+            "underscores, not starting with a digit")
+    if not value:
+        raise ValueError("empty value; pipe one in, e.g. `printf %s \"$V\" | swe mcp secret set NAME`")
+    if "\n" in value or "\r" in value:
+        raise ValueError("a value can't span more than one line")
+    line = render_secret_line(name, value)
+
+    shown = secrets_file_for(home)
+    # Quiver's own folder is private; a store symlinked elsewhere keeps
+    # whatever access its real folder has.
+    shown.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not shown.parent.is_symlink():
+        os.chmod(shown.parent, 0o700)
+    # The real file, so the swap below never replaces a symlink with a copy.
+    path = Path(os.path.realpath(shown))
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    try:
+        import fcntl
+    except ImportError:
+        # Windows has no fcntl; the save still runs, just unlocked.
+        fcntl = None
+
+    # One writer at a time, Terminal and app alike: the lock file sits
+    # beside the store and is never replaced, so the swap can't bypass it.
+    lock_fd = os.open(path.parent / f".{path.name}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        created = not path.exists()
+        try:
+            # newline="" keeps CRLF and every other byte as it was.
+            with open(path, encoding="utf-8", newline="") as handle:
+                text = handle.read()
+        except FileNotFoundError:
+            text = ""
+        lines = text.splitlines(keepends=True)
+        # Every line for the name, not just the first: load_secrets keeps the
+        # last one, so a stale duplicate further down would win.
+        replaced = False
+        for i, existing in enumerate(lines):
+            body = existing.rstrip("\r\n")
+            match = _EXPORT_RE.match(body)
+            if match and match.group(1) == name:
+                lines[i] = line + (existing[len(body):] or "\n")
+                replaced = True
+        if not replaced:
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.append(line + "\n")
+
+        fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write("".join(lines))
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(lock_fd)
+
+    # The store sits under secrets/, which must stay out of any `git add .`.
+    from quiver.init.migrate import seal_secrets_dir
+    seal_secrets_dir(home)
+
+    if load_secrets(home).get(name) != value:
+        raise ValueError(f"the value could not be written in a form {shown} reads back")
+    return shown, created

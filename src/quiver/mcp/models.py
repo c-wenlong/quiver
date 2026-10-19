@@ -24,6 +24,10 @@ class ServerRow:
     harnesses: list
     conflict: bool
     variants: list
+    # ``${NAME}`` references in the hub's definition the secrets file can't
+    # satisfy; [] for a server the hub doesn't hold. Swe fills them from
+    # `swe mcp secret set`, and sync refuses until then.
+    secrets_missing: list
 
     def to_json(self) -> dict:
         return {
@@ -37,6 +41,7 @@ class ServerRow:
             "harnesses": self.harnesses,
             "conflict": self.conflict,
             "variants": self.variants,
+            "secrets_missing": self.secrets_missing,
         }
 
 

@@ -26,6 +26,7 @@
             "claude"
           ]
         ],
+        "secrets_missing": [],
         "health": "error",
         "detail": "url unreachable"
       },
@@ -56,6 +57,9 @@
           [
             "codex"
           ]
+        ],
+        "secrets_missing": [
+          "SECRET_TOKEN"
         ],
         "health": "error",
         "detail": "'fixture-mcp' not in PATH"
