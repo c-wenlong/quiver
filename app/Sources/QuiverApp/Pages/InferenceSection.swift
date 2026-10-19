@@ -89,8 +89,9 @@ struct InferenceSection: View {
         }
         .sheet(item: $editingPlan) { item in
             if let plan = item.plan {
-                PlanKeyEditor(plan: plan, current: item.key?.value ?? "", save: { value in
-                    try await model.set(name: plan.keyName, value: value, provider: item.key?.provider ?? plan.name)
+                PlanKeyEditor(plan: plan, current: item.key?.value ?? "", exists: item.key != nil, save: { value in
+                    try await model.set(name: plan.keyName, value: value,
+                                        provider: item.key?.provider ?? InferenceCatalog.heading)
                     revealed.remove(plan.keyName)
                     Task { await model.check(name: plan.keyName) }
                 }, remove: {
@@ -343,6 +344,9 @@ private struct PlanKeyEditor: View {
     @Environment(\.dismiss) private var dismiss
     var plan: InferencePlan
     var current: String
+    /// Whether the keys file has the variable at all, empty or not, so an
+    /// empty entry can still be removed.
+    var exists: Bool
     var save: (String) async throws -> Void
     var remove: () async throws -> Void
     @State private var value: String
@@ -351,10 +355,11 @@ private struct PlanKeyEditor: View {
     @State private var error: String?
     @State private var working = false
 
-    init(plan: InferencePlan, current: String, save: @escaping (String) async throws -> Void,
+    init(plan: InferencePlan, current: String, exists: Bool, save: @escaping (String) async throws -> Void,
          remove: @escaping () async throws -> Void) {
         self.plan = plan
         self.current = current
+        self.exists = exists
         self.save = save
         self.remove = remove
         _value = State(initialValue: current)
@@ -367,7 +372,7 @@ private struct PlanKeyEditor: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 10) {
                     if let logo = plan.logo { HarnessIcon(harness: logo, size: 20) }
-                    Text(current.isEmpty ? "Set up \(plan.name)" : plan.name)
+                    Text(exists ? plan.name : "Set up \(plan.name)")
                         .font(Theme.sectionTitle).tracking(-0.5).foregroundStyle(Theme.textPrimary)
                 }
                 Text("\(plan.vendor) · saved as \(plan.keyName)")
@@ -416,7 +421,7 @@ private struct PlanKeyEditor: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                if !current.isEmpty {
+                if exists {
                     Button("Remove key", role: .destructive) { confirmingRemove = true }
                         .secondaryButton()
                         .confirmationDialog("Remove the \(plan.name) key?", isPresented: $confirmingRemove) {

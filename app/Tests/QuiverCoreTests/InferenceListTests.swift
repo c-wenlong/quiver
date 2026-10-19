@@ -28,6 +28,18 @@ private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
         #expect(plans.allSatisfy { ProviderCatalog.provider($0.id) == nil })
     }
 
+    /// Every plan's key can be written under the shared heading; the keys
+    /// file refuses a heading with a word of 16 letters or more.
+    @Test func everyPlanKeySavesUnderTheSharedHeading() throws {
+        #expect(APIKeysFile.isLabel(InferenceCatalog.heading))
+        var file = APIKeysFile(text: "")
+        for plan in InferenceCatalog.all {
+            try file.set(name: plan.keyName, value: "sk-test-1234567890", provider: InferenceCatalog.heading)
+        }
+        #expect(Set(file.keys.map(\.name)) == Set(InferenceCatalog.all.map(\.keyName)))
+        #expect(Set(file.keys.map(\.provider)) == [InferenceCatalog.heading])
+    }
+
     @Test func messagesURLJoinsWithOrWithoutATrailingSlash() {
         let kimi = InferenceCatalog.all.first { $0.id == "kimi-code" }!
         #expect(kimi.endpoints[0].messagesURL.absoluteString == "https://api.kimi.ai/coding/v1/messages")
@@ -93,6 +105,10 @@ private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
         #expect(InferenceList.matches(glm, state: nil, kind: nil, query: "z.ai", stateOf: state))   // vendor
         #expect(InferenceList.matches(glm, state: nil, kind: nil, query: "glm_coding", stateOf: state))
         #expect(!InferenceList.matches(open, state: nil, kind: nil, query: "glm", stateOf: state))
+        // A plan key filed under a heading of your own is found by it.
+        let filed = InferenceList.items(keys: [key("GLM_CODING_PLAN_KEY", provider: "Work")])[0]
+        #expect(filed.title == "GLM Coding Plan")
+        #expect(InferenceList.matches(filed, state: nil, kind: nil, query: "work", stateOf: state))
     }
 
     @MainActor @Test func dragOrderPersistsAndNewRowsGoLast() {

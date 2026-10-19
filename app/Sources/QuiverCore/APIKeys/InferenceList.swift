@@ -57,7 +57,7 @@ public enum InferenceList {
     }
 
     /// Whether a row passes the filters. The query matches the title, the
-    /// variable name and a plan's vendor.
+    /// variable name, a plan's vendor and the heading the key is filed under.
     public static func matches(_ item: InferenceItem, state: InferenceKeyState?,
                                kind: InferenceItem.Kind?, query: String,
                                stateOf: (InferenceItem) -> InferenceKeyState) -> Bool {
@@ -65,7 +65,7 @@ public enum InferenceList {
         if let state, stateOf(item) != state { return false }
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return true }
-        return [item.title, item.id, item.plan?.vendor ?? ""]
+        return [item.title, item.id, item.plan?.vendor ?? "", item.key?.providerLabel ?? ""]
             .contains { $0.lowercased().contains(needle) }
     }
 }

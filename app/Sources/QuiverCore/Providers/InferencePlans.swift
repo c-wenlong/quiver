@@ -51,6 +51,12 @@ public struct InferencePlan: Identifiable, Sendable, Equatable {
 }
 
 public enum InferenceCatalog {
+    /// The heading a new plan key is filed under in the keys file. One
+    /// heading for every plan, since the file only takes short words as a
+    /// heading and some plan names are one long word ("CheapestInference").
+    /// A key you filed under a heading of your own keeps it.
+    public static let heading = "Coding plans"
+
     private static func endpoint(_ region: String, _ base: String, _ console: String) -> InferencePlan.Endpoint {
         InferencePlan.Endpoint(region: region, anthropicBaseURL: base, console: URL(string: console)!)
     }
