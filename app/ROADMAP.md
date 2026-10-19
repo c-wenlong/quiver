@@ -127,11 +127,11 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 
 **Phase 3. Add and edit from the app.** Every Manage page edits or syncs what exists, but almost none can create.
 - [x] API keys: a provider picker built from `providers/defaults.py` and `APIKeyCheck.swift`, with a "Get a key" link instead of the free-text Provider and Variable fields. Test a key before saving. ([#397](https://github.com/c-wenlong/quiver/pull/397))
-- [ ] API keys: offer to add `source ~/.api_keys` to `~/.zshrc` (back it up, ask first). Nothing does this today, so saved keys reach no new terminal, and the page subtitle claims they do.
+- [x] API keys: offer to add `source ~/.api_keys` to `~/.zshrc` (back it up, ask first). Nothing does this today, so saved keys reach no new terminal, and the page subtitle claims they do. ([#400](https://github.com/c-wenlong/quiver/pull/400))
 - [x] MCP servers: an Add server sheet (stdio command, args and env, or http url and headers) and Remove. `swe mcp` has neither, and `swe mcp edit` needs `$EDITOR`. Needs `swe mcp add|remove --json`. ([#399](https://github.com/c-wenlong/quiver/pull/399))
 - [x] MCP secrets: `${NAME}` values live in `~/.quiver/secrets/.api_keys`, which nothing writes. Add `swe mcp secret set NAME` (0600) and a paste field per unresolved name. `swe mcp sync` writes the literal `${NAME}` into harness configs when a value is missing; refuse instead. ([#398](https://github.com/c-wenlong/quiver/pull/398))
 - [x] Skills: New skill (writes `~/.quiver/skills/<name>/SKILL.md`) and Link all. Needs `swe skills new --json`. ([#401](https://github.com/c-wenlong/quiver/pull/401))
-- [ ] Plugins: Add marketplace (GitHub owner/repo or path) through `swe plugins marketplace add --json`. Open Explore first when the hub is empty.
+- [x] Plugins: Add marketplace (GitHub owner/repo or path) through `swe plugins marketplace add --json`. Open Explore first when the hub is empty. ([#402](https://github.com/c-wenlong/quiver/pull/402))
 - [ ] Harnesses: a Detect and register button (`swe setup --apply --json`), and a form for a custom harness.
 - [x] Accounts: Sign in opens a terminal that says "command not found" when the CLI isn't installed. Show Install there instead. ([#404](https://github.com/c-wenlong/quiver/pull/404))
 - [ ] Empty states: `EmptyCard` is a label only, and several pages tell users to run a command. Give each a button.

@@ -265,6 +265,35 @@ func decodedInventory() throws -> [Skill] {
             == "Uninstall from Claude Code")
     }
 
+    @Test func addMarketplaceArgvAndDecodesAPartialFailure() async throws {
+        // swe exits 1 when any harness failed but the JSON still lands.
+        let replyJSON = #"""
+        {"schema": 1, "data": {"source": "owner/repo", "results": [
+         {"harness": "claude", "ok": true, "detail": "added"},
+         {"harness": "codex", "ok": false, "detail": "not on PATH"}]}}
+        """#
+        let runner = catalogRunner([(["plugins", "marketplace", "add"],
+                                     CommandResult(status: 1,
+                                                   stdout: Data(replyJSON.utf8),
+                                                   stderr: ""))])
+        let swe = SweClient(runner: runner)
+        let reply = try await swe.addMarketplace(source: "owner/repo",
+                                                 harnesses: ["claude", "codex"])
+        #expect(runner.calls.last ==
+            ["plugins", "marketplace", "add", "owner/repo",
+             "--harness=claude,codex", "--json"])
+        #expect(reply.results.map { $0.ok } == [true, false])
+        #expect(reply.results[1].detail == "not on PATH")
+    }
+
+    @Test func exploreOpensWhenHealthIsEmpty() {
+        #expect(PluginsFirstTab.explore(
+            report: PluginDriftReport(sources: 0, drift: [])))
+        #expect(!PluginsFirstTab.explore(report: nil))
+        #expect(!PluginsFirstTab.explore(
+            report: PluginDriftReport(sources: 2, drift: [])))
+    }
+
     @Test func anActionAsksSweByRefThenReadsTheCatalogAgain() async throws {
         let runner = catalogRunner([(["plugins", "install"], json(#"""
             {"action": "install", "harness": "codex", "ref": "linter@official", "changed": true, "detail": null,
