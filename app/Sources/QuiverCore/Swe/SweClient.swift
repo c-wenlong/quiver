@@ -112,13 +112,25 @@ extension SweClient {
     }
 }
 
-/// Which swe to run: one chosen in Settings, else whatever PATH finds.
+/// Which swe to run: one chosen in Settings, else the one bundled inside
+/// Quiver.app, else whatever PATH finds (a build without the bundle, such
+/// as `swift run`).
 public enum SweLocation {
     public static let defaultsKey = "swePath"
 
-    public static func executable(override: String?) -> String {
+    /// `Contents/Resources/swe/bin/swe`, put there by
+    /// `app/script/bundle-swe.sh`, when this build carries it.
+    public static let bundled: String? = bundled(in: Bundle.main)
+
+    static func bundled(in bundle: Bundle) -> String? {
+        guard let url = bundle.resourceURL?.appending(path: "swe/bin/swe"),
+              FileManager.default.isExecutableFile(atPath: url.path) else { return nil }
+        return url.path
+    }
+
+    public static func executable(override: String?, bundled: String? = SweLocation.bundled) -> String {
         guard let path = override?.trimmingCharacters(in: .whitespaces), !path.isEmpty else {
-            return "swe"
+            return bundled ?? "swe"
         }
         return path
     }
