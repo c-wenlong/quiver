@@ -9,8 +9,8 @@ struct McpAddServerSheet: View {
     var harnesses: [String]
     /// The harnesses the grid compares: the "Add to" defaults.
     var active: [String]
-    /// Names already on the hub or a harness, for the Replace gate.
-    var existing: Set<String> = []
+    /// The servers already listed, for the Replace gate.
+    var existing: [McpServer] = []
     var reload: () async -> Void
 
     @Environment(AppModel.self) private var app
@@ -38,7 +38,7 @@ struct McpAddServerSheet: View {
     @State private var working = false
     @State private var error: String?
 
-    init(harnesses: [String], active: [String], existing: Set<String> = [],
+    init(harnesses: [String], active: [String], existing: [McpServer] = [],
          reload: @escaping () async -> Void) {
         self.harnesses = harnesses
         self.active = active
@@ -178,7 +178,10 @@ struct McpAddServerSheet: View {
         do {
             // No secrets may land in the store for an add swe would
             // refuse: check the name before mcpSecretSet runs.
-            if existing.contains(name) && !force {
+            // Only the hub and the ticked harnesses get written, so only
+            // a copy there is a conflict, as swe judges it.
+            let clash = existing.first { $0.name == name }
+            if let clash, clash.inHub || !targets.isDisjoint(with: clash.harnesses), !force {
                 error = "A server named \(name) already exists. Turn on Replace to overwrite it."
                 return
             }

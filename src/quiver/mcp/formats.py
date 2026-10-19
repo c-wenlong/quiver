@@ -115,10 +115,12 @@ class StandardMcpFormatHandler(McpFormatHandler):
             out["url"] = raw["url"]
         if "headers" in raw and isinstance(raw.get("headers"), dict):
             out["headers"] = dict(raw["headers"])
-        if raw.get("type") in ("http", "sse") and out.get("url"):
+        if raw.get("type") == "sse" and out.get("url"):
             # Remote transport survives canonical: without it an SSE server
             # read from one harness would be re-emitted as plain http.
-            out["type"] = raw["type"]
+            # Http is the default, so it stays implicit: an explicit and an
+            # absent "http" must read the same or --strict sees a change.
+            out["type"] = "sse"
 
         return out
 

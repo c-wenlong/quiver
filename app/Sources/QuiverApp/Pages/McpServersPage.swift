@@ -115,16 +115,16 @@ struct McpServersPage: View {
             }
         }
         .sheet(isPresented: $adding) {
-            let (harnesses, active, names): ([String], [String], Set<String>) = {
+            let (harnesses, active, servers): ([String], [String], [McpServer]) = {
                 if case .loaded(let inventory) = model.state {
                     return (inventory.harnesses,
                             inventory.activeHarnesses.filter { !hidden.contains($0) },
-                            Set(inventory.servers.map(\.name)))
+                            inventory.servers)
                 }
                 return ([], [], [])
             }()
             McpAddServerSheet(harnesses: harnesses, active: active,
-                              existing: names) {
+                              existing: servers) {
                 await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
             }
         }

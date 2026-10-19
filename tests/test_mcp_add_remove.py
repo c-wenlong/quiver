@@ -310,3 +310,23 @@ class McpAddRemoveTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HttpTransportRoundTripTest(unittest.TestCase):
+    """An explicit and an implicit http read the same; sse stays distinct."""
+
+    def test_strict_sees_no_change_for_http_either_way(self):
+        from quiver.mcp.formats import get_conversion_issues
+
+        plain = {"url": "https://a/mcp"}
+        explicit = {"url": "https://a/mcp", "type": "http"}
+        self.assertEqual(get_conversion_issues(plain, "standard", "droid"), [])
+        self.assertEqual(get_conversion_issues(explicit, "droid", "standard"), [])
+
+    def test_sse_survives_standard_to_droid(self):
+        from quiver.mcp.formats import get_conversion_issues, get_format_handler
+
+        sse = {"url": "https://a/sse", "type": "sse"}
+        self.assertEqual(get_conversion_issues(sse, "standard", "droid"), [])
+        canonical = get_format_handler("standard").parse(sse)
+        self.assertEqual(get_format_handler("droid").emit(canonical)["type"], "sse")
