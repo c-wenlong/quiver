@@ -84,8 +84,9 @@ public enum Loadable<Value: Equatable & Sendable>: Equatable, Sendable {
 public final class DoctorModel {
     public private(set) var state: Loadable<DoctorReport> = .idle
     /// Findings whose Run is in flight, and what the last failure said.
-    public private(set) var running: Set<DoctorReport.Finding.ID> = []
-    public private(set) var runErrors: [DoctorReport.Finding.ID: String] = [:]
+    /// `internal(set)` so a test can stage one in flight.
+    public internal(set) var running: Set<DoctorReport.Finding.ID> = []
+    public internal(set) var runErrors: [DoctorReport.Finding.ID: String] = [:]
     private let swe: SweClient
     /// Bumped by each load; a reply from an older load is dropped, so a slow
     /// earlier refresh cannot overwrite a newer one.
@@ -110,24 +111,44 @@ public final class DoctorModel {
         if mine == generation { state = next }
     }
 
-    /// Runs the finding's fix through swe, then re-reads the report.
+    /// One repair at a time: a run in flight keeps the others waiting.
     public func run(_ finding: DoctorReport.Finding) async {
-        guard let action = finding.action, !running.contains(finding.id) else { return }
+        guard let action = finding.action, running.isEmpty else { return }
         running.insert(finding.id)
         runErrors[finding.id] = nil
         do {
             switch action {
             case .setup:
-                _ = try await swe.applySetup(starred: nil, adopt: nil)
+                let outcome = try await swe.applySetup(starred: nil, adopt: nil)
+                // A linking pass that stops early still counts as a
+                // repair for the report, but its reason shows on the row.
+                if let stopped = outcome.links?.error {
+                    runErrors[finding.id] = stopped
+                }
             case .`init`:
                 try await swe.runInit()
             case .discover:
                 _ = try await swe.applyDiscovery()
             }
-            await load()
         } catch {
             runErrors[finding.id] = error.localizedDescription
         }
+        // Even a failed run may have fixed something (a partial `swe
+        // init`), so re-read the report either way.
+        await load()
         running.remove(finding.id)
+    }
+
+    /// A run the page did itself (Run in Terminal) still reports under
+    /// the row.
+    public func noteError(_ message: String, for id: DoctorReport.Finding.ID) {
+        runErrors[id] = message
+    }
+
+    /// The line Run in Terminal types: a leading bare `swe` becomes the
+    /// quoted executable the page would use itself, so the bundled one works.
+    public static func terminalLine(fix: String, swe: String) -> String {
+        guard fix.hasPrefix("swe") else { return fix }
+        return LaunchPlanner.shellQuote(swe) + fix.dropFirst(3)
     }
 }

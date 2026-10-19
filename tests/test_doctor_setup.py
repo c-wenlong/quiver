@@ -99,3 +99,25 @@ class SetupFindingsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_plain_output_shows_the_setup_section(self):
+        from quiver.harness.commands import cmd_doctor
+
+        env = mock.Mock(node="/usr/bin/node", npm="/usr/bin/npm",
+                        node_version="22", npm_version="10",
+                        global_prefix="/usr/local",
+                        global_bin="/usr/local/bin", global_bin_on_path=True)
+        out = io.StringIO()
+        with mock.patch.dict("os.environ", {"HOME": str(self.home)}), \
+             mock.patch("quiver.harness.commands.load_registry", return_value={}), \
+             mock.patch("quiver.harness.path_health.probe_node_env", return_value=env), \
+             mock.patch("quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"), \
+             mock.patch("quiver.harness.path_health.nvm_bin_dirs", return_value=[]), \
+             mock.patch("quiver.harness.path_health.find_off_path_tools", return_value=[]), \
+             mock.patch("quiver.harness.commands.shutil.which", return_value="/usr/bin/npm"), \
+             contextlib.redirect_stdout(out):
+            cmd_doctor([])
+        text = out.getvalue()
+        self.assertIn("Setup", text)
+        self.assertIn("No shared AGENTS.md", text)
+        self.assertIn("swe setup --apply", text)

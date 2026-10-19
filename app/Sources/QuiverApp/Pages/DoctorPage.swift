@@ -106,11 +106,19 @@ private struct FindingRow: View {
                                     }
                                 }
                                 .primaryButton()
+                                .disabled(!model.running.isEmpty)
                             }
                         } else if fix.hasPrefix("swe ") {
                             Button("Run in Terminal", systemImage: "terminal") {
                                 Task {
-                                    try await app.accounts.runInTerminal(line: fix)
+                                    do {
+                                        try await app.accounts.runInTerminal(
+                                            line: DoctorModel.terminalLine(
+                                                fix: fix,
+                                                swe: SweLocation.executable(override: app.swePath)))
+                                    } catch {
+                                        model.noteError(error.localizedDescription, for: finding.id)
+                                    }
                                 }
                             }
                             .secondaryButton()
