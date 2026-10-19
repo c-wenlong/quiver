@@ -14,7 +14,6 @@ struct ProviderSetupSheet: View {
     /// it loads, since it checked PATH just now.
     var isInstalled: Bool
     @State private var model: InstallCatalogModel?
-    @State private var copied: String?
 
     private var sweExecutable: String { SweLocation.executable(override: app.swePath) }
 
@@ -133,8 +132,7 @@ struct ProviderSetupSheet: View {
 
     /// One method: the manager's logo, the copyable command, Copy and Run.
     private func methodRow(_ method: InstallMethod, line: String?) -> some View {
-        let key = "\(provider.id):\(method.via):\(method.command)"
-        return HStack(spacing: 8) {
+        HStack(spacing: 8) {
             Group {
                 if let logo = method.logo {
                     HarnessIcon(harness: logo, size: 16)
@@ -153,17 +151,8 @@ struct ProviderSetupSheet: View {
                 .help(method.command)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
-            Button("Copy", systemImage: copied == key ? "checkmark" : "doc.on.doc") {
-                copyToPasteboard(method.command)
-                copied = key
-                Task {
-                    try? await Task.sleep(for: .seconds(1.5))
-                    if copied == key { copied = nil }
-                }
-            }
-            .iconButton()
-            .help(copied == key ? "Copied" : "Copy")
-            .accessibilityLabel("Copy \(method.managerTitle) command")
+            CopyButton(help: "Copy the \(method.managerTitle) command") { copyToPasteboard(method.command) }
+                .iconButton()
             Button("Run in Terminal", systemImage: "terminal") {
                 guard let line else { return }
                 Task {

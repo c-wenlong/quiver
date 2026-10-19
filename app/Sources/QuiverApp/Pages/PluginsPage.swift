@@ -262,16 +262,11 @@ private struct DriftRow: View {
                         .background(Theme.code, in: .rect(cornerRadius: Theme.smallRadius))
                         // bg.code is the card's own colour in dark; the hairline keeps the block visible.
                         .overlay(RoundedRectangle(cornerRadius: Theme.smallRadius).strokeBorder(Theme.border, lineWidth: 1))
-                    Button("Copy", systemImage: "doc.on.doc") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(finding.fix, forType: .string)
-                    }
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 24, height: 28)
-                    .contentShape(.rect)
-                    .plainButton(cornerRadius: Theme.smallRadius)
-                    .help("Copy")
+                    CopyButton { copyToPasteboard(finding.fix) }
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 24, height: 28)
+                        .contentShape(.rect)
+                        .plainButton(cornerRadius: Theme.smallRadius)
                 }
                 if !finding.runnable {
                     Text("No command does this, so make the edit by hand.")

@@ -91,9 +91,8 @@ private struct FindingRow: View {
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(fix) }
+                        CopyButton(help: "Copy the command") { copyToPasteboard(fix) }
                             .iconButton()
-                            .help("Copy the command")
                     }
                     .padding(.leading, 12)
                     .padding(.trailing, 6)
