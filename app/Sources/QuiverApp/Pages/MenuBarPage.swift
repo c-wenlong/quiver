@@ -3,9 +3,8 @@ import SwiftUI
 
 /// What Quiver shows in the menu bar, after TokenTracker's Menu Bar &
 /// Widgets page, in two tabs: the status item (a live preview, its
-/// switch and figures) and the popup it opens (incidents, spend, and
-/// which harnesses and limits). The desktop widgets have their own
-/// page. A stored "widgets" tab from the old three-tab page reads as an
+/// switch and figures) and the popup it opens (its tabs, then each
+/// tab's own settings). The desktop widgets have their own page. A stored "widgets" tab from the old three-tab page reads as an
 /// unknown raw value and falls back to the first tab.
 struct MenuBarPage: View {
     enum Tab: String { case menuBar, popup }
@@ -16,7 +15,7 @@ struct MenuBarPage: View {
         Page(title: "Menu bar",
              subtitle: "What Quiver shows at the top of your screen.") {
             VStack(alignment: .leading, spacing: 24) {
-                Tabs(options: [(Tab.menuBar, "Menu bar"), (.popup, "Menu bar popup")],
+                Tabs(options: [(Tab.menuBar, "Menu bar"), (.popup, "Popup")],
                      selection: $tab, style: .underline)
                 switch tab {
                 case .menuBar: MenuBarSection()
@@ -148,12 +147,123 @@ private struct MenuBarPreview: View {
 
 // MARK: - Popup
 
+/// The popup's tabs, then the settings of one tab beside a live preview
+/// of that tab.
 private struct PopupSection: View {
     @Environment(AppModel.self) private var app
     @State private var width: CGFloat = 0
+    /// The tab whose settings show, and which the preview draws.
+    @AppStorage("menuBarPageEditingTab") private var editing = PopupTab.usage
 
     /// Below this the 340pt preview no longer leaves the settings room.
     static let twoColumnWidth: CGFloat = 760
+
+    var body: some View {
+        Group {
+            if width >= Self.twoColumnWidth {
+                HStack(alignment: .top, spacing: 24) {
+                    settings
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    preview
+                }
+            } else {
+                VStack(spacing: Theme.sectionGap) {
+                    preview
+                    settings
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    /// The real popup the status item opens, live: it reads the same models
+    /// these switches write, and takes no input (its Quit would terminate
+    /// the app, its Refresh would kick off loads). The shadow stands in for
+    /// the panel's window shadow.
+    private var preview: some View {
+        VStack(spacing: 10) {
+            MenuBarContent(openMain: {}, previewTab: editing)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+            Text(app.popupTabs.shows(editing) ? "Preview" : "Preview, \(editing.title) is switched off")
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    private var settings: some View {
+        VStack(alignment: .leading, spacing: Theme.sectionGap) {
+            PopupTabsSettings()
+            VStack(alignment: .leading, spacing: 16) {
+                Tabs(options: PopupTab.allCases.map { ($0, $0.title) }, selection: $editing,
+                     style: .underline)
+                editing.settings
+            }
+        }
+    }
+}
+
+/// One row of a draggable list with a switch: a grip, an optional icon,
+/// the title, and the switch at the trailing edge.
+private struct ToggleRow<Icon: View>: View {
+    var title: String
+    @Binding var isOn: Bool
+    /// The last shown tab's switch can't turn it off.
+    var locked = false
+    @ViewBuilder var icon: Icon
+
+    var body: some View {
+        HStack(spacing: 10) {
+            GripDots()
+            icon
+            Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+            Spacer(minLength: 16)
+            SettingSwitch(title: "Show \(title)", isOn: $isOn)
+                .disabled(locked)
+                .help(locked ? "At least one tab stays on" : "")
+        }
+        .padding(.vertical, 12)
+        .accessibilityHint("Drag to reorder")
+    }
+}
+
+/// The tab bar's tabs: which show, and in what order.
+private struct PopupTabsSettings: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionHeading(title: "Tabs",
+                           detail: "The tabs across the top of the popup. Drag to reorder.")
+            SettingsCard {
+                ReorderableRows(app.popupTabs.all, showsDividers: true) { id, before in
+                    if let before {
+                        app.popupTabs.move(id, before: before)
+                    } else {
+                        app.popupTabs.moveToEnd(id)
+                    }
+                } row: { tab in
+                    ToggleRow(title: tab.title,
+                              isOn: Binding(get: { app.popupTabs.shows(tab) },
+                                            set: { app.popupTabs.setShown($0, tab) }),
+                              locked: !app.popupTabs.canHide(tab)) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.textNav)
+                            .frame(width: 16)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The Usage tab's settings: incidents, spend, and which harnesses and
+/// limits it lists.
+struct UsageTabSettings: View {
+    @Environment(AppModel.self) private var app
 
     /// The same rows the Accounts page lists: every starred account, even
     /// before its usage loads, each its own row so two accounts of one
@@ -170,46 +280,9 @@ private struct PopupSection: View {
 
     var body: some View {
         @Bindable var app = app
-        Group {
-            if width >= Self.twoColumnWidth {
-                HStack(alignment: .top, spacing: 24) {
-                    settings(app)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    preview
-                }
-            } else {
-                VStack(spacing: Theme.sectionGap) {
-                    preview
-                    settings(app)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-    }
-
-    /// The real popup the status item opens, live: it reads the same models
-    /// these switches write, and takes no input (its Quit would terminate
-    /// the app, its Refresh would kick off loads). The shadow stands in for
-    /// the panel's window shadow.
-    private var preview: some View {
-        VStack(spacing: 10) {
-            MenuBarContent(openMain: {})
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-                .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
-            Text("Preview")
-                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-        }
-    }
-
-    /// The settings column: both cards and their headings, unchanged.
-    private func settings(_ app: AppModel) -> some View {
-        @Bindable var app = app
-        return VStack(alignment: .leading, spacing: Theme.sectionGap) {
+        VStack(alignment: .leading, spacing: Theme.sectionGap) {
             VStack(alignment: .leading, spacing: 16) {
-                SectionHeading(title: "Menu bar popup", detail: "What opens when you click the menu bar item.")
+                SectionHeading(title: "Usage tab", detail: "Limits, incidents and spend.")
                 SettingsCard {
                     SettingRow(title: "Show incidents",
                                detail: "A line at the top when a service your harnesses use has a problem.") {
@@ -224,7 +297,7 @@ private struct PopupSection: View {
             }
             VStack(alignment: .leading, spacing: 16) {
                 SectionHeading(title: "Harnesses and limits",
-                               detail: "Which accounts and harnesses the popup lists, which of their limits, and in what order. Drag to reorder.")
+                               detail: "Which accounts and harnesses the tab lists, which of their limits, and in what order. Drag to reorder.")
                 SettingsCard {
                     let rows = rows
                     let sources = rows.map { (source: $0.source, harness: $0.harness) }
@@ -241,6 +314,79 @@ private struct PopupSection: View {
                         }
                     } row: { row in
                         PopupSourceRow(row: row)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The Compute tab's settings: which charts in what order, how often
+/// they take a point, and which harnesses get a line.
+struct ComputeTabSettings: View {
+    @Environment(AppModel.self) private var app
+
+    private struct HarnessRow: Identifiable {
+        var id: String
+    }
+
+    /// Every starred harness in swe's order, then any other harness the
+    /// history has points for, in the dragged order.
+    private var harnessIDs: [String] {
+        let starred = app.compute.matchers.map(\.harness)
+        let seen = app.compute.history.series.keys.filter { !starred.contains($0) }.sorted()
+        return app.computePopup.harnesses.ordered(starred + seen)
+    }
+
+    private var interval: Binding<TrendInterval> {
+        Binding(get: { app.compute.trendInterval }, set: { app.compute.trendInterval = $0 })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.sectionGap) {
+            VStack(alignment: .leading, spacing: 16) {
+                SectionHeading(title: "Charts",
+                               detail: "The charts the tab stacks, top to bottom. Drag to reorder.")
+                SettingsCard {
+                    ReorderableRows(app.computePopup.allMetrics, showsDividers: true) { id, before in
+                        app.computePopup.moveMetric(id, before: before)
+                    } row: { metric in
+                        ToggleRow(title: metric.title,
+                                  isOn: Binding(get: { app.computePopup.metrics.shows(metric.id) },
+                                                set: { app.computePopup.metrics.setShown($0, metric.id) })) {
+                            EmptyView()
+                        }
+                    }
+                    SettingsDivider()
+                    SettingRow(title: "Take a point",
+                               detail: "Also sets the Compute page's chart.") {
+                        SelectMenu(options: TrendInterval.allCases.map { ($0, $0.title) },
+                                   selection: interval, width: 150)
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 16) {
+                SectionHeading(title: "Harnesses",
+                               detail: "Which starred harnesses get a line, and the order the hover readout lists them in. Drag to reorder.")
+                SettingsCard {
+                    let ids = harnessIDs
+                    if ids.isEmpty {
+                        Text("No harnesses yet. Star a harness on Harnesses to chart it.")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            .padding(.vertical, 14)
+                    }
+                    ReorderableRows(ids.map(HarnessRow.init), showsDividers: true) { id, before in
+                        if let before {
+                            app.computePopup.harnesses.move(id, before: before, in: ids)
+                        } else {
+                            app.computePopup.harnesses.moveToEnd(id, in: ids)
+                        }
+                    } row: { row in
+                        ToggleRow(title: UsageFormat.harness(row.id),
+                                  isOn: Binding(get: { app.computePopup.harnesses.shows(row.id) },
+                                                set: { app.computePopup.harnesses.setShown($0, row.id) })) {
+                            HarnessIcon(harness: row.id, size: 16)
+                        }
                     }
                 }
             }
