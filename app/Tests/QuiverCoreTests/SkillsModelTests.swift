@@ -109,6 +109,33 @@ let inventoryJSON = #"""
         return (SkillsModel(swe: SweClient(runner: runner)), runner)
     }
 
+    @Test func newSkillArgvAndLinkAllSelection() async throws {
+        let (model, runner) = model([
+            (["skills", "new"], ok(#"{"name": "s", "path": "/h/.quiver/skills/s/SKILL.md"}"#)),
+            (["skills", "--json"], ok(inventoryJSON)),
+        ])
+        let reply = try await model.create(name: "s", description: "Use when: x")
+        #expect(reply.path.hasSuffix("SKILL.md"))
+        #expect(runner.calls.first ==
+            ["skills", "new", "s", "--description=Use when: x", "--json"])
+        _ = try await model.create(name: "t", description: "")
+        #expect(runner.calls[2] == ["skills", "new", "t", "--json"])
+
+        let roots = [
+            SkillRoot(name: "a", path: "/a", state: "create"),
+            SkillRoot(name: "b", path: "/b", state: "relink"),
+            SkillRoot(name: "c", path: "/c", state: "absorb", detail: "empty"),
+            SkillRoot(name: "d", path: "/d", state: "absorb", detail: "2 skills"),
+            SkillRoot(name: "e", path: "/e", state: "keep"),
+            SkillRoot(name: "f", path: "/f", state: "conflict"),
+            SkillRoot(name: "g", path: "/g", state: "create", archived: true),
+            SkillRoot(name: "h", path: "/h", state: "linked"),
+        ]
+        let (link, skipped) = SkillsModel.linkAllTargets(roots)
+        #expect(link.map(\.name) == ["a", "b", "c"])
+        #expect(skipped.map(\.name).sorted() == ["d", "e", "f"])
+    }
+
     @Test func loadsSkillsAndRootsFromSwe() async throws {
         let (model, runner) = model([(["skills", "--json"], ok(inventoryJSON))])
         await model.load()

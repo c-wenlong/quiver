@@ -96,6 +96,10 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--mkdir", "Leave an empty directory behind"),
         ("--json", "Print the result as JSON"),
     ],
+    "skills new": [
+        ("--description=", "One-line description"),
+        ("--json", "Print the result as JSON"),
+    ],
     "skills move": [
         ("--from=", "Source scope"), ("--to=", "Destination scope"),
         ("--force", "Back up and replace an existing destination"),
@@ -319,7 +323,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
         "move": "skills move", "discover": "skills discover",
-        "hub": "skills hub",
+        "hub": "skills hub", "new": "skills new",
     },
     "sk": {
         "link": "skills link", "unlink": "skills unlink",
@@ -465,6 +469,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("link", "Point a harness at a shared skills root"),
         ("unlink", "Remove a skills-root symlink"),
         ("move", "Move a skill between scope roots"),
+        ("new", "Create a SKILL.md in the hub"),
         ("discover", "Find skills not yet cataloged"),
         ("hub", "Plugins the quiver hub offers"),
         ("catalog", "Manage extra skills directories"),
@@ -478,6 +483,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("link", "Point a harness at a shared skills root"),
         ("unlink", "Remove a skills-root symlink"),
         ("move", "Move a skill between scope roots"),
+        ("new", "Create a SKILL.md in the hub"),
         ("discover", "Find skills not yet cataloged"),
         ("hub", "Plugins the quiver hub offers"),
         ("catalog", "Manage extra skills directories"),
