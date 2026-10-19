@@ -643,7 +643,11 @@ final class FakeRunningInstances: RunningInstances {
         }
     }
 
-    private func cli(_ script: String, timeout: Duration = .seconds(3),
+    /// The default timeout is for runs that exit on their own: it only
+    /// catches a hang. Under full-suite load renew can notice even an
+    /// instant exit a second or more late, so a short one would time out
+    /// a clean run and report it as a failure.
+    private func cli(_ script: String, timeout: Duration = .seconds(60),
                      sigtermGrace: Duration = .milliseconds(200))
         throws -> (dir: URL, renewer: ClaudeSignInRenewer) {
         let dir = FileManager.default.temporaryDirectory
@@ -660,10 +664,25 @@ final class FakeRunningInstances: RunningInstances {
             environment: { ["PATH": path] }))
     }
 
-    @Test func aCleanExitRenews() async throws {
-        let (dir, renewer) = try cli("#!/bin/sh\nexit 0\n")
+    /// Runs `script` to its own exit and returns renew's answer with the
+    /// child, so a test can check the answer came from the exit status
+    /// and not from the timeout.
+    private func runToExit(_ script: String) async throws -> (renewed: Bool, child: Process) {
+        var (dir, renewer) = try cli(script)
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(await renewer.renew(home: dir.path, isDefault: true))
+        let child = ChildBox()
+        renewer.launched = { child.set($0, readyAt: nil) }
+        let renewed = await renewer.renew(home: dir.path, isDefault: true)
+        let process = try #require(child.get().0)
+        try #require(!process.isRunning)
+        return (renewed, process)
+    }
+
+    @Test func aCleanExitRenews() async throws {
+        let (renewed, child) = try await runToExit("#!/bin/sh\nexit 0\n")
+        #expect(child.terminationReason == .exit)
+        #expect(child.terminationStatus == 0)
+        #expect(renewed)
     }
 
     @Test func aStuckRunIsTerminatedThenKilled() async throws {
@@ -708,8 +727,10 @@ final class FakeRunningInstances: RunningInstances {
     }
 
     @Test func aFailingRunDoesNotRenew() async throws {
-        let (dir, renewer) = try cli("#!/bin/sh\nexit 1\n")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(await renewer.renew(home: dir.path, isDefault: true) == false)
+        // A timeout also answers false, so check the child really exited 1.
+        let (renewed, child) = try await runToExit("#!/bin/sh\nexit 1\n")
+        #expect(child.terminationReason == .exit)
+        #expect(child.terminationStatus == 1)
+        #expect(renewed == false)
     }
 }
