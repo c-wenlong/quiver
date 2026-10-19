@@ -590,6 +590,37 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.rows.count == 13)
     }
 
+    @Test func theLeaderboardShowsWhileTheUsageReadIsOut() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("a", "A", "a", creator: "openai", intelligence: 80),
+            entry("b", "B", "b", creator: "anthropic", intelligence: 70),
+        ])
+        let (started, reading) = AsyncStream<Void>.makeStream()
+        let (release, releasing) = AsyncStream<Void>.makeStream()
+        let used = [slice("b", "claude", tokens: 50)]
+        let model = ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
+                                keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in
+                                    reading.yield()
+                                    for await _ in release { break }
+                                    return used
+                                },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian))
+        let load = Task { await model.load() }
+        for await _ in started { break }
+        // Benchmarks are drawn before the ledger answers, tokens pending.
+        #expect(model.usagePending)
+        #expect(model.rows.map(\.logged) == ["A", "B"])
+        #expect(model.rows.allSatisfy { $0.tokens == 0 })
+        releasing.yield()
+        await load.value
+        #expect(!model.usagePending)
+        #expect(model.rows.first { $0.aa?.id == "b" }?.tokens == 50)
+    }
+
     @Test func harnessFilterNarrowsRowsAndDropsDeadFilters() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [

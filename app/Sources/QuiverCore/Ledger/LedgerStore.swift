@@ -346,71 +346,13 @@ extension LedgerStore {
     func groups(in range: DateInterval, by columns: [Column], thresholds: [Int],
                 bucketSeconds: Int? = nil, harness: String? = nil,
                 priceChanges: [Double] = []) throws -> [PricedGroup] {
-        let bucket = bucketSeconds.map { "CAST(e.ts / \($0) AS INTEGER)" }
-        let era = priceChanges.isEmpty
-            ? "0"
-            : priceChanges.map { "(e.ts >= \($0))" }.joined(separator: " + ")
-        let dims = columns.map { "d.\($0.rawValue)" }
-        let crossed = thresholds.isEmpty
-            ? "0"
-            : thresholds.map { "(e.session_total = 0 AND e.input + e.cache_read + e.cache_write > \($0))" }
-                .joined(separator: " + ")
-        let groupColumns = (dims + ["d.model", "d.tier", "logged", "crossed", "era"]
-            + (bucket.map { _ in ["bucket"] } ?? []))
-            .joined(separator: ", ")
-        let select = (dims + ["d.model", "d.tier", "(e.cost IS NOT NULL) AS logged", "\(crossed) AS crossed",
-                              "\(era) AS era"]
-            + (bucket.map { ["\($0) AS bucket"] } ?? []))
-            .joined(separator: ", ")
-        let statement = try db.prepare("""
-            SELECT \(select),
-                SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write), SUM(e.cache_write_1h),
-                SUM(e.reasoning), TOTAL(e.cost), COUNT(*), MIN(e.ts), MAX(e.ts)
-            FROM events e JOIN dims d ON d.id = e.dim
-            WHERE e.ts >= ? AND e.ts < ?
-            \(harness.map { _ in "AND d.harness = ?" } ?? "")
-            GROUP BY \(groupColumns)
-            """)
-        statement.bind([.double(range.start.timeIntervalSince1970), .double(range.end.timeIntervalSince1970)]
-                       + (harness.map { [SQLiteValue.text($0)] } ?? []))
-        var result: [PricedGroup] = []
-        while try statement.step() {
-            var dimensions: [Column: String] = [:]
-            for (index, column) in columns.enumerated() {
-                dimensions[column] = statement.text(Int32(index)) ?? ""
-            }
-            var i = Int32(columns.count)
-            func next() -> Int32 { defer { i += 1 }; return i }
-            let model = statement.text(next()) ?? ""
-            let tier = statement.text(next()) ?? ""
-            let logged = statement.int(next()) != 0
-            let crossedCount = Int(statement.int(next()))
-            _ = next() // era: only splits the groups; each prices at its own `first`.
-            let bucketStart = bucketSeconds.map { size in
-                Date(timeIntervalSince1970: Double(statement.int(next())) * Double(size))
-            }
-            let sums = TokenSums(
-                input: Int(statement.int(next())), output: Int(statement.int(next())),
-                cacheRead: Int(statement.int(next())), cacheWrite: Int(statement.int(next())),
-                cacheWrite1h: Int(statement.int(next())), reasoning: Int(statement.int(next())))
-            let cost = statement.double(next())
-            let count = Int(statement.int(next()))
-            let first = Date(timeIntervalSince1970: statement.double(next()))
-            let last = Date(timeIntervalSince1970: statement.double(next()))
-            result.append(PricedGroup(
-                dimensions: dimensions, model: model, tier: tier.isEmpty ? nil : tier,
-                hasLoggedCost: logged, thresholdsCrossed: crossedCount, tokens: sums,
-                loggedCost: cost, count: count, first: first, last: last, bucket: bucketStart))
-        }
-        return result
+        try db.pricedGroups(in: range, by: columns, thresholds: thresholds, bucketSeconds: bucketSeconds,
+                            harness: harness, priceChanges: priceChanges)
     }
 
     /// Every model and tier the ledger has a row for.
     func modelsAndTiers() throws -> [(model: String, tier: String)] {
-        let statement = try db.prepare("SELECT DISTINCT model, tier FROM dims")
-        var result: [(model: String, tier: String)] = []
-        while try statement.step() { result.append((statement.text(0) ?? "", statement.text(1) ?? "")) }
-        return result
+        try db.modelsAndTiers()
     }
 
     func events(in range: DateInterval) throws -> [UsageEvent] {
@@ -438,5 +380,80 @@ extension LedgerStore {
                 isSessionTotal: statement.int(13) != 0))
         }
         return events
+    }
+}
+
+/// The grouped reads on any connection to the ledger file: the store's
+/// write connection, or `Ledger`'s read-only one that never queues
+/// behind a scan.
+extension SQLiteDatabase {
+    func pricedGroups(in range: DateInterval, by columns: [LedgerStore.Column], thresholds: [Int],
+                bucketSeconds: Int? = nil, harness: String? = nil,
+                priceChanges: [Double] = []) throws -> [LedgerStore.PricedGroup] {
+        let bucket = bucketSeconds.map { "CAST(e.ts / \($0) AS INTEGER)" }
+        let era = priceChanges.isEmpty
+            ? "0"
+            : priceChanges.map { "(e.ts >= \($0))" }.joined(separator: " + ")
+        let dims = columns.map { "d.\($0.rawValue)" }
+        let crossed = thresholds.isEmpty
+            ? "0"
+            : thresholds.map { "(e.session_total = 0 AND e.input + e.cache_read + e.cache_write > \($0))" }
+                .joined(separator: " + ")
+        let groupColumns = (dims + ["d.model", "d.tier", "logged", "crossed", "era"]
+            + (bucket.map { _ in ["bucket"] } ?? []))
+            .joined(separator: ", ")
+        let select = (dims + ["d.model", "d.tier", "(e.cost IS NOT NULL) AS logged", "\(crossed) AS crossed",
+                              "\(era) AS era"]
+            + (bucket.map { ["\($0) AS bucket"] } ?? []))
+            .joined(separator: ", ")
+        let statement = try prepare("""
+            SELECT \(select),
+                SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write), SUM(e.cache_write_1h),
+                SUM(e.reasoning), TOTAL(e.cost), COUNT(*), MIN(e.ts), MAX(e.ts)
+            FROM events e JOIN dims d ON d.id = e.dim
+            WHERE e.ts >= ? AND e.ts < ?
+            \(harness.map { _ in "AND d.harness = ?" } ?? "")
+            GROUP BY \(groupColumns)
+            """)
+        statement.bind([.double(range.start.timeIntervalSince1970), .double(range.end.timeIntervalSince1970)]
+                       + (harness.map { [SQLiteValue.text($0)] } ?? []))
+        var result: [LedgerStore.PricedGroup] = []
+        while try statement.step() {
+            var dimensions: [LedgerStore.Column: String] = [:]
+            for (index, column) in columns.enumerated() {
+                dimensions[column] = statement.text(Int32(index)) ?? ""
+            }
+            var i = Int32(columns.count)
+            func next() -> Int32 { defer { i += 1 }; return i }
+            let model = statement.text(next()) ?? ""
+            let tier = statement.text(next()) ?? ""
+            let logged = statement.int(next()) != 0
+            let crossedCount = Int(statement.int(next()))
+            _ = next() // era: only splits the groups; each prices at its own `first`.
+            let bucketStart = bucketSeconds.map { size in
+                Date(timeIntervalSince1970: Double(statement.int(next())) * Double(size))
+            }
+            let sums = LedgerStore.TokenSums(
+                input: Int(statement.int(next())), output: Int(statement.int(next())),
+                cacheRead: Int(statement.int(next())), cacheWrite: Int(statement.int(next())),
+                cacheWrite1h: Int(statement.int(next())), reasoning: Int(statement.int(next())))
+            let cost = statement.double(next())
+            let count = Int(statement.int(next()))
+            let first = Date(timeIntervalSince1970: statement.double(next()))
+            let last = Date(timeIntervalSince1970: statement.double(next()))
+            result.append(LedgerStore.PricedGroup(
+                dimensions: dimensions, model: model, tier: tier.isEmpty ? nil : tier,
+                hasLoggedCost: logged, thresholdsCrossed: crossedCount, tokens: sums,
+                loggedCost: cost, count: count, first: first, last: last, bucket: bucketStart))
+        }
+        return result
+    }
+
+    /// Every model and tier the ledger has a row for.
+    func modelsAndTiers() throws -> [(model: String, tier: String)] {
+        let statement = try prepare("SELECT DISTINCT model, tier FROM dims")
+        var result: [(model: String, tier: String)] = []
+        while try statement.step() { result.append((statement.text(0) ?? "", statement.text(1) ?? "")) }
+        return result
     }
 }

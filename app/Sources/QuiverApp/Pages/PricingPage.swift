@@ -58,13 +58,21 @@ private struct PricingContent: View {
                 })
             }
         }
-        .task(id: model.period) { await model.load() }
-        .task(id: model.harnessFilter) { await model.load() }
-        .task(id: app.overview?.completedScans) { await model.load() }
+        // One task for every input: three separate ones each ran the
+        // whole read on first open, one after another.
+        .task(id: LoadKey(period: model.period, harness: model.harnessFilter,
+                          scans: app.overview?.completedScans)) { await model.load() }
         .sheet(item: $editing) { row in
             PriceSheet(model: model, row: row)
         }
     }
+}
+
+/// What a Pricing load reads: a change to any of them reloads.
+private struct LoadKey: Equatable {
+    var period: OverviewPeriod
+    var harness: Set<String>
+    var scans: Int?
 }
 
 // MARK: - Header

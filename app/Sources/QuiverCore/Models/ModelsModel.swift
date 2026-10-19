@@ -225,6 +225,10 @@ public final class ModelsModel {
     /// loading card until then (`hasKey` reads false before the first
     /// key check).
     public private(set) var hasLoaded = false
+    /// The benchmarks are on screen but the first usage read is still
+    /// out: token cells show a spinner rather than "—", and an empty
+    /// board says it is reading rather than "No usage".
+    public private(set) var usagePending = false
     /// The overview scan counter the last usage read saw, so a ledger
     /// re-scan can flag the slices as stale without re-fetching AA data.
     private var loadedUsageStamp: Int?
@@ -275,6 +279,13 @@ public final class ModelsModel {
             .map { Date(timeIntervalSince1970: $0) }
         await loadPrices()
         guard generation == loadGeneration else { return }
+        if !hasLoaded {
+            // Draw the leaderboard now; the usage read fills in tokens
+            // and the user's own models when it lands.
+            usagePending = true
+            rebuild()
+        }
+        defer { if generation == loadGeneration { usagePending = false } }
         usageGeneration += 1
         let usage = usageGeneration
         let covered = requestedUsageStamp
@@ -283,6 +294,7 @@ public final class ModelsModel {
         // A reload that started after this read has the newer slices.
         if usage == usageGeneration { periodSlices = fresh }
         hasLoaded = true
+        usagePending = false
         loadedUsageStamp = covered
         rebuild()
         // A scan that finished while the read was out isn't in it, and
@@ -448,8 +460,11 @@ public final class ModelsModel {
             .map(\.key)
         // A harness that left the period drops out of the filter, before
         // the rows are filtered: once none is left, everything shows again.
-        let live = harnessFilter.filter { harnessTokens[$0] != nil }
-        if live != harnessFilter { harnessFilter = live }
+        // Not before the first usage read, which would drop them all.
+        if !usagePending {
+            let live = harnessFilter.filter { harnessTokens[$0] != nil }
+            if live != harnessFilter { harnessFilter = live }
+        }
 
         // Per logged model: total tokens and the harnesses that ran it.
         var byModel: [String: (tokens: Int, harnesses: [String], byHarness: [String: Int])] = [:]
@@ -480,10 +495,14 @@ public final class ModelsModel {
         // Per AA model, the logged name with the most tokens: its ledger
         // price is the row's list price.
         var pricedNames: [String: String] = [:]
+        // One index for every name: `ModelMatcher.match` re-parses the
+        // whole AA list per call, which held the main thread over a second
+        // with a month of usage.
+        let index = ModelMatcher.Index(models: allModels, links: links)
         // Sorted, so which alias names a merged row (on a token tie) and
         // the order rows enter the sort don't follow dictionary order.
         for (logged, entry) in byModel.sorted(by: { $0.key < $1.key }) {
-            let aa = ModelMatcher.match(logged, in: allModels, links: links)
+            let aa = index.match(logged)?.model
             let parsed = ModelMatcher.parse(logged)
             guard let aa else {
                 // Unmatched names only surface in the warning popover.
