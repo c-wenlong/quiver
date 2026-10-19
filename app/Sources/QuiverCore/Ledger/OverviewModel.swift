@@ -233,11 +233,11 @@ public final class OverviewModel {
         await load(scan: false)
     }
 
-    /// The price list changed under the figures (a saved user price): put
-    /// it in the ledger, drop every cached summary and rebuild. Costs are
-    /// computed at query time, so a fresh catalog reprices past usage.
-    public func pricingUpdated(_ catalog: PricingCatalog) async {
-        await ledger.setPricing(catalog)
+    /// The ledger's price list changed (a saved user price, already set
+    /// there by the caller): drop every cached summary and rebuild. Costs
+    /// are computed at query time, so the new catalog reprices past usage.
+    /// Takes no catalog, so a late call can never put back an older one.
+    public func pricesChanged() async {
         revision += 1
         await load(scan: false)
     }
