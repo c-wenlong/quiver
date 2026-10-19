@@ -765,6 +765,11 @@ private struct DayColumn: View, Equatable {
     private let hourHeight: CGFloat = 48
     private var gridHeight: CGFloat { 24 * hourHeight }
 
+    /// The hour lines, blocks, "+N" chips and now-line are drawn in one
+    /// canvas instead of a stack of views per block: scrolling then moves
+    /// one layer per column, with nothing for SwiftUI to lay out or hit
+    /// test per block on every frame. One interactive layer on top finds
+    /// the block under the pointer through `DayColumnGeometry`.
     var body: some View {
         GeometryReader { geo in
             // 18pt of minimum height at 48pt per hour is 22.5 minutes:
@@ -775,57 +780,24 @@ private struct DayColumn: View, Equatable {
                 model.blocks(on: day).blocks.filter(model.isShown), day: day,
                 minimumDuration: 18 / 48 * 3600,
                 maxLanes: Swift.max(2, Int(geo.size.width / Self.minimumLaneWidth)))
+            let geometry = DayColumnGeometry(layout: layout, day: day, calendar: model.calendar,
+                                             width: geo.size.width, hourHeight: hourHeight)
             ZStack(alignment: .topLeading) {
-                // Hour lines.
-                VStack(spacing: 0) {
-                    ForEach(0..<24, id: \.self) { _ in
-                        VStack(spacing: 0) {
-                            Rectangle().fill(Theme.border.opacity(0.5)).frame(height: 1)
-                            Spacer()
-                        }
-                        .frame(height: hourHeight)
-                    }
-                }
-                ForEach(layout.segments) { segment in
-                    let lane = geo.size.width / CGFloat(segment.laneCount)
-                    // Padding, not .offset: only the layout position gives
-                    // the popover the block's real frame; offset leaves the
-                    // anchor at the column's top, off the visible hours.
-                    BlockView(segment: segment, color: color(segment.block),
-                              title: title(segment.block),
-                              account: model.accountName(for: segment.block.accountHome),
-                              multiAccount: multiAccount.contains(segment.block.harness))
-                        .frame(width: lane - 2, height: height(from: segment.start, to: segment.end))
-                        .onTapGesture { open(segment.block) }
-                        .hoverCard(cards, key: segment.id) {
-                            let block = segment.block
-                            let rows = cardRows(block)
-                            BlockCard(block: block, model: model,
-                                      active: block.end.timeIntervalSince(block.start),
-                                      shown: rows.shown, more: rows.more)
-                        }
-                        .padding(.leading, CGFloat(segment.lane) * lane + 1)
-                        .padding(.top, y(segment.start))
-                }
-                ForEach(layout.overflows) { overflow in
-                    let lane = geo.size.width / CGFloat(overflow.laneCount)
-                    OverflowChip(overflow: overflow, clock: Self.clock)
-                        .frame(width: lane - 2,
-                               height: height(from: overflow.start, to: overflow.end))
-                        .contentShape(.rect)
-                        // A tap opens the card at once; the hover delay
-                        // only keeps a passing pointer from popping one.
-                        .onTapGesture { cards.open(overflow.id) }
-                        .hoverCard(cards, key: overflow.id) {
-                            OverflowCard(overflow: overflow, model: model,
-                                         cardRows: cardRows, open: open)
-                        }
-                        .padding(.leading, CGFloat(overflow.lane) * lane + 1)
-                        .padding(.top, y(overflow.start))
-                }
-                if day.contains(now) {
-                    Rectangle().fill(.red).frame(height: 1.5)
-                        .offset(y: y(now))
+                Canvas { context, size in draw(geometry, in: &context, size: size) }
+                DayColumnHits(geometry: geometry, cards: cards,
+                              tap: activate) { item in card(for: item) }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityChildren {
+                // VoiceOver still reaches and opens every block.
+                ForEach(geometry.items) { item in
+                    Color.clear
+                        .frame(width: item.frame.width, height: item.frame.height)
+                        .position(x: item.frame.midX, y: item.frame.midY)
+                        .accessibilityElement()
+                        .accessibilityLabel(accessibilityLabel(for: item))
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { activate(item) }
                 }
             }
         }
@@ -835,63 +807,212 @@ private struct DayColumn: View, Equatable {
         }
     }
 
-    private func height(from start: Date, to end: Date) -> CGFloat {
-        max(18, CGFloat(CalendarLayout.clockOffset(end, in: day, calendar: model.calendar)
-                        - CalendarLayout.clockOffset(start, in: day, calendar: model.calendar))
-            * hourHeight)
+    /// A block opens its session (or project sheet); a chip opens its
+    /// card at once, since the hover delay only exists so a passing
+    /// pointer never pops one.
+    private func activate(_ item: DayColumnGeometry.Item) {
+        switch item.kind {
+        case .segment(let segment): open(segment.block)
+        case .overflow: cards.open(item.id)
+        }
     }
 
-    /// Clock hours into the day, not elapsed seconds: on a DST day the
-    /// hour a response happened still decides where its block sits.
-    private func y(_ date: Date) -> CGFloat {
-        CGFloat(CalendarLayout.clockOffset(date, in: day, calendar: model.calendar)) * hourHeight
+    @ViewBuilder
+    private func card(for item: DayColumnGeometry.Item) -> some View {
+        switch item.kind {
+        case .segment(let segment):
+            let block = segment.block
+            let rows = cardRows(block)
+            BlockCard(block: block, model: model,
+                      active: block.end.timeIntervalSince(block.start),
+                      shown: rows.shown, more: rows.more)
+        case .overflow(let overflow):
+            OverflowCard(overflow: overflow, model: model, cardRows: cardRows, open: open)
+        }
+    }
+
+    private func accessibilityLabel(for item: DayColumnGeometry.Item) -> String {
+        switch item.kind {
+        case .segment(let segment):
+            return "\(segment.block.harness), \(title(segment.block)), "
+                + CalendarFormat.range(start: segment.block.start, end: segment.block.end)
+        case .overflow(let overflow):
+            return "\(overflow.hidden.count) more blocks, "
+                + "\(Self.clock.string(from: overflow.start)) to \(Self.clock.string(from: overflow.end))"
+        }
+    }
+
+    // MARK: Drawing
+
+    private func draw(_ geometry: DayColumnGeometry, in context: inout GraphicsContext,
+                      size: CGSize) {
+        for hour in 0..<24 {
+            context.fill(Path(CGRect(x: 0, y: CGFloat(hour) * hourHeight,
+                                     width: size.width, height: 1)),
+                         with: .color(Theme.border.opacity(0.5)))
+        }
+        for item in geometry.items {
+            switch item.kind {
+            case .segment(let segment): drawBlock(segment, in: item.frame, context: context)
+            case .overflow(let overflow): drawChip(overflow, in: item.frame, context: context)
+            }
+        }
+        if day.contains(now) {
+            context.fill(Path(CGRect(x: 0, y: geometry.y(now), width: size.width, height: 1.5)),
+                         with: .color(.red))
+        }
+    }
+
+    /// One activity block: rounded fill in the harness colour at low
+    /// opacity, a full-colour left bar, the project name and, when it is
+    /// tall enough, its time range, centred down the block.
+    private func drawBlock(_ segment: CalendarLayout.Segment, in frame: CGRect,
+                           context: GraphicsContext) {
+        let color = self.color(segment.block)
+        context.fill(Path(roundedRect: frame, cornerRadius: 4),
+                     with: .color(color.opacity(0.15)))
+        context.fill(Path(roundedRect: CGRect(x: frame.minX, y: frame.minY + 1.5, width: 3,
+                                              height: max(0, frame.height - 3)),
+                          cornerRadius: 1.5),
+                     with: .color(color))
+        // 3pt bar, then 5pt of padding each side of the text.
+        let textWidth = frame.width - 13
+        var lines: [GraphicsContext.ResolvedText] = []
+        if let title = Self.fitted(title(segment.block), font: .system(size: 10, weight: .medium),
+                                   color: nil, width: textWidth, in: context) {
+            lines.append(title)
+        }
+        if segment.end.timeIntervalSince(segment.start) >= 30 * 60 {
+            let block = segment.block
+            let range = CalendarFormat.range(start: block.start, end: block.end)
+                + (multiAccount.contains(block.harness)
+                   ? " · \(model.accountName(for: block.accountHome))" : "")
+            if let detail = Self.fitted(range, font: .system(size: 9), color: Theme.textSecondary,
+                                        width: textWidth, in: context) {
+                lines.append(detail)
+            }
+        }
+        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude,
+                               height: .greatestFiniteMagnitude)
+        let heights = lines.map { $0.measure(in: unbounded).height }
+        var y = frame.midY - heights.reduce(0, +) / 2
+        var clipped = context
+        clipped.clip(to: Path(frame))
+        for (line, height) in zip(lines, heights) {
+            clipped.draw(line, at: CGPoint(x: frame.minX + 8, y: y), anchor: .topLeading)
+            y += height
+        }
+    }
+
+    /// The "+N" chip in a crowded column's last lane: a subtle fill, a
+    /// dashed border and the hidden count centred at its top.
+    private func drawChip(_ overflow: CalendarLayout.Overflow, in frame: CGRect,
+                          context: GraphicsContext) {
+        context.fill(Path(roundedRect: frame, cornerRadius: 4), with: .color(Theme.rowHover))
+        context.stroke(Path(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 3.5),
+                       with: .color(Theme.textSecondary),
+                       style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        let count = context.resolve(Text("+\(overflow.hidden.count)")
+            .font(.system(size: 11, weight: .semibold)))
+        context.draw(count, at: CGPoint(x: frame.midX, y: frame.minY + 4), anchor: .top)
+    }
+
+    /// One line of text cut to fit `width` with a trailing "…", as
+    /// `lineLimit(1)` would. nil when there is no room at all.
+    private static func fitted(_ string: String, font: Font, color: Color?, width: CGFloat,
+                               in context: GraphicsContext) -> GraphicsContext.ResolvedText? {
+        guard width > 0, !string.isEmpty else { return nil }
+        func resolve(_ text: String) -> GraphicsContext.ResolvedText {
+            var styled = Text(text).font(font)
+            if let color { styled = styled.foregroundStyle(color) }
+            return context.resolve(styled)
+        }
+        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude,
+                               height: .greatestFiniteMagnitude)
+        let full = resolve(string)
+        if full.measure(in: unbounded).width <= width { return full }
+        let characters = Array(string)
+        var low = 0, high = characters.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if resolve(String(characters[..<mid]) + "…").measure(in: unbounded).width <= width {
+                low = mid
+            } else {
+                high = mid - 1
+            }
+        }
+        return resolve(String(characters[..<low]) + "…")
     }
 }
 
-/// One activity block: rounded fill in the harness colour at low opacity,
-/// a full-colour left bar, the project name and its time range when it is
-/// tall enough.
-private struct BlockView: View {
-    var segment: CalendarLayout.Segment
-    var color: Color
-    var title: String
-    var account: String
-    /// True when the harness has more than one account in range: the
-    /// account name rides the second line and the tooltip.
-    var multiAccount: Bool = false
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
-
-    /// The block's real times: `start`/`end` on the segment are display
-    /// times stretched by the minimum duration.
-    private var timeRange: String {
-        CalendarFormat.range(start: segment.block.start, end: segment.block.end)
-    }
+/// A day column's one interactive layer. Hover and taps find their block
+/// or chip through the column's geometry, and only the block whose card
+/// is open gets a view, to anchor its popover.
+private struct DayColumnHits<Card: View>: View {
+    var geometry: DayColumnGeometry
+    var cards: HoverCards
+    var tap: (DayColumnGeometry.Item) -> Void
+    @ViewBuilder var card: (DayColumnGeometry.Item) -> Card
+    /// The item under the pointer, so enter and exit reach the hover
+    /// card like the per-block `.onHover` they replace.
+    @State private var hovered: String?
 
     var body: some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5).fill(color)
-                .frame(width: 3)
-                .padding(.vertical, 1.5)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(title).font(.system(size: 10, weight: .medium))
-                    .lineLimit(1)
-                if segment.end.timeIntervalSince(segment.start) >= 30 * 60 {
-                    Text(timeRange + (multiAccount ? " · \(account)" : ""))
-                        .font(.system(size: 9))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
+        // Read here, so a card opening redraws these layers alone.
+        let open = geometry.items.first { $0.id == cards.key }
+        Color.clear
+            .contentShape(.rect)
+            .onContinuousHover { phase in
+                let under: String?
+                switch phase {
+                case .active(let point): under = geometry.item(at: point)?.id
+                case .ended: under = nil
+                }
+                guard under != hovered else { return }
+                if let hovered { cards.hover(hovered, inside: false) }
+                hovered = under
+                if let under { cards.hover(under, inside: true) }
+            }
+            .onTapGesture { point in
+                if let item = geometry.item(at: point) { tap(item) }
+            }
+            .overlay(alignment: .topLeading) {
+                if let open {
+                    CardAnchor(cards: cards, key: open.id, frame: open.frame) { card(open) }
+                        .id(open.id)
                 }
             }
-            .padding(.horizontal, 5).padding(.vertical, 3)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-        .accessibilityElement()
-        .accessibilityLabel("\(segment.block.harness), \(title), \(timeRange)")
+    }
+}
+
+/// The open card's block, as a view: it reports the block's screen rect
+/// to the card poller and anchors the popover at the block.
+private struct CardAnchor<Card: View>: View {
+    var cards: HoverCards
+    var key: String
+    var frame: CGRect
+    @ViewBuilder var card: () -> Card
+
+    var body: some View {
+        Color.clear
+            .frame(width: frame.width, height: frame.height)
+            .background(HoverRegionView { [cards, key] view, attached in
+                cards.geometry.register(chip: key, view: view, attached: attached)
+            })
+            .popover(isPresented: Binding(get: { true },
+                                          set: { [cards, key] in if !$0 { cards.closed(key) } }),
+                     attachmentAnchor: .rect(.bounds),
+                     arrowEdge: .leading) {
+                card()
+                    .background(HoverRegionView { [cards, key] view, attached in
+                        cards.geometry.register(card: key, view: view, attached: attached)
+                    })
+            }
+            // Padding, not .offset: only the layout position gives the
+            // popover the block's real frame.
+            .padding(.leading, frame.minX)
+            .padding(.top, frame.minY)
+            .allowsHitTesting(false)
     }
 }
 
@@ -1329,31 +1450,6 @@ private struct BlockCard: View {
         }
         .padding(12)
         .frame(width: 300, alignment: .leading)
-    }
-}
-
-/// The "+N" chip in a crowded column's last lane: a subtle fill, a
-/// dashed border and the hidden count centred at its top.
-private struct OverflowChip: View {
-    var overflow: CalendarLayout.Overflow
-    var clock: DateFormatter
-
-    var body: some View {
-        Text("+\(overflow.hidden.count)")
-            .font(.system(size: 11, weight: .semibold))
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.top, 4)
-            .background(Theme.rowHover, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(Theme.textSecondary,
-                                  style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
-            .accessibilityElement()
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(
-                "\(overflow.hidden.count) more blocks, "
-                + clock.string(from: overflow.start)
-                + " to \(clock.string(from: overflow.end))")
     }
 }
 
