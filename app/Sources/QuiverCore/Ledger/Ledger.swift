@@ -502,16 +502,17 @@ public actor Ledger {
     /// every timezone offset in use is a whole number of quarter hours, so a
     /// bucket never straddles midnight.
     public func daily(in range: DateInterval, calendar: Calendar) -> [DailyUsage] {
+        let pricing = self.pricing
         guard let groups = try? store.groups(
             in: range, by: [.harness, .model], thresholds: pricing.thresholds, bucketSeconds: 900,
-            priceChanges: priceChanges(in: range))
+            priceChanges: priceChanges(in: range, pricing: pricing))
         else { return [] }
         struct Key: Hashable { var day: Date, harness: String, model: String }
         var days: [Key: UsageTotals] = [:]
         for group in groups {
             let day = calendar.startOfDay(for: max(group.bucket ?? group.first, range.start))
             days[Key(day: day, harness: group.dimensions[.harness] ?? "", model: group.model), default: UsageTotals()]
-                .add(price(group))
+                .add(Self.price(group, pricing: pricing))
         }
         return days
             .map { DailyUsage(day: $0.key.day, harness: $0.key.harness, model: $0.key.model, totals: $0.value) }
@@ -550,9 +551,11 @@ public actor Ledger {
     /// Usage per session, most recent first. `harness` restricts the read
     /// to one harness's dims when the caller only wants those.
     public func bySession(in range: DateInterval, harness: String? = nil) -> [SessionUsage] {
+        let pricing = self.pricing
         guard let groups = try? store.groups(
             in: range, by: [.harness, .account, .session, .cwd],
-            thresholds: pricing.thresholds, harness: harness, priceChanges: priceChanges(in: range))
+            thresholds: pricing.thresholds, harness: harness,
+            priceChanges: priceChanges(in: range, pricing: pricing))
         else { return [] }
         struct Key: Hashable { var harness, account, session: String }
         var sessions: [Key: SessionUsage] = [:]
@@ -562,7 +565,7 @@ public actor Ledger {
         for group in groups {
             let key = Key(harness: group.dimensions[.harness] ?? "", account: group.dimensions[.account] ?? "",
                           session: group.dimensions[.session] ?? "")
-            let totals = price(group)
+            let totals = Self.price(group, pricing: pricing)
             let cwd = group.dimensions[.cwd].flatMap { $0.isEmpty ? nil : $0 }
             var session = sessions[key] ?? SessionUsage(
                 sessionId: key.session, harness: key.harness, accountHome: key.account, cwd: nil,
@@ -646,14 +649,15 @@ public actor Ledger {
     }
 
     private func aggregate(in range: DateInterval, by columns: [LedgerStore.Column]) -> [[String]: UsageTotals] {
+        let pricing = self.pricing
         guard let groups = try? store.groups(in: range, by: columns, thresholds: pricing.thresholds,
-                                             priceChanges: priceChanges(in: range)) else {
+                                             priceChanges: priceChanges(in: range, pricing: pricing)) else {
             return [:]
         }
         var result: [[String]: UsageTotals] = [:]
         for group in groups {
             let key = columns.map { group.dimensions[$0] ?? "" }
-            result[key, default: UsageTotals()].add(price(group))
+            result[key, default: UsageTotals()].add(Self.price(group, pricing: pricing))
         }
         return result
     }
@@ -661,8 +665,10 @@ public actor Ledger {
     /// The moments inside `range` at which the price entry of any model
     /// the ledger holds changed. Splitting the query there keeps every
     /// group inside one price; other entries' changes split nothing.
-    private func priceChanges(in range: DateInterval) -> [Double] {
-        let pricing = self.pricing
+    /// Every query reads `pricing` once and passes that copy through
+    /// splitting and pricing alike: `setPricing` can swap the catalog
+    /// mid-query, and one result must never mix two catalogs.
+    private func priceChanges(in range: DateInterval, pricing: PricingCatalog) -> [Double] {
         guard pricing.hasHistory, let used = try? store.modelsAndTiers() else { return [] }
         return Self.priceChanges(in: range, used: used, pricing: pricing)
     }
@@ -680,10 +686,6 @@ public actor Ledger {
         }
         let start = range.start.timeIntervalSince1970, end = range.end.timeIntervalSince1970
         return pricing.priceChanges(for: entries).filter { $0 > start && $0 < end }
-    }
-
-    private func price(_ group: LedgerStore.PricedGroup) -> UsageTotals {
-        Self.price(group, pricing: pricing)
     }
 
     private static func price(_ group: LedgerStore.PricedGroup, pricing: PricingCatalog) -> UsageTotals {

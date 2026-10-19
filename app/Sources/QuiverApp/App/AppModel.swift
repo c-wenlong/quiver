@@ -497,7 +497,7 @@ final class AppModel {
                 // price sheet rather than holding it open.
                 apply: { catalog in
                     ledger.setPricing(catalog)
-                    Task { @MainActor in await overviewModel?.pricingUpdated(catalog) }
+                    Task { @MainActor in await overviewModel?.pricesChanged() }
                 })
             // Benchmark data + the user's own per-model usage, for the
             // Models page and the hover cards everywhere else.

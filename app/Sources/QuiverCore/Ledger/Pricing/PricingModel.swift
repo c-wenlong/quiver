@@ -95,6 +95,8 @@ public final class PricingModel {
     /// Bumped on every `load`: a superseded load must not publish or
     /// touch the filter once a newer one has started.
     private var loadGeneration = 0
+    /// Bumped on every `reprice`: only the newest catalog build applies.
+    private var repriceGeneration = 0
 
     private let ledger: Ledger
     private var overrides: PricingOverrides
@@ -242,9 +244,15 @@ public final class PricingModel {
     /// reloads this page's rows. `apply` is expected to return once the
     /// ledger prices with the new catalog; slower redraws elsewhere (the
     /// Overview's figures) belong in the background, not on this path.
+    /// Saves can overlap (Cancel closes the sheet while its write runs),
+    /// so a build that a later save has superseded is dropped rather than
+    /// applied over the newer catalog.
     private func reprice() async throws {
+        repriceGeneration += 1
+        let generation = repriceGeneration
         let makeCatalog = self.makeCatalog
         let catalog = try await Task.detached(priority: .userInitiated) { try makeCatalog() }.value
+        guard generation == repriceGeneration else { return }
         await apply(catalog)
         await load()
     }

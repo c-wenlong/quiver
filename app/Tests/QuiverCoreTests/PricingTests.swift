@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import QuiverCore
 
@@ -321,6 +322,30 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         await model.load()
         #expect(model.unpriced.isEmpty)
         #expect(model.groups.flatMap(\.models).first?.source == .yours)
+    }
+
+    @Test func `a slow catalog build never lands over a newer save`() async throws {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2", tokens: 1_000_000)))
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let file = temp.url.appending(path: "config/pricing.json")
+        let builds = OSAllocatedUnfairLock(initialState: 0)
+        let model = PricingModel(
+            ledger: ledger, overrides: PricingOverrides(url: file),
+            makeCatalog: {
+                // The first build reads the file, then stalls past the
+                // second save: the order a Cancel-and-save-again gives.
+                let entries = PricingOverrides(url: file).entries
+                if builds.withLock({ $0 += 1; return $0 }) == 1 { Thread.sleep(forTimeInterval: 0.3) }
+                return try PricingCatalog(liteLLM: Data("{}".utf8), overrides: entries)
+            },
+            apply: { catalog in await ledger.setPricing(catalog) })
+        async let first: Void = model.save(key: "swe-2", prices: .init(input: 1, output: 1))
+        try await Task.sleep(for: .milliseconds(100))
+        try await model.save(key: "swe-2", prices: .init(input: 5, output: 5))
+        try await first
+        #expect(await ledger.totals(in: allTime).costUSD == 5)
     }
 
     @Test func `saving under a changed key replaces the old one in one write`() async throws {
