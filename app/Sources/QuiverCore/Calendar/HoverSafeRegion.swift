@@ -53,3 +53,20 @@ public struct HoverSafeRegion: Sendable, Equatable {
         return now - since >= hideGrace
     }
 }
+
+/// How long the pointer rests on a block, chip or month entry before its
+/// card opens. With another anchor's card already up the wait is a swap:
+/// the pointer crossing a neighbour on its way into the open card must
+/// not steal it, so a swap waits too instead of happening on entry.
+public enum HoverCardTiming {
+    /// No card up: a passing pointer never pops one.
+    public static let show: Duration = .milliseconds(350)
+    /// Another anchor's card is up.
+    public static let swap: Duration = .milliseconds(300)
+
+    /// The wait before `key`'s card opens; nil when it is already open.
+    public static func delay(entering key: String, open: String?) -> Duration? {
+        guard let open else { return show }
+        return open == key ? nil : swap
+    }
+}

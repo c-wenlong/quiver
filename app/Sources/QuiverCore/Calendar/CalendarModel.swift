@@ -339,6 +339,31 @@ public final class CalendarModel {
         applyCached()
     }
 
+    /// The leading day a horizontal scroll came to rest on, read from its
+    /// offset: the nearest snap target (a day, or a whole week in week
+    /// mode) among `renderDays`. The page lands here only once the scroll
+    /// is idle, so the render window never re-centres under a moving
+    /// swipe. nil in month mode or before the grid has a width.
+    public func settledLeadingDay(offset: Double, columnWidth: Double) -> Date? {
+        let days = renderDays
+        guard !mode.isMonth, columnWidth > 0, !days.isEmpty else { return nil }
+        let step = mode == .week ? 7 : 1
+        let target = Int((offset / (columnWidth * Double(step))).rounded()) * step
+        return days[min(max(0, target), days.count - 1)].start
+    }
+
+    /// Where `day` sits in the scroll content: its column's leading edge
+    /// among `renderDays`. Landing re-centres the render days, which puts
+    /// the resting day in a different column while the scroll view keeps
+    /// its pixel offset, so the page scrolls here in the same update.
+    /// nil when the day is not a column or the grid has no width.
+    public func leadingOffset(of day: Date, columnWidth: Double) -> Double? {
+        guard columnWidth > 0,
+              let index = renderDays.firstIndex(where: { $0.start == day })
+        else { return nil }
+        return Double(index) * columnWidth
+    }
+
     /// One key command as the page maps it: a mode pick, a step, or
     /// Today.
     public func apply(_ command: KeyCommand) {
