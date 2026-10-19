@@ -329,7 +329,8 @@ public final class ComputeModel {
         history.recordTick(sampledAt ?? now)
         if let reading {
             temperatureAvailable = true
-            history.appendTemperature(TemperaturePoint(at: sampledAt ?? now, values: reading.values))
+            history.appendTemperature(TemperaturePoint(at: sampledAt ?? now, values: reading.values,
+                                                       fans: reading.fans))
         }
         for (harness, procs) in attribution.byHarness where !procs.isEmpty {
             history.append(harness, TrendPoint(
