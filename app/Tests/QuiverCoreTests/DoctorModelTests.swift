@@ -154,6 +154,19 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(runner.calls.contains(["harness", "discover", "--apply", "--json"]))
     }
 
+    @Test func setupActionLeavesTheStarsAlone() async throws {
+        let runner = RoutingRunner([
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+            (["setup"], .init(status: 0, stdout: Data(#"{"schema": 1, "data": {"applied": {}}}"#.utf8), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.run(DoctorReport.Finding(
+            check: "setup.agents-md", severity: .warning, message: "none",
+            fix: "swe setup --apply", action: .setup))
+        // No --starred: an empty one would unstar every harness.
+        #expect(runner.calls.contains(["setup", "--apply", "--json"]))
+    }
+
     @Test func aFailureRecordsTheErrorAndClearsRunning() async throws {
         let runner = RoutingRunner([
             (["init"], .init(status: 1, stdout: Data(), stderr: "link would overwrite")),

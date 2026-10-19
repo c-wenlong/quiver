@@ -118,7 +118,7 @@ public final class DoctorModel {
         do {
             switch action {
             case .setup:
-                _ = try await swe.applySetup(starred: [], adopt: nil)
+                _ = try await swe.applySetup(starred: nil, adopt: nil)
             case .`init`:
                 try await swe.runInit()
             case .discover:
