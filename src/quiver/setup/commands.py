@@ -210,7 +210,10 @@ def cmd_setup(args):
             data["applied"] = _apply_all(new_harness, new_mcp, actionable_skills, home, adopt, starred)
         else:
             data["instructions"] = _instructions_preview(home)
-        return emit(data)
+        emit(data)
+        # Linking that stopped part way is not a finished setup, even though
+        # what came before it was applied and is reported above.
+        return 1 if data.get("applied", {}).get("links", {}).get("error") else 0
 
     print(f"\n{c('bold', 'quiver setup')}\n")
 
@@ -269,11 +272,13 @@ def cmd_setup(args):
         print(c("green", f"  ✓ Applied: {', '.join(parts) or 'nothing'}"))
         if links.get("adopted"):
             print(c("green", f"  ✓ AGENTS.md started from {links['adopted']}"))
-        if links.get("error"):
-            print(c("red", f"  {links['error']}"))
         for row in links.get("rows", []):
             if row["result"] in ("blocked", "protected"):
                 print(c("yellow", f"  ! left alone: {row['path']}  ") + c("dim", row["detail"]))
+        if links.get("error"):
+            print(c("red", f"  {links['error']}"))
+            print(c("dim", "  Nothing was linked. Fix that, then run swe setup --apply again.\n"))
+            return 1
         print(c("dim", "  Next: `swe list`  ·  `swe check`  ·  `swe mcp list`  ·  `swe skills`\n"))
         return 0
 
@@ -338,8 +343,9 @@ def _instructions_preview(home: Path) -> dict:
     """What linking the shared AGENTS.md would do, for the app's setup sheet.
 
     ``adopt_candidates`` are the real instruction files linking would leave
-    blocked; any one of them can start the shared file with --adopt while
-    it is still the seed.
+    blocked that --adopt would take: any one of them can start the shared
+    file while it is still the seed. One too large or not text is left out
+    rather than offered and then refused.
     """
     preview = {
         "agents_file": str(agents_file(home)),
@@ -356,6 +362,7 @@ def _instructions_preview(home: Path) -> dict:
         {"harness": registry_name(status.label), "path": str(status.path)}
         for status in run.instructions
         if status.state == "conflict" and status.path.is_file()
+        and check_adoptable(home, status.path) is None
     ]
     return preview
 

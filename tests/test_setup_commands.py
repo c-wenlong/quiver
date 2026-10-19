@@ -268,6 +268,43 @@ class SetupLinksTest(_SetupHarness):
         self.assertEqual(final["qwen-code"]["command"], "qwen")
         self.assertNotEqual(final["droid"].get("state"), "starred")
 
+    def test_a_linking_failure_exits_nonzero_and_keeps_what_was_applied(self):
+        (self.home / ".quiver" / ".linkignore").mkdir(parents=True)
+        code, out, mocks = self._run(["--apply", "--json"])
+
+        self.assertEqual(code, 1)
+        applied = json.loads(out)["data"]["applied"]
+        self.assertIn("cannot read", applied["links"]["error"])
+        self.assertEqual(applied["harness"], [])
+        mocks["apply_findings"].assert_not_called()  # nothing new was found
+
+    def test_text_apply_reports_links_and_a_linking_failure(self):
+        (self.home / ".claude").mkdir()
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.write_text("my own rules\n")
+        code, out, _ = self._run(["--apply", f"--adopt={claude_md}"])
+        self.assertEqual(code, 0)
+        self.assertIn("link(s)", out)
+        self.assertIn("AGENTS.md started from", out)
+
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "AGENTS.md").write_text("other rules\n")
+        code, out, _ = self._run(["--apply"])
+        self.assertEqual(code, 0)
+        self.assertIn("left alone", out)
+
+        (self.home / ".quiver" / ".linkignore").unlink()
+        (self.home / ".quiver" / ".linkignore").mkdir()
+        code, out, _ = self._run(["--apply"])
+        self.assertEqual(code, 1)
+        self.assertIn("Nothing was linked", out)
+
+    def test_preview_leaves_out_files_adopt_would_refuse(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "CLAUDE.md").write_bytes(b"\xff\xfe not text")
+        preview = self._json([])["instructions"]
+        self.assertEqual(preview["adopt_candidates"], [])
+
     def test_starred_needs_apply(self):
         code, out, _ = self._run(["--starred=claude"])
         self.assertEqual(code, 1)
