@@ -174,6 +174,15 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
         shutil.move(str(old), str(new))
         os.chmod(new, 0o600)
         old.symlink_to(new)
+
+    # A root moved by a swe that predates the link has secrets/mcp/ and no
+    # old path at all. Backfill the link there; ~/.api_keys is left alone,
+    # since a home that never had one gains nothing from a new file in it.
+    old_mcp, new_mcp = paths.legacy_mcp_secrets_file_for(home), paths.mcp_secrets_file_for(home)
+    if new_mcp.is_file() and not (old_mcp.exists() or old_mcp.is_symlink()):
+        notes.append("link secrets/.api_keys to secrets/mcp/.api_keys")
+        if apply:
+            old_mcp.symlink_to(new_mcp)
     return notes
 
 

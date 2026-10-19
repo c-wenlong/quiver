@@ -354,6 +354,21 @@ class MoveSecretsTest(unittest.TestCase):
             move_secrets(home)
             self.assertEqual(move_secrets(home), [])
 
+    def test_a_root_moved_without_the_mcp_link_gets_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            secrets_dir = paths.secrets_dir_for(home)
+            _keys(paths.mcp_secrets_file_for(home), "export TOKEN=x\n")
+            secrets_dir.joinpath(".gitignore").write_text(paths.SECRETS_GITIGNORE_BODY)
+            self.assertEqual(move_secrets(home, apply=False),
+                             ["link secrets/.api_keys to secrets/mcp/.api_keys"])
+            self.assertFalse((secrets_dir / ".api_keys").is_symlink())
+            move_secrets(home)
+            self.assertEqual((secrets_dir / ".api_keys").read_text(), "export TOKEN=x\n")
+            self.assertEqual(move_secrets(home), [])
+            # No provider file was ever there, so none appears in $HOME.
+            self.assertFalse((home / ".api_keys").exists())
+
     def test_plan_only_moves_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(tmp)
