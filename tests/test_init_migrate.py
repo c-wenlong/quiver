@@ -342,7 +342,10 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertEqual((home / ".api_keys").resolve(), new_keys.resolve())
             self.assertEqual(paths.mcp_secrets_file_for(home).read_text(), "export TOKEN=x\n")
             self.assertEqual(paths.mcp_secrets_file_for(home).stat().st_mode & 0o777, 0o600)
-            self.assertFalse((home / ".quiver" / "secrets" / ".api_keys").exists())
+            # An older swe on the same machine still reads the old MCP path.
+            old_mcp = home / ".quiver" / "secrets" / ".api_keys"
+            self.assertTrue(old_mcp.is_symlink())
+            self.assertEqual(old_mcp.read_text(), "export TOKEN=x\n")
 
     def test_a_second_run_changes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

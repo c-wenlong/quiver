@@ -243,8 +243,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API keys live under `~/.quiver/secrets/`.** Provider keys moved from
   `~/.api_keys` to `secrets/providers/.api_keys` and MCP values from
   `secrets/.api_keys` to `secrets/mcp/.api_keys`. `swe init` moves both and
-  leaves `~/.api_keys` as a symlink, so a shell profile that sources it
-  keeps working. `secrets/` gets its own `.gitignore` of `*`, so no root
+  leaves a symlink at each old path, so a shell profile that sources
+  `~/.api_keys`, or an older swe that reads `secrets/.api_keys`, keeps
+  working. `secrets/` gets its own `.gitignore` of `*`, so no root
   `.gitignore` can let a key into a commit. Until the move, the CLI and the
   app read the old paths. A fresh `~/.quiver/.gitignore` now lists `secrets/`.
 
