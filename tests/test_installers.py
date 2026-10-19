@@ -85,9 +85,18 @@ class UninstallerTest(unittest.TestCase):
             self.assertEqual((remover.via, remover.package, remover.display()),
                              (via, package, command), path)
 
-    def test_npm_under_a_homebrew_node_is_npm(self):
+    def test_a_formula_bundling_node_modules_is_brew(self):
+        path = ("/opt/homebrew/Cellar/gemini-cli/0.9.0/libexec/lib/node_modules/"
+                "@google/gemini-cli/dist/index.js")
+        self.assertEqual(uninstaller_for("gemini", path), Uninstaller("brew", "gemini-cli"))
+
+    def test_npm_globals_inside_the_node_keg_are_npm(self):
         path = "/opt/homebrew/Cellar/node/22.1.0/lib/node_modules/@openai/codex/bin/codex.js"
         self.assertEqual(uninstaller_for("codex", path), Uninstaller("npm", "@openai/codex"))
+        path = "/usr/local/Cellar/node@20/20.1.0/lib/node_modules/opencode-ai/bin/opencode"
+        self.assertEqual(uninstaller_for("opencode", path), Uninstaller("npm", "opencode-ai"))
+        # A Cellar path with nothing after node_modules has nothing to name.
+        self.assertIsNone(uninstaller_for("x", "/opt/homebrew/Cellar/node/22.1.0/lib/node_modules"))
 
     def test_nix_uses_the_table_attr(self):
         path = "/nix/store/abc-codex-0.1/bin/codex"

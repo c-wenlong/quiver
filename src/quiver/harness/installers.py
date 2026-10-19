@@ -232,8 +232,15 @@ def uninstaller_for(name: str, real_path: str | None) -> Uninstaller | None:
     if not real_path:
         return None
     parts = real_path.split("/")
-    # Checked before Cellar and Caskroom: npm and uv trees can sit under a
-    # Homebrew prefix, and the inner manager is the one that owns the file.
+    # A Homebrew keg owns everything under it, a Node CLI bundled in its
+    # libexec/node_modules included. Only node's own keg holds packages npm
+    # installed, when the npm prefix was left inside it.
+    cask = _segment_after(parts, "Caskroom")
+    if cask:
+        return Uninstaller("cask", cask)
+    formula = _segment_after(parts, "Cellar")
+    if formula and formula != "node" and not formula.startswith("node@"):
+        return Uninstaller("brew", formula)
     if "node_modules" in parts:
         index = len(parts) - 1 - parts[::-1].index("node_modules")
         rest = parts[index + 1:]
@@ -245,12 +252,6 @@ def uninstaller_for(name: str, real_path: str | None) -> Uninstaller | None:
         uv = parts.index("uv")
         if uv + 2 < len(parts) and parts[uv + 1] == "tools":
             return Uninstaller("uv", parts[uv + 2])
-    cask = _segment_after(parts, "Caskroom")
-    if cask:
-        return Uninstaller("cask", cask)
-    formula = _segment_after(parts, "Cellar")
-    if formula:
-        return Uninstaller("brew", formula)
     if real_path.startswith("/nix/store/"):
         attr = (INSTALLERS.get(name) or {}).get("nix")
         if attr:
