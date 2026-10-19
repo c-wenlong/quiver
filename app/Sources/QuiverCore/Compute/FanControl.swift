@@ -138,7 +138,13 @@ public final class FanControl {
     /// The level the slider shows, 0 (the fans' minimum) to 1 (their
     /// maximum). Kept in UserDefaults so the last choice comes back.
     public var level: Double {
-        didSet { defaults.set(level, forKey: Self.levelKey) }
+        didSet {
+            defaults.set(level, forKey: Self.levelKey)
+            // The threshold's controls have no Set button: a new speed
+            // reaches the fans it holds at once. A speed the user set
+            // stays theirs until they press Update speed.
+            if heldByThreshold { try? request().write(to: control) }
+        }
     }
 
     public static let levelKey = "fanManualLevel"
@@ -289,9 +295,13 @@ public final class FanControl {
     /// Hold the fans at `level`. The installed helper picks the request up
     /// within a second; the first time, this installs it, which asks for
     /// the password once.
+    private func request() -> FanControlFile {
+        FanControlFile(level: level, owner: owner, requested: clock())
+    }
+
     private func hold() async {
         do {
-            try FanControlFile(level: level, owner: owner, requested: clock()).write(to: control)
+            try request().write(to: control)
         } catch {
             phase = .failed("Couldn't write \(control.path): \(error.localizedDescription)")
             return
@@ -347,7 +357,10 @@ public final class FanControl {
         if installUnchecked { await refresh() }
         if !helperInstalled {
             switch await installHelper() {
-            case .installed: break
+            case .installed:
+                // An earlier failed try must not keep the rule from acting:
+                // it only takes the fans from Automatic.
+                if case .failed = phase { phase = .automatic }
             case .cancelled: return
             case .failed(let message):
                 phase = .failed(message)
@@ -365,6 +378,11 @@ public final class FanControl {
     public func checkTemperature(_ cpu: Double?) async {
         guard thresholdEnabled, let cpu else { return }
         if heldByThreshold {
+            // Read the fans here too: with the page and popover closed
+            // nothing else would, and a takeover the helper never finished
+            // must time out and be reported rather than sit in Starting.
+            await refresh()
+            guard heldByThreshold else { return }
             if !isHolding {
                 heldByThreshold = false
             } else if cpu <= releaseBelow {
@@ -374,8 +392,16 @@ public final class FanControl {
         }
         guard phase == .automatic, cpu >= threshold else { return }
         if installUnchecked { await refresh() }
-        guard helperInstalled else { return }
+        guard helperInstalled, thresholdEnabled, phase == .automatic, !heldByThreshold else { return }
+        // Claimed before the wait, so switching the rule off (or the user
+        // taking over) during it is seen and undone, not left held.
+        heldByThreshold = true
         await hold()
+        guard heldByThreshold else { return }
+        if !thresholdEnabled {
+            restoreAutomatic()
+            return
+        }
         heldByThreshold = isHolding
     }
 

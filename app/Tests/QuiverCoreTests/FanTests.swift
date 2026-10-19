@@ -583,6 +583,83 @@ import Testing
         #expect(FanControlFile.request(at: url) == nil)
     }
 
+    /// Parks the fan read on its background thread until released.
+    final class ReadGate: @unchecked Sendable {
+        var armed = false
+        let parked = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+    }
+
+    @MainActor @Test func switchingOffMidTakeoverLeavesNothingHeld() async {
+        let smc = FakeSMC.twoFans()
+        let gate = ReadGate()
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let fans = FanControl(control: url,
+                              reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
+                              installer: installer, isInstalled: { _ in true }, executable: "/Apps/Quiver", owner: 77,
+                              defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+        await fans.refresh()
+        fans.thresholdEnabled = true
+        gate.armed = true
+        let takeover = Task { await fans.checkTemperature(90) }
+        await runOffPool { gate.parked.wait() }
+        // The takeover is waiting on its fan read: switch the rule off now.
+        fans.thresholdEnabled = false
+        gate.armed = false
+        gate.release.signal()
+        await takeover.value
+        #expect(!fans.heldByThreshold)
+        #expect(fans.phase == .automatic)
+        #expect(FanControlFile.request(at: url) == nil)
+    }
+
+    @MainActor @Test func theThresholdSpeedReachesTheFansAtOnce() async {
+        let (fans, url, _) = await installedControl()
+        fans.thresholdEnabled = true
+        fans.level = 0.4
+        await fans.checkTemperature(90)
+        #expect(FanControlFile.request(at: url)?.level == 0.4)
+        fans.level = 0.9
+        #expect(FanControlFile.request(at: url)?.level == 0.9)
+        // A speed the user set waits for their Update speed.
+        await fans.applyManual()
+        fans.level = 0.2
+        #expect(FanControlFile.request(at: url)?.level == 0.9)
+    }
+
+    @MainActor @Test func aSuccessfulRetryLetsTheRuleAct() async {
+        let installer = FakeInstaller()
+        installer.error = .failed("launchctl said no")
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer)
+        await fans.enableThreshold()
+        #expect(fans.phase == .failed("launchctl said no"))
+        installer.error = nil
+        await fans.enableThreshold()
+        #expect(fans.phase == .automatic)
+        await fans.checkTemperature(90)
+        #expect(fans.heldByThreshold)
+        #expect(FanControlFile.request(at: url) != nil)
+    }
+
+    @MainActor @Test func aTakeoverTheHelperNeverFinishesTimesOutInTheBackground() async {
+        let clock = Box(Date(timeIntervalSince1970: 1_800_000_000))
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer, clock: clock)
+        await fans.refresh()
+        fans.thresholdEnabled = true
+        await fans.checkTemperature(90)
+        #expect(fans.phase == .starting)
+        // No page, no popover: only the ticks read the fans.
+        clock.value = clock.value.addingTimeInterval(FanControl.startTimeout + 1)
+        await fans.checkTemperature(90)
+        #expect(fans.phase == .failed(FanControl.notTaken))
+        #expect(!fans.heldByThreshold)
+        #expect(FanControlFile.request(at: url) == nil)
+    }
+
     @MainActor @Test func theThresholdIsClampedAndRemembered() async {
         let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
         let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
