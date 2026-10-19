@@ -81,13 +81,17 @@ struct InferenceSection: View {
         .task(id: model.path) { await model.load() }
         .onDisappear { revealed.removeAll() }
         .sheet(item: $editing) { draft in
-            KeyEditor(draft: draft, providers: model.providers, save: { provider, name, value in
+            KeyEditor(draft: draft, providers: model.providers, rows: model.rows,
+                      save: { provider, name, value, tested in
                 if draft.isNew {
-                    try await model.set(name: name, value: value, provider: provider)
+                    try await model.set(name: name, value: value, provider: provider, tested: tested)
                 } else {
-                    try await model.update(name: draft.name, newName: name, provider: provider, value: value)
+                    try await model.update(name: draft.name, newName: name, provider: provider,
+                                           value: value, tested: tested)
                     revealed.remove(draft.name)
                 }
+            }, test: { name, value in
+                await model.test(name: name, value: value)
             }, remove: { name in
                 try await model.remove(name: name)
                 revealed.remove(name)
@@ -586,28 +590,83 @@ struct KeyDraft: Identifiable {
     var isNew: Bool
 }
 
-/// Add, change or remove one key. On an existing key the provider and the
-/// variable name edit too: a rename, a move and a new value save together.
+/// Add, change or remove one key. A new key first picks its provider from
+/// the catalog: a known provider fixes the variable name (a pick when it
+/// has several) and offers the page that hands out keys; "Other provider"
+/// keeps the free-text provider and variable fields. On an existing key
+/// the provider and the variable name edit as before: a rename, a move
+/// and a new value save together. Saving a non-empty value tests it
+/// first; a rejection shows instead of saving until "Save anyway".
 private struct KeyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State var draft: KeyDraft
     /// The name the row had when the sheet opened; the draft's changes.
     private let originalName: String
+    /// The original value, to tell whether a test is worth offering.
+    private let originalValue: String
     var providers: [String]
-    var save: (String, String, String) async throws -> Void
+    /// Every row in the file, for heading picks and "already set" notes.
+    var rows: [APIKeysModel.Row]
+    /// provider, name, value, the test verdict to keep.
+    var save: (String, String, String, APIKeyCheckResult?) async throws -> Void
+    /// name, value -> the provider's verdict.
+    var test: (String, String) async -> APIKeyCheckResult
     var remove: (String) async throws -> Void
     @State private var showValue = false
     @State private var confirmingRemove = false
     @State private var error: String?
     @State private var working = false
+    /// The new-key pick: "" nothing yet, "other" the free-text path, else
+    /// an `APIKeyProvider.id`.
+    @State private var providerChoice = ""
+    /// The variable a multi-variable provider saves under.
+    @State private var envVarChoice = ""
+    /// The last verdict and the (name, value) it describes.
+    @State private var testResult: APIKeyCheckResult?
+    @State private var testedFor = (name: "", value: "")
+    @State private var testing = false
+    /// A rejected test showed; the next click saves regardless.
+    @State private var saveAnyway = false
+    /// The test-then-save in flight; closing the sheet cancels it, so a
+    /// Cancel during the test never saves.
+    @State private var saveTask: Task<Void, Never>?
 
-    init(draft: KeyDraft, providers: [String], save: @escaping (String, String, String) async throws -> Void,
+    init(draft: KeyDraft, providers: [String], rows: [APIKeysModel.Row],
+         save: @escaping (String, String, String, APIKeyCheckResult?) async throws -> Void,
+         test: @escaping (String, String) async -> APIKeyCheckResult,
          remove: @escaping (String) async throws -> Void) {
         _draft = State(initialValue: draft)
         originalName = draft.name
+        originalValue = draft.value
         self.providers = providers
+        self.rows = rows
         self.save = save
+        self.test = test
         self.remove = remove
+    }
+
+    /// The picked provider on a new key, nil for "other" or none.
+    private var picked: APIKeyProvider? {
+        draft.isNew ? APIKeyProviders.provider(forID: providerChoice) : nil
+    }
+
+    /// The variable the save writes.
+    private var finalName: String {
+        if let picked {
+            return envVarChoice.isEmpty ? picked.envVars[0] : envVarChoice
+        }
+        return draft.name.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The heading the save writes under.
+    private var finalProvider: String {
+        if let picked {
+            return APIKeyProviders.heading(for: picked, in: rows)
+        }
+        // An existing key keeps an empty provider (it is ungrouped); a
+        // new one gets the OTHER group.
+        let provider = draft.provider.trimmingCharacters(in: .whitespaces)
+        return draft.isNew && provider.isEmpty ? "OTHER" : provider
     }
 
     private var nameProblem: String? {
@@ -619,45 +678,47 @@ private struct KeyEditor: View {
         return nil
     }
 
+    /// The free-text variable field shows: an "other" new key or any edit.
+    private var freeFormName: Bool {
+        !draft.isNew || providerChoice == "other"
+    }
+
+    /// The verdict still describes the current name and value.
+    private var currentTest: APIKeyCheckResult? {
+        testedFor == (finalName, draft.value) ? testResult : nil
+    }
+
+    /// A test is worth offering: a new non-empty value, or an edit that
+    /// changed the value or the variable it answers to.
+    private var canTest: Bool {
+        !draft.value.isEmpty && (draft.isNew || draft.value != originalValue || finalName != originalName)
+    }
+
+    /// Where "Get a key" points on an existing key whose variable the
+    /// catalog knows.
+    private var editKeyURL: URL? {
+        guard !draft.isNew else { return nil }
+        return APIKeyProviders.provider(forVariable: finalName)?.keyURL
+    }
+
+    private var saveDisabled: Bool {
+        if working || testing { return true }
+        if draft.isNew && providerChoice.isEmpty { return true }
+        if freeFormName && nameProblem != nil { return true }
+        return false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(draft.isNew ? "Add a key" : "Edit \(originalName)").font(Theme.sectionTitle).tracking(-0.5)
-            FormField("Provider") {
-                HStack(spacing: 8) {
-                    // Another group's name moves the key to the end of it.
-                    TextField("ANTHROPIC", text: $draft.provider).quiverField()
-                    if !providers.isEmpty {
-                        // "" is a real choice (ungrouped keys); it still
-                        // needs a label in the menu.
-                        PopoverSelect(options: providers.map {
-                                          ($0, $0.isEmpty ? "Ungrouped" : $0, APIKeyProviderLogo.logoID(for: $0))
-                                      },
-                                      selection: $draft.provider, title: "Existing")
-                    }
-                }
+            Group {
+                if draft.isNew { providerPicker }
+                if freeFormName { providerField }
+                if let picked { knownProviderFields(picked) }
+                if freeFormName { variableField }
+                valueField
             }
-            FormField("Variable") {
-                TextField("ANTHROPIC_API_KEY", text: $draft.name)
-                    .quiverField(monospaced: true)
-                if !draft.name.isEmpty, let problem = nameProblem {
-                    Text(problem).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                }
-            }
-            FormField("Value") {
-                HStack(spacing: 8) {
-                    Group {
-                        if showValue {
-                            TextField("sk-…", text: $draft.value)
-                        } else {
-                            SecureField("sk-…", text: $draft.value)
-                        }
-                    }
-                    .quiverField(monospaced: true)
-                    Button(showValue ? "Hide" : "Show", systemImage: showValue ? "eye.slash" : "eye") { showValue.toggle() }
-                        .iconButton()
-                        .help(showValue ? "Hide the value" : "Show the value")
-                }
-            }
+            .disabled(testing)
             if let error {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
@@ -677,31 +738,182 @@ private struct KeyEditor: View {
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
-                Button(draft.isNew ? "Add key" : "Save") {
-                    run {
-                        // An existing key keeps an empty provider (it is
-                        // ungrouped); a new one gets the OTHER group.
-                        let provider = draft.provider.trimmingCharacters(in: .whitespaces)
-                        try await save(draft.isNew && provider.isEmpty ? "OTHER" : provider,
-                                       draft.name.trimmingCharacters(in: .whitespaces), draft.value)
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .primaryButton()
-                .disabled(working || nameProblem != nil)
+                Button(saveAnyway ? "Save anyway" : (draft.isNew ? "Add key" : "Save")) { saveTapped() }
+                    .keyboardShortcut(.defaultAction)
+                    .primaryButton()
+                    .disabled(saveDisabled)
             }
         }
         .padding(24)
         .frame(width: 520)
         .background(Theme.panel)
+        .onDisappear { saveTask?.cancel() }
     }
 
+    /// The catalog picker a new key starts with, "Other provider" last.
+    private var providerPicker: some View {
+        FormField("Provider") {
+            PopoverSelect(options: APIKeyProviders.all.map { ($0.id, $0.name, $0.logo) }
+                              + [("other", "Other provider", nil)],
+                          selection: $providerChoice,
+                          title: providerChoice.isEmpty ? "Choose a provider" : nil)
+            .onChange(of: providerChoice) {
+                envVarChoice = picked?.envVars[0] ?? ""
+                saveAnyway = false
+            }
+        }
+    }
+
+    /// What a picked provider fixes: the variable it saves as (a pick
+    /// when it has several), where to get a key, and a note when that
+    /// variable is already in the file.
+    private func knownProviderFields(_ provider: APIKeyProvider) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                if provider.envVars.count > 1 {
+                    Text("saved as").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    PopoverSelect(options: provider.envVars.map { ($0, $0, nil) },
+                                  selection: $envVarChoice)
+                        .onChange(of: envVarChoice) { saveAnyway = false }
+                } else {
+                    Text("saved as \(provider.envVars[0])")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 8)
+                Link("Get a key", destination: provider.keyURL).font(Theme.caption)
+            }
+            if rows.contains(where: { $0.name == finalName }) {
+                Text("\(finalName) is already set; saving replaces it.")
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
+            }
+        }
+    }
+
+    /// Free text plus the existing groups: the edit path's provider row,
+    /// and the name an "Other provider" key files under.
+    private var providerField: some View {
+        FormField(draft.isNew ? "Provider name" : "Provider") {
+            HStack(spacing: 8) {
+                // Another group's name moves the key to the end of it.
+                TextField("ANTHROPIC", text: $draft.provider).quiverField()
+                if !providers.isEmpty {
+                    // "" is a real choice (ungrouped keys); it still
+                    // needs a label in the menu.
+                    PopoverSelect(options: providers.map {
+                                      ($0, $0.isEmpty ? "Ungrouped" : $0, APIKeyProviderLogo.logoID(for: $0))
+                                  },
+                                  selection: $draft.provider, title: "Existing")
+                }
+            }
+            if let editKeyURL {
+                Link("Get a key", destination: editKeyURL).font(Theme.caption)
+            }
+        }
+    }
+
+    private var variableField: some View {
+        FormField("Variable") {
+            TextField("ANTHROPIC_API_KEY", text: $draft.name)
+                .quiverField(monospaced: true)
+                .onChange(of: draft.name) { saveAnyway = false }
+            if !draft.name.isEmpty, let problem = nameProblem {
+                Text(problem).font(Theme.caption).foregroundStyle(Theme.dangerText)
+            }
+        }
+    }
+
+    private var valueField: some View {
+        FormField("Value") {
+            HStack(spacing: 8) {
+                Group {
+                    if showValue {
+                        TextField("sk-…", text: $draft.value)
+                    } else {
+                        SecureField("sk-…", text: $draft.value)
+                    }
+                }
+                .quiverField(monospaced: true)
+                .onChange(of: draft.value) { saveAnyway = false }
+                Button(showValue ? "Hide" : "Show", systemImage: showValue ? "eye.slash" : "eye") { showValue.toggle() }
+                    .iconButton()
+                    .help(showValue ? "Hide the value" : "Show the value")
+                if canTest {
+                    Button(testing ? "Testing…" : "Test", action: testTapped)
+                        .secondaryButton()
+                        .disabled(testing || freeFormName && nameProblem != nil)
+                }
+            }
+            if let result = currentTest {
+                Text(result.words)
+                    .font(Theme.caption)
+                    .foregroundStyle(testColor(result))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func testColor(_ result: APIKeyCheckResult) -> Color {
+        switch APIKeyCheckStyle(result) {
+        case .success: Theme.success
+        case .rejected: Theme.danger
+        case .unchanged: Theme.textSecondary
+        }
+    }
+
+    private func testTapped() {
+        testing = true
+        let name = finalName
+        let value = draft.value
+        Task {
+            let result = await test(name, value)
+            testing = false
+            testResult = result
+            testedFor = (name, value)
+        }
+    }
+
+    /// Delete or any plain action: no test runs first.
     private func run(_ action: @escaping () async throws -> Void) {
         working = true
         Task {
             defer { working = false }
             do {
                 try await action()
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// Test first, then save with the verdict. A rejection stops the save
+    /// once and turns the button into "Save anyway".
+    private func saveTapped() {
+        working = true
+        error = nil
+        let name = finalName
+        let provider = finalProvider
+        let value = draft.value
+        saveTask = Task {
+            defer { working = false }
+            var result = currentTest
+            // A move to another provider alone keeps the key it had, so
+            // it asks the provider nothing.
+            if canTest, result == nil {
+                testing = true
+                result = await test(name, value)
+                testing = false
+                testResult = result
+                testedFor = (name, value)
+            }
+            guard !Task.isCancelled else { return }
+            if case .rejected = result, !saveAnyway {
+                saveAnyway = true
+                return
+            }
+            do {
+                try await save(provider, name, value, value.isEmpty ? nil : result)
                 dismiss()
             } catch {
                 self.error = error.localizedDescription

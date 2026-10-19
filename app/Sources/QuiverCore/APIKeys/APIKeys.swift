@@ -723,10 +723,12 @@ public final class APIKeysModel {
         rebuild()
     }
 
-    public func set(name: String, value: String, provider: String) async throws {
+    public func set(name: String, value: String, provider: String,
+                    tested: APIKeyCheckResult? = nil) async throws {
         var edited = file
         try edited.set(name: name, value: value, provider: provider)
         try write(edited)
+        recordTested(tested, name: name, value: value)
     }
 
     public func remove(name: String) async throws {
@@ -745,7 +747,8 @@ public final class APIKeysModel {
     /// One save for every change the editor can make: rename, move and a
     /// new value together, so a changed-on-disk refusal loses none of them.
     /// A renamed key keeps its check result under the new name.
-    public func update(name: String, newName: String, provider: String, value: String) async throws {
+    public func update(name: String, newName: String, provider: String, value: String,
+                       tested: APIKeyCheckResult? = nil) async throws {
         var edited = file
         try edited.rename(name: name, to: newName)
         try edited.move(name: newName, toProvider: provider)
@@ -764,6 +767,7 @@ public final class APIKeysModel {
             }
             saveChecks()
         }
+        recordTested(tested, name: newName, value: value)
     }
 
     /// Whether a check made under one name still applies under another:
@@ -845,6 +849,27 @@ public final class APIKeysModel {
         guard rows.contains(where: { $0.name == name }) else { return }
         checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: row.value,
                                    salt: checkSalt)
+        saveChecks()
+    }
+
+    /// Test a key that isn't saved yet, through the same checker and
+    /// limiter as a row check. Persists nothing: a save that wants the
+    /// result kept passes it back as `tested`.
+    public func test(name: String, value: String) async -> APIKeyCheckResult {
+        guard let probe = APIKeyProbe.probe(forName: name) else {
+            return .noCheck(APIKeyProbe.noCheckReason(forName: name))
+        }
+        await slots.acquire()
+        let result = await checker.check(key: value, probe: probe)
+        await slots.release()
+        return result
+    }
+
+    /// Store the verdict a pre-save test reached, so the row shows it
+    /// right away instead of asking the provider a second time.
+    private func recordTested(_ tested: APIKeyCheckResult?, name: String, value: String) {
+        guard let tested else { return }
+        checks[name] = APIKeyCheck(result: tested, checkedAt: Date(), value: value, salt: checkSalt)
         saveChecks()
     }
 
