@@ -9,8 +9,11 @@ import Testing
 @MainActor private final class DelayGate {
     private var permits = 0
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    /// Every wait asked for, in order.
+    private(set) var requested: [Duration] = []
 
-    func wait() async {
+    func wait(_ duration: Duration) async {
+        requested.append(duration)
         if permits > 0 { permits -= 1; return }
         await withCheckedContinuation { waiting.append($0) }
     }
@@ -24,13 +27,20 @@ import Testing
 @Suite struct HoverCardStateTests {
     private let gate = DelayGate()
 
+    /// A clock the test moves by hand.
+    private final class Clock: @unchecked Sendable {
+        var now = ContinuousClock.now
+    }
+    private let clock = Clock()
+
     /// No view has reported a rect unless `card` is given, and the
     /// pointer sits at the origin.
     private func state(card: CGRect? = nil) -> HoverCardState {
         HoverCardState(pointer: { CGPoint(x: 10, y: 10) },
                        rects: { _ in (nil, card) },
-                       wait: { [gate] _ in await gate.wait() },
-                       pollWait: { _ in try? await Task.sleep(for: .seconds(3600)) })
+                       wait: { [gate] in await gate.wait($0) },
+                       pollWait: { _ in try? await Task.sleep(for: .seconds(3600)) },
+                       clock: { [clock] in clock.now })
     }
 
     @Test func passingOverANeighbourKeepsTheOpenCard() async {
@@ -82,5 +92,72 @@ import Testing
         state.open("a")
         state.closed("a")
         #expect(state.key == "a")
+    }
+
+    @Test func aScrollClosesTheOpenCardAndHoldsNewOnes() async {
+        let state = state()
+        state.open("a")
+        state.scrollBegan("days")
+        #expect(state.key == nil)
+        state.hover("b", inside: true) // the grid moves under the pointer
+        gate.release()
+        await state.settled()
+        #expect(state.key == nil)
+        #expect(gate.requested.isEmpty)
+    }
+
+    @Test func theBlockUnderThePointerOpensASecondAfterTheScrollSettles() async {
+        let state = state()
+        state.scrollBegan("days")
+        state.hover("b", inside: true)
+        state.scrollSettled("days")
+        gate.release()
+        await state.settled()
+        // No pointer move needed: the card under it opened after a full
+        // second's wait.
+        #expect(gate.requested == [HoverCardTiming.afterScroll])
+        #expect(state.key == "b")
+    }
+
+    @Test func aHoverJustAfterAScrollWaitsOutTheQuiet() async {
+        let state = state()
+        state.scrollBegan("days")
+        state.scrollSettled("days")
+        clock.now += .milliseconds(200)
+        state.hover("c", inside: true)
+        gate.release()
+        await state.settled()
+        // 800 ms of quiet left beats the usual 350 ms show delay.
+        #expect(gate.requested == [.milliseconds(800)])
+        // Well after the quiet, with no card up, the usual show delay is
+        // back.
+        clock.now += .seconds(5)
+        state.dismiss()
+        state.hover("d", inside: true)
+        gate.release()
+        await state.settled()
+        #expect(gate.requested.last == HoverCardTiming.show)
+    }
+
+    @Test func cardsStayQuietUntilEveryScrollViewRests() async {
+        let state = state()
+        state.scrollBegan("days")
+        state.scrollBegan("hours")
+        state.scrollSettled("hours")
+        state.hover("b", inside: true) // the days are still moving
+        #expect(gate.requested.isEmpty)
+        state.scrollSettled("days")
+        gate.release()
+        await state.settled()
+        #expect(gate.requested == [HoverCardTiming.afterScroll])
+        #expect(state.key == "b")
+    }
+
+    @Test func aChipTapStillOpensAtOnceRightAfterAScroll() {
+        let state = state()
+        state.scrollBegan("days")
+        state.scrollSettled("days")
+        state.open("chip") // a deliberate click, not a passing pointer
+        #expect(state.key == "chip")
     }
 }
