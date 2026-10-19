@@ -34,7 +34,7 @@ extension PopupTab {
             Task { await app.others.load(refreshFailed: true) }
             Task { await app.overview?.load(scan: true) }
         case .compute:
-            Task { await app.compute.tickTrends() }
+            app.compute.tickTrendsNow()
         }
     }
 

@@ -152,6 +152,20 @@ import Testing
         #expect(history.total(of: .ram, harnesses: ["claude"]) == 1)
     }
 
+    @Test func aTickWithNothingRunningZeroesTheTotal() {
+        var history = ComputeHistory()
+        history.append("claude", point(t0, gb: 2, cpu: 30, gpu: 5))
+        #expect(history.total(of: .ram, harnesses: ["claude"]) == 2)
+        // The last harness stopped: the next tick adds no point.
+        history.recordTick(t0 + 10)
+        #expect(history.total(of: .ram, harnesses: ["claude"]) == 0)
+        #expect(history.total(of: .cpu, harnesses: ["claude"]) == 0)
+        #expect(history.total(of: .gpu, harnesses: ["claude"]) == 0)
+        // An older tick never moves "now" back.
+        history.recordTick(t0)
+        #expect(history.lastTick == t0 + 10)
+    }
+
     @Test func activeListsHarnessesWithAPointInTheWindow() {
         var history = ComputeHistory()
         history.append("codex", point(t0, gb: 1, cpu: 1, gpu: nil))

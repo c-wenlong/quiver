@@ -47,14 +47,16 @@ public enum TrendMetric: String, CaseIterable, Identifiable, Sendable {
 
 extension ComputeHistory {
     /// The metric summed over the given harnesses at the newest tick, or
-    /// nil before any point. A harness that stopped earlier has no point
-    /// at that tick, so it adds nothing rather than its last old value.
+    /// nil before any tick. A harness not running at that tick adds
+    /// nothing rather than its last old value, so once every harness has
+    /// stopped the total is zero. GPU is nil when no point at the tick
+    /// has a GPU reading.
     public func total(of metric: TrendMetric, harnesses: [String]) -> Double? {
-        guard let latest else { return nil }
-        let points = harnesses.compactMap { self.points(for: $0).last }
-            .filter { $0.at == latest && metric.reads($0) }
-        guard !points.isEmpty || metric != .gpu else { return nil }
-        return points.reduce(0) { $0 + metric.value(of: $1) }
+        guard let tick = lastTick else { return nil }
+        let points = harnesses.compactMap { self.points(for: $0).last }.filter { $0.at == tick }
+        let read = points.filter(metric.reads)
+        if metric == .gpu && !points.isEmpty && read.isEmpty { return nil }
+        return read.reduce(0) { $0 + metric.value(of: $1) }
     }
 
     /// Every harness with a point in `range`, sorted: the lines a chart

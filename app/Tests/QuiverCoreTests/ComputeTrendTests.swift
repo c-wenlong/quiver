@@ -654,6 +654,40 @@ import Testing
         #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
     }
 
+    @MainActor @Test func refreshDuringATickDropsTheOlderTick() async {
+        // The popup's Refresh restarts the loop while the loop's own tick
+        // is parked on its GPU read: the parked tick must not write back,
+        // or its older counters would reset the GPU baseline.
+        let clock = Clock(Self.now)
+        let claudeBin = "/opt/homebrew/bin/claude"
+        let sampler = CountingSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
+        let gpu = GateGPU([10: 1_000])
+        let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
+                                 gpu: gpu, clock: { clock.now },
+                                 sleep: { _ in throw CancellationError() },
+                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 selfPID: 99)
+        await model.loadMatchers()
+
+        gpu.gateNext()
+        let staleTick = Task { await model.trendTick(at: clock.now, generation: 0) }
+        #expect(await gpu.waitForPark())
+
+        // Refresh: a new loop ticks at once and finishes.
+        model.tickTrendsNow()
+        for _ in 0..<500 where model.history.points(for: "claude").isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
+
+        clock.now = Self.now.addingTimeInterval(20)
+        gpu.table = [10: 3_000]
+        gpu.release()
+        await staleTick.value
+        #expect(model.history.points(for: "claude").count == 1)
+        #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
+    }
+
     @Test func theHarnessDecodesPrimaryColour() throws {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
