@@ -594,6 +594,9 @@ final class AppModel {
                 }
         }, managedPIDs: { await Self.launchdManagedPIDs() }, defaults: .standard)
         terminalChoice = { [unowned self] in self.terminal }
+        compute.onTemperature = { [fans] reading in
+            Task { await fans.checkTemperature(reading[.cpu]) }
+        }
         compute.startTrends()
     }
 

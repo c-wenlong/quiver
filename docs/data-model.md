@@ -80,7 +80,7 @@ every key below is live.
 | `popupHiddenHarnesses`, `popupHiddenWindows`, `popupHarnessOrder` | legacy popup keys, read-only migration fallbacks; keep until the new keys have covered every install |
 | `mcpHiddenHarnesses` | harness columns hidden on the MCP page |
 | `providerOrder`, `providerDisabled` | provider list order and switches |
-| `computeTrendInterval`, `computeTrendTab`, `computeMemoryLimitGB`, `computeOrphanAgeMinutes`, `fanManualLevel`, `computeTemperatureLines` | Compute page preferences (`computeTrendTab` also takes `temperature`; `computeTemperatureLines` lists the Temperature tab's switched-on lines, default `cpu`, `gpu`, `ssd`, `battery`) |
+| `computeTrendInterval`, `computeTrendTab`, `computeMemoryLimitGB`, `computeOrphanAgeMinutes`, `fanManualLevel`, `fanThresholdEnabled`, `fanThresholdCelsius`, `computeTemperatureLines` | Compute page preferences (`computeTrendTab` also takes `temperature`; `computeTemperatureLines` lists the Temperature tab's switched-on lines, default `cpu`, `gpu`, `ssd`, `battery`) |
 | `refreshFreshMinutes` | the "Refresh only what failed for" window (default 5, clamped to 1..120) |
 | `customStatusServices` | user-added status services |
 | `apiKeyCheckSalt` | salt for cached key-check results (not a secret itself) |
