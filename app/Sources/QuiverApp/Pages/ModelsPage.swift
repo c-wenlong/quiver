@@ -572,6 +572,7 @@ struct TableCard: View {
             }
             Text("Cost / 1M")
                 .hoverTip(ColumnTip.listPrice.text, title: ColumnTip.listPrice.title)
+                .padding(.leading, TableColumns.priceInset)
                 .frame(width: columns.price, alignment: .leading)
             Text("AA blended")
                 .hoverTip(ColumnTip.blended.text, title: ColumnTip.blended.title)
@@ -588,9 +589,10 @@ struct TableCard: View {
 /// what it measures.
 @MainActor private func iconHeader(_ metric: ModelsModel.Metric) -> some View {
     let tip = ColumnTip.of(metric)
+    // No padding around the glyph: its right edge lines up with the
+    // right-aligned figures under it.
     return Image(systemName: tip.icon)
         .font(.system(size: 13))
-        .frame(width: 18, height: 16)
         .hoverTip(tip.text, title: tip.title)
 }
 
@@ -610,19 +612,19 @@ struct ColumnTip: Equatable {
         case .coding:
             ColumnTip(icon: "terminal",
                       title: "Coding: Terminal-Bench 4.0",
-                      text: "Share of agentic coding and terminal tasks passed, run by Artificial Analysis. It replaces their Coding Index, which stopped covering new models in September 2026.")
+                      text: "Percent of agentic coding and terminal tasks passed, run by Artificial Analysis. It replaces their Coding Index, which stopped covering new models in September 2026.")
         case .reasoning:
             ColumnTip(icon: "graduationcap",
                       title: "Reasoning: Humanity's Last Exam",
-                      text: "Share of expert-level questions answered correctly, about 40% of them maths. It replaces Artificial Analysis's Maths Index, retired in January 2026.")
+                      text: "Percent of expert-level questions answered correctly, about 40% of them maths. It replaces Artificial Analysis's Maths Index, retired in January 2026.")
         case .speed:
             ColumnTip(icon: "gauge.with.dots.needle.67percent",
                       title: "Speed: Median output speed",
-                      text: "Output tokens per second, the median across the providers Artificial Analysis tests.")
+                      text: "Output tokens per second (t/s), the median across the providers Artificial Analysis tests.")
         case .ttft:
             ColumnTip(icon: "timer",
                       title: "Latency: Time to first token",
-                      text: "Median seconds until the first token arrives. Lower is better.")
+                      text: "Median seconds until the first token arrives, lower is better.")
         case .cost:
             blended
         }
@@ -645,16 +647,19 @@ struct ColumnTip: Equatable {
 /// figures are squeezed. Below the floors' sum the table scrolls.
 struct TableColumns: Equatable {
     static let gap: CGFloat = 14
+    /// Extra room before the left-aligned prices, so they don't run into
+    /// the right-aligned speed figures beside them.
+    static let priceInset: CGFloat = 12
 
     /// (floor, weight) per column, in display order.
     static let model = (min: 180.0, weight: 24.0)
     static let ranIn = (min: 56.0, weight: 6.0)
     static let intelligence = (min: 40.0, weight: 6.0)
-    static let coding = (min: 48.0, weight: 6.0)
-    static let reasoning = (min: 48.0, weight: 6.0)
-    static let speed = (min: 64.0, weight: 7.0)
-    static let extra = (min: 56.0, weight: 6.0)
-    static let price = (min: 150.0, weight: 12.0)
+    static let coding = (min: 40.0, weight: 6.0)
+    static let reasoning = (min: 40.0, weight: 6.0)
+    static let speed = (min: 40.0, weight: 6.0)
+    static let extra = (min: 44.0, weight: 6.0)
+    static let price = (min: 162.0, weight: 12.0)
     static let cost = (min: 130.0, weight: 16.0)
     static let tokens = (min: 76.0, weight: 9.0)
 
@@ -716,19 +721,21 @@ private struct TableRow: View {
             }
             .frame(width: columns.ranIn, alignment: .leading)
             metric(row.aa?.intelligence).frame(width: columns.intelligence, alignment: .trailing)
-            metric(row.aa?.coding, unit: "%", missing: AALanguageModel.noCodingScore)
+            metric(row.aa?.coding, missing: AALanguageModel.noCodingScore)
                 .frame(width: columns.coding, alignment: .trailing)
-            metric(row.aa?.reasoning, unit: "%", missing: AALanguageModel.noReasoningScore)
+            metric(row.aa?.reasoning, missing: AALanguageModel.noReasoningScore)
                 .frame(width: columns.reasoning, alignment: .trailing)
-            metric(row.aa?.speed, unit: "t/s").frame(width: columns.speed, alignment: .trailing)
+            metric(row.aa?.speed).frame(width: columns.speed, alignment: .trailing)
             if model.showsExtraMetric {
-                Text(row.value.map(model.metric.format) ?? "—")
+                // The unit lives in the header's tip, as for the others.
+                Text(row.value.map { String(format: "%.2f", $0) } ?? "—")
                     .font(Theme.bodySmall).monospacedDigit()
                     .foregroundStyle(row.value == nil ? Theme.textMuted : Theme.textPrimary)
                     .frame(width: columns.extra, alignment: .trailing)
                     .help(row.value == nil ? model.metric.missingNote ?? "" : "")
             }
             ListPriceCell(price: row.listPrice)
+                .padding(.leading, TableColumns.priceInset)
                 .frame(width: columns.price, alignment: .leading)
             CostScale(model: row.aa, rank: row.costPercentile)
                 .frame(width: columns.cost, alignment: .leading)
@@ -747,17 +754,11 @@ private struct TableRow: View {
     }
 
     /// A figure, or "—" when Artificial Analysis has none, with `missing`
-    /// as the dash's hover note.
-    @ViewBuilder private func metric(_ value: Double?, unit: String? = nil,
-                                     missing: String? = nil) -> some View {
+    /// as the dash's hover note. Units are in the header's tip.
+    @ViewBuilder private func metric(_ value: Double?, missing: String? = nil) -> some View {
         if let value {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("\(Int(value.rounded()))")
-                    .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
-                if let unit {
-                    Text(unit).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                }
-            }
+            Text("\(Int(value.rounded()))")
+                .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
         } else {
             Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
                 .help(missing ?? "")
