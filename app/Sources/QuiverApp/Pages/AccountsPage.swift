@@ -165,7 +165,13 @@ private struct AccountCard: View {
         }
     }
     var installSheet: some View {
-        EmptyView().sheet(item: $installing) { p in
+        EmptyView().sheet(item: $installing, onDismiss: {
+            // A CLI installed from the sheet turns Install back into Sign in.
+            Task {
+                await app.others.load(force: true)
+                await app.accounts.load(force: false)
+            }
+        }) { p in
             ProviderSetupSheet(provider: p, isInstalled: false)
         }
     }
@@ -187,7 +193,7 @@ private struct AccountCard: View {
                 Spacer()
                 EllipsisMenu {
                     signInItem(name: profile.name, harness: profile.vendor.rawValue,
-                               cli: LaunchPlanner.cliName(for: profile.vendor),
+                               cli: model.signInCLI(for: profile),
                                installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
                                    ?? model.cliOnPath[profile.vendor]) {
                         perform { try await model.signIn(profile) }
@@ -508,7 +514,13 @@ private struct HarnessAccountCard: View {
         }
     }
     var installSheet: some View {
-        EmptyView().sheet(item: $installing) { p in
+        EmptyView().sheet(item: $installing, onDismiss: {
+            // A CLI installed from the sheet turns Install back into Sign in.
+            Task {
+                await app.others.load(force: true)
+                await app.accounts.load(force: false)
+            }
+        }) { p in
             ProviderSetupSheet(provider: p, isInstalled: false)
         }
     }
@@ -533,7 +545,7 @@ private struct HarnessAccountCard: View {
                     // so a rename writes profiles.json and Remove deletes them.
                     EllipsisMenu {
                         signInItem(name: profile.name, harness: profile.vendor.rawValue,
-                                   cli: LaunchPlanner.cliName(for: profile.vendor),
+                                   cli: model.signInCLI(for: profile),
                                    installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
                                        ?? model.cliOnPath[profile.vendor]) {
                             perform { try await model.signIn(profile) }
@@ -550,8 +562,10 @@ private struct HarnessAccountCard: View {
                         if let login = HarnessAccess.loginCommand(for: row.name) {
                             signInItem(name: row.name, harness: row.name,
                                        cli: AccountSignIn.cli(loginCommand: login),
-                                       installed: row.cliInstalled
-                                           ?? app.others.cliInstalled[AccountSignIn.cli(loginCommand: login)]) {
+                                       // The login binary, not the harness's own
+                                       // (Copilot signs in with gh).
+                                       installed: app.others.cliInstalled[AccountSignIn.cli(loginCommand: login)]
+                                           ?? (AccountSignIn.cli(loginCommand: login) == row.name ? row.cliInstalled : nil)) {
                                 perform { try await model.signIn(harness: row.name) }
                             }
                             Divider()

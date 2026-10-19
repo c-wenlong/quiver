@@ -380,6 +380,13 @@ public final class AccountsModel {
         try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
     }
 
+    /// The CLI this account's Sign in runs, or nil when it signs in inside
+    /// its own app (a Cursor profile), which needs no CLI.
+    public func signInCLI(for profile: Profile) -> String? {
+        LaunchPlanner.cliLoginCommand(for: profile, paths: store.paths(for: profile)) == nil
+            ? nil : LaunchPlanner.cliName(for: profile.vendor)
+    }
+
     public func folder(of profile: Profile) -> URL {
         store.paths(for: profile).home
     }

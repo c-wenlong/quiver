@@ -188,4 +188,16 @@ import Testing
         await #expect(throws: LaunchError.self) { try await m2.signIn(work) }
         #expect(launcher.launched.isEmpty)
     }
+
+    @Test func appSignInAccountsNeedNoCLI() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)")
+        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let cursor = try store.add(vendor: .cursor, name: "Cursor 2")
+        let codex = try store.add(vendor: .codex, name: "Codex 2")
+        let m = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
+                              terminal: { .terminal }, loginPath: { "" }, running: running)
+        #expect(m.signInCLI(for: cursor) == nil)
+        #expect(m.signInCLI(for: codex) == LaunchPlanner.cliName(for: .codex))
+        #expect(AccountSignIn.action(cli: m.signInCLI(for: cursor), harness: "cursor", installed: false) == .signIn)
+    }
 }
