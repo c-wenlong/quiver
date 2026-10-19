@@ -142,7 +142,9 @@ public final class ComputeModel {
     private var trendGeneration = 0
     /// Whether the matcher list has ever loaded, so a trend tick does not
     /// respawn `swe list` every interval when nothing is starred.
-    private var matchersLoaded = false
+    /// The starred list has been read at least once, so an empty one
+    /// really means nothing is starred.
+    public private(set) var matchersLoaded = false
     /// When a matcher load last failed; a tick may retry once a minute.
     private var matchersFailedAt: Date?
 

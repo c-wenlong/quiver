@@ -71,7 +71,8 @@ struct AccountsPage: View {
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
             } else {
                 EmptyCard(text: "Nothing starred. Star a harness on Harnesses to see it here.",
-                          icon: "star")
+                          icon: "star",
+                          actionTitle: "Open Harnesses") { app.selection = .harnesses }
             }
         }
         .sheet(isPresented: $adding) {
