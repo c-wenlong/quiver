@@ -622,12 +622,20 @@ struct ErrorCard: View {
 struct EmptyCard: View {
     var text: String
     var icon: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
         Card {
-            Label(text, systemImage: icon)
-                .font(Theme.bodySmall)
-                .foregroundStyle(Theme.textSecondary)
+            HStack {
+                Label(text, systemImage: icon)
+                    .font(Theme.bodySmall)
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if let actionTitle, let action {
+                    Button(actionTitle, action: action).secondaryButton()
+                }
+            }
         }
     }
 }
