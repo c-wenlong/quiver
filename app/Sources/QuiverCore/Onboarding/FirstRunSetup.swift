@@ -1,0 +1,244 @@
+import Foundation
+import Observation
+
+/// What `swe setup --json` found: harnesses to register, MCP servers to
+/// import, and what linking the shared AGENTS.md would do.
+public struct SetupPreview: Decodable, Sendable, Equatable {
+    public struct Harness: Decodable, Sendable, Equatable {
+        public let name: String
+    }
+
+    public struct Server: Decodable, Sendable, Equatable {
+        public let name: String
+    }
+
+    public struct LinkRow: Decodable, Sendable, Equatable {
+        /// "instructions", "skills" or "hooks".
+        public let kind: String
+        public let harness: String
+        public let path: String
+        /// A result word: linked, blocked, protected, skipped… In a preview
+        /// a change reads "would-create", "would-absorb" and so on.
+        public let result: String
+        public let detail: String
+
+        public init(kind: String, harness: String, path: String, result: String, detail: String = "") {
+            self.kind = kind
+            self.harness = harness
+            self.path = path
+            self.result = result
+            self.detail = detail
+        }
+
+        /// Linked now, or would be once setup runs.
+        public var isLinked: Bool {
+            ["linked", "would-create", "would-relink", "would-absorb"].contains(result)
+        }
+
+        /// A real file or folder setup leaves where it is.
+        public var isLeftAlone: Bool {
+            ["blocked", "protected", "conflict", "keep", "would-conflict", "would-keep"].contains(result)
+        }
+    }
+
+    /// A real instruction file that could start the shared AGENTS.md.
+    public struct Candidate: Decodable, Sendable, Equatable, Hashable {
+        public let harness: String
+        public let path: String
+
+        public init(harness: String, path: String) {
+            self.harness = harness
+            self.path = path
+        }
+    }
+
+    public struct Instructions: Decodable, Sendable, Equatable {
+        public let agentsFile: String
+        public let agentsFileExists: Bool
+        /// AGENTS.md holds the user's own text, so nothing can be adopted.
+        public let agentsFileCustomised: Bool
+        public let rows: [LinkRow]
+        public let adoptCandidates: [Candidate]
+
+        public init(agentsFile: String, agentsFileExists: Bool, agentsFileCustomised: Bool,
+                    rows: [LinkRow], adoptCandidates: [Candidate]) {
+            self.agentsFile = agentsFile
+            self.agentsFileExists = agentsFileExists
+            self.agentsFileCustomised = agentsFileCustomised
+            self.rows = rows
+            self.adoptCandidates = adoptCandidates
+        }
+    }
+
+    public let harness: [Harness]
+    public let mcp: [Server]
+    /// Missing from an swe older than the setup sheet.
+    public let instructions: Instructions?
+}
+
+/// What `swe setup --apply --json` did.
+public struct SetupOutcome: Decodable, Sendable, Equatable {
+    public struct Starred: Decodable, Sendable, Equatable {
+        public let starred: [String]
+        public let registered: [String]
+        public let unknown: [String]
+    }
+
+    public struct Links: Decodable, Sendable, Equatable {
+        public let adopted: String?
+        public let error: String?
+        public let rows: [SetupPreview.LinkRow]?
+    }
+
+    public let harness: [String]
+    public let mcp: [String]
+    public let starred: Starred?
+    public let links: Links?
+
+    /// Paths setup left as they were, so the user can deal with them.
+    public var leftAlone: [SetupPreview.LinkRow] {
+        (links?.rows ?? []).filter(\.isLeftAlone)
+    }
+}
+
+private struct SetupApplied: Decodable { let applied: SetupOutcome }
+
+extension SweClient {
+    /// `swe setup --json`: a preview, nothing written.
+    public func setupPreview() async throws -> SetupPreview {
+        try await call(["setup", "--json", "--non-interactive"])
+    }
+
+    /// `swe setup --apply --json`: register what was found, import MCP
+    /// servers, link AGENTS.md and skills, and star exactly `starred`.
+    /// `adopt` starts the shared AGENTS.md from that file.
+    public func applySetup(starred: [String], adopt: String?) async throws -> SetupOutcome {
+        var arguments = ["setup", "--apply", "--json", "--starred=" + starred.joined(separator: ",")]
+        if let adopt { arguments.append("--adopt=" + adopt) }
+        // A linking pass that stopped exits 1 but still says what was
+        // applied and why it stopped (`links.error`), so read that.
+        let reply: SetupApplied = try await call(arguments, allowFailure: true)
+        return reply.applied
+    }
+}
+
+/// Whether to open the setup window at launch: never once it has been
+/// finished or skipped, and only on a Mac with no shared AGENTS.md yet,
+/// so an existing install isn't asked to set up again after an update.
+public enum FirstRun {
+    public static let defaultsKey = "firstRunSetupDone"
+
+    public static func shouldOffer(done: Bool, agentsFileExists: Bool) -> Bool {
+        !done && !agentsFileExists
+    }
+
+    public static func agentsFile(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        home.appending(path: ".quiver/AGENTS.md")
+    }
+}
+
+/// The first-run setup window's state: four steps, the agents you use,
+/// which instruction file starts the shared AGENTS.md, and the one swe
+/// call that applies it all.
+@MainActor
+@Observable
+public final class FirstRunSetupModel {
+    public enum Step: Int, CaseIterable, Sendable {
+        case agents, links, look, notifications
+
+        public var number: Int { rawValue + 1 }
+    }
+
+    /// Where the shared AGENTS.md starts from.
+    public enum Start: Hashable, Sendable {
+        /// Quiver's starter file, or the AGENTS.md already there.
+        case seed
+        case file(String)
+    }
+
+    public private(set) var step: Step = .agents
+    public private(set) var preview: Loadable<SetupPreview> = .idle
+    /// Ticked on the agents step; harness ids as swe and Settings name them.
+    public var selected: Set<String> = []
+    public var start: Start = .seed
+    public private(set) var applying = false
+    public private(set) var outcome: SetupOutcome?
+    public private(set) var applyError: String?
+
+    private let swe: @Sendable () -> SweClient
+    private var generation = 0
+
+    public init(swe: @escaping @Sendable () -> SweClient, starred: Set<String> = []) {
+        self.swe = swe
+        selected = starred
+    }
+
+    public func toggle(_ id: String) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
+    public func load() async {
+        generation += 1
+        let run = generation
+        preview = .loading
+        do {
+            let found = try await swe().setupPreview()
+            guard run == generation else { return }
+            preview = .loaded(found)
+            start = Self.defaultStart(found.instructions)
+        } catch is CancellationError {
+            if run == generation { preview = .idle }
+        } catch {
+            if run == generation { preview = .failed(error.localizedDescription) }
+        }
+    }
+
+    /// Your own instructions beat the starter file: the first real file
+    /// found (Claude's comes first in swe's order) starts the shared one,
+    /// unless AGENTS.md already has your text.
+    static func defaultStart(_ instructions: SetupPreview.Instructions?) -> Start {
+        guard let instructions, !instructions.agentsFileCustomised,
+              let first = instructions.adoptCandidates.first else { return .seed }
+        return .file(first.path)
+    }
+
+    /// Candidates the chosen start leaves as they are.
+    public var untouchedCandidates: [SetupPreview.Candidate] {
+        guard case .loaded(let found) = preview else { return [] }
+        return (found.instructions?.adoptCandidates ?? []).filter { .file($0.path) != start }
+    }
+
+    public func back() {
+        guard let previous = Step(rawValue: step.rawValue - 1) else { return }
+        step = previous
+    }
+
+    /// Continue. Leaving the links step runs setup; a failure, or files
+    /// setup left alone, keep you there to read about them, and a second
+    /// Continue moves on.
+    public func next(order: [String]) async {
+        if step == .links && outcome == nil {
+            await apply(order: order)
+            if applyError != nil || !(outcome?.leftAlone.isEmpty ?? true) { return }
+        }
+        if let following = Step(rawValue: step.rawValue + 1) { step = following }
+    }
+
+    /// The ticked harnesses in `order` (the grid's), then any others.
+    func starredList(order: [String]) -> [String] {
+        order.filter(selected.contains) + selected.subtracting(order).sorted()
+    }
+
+    func apply(order: [String]) async {
+        applying = true
+        applyError = nil
+        defer { applying = false }
+        let adopt: String? = if case .file(let path) = start { path } else { nil }
+        do {
+            outcome = try await swe().applySetup(starred: starredList(order: order), adopt: adopt)
+            if let error = outcome?.links?.error { applyError = error }
+        } catch {
+            applyError = error.localizedDescription
+        }
+    }
+}

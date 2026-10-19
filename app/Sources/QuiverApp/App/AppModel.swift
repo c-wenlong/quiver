@@ -133,6 +133,21 @@ final class AppModel {
         NSApp.applicationIconImage = NSImage(contentsOf: url)
     }
 
+    /// The first-run setup window: open at launch on a Mac with no shared
+    /// AGENTS.md that hasn't finished or skipped it, or from Settings.
+    var showsFirstRunSetup = false
+
+    /// Setup finished or skipped: never offered at launch again, and the
+    /// pages that read stars, harnesses and links load afresh.
+    func closeFirstRunSetup() {
+        UserDefaults.standard.set(true, forKey: FirstRun.defaultsKey)
+        showsFirstRunSetup = false
+        Task { [others, providers] in
+            await others.load()
+            await providers.load()
+        }
+    }
+
     /// Light, dark, or macOS's own setting (the default).
     var appearance: AppearanceMode {
         didSet {
@@ -644,6 +659,11 @@ final class AppModel {
             statusPolling = Task { [serviceStatus] in await serviceStatus.keepFresh() }
         }
         guard watchers.isEmpty else { return }
+        if FirstRun.shouldOffer(
+            done: UserDefaults.standard.bool(forKey: FirstRun.defaultsKey),
+            agentsFileExists: FileManager.default.fileExists(atPath: FirstRun.agentsFile().path)) {
+            showsFirstRunSetup = true
+        }
         if let overview { refreshing = Task { await overview.keepFresh() } }
         if let ledger, backingUp == nil { backingUp = Task { await ledger.keepBackedUp() } }
         watchers = [

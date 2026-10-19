@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-run setup in the app.** A new Mac with no `~/.quiver/AGENTS.md`
+  opens a four-step window. First, tick the coding agents you use: the ones
+  found on the Mac come first, and "Show more agents" lists the rest, with
+  install commands for one you pick before installing it. Second, one
+  shared AGENTS.md, skills folder and MCP server list, started from your
+  own CLAUDE.md or AGENTS.md if you have one. Third, light, dark or system
+  look. Fourth, limit notifications, with Allow and a test notification.
+  Step two is one `swe setup --apply` call. Skip closes the window for
+  good; Settings › General › First-run setup opens it again.
+
 - **`swe setup --apply` sets up a blank Mac in one go.** After registering
   harnesses, importing MCP servers and linking skills roots, it now builds
   `~/.quiver` (seeded `AGENTS.md`, `.linkignore`, `.gitignore`) and links

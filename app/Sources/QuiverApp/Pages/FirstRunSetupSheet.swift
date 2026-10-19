@@ -1,0 +1,585 @@
+import AppKit
+import QuiverCore
+import SwiftUI
+import UserNotifications
+
+/// The first-run setup window, in four steps: the agents you use, one
+/// shared AGENTS.md, skills and MCP servers, the look, and notifications.
+/// The second step is the only one that writes outside Quiver's own
+/// settings, through one `swe setup --apply` call.
+struct FirstRunSetupSheet: View {
+    @Environment(AppModel.self) private var app
+    @State private var model: FirstRunSetupModel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let model {
+                Content(model: model)
+            } else {
+                Spacer()
+            }
+        }
+        .frame(width: 820, height: 680)
+        .background(Theme.panel)
+        .interactiveDismissDisabled()
+        .task {
+            let starred = app.others.starred ?? []
+            let setup = FirstRunSetupModel(swe: { [app] in app.swe }, starred: starred)
+            model = setup
+            await app.providers.loadIfNeeded(for: app.swePath)
+            await app.limits.checkNotificationPermission()
+            await setup.load()
+        }
+    }
+}
+
+private struct Content: View {
+    @Environment(AppModel.self) private var app
+    @Bindable var model: FirstRunSetupModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, 40)
+                .padding(.top, 32)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    titles
+                    switch model.step {
+                    case .agents: AgentsStep(model: model)
+                    case .links: LinksStep(model: model)
+                    case .look: LookStep()
+                    case .notifications: NotificationsStep()
+                    }
+                }
+                .padding(.horizontal, 40)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider().overlay(Theme.border)
+            footer
+                .padding(.horizontal, 40)
+                .padding(.vertical, 18)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            HStack(spacing: 10) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable().frame(width: 28, height: 28)
+                    .accessibilityHidden(true)
+                Text("Quiver").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+            }
+            HStack(spacing: 6) {
+                ForEach(FirstRunSetupModel.Step.allCases, id: \.self) { step in
+                    Capsule()
+                        .fill(step == model.step ? Theme.textPrimary : Theme.borderStrong)
+                        .frame(width: step == model.step ? 36 : 22, height: 3)
+                }
+                Text("\(model.step.number) of \(FirstRunSetupModel.Step.allCases.count)")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .padding(.leading, 8)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Step \(model.step.number) of \(FirstRunSetupModel.Step.allCases.count)")
+        }
+    }
+
+    private var titles: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.step == .agents {
+                Text("Welcome to Quiver").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            Text(title).font(Theme.pageTitle).tracking(-0.8).foregroundStyle(Theme.textPrimary)
+            Text(subtitle).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var title: String {
+        switch model.step {
+        case .agents: "Pick the agents you use"
+        case .links: "One setup for all of them"
+        case .look: "Pick a look"
+        case .notifications: "Set up notifications"
+        }
+    }
+
+    private var subtitle: String {
+        switch model.step {
+        case .agents:
+            "Quiver shows usage, limits and sessions for every coding agent. The ones you pick go in the menu bar and on Accounts. Change them any time on Harnesses."
+        case .links:
+            "Quiver keeps one AGENTS.md, one skills folder and one list of MCP servers, and links them into each agent."
+        case .look:
+            "Change it later in Settings › Preferences."
+        case .notifications:
+            "Quiver tells you when a limit nears its end and when it resets."
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Button("Skip setup") { app.closeFirstRunSetup() }
+                .buttonStyle(.plain)
+                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                .help("Close this and set things up later from Settings › General")
+            Spacer()
+            if model.step != .agents {
+                Button("Back", systemImage: "chevron.left") { model.back() }
+                    .secondaryButton()
+                    .disabled(model.applying)
+            }
+            Button(continueTitle) {
+                if model.step == .notifications {
+                    app.closeFirstRunSetup()
+                } else {
+                    Task { await model.next(order: app.providers.rows.map(\.provider.id)) }
+                }
+            }
+            .primaryButton()
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(model.applying || (model.step == .links && !previewReady))
+        }
+    }
+
+    private var previewReady: Bool {
+        if case .loaded = model.preview { return true }
+        return false
+    }
+
+    private var continueTitle: String {
+        switch model.step {
+        case .links where model.applying: "Setting up…"
+        case .links where model.outcome == nil: "Set up"
+        case .notifications: "Start using Quiver"
+        default: "Continue"
+        }
+    }
+}
+
+// MARK: - Step 1: agents
+
+private struct AgentsStep: View {
+    @Environment(AppModel.self) private var app
+    @Bindable var model: FirstRunSetupModel
+    @State private var showingMore = false
+    @State private var installing: Provider?
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
+
+    private var installed: [Provider] { app.providers.rows.filter(\.isInstalled).map(\.provider) }
+    private var others: [Provider] { app.providers.rows.filter { !$0.isInstalled }.map(\.provider) }
+    private var pickedMissing: [Provider] { others.filter { model.selected.contains($0.id) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !app.providers.hasChecked {
+                LoadingCard(text: "Looking for coding agents on this Mac…")
+            } else {
+                if let error = app.providers.checkError { ErrorCard(message: error) }
+                ForEach(pickedMissing) { provider in missingBanner(provider) }
+                HStack(spacing: 6) {
+                    Text("Found on this Mac").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    Text("\(installed.count)").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
+                }
+                if installed.isEmpty {
+                    Text("No coding agents found yet. Pick the ones you plan to use below.")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                } else {
+                    grid(installed)
+                }
+                if !others.isEmpty {
+                    Button(showingMore ? "Hide agents" : "Show \(others.count) more agents") {
+                        showingMore.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    .underline()
+                    if showingMore { grid(others) }
+                }
+            }
+        }
+        .sheet(item: $installing) { provider in
+            ProviderSetupSheet(provider: provider, isInstalled: false).environment(app)
+        }
+    }
+
+    private func grid(_ providers: [Provider]) -> some View {
+        LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(providers) { provider in
+                AgentTile(provider: provider, isOn: model.selected.contains(provider.id)) {
+                    model.toggle(provider.id)
+                }
+            }
+        }
+    }
+
+    private func missingBanner(_ provider: Provider) -> some View {
+        HStack(spacing: 12) {
+            (Text(provider.name).foregroundStyle(Theme.textPrimary)
+                + Text(" isn't installed yet. Quiver will list it anyway, and you can install it any time."))
+                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            Button("Install…") { installing = provider }
+                .secondaryButton()
+                .help("Show the install commands for \(provider.name)")
+        }
+        .padding(.horizontal, Theme.cardPadding)
+        .padding(.vertical, 12)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.warning.opacity(0.6), lineWidth: 1))
+    }
+}
+
+/// One agent: its logo, its name, a tick when picked.
+private struct AgentTile: View {
+    var provider: Provider
+    var isOn: Bool
+    var toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 10) {
+                HarnessIcon(harness: provider.icon, size: 18)
+                    .frame(width: 30, height: 30)
+                    .background(Theme.panel, in: .rect(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+                Text(provider.name)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if isOn {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Theme.textPrimary)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 52)
+            .background(isOn ? Theme.cardHover : Theme.card, in: .rect(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(isOn ? Theme.textSecondary : (hovering ? Theme.borderHover : Theme.border),
+                              lineWidth: 1))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+// MARK: - Step 2: AGENTS.md, skills and MCP servers
+
+private struct LinksStep: View {
+    @Bindable var model: FirstRunSetupModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            switch model.preview {
+            case .idle, .loading:
+                LoadingCard(text: "Checking what each agent already has…")
+            case .failed(let message):
+                ErrorCard(message: message)
+            case .loaded(let preview):
+                if let error = model.applyError { ErrorCard(message: error) }
+                if let outcome = model.outcome { done(outcome) }
+                VStack(spacing: 0) {
+                    instructionsRow(preview.instructions)
+                    Divider().overlay(Theme.border)
+                    row(icon: "sparkles", title: "Skills",
+                        detail: "~/.quiver/skills becomes every agent's skills folder, so a skill you add shows up in all of them.")
+                    Divider().overlay(Theme.border)
+                    row(icon: "powerplug", title: "MCP servers", detail: mcpDetail(preview.mcp))
+                }
+                .padding(.horizontal, Theme.cardPadding)
+                .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+                Text("Anything replaced is backed up to ~/.quiver/backups first. A real file that would be lost stays where it is.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    private func mcpDetail(_ servers: [SetupPreview.Server]) -> String {
+        guard !servers.isEmpty else {
+            return "None found in your agents yet. Add servers later on the MCP servers page."
+        }
+        let names = servers.map(\.name).joined(separator: ", ")
+        return "Copies \(servers.count) server\(servers.count == 1 ? "" : "s") your agents already use into ~/.quiver/mcp.json: \(names)."
+    }
+
+    @ViewBuilder
+    private func instructionsRow(_ instructions: SetupPreview.Instructions?) -> some View {
+        row(icon: "doc.text", title: "Shared instructions",
+            detail: "~/.quiver/AGENTS.md, linked into each agent as its own file (CLAUDE.md, AGENTS.md, GEMINI.md…).") {
+            if let instructions {
+                if instructions.agentsFileCustomised {
+                    Text("Your AGENTS.md is already there and stays as it is.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                } else if !instructions.adoptCandidates.isEmpty {
+                    HStack(spacing: 8) {
+                        Text("Start from").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        Picker("Start from", selection: $model.start) {
+                            ForEach(instructions.adoptCandidates, id: \.self) { candidate in
+                                Text("Your \(Self.tilde(candidate.path))")
+                                    .tag(FirstRunSetupModel.Start.file(candidate.path))
+                            }
+                            Text("Quiver's starter file").tag(FirstRunSetupModel.Start.seed)
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 360)
+                        .disabled(model.outcome != nil)
+                    }
+                }
+                ForEach(model.untouchedCandidates, id: \.self) { candidate in
+                    Text("\(Self.tilde(candidate.path)) has other text, so it stays as it is. Link it later on the AGENTS.md page.")
+                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func done(_ outcome: SetupOutcome) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Set up. These stay as they are:", systemImage: "checkmark.circle")
+                .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            ForEach(outcome.leftAlone, id: \.path) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.tilde(row.path)).font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                    if !row.detail.isEmpty {
+                        Text(row.detail).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+            }
+            Text("Continue when you've read this. The Harnesses and AGENTS.md pages show them again.")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+        }
+        .padding(Theme.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .opacity(outcome.leftAlone.isEmpty ? 0 : 1)
+    }
+
+    private func row(icon: String, title: String, detail: String,
+                     @ViewBuilder extra: () -> some View = { EmptyView() }) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(Theme.textSecondary)
+                .frame(width: 20).padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                Text(detail).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                extra()
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 14)
+    }
+
+    static func tilde(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}
+
+// MARK: - Step 3: look
+
+private struct LookStep: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ForEach(AppearanceMode.allCases, id: \.self) { mode in
+                card(mode)
+            }
+        }
+    }
+
+    private func card(_ mode: AppearanceMode) -> some View {
+        let isOn = app.appearance == mode
+        return Button { app.appearance = mode } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                WindowSketch(mode: mode)
+                    .frame(height: 110)
+                    .overlay(alignment: .topTrailing) {
+                        if isOn {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(Theme.textPrimary, Theme.card)
+                                .padding(8)
+                        }
+                    }
+                HStack {
+                    Label(mode.title, systemImage: mode.symbol)
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Text(mode.blurb).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .padding(12)
+            .background(isOn ? Theme.cardHover : Theme.card, in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(isOn ? Theme.textSecondary : Theme.border, lineWidth: 1))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+private extension AppearanceMode {
+    var symbol: String {
+        switch self {
+        case .system: "desktopcomputer"
+        case .light: "sun.max"
+        case .dark: "moon"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .system: "Matches macOS"
+        case .light: "Bright and clear"
+        case .dark: "Easy on the eyes"
+        }
+    }
+}
+
+/// A tiny Quiver window in light, dark, or both halves for System. Fixed
+/// colours on purpose: it shows the mode, whatever mode is on now.
+private struct WindowSketch: View {
+    var mode: AppearanceMode
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                window(dark: mode != .light)
+                if mode == .system {
+                    window(dark: false)
+                        .mask(alignment: .trailing) {
+                            Rectangle().frame(width: geo.size.width * 0.55)
+                        }
+                }
+            }
+        }
+        .clipShape(.rect(cornerRadius: 8))
+        .accessibilityHidden(true)
+    }
+
+    private func window(dark: Bool) -> some View {
+        let wash = dark ? Color(white: 0.09) : Color(white: 0.96)
+        let panel = dark ? Color(white: 0.13) : Color.white
+        let line = dark ? Color(white: 0.26) : Color(white: 0.86)
+        return HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(0..<4, id: \.self) { i in
+                    Capsule().fill(i == 0 ? Theme.accentFill : line)
+                        .frame(width: i == 0 ? 30 : 38, height: 4)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .frame(width: 64)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(wash)
+            VStack(alignment: .leading, spacing: 7) {
+                Capsule().fill(line).frame(width: 50, height: 6)
+                Capsule().fill(line).frame(height: 4)
+                Capsule().fill(line).frame(width: 80, height: 4)
+                Spacer()
+                RoundedRectangle(cornerRadius: 4).fill(line).frame(height: 16)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(panel)
+        }
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(line, lineWidth: 1))
+    }
+}
+
+// MARK: - Step 4: notifications
+
+private struct NotificationsStep: View {
+    @Environment(AppModel.self) private var app
+    @State private var sentTest = false
+
+    var body: some View {
+        @Bindable var limits = app.limits
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "bell.badge").font(.system(size: 16))
+                    .foregroundStyle(Theme.textSecondary).padding(.top, 2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Allow notifications for Quiver").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    Text(permissionDetail).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                permissionButton
+            }
+            .padding(Theme.cardPadding)
+            .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Limits").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    Text("When a usage limit passes 90%, and when it resets. Once per crossing.")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 12)
+                SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
+            }
+            .padding(Theme.cardPadding)
+            .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+
+            HStack(spacing: 10) {
+                Button(sentTest ? "Sent" : "Send test notification", systemImage: "bell") {
+                    Task {
+                        await app.limits.sendTestNotification()
+                        sentTest = app.limits.notificationStatus == .authorized
+                    }
+                }
+                .secondaryButton()
+                Text("More in Settings › Notifications.").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .task { await app.limits.checkNotificationPermission() }
+    }
+
+    private var permissionDetail: String {
+        switch app.limits.notificationStatus {
+        case .authorized, .provisional, .ephemeral: "Allowed."
+        case .denied: "Turned off for Quiver. Turn them on in System Settings › Notifications."
+        default: "Click Allow, then Allow again in the macOS dialog."
+        }
+    }
+
+    @ViewBuilder private var permissionButton: some View {
+        switch app.limits.notificationStatus {
+        case .authorized, .provisional, .ephemeral:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                .accessibilityLabel("Allowed")
+        case .denied:
+            Button("Open System Settings", systemImage: "gear") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .secondaryButton()
+        default:
+            Button("Allow") { Task { await app.limits.requestNotifications() } }
+                .secondaryButton()
+        }
+    }
+}

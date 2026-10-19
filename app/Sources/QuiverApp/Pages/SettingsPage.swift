@@ -170,6 +170,12 @@ private struct SettingsSectionView: View {
                            ? "The menu bar item is off in Menu bar, so Quiver stays in the Dock." : nil) {
                 SettingSwitch(title: "Show in Dock", isOn: $app.showsInDock)
             }
+            SettingsDivider()
+            SettingRow(title: "First-run setup",
+                       detail: "Pick the agents you use, link AGENTS.md and skills into each one, and choose the look and notifications.") {
+                Button("Run setup") { app.showsFirstRunSetup = true }
+                    .secondaryButton()
+            }
         }
     }
 
