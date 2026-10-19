@@ -12,7 +12,7 @@ struct DetectSheet: View {
 
     @State private var discovery: HarnessDiscovery?
     @State private var checked: Set<String> = []
-    @State private var registered: [String]?
+    @State private var registered: HarnessDiscovery.Applied?
     @State private var error: String?
     @State private var working = false
 
@@ -23,8 +23,12 @@ struct DetectSheet: View {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
             if let registered {
-                Text("Registered \(registered.joined(separator: ", ")).")
+                Text("Registered \(registered.added.joined(separator: ", ")).")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                ForEach(registered.skipped) { skip in
+                    Text("Skipped \(skip.name): \(skip.reason)")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
             } else if let discovery {
                 let (rows, _) = HarnessDiscovery.selection(discovery.findings)
                 if rows.isEmpty {

@@ -176,8 +176,8 @@ def cmd_discover(args):
         # the floor map in apply_findings treats "low" as accept-everything.
         # Named or picked findings skip the floor entirely.
         min_conf = "low" if opts["apply_all"] else "high"
-        added = apply_findings(findings, min_confidence=min_conf, names=names)
-        data["applied"] = {"added": added}
+        added, skipped = apply_findings(findings, min_confidence=min_conf, names=names)
+        data["applied"] = {"added": added, "skipped": skipped}
         if not opts["json"] and added:
             print(c("green", f"  ✓ Added {len(added)} tool(s) to registry: {', '.join(added)}"))
             print(c("dim", "  Run `swe list` to verify.\n"))

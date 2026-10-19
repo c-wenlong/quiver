@@ -74,6 +74,28 @@ public struct HarnessDiscovery: Decodable, Sendable {
 
     public struct Applied: Decodable, Sendable {
         public let added: [String]
+        /// Findings apply refused: a name already registered, or an alias
+        /// belonging to another harness. Absent from an older swe.
+        public let skipped: [Skipped]
+
+        public struct Skipped: Decodable, Sendable, Identifiable {
+            public var id: String { name + reason }
+            public let name: String
+            public let reason: String
+        }
+
+        private enum CodingKeys: String, CodingKey { case added, skipped }
+
+        public init(added: [String], skipped: [Skipped]) {
+            self.added = added
+            self.skipped = skipped
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let box = try decoder.container(keyedBy: CodingKeys.self)
+            added = try box.decode([String].self, forKey: .added)
+            skipped = try box.decodeIfPresent([Skipped].self, forKey: .skipped) ?? []
+        }
     }
 
     /// What the Detect sheet offers: new matches only, high-confidence
@@ -186,12 +208,13 @@ public final class HarnessesModel {
         self.swe = swe
     }
 
-    /// Registers discovered harnesses by name, behind the registry gate;
-    /// returns the names swe added.
-    public func register(_ names: [String]) async throws -> [String] {
+    /// Registers those names behind the registry gate; the reply also
+    /// says which names were refused, and why.
+    public func register(_ names: [String]) async throws -> HarnessDiscovery.Applied {
         await gate.acquire()
         defer { gate.release() }
-        return try await swe.registerHarnesses(names).applied?.added ?? []
+        return try await swe.registerHarnesses(names).applied
+            ?? .init(added: [], skipped: [])
     }
 
     /// Adds a custom harness behind the registry gate; never overwrites.
