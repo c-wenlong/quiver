@@ -445,12 +445,14 @@ import Testing
         #expect(model.history.temperatures.isEmpty)
         #expect(!model.temperatureAvailable)
         // Recorded even with no harness running: the Mac is still warm.
-        thermometer.reading = TemperatureReading([.cpu: 58, .gpu: 61, .battery: 35])
+        thermometer.reading = TemperatureReading([.cpu: 58, .gpu: 61, .battery: 35],
+                                                 fans: FanSummary(rpm: 3100, up: true))
         clock.now = Self.now.addingTimeInterval(10)
         await model.trendTick(at: clock.now)
         #expect(model.history.temperatures.map { $0[.cpu] } == [58])
         #expect(model.history.temperatures.last?[.battery] == 35)
         #expect(model.history.temperatures.last?[.gpu] == 61)
+        #expect(model.history.temperatures.last?.fans == FanSummary(rpm: 3100, up: true))
         #expect(model.temperatureAvailable)
         #expect(model.history.isEmpty)
     }
@@ -486,6 +488,23 @@ import Testing
         #expect(ComputeModel.loadTemperatureLines(defaults) == [.gpu])
         defaults.set([String](), forKey: ComputeModel.temperatureLinesKey)
         #expect(ComputeModel.loadTemperatureLines(defaults).isEmpty)
+    }
+
+    @Test func fanSpansCoverUpTicksAndJoinAcrossOneSlowTick() {
+        func point(_ seconds: Double, up: Bool?) -> TemperaturePoint {
+            TemperaturePoint(at: Self.now.addingTimeInterval(seconds), values: [.cpu: 70],
+                             fans: up.map { FanSummary(rpm: $0 ? 4000 : 2317, up: $0) })
+        }
+        let at = { (seconds: Double) in Self.now.addingTimeInterval(seconds) }
+        // Ten-second ticks: up at 10 and 20, a tick 13 s late at 33 still
+        // joins, then down, then a lone up tick at 70.
+        let points = [point(0, up: false), point(10, up: true), point(20, up: true), point(33, up: true),
+                      point(40, up: false), point(50, up: nil), point(70, up: true)]
+        let spans = ComputeHistory.fanSpans(points, interval: .tenSeconds)
+        #expect(spans == [at(5)...at(38), at(65)...at(75)])
+        // Up ticks two intervals apart stay separate.
+        #expect(ComputeHistory.fanSpans([point(0, up: true), point(20, up: true)], interval: .tenSeconds).count == 2)
+        #expect(ComputeHistory.fanSpans([point(0, up: false)], interval: .tenSeconds).isEmpty)
     }
 
     @Test func temperaturesAgeOutWhenTheSensorsStopAnswering() {

@@ -66,10 +66,13 @@ public struct TrendPoint: Sendable, Equatable {
 public struct TemperaturePoint: Sendable, Equatable {
     public var at: Date
     public var values: [ThermalComponent: Double]
+    /// Nil on a Mac without fans.
+    public var fans: FanSummary?
 
-    public init(at: Date, values: [ThermalComponent: Double]) {
+    public init(at: Date, values: [ThermalComponent: Double], fans: FanSummary? = nil) {
         self.at = at
         self.values = values
+        self.fans = fans
     }
 
     public subscript(_ component: ThermalComponent) -> Double? { values[component] }
@@ -139,6 +142,27 @@ public struct ComputeHistory: Sendable, Equatable {
         guard let end = temperatureEnd else { return [] }
         let range = window(endingAt: end, interval: interval)
         return temperatures.filter { range.contains($0.at) }
+    }
+
+    /// The stretches of time the fans ran up, for the chart's shading.
+    /// Each up point stands for half an interval either side of it, so a
+    /// lone tick still shows; up points no more than an interval and a
+    /// half apart join into one span, so a single slow tick does not
+    /// split it.
+    public static func fanSpans(_ points: [TemperaturePoint], interval: TrendInterval) -> [ClosedRange<Date>] {
+        let half = interval.seconds / 2
+        var spans: [ClosedRange<Date>] = []
+        var lastUp: Date?
+        for point in points.sorted(by: { $0.at < $1.at }) where point.fans?.up == true {
+            let end = point.at.addingTimeInterval(half)
+            if let lastUp, let open = spans.last, point.at.timeIntervalSince(lastUp) <= interval.seconds * 1.5 {
+                spans[spans.count - 1] = open.lowerBound...end
+            } else {
+                spans.append(point.at.addingTimeInterval(-half)...end)
+            }
+            lastUp = point.at
+        }
+        return spans
     }
 
     /// Whether any point has been recorded yet.
