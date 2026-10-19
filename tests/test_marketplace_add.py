@@ -81,6 +81,18 @@ class MarketplaceAddTest(unittest.TestCase):
         self.assertNotIn("secret", result["results"][0]["detail"])
         self.assertIn("host/repo", result["results"][0]["detail"])
 
+    def test_path_looking_sources_must_be_folders(self):
+        for source in ("./plugins", "~/nope/market", "/no/such/dir"):
+            with self.subTest(source=source):
+                with self.assertRaises(ActionError):
+                    marketplace_source(source, self.home)
+
+    def test_a_bad_harness_runs_nothing(self):
+        run, calls = self.run_with([(0, "ok\n", "")])
+        with self.assertRaises(ActionError):
+            marketplace_add(self.home, "owner/repo", ["claude", "gemini"], run=run)
+        self.assertEqual(calls, [])
+
     def test_unknown_harness_refused(self):
         with self.assertRaises(ActionError):
             marketplace_add(self.home, "owner/repo", ["gemini"])

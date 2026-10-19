@@ -175,10 +175,13 @@ def marketplace_source(source: str, home: Path) -> str:
     source = source.strip()
     if source.startswith("-") or not source:
         raise ActionError(f"not a marketplace source: {source!r}; use {_SOURCE_FORMS}")
-    if _REPO_REF.fullmatch(source) or source.startswith("https://") \
-            or _SSH_URL.fullmatch(source):
-        return source
     folder = Path(source).expanduser()
+    # A path-looking source is a folder or nothing: `./plugins` must not
+    # pass as the GitHub repo "./plugins".
+    looks_like_path = source.startswith(("/", "~", "."))
+    if not looks_like_path and (_REPO_REF.fullmatch(source) or source.startswith("https://")
+                                or _SSH_URL.fullmatch(source)):
+        return source
     if folder.is_dir():
         return str(folder.resolve())
     raise ActionError(f"not a marketplace source: {source!r}; use {_SOURCE_FORMS}")
@@ -188,11 +191,14 @@ def marketplace_add(home: Path, source: str, harnesses: list[str], run=None) -> 
     """`swe plugins marketplace add`: one harness CLI call per harness."""
     run = run or subprocess.run
     argv_source = marketplace_source(source, home)
-    results = []
+    # Every harness is checked before any CLI runs, so a typo in the second
+    # one can't leave the first registered and the command reporting failure.
     for harness in harnesses:
         if harness not in ACTIONABLE:
             raise ActionError(
                 f"--harness must be one of {', '.join(ACTIONABLE)}, not {harness!r}")
+    results = []
+    for harness in harnesses:
         if harness == "claude":
             argv = ["claude", "plugin", "marketplace", "add",
                     "--scope", "user", argv_source]
