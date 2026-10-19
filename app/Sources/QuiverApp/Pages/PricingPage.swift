@@ -221,15 +221,17 @@ private struct PricingRow: View {
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
-    /// Where the rates came from. A harness-billed row with no rates says
-    /// "Harness" rather than warning "No price": its spend is already known.
+    /// Where the spend comes from: for a harness-billed row the charge its
+    /// biller logs ("Cursor bills"), whatever price is saved, since no
+    /// rate applies to it; otherwise where the rates came from.
     private var sourceText: String {
+        if row.harnessBilled { return "\(billers(row)) bills" }
         if row.isFree { return "Free" }
         return switch row.source {
         case .yours: "Yours"
         case .quiver: "Quiver"
         case .liteLLM: "LiteLLM"
-        case nil: row.harnessBilled ? "Harness" : "No price"
+        case nil: "No price"
         }
     }
 
@@ -293,7 +295,9 @@ private struct PricingRow: View {
             .frame(minWidth: 120, alignment: .leading)
             Spacer()
             ForEach(rateColumns.indices, id: \.self) { index in
+                // A harness-billed row's rates are kept but unused: dimmed.
                 Text(rateColumns[index])
+                    .foregroundStyle(row.harnessBilled ? Theme.textMuted : Theme.textPrimary)
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     .frame(width: Self.rateColumnWidth, alignment: .trailing)
             }
@@ -347,10 +351,25 @@ private struct RowHover: ViewModifier {
     }
 }
 
+/// Who bills a harness-billed row: Grok Bot signs in with the Cursor
+/// account and its charges arrive through Cursor's usage feed, so Cursor;
+/// any other harness bills its own usage. Each name once.
+private func billers(_ row: PricingModel.PricedModel) -> String {
+    var names: [String] = []
+    for harness in row.harnesses {
+        let name = harness == "grok-bot" ? "Cursor" : UsageFormat.harness(harness)
+        if !names.contains(name) { names.append(name) }
+    }
+    return names.joined(separator: " and ")
+}
+
 /// "Spend uses the charge Cursor logs for each request, not these rates."
+/// With a saved price, says outright that it's kept but not used.
 private func harnessBilledNote(_ row: PricingModel.PricedModel) -> String {
-    let names = row.harnesses.map(UsageFormat.harness).joined(separator: " and ")
-    return "Spend uses the charge \(names) logs for each request, not these rates."
+    let charge = "the charge \(billers(row)) logs for each request"
+    return row.source == .yours
+        ? "Your price is saved but not used: spend uses \(charge)."
+        : "Spend uses \(charge), not these rates."
 }
 
 // MARK: - Price form
