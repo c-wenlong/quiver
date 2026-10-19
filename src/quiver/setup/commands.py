@@ -12,6 +12,13 @@ from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
 from quiver.prompt import read_line
 from quiver.skills.symlinks import apply_skills_symlink_hints, skills_symlink_hints
 from quiver.setup.wizard import SECTION_ALIASES, run_setup_wizard
+from quiver.init.commands import (
+    adopt_instructions,
+    agents_file_customised,
+    check_adoptable,
+    run_init,
+)
+from quiver.init.layout import LinkIgnoreError, agents_file, registry_name
 
 
 def cmd_harness(args):
@@ -95,7 +102,12 @@ def _setup_help():
   {c('cyan', 'swe setup --quick')}      Configure only missing or actionable stages
   {c('cyan', 'swe setup <section>')}    Run one section: harnesses, providers, mcp,
                                 skills, report, or check
-  {c('cyan', 'swe setup --apply')}      Non-interactively apply safe discovery changes
+  {c('cyan', 'swe setup --apply')}      Non-interactively apply safe discovery changes,
+                                then link AGENTS.md and skills into each harness
+  {c('cyan', 'swe setup --apply --adopt=<file>')}  Start ~/.quiver/AGENTS.md from one of
+                                your instruction files (only while it is the seed)
+  {c('cyan', 'swe setup --apply --starred=a,b')}  Star exactly these harnesses (registers
+                                catalog ones that aren't registered yet)
   {c('cyan', 'swe setup --json')}       Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
 
@@ -114,6 +126,15 @@ def _setup_help():
 
 
 def cmd_setup(args):
+    adopt_args = [arg for arg in args if arg.startswith("--adopt=")]
+    starred_args = [arg for arg in args if arg.startswith("--starred=")]
+    args = [arg for arg in args
+            if not arg.startswith(("--adopt=", "--starred="))]
+    adopt = Path(adopt_args[-1].split("=", 1)[1]).expanduser() if adopt_args else None
+    starred = None
+    if starred_args:
+        value = starred_args[-1].split("=", 1)[1]
+        starred = [name.strip() for name in value.split(",") if name.strip()]
     apply = "--apply" in args
     json_out = "--json" in args
     quick = "--quick" in args
@@ -141,6 +162,19 @@ def cmd_setup(args):
     if quick and (apply or json_out or non_interactive):
         print(c("red", "  --quick is for the interactive wizard and cannot be combined with non-interactive modes."))
         return 1
+
+    refusal_stream = sys.stderr if json_out else sys.stdout
+    if adopt is not None and not apply:
+        print(c("red", "  --adopt only works with --apply."), file=refusal_stream)
+        return 1
+    if starred is not None and not apply:
+        print(c("red", "  --starred only works with --apply."), file=refusal_stream)
+        return 1
+    if adopt is not None:
+        reason = check_adoptable(Path.home(), adopt)
+        if reason:
+            print(c("red", f"  {reason}"), file=refusal_stream)
+            return 1
 
     interactive = sys.stdin.isatty() and not non_interactive
     if not apply and not json_out and interactive:
@@ -173,11 +207,9 @@ def cmd_setup(args):
             ],
         }
         if apply:
-            data["applied"] = {
-                "harness": apply_findings(new_harness, min_confidence="high") if new_harness else [],
-                "mcp": apply_mcp_findings(new_mcp).added if new_mcp else [],
-                "skills": apply_skills_symlink_hints(actionable_skills, home=home),
-            }
+            data["applied"] = _apply_all(new_harness, new_mcp, actionable_skills, home, adopt, starred)
+        else:
+            data["instructions"] = _instructions_preview(home)
         return emit(data)
 
     print(f"\n{c('bold', 'quiver setup')}\n")
@@ -219,24 +251,35 @@ def cmd_setup(args):
         print(c("green", "  ✓ Skills roots look good (shared tree linked)."))
     print()
 
+    if apply:
+        # Linking runs even when discovery found nothing new: a fresh
+        # ~/.quiver still needs its AGENTS.md seeded and linked.
+        applied = _apply_all(new_harness, new_mcp, actionable_skills, home, adopt, starred)
+        parts = []
+        if applied["harness"]:
+            parts.append(f"{len(applied['harness'])} harness(es)")
+        if applied["mcp"]:
+            parts.append(f"{len(applied['mcp'])} MCP server(s)")
+        if applied["skills"]:
+            parts.append(f"{len(applied['skills'])} skills action(s)")
+        links = applied["links"]
+        linked = [r for r in links.get("rows", []) if r["result"] == "linked"]
+        if linked:
+            parts.append(f"{len(linked)} link(s)")
+        print(c("green", f"  ✓ Applied: {', '.join(parts) or 'nothing'}"))
+        if links.get("adopted"):
+            print(c("green", f"  ✓ AGENTS.md started from {links['adopted']}"))
+        if links.get("error"):
+            print(c("red", f"  {links['error']}"))
+        for row in links.get("rows", []):
+            if row["result"] in ("blocked", "protected"):
+                print(c("yellow", f"  ! left alone: {row['path']}  ") + c("dim", row["detail"]))
+        print(c("dim", "  Next: `swe list`  ·  `swe check`  ·  `swe mcp list`  ·  `swe skills`\n"))
+        return 0
+
     has_work = bool(new_harness or new_mcp or actionable_skills)
     if not has_work:
         print(c("dim", "  Nothing to apply. Try `swe list`, `swe mcp list`, `swe skills scope list`.\n"))
-        return 0
-
-    if apply:
-        added_h = apply_findings(new_harness, min_confidence="high") if new_harness else []
-        added_m = apply_mcp_findings(new_mcp).added if new_mcp else []
-        added_s = apply_skills_symlink_hints(actionable_skills, home=home)
-        parts = []
-        if added_h:
-            parts.append(f"{len(added_h)} harness(es)")
-        if added_m:
-            parts.append(f"{len(added_m)} MCP server(s)")
-        if added_s:
-            parts.append(f"{len(added_s)} skills action(s)")
-        print(c("green", f"  ✓ Applied: {', '.join(parts) or 'nothing'}"))
-        print(c("dim", "  Next: `swe list`  ·  `swe check`  ·  `swe mcp list`  ·  `swe skills`\n"))
         return 0
 
     if sys.stdin.isatty():
@@ -257,3 +300,106 @@ def cmd_setup(args):
 
     print(c("dim", "  Dry-run only. Run: swe setup --apply\n"))
     return 0
+
+
+def _apply_all(new_harness, new_mcp, actionable_skills, home: Path,
+               adopt: Path | None, starred: list[str] | None = None) -> dict:
+    """Register, import and link everything setup found, without asking.
+
+    Harnesses, MCP servers and skills roots first, so the stars and the
+    linking pass after them see the freshly registered harnesses. Linking
+    is `swe init` with nobody to ask: real files in the way stay blocked
+    (no --force) and new skills folders are registered only when their
+    owner has a command or catalog entry.
+    """
+    applied = {
+        "harness": apply_findings(new_harness, min_confidence="high") if new_harness else [],
+        "mcp": apply_mcp_findings(new_mcp).added if new_mcp else [],
+        "skills": apply_skills_symlink_hints(actionable_skills, home=home),
+    }
+    if starred is not None:
+        applied["starred"] = _set_starred(starred)
+    links: dict = {"adopted": None}
+    try:
+        if adopt is not None:
+            adopt_instructions(home, adopt)
+            links["adopted"] = str(adopt)
+        run = run_init(home, evidence_only=True, quiet=True)
+    except (LinkIgnoreError, ValueError) as exc:
+        links["error"] = str(exc)
+    else:
+        links["scaffold"] = run.scaffold
+        links["rows"] = run.rows_json()
+    applied["links"] = links
+    return applied
+
+
+def _instructions_preview(home: Path) -> dict:
+    """What linking the shared AGENTS.md would do, for the app's setup sheet.
+
+    ``adopt_candidates`` are the real instruction files linking would leave
+    blocked; any one of them can start the shared file with --adopt while
+    it is still the seed.
+    """
+    preview = {
+        "agents_file": str(agents_file(home)),
+        "agents_file_exists": agents_file(home).exists(),
+        "agents_file_customised": agents_file_customised(home),
+    }
+    try:
+        run = run_init(home, check_only=True, quiet=True)
+    except LinkIgnoreError as exc:
+        preview.update(rows=[], adopt_candidates=[], error=str(exc))
+        return preview
+    preview["rows"] = run.rows_json()
+    preview["adopt_candidates"] = [
+        {"harness": registry_name(status.label), "path": str(status.path)}
+        for status in run.instructions
+        if status.state == "conflict" and status.path.is_file()
+    ]
+    return preview
+
+
+def _set_starred(names: list[str]) -> dict:
+    """Make the starred harnesses exactly ``names``, in that order.
+
+    The app's setup sheet asks which harnesses you use and sends the whole
+    ticked set, so anything starred before and now unticked is unstarred.
+    A name the registry lacks but the catalog knows (one you picked before
+    installing it) is registered from its catalog entry first; any other
+    name is reported back as unknown rather than invented.
+    """
+    from datetime import datetime
+
+    from quiver.harness.catalog import HARNESS_CATALOG
+    from quiver.harness.registry import load_registry, resolve, save_registry
+    from quiver.harness.stars import save_stars
+
+    registry = load_registry()
+    wanted: list[str] = []
+    registered: list[str] = []
+    unknown: list[str] = []
+    for raw in names:
+        name = resolve(registry, raw)
+        if name is None and raw in HARNESS_CATALOG:
+            entry = HARNESS_CATALOG[raw]
+            registry[raw] = {
+                "command": entry.get("command", raw),
+                "description": entry.get("description", ""),
+                "version": None,
+                "tags": list(entry.get("tags") or ["agentic", "coding"]),
+                "aliases": list(entry.get("aliases") or []),
+                "added": datetime.now().isoformat(),
+                "discovered_via": "setup",
+            }
+            if entry.get("primary_color"):
+                registry[raw]["primary_color"] = entry["primary_color"]
+            save_registry(registry)
+            registered.append(raw)
+            name = raw
+        if name is None:
+            unknown.append(raw)
+        elif name not in wanted:
+            wanted.append(name)
+    save_stars(wanted)
+    return {"starred": wanted, "registered": registered, "unknown": unknown}

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe setup --apply` sets up a blank Mac in one go.** After registering
+  harnesses, importing MCP servers and linking skills roots, it now builds
+  `~/.quiver` (seeded `AGENTS.md`, `.linkignore`, `.gitignore`) and links
+  the shared `AGENTS.md`, skills and hooks into every harness, as `swe
+  init` does. It asks nothing: a real file in the way stays as it is, and
+  a new skills folder is registered only when its owner has a command or
+  catalog entry. Two new flags serve the app's first-run setup.
+  `--adopt=<file>` starts the shared `AGENTS.md` from one of your own
+  instruction files (only while it is still the seed). `--starred=a,b`
+  makes those harnesses exactly the starred set, registering catalog ones
+  you haven't installed yet. `swe setup --json` adds an `instructions`
+  preview with the files `--adopt` could take.
+
+- **`swe init` links a file that already matches the shared copy.** A real
+  instruction file whose text is identical to `~/.quiver/AGENTS.md` is now
+  `absorb` (backed up, then linked) instead of a conflict that needs
+  `--force`.
+
 - **Coding plans in Settings › Providers › Inference.** 35 subscription
   plans (Ark, GLM, Kimi Code, MiniMax, Qwen, Step, MiMo, Tencent, JD Cloud,
   iFlytek, Huawei Cloud, Synthetic, Ollama Cloud, Vercel Token Pass and more)

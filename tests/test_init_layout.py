@@ -113,6 +113,17 @@ class InspectTest(unittest.TestCase):
             self.assertEqual(status.state, "conflict")
             self.assertIn("--force", status.detail)
 
+    def test_absorb_when_a_real_file_already_matches_the_shared_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            agents_file(home).parent.mkdir(parents=True, exist_ok=True)
+            agents_file(home).write_text("same rules\n")
+            (home / ".claude/CLAUDE.md").write_text("same rules\n")
+
+            status = inspect("claude", Path(".claude/CLAUDE.md"), agents_file(home), home)
+            self.assertEqual(status.state, "absorb")
+            self.assertIn("same text", status.detail)
+
     def test_plan_returns_both_lists(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)

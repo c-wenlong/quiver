@@ -505,6 +505,14 @@ def _chain_lands_on(path: Path, canonical: Path) -> bool:
         return False
 
 
+def _same_bytes(path: Path, canonical: Path) -> bool:
+    """True when both are readable files with identical contents."""
+    try:
+        return canonical.is_file() and path.read_bytes() == canonical.read_bytes()
+    except OSError:
+        return False
+
+
 def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
     """Classify one target without touching the filesystem."""
     path = home / rel
@@ -528,6 +536,12 @@ def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
         return LinkStatus(label, path, "relink", f"points at {current}")
 
     if path.exists():
+        # A file that already says exactly what the shared copy says loses
+        # nothing when it becomes a link (and it is backed up first), so it
+        # needs no --force. This is what makes `swe setup --adopt` link the
+        # file the shared AGENTS.md was started from.
+        if path.is_file() and _same_bytes(path, canonical):
+            return LinkStatus(label, path, "absorb", "same text as the shared copy")
         kind = "directory" if path.is_dir() else "file"
         return LinkStatus(label, path, "conflict", f"real {kind}, needs --force")
 

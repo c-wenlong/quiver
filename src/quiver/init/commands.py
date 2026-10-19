@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from quiver.console import c
@@ -196,12 +197,14 @@ def _instruction_filename(label: str) -> str | None:
 
 
 def _pick_new_harnesses(
-    new: list[LinkStatus], home: Path, yes: bool
+    new: list[LinkStatus], home: Path, yes: bool, evidence_only: bool = False
 ) -> tuple[dict[str, tuple[Path, str | None]], dict[str, Path]] | None:
     """Split ``new`` into (managed, declined); None when cancelled.
 
     ``--yes`` registers everything with the conventional AGENTS.md: the
-    caller asked for that by name. A non-terminal run decides nothing,
+    caller asked for that by name. ``evidence_only`` registers just the
+    roots with harness evidence, the ones a terminal picker would pre-tick,
+    and decides nothing about the rest. A non-terminal run decides nothing,
     since a skills/ dir alone does not make an app a harness and nobody is
     there to say so; it returns two empty dicts and the roots wait,
     unlinked, for an interactive run. In a terminal the multiselect
@@ -210,6 +213,11 @@ def _pick_new_harnesses(
     """
     if yes:
         return {s.label: (s.path, "AGENTS.md") for s in new}, {}
+    if evidence_only:
+        return {
+            s.label: (s.path, "AGENTS.md")
+            for s in new if has_harness_evidence(s.label)
+        }, {}
     if not _supported():
         names = ", ".join(s.label for s in new)
         print(c("dim", f"  not a terminal: left {len(new)} new skills "
@@ -270,49 +278,46 @@ def _link_json(instructions: list[LinkStatus], skills: list[LinkStatus]) -> list
     return [rows[name].to_json() for name in sorted(rows)]
 
 
-def cmd_init(args) -> int:
-    args = list(args or [])
-    if args and args[0] in ("-h", "--help", "help"):
-        print_init_help()
-        return 0
-    args, json_view = take_json_flag(args)
+@dataclass
+class InitRun:
+    """What one `swe init` pass planned or did, before any printing."""
 
-    check_only = "--check" in args or "-n" in args
-    force = "--force" in args
-    migrate = "--migrate" in args
-    full = "--full" in args
-    yes = "--yes" in args
+    scaffold: list[str]
+    instructions: list[LinkStatus]
+    skills: list[LinkStatus]
+    inst_rows: list[tuple[LinkStatus, str]]
+    skill_rows: list[tuple[LinkStatus, str]]
+    hook_rows: list[tuple[LinkStatus, str]]
 
-    known = ("--check", "-n", "--force", "--migrate", "--full", "--yes")
-    unknown = [a for a in args if a not in known]
-    if unknown:
-        if json_view:
-            print(f"Unknown option: {unknown[0]}", file=sys.stderr)
-            return 1
-        print(f"Unknown option: {unknown[0]}")
-        print_init_help()
-        return 1
-    if json_view and not check_only:
-        # A run that links things also prompts and prints progress. --json
-        # promises one document and no writes, which only the preview keeps.
-        print("--json only works with --check: swe init --check --json",
-              file=sys.stderr)
-        return 1
+    def rows_json(self) -> list[dict]:
+        """Every path with its result, for `swe setup --apply --json`."""
+        return [
+            {
+                "kind": kind,
+                "harness": registry_name(status.label),
+                "path": str(status.path),
+                "result": result,
+                "detail": status.detail,
+            }
+            for kind, rows in (("instructions", self.inst_rows),
+                               ("skills", self.skill_rows),
+                               ("hooks", self.hook_rows))
+            for status, result in rows
+        ]
 
-    home = Path.home()
 
-    # Read the ignore list before anything is written. An unreadable file
-    # must stop the run: a plan built without it would let --force replace
-    # the very paths the user listed to protect.
-    try:
-        patterns = load_linkignore(home)
-    except LinkIgnoreError as exc:
-        if json_view:
-            print(str(exc), file=sys.stderr)
-            return 1
-        print(c("red", f"  {exc}"))
-        print(c("dim", "  Fix or remove ~/.quiver/.linkignore, then run swe init again."))
-        return 1
+def run_init(home: Path, *, check_only: bool = False, force: bool = False,
+             migrate: bool = False, yes: bool = False,
+             evidence_only: bool = False, quiet: bool = False) -> InitRun:
+    """Build the layout and link every harness; the body of `swe init`.
+
+    ``evidence_only`` registers only the new skills folders whose owner has
+    a command on PATH or a catalog entry and leaves the rest waiting, which
+    is what `swe setup --apply` wants with nobody there to ask. ``quiet``
+    keeps it from printing, for callers that emit one JSON document.
+    Raises LinkIgnoreError when ~/.quiver/.linkignore can't be read.
+    """
+    patterns = load_linkignore(home)
 
     scaffold = _ensure_scaffold(home, check_only)
 
@@ -354,17 +359,19 @@ def cmd_init(args) -> int:
             )
     elif new:
         if legacy_registry_pending(home):
-            print(c("dim", "  harness.json not migrated yet, "
-                          "run swe list once, then swe init again"))
+            if not quiet:
+                print(c("dim", "  harness.json not migrated yet, "
+                              "run swe list once, then swe init again"))
         else:
-            decided = _pick_new_harnesses(new, home, yes)
+            decided = _pick_new_harnesses(new, home, yes, evidence_only)
             if decided is not None:
                 managed, declined = decided
                 held -= set(managed) | set(declined)
                 if managed or declined:
                     registry = register(home, registry, managed, declined)
-                    print(c("green", f"  registered {len(managed)} managed, "
-                                     f"{len(declined)} declined"))
+                    if not quiet:
+                        print(c("green", f"  registered {len(managed)} managed, "
+                                         f"{len(declined)} declined"))
                     # Re-plan so the new instruction targets and the freshly
                     # archived roots show up in this same run.
                     instructions, skills = plan(home, patterns, registry)
@@ -391,6 +398,103 @@ def cmd_init(args) -> int:
         ]
         skill_rows = [(s, _apply(s, skills_dir(home), home, force)) for s in skills]
         hook_rows = [(s, _apply(s, s.source, home, force)) for s in hooks]
+    return InitRun(scaffold, instructions, skills, inst_rows, skill_rows, hook_rows)
+
+
+# Larger than any instruction file anyone writes by hand; a guard against
+# adopting a log or a binary by mistake.
+_ADOPT_LIMIT = 1_000_000
+
+
+def agents_file_customised(home: Path) -> bool:
+    """True once ~/.quiver/AGENTS.md says something other than the seed."""
+    try:
+        return agents_file(home).read_text(encoding="utf-8") != SEED_AGENTS_MD
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeDecodeError):
+        return True
+
+
+def check_adoptable(home: Path, source: Path) -> str | None:
+    """Why ``source`` can't start the shared AGENTS.md, or None if it can."""
+    if agents_file_customised(home):
+        return (f"{agents_file(home)} already has your own text, "
+                "so nothing was adopted. Edit it instead.")
+    if not source.is_file():
+        return f"{source} is not a file."
+    try:
+        if source.stat().st_size > _ADOPT_LIMIT:
+            return f"{source} is too large to be an instruction file."
+        source.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"Couldn't read {source}: {exc}"
+    return None
+
+
+def adopt_instructions(home: Path, source: Path) -> None:
+    """Start the shared AGENTS.md from ``source``'s text.
+
+    Only while AGENTS.md is missing or still the seed, which
+    check_adoptable confirms. The source itself is left in place: the
+    linking pass that follows sees it now matches the shared copy, backs
+    it up and replaces it with a link (state ``absorb``).
+    """
+    reason = check_adoptable(home, source)
+    if reason:
+        raise ValueError(reason)
+    target = agents_file(home)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(source.read_bytes())
+
+
+def cmd_init(args) -> int:
+    args = list(args or [])
+    if args and args[0] in ("-h", "--help", "help"):
+        print_init_help()
+        return 0
+    args, json_view = take_json_flag(args)
+
+    check_only = "--check" in args or "-n" in args
+    force = "--force" in args
+    migrate = "--migrate" in args
+    full = "--full" in args
+    yes = "--yes" in args
+
+    known = ("--check", "-n", "--force", "--migrate", "--full", "--yes")
+    unknown = [a for a in args if a not in known]
+    if unknown:
+        if json_view:
+            print(f"Unknown option: {unknown[0]}", file=sys.stderr)
+            return 1
+        print(f"Unknown option: {unknown[0]}")
+        print_init_help()
+        return 1
+    if json_view and not check_only:
+        # A run that links things also prompts and prints progress. --json
+        # promises one document and no writes, which only the preview keeps.
+        print("--json only works with --check: swe init --check --json",
+              file=sys.stderr)
+        return 1
+
+    home = Path.home()
+
+    # Read the ignore list before anything is written. An unreadable file
+    # must stop the run: a plan built without it would let --force replace
+    # the very paths the user listed to protect.
+    try:
+        result = run_init(home, check_only=check_only, force=force,
+                          migrate=migrate, yes=yes)
+    except LinkIgnoreError as exc:
+        if json_view:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(c("red", f"  {exc}"))
+        print(c("dim", "  Fix or remove ~/.quiver/.linkignore, then run swe init again."))
+        return 1
+    scaffold = result.scaffold
+    instructions, skills = result.instructions, result.skills
+    inst_rows, skill_rows, hook_rows = result.inst_rows, result.skill_rows, result.hook_rows
 
     if json_view:
         # Link state is data here, not a verdict: exit 0 even when a path
