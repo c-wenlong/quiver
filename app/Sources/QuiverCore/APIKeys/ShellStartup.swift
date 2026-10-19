@@ -93,13 +93,24 @@ public struct ShellStartupWriter: Sendable {
         self.now = now
     }
 
-    public enum Error: Swift.Error, Equatable {
+    public enum Error: Swift.Error, Equatable, LocalizedError {
         /// No startup file is known for this shell.
         case unsupportedShell(String)
         /// The file exists but isn't UTF-8, so appending would destroy it.
         case unreadable(URL)
         /// The backup could not be written; the rc is left alone.
         case backupFailed(URL)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unsupportedShell(let shell):
+                "Quiver doesn't know which startup file \(shell) reads. Add the line to it yourself."
+            case .unreadable(let file):
+                "\(file.path) isn't plain UTF-8 text, so Quiver left it alone. Add the line in an editor."
+            case .backupFailed(let file):
+                "Couldn't write the backup at \(file.path), so Quiver didn't change your startup file."
+            }
+        }
     }
 
     /// Appends the source line to the shell's startup file. Already
