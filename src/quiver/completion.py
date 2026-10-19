@@ -261,6 +261,8 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--tags=", "Comma-separated tags"),
         ("--command=", "Prefill the command (-i only)"),
         ("--description=", "Prefill the description (-i only)"),
+        ("--no-replace", "Refuse if the name is registered"),
+        ("--json", "Print the result as JSON"),
     ],
     "edit": [
         ("--set=", "Set field=value"),

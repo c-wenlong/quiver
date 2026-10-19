@@ -293,3 +293,54 @@ func fixture(_ name: String) throws -> Data {
         #expect(LoginShell.path(fromEnvOutput: "HOME=/Users/k\n") == nil)
     }
 }
+
+/// swe's harness discover/add envelopes for the Harnesses page sheets.
+@Suite struct HarnessAddTests {
+    private let findingsJSON = #"""
+    "findings": [
+     {"name": "newcli", "command": "newcli", "path": "/opt/homebrew/bin/newcli",
+      "confidence": "high", "status": "new"},
+     {"name": "guess", "command": "guess", "path": "/h/.guess",
+      "confidence": "low", "status": "new"},
+     {"name": "claude", "command": "claude", "path": "/opt/hb/claude",
+      "confidence": "high", "status": "registered"}]
+    """#
+
+    private func discovery(applied: Bool = false) -> CommandResult {
+        let appliedJSON = applied
+            ? #""applied": {"added": ["newcli", "guess"]},"# : ""
+        let doc = "{\"schema\": 1, \"data\": {" + appliedJSON + findingsJSON + "}}"
+        return CommandResult(status: 0, stdout: Data(doc.utf8), stderr: "")
+    }
+
+    @Test func discoverArgvAndDefaultTicking() async throws {
+        let runner = ScriptedRunner([(["harness", "discover"], discovery(applied: true))])
+        let swe = SweClient(runner: runner)
+        let preview = try await swe.discoverHarnesses()
+        #expect(runner.calls == [["harness", "discover", "--json"]])
+        let (rows, checked) = HarnessDiscovery.selection(preview.findings)
+        #expect(rows.map(\.name) == ["newcli", "guess"])
+        #expect(checked == ["newcli"])
+        _ = try await swe.registerHarnesses(["newcli", "guess"])
+        #expect(runner.calls.last ==
+            ["harness", "discover", "--apply", "newcli", "guess", "--json"])
+    }
+
+    @Test func addHarnessArgvOmitsEmptyOptionals() async throws {
+        let ok = CommandResult(status: 0, stdout: Data(#"""
+        {"schema": 1, "data": {"name": "t", "command": "t", "action": "added",
+         "installed": true, "aliases": ["x"], "tags": ["agentic"]}}
+        """#.utf8), stderr: "")
+        let runner = ScriptedRunner([(["add"], ok)])
+        let swe = SweClient(runner: runner)
+        let reply = try await swe.addHarness(name: "t", command: "t",
+            description: "desc", aliases: ["x"], tags: ["agentic"])
+        #expect(reply.installed && reply.action == "added")
+        #expect(runner.calls.first ==
+            ["add", "t", "t", "--description=desc", "--aliases=x", "--tags=agentic",
+             "--no-replace", "--json"])
+        _ = try await swe.addHarness(name: "t2", command: "t2", description: "",
+                                     aliases: [], tags: [])
+        #expect(runner.calls.last == ["add", "t2", "t2", "--no-replace", "--json"])
+    }
+}

@@ -34,7 +34,7 @@ class HarnessDiscoverEnvelopeTest(unittest.TestCase):
 
     def _run(self, args, findings, apply_return=None):
         from quiver.harness import discover_commands as dc
-        apply_fn = mock.Mock(return_value=apply_return if apply_return is not None else [])
+        apply_fn = mock.Mock(return_value=(apply_return or [], []))
         out = StringIO()
         with patch.object(dc, "discover_harnesses", lambda **k: findings), \
                 patch.object(dc, "apply_findings", apply_fn), \
@@ -56,7 +56,7 @@ class HarnessDiscoverEnvelopeTest(unittest.TestCase):
         self.assertEqual(code, 0)
         apply_fn.assert_called_once()
         doc = _decode_one_document(raw)
-        self.assertEqual(doc["data"]["applied"], {"added": ["a"]})
+        self.assertEqual(doc["data"]["applied"], {"added": ["a"], "skipped": []})
         self.assertEqual(len(doc["data"]["findings"]), 1)
 
 

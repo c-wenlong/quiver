@@ -46,7 +46,7 @@ class SetupWizardTest(unittest.TestCase):
         self.assertIn("Enter yes or no", output.getvalue())
 
     @patch("quiver.setup.wizard.backup_file")
-    @patch("quiver.setup.wizard.apply_findings", return_value=["claude"])
+    @patch("quiver.setup.wizard.apply_findings", return_value=(["claude"], []))
     @patch("quiver.setup.wizard.discover_harnesses")
     def test_harness_stage_confirms_and_applies_high_confidence_findings(
         self, discover, apply, backup

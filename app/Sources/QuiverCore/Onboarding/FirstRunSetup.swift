@@ -119,8 +119,11 @@ extension SweClient {
     /// `swe setup --apply --json`: register what was found, import MCP
     /// servers, link AGENTS.md and skills, and star exactly `starred`.
     /// `adopt` starts the shared AGENTS.md from that file.
-    public func applySetup(starred: [String], adopt: String?) async throws -> SetupOutcome {
-        var arguments = ["setup", "--apply", "--json", "--starred=" + starred.joined(separator: ",")]
+    /// `starred` nil leaves the stars alone; an array makes them exactly
+    /// that list, so an empty one unstars everything.
+    public func applySetup(starred: [String]?, adopt: String?) async throws -> SetupOutcome {
+        var arguments = ["setup", "--apply", "--json"]
+        if let starred { arguments.append("--starred=" + starred.joined(separator: ",")) }
         if let adopt { arguments.append("--adopt=" + adopt) }
         // A linking pass that stopped exits 1 but still says what was
         // applied and why it stopped (`links.error`), so read that.

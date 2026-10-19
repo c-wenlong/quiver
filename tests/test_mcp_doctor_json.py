@@ -585,7 +585,7 @@ class DoctorJsonTest(unittest.TestCase):
         self.assertEqual(doc["data"]["ok"], result.returncode == 0)
         for finding in doc["data"]["findings"]:
             # "harness" appears only on a finding about one harness.
-            self.assertEqual(set(finding) - {"harness"}, self.FINDING_KEYS)
+            self.assertEqual(set(finding) - {"harness", "action"}, self.FINDING_KEYS)
             self.assertIn(finding["severity"], {"error", "warning", "info"})
             self.assertTrue(finding["fix"] is None or isinstance(finding["fix"], str))
 
@@ -661,7 +661,7 @@ class DoctorJsonChecksTest(unittest.TestCase):
             return_value=list(orphans),
         ), patch("quiver.harness.commands.shutil.which", return_value=which), patch(
             "quiver.harness.drift.run_drift_checks", return_value=list(drift)
-        ):
+        ), patch("quiver.harness.doctor.setup_findings", return_value=[]):
             out = io.StringIO()
             with redirect_stdout(out):
                 code = cmd_doctor(["--json"])
