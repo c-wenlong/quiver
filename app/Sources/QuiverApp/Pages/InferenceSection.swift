@@ -274,12 +274,9 @@ private struct InferenceRow: View {
 
     private var type: String { item.kind == .plan ? "Coding plan" : "API key" }
 
-    /// A plan's vendor under its name; a key's heading is its name already.
-    /// A narrow table puts the type there too.
-    private var subtitle: String? {
-        guard compact else { return item.plan?.vendor }
-        return [type, item.plan?.vendor].compactMap { $0 }.joined(separator: " · ")
-    }
+    /// Nothing under the name, except in a narrow table, where the type
+    /// moves there from its own column.
+    private var subtitle: String? { compact ? type : nil }
 
     var body: some View {
         HStack(spacing: 12) {
