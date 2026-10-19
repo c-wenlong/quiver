@@ -436,6 +436,18 @@ import Testing
         #expect(FanControlFile.request(at: url) != nil)
     }
 
+    @MainActor @Test func aRefreshDuringRemovalDoesNotLeaveItLookingInstalled() async {
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, _) = control(FakeSMC.twoFans(), installer: installer)
+        await fans.refresh()
+        #expect(fans.helperInstalled)
+        // The popover's own refresh lands while the password prompt is up.
+        installer.duringUninstall = { await fans.refresh() }
+        await fans.removeHelper()
+        #expect(!fans.helperInstalled)
+    }
+
     @MainActor @Test func removingTheHelperHandsTheFansBackFirst() async {
         let smc = FakeSMC.twoFans()
         let installer = FakeInstaller()
@@ -521,8 +533,12 @@ import Testing
             installed.value = true
         }
 
+        /// Runs while the removal "prompt" is up.
+        var duringUninstall: (@MainActor () async -> Void)?
+
         func uninstall() async throws {
             uninstalls += 1
+            await duringUninstall?()
             if let error { throw error }
             installed.value = false
         }

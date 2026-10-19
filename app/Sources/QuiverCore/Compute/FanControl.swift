@@ -261,6 +261,8 @@ public final class FanControl {
             do {
                 try await installer.install(executable: executable, control: control)
                 helperInstalled = true
+                // Same as removal: check again once the prompt is done.
+                installUnchecked = true
             } catch FanHelperInstallError.cancelled {
                 phase = clearRequest() ?? .automatic
                 return
@@ -285,7 +287,6 @@ public final class FanControl {
     /// Fans back to automatic, then the helper uninstalled (one password).
     public func removeHelper() async {
         restoreAutomatic()
-        installUnchecked = true
         busy = true
         defer { busy = false }
         do {
@@ -294,6 +295,9 @@ public final class FanControl {
         } catch {
             phase = .failed(error.localizedDescription)
         }
+        // Marked only now: a refresh while the prompt was up checked the
+        // helper as it was then, and must not stand for after.
+        installUnchecked = true
         await refresh()
     }
 
