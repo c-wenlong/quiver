@@ -471,6 +471,17 @@ import Testing
         #expect(shown.count == ComputeHistory.window * 3 + 1)
     }
 
+    @Test func temperaturesAgeOutWhenTheSensorsStopAnswering() {
+        var history = ComputeHistory()
+        history.appendTemperature(TemperaturePoint(at: Self.now, cpu: 50, battery: nil))
+        #expect(history.temperatureWindow(interval: .threeSeconds).count == 1)
+        // Ticks keep coming with no reading; the old one slides off.
+        let later = Self.now.addingTimeInterval(Double(ComputeHistory.window) * 3 + 1)
+        history.recordTick(later)
+        #expect(history.temperatureWindow(interval: .threeSeconds).isEmpty)
+        #expect(history.temperatureEnd == later)
+    }
+
     @MainActor @Test func noGPUAnswerMeansNilPointsAndNoAvailability() async {
         let clock = Clock(Self.now)
         let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])

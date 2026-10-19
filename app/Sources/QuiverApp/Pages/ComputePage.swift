@@ -161,7 +161,7 @@ private struct TrendCard: View {
     }
 
     @ViewBuilder private var temperature: some View {
-        if !model.history.temperatures.isEmpty {
+        if !model.history.temperatureWindow(interval: model.trendInterval).isEmpty {
             TemperatureChart(hovered: $hovered)
         } else if model.history.lastTick == nil {
             placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")

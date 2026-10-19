@@ -168,6 +168,40 @@ import Testing
         #expect(target == 7826)
     }
 
+    @Test func aReleaseThatDidNotStickIsRetried() {
+        let smc = FakeSMC.twoFans(gate: false)
+        smc.refuseReleaseWrites = 1
+        var releaseWrites = 0
+        smc.onWrite = { key, bytes in if key == "F0Md" && bytes == [0] { releaseWrites += 1 } }
+        hold(smc, [ask(1), nil, nil]).run()
+        #expect(releaseWrites == 1)
+        #expect(smc.number("F0Md") == 0 && smc.number("F1Md") == 0)
+    }
+
+    @Test func automaticWhileUnlockingStopsTheRetries() {
+        let smc = FakeSMC.twoFans()
+        smc.refuseModeWrites = .max
+        let reads = Counter()
+        var targets = 0
+        smc.onWrite = { key, _ in if key.hasSuffix("Tg") { targets += 1 } }
+        let counter = Counter()
+        let request = ask(1)
+        var hold = FanHold(
+            smc: smc,
+            // The request is there for the pass, then withdrawn after a
+            // few retries' worth of reads.
+            request: { reads.passes += 1; return counter.passes == 0 && reads.passes < 4 ? request : nil },
+            ownerAlive: { _ in true }, underPressure: { false },
+            shouldStop: { counter.passes > 1 },
+            sleep: { seconds in if seconds >= 1 { counter.passes += 1 } })
+        hold.unlockTimeout = 60
+        hold.run()
+        // Far fewer than the 600 retries the timeout would allow.
+        #expect(reads.passes < 10)
+        #expect(targets == 0)
+        #expect(smc.number("Ftst") == 0)
+    }
+
     @Test func noFansMeansNothingToHold() {
         let smc = FakeSMC()
         hold(smc, [ask(1)]).run()
@@ -196,14 +230,45 @@ import Testing
         #expect(job["RunAtLoad"] as? Bool == true)
     }
 
-    @Test func theInstallScriptQuotesForShellThenAppleScript() {
+    @Test func theInstallScriptChecksTheCopyAndWritesTheJobAsRoot() throws {
         let command = AdministratorInstaller.installCommand(
-            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", plist: "/tmp/job.plist")
+            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123",
+            control: URL(fileURLWithPath: "/Users/o'neil/.quiver/fan/control.json"))
         #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"#))
-        #expect(command.contains("/bin/launchctl bootstrap system '/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist'"))
+        // The hash is checked on the root-owned copy, before re-signing
+        // changes its bytes.
+        let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 '/Library/PrivilegedHelperTools/"))
+        let sign = try #require(command.range(of: "/usr/bin/codesign --force --sign -"))
+        #expect(hash.lowerBound < sign.lowerBound)
+        #expect(command.contains("= 'abc123' ]"))
+        // No file from the user's side becomes the job: root writes it.
+        #expect(command.contains("/usr/bin/printf '%s' '<?xml"))
+        #expect(command.contains(#"<string>/Users/o'\''neil/.quiver/fan/control.json</string>"#))
+        #expect(command.contains("> '/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist'"))
+        #expect(!command.contains("\n"))
+        #expect(command.hasSuffix("/bin/launchctl bootstrap system '/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist'"))
         #expect(AdministratorInstaller.uninstallCommand.contains("/bin/rm -f '/Library/LaunchDaemons/"))
         #expect(AdministratorInstaller.script(#"echo "a\b" 'c'"#, prompt: #"Say "hi""#)
             == #"do shell script "echo \"a\\b\" 'c'" with prompt "Say \"hi\"" with administrator privileges"#)
+    }
+
+    @Test func theOneLineJobIsTheSameJob() throws {
+        let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
+        let line = FanHelper.plistLine(control: control)
+        #expect(!line.contains("\n"))
+        let parsed = try PropertyListSerialization.propertyList(from: Data(line.utf8), format: nil) as? NSDictionary
+        let original = try PropertyListSerialization.propertyList(from: FanHelper.plist(control: control),
+                                                                  format: nil) as? NSDictionary
+        #expect(parsed == original)
+    }
+
+    @Test func theHashIsSHA256OfTheFile() throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "hash-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("abc".utf8).write(to: url)
+        #expect(AdministratorInstaller.sha256(of: url.path)
+            == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        #expect(AdministratorInstaller.sha256(of: "/nonexistent/\(UUID().uuidString)") == nil)
     }
 
     @Test func onlyAQuiverProcessCountsAsTheOwner() {
@@ -229,6 +294,29 @@ import Testing
         #expect(FanControlFile.request(at: url) == nil)
     }
 
+    @Test func theRootHelperNeverReadsBigFilesLinksOrPipes() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let good = folder.appending(path: "good.json")
+        try ask(0.5).write(to: good)
+        // Oversized, even when it starts with a valid request.
+        let big = folder.appending(path: "big.json")
+        var data = try JSONEncoder().encode(ask(0.5))
+        data.append(Data(repeating: 0x20, count: 5000))
+        try data.write(to: big)
+        #expect(FanControlFile.request(at: big) == nil)
+        // A link to a good file is still refused.
+        let link = folder.appending(path: "link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: good)
+        #expect(FanControlFile.request(at: link) == nil)
+        // A FIFO answers at once instead of blocking the loop.
+        let fifo = folder.appending(path: "fifo.json")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        #expect(FanControlFile.request(at: fifo) == nil)
+        #expect(FanControlFile.request(at: good) == ask(0.5))
+    }
+
     // MARK: The popover's model
 
     @MainActor
@@ -237,7 +325,7 @@ import Testing
         let url = FileManager.default.temporaryDirectory
             .appending(path: "fan-\(UUID().uuidString)/control.json")
         let control = FanControl(control: url, reader: { FanKeys.read(smc) }, installer: installer,
-                                 isInstalled: { installer.installed.value },
+                                 isInstalled: { _ in installer.checks += 1; return installer.installed.value },
                                  executable: "/Apps/Quiver", owner: 77, clock: { clock.value },
                                  defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
         return (control, url)
@@ -295,6 +383,7 @@ import Testing
         let installer = FakeInstaller()
         installer.installed.value = true
         let (fans, url) = control(FakeSMC.twoFans(), installer: installer, clock: clock)
+        await fans.refresh()
         await fans.applyManual()
         #expect(installer.installs == 0)
         #expect(fans.phase == .starting)
@@ -302,6 +391,31 @@ import Testing
         await fans.refresh()
         #expect(fans.phase == .failed(FanControl.notTaken))
         #expect(FanControlFile.request(at: url) == nil)
+        // The helper may be gone or half installed: look again, so the
+        // next Set speed can reinstall it.
+        let checks = installer.checks
+        await fans.refresh()
+        #expect(installer.checks == checks + 1)
+        await fans.refresh()
+        #expect(installer.checks == checks + 1)
+    }
+
+    @MainActor @Test func automaticIsOnlyClaimedOnceTheRequestIsGone() async throws {
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer)
+        await fans.refresh()
+        await fans.applyManual()
+        let folder = url.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path) }
+        fans.restoreAutomatic()
+        guard case .failed(let message) = fans.phase else {
+            Issue.record("expected a failure, got \(fans.phase)")
+            return
+        }
+        #expect(message.contains("stay manual"))
+        #expect(FanControlFile.request(at: url) != nil)
     }
 
     @MainActor @Test func fansTakenBackWhileHoldingWaitForTheHelperAgain() async {
@@ -309,6 +423,7 @@ import Testing
         let installer = FakeInstaller()
         installer.installed.value = true
         let (fans, url) = control(smc, installer: installer)
+        await fans.refresh()
         await fans.applyManual()
         smc.set("F0Md", 1); smc.set("F1Md", 1)
         await fans.refresh()
@@ -326,6 +441,7 @@ import Testing
         let installer = FakeInstaller()
         installer.installed.value = true
         let (fans, url) = control(smc, installer: installer)
+        await fans.refresh()
         await fans.applyManual()
         await fans.removeHelper()
         #expect(installer.uninstalls == 1)
@@ -341,6 +457,8 @@ import Testing
     final class FakeSMC: SMCAccess, @unchecked Sendable {
         private var values: [String: SMCValue] = [:]
         var refuseModeWrites = 0
+        /// Mode writes back to automatic to refuse, like a busy SMC.
+        var refuseReleaseWrites = 0
         var onWrite: (String, [UInt8]) -> Void = { _, _ in }
 
         static func twoFans(gate: Bool = true) -> FakeSMC {
@@ -378,6 +496,10 @@ import Testing
                     return false
                 }
             }
+            if key.hasPrefix("F"), key.lowercased().hasSuffix("md"), bytes == [0], refuseReleaseWrites > 0 {
+                refuseReleaseWrites -= 1
+                return false
+            }
             values[key]?.bytes = bytes
             onWrite(key, bytes)
             return true
@@ -386,6 +508,7 @@ import Testing
 
     final class FakeInstaller: FanHelperInstalling, @unchecked Sendable {
         let installed = Box(false)
+        var checks = 0
         var installs = 0
         var uninstalls = 0
         var lastControl: URL?

@@ -86,12 +86,28 @@ public struct FanControlFile: Codable, Equatable, Sendable {
     /// oversized, unreadable or asks for nothing: anything unclear means
     /// automatic. The level comes back clamped into 0...1.
     public static func request(at url: URL) -> FanControlFile? {
-        guard let data = try? Data(contentsOf: url), data.count <= 4096,
+        guard let data = boundedRead(url, limit: 4096),
               var file = try? JSONDecoder().decode(FanControlFile.self, from: data),
               let level = file.level, level.isFinite, let owner = file.owner, owner > 1
         else { return nil }
         file.level = min(max(level, 0), 1)
         return file
+    }
+
+    /// At most `limit` bytes of a regular file, or nil for anything
+    /// bigger, a symlink, a FIFO or a missing file. The root helper reads
+    /// a file the user can write every second, so it must never follow a
+    /// link, block on a pipe, or load an oversized file whole.
+    static func boundedRead(_ url: URL, limit: Int) -> Data? {
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= limit else { return nil }
+        var buffer = [UInt8](repeating: 0, count: limit + 1)
+        let count = read(fd, &buffer, buffer.count)
+        guard count >= 0, count <= limit else { return nil }
+        return Data(buffer.prefix(count))
     }
 
     public func write(to url: URL) throws {
@@ -136,37 +152,60 @@ public struct FanHold {
         self.sleep = sleep
     }
 
+    /// What one pass came to.
+    enum Pass: Equatable {
+        case held
+        /// The fans would not go manual: release, and leave this request.
+        case refused
+        /// The request went away or its Quiver quit mid-pass: release.
+        case withdrawn
+    }
+
     /// Runs until stopped, a pass a second. A request the fans would not
-    /// take is released and not retried until a new one replaces it.
+    /// take is released and not retried until a new one replaces it. A
+    /// release that did not stick is retried on the next pass.
     public func run() {
         var holding = false
         var failed: FanControlFile?
         while !shouldStop() {
             if let request = request(), request != failed, let level = request.level,
                let owner = request.owner, ownerAlive(owner) {
-                if hold(level: underPressure() ? 1 : level) {
+                let wanted = { self.request() == request && self.ownerAlive(owner) }
+                switch hold(level: underPressure() ? 1 : level, wanted: wanted) {
+                case .held:
                     holding = true
-                } else {
-                    release()
-                    holding = false
+                case .refused:
                     failed = request
+                    holding = !release()
+                case .withdrawn:
+                    holding = !release()
                 }
             } else if holding {
-                release()
-                holding = false
+                holding = !release()
             }
             sleep(1)
         }
-        if holding { release() }
+        // Stopping: a few tries, so launchd stopping the job never leaves
+        // a fan manual over one failed write.
+        for _ in 0..<5 where holding {
+            holding = !release()
+            if holding { sleep(0.2) }
+        }
     }
 
-    /// One pass: every fan in manual mode at its share of the level.
-    /// False when there are no fans or one would not go manual.
-    func hold(level: Double) -> Bool {
+    /// One pass: every fan in manual mode at its share of the level, as
+    /// long as `wanted` still holds.
+    func hold(level: Double, wanted: () -> Bool = { true }) -> Pass {
         let fans = FanKeys.read(smc)
-        guard !fans.isEmpty else { return false }
+        guard !fans.isEmpty else { return .refused }
         for fan in fans {
-            if !fan.isManual && !takeManual(fan.index) { return false }
+            if !fan.isManual {
+                switch takeManual(fan.index, wanted: wanted) {
+                case .held: break
+                case let other: return other
+                }
+            }
+            guard wanted() else { return .withdrawn }
             let rpm = fan.rpm(atLevel: level)
             if fan.target.map({ abs($0 - rpm) >= 1 }) ?? true {
                 // Some firmware answers a size error yet takes the value,
@@ -174,35 +213,46 @@ public struct FanHold {
                 smc.write(FanKeys.target(fan.index), SMCValue.float(rpm))
             }
         }
-        return true
+        return .held
     }
 
-    /// The mode write, behind Ftst where the Mac has one.
-    func takeManual(_ fan: Int) -> Bool {
+    /// The mode write, behind Ftst where the Mac has one. The retries
+    /// stop as soon as the request is withdrawn.
+    func takeManual(_ fan: Int, wanted: () -> Bool = { true }) -> Pass {
         let mode = FanKeys.mode(fan, in: smc)
-        if smc.write(mode, [1]) { return true }
-        guard let gate = smc.read(FanKeys.unlock) else { return false }
+        if smc.write(mode, [1]) { return .held }
+        guard let gate = smc.read(FanKeys.unlock) else { return .refused }
         if gate.number != 1 { smc.write(FanKeys.unlock, [1]) }
         var waited: TimeInterval = 0
         while waited < unlockTimeout {
-            if shouldStop() { return false }
+            if shouldStop() || !wanted() { return .withdrawn }
             sleep(0.1)
             waited += 0.1
-            if smc.write(mode, [1]) { return true }
+            if smc.write(mode, [1]) { return .held }
         }
-        return false
+        return .refused
     }
 
     /// Every fan back to automatic, then the gate closed so thermalmonitord
-    /// takes over again.
-    public func release() {
-        guard let count = smc.read(FanKeys.count)?.number, count > 0 else { return }
-        for fan in 0..<min(Int(count), 8) {
-            smc.write(FanKeys.mode(fan, in: smc), [0])
+    /// takes over again. True once no fan reads manual and the gate reads
+    /// closed (or the Mac has none).
+    @discardableResult
+    public func release() -> Bool {
+        guard let count = smc.read(FanKeys.count)?.number, count > 0 else { return true }
+        let fans = 0..<min(Int(count), 8)
+        for fan in fans {
+            let mode = FanKeys.mode(fan, in: smc)
+            // Mode 3 is thermalmonitord's own; only a manual (or unread)
+            // fan needs the write.
+            let current = smc.read(mode)?.number
+            if current == nil || current == 1 { smc.write(mode, [0]) }
         }
         if let gate = smc.read(FanKeys.unlock), gate.number != 0 {
             smc.write(FanKeys.unlock, [0])
         }
+        let fansBack = fans.allSatisfy { smc.read(FanKeys.mode($0, in: smc))?.number != 1 }
+        let gateClosed = smc.read(FanKeys.unlock).map { $0.number != 1 } ?? true
+        return fansBack && gateClosed
     }
 }
 
@@ -241,6 +291,18 @@ public enum FanHelper {
             "ProcessType": "Background",
         ]
         return (try? PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0)) ?? Data()
+    }
+
+    /// The same job on one line, for the install script to write as root
+    /// itself: a file prepared beforehand could be swapped by anything
+    /// running as the user while the password prompt is up. Whitespace
+    /// between tags means nothing to a plist; no value holds a line break
+    /// (`parse` and the installer only take absolute paths without one).
+    public static func plistLine(control: URL) -> String {
+        String(decoding: plist(control: control), as: UTF8.self)
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined()
     }
 
     /// Whether `pid` is a running Quiver: a reused pid that now belongs

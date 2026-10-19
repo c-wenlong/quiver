@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import Observation
@@ -44,14 +45,20 @@ public struct AdministratorInstaller: FanHelperInstalling {
         return "do shell script \"\(apple(command))\" with prompt \"\(apple(prompt))\" with administrator privileges"
     }
 
-    /// Copy, ad-hoc sign the copy (it no longer sits in the bundle its
-    /// signature sealed), install the job, and (re)start it.
-    public static func installCommand(executable: String, plist: String) -> String {
+    /// Copy the executable, check the copy is byte for byte the one
+    /// hashed before the prompt (anything running as the user could swap
+    /// the bundle's copy while the prompt is up), ad-hoc sign it (it no
+    /// longer sits in the bundle its signature sealed), write the job from
+    /// trusted text as root, and (re)start it.
+    public static func installCommand(executable: String, sha256: String, control: URL) -> String {
         let tool = shell(FanHelper.installedExecutable), job = shell(FanHelper.installedPlist)
         return "/bin/mkdir -p /Library/PrivilegedHelperTools"
             + " && /usr/bin/install -m 755 -o root -g wheel \(shell(executable)) \(tool)"
+            + " && { [ \"$(/usr/bin/shasum -a 256 \(tool) | /usr/bin/cut -d ' ' -f 1)\" = \(shell(sha256)) ]"
+            + " || { /bin/rm -f \(tool); echo 'The Quiver executable changed during install.' >&2; exit 1; }; }"
             + " && /usr/bin/codesign --force --sign - \(tool)"
-            + " && /usr/bin/install -m 644 -o root -g wheel \(shell(plist)) \(job)"
+            + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control))) > \(job)"
+            + " && /usr/sbin/chown root:wheel \(job) && /bin/chmod 644 \(job)"
             // A reinstall unloads the old job first; launchd needs a beat
             // before the label can load again.
             + " && { /bin/launchctl bootout system/\(FanHelper.label) 2>/dev/null && /bin/sleep 1; true; }"
@@ -64,15 +71,19 @@ public struct AdministratorInstaller: FanHelperInstalling {
             + " && /bin/rm -f \(shell(FanHelper.installedPlist)) \(shell(FanHelper.installedExecutable))"
     }
 
+    static func sha256(of path: String) -> String? {
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     public func install(executable: String, control: URL) async throws {
-        let plist = FileManager.default.temporaryDirectory.appending(path: "\(FanHelper.label)-\(UUID().uuidString).plist")
-        do {
-            try FanHelper.plist(control: control).write(to: plist)
-        } catch {
-            throw FanHelperInstallError.failed("Couldn't write the helper's launchd job: \(error.localizedDescription)")
+        guard !control.path.contains(where: \.isNewline), !executable.contains(where: \.isNewline) else {
+            throw FanHelperInstallError.failed("Quiver's paths can't hold a line break for the fan helper.")
         }
-        defer { try? FileManager.default.removeItem(at: plist) }
-        try await run(Self.script(Self.installCommand(executable: executable, plist: plist.path),
+        guard let hash = await runOffPool({ Self.sha256(of: executable) }) else {
+            throw FanHelperInstallError.failed("Couldn't read \(executable).")
+        }
+        try await run(Self.script(Self.installCommand(executable: executable, sha256: hash, control: control),
                                   prompt: "Quiver wants to install a helper that sets the fan speed. "
                                       + "You'll only be asked once."))
     }
@@ -138,7 +149,7 @@ public final class FanControl {
 
     private let reader: @Sendable () -> [FanReading]
     private let installer: any FanHelperInstalling
-    private let isInstalled: @Sendable () -> Bool
+    private let isInstalled: @Sendable (URL) -> Bool
     private let control: URL
     private let executable: String
     private let owner: Int32
@@ -149,7 +160,7 @@ public final class FanControl {
     public init(control: URL,
                 reader: @escaping @Sendable () -> [FanReading] = { AppleSMC().map(FanKeys.read) ?? [] },
                 installer: any FanHelperInstalling = AdministratorInstaller(),
-                isInstalled: @escaping @Sendable () -> Bool = FanControl.helperOnDisk,
+                isInstalled: @escaping @Sendable (URL) -> Bool = FanControl.helperReady,
                 executable: String = Bundle.main.executablePath ?? CommandLine.arguments[0],
                 owner: Int32 = getpid(),
                 clock: @escaping @Sendable () -> Date = { .now },
@@ -162,14 +173,29 @@ public final class FanControl {
         self.owner = owner
         self.clock = clock
         self.defaults = defaults
-        helperInstalled = isInstalled()
+        helperInstalled = false
         level = defaults.object(forKey: Self.levelKey) as? Double ?? 0.5
     }
 
-    /// The helper's launchd job and executable are both in place.
-    public nonisolated static func helperOnDisk() -> Bool {
-        FileManager.default.fileExists(atPath: FanHelper.installedPlist)
-            && FileManager.default.fileExists(atPath: FanHelper.installedExecutable)
+    /// The helper is installed, steered by this control file, and loaded:
+    /// files left by a half-finished install, or a job another account
+    /// installed for its own file, count as not installed, so Set speed
+    /// reinstalls rather than waits on a helper that will never come.
+    public nonisolated static func helperReady(control: URL) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: FanHelper.installedExecutable),
+              let data = FileManager.default.contents(atPath: FanHelper.installedPlist),
+              let job = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let arguments = job["ProgramArguments"] as? [String],
+              arguments == [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path]
+        else { return false }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["print", "system/\(FanHelper.label)"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
     }
 
     /// Whether a manual speed is being held or about to be.
@@ -181,13 +207,20 @@ public final class FanControl {
     /// Read the fans, then settle the phase from what the SMC says:
     /// every fan manual means the helper holds them.
     public func refresh() async {
-        let reader = self.reader, isInstalled = self.isInstalled
-        let (fans, installed) = await runOffPool { (reader(), isInstalled()) }
-        self.fans = fans
-        helperInstalled = installed
+        let reader = self.reader
+        fans = await runOffPool { reader() }
+        // The install check spawns launchctl, so it runs on the first read
+        // and after a request the helper never took, not every tick.
+        if installUnchecked {
+            let isInstalled = self.isInstalled, control = self.control
+            helperInstalled = await runOffPool { isInstalled(control) }
+            installUnchecked = false
+        }
         loaded = true
         settle()
     }
+
+    private var installUnchecked = true
 
     private var fansManual: Bool { !fans.isEmpty && fans.allSatisfy(\.isManual) }
 
@@ -197,8 +230,8 @@ public final class FanControl {
             if fansManual {
                 phase = .manual
             } else if let startedAt, clock().timeIntervalSince(startedAt) > Self.startTimeout {
-                clearRequest()
-                phase = .failed(Self.notTaken)
+                phase = clearRequest() ?? .failed(Self.notTaken)
+                installUnchecked = true
             }
         case .manual:
             // macOS took them back (after sleep, say): the helper takes
@@ -229,12 +262,10 @@ public final class FanControl {
                 try await installer.install(executable: executable, control: control)
                 helperInstalled = true
             } catch FanHelperInstallError.cancelled {
-                clearRequest()
-                phase = .automatic
+                phase = clearRequest() ?? .automatic
                 return
             } catch {
-                clearRequest()
-                phase = .failed(error.localizedDescription)
+                phase = clearRequest() ?? .failed(error.localizedDescription)
                 return
             }
         }
@@ -248,13 +279,13 @@ public final class FanControl {
     /// Hand the fans back to macOS. The helper sees the empty request
     /// within a second and sets every fan to automatic.
     public func restoreAutomatic() {
-        clearRequest()
-        phase = .automatic
+        phase = clearRequest() ?? .automatic
     }
 
     /// Fans back to automatic, then the helper uninstalled (one password).
     public func removeHelper() async {
         restoreAutomatic()
+        installUnchecked = true
         busy = true
         defer { busy = false }
         do {
@@ -266,8 +297,19 @@ public final class FanControl {
         await refresh()
     }
 
-    private func clearRequest() {
-        try? FanControlFile(level: nil).write(to: control)
+    /// Withdraw the request. Nil once it is gone; otherwise the failure
+    /// to show, since a request left in place keeps the fans held while
+    /// the popover would claim Automatic.
+    private func clearRequest() -> Phase? {
         startedAt = nil
+        do {
+            try FanControlFile(level: nil).write(to: control)
+            return nil
+        } catch {
+            if (try? FileManager.default.removeItem(at: control)) != nil
+                || !FileManager.default.fileExists(atPath: control.path) { return nil }
+            return .failed("Couldn't hand the fans back (\(error.localizedDescription)). "
+                           + "They stay manual until Quiver quits.")
+        }
     }
 }

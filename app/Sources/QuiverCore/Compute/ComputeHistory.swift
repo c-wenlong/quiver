@@ -128,10 +128,14 @@ public struct ComputeHistory: Sendable, Equatable {
         }
     }
 
-    /// The temperature points in the `window` intervals ending at the
-    /// newest one, oldest first.
+    /// Where the temperature chart's x range ends: the newest tick, read
+    /// or not, so readings age out even once the sensors stop answering.
+    public var temperatureEnd: Date? { lastTick ?? temperatures.last?.at }
+
+    /// The temperature points in the `window` intervals ending at
+    /// `temperatureEnd`, oldest first.
     public func temperatureWindow(interval: TrendInterval) -> [TemperaturePoint] {
-        guard let end = temperatures.last?.at else { return [] }
+        guard let end = temperatureEnd else { return [] }
         let range = window(endingAt: end, interval: interval)
         return temperatures.filter { range.contains($0.at) }
     }

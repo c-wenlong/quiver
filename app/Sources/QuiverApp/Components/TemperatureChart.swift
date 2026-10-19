@@ -52,7 +52,7 @@ struct TemperatureChart: View {
         let values = points.flatMap { point in Sensor.allCases.compactMap { $0.value(point) } }
         // The same x range as the harness charts: the whole window, so
         // the first minutes draw from the right rather than stretched.
-        let end = points.last?.at ?? .now
+        let end = app.compute.history.temperatureEnd ?? .now
         let domain = app.compute.history.window(endingAt: end, interval: app.compute.trendInterval)
         Chart {
             ForEach(Sensor.allCases, id: \.self) { sensor in

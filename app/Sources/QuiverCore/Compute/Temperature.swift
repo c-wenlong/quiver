@@ -58,21 +58,38 @@ public struct HIDTemperatureSampler: TemperatureSampling {
     private static let temperatureEvent: Int64 = 15
     private static let temperatureField = Int32(15 << 16)
 
-    private static func symbol<T>(_ name: String, as: T.Type) -> T? {
-        guard let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY),
-              let pointer = dlsym(handle, name) else { return nil }
-        return unsafeBitCast(pointer, to: T.self)
+    /// The six calls, resolved once for the process; nil when this macOS
+    /// lacks any of them. IOKit is already loaded, so the one dlopen only
+    /// takes a handle and is never closed.
+    private struct Calls {
+        var create: Create
+        var setMatching: SetMatching
+        var copyServices: CopyServices
+        var copyProperty: CopyProperty
+        var copyEvent: CopyEvent
+        var floatValue: FloatValue
     }
 
-    public func read() -> TemperatureReading? {
-        guard let create = Self.symbol("IOHIDEventSystemClientCreate", as: Create.self),
-              let setMatching = Self.symbol("IOHIDEventSystemClientSetMatching", as: SetMatching.self),
-              let copyServices = Self.symbol("IOHIDEventSystemClientCopyServices", as: CopyServices.self),
-              let copyProperty = Self.symbol("IOHIDServiceClientCopyProperty", as: CopyProperty.self),
-              let copyEvent = Self.symbol("IOHIDServiceClientCopyEvent", as: CopyEvent.self),
-              let floatValue = Self.symbol("IOHIDEventGetFloatValue", as: FloatValue.self),
-              let rawClient = create(kCFAllocatorDefault)
+    private nonisolated(unsafe) static let calls: Calls? = {
+        guard let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY) else { return nil }
+        func symbol<T>(_ name: String, as: T.Type) -> T? {
+            dlsym(handle, name).map { unsafeBitCast($0, to: T.self) }
+        }
+        guard let create = symbol("IOHIDEventSystemClientCreate", as: Create.self),
+              let setMatching = symbol("IOHIDEventSystemClientSetMatching", as: SetMatching.self),
+              let copyServices = symbol("IOHIDEventSystemClientCopyServices", as: CopyServices.self),
+              let copyProperty = symbol("IOHIDServiceClientCopyProperty", as: CopyProperty.self),
+              let copyEvent = symbol("IOHIDServiceClientCopyEvent", as: CopyEvent.self),
+              let floatValue = symbol("IOHIDEventGetFloatValue", as: FloatValue.self)
         else { return nil }
+        return Calls(create: create, setMatching: setMatching, copyServices: copyServices,
+                     copyProperty: copyProperty, copyEvent: copyEvent, floatValue: floatValue)
+    }()
+
+    public func read() -> TemperatureReading? {
+        guard let calls = Self.calls, let rawClient = calls.create(kCFAllocatorDefault) else { return nil }
+        let (setMatching, copyServices, copyProperty, copyEvent, floatValue) =
+            (calls.setMatching, calls.copyServices, calls.copyProperty, calls.copyEvent, calls.floatValue)
         // Every Copy and Create hands back a +1 reference; ARC takes it.
         let client = Unmanaged<AnyObject>.fromOpaque(rawClient).takeRetainedValue()
         // Usage page 0xff00, usage 5: Apple's vendor temperature sensors.
