@@ -96,10 +96,6 @@ class SetupFindingsTest(unittest.TestCase):
         checks = {f["check"] for f in doc["data"]["findings"]}
         self.assertIn("setup.registry", checks)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_plain_output_shows_the_setup_section(self):
         from quiver.harness.commands import cmd_doctor
 
@@ -107,6 +103,7 @@ if __name__ == "__main__":
                         node_version="22", npm_version="10",
                         global_prefix="/usr/local",
                         global_bin="/usr/local/bin", global_bin_on_path=True)
+        self.hub()  # a hub with no AGENTS.md
         out = io.StringIO()
         with mock.patch.dict("os.environ", {"HOME": str(self.home)}), \
              mock.patch("quiver.harness.commands.load_registry", return_value={}), \
@@ -121,3 +118,7 @@ if __name__ == "__main__":
         self.assertIn("Setup", text)
         self.assertIn("No shared AGENTS.md", text)
         self.assertIn("swe setup --apply", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
