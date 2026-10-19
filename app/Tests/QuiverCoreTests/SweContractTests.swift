@@ -120,6 +120,14 @@ import Testing
         #expect(http.url == "https://fixture.example/mcp")
         #expect(http.headerKeys == ["Authorization"])
         #expect(http.secretsMissing == [])
+        #expect(http.inHub)
+        let hubOnly = try #require(inventory.servers.first { $0.name == "fixture-hub-only" })
+        #expect(hubOnly.inHub)
+        #expect(hubOnly.harnesses == [])
+        #expect(hubOnly.command == "hub-only-bin")
+        #expect(hubOnly.envKeys == ["HUB_TOKEN"])
+        #expect(hubOnly.secretsMissing == ["HUB_TOKEN"])
+        #expect(stdio.inHub)
     }
 
     @Test func mcpStatusAddsHealthAndDetail() async throws {

@@ -28,6 +28,9 @@ class ServerRow:
     # satisfy; [] for a server the hub doesn't hold. Swe fills them from
     # `swe mcp secret set`, and sync refuses until then.
     secrets_missing: list
+    # Whether the hub (mcp.json) defines this server. A hub-only row has
+    # empty harnesses and variants.
+    in_hub: bool
 
     def to_json(self) -> dict:
         return {
@@ -42,6 +45,7 @@ class ServerRow:
             "conflict": self.conflict,
             "variants": self.variants,
             "secrets_missing": self.secrets_missing,
+            "in_hub": self.in_hub,
         }
 
 
