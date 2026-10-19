@@ -629,6 +629,20 @@ final class FakeRunningInstances: RunningInstances {
         #expect(standard["CLAUDE_CONFIG_DIR"] == nil)
     }
 
+    /// Hands the renewal child and the moment it was ready out of the
+    /// launch gate.
+    private final class ChildBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        private var readyAt: ContinuousClock.Instant?
+        func set(_ process: Process, readyAt: ContinuousClock.Instant?) {
+            lock.withLock { self.process = process; self.readyAt = readyAt }
+        }
+        func get() -> (Process?, ContinuousClock.Instant?) {
+            lock.withLock { (process, readyAt) }
+        }
+    }
+
     private func cli(_ script: String, timeout: Duration = .seconds(3),
                      sigtermGrace: Duration = .milliseconds(200))
         throws -> (dir: URL, renewer: ClaudeSignInRenewer) {
@@ -656,19 +670,41 @@ final class FakeRunningInstances: RunningInstances {
         // A child that ignores SIGTERM is SIGKILLed; renew never reports
         // done while it still runs.
         // exec keeps the ignored TERM, so only SIGKILL can end it. Its
-        // marker file proves the child really started before the timeout.
-        let (dir, renewer) = try cli("#!/bin/sh\ntrap '' TERM\n/usr/bin/touch started\nexec /bin/sleep 60\n",
-                                     timeout: .milliseconds(1500), sigtermGrace: .milliseconds(300))
+        // marker file proves the trap is in place. A loaded machine can
+        // take longer than any fixed timeout to reach that line, so the
+        // timeout starts only once the marker shows up.
+        var (dir, renewer) = try cli("#!/bin/sh\ntrap '' TERM\n/usr/bin/touch started\nexec /bin/sleep 60\n",
+                                     timeout: .milliseconds(500), sigtermGrace: .milliseconds(500))
         defer { try? FileManager.default.removeItem(at: dir) }
-        let start = ContinuousClock.now
+        let marker = dir.appending(path: "started").path
+        let child = ChildBox()
+        renewer.launched = { process in
+            child.set(process, readyAt: nil)
+            // The child is another process, so there is no gate to await:
+            // poll its marker, giving up if it dies or never gets there.
+            let deadline = ContinuousClock.now + .seconds(30)
+            while !FileManager.default.fileExists(atPath: marker),
+                  process.isRunning, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            child.set(process, readyAt: ContinuousClock.now)
+        }
         #expect(await renewer.renew(home: dir.path, isDefault: true) == false)
-        let elapsed = ContinuousClock.now - start
-        #expect(FileManager.default.fileExists(atPath: dir.appending(path: "started").path))
-        #expect(elapsed >= .milliseconds(1750))
+        let end = ContinuousClock.now
+        let (process, readyAt) = child.get()
+        let ready = try #require(readyAt)
+        #expect(FileManager.default.fileExists(atPath: marker))
+        // Ended by SIGKILL, and already gone when renew returned.
+        let killed = try #require(process)
+        try #require(!killed.isRunning)
+        #expect(killed.terminationReason == .uncaughtSignal)
+        #expect(killed.terminationStatus == SIGKILL)
+        // SIGTERM was ignored, so renew sat out the whole grace too.
+        #expect(end - ready >= .milliseconds(1000))
         // The bound catches a hang, not latency: it sits under the
         // child's 60s sleep, so a broken timeout still fails while a
         // starved CI runner cannot trip it.
-        #expect(elapsed < .seconds(30))
+        #expect(end - ready < .seconds(30))
     }
 
     @Test func aFailingRunDoesNotRenew() async throws {
