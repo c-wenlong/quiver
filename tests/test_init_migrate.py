@@ -342,7 +342,10 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertEqual((home / ".api_keys").resolve(), new_keys.resolve())
             self.assertEqual(paths.mcp_secrets_file_for(home).read_text(), "export TOKEN=x\n")
             self.assertEqual(paths.mcp_secrets_file_for(home).stat().st_mode & 0o777, 0o600)
-            self.assertFalse((home / ".quiver" / "secrets" / ".api_keys").exists())
+            # An older swe on the same machine still reads the old MCP path.
+            old_mcp = home / ".quiver" / "secrets" / ".api_keys"
+            self.assertTrue(old_mcp.is_symlink())
+            self.assertEqual(old_mcp.read_text(), "export TOKEN=x\n")
 
     def test_a_second_run_changes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -350,6 +353,21 @@ class MoveSecretsTest(unittest.TestCase):
             _keys(home / ".api_keys")
             move_secrets(home)
             self.assertEqual(move_secrets(home), [])
+
+    def test_a_root_moved_without_the_mcp_link_gets_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            secrets_dir = paths.secrets_dir_for(home)
+            _keys(paths.mcp_secrets_file_for(home), "export TOKEN=x\n")
+            secrets_dir.joinpath(".gitignore").write_text(paths.SECRETS_GITIGNORE_BODY)
+            self.assertEqual(move_secrets(home, apply=False),
+                             ["link secrets/.api_keys to secrets/mcp/.api_keys"])
+            self.assertFalse((secrets_dir / ".api_keys").is_symlink())
+            move_secrets(home)
+            self.assertEqual((secrets_dir / ".api_keys").read_text(), "export TOKEN=x\n")
+            self.assertEqual(move_secrets(home), [])
+            # No provider file was ever there, so none appears in $HOME.
+            self.assertFalse((home / ".api_keys").exists())
 
     def test_plan_only_moves_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -97,8 +97,9 @@ by hand before versioning `~/.quiver`.
 Both credential stores are shell-style `export NAME=value` files, each in
 its own folder under `secrets/`. Provider keys used to sit at `~/.api_keys`
 and MCP values at `secrets/.api_keys`; `swe init` moves each file into its
-folder (`init/migrate.move_secrets`) and leaves a symlink at `~/.api_keys`,
-because shell profiles source that path. Before anything lands there,
+folder (`init/migrate.move_secrets`) and leaves a symlink at each old path:
+shell profiles source `~/.api_keys`, and an older swe on the same machine (a
+Nix-pinned build, say) still reads `secrets/.api_keys` for `swe mcp sync`. Before anything lands there,
 `secrets/` gets its own `.gitignore` of `*` (`seal_secrets_dir`; the app's
 `APIKeysStore` does the same before a first save). Git lets that file win
 over the root one, so an older root `.gitignore`, or one with a
