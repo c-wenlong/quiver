@@ -290,6 +290,7 @@ private struct HarnessLinksSummary: View {
 
 /// One chip per harness skills folder; a chip opens its detail in place.
 private struct HarnessLinksPanel: View {
+    @Environment(AppModel.self) private var app
     var model: SkillsModel
     var sharedDir: String
     @State private var selected: SkillRoot.ID?
@@ -314,8 +315,14 @@ private struct HarnessLinksPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if roots.isEmpty {
-                    Text("No harness skills folders found. Run swe init to set them up.")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    // No harness is known yet, so there is nothing to link;
+                    // registering one is the step that helps.
+                    HStack(spacing: 10) {
+                        Text("No harness skills folders found. Register a harness first.")
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        Button("Open Harnesses") { app.selection = .harnesses }
+                            .secondaryButton()
+                    }
                 } else {
                     FlowLayout(spacing: 6, lineSpacing: 6) {
                         ForEach(roots) { root in
