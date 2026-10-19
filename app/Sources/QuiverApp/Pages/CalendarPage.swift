@@ -329,6 +329,7 @@ private struct CalendarContent: View {
                                     scrollOffset.x = offset
                                 }
                                 .onScrollPhaseChange { old, phase, context in
+                                    cards.scrollPhase("days", from: old, to: phase)
                                     // Land only when a swipe comes to rest:
                                     // re-centring the render window mid-swipe
                                     // shifted the content under the momentum
@@ -347,9 +348,17 @@ private struct CalendarContent: View {
                             }
                             .id("grid")
                         }
+                        // The hours scroll quiets cards like the days do.
+                        .onScrollPhaseChange { old, phase in
+                            cards.scrollPhase("hours", from: old, to: phase)
+                        }
                         .onAppear { scrollToFirstBlock(proxy) }
-                        // Month view replaces this grid; coming back must scroll again.
-                        .onDisappear { scrolledRange = nil }
+                        // Month view replaces this grid; coming back must scroll
+                        // again, and a swipe cut off mid-way never reports rest.
+                        .onDisappear {
+                            scrolledRange = nil
+                            cards.scrollsRemoved()
+                        }
                         .onChange(of: model.visibleWindowBlocks.isEmpty) {
                             scrollToFirstBlock(proxy)
                         }
@@ -1500,6 +1509,18 @@ private extension Array {
     func open(_ key: String) { state.open(key) }
     func dismiss() { state.dismiss() }
     func closed(_ key: String) { state.closed(key) }
+
+    /// A scroll view's phase: moving closes and holds every card; coming
+    /// to rest starts the quiet before the next one.
+    func scrollPhase(_ id: String, from old: ScrollPhase, to phase: ScrollPhase) {
+        if phase == .idle {
+            if old != .idle { state.scrollSettled(id) }
+        } else if old == .idle {
+            state.scrollBegan(id)
+        }
+    }
+
+    func scrollsRemoved() { state.scrollsRemoved() }
 }
 
 /// Makes a view a hover-card anchor: registers its rect and the card's

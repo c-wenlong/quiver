@@ -63,6 +63,9 @@ public enum HoverCardTiming {
     public static let show: Duration = .milliseconds(350)
     /// Another anchor's card is up.
     public static let swap: Duration = .milliseconds(300)
+    /// After every scroll comes to rest, no card opens for this long, so
+    /// cards never pop up over a grid that just moved under the pointer.
+    public static let afterScroll: Duration = .seconds(1)
 
     /// The wait before `key`'s card opens; nil when it is already open.
     public static func delay(entering key: String, open: String?) -> Duration? {
