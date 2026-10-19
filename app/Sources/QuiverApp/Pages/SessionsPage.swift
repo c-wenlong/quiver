@@ -38,7 +38,9 @@ private struct SessionsContent: View {
     /// The Devin-key hint, until the user has Devin and a key, or closes it.
     private var showDevinHint: Bool {
         DevinKeyHint.shows(
-            hasDevin: model.rows.contains { $0.session.harness == "devin" }
+            // Cloud-only users count too: their stored sessions stop
+            // updating once the key is gone.
+            hasDevin: model.rows.contains { DevinKeyHint.isDevin(harness: $0.session.harness) }
                 || app.others.cliInstalled["devin"] == true,
             keySet: app.services.statuses["DEVIN_API_KEY"]?.isSet,
             dismissed: devinKeyHintDismissed)

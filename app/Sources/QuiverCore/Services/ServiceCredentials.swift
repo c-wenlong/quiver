@@ -182,6 +182,12 @@ public actor ServiceCredentials {
 /// Whether the Sessions page shows the Devin-key hint. Unknown status
 /// stays quiet, so statuses loading never flashes it.
 public enum DevinKeyHint {
+    /// A session row that means "this user has Devin": the CLI's own
+    /// sessions or the cloud ones imported with the key.
+    public static func isDevin(harness: String) -> Bool {
+        harness == "devin" || harness == DevinCloud.harness
+    }
+
     public static func shows(hasDevin: Bool, keySet: Bool?, dismissed: Bool) -> Bool {
         hasDevin && !dismissed && keySet == false
     }

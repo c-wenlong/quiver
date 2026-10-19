@@ -30,4 +30,10 @@ import Testing
             #expect(service.keyURL.scheme == "https", "\(service.id)")
         }
     }
+
+    @Test func cloudSessionsCountAsDevin() {
+        #expect(DevinKeyHint.isDevin(harness: "devin"))
+        #expect(DevinKeyHint.isDevin(harness: DevinCloud.harness))
+        #expect(!DevinKeyHint.isDevin(harness: "claude"))
+    }
 }
