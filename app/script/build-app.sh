@@ -250,11 +250,15 @@ codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$bundle" 
 # writes the ticket onto the bundle itself so Gatekeeper passes it
 # offline. A DMG step added later calls notarytool the same way.
 if [ -n "${QUIVER_NOTARY_PROFILE:-}" ]; then
-  notary_zip="$(mktemp -d)/Quiver.zip"
-  ditto -c -k --keepParent "$bundle" "$notary_zip"
-  xcrun notarytool submit "$notary_zip" \
+  notary_dir="$(mktemp -d)"
+  # The zip exists only for the submission; drop it and its folder whether
+  # notarization passes or a failed submit/staple exits the script.
+  trap 'rm -rf "$notary_dir"' EXIT
+  ditto -c -k --keepParent "$bundle" "$notary_dir/Quiver.zip"
+  xcrun notarytool submit "$notary_dir/Quiver.zip" \
     --keychain-profile "$QUIVER_NOTARY_PROFILE" --wait
   xcrun stapler staple "$bundle"
-  rm -f "$notary_zip"
+  rm -rf "$notary_dir"
+  trap - EXIT
 fi
 echo "$bundle"
