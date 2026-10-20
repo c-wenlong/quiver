@@ -550,7 +550,7 @@ class CmdListRefreshFailedFlagTest(unittest.TestCase):
         ) as fetch_rates, redirect_stdout(io.StringIO()):
             code = cmd_list(["--usage", "--refresh-failed", "--cache-ttl=300"])
 
-        self.assertEqual(code, None)
+        self.assertEqual(code, 0)
         fetch_rates.assert_called_once_with(
             use_cache=True, tool_names=set(),
             refresh_failed=True, cache_ttl=300.0,
@@ -564,7 +564,7 @@ class CmdListRefreshFailedFlagTest(unittest.TestCase):
         ) as fetch_rates, redirect_stdout(io.StringIO()):
             code = cmd_list(["--refresh-failed"])
 
-        self.assertEqual(code, None)
+        self.assertEqual(code, 0)
         fetch_rates.assert_called_once_with(
             use_cache=True, tool_names=set(),
             refresh_failed=True, cache_ttl=None,

@@ -389,6 +389,123 @@ class McpSyncCodexPeerTest(unittest.TestCase):
         self.assertIn("[features]", text)
         self.assertIn('[plugins."github@openai-curated"]', text)
 
+    @staticmethod
+    def _identity_editor() -> str:
+        """An $EDITOR that rewrites the temp file semantically unchanged."""
+        script = (
+            "import json, sys\n"
+            "p = sys.argv[1]\n"
+            "d = json.load(open(p))\n"
+            "json.dump(d, open(p, 'w'), indent=2)\n"
+        )
+        return f'{sys.executable} -c "{script}"'
+
+    def test_edit_opencode_no_change_save_preserves_entry(self):
+        """Regression: `swe mcp edit` routed the raw opencode dict through
+        emit(), which expects canonical shape — a no-change save nested the
+        command list and dropped `environment`/`enabled`/`type`. The raw
+        dict is now written back verbatim."""
+        env = _mcp_env(self.home)
+        env["EDITOR"] = self._identity_editor()
+        r = subprocess.run(
+            [sys.executable, "-m", MCP_MODULE, "edit", "opencode", "notion"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        data = json.loads(
+            (self.home / ".config" / "opencode" / "opencode.json").read_text()
+        )
+        self.assertEqual(
+            data["mcp"]["notion"],
+            {
+                "command": ["node", "/tmp/notion.js"],
+                "environment": {"NOTION_TOKEN": "tok"},
+                "enabled": True,
+                "type": "local",
+            },
+        )
+
+    def test_edit_claude_preserves_extension_keys(self):
+        """`disabled`/`autoApprove` are not canonical fields: emit() stripped
+        them, so editing a disabled claude server silently re-enabled it."""
+        claude_path = self.home / ".claude.json"
+        claude_path.write_text(
+            json.dumps({
+                "mcpServers": {
+                    "fs": {
+                        "command": "node",
+                        "args": ["/tmp/fs.js"],
+                        "disabled": True,
+                        "autoApprove": ["read"],
+                    }
+                }
+            }, indent=2) + "\n"
+        )
+        env = _mcp_env(self.home)
+        env["EDITOR"] = self._identity_editor()
+        r = subprocess.run(
+            [sys.executable, "-m", MCP_MODULE, "edit", "claude", "fs"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        data = json.loads(claude_path.read_text())
+        self.assertEqual(
+            data["mcpServers"]["fs"],
+            {
+                "command": "node",
+                "args": ["/tmp/fs.js"],
+                "disabled": True,
+                "autoApprove": ["read"],
+            },
+        )
+
+    def test_edit_opencode_real_edit_keeps_other_keys(self):
+        """An actual edit updates the touched field and leaves every other
+        key of the entry — and every other server — untouched."""
+        oc_path = self.home / ".config" / "opencode" / "opencode.json"
+        fixture = json.loads(oc_path.read_text())
+        fixture["mcp"]["linear"] = {
+            "command": ["bun", "/tmp/linear.js"],
+            "environment": {"LINEAR_KEY": "lk"},
+            "enabled": True,
+            "type": "local",
+        }
+        oc_path.write_text(json.dumps(fixture, indent=2) + "\n")
+        script = (
+            "import json, sys\n"
+            "p = sys.argv[1]\n"
+            "d = json.load(open(p))\n"
+            "d['notion']['enabled'] = False\n"
+            "json.dump(d, open(p, 'w'), indent=2)\n"
+        )
+        env = _mcp_env(self.home)
+        env["EDITOR"] = f'{sys.executable} -c "{script}"'
+        r = subprocess.run(
+            [sys.executable, "-m", MCP_MODULE, "edit", "opencode", "notion"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        data = json.loads(oc_path.read_text())
+        self.assertEqual(
+            data["mcp"]["notion"],
+            {
+                "command": ["node", "/tmp/notion.js"],
+                "environment": {"NOTION_TOKEN": "tok"},
+                "enabled": False,
+                "type": "local",
+            },
+        )
+        # The untouched server must survive the save byte-for-byte.
+        self.assertEqual(
+            data["mcp"]["linear"],
+            {
+                "command": ["bun", "/tmp/linear.js"],
+                "environment": {"LINEAR_KEY": "lk"},
+                "enabled": True,
+                "type": "local",
+            },
+        )
+
 
 class McpSyncDroidPeerTest(unittest.TestCase):
     """Verify Factory Droid is a first-class peer for ``swe mcp sync``.

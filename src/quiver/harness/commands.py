@@ -593,6 +593,19 @@ def cmd_list(args):
     args, json_view = take_json_flag(list(args or []))
     # Under --json a refusal must leave stdout empty: the app decodes it whole.
     err = error_stream(json_view)
+    if json_view and args and args[0] in ("edit", "legend", "--legend", "key"):
+        # Refused before dispatch: `edit --reset` writes config, and neither
+        # subcommand has a JSON form.
+        print(c("red", f"swe list {args[0]} has no --json output"), file=err)
+        return 1
+    # Subcommand dispatch stays on the untouched argv. The subcommands do
+    # their own arg checking, and keeping them first preserves `swe list
+    # -u edit` treating "edit" as a tag filter rather than opening the
+    # column editor once -u is consumed.
+    if args and args[0] == "edit":
+        return cmd_list_edit(args[1:])
+    if args and args[0] in ("legend", "--legend", "key"):
+        return cmd_list_legend(args[1:])
 
     # Boolean flags are matched on the raw argv, before expand_value_flags:
     # an expanded --scope=-u pair would smuggle -u in as a real flag, and a
@@ -629,15 +642,6 @@ def cmd_list(args):
     except ValueError as exc:
         print(c("red", str(exc)), file=err)
         return 1
-    if json_view and args and args[0] in ("edit", "legend", "--legend", "key"):
-        # Refused before dispatch: `edit --reset` writes config, and neither
-        # subcommand has a JSON form.
-        print(c("red", f"swe list {args[0]} has no --json output"), file=err)
-        return 1
-    if args and args[0] == "edit":
-        return cmd_list_edit(args[1:])
-    if args and args[0] in ("legend", "--legend", "key"):
-        return cmd_list_legend(args[1:])
 
     if refresh:
         from quiver.sessions.aggregator import invalidate_cache as _inv_sessions
@@ -967,6 +971,7 @@ def cmd_list(args):
     # place and can leave a dangling escape.
     tag_str = elide("  ".join(all_tags), max(20, terminal_width() - 10))
     print(f"  {c('dim', 'tags:')}  {c('cyan', tag_str)}\n")
+    return 0
 
 
 def _registry_state(name: str) -> str:

@@ -453,20 +453,42 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertIn("Unknown scope", out)
 
     def test_list_exclude_value_spelling_a_flag_does_not_refresh(self):
-        with patch(
-            "quiver.sessions.usage.invalidate_counts_cache"
-        ) as invalidate:
+        # A refresh run would clear the real session cache and re-poll
+        # provider rate limits, so the refresh side-effects are patched.
+        with (
+            patch("quiver.sessions.aggregator.invalidate_cache") as inv_sessions,
+            patch(
+                "quiver.sessions.usage.invalidate_counts_cache"
+            ) as inv_counts,
+            patch("quiver.harness.commands._fetch_rate_limits"),
+        ):
             code, _ = _run(cmd_list, ["--exclude=-r"])
         self.assertEqual(code, 0)
-        invalidate.assert_not_called()
+        inv_sessions.assert_not_called()
+        inv_counts.assert_not_called()
 
     def test_list_real_boolean_flags_still_work(self):
-        with patch(
-            "quiver.sessions.usage.invalidate_counts_cache"
-        ) as invalidate:
+        with (
+            patch("quiver.sessions.aggregator.invalidate_cache"),
+            patch(
+                "quiver.sessions.usage.invalidate_counts_cache"
+            ) as invalidate,
+            patch("quiver.harness.commands._fetch_rate_limits"),
+        ):
             code, _ = _run(cmd_list, ["-r"])
         self.assertEqual(code, 0)
         invalidate.assert_called_once()
+
+    def test_list_subcommand_dispatch_still_precedes_flag_parsing(self):
+        # `edit`/`legend` dispatch on the untouched argv: `-u edit` keeps
+        # treating "edit" as a tag filter, and a real `edit` call hands its
+        # own argv to cmd_list_edit, which rejects list-only flags.
+        with patch("quiver.harness.commands._fetch_rate_limits"):
+            code, out = _run(cmd_list, ["-u", "edit"])
+        self.assertEqual(code, 0)
+        code, out = _run(cmd_list, ["edit", "--reset", "-r"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unexpected args", out)
 
 
 if __name__ == "__main__":

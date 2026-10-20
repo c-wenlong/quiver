@@ -123,5 +123,50 @@ class ParsePiTitleSourceTest(unittest.TestCase):
         self.assertEqual(sess.title_source, "rename")
 
 
+class ParsePiSessionsPerFileTest(unittest.TestCase):
+    """Each pi transcript file is its own session; empty dirs yield none."""
+
+    def _run(self, files):
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions_root = Path(tmp) / "sessions"
+            project_dir = sessions_root / "--Users-kaichen-project--"
+            project_dir.mkdir(parents=True)
+            for name, records in files.items():
+                with open(project_dir / name, "w") as f:
+                    for rec in records:
+                        f.write(json.dumps(rec) + "\n")
+
+            def fake_expanduser(path: str) -> str:
+                if path in ("~/.pi/agent/sessions/", "~/.pi/agent/sessions"):
+                    return str(sessions_root) + "/"
+                return os.path.expanduser(path)
+
+            with patch("quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
+                return parse_pi()
+
+    def test_one_session_per_transcript_file(self):
+        sessions = self._run(
+            {
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl": [
+                    _session_record(),
+                    _user_message("first session prompt"),
+                ],
+                "ffffffff-1111-2222-3333-444444444444.jsonl": [
+                    _session_record(),
+                    _user_message("second session prompt"),
+                ],
+            }
+        )
+        self.assertEqual(len(sessions), 2)
+        self.assertEqual(
+            {s.title for s in sessions},
+            {"first session prompt", "second session prompt"},
+        )
+
+    def test_project_dir_without_transcripts_yields_no_session(self):
+        sessions = self._run({})
+        self.assertEqual(sessions, [])
+
+
 if __name__ == "__main__":
     unittest.main()
