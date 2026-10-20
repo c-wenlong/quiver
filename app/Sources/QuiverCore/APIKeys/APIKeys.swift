@@ -955,40 +955,48 @@ public final class APIKeysModel {
         return CustomProvider.models(in: body)
     }
 
-    /// The custom endpoint a `X_API_KEY` row answers to: the sibling
-    /// `X_BASE_URL`'s value, unless the catalogue knows the name AND the
-    /// base restates the catalogue probe's own host. OpenRouter's docs
-    /// publish `OPENROUTER_BASE_URL` for its canonical endpoint, and its
-    /// catalogue probe asks `/key`, which actually validates the key —
-    /// the generic `/models` is public and would pass every key.
+    /// The sibling `X_BASE_URL` of a `X_API_KEY` row, when set: the file
+    /// points that key at a specific endpoint, so the endpoint steers
+    /// both what a check asks and what a saved verdict describes.
     private func customBase(for name: String) -> String? {
         let suffix = "_API_KEY"
         guard name.hasSuffix(suffix), name.count > suffix.count,
               let base = rows.first(where: { $0.name == name.dropLast(suffix.count) + "_BASE_URL" })?.value,
               !base.isEmpty else { return nil }
-        if let catalogProbe = APIKeyProbe.probe(forName: name),
-           let baseHost = URLComponents(string: base)?.host?.lowercased(),
-           catalogProbe.hosts.contains(where: { $0.host?.lowercased() == baseHost }) {
-            return nil
-        }
         return base
     }
 
-    /// The probe a check sends a key to. A `X_BASE_URL` pointing at a
-    /// host the catalogue doesn't ask wins over the catalogue: the file
-    /// points that provider at a custom endpoint on purpose, and the
-    /// catalogue host would see a key it was never meant for. An
-    /// unparseable sibling is no check at all, never a fall back to the
-    /// catalogue.
+    /// The probe a check sends a key to. A sibling base URL reshapes the
+    /// probe rather than replace it outright:
+    /// - on one of the catalogue probe's own hosts (a region pick, like
+    ///   Dashscope's China vs international endpoints), the catalogue
+    ///   probe narrows to just that endpoint;
+    /// - on any other host, the file points the key at a custom
+    ///   endpoint, so it asks `{base}/models` with the provider's own
+    ///   auth — the catalogue host would see a key it was never meant
+    ///   for. OpenRouter's canonical `OPENROUTER_BASE_URL` narrows to
+    ///   the same `/key` check rather than the public `/models`.
+    /// - an unparseable base is no check at all, never a fall back.
     private func probe(for name: String) -> APIKeyProbe? {
-        if let base = customBase(for: name) {
-            return CustomProvider.probe(baseURL: base)
+        let catalogProbe = APIKeyProbe.probe(forName: name)
+        guard let base = customBase(for: name) else { return catalogProbe }
+        let baseHost = URLComponents(string: base)?.host?.lowercased()
+        if let catalogProbe, let baseHost {
+            let onHost = catalogProbe.hosts.filter { $0.host?.lowercased() == baseHost }
+            if !onHost.isEmpty {
+                return APIKeyProbe(hosts: onHost, method: catalogProbe.method,
+                                   body: catalogProbe.body, auth: catalogProbe.auth,
+                                   worksOnBadRequest: catalogProbe.worksOnBadRequest)
+            }
+            guard let url = CustomProvider.modelsURL(base) else { return nil }
+            return APIKeyProbe(hosts: [url], method: "GET", body: nil,
+                               auth: catalogProbe.auth, worksOnBadRequest: false)
         }
-        return APIKeyProbe.probe(forName: name)
+        return CustomProvider.probe(baseURL: base)
     }
 
     /// The value a check's fingerprint covers for a row: the key itself,
-    /// plus the custom base URL when one drives its probe. Repointing
+    /// plus the custom base URL when one steers its probe. Repointing
     /// the endpoint then retires the verdict the old endpoint earned.
     private func checkAnchor(for row: Row) -> String {
         guard let base = customBase(for: row.name) else { return row.value }

@@ -1170,6 +1170,22 @@ struct FakeShell: ShellEnvironmentReading {
         }
     }
 
+    /// A catalogue probe that lists several regional endpoints narrows
+    /// to the one the base URL names: a China Dashscope base must not
+    /// let the international endpoint's answer stand for it.
+    @Test func aBaseURLOnACatalogueHostNarrowsTheCheckToIt() async throws {
+        let transport = FakeTransport()
+        transport.reply(200, body: Data(#"{"data":[]}"#.utf8))
+        let (model, _) = try model(text: """
+            export DASHSCOPE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            export DASHSCOPE_API_KEY="sk-x"
+            """, transport: transport)
+        await model.load()
+        await model.check(name: "DASHSCOPE_API_KEY")
+        #expect(transport.requests.map { $0.url?.absoluteString }
+                == ["https://dashscope.aliyuncs.com/compatible-mode/v1/models"])
+    }
+
     /// A sibling base URL that can't parse is no check at all; falling
     /// back to the catalogue would leak the key the same way.
     @Test func aBrokenBaseURLKeepsTheKeyFromTheCatalogueHost() async throws {
