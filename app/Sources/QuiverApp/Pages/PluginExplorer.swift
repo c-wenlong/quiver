@@ -39,13 +39,15 @@ struct PluginExplorer: View {
                 // A reload swaps the index wholesale, so the opened plugin
                 // is re-derived by ref — like SkillsPage follows its row —
                 // or the detail keeps showing a version the catalog no
-                // longer has.
-                let entry = index.entry(for: opened.row.plugin.ref) ?? opened
-                if let market = index.catalog.marketplaces
-                    .first(where: { $0.name == entry.row.plugin.marketplace }) {
+                // longer has. A ref the reload dropped takes the detail
+                // back to the list rather than showing what is gone.
+                if let entry = index.entry(for: opened.row.plugin.ref),
+                   let market = index.catalog.marketplaces
+                       .first(where: { $0.name == entry.row.plugin.marketplace }) {
                     PluginDetailView(entry: entry, market: market, home: home) { self.opened = nil }
                 } else {
                     content(index)
+                        .onAppear { self.opened = nil }
                 }
             } else if let index = model.index {
                 content(index)

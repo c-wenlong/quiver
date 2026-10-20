@@ -368,7 +368,10 @@ struct PartsCard: View {
                     .font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
         }
-        .task { reload() }
+        // Keyed on the root: a catalog reload can move the plugin's
+        // folder, and cancelling the old task drops a walk that still
+        // lands for it.
+        .task(id: root) { reload() }
         .task(id: selected) {
             previewTask?.cancel()
             guard let selected else {
