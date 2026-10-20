@@ -110,6 +110,14 @@ class SessionCountsCacheTest(unittest.TestCase):
                                 "counts": {"claude": 3}}}})
         self.assertIsNone(got)
 
+    def test_overflowing_cached_at_is_a_miss(self):
+        # json.dumps writes a 400-digit int verbatim; float() on it
+        # raises OverflowError, which used to escape the guard.
+        got = self._load({
+            "windows": {"all": {"cached_at": 10 ** 400,
+                                "counts": {"claude": 3}}}})
+        self.assertIsNone(got)
+
     def test_overflowing_count_is_a_miss(self):
         import time
 
@@ -192,6 +200,86 @@ class DoctorHostilePathsTest(unittest.TestCase):
                     self.assertEqual(nvm_bin_dirs(home), [])
             finally:
                 versions.chmod(stat.S_IRWXU)
+
+    def test_nvm_bin_dirs_survives_unsearchable_nvm_parent(self):
+        """Lock the parent, not the versions dir: stat() on
+        ``.nvm/versions/node`` then raises EACCES inside ``is_dir()``
+        itself, before the iterdir guard can run."""
+        from quiver.harness.path_health import nvm_bin_dirs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            nvm_dir = home / ".nvm"
+            versions = nvm_dir / "versions" / "node"
+            (versions / "v22.0.0" / "bin").mkdir(parents=True)
+            nvm_dir.chmod(0)
+            try:
+                if os.access(nvm_dir, os.X_OK):
+                    self.skipTest("running as a user that ignores modes")
+                with mock.patch.dict(
+                    os.environ, {"NVM_DIR": str(nvm_dir)}
+                ):
+                    self.assertEqual(nvm_bin_dirs(home), [])
+            finally:
+                nvm_dir.chmod(stat.S_IRWXU)
+
+    def test_nvm_bin_dirs_skips_unstatable_version_dir(self):
+        """iterdir succeeds but ``child/bin`` cannot be stat()'d."""
+        from quiver.harness.path_health import nvm_bin_dirs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            versions = home / ".nvm" / "versions" / "node"
+            version = versions / "v22.0.0"
+            (version / "bin").mkdir(parents=True)
+            version.chmod(0)
+            try:
+                if os.access(version, os.X_OK):
+                    self.skipTest("running as a user that ignores modes")
+                with mock.patch.dict(
+                    os.environ, {"NVM_DIR": str(home / ".nvm")}
+                ):
+                    self.assertEqual(nvm_bin_dirs(home), [])
+            finally:
+                version.chmod(stat.S_IRWXU)
+
+    def test_dangling_symlink_scan_survives_unstatable_dir(self):
+        """is_dir() itself raises EACCES on Python 3.11-3.13 when a
+        parent lacks +x. The mode bit alone cannot prove it (3.14+
+        returns False instead), so the raise is patched in."""
+        from quiver.harness.drift import check_dangling_symlinks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            locked = Path(tmp) / "locked"
+            locked.mkdir()
+            with mock.patch.object(
+                Path, "is_dir",
+                side_effect=PermissionError(13, "Permission denied"),
+            ):
+                findings = check_dangling_symlinks([locked])
+        self.assertTrue(
+            any("cannot be scanned" in f.message for f in findings),
+            findings,
+        )
+
+    def test_dangling_symlink_scan_skips_unstatable_entries(self):
+        """A directory with +r but no +x lists names it cannot lstat().
+        The PermissionError is patched in for the same reason as above:
+        mode bits express it only on the Pythons that still raise."""
+        from quiver.harness.drift import check_dangling_symlinks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            listed = Path(tmp) / "listed"
+            listed.mkdir()
+            (listed / "dangling").symlink_to(listed / "gone")
+            with mock.patch.object(
+                Path, "is_symlink",
+                side_effect=PermissionError(13, "Permission denied"),
+            ):
+                findings = check_dangling_symlinks([listed])
+        # No crash, and nothing fabricated: the entry could not be
+        # classified, so it reports nothing at all.
+        self.assertEqual(findings, [])
 
 
 # ── 4. swe mcp edit on non-object JSON ─────────────────────────────
@@ -290,6 +378,18 @@ class UsageEventsParseTest(unittest.TestCase):
         self.assertEqual(mapped["input_tokens"], 0)
         self.assertEqual(mapped["output_tokens"], 0)
         self.assertEqual(mapped["cache_read_tokens"], 0)
+
+    def test_fields_map_survives_overflowing_cents(self):
+        from quiver.harness.rate_limits import _usage_event_fields
+
+        # A 400-digit integer parses fine from JSON but float() cannot
+        # convert it — math.isfinite() used to take the OverflowError.
+        mapped = _usage_event_fields({
+            "timestamp": "1700000000000",
+            "tokenUsage": {"totalCents": 10 ** 400},
+        })
+        self.assertIsNotNone(mapped)
+        self.assertIsNone(mapped["cost_usd"])
 
     def test_bad_since_flag_reports_not_tracebacks(self):
         from quiver.harness.commands import cmd_harness_usage_events

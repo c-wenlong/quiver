@@ -129,10 +129,13 @@ def nvm_bin_dirs(home: Path | None = None) -> list[Path]:
     home = home or Path.home()
     nvm_dir = Path(os.environ.get("NVM_DIR", home / ".nvm"))
     versions = nvm_dir / "versions" / "node"
-    if not versions.is_dir():
-        return []
     dirs: list[Path] = []
     try:
+        # is_dir() propagates EACCES when a parent lacks search
+        # permission — that belongs in the same "cannot see" bucket as
+        # an iterdir() failure, so both live inside the guard.
+        if not versions.is_dir():
+            return []
         children = sorted(versions.iterdir())
     except OSError:
         # An unreadable nvm dir means "no nvm installs we can see",
@@ -140,8 +143,13 @@ def nvm_bin_dirs(home: Path | None = None) -> list[Path]:
         return []
     for child in children:
         bin_dir = child / "bin"
-        if bin_dir.is_dir():
-            dirs.append(bin_dir)
+        try:
+            if bin_dir.is_dir():
+                dirs.append(bin_dir)
+        except OSError:
+            # Same story one level down: a version dir we can list but
+            # not stat through is skipped like a missing bin/.
+            continue
     return dirs
 
 

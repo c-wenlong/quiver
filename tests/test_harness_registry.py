@@ -171,6 +171,43 @@ class RegistryRobustnessTest(unittest.TestCase):
             # Readers that keyed on entry["command"] must not crash on the ghost.
             self.assertEqual(reg["ghost-tool"].get("command"), None)
 
+    def _corrupt_legacy_case(self, filename: str):
+        """tools.json valid + one corrupt legacy file: the migration must
+        refuse rather than commit a harness.json missing that state."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        config_dir = self._config_dir(tmp.name)
+        (config_dir / "tools.json").write_text(
+            json.dumps({"claude": {"command": "claude"}}))
+        (config_dir / filename).write_text("{corrupt")
+        patches = self._patches(config_dir)
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return config_dir
+
+    def test_migration_refuses_a_corrupt_stars_file(self):
+        config_dir = self._corrupt_legacy_case("stars.json")
+        with self.assertRaises(CorruptConfigurationError) as ctx:
+            load_registry()
+        self.assertIn("stars.json", str(ctx.exception))
+        # Nothing committed: harness.json must not exist yet.
+        self.assertFalse((config_dir / "harness.json").exists())
+
+    def test_migration_refuses_a_corrupt_archive_file(self):
+        config_dir = self._corrupt_legacy_case("archived.json")
+        with self.assertRaises(CorruptConfigurationError) as ctx:
+            load_registry()
+        self.assertIn("archived.json", str(ctx.exception))
+        self.assertFalse((config_dir / "harness.json").exists())
+
+    def test_migration_runs_once_the_corrupt_file_is_removed(self):
+        config_dir = self._corrupt_legacy_case("stars.json")
+        (config_dir / "stars.json").unlink()
+        reg = load_registry()
+        self.assertEqual(reg["claude"]["command"], "claude")
+        self.assertTrue((config_dir / "harness.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2127,12 +2127,15 @@ def _usage_event_fields(event: dict) -> dict | None:
 
     cents = usage.get("totalCents")
     cost = None
-    if (
-        isinstance(cents, (int, float))
-        and not isinstance(cents, bool)
-        and math.isfinite(cents)
-    ):
-        cost = float(cents) / 100
+    if isinstance(cents, (int, float)) and not isinstance(cents, bool):
+        try:
+            # JSON carries a 400-digit integer that float() cannot
+            # convert; isfinite() on the int would raise the same way.
+            cents_f = float(cents)
+        except OverflowError:
+            cents_f = float("nan")
+        if math.isfinite(cents_f):
+            cost = cents_f / 100
     conversation = event.get("conversationId")
     return {
         "timestamp": timestamp,

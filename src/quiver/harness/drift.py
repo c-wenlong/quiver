@@ -469,9 +469,11 @@ def check_dangling_symlinks(directories: Sequence[Path]) -> list[Finding]:
     """
     findings: list[Finding] = []
     for directory in directories:
-        if not directory.is_dir():
-            continue
         try:
+            # is_dir() propagates EACCES when a parent lacks search
+            # permission, so it belongs inside the guard too.
+            if not directory.is_dir():
+                continue
             entries = sorted(directory.iterdir())
         except OSError as exc:
             # An unreadable directory is itself worth reporting; dying on
@@ -482,11 +484,17 @@ def check_dangling_symlinks(directories: Sequence[Path]) -> list[Finding]:
             ))
             continue
         for entry in entries:
-            if entry.is_symlink() and not entry.exists():
-                findings.append(Finding(
-                    "warn", "symlinks",
-                    f"{entry} is a broken symlink (target does not exist)",
-                ))
+            try:
+                if entry.is_symlink() and not entry.exists():
+                    findings.append(Finding(
+                        "warn", "symlinks",
+                        f"{entry} is a broken symlink (target does not exist)",
+                    ))
+            except OSError:
+                # A directory we can list but not stat through (read
+                # without search permission) yields entries that cannot
+                # be classified; skip them like a non-symlink.
+                continue
     return findings
 
 
