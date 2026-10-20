@@ -114,8 +114,8 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 **Phase 0. Quick fixes**
 - [x] `swe` version probe tried `claude version` first, which starts a Claude session ([#370](https://github.com/c-wenlong/quiver/pull/370))
 - [x] Seeded `~/.quiver/.gitignore` lists `secrets/` ([#369](https://github.com/c-wenlong/quiver/pull/369))
-- [ ] A missing `swe` shows raw `env: swe: No such file or directory`. `ProcessRunner` runs `/usr/bin/env`, so exit 127 lands as `commandFailed`, never `.notInstalled` (`CommandRunner.swift`, `SweClient.swift`). Map 127 to `.notInstalled`, and replace its "Install quiver with pip" text, since the PyPI name belongs to someone else.
-- [ ] `swe providers add` tells users `~/.api_keys/<name>` is a directory of files, but the app reads `~/.api_keys` as one file and fails on a directory. Make them agree.
+- [x] A missing `swe` shows raw `env: swe: No such file or directory`. `ProcessRunner` runs `/usr/bin/env`, so exit 127 lands as `commandFailed`, never `.notInstalled` (`CommandRunner.swift`, `SweClient.swift`). Map 127 to `.notInstalled`, and replace its "Install quiver with pip" text, since the PyPI name belongs to someone else. ([#408](https://github.com/c-wenlong/quiver/pull/408))
+- [x] `swe providers add` tells users `~/.api_keys/<name>` is a directory of files, but the app reads `~/.api_keys` as one file and fails on a directory. Make them agree. ([#408](https://github.com/c-wenlong/quiver/pull/408))
 
 **Phase 1. Bundle `swe` inside the app**
 - [x] python-build-standalone CPython 3.13 plus `src/quiver` at `Contents/Resources/swe`, used when Settings names no `swe` ([#371](https://github.com/c-wenlong/quiver/pull/371))
