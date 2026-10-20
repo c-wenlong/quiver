@@ -140,11 +140,11 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 
 **Phase 4. Release pipeline**
 - [x] Prod builds hide the channel picker and Rebuild ([#409](https://github.com/c-wenlong/quiver/pull/409)). Releases build with `QUIVER_CHANNEL=prod` once the release job below exists.
-- [ ] Sign with Developer ID, hardened runtime and `--timestamp` (`build-app.sh` only finds Apple Development identities). Check what entitlements the bundled Python needs (ctypes). Then notarize and staple.
-- [ ] A macOS 26 release job that builds, signs, notarizes, makes the DMG and attaches it to the GitHub release. The release workflow builds only the Python wheel today.
+- [ ] Sign with Developer ID, hardened runtime and `--timestamp`, then notarize and staple. Implemented ([#414](https://github.com/c-wenlong/quiver/pull/414)): prod signs Developer ID with runtime+timestamp (verified locally, `spctl` = Unnotarized Developer ID), `QUIVER_NOTARY_PROFILE` zips+submits+staples. Unticked until a real submission runs — needs the notarytool keychain profile.
+- [x] A macOS 26 release job that builds, signs, notarizes, makes the DMG and attaches it to the GitHub release ([#415](https://github.com/c-wenlong/quiver/pull/415), [#417](https://github.com/c-wenlong/quiver/pull/417)). Runs unsigned until the `MACOS_CERTIFICATE`, `NOTARY_*` and `SPARKLE_PRIVATE_KEY` secrets land.
 - [x] Version stamps come from `git describe`, which reads `0.0.0` on a shallow CI checkout. Fetch tags or pass the version in. ([#411](https://github.com/c-wenlong/quiver/pull/411))
-- [ ] Universal build (arm64 and x86_64), Python included, or say Apple Silicon only on the download page. macOS 26 is the floor either way.
-- [ ] In-app updates (Sparkle and an appcast). Today Settings only links to the releases page.
+- [x] Universal build or Apple Silicon only: Apple Silicon only, decided. macOS 26 is the floor; release notes and the download page should say so.
+- [x] In-app updates (Sparkle and an appcast). Sparkle 2.10.0 bundled + signed ([#416](https://github.com/c-wenlong/quiver/pull/416)); prod Info.plist carries SUFeedURL + SUPublicEDKey; the release job signs `appcast.xml` with `SPARKLE_PRIVATE_KEY` ([#417](https://github.com/c-wenlong/quiver/pull/417)).
 - [x] `NSAppleEventsUsageDescription` (Sign in, Resume and Run in Terminal use `osascript`). ([#412](https://github.com/c-wenlong/quiver/pull/412))
 - [x] Keychain writes pass the secret on `security`'s argv (`UsageProduction.swift`). Use stdin or the Security framework. ([#410](https://github.com/c-wenlong/quiver/pull/410))
 - [x] The release check calls the `c-wenlong/quiver` releases API, so the repo has to be public. (the repo is public)
