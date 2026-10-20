@@ -197,6 +197,28 @@ class PlanMigrationTest(unittest.TestCase):
             self.assertIn("something_new.json", dest)
             self.assertEqual(dest["something_new.json"].parent, paths.config_dir_for(home))
 
+    def test_mcp_json_lands_at_the_hub_path(self):
+        # The MCP hub is ~/.quiver/mcp.json — routing it into config/
+        # stranded every server where no reader looks.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={"mcp.json": '{"mcpServers":{}}'})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(dest["mcp.json"], paths.mcp_source_file_for(home))
+
+    def test_dotfiles_are_moved_not_dropped(self):
+        # A user .env or notes file in the old root is data, not .DS_Store.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".env": "TOKEN=x"})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(
+                dest[".env"], paths.config_dir_for(home) / ".env")
+            self.assertNotIn(".env", {p.name for p in plan.dropped})
+            apply_migration(plan)
+            self.assertEqual(
+                (paths.config_dir_for(home) / ".env").read_text(), "TOKEN=x")
+
     def test_drop_list_and_move_lists_do_not_overlap(self):
         self.assertEqual(set(DROP) & set(CONFIG_FILES), set())
         self.assertEqual(set(DROP) & set(CACHE_FILES), set())
@@ -263,6 +285,20 @@ class ApplyMigrationTest(unittest.TestCase):
             home = _legacy_home(tmp)
             apply_migration(plan_migration(home), remove_source=False)
             self.assertTrue((home / ".config" / "swe").is_dir())
+
+    def test_a_symlinked_dir_in_the_drop_list_unlinks_not_crashes(self):
+        # rmtree on a symlinked dir raises OSError mid-apply and strands a
+        # half-migrated tree: the link is removed, the target untouched.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp)
+            outside = home / "elsewhere"
+            outside.mkdir()
+            (outside / "keep.txt").write_text("keep me")
+            (home / ".config" / "swe" / "archive").symlink_to(
+                outside, target_is_directory=True)
+            apply_migration(plan_migration(home))
+            self.assertFalse((home / ".config" / "swe" / "archive").exists())
+            self.assertTrue((outside / "keep.txt").is_file())
 
 
 class GitignoreTest(unittest.TestCase):
@@ -441,6 +477,24 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertEqual(move_secrets(home), [])
             self.assertFalse(paths.secrets_dir_for(home).exists())
 
+    def test_a_symlinked_secrets_dir_is_never_sealed_or_written_through(self):
+        # Path ops follow links: sealing a symlinked secrets/ used to chmod
+        # 0700 and plant a catch-all .gitignore in a foreign directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            outside = home / "foreign"
+            outside.mkdir()
+            paths.secrets_dir_for(home).parent.mkdir(parents=True, exist_ok=True)
+            paths.secrets_dir_for(home).symlink_to(
+                outside, target_is_directory=True)
+            _keys(home / ".api_keys")
+            notes = move_secrets(home)
+            self.assertIn("left alone", " ".join(notes))
+            self.assertFalse((outside / ".gitignore").exists())
+            self.assertFalse((outside / "providers" / ".api_keys").exists())
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o755)
+            self.assertFalse((home / ".api_keys").is_symlink())
+
 
 class CmdInitMigrationTest(unittest.TestCase):
     def _run(self, home, args):
@@ -489,6 +543,20 @@ class CmdInitMigrationTest(unittest.TestCase):
             (home / ".claude").mkdir()
             self._run(home, [])
             self.assertTrue((home / ".quiver" / ".gitignore").is_file())
+
+    def test_a_dangling_scaffold_symlink_is_not_written_through(self):
+        # exists() is false for a dangling link, so the AGENTS.md seed used
+        # to follow it and create the file at the link's target.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            target = home / "foreign" / "AGENTS.md"
+            paths.agents_file_for(home).parent.mkdir(parents=True)
+            paths.agents_file_for(home).symlink_to(target)
+            code, _out = self._run(home, [])
+            self.assertIn(code, (0, 1))
+            self.assertFalse(target.exists(), "seed wrote through a symlink")
+            self.assertTrue(paths.agents_file_for(home).is_symlink())
 
 
 if __name__ == "__main__":

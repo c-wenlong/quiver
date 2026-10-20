@@ -295,11 +295,19 @@ def skill_root_label(
     return owner[1:] if owner.startswith(".") else owner
 
 
+# os.walk with followlinks has no depth or size bound: a skills root holding
+# a symlink to $HOME would otherwise scan the whole home. Same cap as the
+# plugin drift check (find/plugin_drift.py's MAX_ENTRIES).
+_WALK_DIR_CAP = 20_000
+
+
 def _skill_mds(root: Path) -> dict[str, Path]:
     """dir-name -> its SKILL.md path for every skill folder under ``root``.
 
     The walk follows symlinks but de-duplicates by (dev, ino), so a link
-    into a vendor repo is seen exactly once.
+    into a vendor repo is seen exactly once, and caps at _WALK_DIR_CAP
+    visited directories so a link cycle or a link out to a huge tree
+    cannot make init scan it all.
     """
     import os
 
@@ -318,6 +326,9 @@ def _skill_mds(root: Path) -> dict[str, Path]:
             dirnames[:] = []
             continue
         seen.add(key)
+        if len(seen) >= _WALK_DIR_CAP:
+            dirnames[:] = []
+            continue
         if "SKILL.md" in filenames:
             out[Path(dirpath).name] = Path(dirpath) / "SKILL.md"
     return out
