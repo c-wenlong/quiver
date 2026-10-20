@@ -117,6 +117,41 @@ class CommandsSmokeTest(unittest.TestCase):
                 self.assertEqual(cmd_info(["missing"]), 1)
                 self.assertEqual(cmd_info([]), 1)
 
+    def test_add_hint_points_at_the_export_file(self):
+        # The default store is one file of export lines; a directory of
+        # per-provider files is only for --api-keys-dir overrides.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_dir, registry_file, _ = self._setup(tmp_path)
+            keys_file = tmp_path / "keys" / ".api_keys"
+            keys_file.parent.mkdir()
+            keys_file.write_text("export OLD=1\n")
+            p1, p2 = _registry_patches(config_dir, registry_file)
+            out = io.StringIO()
+            with p1, p2, patch(
+                "quiver.providers.commands.default_keys_dir",
+                return_value=keys_file,
+            ), redirect_stdout(out):
+                self.assertEqual(
+                    cmd_add(["myprov", "--env=MY_API_KEY", "--file=myprov"]), 0)
+            self.assertIn("export MY_API_KEY", out.getvalue())
+            self.assertIn(str(keys_file), out.getvalue())
+            self.assertNotIn(str(keys_file / "myprov"), out.getvalue())
+
+    def test_add_hint_points_inside_a_real_keys_directory(self):
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_dir, registry_file, keys_dir = self._setup(tmp_path)
+            p1, p2 = _registry_patches(config_dir, registry_file)
+            out = io.StringIO()
+            with p1, p2, patch(
+                "quiver.providers.commands.default_keys_dir",
+                return_value=keys_dir,
+            ), redirect_stdout(out):
+                self.assertEqual(
+                    cmd_add(["myprov", "--env=MY_API_KEY", "--file=myprov"]), 0)
+            self.assertIn(str(keys_dir / "myprov"), out.getvalue())
+
     def test_cmd_add_registers_new_provider(self):
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
