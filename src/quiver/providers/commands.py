@@ -423,14 +423,34 @@ def cmd_info(args: list[str]) -> int:
 
     if row and not row.get("raw_key") and row["key_file"]:
         print()
-        print(
-            c(
-                "dim",
-                f"  No key found. Drop your key at {_display_keys_dir(Path(row['key_file']))}  (just the key string, no shell quoting).",
-            )
+        # key_filename, falling back to the older ``file`` field like
+        # find_key_file does.
+        hint = _key_drop_hint(
+            keys_dir, info.get("key_filename") or info.get("file"),
+            env_list[0] if env_list else None
         )
+        print(c("dim", f"  No key found. {hint}"))
     print()
     return 0
+
+
+def _key_drop_hint(keys_dir: Path, key_filename: str | None,
+                   env_var: str | None) -> str:
+    """Where a new key goes, phrased for the layout ``keys_dir`` is.
+
+    A directory holds one bare-key file per provider; anything else —
+    including the default, a file that may not exist yet — is the single
+    shell-export file the app edits too, where a key is an export line.
+    """
+    if keys_dir.is_dir():
+        where = _display_keys_dir(keys_dir / (key_filename or "key"))
+        return (f"Drop your key at {where}  "
+                "(just the key string, no shell quoting).")
+    if env_var is None:
+        return (f"It has no env variable yet — re-add it with --env=NAME, "
+                f"then 'export NAME=<your key>' goes in "
+                f"{_display_keys_dir(keys_dir)}.")
+    return f"Add  export {env_var}=<your key>  to {_display_keys_dir(keys_dir)}."
 
 
 def cmd_add(args: list[str]) -> int:
@@ -538,11 +558,10 @@ def cmd_add(args: list[str]) -> int:
     if url:
         parts.append(f"url: {url}")
     print(f"  {c('green', '✓')} {action} '{name}' — {', '.join(parts)}")
+    stored_env = providers[name]["env_vars"]
     print(
-        c(
-            "dim",
-            f"  Drop your key string at {default_keys_dir()}/{key_filename}",
-        )
+        c("dim", "  " + _key_drop_hint(
+            default_keys_dir(), key_filename, stored_env[0] if stored_env else None))
     )
     return 0
 
