@@ -1345,6 +1345,20 @@ class CmdStoreWordingTest(unittest.TestCase):
             )
         self.assertIn("PRIMARY_API_KEY or SECONDARY_API_KEY", out)
 
+    def test_remove_survives_a_store_with_invalid_utf8(self):
+        # A non-UTF-8 .api_keys used to raise UnicodeDecodeError after the
+        # removal was already saved — traceback on a completed remove.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / ".api_keys"
+            store.write_bytes(b"export PRIMARY_API_KEY=\xff\xfe\n")
+            out = self._remove_with_store(
+                tmp_path, store,
+                env_vars=("PRIMARY_API_KEY", "SECONDARY_API_KEY"),
+            )
+        self.assertIn("Removed 'openai'", out)
+        self.assertIn("PRIMARY_API_KEY or SECONDARY_API_KEY", out)
+
 
 if __name__ == "__main__":
     unittest.main()

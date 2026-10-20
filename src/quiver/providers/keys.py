@@ -65,12 +65,14 @@ def _safe_read_text(path: Path | None) -> str | None:
 
     Centralised so both ``read_key`` and ``read_shell_export_keys`` share
     the same exception swallowing semantics across the providers module.
+    ``UnicodeError`` is a read failure too: a key file holding undecodable
+    bytes contains no usable key.
     """
     if path is None:
         return None
     try:
         return path.read_text()
-    except (FileNotFoundError, PermissionError, OSError):
+    except (FileNotFoundError, PermissionError, OSError, UnicodeError):
         return None
 
 
