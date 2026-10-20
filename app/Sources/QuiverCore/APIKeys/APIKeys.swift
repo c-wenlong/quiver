@@ -747,9 +747,7 @@ public final class APIKeysModel {
         // Show the file now; the shell can take seconds to start.
         shellRead = false
         rebuild()
-        environment = await shell.freshEnvironment()
-        shellRead = true
-        rebuild()
+        await readShell()
         refreshSourcing()
     }
 
@@ -1033,9 +1031,39 @@ public final class APIKeysModel {
         try store.save(edited, over: stamp)
         savedAt = Date()
         readFile()
-        // The shell is read again on the next load; until then a changed key
-        // shows what the file now says against the last shell reading.
         rebuild()
+        rereadShell()
+    }
+
+    /// The reread a save started, kept so a test can await the rows
+    /// settling on the fresh environment.
+    var shellReread: Task<Void, Never>?
+    /// Serials shell reads so the newest always lands last: a read asked
+    /// for before a save describes a file that no longer exists.
+    private var shellReads = 0
+
+    /// Reads the login shell's environment once and rebuilds on it.
+    /// load() and the post-save reread both go through here; only the
+    /// newest request's answer lands, so a save during a load can't be
+    /// clobbered by the load's older answer. Sourcing recomputes on the
+    /// landing read too: the startup file it checks follows ZDOTDIR,
+    /// which only the shell's own environment knows.
+    private func readShell() async {
+        shellReads += 1
+        let serial = shellReads
+        let fresh = await shell.freshEnvironment()
+        guard serial == shellReads else { return }
+        environment = fresh
+        shellRead = true
+        refreshSourcing()
+        rebuild()
+    }
+
+    /// A save changes the file a new terminal sources, so the last read
+    /// is stale the moment the write lands — ask the shell again. The
+    /// serial drops any older read still in flight, including a load's.
+    private func rereadShell() {
+        shellReread = Task { await readShell() }
     }
 
     private func readFile() {

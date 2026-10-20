@@ -662,27 +662,33 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
     }
 }
 
-/// A shell that answers only when released.
+/// A shell that answers only when released. Reads park in arrival
+/// order so overlapping requests can be let through one at a time.
 actor GatedShell: ShellEnvironmentReading {
-    private var gate: CheckedContinuation<Void, Never>?
+    private var gates: [CheckedContinuation<Void, Never>] = []
     private var nextID = 0
     private var parkers: [Int: CheckedContinuation<Bool, Never>] = [:]
+    /// What a read reports once released.
+    private var reply: [String: String]? = ["OPENAI_ORG": "org-test"]
+
+    /// What the next released read reports.
+    func reply(_ environment: [String: String]?) { reply = environment }
 
     func freshEnvironment() async -> [String: String]? {
         let parked = parkers
         parkers = [:]
         for parker in parked.values { parker.resume(returning: true) }
-        await withCheckedContinuation { gate = $0 }
-        return ["OPENAI_ORG": "org-test"]
+        await withCheckedContinuation { gates.append($0) }
+        return reply
     }
 
-    /// True once the shell is parked on its gate, false after ten
-    /// seconds. Checking the gate and parking the caller happen in one
-    /// actor step, so the park can never be missed and the caller
-    /// stranded until the timeout.
+    /// True once a read is parked, false after ten seconds. Checking
+    /// the park and parking the caller happen in one actor step, so
+    /// the park can never be missed and the caller stranded until the
+    /// timeout.
     func waitForPark() async -> Bool {
         await withCheckedContinuation { cont in
-            if gate != nil {
+            if !gates.isEmpty {
                 cont.resume(returning: true)
                 return
             }
@@ -693,14 +699,23 @@ actor GatedShell: ShellEnvironmentReading {
         }
     }
 
-    /// The timeout resumes only its own waiter, and only if the shell
-    /// has not already parked.
+    /// The timeout resumes only its own waiter, and only if a read has
+    /// not already parked.
     private func expire(_ id: Int) async {
         try? await Task.sleep(for: .seconds(10))
         parkers.removeValue(forKey: id)?.resume(returning: false)
     }
 
-    func release() { gate?.resume(); gate = nil }
+    /// Lets every parked read through.
+    func release() {
+        for gate in gates { gate.resume() }
+        gates = []
+    }
+
+    /// Lets only the longest-parked read through; the rest stay waiting.
+    func releaseNext() {
+        if !gates.isEmpty { gates.removeFirst().resume() }
+    }
 }
 
 /// A shell that reports a fixed environment.
@@ -774,6 +789,48 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(model.sourcing == .sourced)
         #expect(FileManager.default.fileExists(atPath: home.appending(path: "dots/.zshrc").path))
     }
+
+    /// A save mid-load drops the load's read, so the sourcing check it
+    /// runs afterwards sees no shell environment at all; when the
+    /// save's own read lands with ZDOTDIR in it, the check reruns
+    /// against the file that environment actually names.
+    @Test func sourcingFollowsTheLandingReadsEnvironment() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appending(path: "keysource-\(UUID().uuidString)")
+        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)
+        // ZDOTDIR's .zshrc sources the file; the plain ~/.zshrc doesn't.
+        let dots = home.appending(path: "dots")
+        try FileManager.default.createDirectory(at: dots, withIntermediateDirectories: true)
+        try (ShellStartup.sourceLine(for: keys, home: home) + "\n")
+            .write(to: dots.appending(path: ".zshrc"), atomically: true, encoding: .utf8)
+        try "export OTHER=1\n".write(to: home.appending(path: ".zshrc"),
+                                    atomically: true, encoding: .utf8)
+        let shell = GatedShell()
+        await shell.reply(["A_KEY": "v1", "ZDOTDIR": dots.path])
+        let model = APIKeysModel(
+            store: APIKeysStore(url: keys, backupDirectory: home.appending(path: "backups")),
+            shell: shell,
+            checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
+            defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
+            shellName: "/bin/zsh", home: home, environment: [:])
+        let load = Task { await model.load() }
+        #expect(await shell.waitForPark())
+
+        try await model.set(name: "B_KEY", value: "v2", provider: "")
+        await shell.releaseNext()
+        await load.value
+        // The dropped read leaves no shell env, so the check ran on the
+        // wrong file; the save's own read puts it right when it lands.
+        #expect(model.sourcing == .notSourced(file: home.appending(path: ".zshrc")))
+        #expect(await shell.waitForPark())
+        await shell.reply(["A_KEY": "v1", "B_KEY": "v2", "ZDOTDIR": dots.path])
+        await shell.release()
+        await model.shellReread?.value
+        #expect(model.sourcing == .sourced)
+    }
 }
 
 @MainActor
@@ -816,6 +873,66 @@ struct FakeShell: ShellEnvironmentReading {
         await shell.release()
         await load.value
         #expect(model.rows.map(\.status) == [.notLoaded, .notLoaded, .loaded])
+    }
+
+    /// A save changes the file a new terminal sources, so the shell is
+    /// read again: the row shows the stale verdict first, then settles
+    /// on what a new terminal would now get.
+    @Test func aSaveRereadsTheShell() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keysreread-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
+        let shell = GatedShell()
+        await shell.reply(["A_KEY": "v1"])
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+                                 checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                                 defaults: UserDefaults(suiteName: "keysreread-\(UUID().uuidString)")!)
+        let load = Task { await model.load() }
+        #expect(await shell.waitForPark())
+        await shell.release()
+        await load.value
+        #expect(model.rows.first?.status == .loaded)
+
+        try await model.set(name: "B_KEY", value: "v2", provider: "")
+        // The stale read still stands while the reread is parked.
+        #expect(model.rows.last?.status == .notLoaded)
+        #expect(await shell.waitForPark())
+        await shell.reply(["A_KEY": "v1", "B_KEY": "v2"])
+        await shell.release()
+        await model.shellReread?.value
+        #expect(model.rows.map(\.status) == [.loaded, .loaded])
+    }
+
+    /// A save while load() is still waiting on the shell gets a read of
+    /// its own: the load's answer predates the write and is dropped, so
+    /// the saved key doesn't stay Not loaded on the stale answer.
+    @Test func aSaveDuringLoadGetsItsOwnShellRead() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keysoverlap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
+        let shell = GatedShell()
+        await shell.reply(["A_KEY": "v1"])
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+                                 checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                                 defaults: UserDefaults(suiteName: "keysoverlap-\(UUID().uuidString)")!)
+        let load = Task { await model.load() }
+        #expect(await shell.waitForPark())
+
+        // The write lands while the load's read is still parked, so
+        // that read can only describe the file before the save.
+        try await model.set(name: "B_KEY", value: "v2", provider: "")
+        await shell.releaseNext()
+        await load.value
+        #expect(model.rows.last?.status == .checking)
+
+        // The save's own read is the one that settles the rows.
+        #expect(await shell.waitForPark())
+        await shell.reply(["A_KEY": "v1", "B_KEY": "v2"])
+        await shell.release()
+        await model.shellReread?.value
+        #expect(model.rows.map(\.status) == [.loaded, .loaded])
     }
 
     @Test func anUnreadableShellLeavesTheStatusUnknown() async throws {
