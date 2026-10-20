@@ -35,7 +35,14 @@
 # will notarize) and a secure timestamp, so they keep verifying after
 # the certificate expires. QUIVER_NOTARY_PROFILE=… (a `notarytool
 # store-credentials` keychain profile) notarizes and staples after
-# signing.
+# signing; script/make-dmg.sh then packages the DMG and can notarize it
+# with either that profile or the NOTARY_* App Store Connect key.
+#
+# A prod build also refuses a tree it cannot ship from: non-arm64 hosts
+# (releases are Apple Silicon only, per app/ROADMAP.md), a dirty checkout
+# (untracked files under src/quiver would bundle in silently) and a
+# checkout with no version tag (the bundle would stamp 0.0.0, which
+# ReleaseCheck then treats as older than every release).
 set -euo pipefail
 
 config="${1:-release}"
@@ -48,6 +55,31 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 build_dir="${QUIVER_BUILD_DIR:-$here/build}"
 mkdir -p "$build_dir"
+
+if [ "$channel" = "prod" ]; then
+  if [ "$(uname -m)" != "arm64" ]; then
+    echo "build-app: prod releases are Apple Silicon only; this is $(uname -m)." >&2
+    echo "Ship Intel by running the same tag's build on Intel hardware." >&2
+    exit 1
+  fi
+  if ! git -C "$here" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "build-app: prod needs a git checkout; the version stamp and the" >&2
+    echo "bundled swe both come from the tree." >&2
+    exit 1
+  fi
+  if [ -n "$(git -C "$here" status --porcelain)" ]; then
+    echo "build-app: refusing a prod build from a dirty checkout: uncommitted" >&2
+    echo "edits (and untracked files under src/quiver) ship silently. Commit or" >&2
+    echo "stash first, or build a clean worktree like install-app.sh does." >&2
+    exit 1
+  fi
+  if ! git -C "$here" describe --tags --abbrev=0 >/dev/null 2>&1; then
+    echo "build-app: prod needs a version tag and git describe found none" >&2
+    echo "(a shallow clone or tarball), so the bundle would stamp 0.0.0." >&2
+    echo "Fetch tags first: git fetch --tags." >&2
+    exit 1
+  fi
+fi
 
 # Info.plist values come from git and the environment, so a checkout in a
 # path containing &, < or > would otherwise write broken XML.
@@ -243,11 +275,14 @@ elif [ -z "$identity" ]; then
 fi
 # Prod signs for Gatekeeper: every Mach-O gets the hardened runtime (a
 # notarization prerequisite) and a secure timestamp, so the signature
-# keeps verifying after the certificate expires. Dev builds keep plain
-# signatures: --timestamp needs Apple's timestamp server, which a dev
-# machine may be offline from, and ad-hoc signatures can't carry one.
+# keeps verifying after the certificate expires. The same goes for any
+# build headed to notarization (QUIVER_NOTARY_PROFILE set), whatever its
+# channel. Dev builds keep plain signatures: --timestamp needs Apple's
+# timestamp server, which a dev machine may be offline from, and ad-hoc
+# signatures can't carry one.
 sign_opts=()
-if [ "$channel" = "prod" ] && [ "$identity" != "-" ]; then
+if [ "$identity" != "-" ] &&
+   { [ "$channel" = "prod" ] || [ -n "${QUIVER_NOTARY_PROFILE:-}" ]; }; then
   sign_opts=(--options runtime --timestamp)
 fi
 # Inside out: the bundled Python's binaries, the extension with its sandbox,
@@ -284,7 +319,9 @@ codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$bundle" 
 # Notarize and staple when a `notarytool store-credentials` keychain
 # profile is named. The zip exists only for the submission; stapler
 # writes the ticket onto the bundle itself so Gatekeeper passes it
-# offline. A DMG step added later calls notarytool the same way.
+# offline. make-dmg.sh packages the result into a DMG and runs the same
+# submit + staple on the image (it also accepts the NOTARY_* App Store
+# Connect key form, which is what release.yml passes it).
 if [ -n "${QUIVER_NOTARY_PROFILE:-}" ]; then
   notary_dir="$(mktemp -d)"
   # The zip exists only for the submission; drop it and its folder whether
