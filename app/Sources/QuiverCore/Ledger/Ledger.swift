@@ -135,9 +135,10 @@ public struct ScanReport: Sendable, Equatable {
     /// Lines over the size limit that were skipped.
     public var skippedLines = 0
     public var databasesRead = 0
-    /// Sources that failed this round and were skipped, one note each. A
-    /// source in a transient state (mid-rebuild, locked for recovery, an
-    /// unexpected schema) must not take the rest of the scan down with it.
+    /// Sources or files that failed this round and were skipped, one note
+    /// each. A source in a transient state (mid-rebuild, locked for
+    /// recovery, an unexpected schema) or an unreadable transcript must
+    /// not take the rest of the scan down with it.
     public var notes: [String] = []
     public init() {}
 }
@@ -235,7 +236,7 @@ public actor Ledger {
         var seen = Set<String>()
         for home in roots.claudeHomes {
             for file in Self.jsonlFiles(under: home.appendingPathComponent("projects")) {
-                if Task.isCancelled { return report }
+                if Task.isCancelled { throw CancellationError() }
                 try scanFile(file, accountHome: home.path, parser: ClaudeFileParser.self, seen: &seen, report: &report)
                 await Task.yield()
             }
@@ -245,7 +246,7 @@ public actor Ledger {
             // is attributed to the live copy.
             for directory in ["sessions", "archived_sessions"] {
                 for file in Self.jsonlFiles(under: home.appendingPathComponent(directory)) {
-                    if Task.isCancelled { return report }
+                    if Task.isCancelled { throw CancellationError() }
                     try scanFile(file, accountHome: home.path, parser: CodexFileParser.self, seen: &seen, report: &report)
                     await Task.yield()
                 }
@@ -261,14 +262,14 @@ public actor Ledger {
         }
         for home in roots.piHomes {
             for file in Self.jsonlFiles(under: home.appendingPathComponent("agent/sessions")) {
-                if Task.isCancelled { return report }
+                if Task.isCancelled { throw CancellationError() }
                 try scanFile(file, accountHome: home.path, parser: PiFileParser.self, seen: &seen, report: &report)
                 await Task.yield()
             }
         }
         for home in roots.droidHomes {
             for file in Self.files(under: home.appendingPathComponent("sessions"), suffix: ".settings.json") {
-                if Task.isCancelled { return report }
+                if Task.isCancelled { throw CancellationError() }
                 try scanSessionFile(file, accountHome: home.path,
                                     watched: SessionTotalsFile.droidTranscript(for: file),
                                     parse: { try SessionTotalsFile.droid(settings: $0, accountHome: home.path) },
@@ -281,7 +282,7 @@ public actor Ledger {
             for file in Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json")
             where file.deletingPathExtension().lastPathComponent
                 == file.deletingLastPathComponent().lastPathComponent {
-                if Task.isCancelled { return report }
+                if Task.isCancelled { throw CancellationError() }
                 try scanSessionFile(file, accountHome: home.path,
                                     parse: { try SessionTotalsFile.cline(session: $0, accountHome: home.path) },
                                     report: &report)
@@ -319,12 +320,21 @@ public actor Ledger {
         var start: UInt64 = 0
         var state: Data?
         if let saved {
+            // `changed` is ctime: a rewrite that preserved size and mtime
+            // (a backup restore, a `touch -r` stamp) still moves it, so the
+            // fast path no longer trusts the stamp alone. Cursors written
+            // before it was recorded keep the check they were saved under.
             if saved.inode == info.inode, saved.size == info.size, saved.modified == info.modified,
-               saved.offset == info.size {
+               (saved.changed ?? info.changed) == info.changed, saved.offset == info.size {
                 report.filesUnchanged += 1
                 return
             }
-            if saved.inode == info.inode, info.size >= saved.offset, Self.fingerprintsMatch(saved, path: path) {
+            // Resuming is appends only: a file read to its end already
+            // (`offset == size`) whose stamps moved is a rewrite, and
+            // resuming at EOF would read nothing and re-stamp the cursor
+            // over an edit the head/middle/tail samples cannot see.
+            if saved.inode == info.inode, info.size > saved.offset,
+               Self.fingerprintsMatch(saved, path: path) {
                 start = saved.offset
                 state = saved.state
             } else {
@@ -341,27 +351,70 @@ public actor Ledger {
                     try store.upsert(record)
                 }
             }
-            let head = Self.hashRange(path: path, from: 0, length: min(4096, result.endOffset))
-            let tailLength = min(4096, result.endOffset)
+            let head = Self.hashRange(path: path, from: 0, length: min(Self.fingerprintBytes, result.endOffset))
+            let tailLength = min(Self.fingerprintBytes, result.endOffset)
             let tail = Self.hashRange(path: path, from: result.endOffset - tailLength, length: tailLength)
+            let mid = Self.middleSample(of: result.endOffset)
+            let midHash = Self.hashRange(path: path, from: mid.from, length: mid.length)
             try store.save(FileCursor(
                 path: path, inode: info.inode, size: info.size, modified: info.modified,
-                offset: result.endOffset, headHash: head, headLength: Int(min(4096, result.endOffset)),
-                tailHash: tail, tailLength: Int(tailLength), state: lineParser.savedState(),
+                changed: info.changed, offset: result.endOffset,
+                headHash: head, headLength: Int(min(Self.fingerprintBytes, result.endOffset)),
+                tailHash: tail, tailLength: Int(tailLength), midHash: midHash,
+                state: lineParser.savedState(),
                 skippedLines: (start > 0 ? saved?.skippedLines ?? 0 : 0) + result.skippedLines))
             try store.db.execute("COMMIT")
             report.skippedLines += result.skippedLines
-        } catch {
+        } catch let failure as SQLiteDatabase.Failure {
+            // Quiver's own store failing aborts the scan, same as a
+            // database source's cache failure: the round is not complete.
             store.rollback()
-            throw error
+            throw failure
+        } catch {
+            // The file itself was unreadable — gone or locked mid-scan,
+            // permissions, a bad block. One bad transcript must not take
+            // every harness's scan down with it, so like a skipped source
+            // it becomes a note. Its cursor is left unsaved, so the next
+            // scan retries it.
+            store.rollback()
+            report.notes.append("Skipped \(path): \(error.localizedDescription)")
+            return
         }
         report.filesRead += 1
     }
 
+    /// Bytes each fingerprint sample covers. Head, middle and tail of the
+    /// range already read are hashed, so a same-length edit anywhere near
+    /// the middle still shows.
+    private static let fingerprintBytes: UInt64 = 4_096
+
+    /// The `fingerprintBytes`-byte block centered in `offset` bytes. A pure
+    /// function of the saved offset, so only the hash is stored.
+    private static func middleSample(of offset: UInt64) -> (from: UInt64, length: UInt64) {
+        let length = min(fingerprintBytes, offset)
+        return ((offset - length) / 2, length)
+    }
+
     private static func fingerprintsMatch(_ cursor: FileCursor, path: String) -> Bool {
-        hashRange(path: path, from: 0, length: UInt64(cursor.headLength)) == cursor.headHash
-            && hashRange(path: path, from: cursor.offset - UInt64(cursor.tailLength), length: UInt64(cursor.tailLength))
-            == cursor.tailHash
+        // A malformed cursor must fail the check, not trap: validate every
+        // conversion and the tail's reach before subtracting.
+        guard let headLength = UInt64(exactly: cursor.headLength),
+              let tailLength = UInt64(exactly: cursor.tailLength),
+              headLength <= fingerprintBytes, tailLength <= fingerprintBytes,
+              tailLength <= cursor.offset
+        else { return false }
+        guard hashRange(path: path, from: 0, length: headLength) == cursor.headHash,
+              hashRange(path: path, from: cursor.offset - tailLength, length: tailLength)
+                == cursor.tailHash
+        else { return false }
+        if let midHash = cursor.midHash {
+            let mid = middleSample(of: cursor.offset)
+            return hashRange(path: path, from: mid.from, length: mid.length) == midHash
+        }
+        // Saved before the middle sample existed: trust it only where head
+        // and tail already cover the file end to end. Bigger files rescan
+        // once, and their new cursor records the middle.
+        return headLength + tailLength >= cursor.offset
     }
 
     private static func hashRange(path: String, from offset: UInt64, length: UInt64) -> Int64 {
@@ -406,12 +459,14 @@ public actor Ledger {
         var inode: UInt64
         var size: UInt64
         var modified: Double
+        var changed: Double
 
         init?(_ path: String) {
             guard let info = FileInfo(path: path) else { return nil }
             inode = info.inode
             size = info.size
             modified = info.modified
+            changed = info.changed
         }
     }
 
@@ -432,6 +487,7 @@ public actor Ledger {
         let state = watched.map { _ in (try? JSONEncoder().encode(watchedStamp)) ?? nil } ?? nil
         if let saved = try store.cursor(for: path),
            saved.inode == info.inode, saved.size == info.size, saved.modified == info.modified,
+           (saved.changed ?? info.changed) == info.changed,
            saved.state == state {
             report.filesUnchanged += 1
             return
@@ -455,7 +511,8 @@ public actor Ledger {
             }
             try store.save(FileCursor(
                 path: path, inode: info.inode, size: info.size, modified: info.modified,
-                offset: info.size, headHash: 0, headLength: 0, tailHash: 0, tailLength: 0,
+                changed: info.changed, offset: info.size,
+                headHash: 0, headLength: 0, tailHash: 0, tailLength: 0,
                 state: state, skippedLines: 0))
             try store.db.execute("COMMIT")
         } catch {
@@ -733,6 +790,10 @@ struct FileInfo {
     var inode: UInt64
     var size: UInt64
     var modified: Double
+    /// The inode's change time. Any write — including one that then
+    /// restores `modified` — moves it, and it cannot be stamped back,
+    /// which makes it the tell for metadata-preserved rewrites.
+    var changed: Double
 
     init?(path: String) {
         var info = stat()
@@ -740,6 +801,7 @@ struct FileInfo {
         inode = UInt64(info.st_ino)
         size = UInt64(info.st_size)
         modified = Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9
+        changed = Double(info.st_ctimespec.tv_sec) + Double(info.st_ctimespec.tv_nsec) / 1e9
     }
 }
 

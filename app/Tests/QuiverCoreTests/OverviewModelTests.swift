@@ -291,6 +291,18 @@ struct ScanFailed: Error, LocalizedError {
         #expect(model.completedScans == 0)
     }
 
+    /// A cancelled scan is not a completed one: no count, no cleared
+    /// error, just a rebuilt view over whatever committed before it.
+    @Test func aCancelledScanDoesNotCountAsComplete() async {
+        let ledger = FakeLedger()
+        await ledger.failScans(with: CancellationError())
+        let model = model(ledger)
+        await model.load(scan: true)
+        #expect(await ledger.scans == 1)
+        #expect(model.completedScans == 0)
+        #expect(model.error == nil)
+    }
+
     @Test func switchingPeriodOnlyRequeriesThatPeriod() async throws {
         let ledger = FakeLedger()
         await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 2)])
