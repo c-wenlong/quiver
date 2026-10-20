@@ -1369,4 +1369,46 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.rows.map(\.logged) == scoped)
         #expect(model.searchOverflow == 0)
     }
+
+    @Test func aRepeatQueryReadsTheCacheNotTheParser() async throws {
+        // match answers memoize per name: a needle the search already
+        // ran adds zero index lookups, which is what keeps typing cheap.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5",
+                  creator: "anthropic", intelligence: 70),
+            entry("kimi", "Kimi K3 (Max)", "kimi-k3",
+                  creator: "moonshot", intelligence: 45),
+        ])
+        let model = makeModel(dir: dir,
+                              slices: [slice("claude-opus-5-5", "claude", tokens: 10)])
+        await model.load()
+        model.query = "kimi"
+        let warmed = model.matcherMisses
+        #expect(warmed > 0)
+        // A different needle parses only the names it alone reaches.
+        model.query = "opus"
+        #expect(model.matcherMisses > warmed)
+        let beforeRepeat = model.matcherMisses
+        // And the warmed query's names never hit the index again.
+        model.query = "kimi"
+        #expect(model.rows.map(\.aa?.id) == ["kimi"])
+        #expect(model.matcherMisses == beforeRepeat)
+    }
+
+    @Test func aBroadQueryCapsTheWholeBoard() async throws {
+        // A one-letter needle can hit hundreds of AA models; the page
+        // lists the first screenful and counts the rest in the note.
+        let dir = try TempDir()
+        let entries = (0..<(ModelsModel.searchResultLimit + 20)).map { i in
+            entry("flood-\(i)", "Flood \(i)", "flood-\(i)",
+                  creator: "openai", intelligence: Double(100 - i))
+        }
+        try writeLLMs(dir, entries)
+        let model = makeModel(dir: dir)
+        await model.load()
+        model.query = "flood"
+        #expect(model.rows.count == ModelsModel.searchResultLimit)
+        #expect(model.searchOverflow == 20)
+    }
 }
