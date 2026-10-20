@@ -44,3 +44,7 @@ result-*
 build/docs-site/
 site/
 .venv-docs/
+
+# Local credentials for release work (BOOTSTRAP.md lists what goes here).
+.env
+.env.*
