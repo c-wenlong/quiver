@@ -160,26 +160,57 @@ public struct ProcessRunner: CommandRunning {
                 // deadline the whole command tree is stopped — a child
                 // like `bash` leaves `swift build` running otherwise —
                 // and the call throws once the run's own process is gone
-                // (the termination handler may report it sooner). A
-                // grandchild holding the pipes open can't delay that:
-                // the readers finish whenever the pipes finally close.
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) {
-                    deadline.expire()
-                    if process.isRunning { process.terminate() }
-                    Self.stopDescendants(of: process.processIdentifier, signal: SIGTERM)
-                    // SIGTERM is a request; anything that ignores it, and
-                    // any descendant spawned meanwhile, is killed
-                    // outright a moment later.
-                    DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(2)) {
-                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                // (the termination handler may report it sooner). Both
+                // blocks are cancelled when the run answers, so a pid
+                // reused after the child exited is never signalled.
+                let tagged = PidBox()
+                let killBlock = DispatchWorkItem {
+                    if process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
                         Self.stopDescendants(of: process.processIdentifier, signal: SIGKILL)
-                        // SIGKILL cannot be ignored, so this waits out the
-                        // kernel's reaping rather than a live child.
-                        process.waitUntilExit()
-                        once.resume(throwing: SweError.timedOut)
                     }
+                    // Orphans reparented to launchd vanish from the tree
+                    // walk; the pids tagged at the deadline are
+                    // re-signalled by number.
+                    for descendant in Set(tagged.all) { kill(descendant, SIGKILL) }
+                    // SIGKILL cannot be ignored, so this waits out the
+                    // kernel's reaping rather than a live child.
+                    process.waitUntilExit()
+                    once.resume(throwing: SweError.timedOut)
                 }
+                let deadlineBlock = DispatchWorkItem {
+                    deadline.expire()
+                    // A child that already exited left nothing to
+                    // signal, and its pid may already belong to another
+                    // process — report the timeout, never sweep.
+                    guard process.isRunning else {
+                        once.resume(throwing: SweError.timedOut)
+                        return
+                    }
+                    // Children first: the parent must stay alive until
+                    // the tree is tagged or they reparent and vanish.
+                    tagged.set(Self.stopDescendants(
+                        of: process.processIdentifier, signal: SIGTERM))
+                    process.terminate()
+                    // A dying parent may spawn during the sweep; one
+                    // more pass catches the strays while attached.
+                    tagged.set(tagged.all + Self.stopDescendants(
+                        of: process.processIdentifier, signal: SIGTERM))
+                    // SIGTERM is a request; whatever ignores it is
+                    // killed outright a moment later.
+                    DispatchQueue.global().asyncAfter(
+                        deadline: .now() + .seconds(2), execute: killBlock)
+                }
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + timeout.timeInterval, execute: deadlineBlock)
                 group.notify(queue: .global()) {
+                    // A finished run disarms the deadline; a timed-out
+                    // one keeps the kill pass so survivors cannot
+                    // outlive the call.
+                    if !deadline.isExpired {
+                        deadlineBlock.cancel()
+                        killBlock.cancel()
+                    }
                     once.resume(CommandResult(
                         status: process.terminationStatus,
                         stdout: box.stdout,
@@ -193,11 +224,16 @@ public struct ProcessRunner: CommandRunning {
     }
 
     /// Sends `signal` to every process under `pid`, walking the tree with
-    /// `proc_listchildpids`. A pid that exits between listing and the
-    /// signal just answers ESRCH. Children may outlive their parent —
-    /// a `bash` script's `swift build` survives bash's own terminate —
-    /// so a timeout sweeps the descendants too.
-    private static func stopDescendants(of pid: pid_t, signal: Int32) {
+    /// `proc_listchildpids`, and returns the pids it found so a later
+    /// pass can reach orphans that reparented off the tree. A pid that
+    /// exits between listing and the signal just answers ESRCH.
+    /// Children may outlive their parent — a `bash` script's `swift
+    /// build` survives bash's own terminate — so a timeout sweeps the
+    /// descendants too. Never call this on a child that has already
+    /// exited: its pid may belong to another process by then.
+    @discardableResult
+    private static func stopDescendants(of pid: pid_t, signal: Int32) -> [pid_t] {
+        var found: [pid_t] = []
         var seen: Set<pid_t> = [pid]
         var queue = [pid]
         while let parent = queue.popLast() {
@@ -207,10 +243,12 @@ public struct ProcessRunner: CommandRunning {
             guard bytes > 0 else { continue }
             for child in buffer.prefix(Int(bytes) / MemoryLayout<pid_t>.stride)
             where seen.insert(child).inserted {
+                found.append(child)
                 kill(child, signal)
                 queue.append(child)
             }
         }
+        return found
     }
 }
 
@@ -223,6 +261,17 @@ private final class DeadlineBox: @unchecked Sendable {
     var isExpired: Bool { lock.withLock { expired } }
 
     func expire() { lock.withLock { expired = true } }
+}
+
+/// The descendant pids a deadline sweep found, shared with the SIGKILL
+/// pass so orphans that reparented off the tree are still stopped.
+private final class PidBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pids: [pid_t] = []
+
+    var all: [pid_t] { lock.withLock { pids } }
+
+    func set(_ newValue: [pid_t]) { lock.withLock { pids = newValue } }
 }
 
 /// The one place a run's cancel and its launch meet. Both take the lock, so
