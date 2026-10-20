@@ -86,10 +86,12 @@ Repo resolution is `--repo=` first, then the working directory's git
 remote, then every pinned repo — a bare query outside a checkout runs
 against all pins, so `results` is always a list of per-repo entries.
 
-- `GhEnv`: `{"status", "login"}` — `status` is `ok` |
-  `unavailable` (gh missing) | `auth-required`. On a blocked env the
-  command exits 1, prints the reason to stderr, and still emits the
-  envelope with empty results.
+- `GhEnv`: `{"status", "login", "error"}` — `status` is `ok` |
+  `unavailable` (gh missing) | `auth-required` | `upstream-error`
+  (the `gh auth status` probe itself failed, e.g. a timeout — not proof
+  the login is gone). `error` carries the probe failure or is null. On a
+  blocked env the command exits 1, prints the reason to stderr, and
+  still emits the envelope with empty results.
 - `GhResults`: `{"github": GhEnv, "results": [entry]}` where each entry
   is `{"repo", "status", <rows>, "error"?}`. `status` is `ok` |
   `not-found` | `unavailable` | `auth-required` | `upstream-error`; on
@@ -110,7 +112,9 @@ against all pins, so `results` is always a list of per-repo entries.
   created_at, updated_at, url}`; `conclusion` is null while running.
 - `pages` entry: `{"repo", "status", "pages": null | {url, cname,
   status, source_branch, latest_build: null | {status, error, commit,
-  updated_at}}}`. `pages: null` means the repo has no Pages site.
+  updated_at}}}`. `pages: null` means the repo has no Pages site;
+  `latest_build: null` means no builds yet, while a failed build read
+  arrives as `{"status": "fetch-failed", "error": <gh stderr>}`.
 - `GhRelease`: `{tag, name, latest, draft, prerelease, published_at,
   url}`. `GhTag`: `{name, sha, url}`. `GhBranch`: `{name, protected,
   default, sha, url}`.

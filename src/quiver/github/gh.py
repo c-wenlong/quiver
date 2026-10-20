@@ -32,11 +32,14 @@ class GhEnv:
     installed: bool = field(default_factory=lambda: shutil.which("gh") is not None)
     authenticated: bool = False
     login: str = ""
+    error: str = ""
 
     @property
     def status(self) -> str:
         if not self.installed:
             return "unavailable"
+        if self.error:
+            return "upstream-error"  # the probe itself failed — not proof auth is missing
         if not self.authenticated:
             return "auth-required"
         return "ok"
@@ -52,7 +55,8 @@ def probe_env() -> GhEnv:
             ["gh", "auth", "status", "--hostname", "github.com"],
             capture_output=True, text=True, timeout=GH_TIMEOUT,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        env.error = str(exc)
         return env
     env.authenticated = done.returncode == 0
     if env.authenticated:
@@ -78,7 +82,11 @@ def run_gh(args: list[str], timeout: int = GH_TIMEOUT) -> GhResult:
         return GhResult("unavailable", error=str(exc))
     if done.returncode != 0:
         stderr = (done.stderr or done.stdout or "").strip()
-        if "404" in stderr or "Not Found" in stderr or "Could not resolve" in stderr:
+        # "Could not resolve host" is a DNS outage, not a missing resource —
+        # only the GraphQL "Could not resolve to a Repository" means gone.
+        if ("404" in stderr or "Not Found" in stderr
+                or "not found" in stderr
+                or "Could not resolve to a" in stderr):
             return GhResult("not-found", error=stderr)
         return GhResult("upstream-error", error=stderr)
     return GhResult("ok", data=done.stdout)

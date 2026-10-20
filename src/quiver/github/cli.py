@@ -249,6 +249,33 @@ def _gh_list(args: list[str]) -> gh.GhResult:
     return gh.run_json(args)
 
 
+def _gh_paginated(path: str, limit: int) -> gh.GhResult:
+    """``gh api`` a list endpoint, fetching just enough pages for ``limit``.
+
+    GitHub caps ``per_page`` at 100, so a single request cannot serve
+    ``--limit=200``. Pages are pulled explicitly — never
+    ``--paginate``, which would fetch the endpoint's *entire* history —
+    and a short page means the listing ended.
+    """
+    items: list = []
+    per_page = min(limit, 100)
+    page = 1
+    sep = "&" if "?" in path else "?"
+    while len(items) < limit:
+        result = gh.run_json(
+            ["api", f"{path}{sep}per_page={per_page}&page={page}"])
+        if result.status != "ok":
+            if items:
+                break  # later page failed: keep what we already have
+            return result
+        batch = result.data if isinstance(result.data, list) else []
+        items += batch
+        if len(batch) < per_page:
+            break
+        page += 1
+    return gh.GhResult("ok", data=items[:limit])
+
+
 def _repo_result(repo: str, key: str, result: gh.GhResult,
                  shape) -> dict:
     """Uniform per-repo entry: ok carries shaped rows, errors stay typed."""
@@ -271,6 +298,8 @@ def _fetch_pr_status(repo: str) -> dict:
         "pr", "status", "--repo", repo, "--json", _PR_FIELDS])
     if result.status != "ok":
         return {"repo": repo, "status": result.status,
+                "current_branch": None, "authored": [],
+                "review_requested": [],
                 "error": result.error or result.status}
     data = result.data or {}
     return {
@@ -306,7 +335,15 @@ def _fetch_pages(repo: str) -> dict:
         return {"repo": repo, "status": site.status, "pages": None,
                 "error": site.error or site.status}
     latest = gh.run_json(["api", f"repos/{repo}/pages/builds/latest"])
-    build = latest.data if latest.status == "ok" else None
+    if latest.status == "ok":
+        build = latest.data
+    elif latest.status == "not-found":
+        build = None
+    else:
+        # A failed build read is not a missing build — keep the error so
+        # the UI can say "couldn't check" instead of rendering nothing.
+        build = {"status": "fetch-failed",
+                 "error": latest.error or latest.status}
     return _pages_payload(repo, site.data or {}, build)
 
 
@@ -319,8 +356,7 @@ def _fetch_releases(repo: str, limit: int) -> dict:
 
 
 def _fetch_tags(repo: str, limit: int) -> dict:
-    result = gh.run_json(
-        ["api", f"repos/{repo}/tags?per_page={limit}"])
+    result = _gh_paginated(f"repos/{repo}/tags", limit)
     def shape(tag: dict) -> dict:
         name = tag.get("name") or ""
         return {
@@ -338,8 +374,7 @@ def _fetch_branches(repo: str, limit: int) -> dict:
                 "default_branch": None,
                 "error": meta.error or meta.status}
     default = str(meta.data or "").strip()
-    result = gh.run_json(
-        ["api", f"repos/{repo}/branches?per_page={limit}"])
+    result = _gh_paginated(f"repos/{repo}/branches", limit)
     def shape(branch: dict) -> dict:
         name = branch.get("name") or ""
         return {
@@ -355,7 +390,7 @@ def _fetch_branches(repo: str, limit: int) -> dict:
 
 
 def _fetch_inbox(limit: int) -> dict:
-    result = gh.run_json(["api", f"notifications?per_page={limit}"])
+    result = _gh_paginated("notifications", limit)
     if result.status != "ok":
         return {"status": result.status, "notifications": [],
                 "error": result.error or result.status}
@@ -649,24 +684,33 @@ def _render_inbox(payload: dict) -> None:
 def _cmd_repo(args: list[str], json_view: bool) -> int:
     sub = args[0] if args else "list"
     rest = args[1:] if args else []
+    err = error_stream(json_view)
+
+    if sub in ("add", "remove", "rm", "search"):
+        parsed = _parse_common(rest, json_view)
+        if parsed is None:
+            return 1
+        opts, pos = parsed
+        if not pos:
+            print(c("red", f"Usage: swe gh repo {sub} <arg>"), file=err)
+            return 1
+    else:
+        opts, pos = None, []
 
     if sub == "add":
-        if not rest:
-            print(c("red", "Usage: swe gh repo add <owner/name|url>"))
-            return 1
-        name = repos.normalize_repo_input(rest[0])
+        name = repos.normalize_repo_input(pos[0])
         if not name:
-            print(c("red", f"Not a GitHub repo: {rest[0]}"))
+            print(c("red", f"Not a GitHub repo: {pos[0]}"), file=err)
             return 1
         env = gh.probe_env()
         if env.status != "ok":
-            print(c("red", f"  {_env_error(env)}"),
-                  file=error_stream(json_view))
+            print(c("red", f"  {_env_error(env)}"), file=err)
             return 1
         check = gh.run_json(
             ["repo", "view", name, "--json", "nameWithOwner"])
-        if check.status != "ok":
-            print(c("red", f"Cannot reach {name}: {check.error or check.status}"))
+        if check.status != "ok" or not isinstance(check.data, dict):
+            print(c("red", f"Cannot reach {name}: "
+                           f"{check.error or check.status}"), file=err)
             return 1
         name = check.data.get("nameWithOwner") or name
         pinned = repos.add_pinned(name)
@@ -676,10 +720,7 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
         return 0
 
     if sub in ("remove", "rm"):
-        if not rest:
-            print(c("red", "Usage: swe gh repo remove <owner/name>"))
-            return 1
-        name = repos.normalize_repo_input(rest[0]) or rest[0]
+        name = repos.normalize_repo_input(pos[0]) or pos[0]
         pinned, removed = repos.remove_pinned(name)
         if json_view:
             return emit({"removed": removed, "repo": name,
@@ -689,19 +730,16 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
         return 0 if removed else 1
 
     if sub == "search":
-        if not rest:
-            print(c("red", "Usage: swe gh repo search <query>"))
-            return 1
+        query = " ".join(pos)
         env = gh.probe_env()
         if env.status != "ok":
-            print(c("red", f"  {_env_error(env)}"),
-                  file=error_stream(json_view))
+            print(c("red", f"  {_env_error(env)}"), file=err)
             return 1
         result = gh.run_json([
-            "search", "repos", rest[0], "--limit", "15", "--json",
-            "fullName,description,stargazersCount,updatedAt"])
+            "search", "repos", query, "--limit", str(_limit(opts, 15)),
+            "--json", "fullName,description,stargazersCount,updatedAt"])
         if result.status != "ok":
-            print(c("red", result.error or result.status))
+            print(c("red", result.error or result.status), file=err)
             return 1
         found = [
             {"name": r.get("fullName"), "description": r.get("description"),
@@ -710,7 +748,7 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
              "url": f"https://github.com/{r.get('fullName')}"}
             for r in (result.data or []) if isinstance(r, dict)]
         if json_view:
-            return emit({"query": rest[0], "results": found})
+            return emit({"query": query, "results": found})
         print()
         for r in found:
             stars = f"{r['stars']:,}" if isinstance(r["stars"], int) else "-"
@@ -724,7 +762,7 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
 
     if sub != "list":
         print(c("red", f"Unknown: swe gh repo {sub}  "
-                       "(list | add | remove | search)"))
+                       "(list | add | remove | search)"), file=err)
         return 1
 
     pinned = repos.load_pinned()
@@ -759,21 +797,25 @@ def _open_web(kind: str, targets: list[str]) -> None:
 
 
 def _env_error(env: gh.GhEnv) -> str:
-    return ("gh is not installed: brew install gh"
-            if not env.installed
-            else "gh is not authenticated: run `gh auth login`")
+    if not env.installed:
+        return "gh is not installed: brew install gh"
+    if env.error:
+        return f"gh is not responding ({env.error})"
+    return "gh is not authenticated: run `gh auth login`"
 
 
 def _env_payload(env: gh.GhEnv) -> dict:
-    return {"status": env.status, "login": env.login or None}
+    return {"status": env.status, "login": env.login or None,
+            "error": env.error or None}
 
 
-def _parse_common(rest: list[str]) -> tuple[dict, list[str]] | None:
+def _parse_common(rest: list[str],
+                  json_view: bool) -> tuple[dict, list[str]] | None:
     """Split ``--repo=``/``--state=``/``--limit=``/``--web`` from positionals."""
     try:
         args = expand_value_flags(rest, _VALUE_FLAGS)
     except ValueError as exc:
-        print(c("red", str(exc)))
+        print(c("red", str(exc)), file=error_stream(json_view))
         return None
     opts = {"repo": None, "state": None, "limit": None, "web": False}
     pos = []
@@ -871,21 +913,22 @@ def _list_command(cmd: str, fetch, render,
     surface has them.
     """
     def handler(rest: list[str], json_view: bool) -> int:
-        parsed = _parse_common(rest)
+        parsed = _parse_common(rest, json_view)
         if parsed is None:
             return 1
         opts, pos = parsed
         if pos and pos[0] == "list":
             pos = pos[1:]
         if pos:
-            print(c("red", f"Unexpected args: {' '.join(pos)}"))
+            print(c("red", f"Unexpected args: {' '.join(pos)}"),
+                  file=error_stream(json_view))
             return 1
         if states:
             state = (opts["state"] or "open").lower()
             if state not in states:
                 print(c("red",
                         f"--state must be {', '.join(states[:-1])} or "
-                        f"{states[-1]}"))
+                        f"{states[-1]}"), file=error_stream(json_view))
                 return 1
             opts["state"] = state
         env, results = _collect(cmd, opts, json_view, fetch)
@@ -894,24 +937,27 @@ def _list_command(cmd: str, fetch, render,
 
 
 def _cmd_pr(rest: list[str], json_view: bool) -> int:
-    parsed = _parse_common(rest)
+    parsed = _parse_common(rest, json_view)
     if parsed is None:
         return 1
     opts, pos = parsed
     sub = pos[0] if pos else "list"
     if len(pos) > 1:
-        print(c("red", f"Unexpected args: {' '.join(pos[1:])}"))
+        print(c("red", f"Unexpected args: {' '.join(pos[1:])}"),
+              file=error_stream(json_view))
         return 1
     if sub == "status":
         env, results = _collect(
             "pr", opts, json_view, lambda name, _o: _fetch_pr_status(name))
         return _finish(env, results, opts, json_view, _render_pr_status)
     if sub != "list":
-        print(c("red", f"Unknown: swe gh pr {sub}  (list | status)"))
+        print(c("red", f"Unknown: swe gh pr {sub}  (list | status)"),
+              file=error_stream(json_view))
         return 1
     state = (opts["state"] or "open").lower()
     if state not in ("open", "closed", "merged", "all"):
-        print(c("red", "--state must be open, closed, merged or all"))
+        print(c("red", "--state must be open, closed, merged or all"),
+              file=error_stream(json_view))
         return 1
     env, results = _collect(
         "pr", opts, json_view,
@@ -920,12 +966,13 @@ def _cmd_pr(rest: list[str], json_view: bool) -> int:
 
 
 def _cmd_inbox(rest: list[str], json_view: bool) -> int:
-    parsed = _parse_common(rest)
+    parsed = _parse_common(rest, json_view)
     if parsed is None:
         return 1
     opts, pos = parsed
     if pos:
-        print(c("red", f"Unexpected args: {' '.join(pos)}"))
+        print(c("red", f"Unexpected args: {' '.join(pos)}"),
+              file=error_stream(json_view))
         return 1
     env = gh.probe_env()
     if env.status != "ok":
