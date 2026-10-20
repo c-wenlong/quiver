@@ -447,7 +447,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
 @Suite @MainActor struct ModelsModelTests {
     private func makeModel(dir: TempDir,
                            slices: [ModelUsage] = [],
-                           key: String? = "key") -> ModelsModel {
+                           key: String? = "key",
+                           searchDelay: Duration = .zero) -> ModelsModel {
         ModelsModel(store: ArtificialAnalysisStore(directory: dir.path("aa")),
                     keyReader: { key },
                     transport: StubHTTP(),
@@ -455,7 +456,7 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                     slices: { _ in slices },
                     now: { Date(timeIntervalSince1970: 1_800_000_000) },
                     calendar: Calendar(identifier: .gregorian),
-                    searchDelay: .zero)
+                    searchDelay: searchDelay)
     }
 
     private func slice(_ model: String, _ harness: String, tokens: Int) -> ModelUsage {
@@ -1329,6 +1330,43 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.rows.count == ModelsModel.searchLimit)
         #expect(model.searchOverflow == 5)
         model.query = ""
+        #expect(model.searchOverflow == 0)
+    }
+
+    @Test func aDelayedSearchAppliesAfterThePause() async throws {
+        // Typing coalesces: the flag moves at once, the rows only once
+        // the pause runs out — never mid-query intermediate results.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("kimi", "Kimi K3 (Max)", "kimi-k3",
+                  creator: "moonshot", intelligence: 45),
+        ])
+        let model = makeModel(dir: dir, searchDelay: .milliseconds(60))
+        await model.load()
+        let scoped = model.rows.map(\.logged)
+        model.query = "kimi k3"
+        #expect(model.searching)
+        #expect(model.rows.map(\.logged) == scoped)
+        await model.settleSearch()
+        #expect(model.rows.map(\.aa?.id) == ["kimi"])
+    }
+
+    @Test func aQueryClearedInsideTheDelayKeepsTheBoard() async throws {
+        // Clearing before the pause runs out re-arms the rebuild, and the
+        // board comes back without the search's rows ever landing.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("kimi", "Kimi K3 (Max)", "kimi-k3",
+                  creator: "moonshot", intelligence: 45),
+        ])
+        let model = makeModel(dir: dir, searchDelay: .milliseconds(60))
+        await model.load()
+        let scoped = model.rows.map(\.logged)
+        model.query = "kimi"
+        model.query = ""
+        #expect(!model.searching)
+        await model.settleSearch()
+        #expect(model.rows.map(\.logged) == scoped)
         #expect(model.searchOverflow == 0)
     }
 }
