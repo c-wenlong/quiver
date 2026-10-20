@@ -234,6 +234,112 @@ import Testing
         #expect(totals.costUSD == 0.04)
     }
 
+    /// The dedup key names the event, not its counts: when Cursor corrects
+    /// an event's counts, the row is replaced rather than doubled.
+    @Test func aCountCorrectionReplacesTheRow() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        func event(input: Int, output: Int) -> CursorUsageEvent {
+            CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: "conv-1", headless: false,
+                inputTokens: input, outputTokens: output,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil)
+        }
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: event(input: 1_000, output: 50), accountKey: "uid-1", accountHome: account)])
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: event(input: 2_000, output: 60), accountKey: "uid-1", accountHome: account)])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events[0].inputTokens == 2_000)
+        #expect(events[0].outputTokens == 60)
+    }
+
+    /// Rows written under the old key — which embedded the counts — are
+    /// removed when the corrected event lands, not left double-counting.
+    @Test func aRowKeyedByTheOldCountsSchemeIsCleanedUp() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let stale = LedgerRecord(
+            key: "cursor-feed:uid-1:1791700000500:composer-1:conv-1:1000:50",
+            authoritative: true,
+            event: UsageEvent(
+                harness: "cursor", accountHome: account, sessionId: "conv-1",
+                model: "composer-1", timestamp: Date(timeIntervalSince1970: 1791700000.5),
+                inputTokens: 1_000, outputTokens: 50))
+        try await ledger.ingest([stale])
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: "conv-1", headless: false,
+                inputTokens: 2_000, outputTokens: 60,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil),
+            accountKey: "uid-1", accountHome: account)])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events[0].inputTokens == 2_000)
+    }
+
+    /// The cleanup matches the event's identity, not the profile that
+    /// read it: a row profile A stored under the old counts scheme is
+    /// removed when profile B re-imports the same account's event.
+    @Test func anOldSchemeRowFromAnotherProfileIsCleanedUp() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let removedProfile = "/t/cursor-gone/desktop"
+        let stale = LedgerRecord(
+            key: "cursor-feed:uid-1:1791700000500:composer-1:conv-1:1000:50",
+            authoritative: true,
+            event: UsageEvent(
+                harness: "cursor", accountHome: removedProfile, sessionId: "conv-1",
+                model: "composer-1", timestamp: Date(timeIntervalSince1970: 1791700000.5),
+                inputTokens: 1_000, outputTokens: 50))
+        try await ledger.ingest([stale])
+        // The same account read through this profile — even with the same
+        // counts, the new key differs from the counts-bearing old one.
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: "conv-1", headless: false,
+                inputTokens: 1_000, outputTokens: 50,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil),
+            accountKey: "uid-1", accountHome: account)])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events[0].accountHome == account)
+    }
+
+    /// The cross-profile match must not reach another account: a row for
+    /// the same day bucket, model and instant but keyed under a different
+    /// account id survives the cleanup.
+    @Test func anotherAccountsLookalikeRowKeepsItsUsage() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        // uid-2's event, as its profile stored it under the old scheme:
+        // no conversation, so the day bucket and the rest of the event
+        // identity coincide with uid-1's.
+        let otherAccount = LedgerRecord(
+            key: "cursor-feed:uid-2:1791700000500:composer-1::700:20",
+            authoritative: true,
+            event: UsageEvent(
+                harness: "cursor", accountHome: account,
+                sessionId: "cursor-" + CursorUsageFeed.dayLabel(for: 1791700000.5),
+                model: "composer-1", timestamp: Date(timeIntervalSince1970: 1791700000.5),
+                inputTokens: 700, outputTokens: 20))
+        try await ledger.ingest([otherAccount])
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: nil, headless: false,
+                inputTokens: 1_000, outputTokens: 50,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil),
+            accountKey: "uid-1", accountHome: "/t/cursor-side/desktop")])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 2)
+        #expect(Set(events.map(\.inputTokens)) == [700, 1_000])
+    }
+
     @Test func theWindowStartsAt180DaysThenOverlapsTwo() async throws {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("cache"))

@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import QuiverCore
 
@@ -211,6 +212,29 @@ func execute(_ sql: String, on url: URL) throws {
             Issue.record("expected the scan to throw")
         } catch let error as SQLiteDatabase.Failure {
             #expect(error.message.contains("locked"))
+        }
+    }
+
+    /// The read-write connection waits out a held lock the way both
+    /// read-only ones do — without `sqlite3_busy_timeout` it returned
+    /// SQLITE_BUSY at once.
+    @Test func aWriteConnectionWaitsOutAHeldLock() throws {
+        let temp = try TempDir()
+        let url = temp.path("held.sqlite")
+        try execute("CREATE TABLE seed (id INTEGER)", on: url)
+        let holder = try SQLiteDatabase(url: url)
+        try holder.execute("BEGIN EXCLUSIVE")
+        defer { try? holder.execute("ROLLBACK") }
+
+        let contender = try SQLiteDatabase(url: url)
+        let start = Date()
+        do {
+            try contender.execute("CREATE TABLE t (id INTEGER)")
+            Issue.record("expected SQLITE_BUSY")
+        } catch let error as SQLiteDatabase.Failure {
+            #expect(error.code == SQLITE_BUSY)
+            // It waited out the timeout instead of failing instantly.
+            #expect(Date().timeIntervalSince(start) > 1.0)
         }
     }
 

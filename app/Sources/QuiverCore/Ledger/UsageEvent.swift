@@ -107,6 +107,12 @@ struct LedgerRecord: Sendable, Equatable {
     /// a re-read under the same key replaces whatever the file said before,
     /// even when the totals went down.
     var authoritative: Bool = false
+    /// The account in `key` is a real account id that more than one profile
+    /// can read — the Cursor feed, when swe names an `account_id`. An
+    /// authoritative write then removes rows an old key scheme left for the
+    /// same event under any profile's `accountHome`. Without it the account
+    /// is the profile itself, so only this profile's stale rows match.
+    var accountSpansProfiles: Bool = false
     var event: UsageEvent
 }
 

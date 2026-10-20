@@ -7,6 +7,10 @@ struct FileCursor: Equatable {
     var inode: UInt64
     var size: UInt64
     var modified: Double
+    /// The file's ctime at scan time, catching rewrites that preserve size
+    /// and mtime. nil on cursors saved before it was recorded; those keep
+    /// the inode+size+mtime test they were written under.
+    var changed: Double? = nil
     var offset: UInt64
     /// Hash of the first `headLength` bytes. Those bytes sit before `offset`,
     /// so appending never changes them.
@@ -15,6 +19,11 @@ struct FileCursor: Equatable {
     /// Hash of the `tailLength` bytes that end at `offset`.
     var tailHash: Int64
     var tailLength: Int
+    /// Hash of a block centered in the read range, closing the gap between
+    /// head and tail where a same-length edit could hide. nil on cursors
+    /// saved before it existed: those rescan once when head and tail do
+    /// not already cover the whole file.
+    var midHash: Int64? = nil
     /// The parser's state at `offset`, for parsers that carry state between lines.
     var state: Data?
     var skippedLines: Int
@@ -44,6 +53,8 @@ final class LedgerStore {
     private var deleteEvent: Statement!
     private var selectDim: Statement!
     private var insertDim: Statement!
+    private var deleteSameEvent: Statement!
+    private var selectSameEventAnyProfile: Statement!
 
     struct DimKey: Hashable {
         var harness, account, session, cwd, model, tier: String
@@ -88,13 +99,19 @@ final class LedgerStore {
             CREATE INDEX IF NOT EXISTS events_msg ON events (msg) WHERE msg IS NOT NULL;
             CREATE TABLE IF NOT EXISTS cursors (
                 path TEXT PRIMARY KEY, inode INTEGER NOT NULL, size INTEGER NOT NULL, modified REAL NOT NULL,
-                offset INTEGER NOT NULL, head_hash INTEGER NOT NULL, head_length INTEGER NOT NULL,
-                tail_hash INTEGER NOT NULL, tail_length INTEGER NOT NULL, state BLOB, skipped INTEGER NOT NULL);
+                changed REAL, offset INTEGER NOT NULL, head_hash INTEGER NOT NULL, head_length INTEGER NOT NULL,
+                tail_hash INTEGER NOT NULL, tail_length INTEGER NOT NULL, mid_hash INTEGER,
+                state BLOB, skipped INTEGER NOT NULL);
             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', '\(Self.schemaVersion)');
             """)
         // Session-total events never count toward long-context surcharges.
         // Old rows are correct with the 0 default, so no schema bump.
         try? db.execute("ALTER TABLE events ADD COLUMN session_total INTEGER NOT NULL DEFAULT 0")
+        // The cursor fingerprint grew a ctime stamp and a middle sample.
+        // Old rows keep NULL: a NULL `changed` is checked the old way and a
+        // NULL `mid_hash` fails closed into one rescan.
+        try? db.execute("ALTER TABLE cursors ADD COLUMN changed REAL")
+        try? db.execute("ALTER TABLE cursors ADD COLUMN mid_hash INTEGER")
         selectByKey = try db.prepare("""
             SELECT sidechain, input, output, cache_read, cache_write, cache_write_1h,
                 reasoning, session_total, cost, ts, dim FROM events WHERE key = ?
@@ -113,6 +130,18 @@ final class LedgerStore {
             "SELECT id FROM dims WHERE harness = ? AND account = ? AND session = ? AND cwd = ? AND model = ? AND tier = ?")
         insertDim = try db.prepare(
             "INSERT INTO dims (harness, account, session, cwd, model, tier) VALUES (?, ?, ?, ?, ?, ?)")
+        deleteSameEvent = try db.prepare(
+            "DELETE FROM events WHERE dim = ? AND ts = ? AND key != ? AND msg IS NULL")
+        // For accounts several profiles can read (the Cursor feed when
+        // swe names an account_id), the same event's stale rows sit under
+        // whichever profile imported them — dims.account names the reader,
+        // not the account. The candidates share the event's identity; the
+        // key check afterwards confirms they belong to the same account.
+        selectSameEventAnyProfile = try db.prepare("""
+            SELECT e.key, e.input, e.output FROM events e JOIN dims d ON d.id = e.dim
+            WHERE e.ts = ? AND e.key != ? AND e.msg IS NULL
+                AND d.harness = ? AND d.session = ? AND d.cwd = ? AND d.model = ? AND d.tier = ?
+            """)
     }
 
     /// A schema mismatch drops the tables below and the next scan rebuilds
@@ -182,7 +211,43 @@ final class LedgerStore {
                 return false
             }
         }
-        try write(record, key: key)
+        let dim = try write(record, key: key)
+        if record.authoritative {
+            // An authoritative record is the source's latest word on its
+            // event. If an older key scheme left a row for the same event
+            // behind — the Cursor feed once keyed on the token counts it
+            // reported, so a correction keyed a new row — remove it or the
+            // correction double-counts.
+            let e = record.event
+            if record.accountSpansProfiles {
+                // The old counts-bearing key is this record's key plus
+                // ":\(input):\(output)". Rehashing it with a candidate's
+                // own counts reproduces its key only when the candidate
+                // is the same account's same event — another account's
+                // lookalike row (same day bucket, model and instant)
+                // keeps its own account in the string and is left alone.
+                selectSameEventAnyProfile.bind([
+                    .double(e.timestamp.timeIntervalSince1970), .int(key),
+                    .text(e.harness), .text(e.sessionId), .text(e.cwd ?? ""),
+                    .text(e.model), .text(e.serviceTier ?? ""),
+                ])
+                var staleKeys: [Int64] = []
+                while try selectSameEventAnyProfile.step() {
+                    let stale = StableHash.of(
+                        "\(record.key):\(selectSameEventAnyProfile.int(1)):" +
+                            "\(selectSameEventAnyProfile.int(2))")
+                    if stale == selectSameEventAnyProfile.int(0) { staleKeys.append(stale) }
+                }
+                selectSameEventAnyProfile.bind([])
+                for stale in staleKeys {
+                    try deleteEvent.bind([.int(stale)]).run()
+                }
+            } else {
+                try deleteSameEvent.bind([
+                    .int(dim), .double(e.timestamp.timeIntervalSince1970), .int(key),
+                ]).run()
+            }
+        }
         return true
     }
 
@@ -219,7 +284,9 @@ final class LedgerStore {
         return candidateTotal > existingTotal
     }
 
-    private func write(_ record: LedgerRecord, key: Int64) throws {
+    /// - Returns: the event's dimension row id.
+    @discardableResult
+    private func write(_ record: LedgerRecord, key: Int64) throws -> Int64 {
         let e = record.event
         let dim = try dimID(DimKey(
             harness: e.harness, account: e.accountHome, session: e.sessionId,
@@ -231,6 +298,7 @@ final class LedgerStore {
             .int(e.cacheWrite1hTokens), .int(e.reasoningTokens),
             .int(e.isSessionTotal ? 1 : 0), .optionalDouble(e.costUSD),
         ]).run()
+        return dim
     }
 
     /// Drops the event under `key` when there is one. Used by session-total
@@ -268,28 +336,35 @@ final class LedgerStore {
 
     func cursor(for path: String) throws -> FileCursor? {
         let statement = try db.prepare("""
-            SELECT inode, size, modified, offset, head_hash, head_length, tail_hash, tail_length, state, skipped
+            SELECT inode, size, modified, changed, offset, head_hash, head_length,
+                tail_hash, tail_length, mid_hash, state, skipped
             FROM cursors WHERE path = ?
             """)
         statement.bind([.text(path)])
         guard try statement.step() else { return nil }
         return FileCursor(
             path: path, inode: UInt64(bitPattern: statement.int(0)), size: UInt64(statement.int(1)),
-            modified: statement.double(2), offset: UInt64(statement.int(3)),
-            headHash: statement.int(4), headLength: Int(statement.int(5)),
-            tailHash: statement.int(6), tailLength: Int(statement.int(7)),
-            state: statement.blob(8), skippedLines: Int(statement.int(9)))
+            modified: statement.double(2),
+            changed: statement.isNull(3) ? nil : statement.double(3),
+            offset: UInt64(statement.int(4)),
+            headHash: statement.int(5), headLength: Int(statement.int(6)),
+            tailHash: statement.int(7), tailLength: Int(statement.int(8)),
+            midHash: statement.isNull(9) ? nil : statement.int(9),
+            state: statement.blob(10), skippedLines: Int(statement.int(11)))
     }
 
     func save(_ cursor: FileCursor) throws {
         try db.prepare("""
             INSERT OR REPLACE INTO cursors
-            (path, inode, size, modified, offset, head_hash, head_length, tail_hash, tail_length, state, skipped)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (path, inode, size, modified, changed, offset, head_hash, head_length,
+             tail_hash, tail_length, mid_hash, state, skipped)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """).bind([
                 .text(cursor.path), .int(Int64(bitPattern: cursor.inode)), .int(Int64(cursor.size)),
-                .double(cursor.modified), .int(Int64(cursor.offset)), .int(cursor.headHash),
+                .double(cursor.modified), cursor.changed.map(SQLiteValue.double) ?? .null,
+                .int(Int64(cursor.offset)), .int(cursor.headHash),
                 .int(cursor.headLength), .int(cursor.tailHash), .int(cursor.tailLength),
+                cursor.midHash.map(SQLiteValue.int) ?? .null,
                 cursor.state.map(SQLiteValue.blob) ?? .null, .int(cursor.skippedLines),
             ]).run()
     }

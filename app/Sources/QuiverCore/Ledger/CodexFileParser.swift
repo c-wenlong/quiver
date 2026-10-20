@@ -38,12 +38,19 @@ struct CodexFileParser: FileLogParser {
         /// own first turn starts at or after, or -1 when only the line's own
         /// time can tell.
         var replayGate: Double?
-        /// Recent cumulative totals, newest last.
-        var recentTotals: [Usage] = []
+        /// Every distinct cumulative total seen. Kept whole — a resume or
+        /// compaction replay re-sends snapshots from arbitrarily far back,
+        /// so a bounded ring would let an old one through again and emit it
+        /// as fresh usage. The set is what dedups; size stays proportional
+        /// to the session's turn count.
+        var seenTotals: Set<Usage> = []
+        /// The newest cumulative total, for the delta a snapshot without
+        /// `last_token_usage` falls back to.
+        var lastTotal: Usage?
         var usesRecords = false
     }
 
-    struct Usage: Codable, Equatable {
+    struct Usage: Codable, Equatable, Hashable {
         var input = 0, cached = 0, cacheWrite = 0, output = 0, reasoning = 0, total = 0
 
         init(_ json: [String: Any]) {
@@ -73,7 +80,6 @@ struct CodexFileParser: FileLogParser {
 
     private let accountHome: String
     private var state: State
-    private static let maxRecentTotals = 32
 
     init(file: URL, accountHome: String, savedState: Data?) {
         self.accountHome = accountHome
@@ -158,8 +164,8 @@ struct CodexFileParser: FileLogParser {
         }
         let usage: Usage
         if let total {
-            if state.recentTotals.contains(total) { return [] }
-            usage = last ?? total.minus(state.recentTotals.last ?? Usage())
+            if state.seenTotals.contains(total) { return [] }
+            usage = last ?? total.minus(state.lastTotal ?? Usage())
             remember(total)
         } else if let last {
             usage = last
@@ -170,9 +176,8 @@ struct CodexFileParser: FileLogParser {
     }
 
     private mutating func remember(_ total: Usage) {
-        state.recentTotals.removeAll { $0 == total }
-        state.recentTotals.append(total)
-        if state.recentTotals.count > Self.maxRecentTotals { state.recentTotals.removeFirst() }
+        state.seenTotals.insert(total)
+        state.lastTotal = total
     }
 
     private func record(_ usage: Usage, key: String, at time: Date) -> [LedgerRecord] {
@@ -207,5 +212,43 @@ struct CodexFileParser: FileLogParser {
         case "fast", "priority": return "priority"
         default: return tier.lowercased()
         }
+    }
+}
+
+extension CodexFileParser.State {
+    /// `recentTotals` was the 32-entry ring `seenTotals` replaced. States
+    /// saved with it seed the set and the last-seen total from it.
+    private enum Keys: String, CodingKey {
+        case sessionId, cwd, model, tier, sawSessionMeta, replayGate
+        case seenTotals, lastTotal, usesRecords, recentTotals
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: Keys.self)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        tier = try container.decodeIfPresent(String.self, forKey: .tier)
+        sawSessionMeta = try container.decodeIfPresent(Bool.self, forKey: .sawSessionMeta) ?? false
+        replayGate = try container.decodeIfPresent(Double.self, forKey: .replayGate)
+        usesRecords = try container.decodeIfPresent(Bool.self, forKey: .usesRecords) ?? false
+        let recent = try container.decodeIfPresent([CodexFileParser.Usage].self, forKey: .recentTotals) ?? []
+        seenTotals = try container.decodeIfPresent(Set<CodexFileParser.Usage>.self, forKey: .seenTotals)
+            ?? Set(recent)
+        lastTotal = try container.decodeIfPresent(CodexFileParser.Usage.self, forKey: .lastTotal)
+            ?? recent.last
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: Keys.self)
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encodeIfPresent(cwd, forKey: .cwd)
+        try container.encodeIfPresent(model, forKey: .model)
+        try container.encodeIfPresent(tier, forKey: .tier)
+        try container.encode(sawSessionMeta, forKey: .sawSessionMeta)
+        try container.encodeIfPresent(replayGate, forKey: .replayGate)
+        try container.encode(seenTotals, forKey: .seenTotals)
+        try container.encodeIfPresent(lastTotal, forKey: .lastTotal)
+        try container.encode(usesRecords, forKey: .usesRecords)
     }
 }
