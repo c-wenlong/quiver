@@ -170,9 +170,14 @@ public struct ProcessRunner: CommandRunning {
                         Self.stopDescendants(of: process.processIdentifier, signal: SIGKILL)
                     }
                     // Orphans reparented to launchd vanish from the tree
-                    // walk; the pids tagged at the deadline are
-                    // re-signalled by number.
-                    for descendant in Set(tagged.all) { kill(descendant, SIGKILL) }
+                    // walk, so tagged pids are re-signalled by number —
+                    // but only while the number still identifies the
+                    // same process. A descendant that obeyed SIGTERM and
+                    // whose pid was reused is left alone.
+                    for descendant in Set(tagged.all)
+                    where Self.tag(descendant.pid) == descendant {
+                        kill(descendant.pid, SIGKILL)
+                    }
                     // SIGKILL cannot be ignored, so this waits out the
                     // kernel's reaping rather than a live child.
                     process.waitUntilExit()
@@ -224,16 +229,15 @@ public struct ProcessRunner: CommandRunning {
     }
 
     /// Sends `signal` to every process under `pid`, walking the tree with
-    /// `proc_listchildpids`, and returns the pids it found so a later
-    /// pass can reach orphans that reparented off the tree. A pid that
-    /// exits between listing and the signal just answers ESRCH.
+    /// `proc_listchildpids`, and returns the processes it tagged so a
+    /// later pass can reach orphans that reparented off the tree.
     /// Children may outlive their parent — a `bash` script's `swift
     /// build` survives bash's own terminate — so a timeout sweeps the
     /// descendants too. Never call this on a child that has already
     /// exited: its pid may belong to another process by then.
     @discardableResult
-    private static func stopDescendants(of pid: pid_t, signal: Int32) -> [pid_t] {
-        var found: [pid_t] = []
+    private static func stopDescendants(of pid: pid_t, signal: Int32) -> [TaggedPid] {
+        var found: [TaggedPid] = []
         var seen: Set<pid_t> = [pid]
         var queue = [pid]
         while let parent = queue.popLast() {
@@ -243,12 +247,29 @@ public struct ProcessRunner: CommandRunning {
             guard bytes > 0 else { continue }
             for child in buffer.prefix(Int(bytes) / MemoryLayout<pid_t>.stride)
             where seen.insert(child).inserted {
-                found.append(child)
-                kill(child, signal)
+                // A child that exited since the listing has no start tag
+                // and its number may already serve another process, so
+                // only a tagged pid is ever signalled. Its own children
+                // are still walked either way.
+                if let tagged = Self.tag(child) {
+                    found.append(tagged)
+                    kill(child, signal)
+                }
                 queue.append(child)
             }
         }
         return found
+    }
+
+    /// The process's start instant, nil once it has exited — the
+    /// identity check that keeps a signal off a pid the system reused.
+    private static func tag(_ pid: pid_t) -> TaggedPid? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return TaggedPid(pid: pid,
+                         seconds: info.pbi_start_tvsec,
+                         micros: info.pbi_start_tvusec)
     }
 }
 
@@ -263,15 +284,24 @@ private final class DeadlineBox: @unchecked Sendable {
     func expire() { lock.withLock { expired = true } }
 }
 
-/// The descendant pids a deadline sweep found, shared with the SIGKILL
+/// A descendant process's pid plus its start instant. The pair survives
+/// the process reparenting to launchd, so a later signal can still tell
+/// the tagged process from an unrelated one that reused the number.
+private struct TaggedPid: Hashable, Sendable {
+    var pid: pid_t
+    var seconds: UInt64
+    var micros: UInt64
+}
+
+/// The descendants a deadline sweep tagged, shared with the SIGKILL
 /// pass so orphans that reparented off the tree are still stopped.
 private final class PidBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var pids: [pid_t] = []
+    private var pids: [TaggedPid] = []
 
-    var all: [pid_t] { lock.withLock { pids } }
+    var all: [TaggedPid] { lock.withLock { pids } }
 
-    func set(_ newValue: [pid_t]) { lock.withLock { pids = newValue } }
+    func set(_ newValue: [TaggedPid]) { lock.withLock { pids = newValue } }
 }
 
 /// The one place a run's cancel and its launch meet. Both take the lock, so
