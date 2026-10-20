@@ -1036,10 +1036,18 @@ def _load_libcrypto():
     4. Explicit homebrew paths — last resort; may abort on hardened
        python.org builds but those are already handled by step 1.
 
-    ``ctypes.CDLL(None)`` (process global namespace) is intentionally
-    NOT used: on python.org 3.12 framework it resolves ``EVP_*`` to a
+    ``ctypes.CDLL(None)`` (process global namespace) is not a general
+    candidate: on python.org 3.12 framework it resolves ``EVP_*`` to a
     different-ABI libcrypto already loaded by a system component and
     segfaults inside ``EVP_CipherInit_ex``.
+
+    The bundled python-build-standalone interpreter links OpenSSL
+    statically — ``CDLL(None)`` finds EVP_* symbols but the real calls
+    segfault, and an external ``/usr/lib`` load under the app's
+    signature aborts instead of raising OSError ("loading libcrypto in
+    an unsafe way"). The bundled swe therefore sets
+    ``QUIVER_BUNDLED_PYTHON`` and only tries dylibs inside the bundle's
+    own lib dir, which build-app.sh signs with the app.
 
     Function signatures are configured once on the cached handle.
     """
@@ -1050,6 +1058,33 @@ def _load_libcrypto():
     import ctypes
     import ctypes.util
     import glob
+    import sys
+    from pathlib import Path
+
+    if os.environ.get("QUIVER_BUNDLED_PYTHON"):
+        # Bundled build: only dylibs the bundle itself ships are safe —
+        # they're signed with the app; anything outside can abort the
+        # process rather than raise.
+        bundle_lib = Path(sys.executable).resolve().parent.parent / "lib"
+        candidates = sorted(
+            glob.glob(str(bundle_lib / "libcrypto*.dylib")), reverse=True
+        )
+        lib = None
+        for cand in candidates:
+            try:
+                cand_lib = ctypes.CDLL(cand)
+            except OSError:
+                continue
+            if hasattr(cand_lib, "EVP_aes_256_gcm") and hasattr(
+                cand_lib, "EVP_CIPHER_CTX_new"
+            ):
+                lib = cand_lib
+                break
+        if lib is None:
+            return None
+        _configure_evp(lib)
+        _LIBCRYPTO = lib
+        return lib
 
     candidates: list[str] = []
     # 1. macOS python.org framework-local libcrypto (same-team signed).
@@ -1083,6 +1118,13 @@ def _load_libcrypto():
     if lib is None:
         return None
 
+    _configure_evp(lib)
+    _LIBCRYPTO = lib
+    return lib
+
+
+def _configure_evp(lib) -> None:
+    import ctypes
     lib.EVP_aes_256_gcm.restype = ctypes.c_void_p
     lib.EVP_CIPHER_CTX_new.restype = ctypes.c_void_p
     lib.EVP_CIPHER_CTX_free.argtypes = [ctypes.c_void_p]
@@ -1104,8 +1146,6 @@ def _load_libcrypto():
         ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int),
     ]
     lib.EVP_CipherFinal_ex.restype = ctypes.c_int
-    _LIBCRYPTO = lib
-    return lib
 
 
 def _decrypt_droid_auth_file() -> str | None:

@@ -3442,6 +3442,68 @@ class DroidFetcherTest(unittest.TestCase):
         self.assertEqual(hdrs.get("Accept"), "application/json")
 
 
+class BundledLibcryptoLoadTest(unittest.TestCase):
+    """QUIVER_BUNDLED_PYTHON loads OpenSSL only from the bundle's lib dir.
+
+    An external dylib under the bundled interpreter's signature aborts
+    the process instead of raising, so nothing outside
+    ``<python>/../lib`` may reach CDLL.
+    """
+
+    def setUp(self):
+        import quiver.harness.rate_limits as rl
+        self.rl = rl
+        self._saved = (rl._LIBCRYPTO, rl._LIBCRYPTO_TRIED)
+        rl._LIBCRYPTO_TRIED = False
+        rl._LIBCRYPTO = None
+        self.addCleanup(setattr, rl, "_LIBCRYPTO", self._saved[0])
+        self.addCleanup(setattr, rl, "_LIBCRYPTO_TRIED", self._saved[1])
+
+    def _fake_executable(self, tmp):
+        """A python layout like the bundle's: <root>/bin/python3 + lib/."""
+        root = Path(tmp)
+        (root / "bin").mkdir(parents=True)
+        (root / "lib").mkdir()
+        exe = root / "bin" / "python3"
+        exe.touch()
+        return root, exe
+
+    def test_bundled_loads_only_the_bundle_lib_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, exe = self._fake_executable(tmp)
+            dylib = root / "lib" / "libcrypto.3.dylib"
+            dylib.touch()
+            calls = []
+
+            def fake_cdll(name):
+                calls.append(name)
+                return object()
+
+            import ctypes
+            import ctypes.util  # noqa: F401 — it uses CDLL at import time
+            with patch.dict(os.environ, {"QUIVER_BUNDLED_PYTHON": "1"}), \
+                    patch.object(sys, "executable", str(exe)), \
+                    patch.object(ctypes, "CDLL", fake_cdll):
+                self.rl._load_libcrypto()
+            # The wrong dylib crashes this interpreter rather than
+            # raising; only the bundle's own lib dir may be tried.
+            self.assertEqual(calls, [str(dylib.resolve())])
+
+    def test_bundled_without_dylib_loads_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, exe = self._fake_executable(tmp)
+            calls = []
+
+            import ctypes
+            import ctypes.util  # noqa: F401
+            with patch.dict(os.environ, {"QUIVER_BUNDLED_PYTHON": "1"}), \
+                    patch.object(sys, "executable", str(exe)), \
+                    patch.object(ctypes, "CDLL",
+                                 lambda name: calls.append(name)):
+                self.assertIsNone(self.rl._load_libcrypto())
+            self.assertEqual(calls, [])
+
+
 class DroidAuthFileDecryptTest(unittest.TestCase):
     """Unit tests for the auth.v2.file decryptor's defensive paths.
 
