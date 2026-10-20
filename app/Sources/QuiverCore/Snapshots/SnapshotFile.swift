@@ -45,14 +45,39 @@ public actor SnapshotFile<Content: SnapshotContent>: SnapshotStoring {
         self.url = url
     }
 
+    /// The lock lives on a sibling that is never renamed into place: a
+    /// lock on `url` itself would ride the old inode when a save swaps
+    /// the file, and two savers would hold different locks at once.
+    /// app + widget + CLI can write the same snapshot; the lock keeps
+    /// their writes serialized instead of interleaved.
+    private nonisolated var lockPath: String {
+        url.deletingLastPathComponent()
+            .appending(path: ".\(url.lastPathComponent).lock").path
+    }
+
+    /// `body` under an `flock` on the sibling lock file: exclusive for a
+    /// save, shared for a load. Advisory and best-effort — when the lock
+    /// file can't be opened (the folder does not exist yet) the work runs
+    /// anyway; a save's write-then-rename is already atomic per file.
+    private nonisolated func locked<T>(exclusive: Bool, _ body: () throws -> T) rethrows -> T {
+        let fd = open(lockPath, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        if fd >= 0 {
+            flock(fd, exclusive ? LOCK_EX : LOCK_SH)
+            defer { close(fd) }   // closing drops the flock
+        }
+        return try body()
+    }
+
     /// Nil when the file is missing, damaged or from another version.
     /// Nonisolated so a model can hydrate synchronously on init.
     public nonisolated func load() -> Content? {
-        guard let data = try? Data(contentsOf: url),
-              let content = try? JSONDecoder().decode(Content.self, from: data),
-              content.version == Content.currentVersion
-        else { return nil }
-        return content
+        locked(exclusive: false) {
+            guard let data = try? Data(contentsOf: url),
+                  let content = try? JSONDecoder().decode(Content.self, from: data),
+                  content.version == Content.currentVersion
+            else { return nil }
+            return content
+        }
     }
 
     public func save(_ content: Content) {
@@ -63,15 +88,17 @@ public actor SnapshotFile<Content: SnapshotContent>: SnapshotStoring {
         let manager = FileManager.default
         try? manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                      attributes: [.posixPermissions: 0o700])
-        // Created private, then renamed into place, so the file is never
-        // readable by others even for a moment.
-        let temporary = url.deletingLastPathComponent()
-            .appending(path: ".\(url.lastPathComponent).\(UUID().uuidString).tmp")
-        guard manager.createFile(atPath: temporary.path, contents: data,
-                                 attributes: [.posixPermissions: 0o600])
-        else { return }
-        if rename(temporary.path, url.path) != 0 {
-            try? manager.removeItem(at: temporary)
+        locked(exclusive: true) {
+            // Created private, then renamed into place, so the file is never
+            // readable by others even for a moment.
+            let temporary = url.deletingLastPathComponent()
+                .appending(path: ".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+            guard manager.createFile(atPath: temporary.path, contents: data,
+                                     attributes: [.posixPermissions: 0o600])
+            else { return }
+            if rename(temporary.path, url.path) != 0 {
+                try? manager.removeItem(at: temporary)
+            }
         }
     }
 }

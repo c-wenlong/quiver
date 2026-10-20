@@ -357,6 +357,23 @@ private final class GateRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
+/// Throws `SweError.timedOut` the way a run past its deadline does on the
+/// first call, then answers like a finished build, so a test can see the
+/// rebuild state recover instead of sticking at .building.
+private final class FlakyRunner: CommandRunning, @unchecked Sendable {
+    private var failures: Int
+
+    init(failures: Int = 1) { self.failures = failures }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        if failures > 0 {
+            failures -= 1
+            throw SweError.timedOut
+        }
+        return CommandResult(status: 0, stdout: Data(), stderr: "")
+    }
+}
+
 private struct DeadTransport: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         throw URLError(.notConnectedToInternet)
@@ -568,6 +585,26 @@ struct UpdatesModelTests {
         #expect(model.relaunchURL() == nil)
         #expect(model.rebuildState == .idle)
         #expect(model.rebuildNotice == "The build was cleaned up. Rebuild to try again.")
+    }
+
+    @Test func aTimedOutBuildFailsAndTheNextBuildCanRun() async throws {
+        let dir = tempDir()
+        let model = makeModel(checkout: dir.path, rebuildRunner: FlakyRunner(),
+                              rebuildDir: tempDir())
+        await model.rebuild()
+        guard case .failed(let message) = model.rebuildState else {
+            Issue.record("expected a failed rebuild, got \(model.rebuildState)")
+            return
+        }
+        #expect(message.contains("timed out"))
+        // The wedge would have left .building and blocked this rebuild.
+        model.resetRebuild()
+        #expect(model.rebuildState == .idle)
+        await model.rebuild()
+        guard case .built = model.rebuildState else {
+            Issue.record("expected a built rebuild, got \(model.rebuildState)")
+            return
+        }
     }
 
     @Test func aFailedRebuildKeepsTheLastLines() async throws {

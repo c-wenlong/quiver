@@ -177,6 +177,96 @@ private let oldInstallJSON = #"""
                 || adds == ["start:two", "end:two", "start:one", "end:one"])
     }
 
+    /// A load cancelled while a second load is already in flight must not
+    /// roll the generation back — rewinding it made the second run's
+    /// `run == generation` check fail and left the sheet at .loading
+    /// forever. Call one parks in a sleep the cancel interrupts; call two
+    /// parks on a gate the test releases once the cancel has landed.
+    @Test func aCancelledFirstLoadKeepsTheInFlightResult() async throws {
+        let runner = RaceRunner()
+        let model = InstallCatalogModel(swe: SweClient(runner: runner))
+        let first = Task { await model.load() }
+        await runner.waitUntilStarted()
+        async let second: Void = model.load()
+        await runner.waitUntilParked()
+        first.cancel()
+        await first.value
+        runner.releaseParked()
+        await second
+        guard case .loaded = model.state else {
+            Issue.record("expected loaded, got \(model.state)")
+            return
+        }
+    }
+
+    /// First call signals it started then sleeps (a cancel interrupts it);
+    /// the second parks on a gate until `releaseParked` lets it answer.
+    private final class RaceRunner: CommandRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        private var parked = false
+        private var startedWaiter: CheckedContinuation<Void, Never>?
+        private var parkedWaiter: CheckedContinuation<Void, Never>?
+        private var gate: CheckedContinuation<Void, Never>?
+
+        func waitUntilStarted() async {
+            await withCheckedContinuation { continuation in
+                let done = lock.withLock { () -> Bool in
+                    if count > 0 { return true }
+                    startedWaiter = continuation
+                    return false
+                }
+                if done { continuation.resume() }
+            }
+        }
+
+        func waitUntilParked() async {
+            await withCheckedContinuation { continuation in
+                let done = lock.withLock { () -> Bool in
+                    if parked { return true }
+                    parkedWaiter = continuation
+                    return false
+                }
+                if done { continuation.resume() }
+            }
+        }
+
+        func releaseParked() {
+            lock.withLock {
+                gate?.resume()
+                gate = nil
+            }
+        }
+
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            let n = lock.withLock { () -> Int in
+                count += 1
+                return count
+            }
+            if n == 1 {
+                let waiter = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                    let w = startedWaiter
+                    startedWaiter = nil
+                    return w
+                }
+                waiter?.resume()
+                try await Task.sleep(for: .seconds(60))
+                return ok(#"{"harnesses": []}"#)
+            }
+            await withCheckedContinuation { continuation in
+                let waiter = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                    gate = continuation
+                    parked = true
+                    let w = parkedWaiter
+                    parkedWaiter = nil
+                    return w
+                }
+                waiter?.resume()
+            }
+            return ok(#"{"harnesses": []}"#)
+        }
+    }
+
     /// Records when each `swe add` starts and ends, so a test can see the
     /// calls never overlap; other commands answer an empty catalog.
     private final class OrderedRunner: CommandRunning, @unchecked Sendable {

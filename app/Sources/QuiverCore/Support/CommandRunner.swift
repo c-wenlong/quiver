@@ -19,6 +19,10 @@ public protocol CommandRunning: Sendable {
     /// `input` goes to the child's stdin, then stdin closes. Secret values
     /// travel this way, never through argv, which `ps` would show.
     func run(_ arguments: [String], input: Data?) async throws -> CommandResult
+    /// `timeout` bounds the whole run: past it the child is stopped and
+    /// the call throws, even if something still holds the pipes open.
+    /// nil asks for the runner's own default bound.
+    func run(_ arguments: [String], input: Data?, timeout: Duration?) async throws -> CommandResult
 }
 
 public extension CommandRunning {
@@ -26,6 +30,11 @@ public extension CommandRunning {
     /// without input. The real runner overrides it.
     func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
         try await run(arguments)
+    }
+    /// Conformers that can't bound a run (the fakes) ignore the deadline;
+    /// the real runner enforces it.
+    func run(_ arguments: [String], input: Data?, timeout: Duration?) async throws -> CommandResult {
+        try await run(arguments, input: input)
     }
 }
 
@@ -39,18 +48,30 @@ public extension CommandRunning {
 public struct ProcessRunner: CommandRunning {
     public var executable: String
     public var environment: [String: String]?
+    /// The longest a run may take before the child is stopped and the
+    /// call throws `SweError.timedOut`. `run(_:input:timeout:)` overrides
+    /// it per call. Long enough for swe's slowest replies (a `--usage`
+    /// list polling every provider); a wedged child still gets found.
+    public var defaultTimeout: Duration
 
     public init(executable: String = SweLocation.executable(override: nil),
-                environment: [String: String]? = nil) {
+                environment: [String: String]? = nil,
+                defaultTimeout: Duration = .seconds(120)) {
         self.executable = executable
         self.environment = environment
+        self.defaultTimeout = defaultTimeout
     }
 
     public func run(_ arguments: [String]) async throws -> CommandResult {
-        try await run(arguments, input: nil)
+        try await run(arguments, input: nil, timeout: nil)
     }
 
     public func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+        try await run(arguments, input: input, timeout: nil)
+    }
+
+    public func run(_ arguments: [String], input: Data?, timeout: Duration?) async throws -> CommandResult {
+        let timeout = timeout ?? defaultTimeout
         let env: [String: String]
         if let environment {
             env = environment
@@ -79,6 +100,7 @@ public struct ProcessRunner: CommandRunning {
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                let once = ResumeOnce(continuation)
                 // One reader per pipe, each reading to EOF, and the result is
                 // assembled only once both readers and the exit are in. A
                 // callback-per-chunk reader can still be holding bytes when
@@ -104,12 +126,18 @@ public struct ProcessRunner: CommandRunning {
                     group.leave()
                     try? out.fileHandleForWriting.close()
                     try? err.fileHandleForWriting.close()
-                    continuation.resume(throwing: error)
+                    once.resume(throwing: error)
                 }
                 do {
                     guard try gate.launch() else { return abandon(CancellationError()) }
-                } catch {
-                    return abandon(SweError.notInstalled(executable))
+                } catch let error as NSError {
+                    // env(1) itself failed to spawn — the box is out of
+                    // processes or env is broken — which is a system
+                    // problem, not swe missing. A missing swe answers
+                    // exit 127 and is named in SweClient.
+                    return abandon(SweError.commandFailed(
+                        status: Int32(clamping: error.code),
+                        message: "Couldn't start \(executable): \(error.localizedDescription)"))
                 }
                 if let input {
                     // A child that exits before reading (an older swe that
@@ -122,8 +150,24 @@ public struct ProcessRunner: CommandRunning {
                         try? inputPipe.fileHandleForWriting.close()
                     }
                 }
+                // A hung child — or one that already exited while a
+                // grandchild still holds the pipes open — must not wedge
+                // the caller forever: past the deadline the run throws.
+                // The readers finish whenever the pipes finally close;
+                // the group's late notify is then a no-op.
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) {
+                    if process.isRunning {
+                        process.terminate()
+                        // SIGTERM is a request; a child that ignores it is
+                        // killed outright a moment later.
+                        DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(2)) {
+                            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                        }
+                    }
+                    once.resume(throwing: SweError.timedOut)
+                }
                 group.notify(queue: .global()) {
-                    continuation.resume(returning: CommandResult(
+                    once.resume(CommandResult(
                         status: process.terminationStatus,
                         stdout: box.stdout,
                         stderr: String(decoding: box.stderr, as: UTF8.self)))
@@ -260,19 +304,32 @@ public enum LoginShell {
     }
 }
 
-/// Resumes a continuation with the first value offered, ignoring the rest.
+/// Resumes a continuation with the first offer, ignoring the rest.
 private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<T, Never>?
+    private var action: (@Sendable (Result<T, any Error>) -> Void)?
 
-    init(_ continuation: CheckedContinuation<T, Never>) { self.continuation = continuation }
-
-    func resume(_ value: T) {
-        let pending = lock.withLock { () -> CheckedContinuation<T, Never>? in
-            defer { continuation = nil }
-            return continuation
+    init(_ continuation: CheckedContinuation<T, Never>) {
+        action = { result in
+            guard case .success(let value) = result else { return }
+            continuation.resume(returning: value)
         }
-        pending?.resume(returning: value)
+    }
+
+    init(_ continuation: CheckedContinuation<T, any Error>) {
+        action = { continuation.resume(with: $0) }
+    }
+
+    func resume(_ value: T) { offer(.success(value)) }
+
+    func resume(throwing error: any Error) { offer(.failure(error)) }
+
+    private func offer(_ result: Result<T, any Error>) {
+        let pending = lock.withLock { () -> (@Sendable (Result<T, any Error>) -> Void)? in
+            defer { action = nil }
+            return action
+        }
+        pending?(result)
     }
 }
 

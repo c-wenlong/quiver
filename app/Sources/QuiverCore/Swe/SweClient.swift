@@ -6,6 +6,8 @@ public enum SweError: Error, Equatable, Sendable {
     case unsupportedSchema(Int)
     case jsonUnsupported
     case malformedOutput(String)
+    /// The subprocess ran past its deadline and was stopped.
+    case timedOut
 }
 
 extension SweError: LocalizedError {
@@ -21,6 +23,8 @@ extension SweError: LocalizedError {
             "This swe speaks schema \(version). Update the app."
         case .malformedOutput(let detail):
             "swe returned output the app couldn't read. \(detail)"
+        case .timedOut:
+            "The command took too long and was stopped."
         }
     }
 }
@@ -57,6 +61,10 @@ public struct SweClient: Sendable {
         return data.harnesses
     }
 
+    /// `@concurrent`: the envelope decode below runs wherever this is
+    /// awaited — the main actor for most models — and a big swe payload
+    /// would stall the UI there. Hop off the caller's executor.
+    @concurrent
     func call<T: Decodable>(_ arguments: [String], input: Data? = nil,
                             allowFailure: Bool = false) async throws -> T {
         let result = try await runner.run(arguments, input: input)
@@ -83,18 +91,24 @@ public struct SweClient: Sendable {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .secondsSince1970
-        let header: SchemaHeader
+        // One pass over the payload: the schema rides inside the same
+        // envelope as the data instead of a separate header decode.
         do {
-            header = try decoder.decode(SchemaHeader.self, from: result.stdout)
+            let envelope = try decoder.decode(Envelope<T>.self, from: result.stdout)
+            guard envelope.schema == Self.supportedSchema else {
+                throw SweError.unsupportedSchema(envelope.schema)
+            }
+            return envelope.data
+        } catch let error as SweError {
+            throw error
         } catch {
-            throw SweError.malformedOutput(Self.plain(String(stdoutText.prefix(200))))
-        }
-        guard header.schema == Self.supportedSchema else {
-            throw SweError.unsupportedSchema(header.schema)
-        }
-        do {
-            return try decoder.decode(Envelope<T>.self, from: result.stdout).data
-        } catch {
+            // The header may still be readable where the payload is not:
+            // a newer schema gets named rather than reported as garbage.
+            guard let header = try? decoder.decode(SchemaHeader.self, from: result.stdout)
+            else { throw SweError.malformedOutput(Self.plain(String(stdoutText.prefix(200)))) }
+            guard header.schema == Self.supportedSchema else {
+                throw SweError.unsupportedSchema(header.schema)
+            }
             throw SweError.malformedOutput(String(describing: error))
         }
     }
@@ -152,5 +166,29 @@ public enum SweLocation {
 }
 
 struct SchemaHeader: Decodable { let schema: Int }
-struct Envelope<T: Decodable>: Decodable { let data: T }
-struct HarnessList: Decodable { let harnesses: [Harness] }
+struct Envelope<T: Decodable>: Decodable {
+    let schema: Int
+    let data: T
+}
+
+/// Decodes one element as nil when it is malformed, so a single bad row
+/// degrades instead of failing the whole list.
+struct LossyRow<Wrapped: Decodable>: Decodable {
+    let value: Wrapped?
+
+    init(from decoder: Decoder) throws {
+        value = try? Wrapped(from: decoder)
+    }
+}
+
+struct HarnessList: Decodable {
+    let harnesses: [Harness]
+
+    enum CodingKeys: String, CodingKey { case harnesses }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        harnesses = try c.decode([LossyRow<Harness>].self, forKey: .harnesses)
+            .compactMap(\.value)
+    }
+}

@@ -129,7 +129,10 @@ public final class InstallCatalogModel {
             let harnesses = try await swe.installCatalog()
             if run == generation { state = .loaded(harnesses) }
         } catch is CancellationError {
-            generation -= 1
+            // Do not roll the generation back: a second load already in
+            // flight keeps its claim, and its result still publishes.
+            // Rewinding would make its `run == generation` check fail and
+            // leave the sheet at .loading forever.
         } catch {
             if run == generation { state = .failed(error.localizedDescription) }
         }

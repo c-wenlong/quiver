@@ -175,16 +175,27 @@ public final class UpdatesModel {
             to: buildDir.appending(path: "owner.pid"),
             atomically: true, encoding: .utf8)
         let script = checkout + "/app/script/build-app.sh"
-        let result = try? await rebuildRunner.run(
-            ["QUIVER_BUILD_DIR=\(buildDir.path)", "bash", script])
+        // A build is minutes, not seconds, but a wedged one must not pin
+        // rebuildState at .building forever: the runner bounds the run and
+        // every way out of here resets the state.
+        let result: CommandResult
+        do {
+            result = try await rebuildRunner.run(
+                ["QUIVER_BUILD_DIR=\(buildDir.path)", "bash", script],
+                input: nil, timeout: .seconds(30 * 60))
+        } catch SweError.timedOut {
+            try? FileManager.default.removeItem(at: buildDir)
+            rebuildState = .failed("The build timed out after 30 minutes and was stopped.")
+            return
+        } catch {
+            try? FileManager.default.removeItem(at: buildDir)
+            rebuildState = .failed("The build could not be started: "
+                + error.localizedDescription)
+            return
+        }
         guard self.checkout == startedCheckout else {
             try? FileManager.default.removeItem(at: buildDir)
             rebuildState = .idle
-            return
-        }
-        guard let result else {
-            try? FileManager.default.removeItem(at: buildDir)
-            rebuildState = .failed("The build could not be started.")
             return
         }
         if result.status == 0 {

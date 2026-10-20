@@ -41,6 +41,28 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
         return set.isEmpty ? UsageFormat.harness(name) : set
     }
 
+    /// Identity fields stay strict — a row without them is dropped by
+    /// HarnessList's lossy decode. Everything optional tolerates a bad
+    /// value so one malformed field can't cost the row, and a malformed
+    /// reading degrades to nil rather than killing the whole page.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        command = try c.decode(String.self, forKey: .command)
+        description = try c.decode(String.self, forKey: .description)
+        aliases = try c.decode([String].self, forKey: .aliases)
+        tags = try c.decode([String].self, forKey: .tags)
+        state = try c.decode(State.self, forKey: .state)
+        displayName = (try? c.decodeIfPresent(String.self, forKey: .displayName)) ?? nil
+        version = (try? c.decodeIfPresent(String.self, forKey: .version)) ?? nil
+        sessions100d = (try? c.decodeIfPresent(Int.self, forKey: .sessions100d)) ?? nil
+        rateLimit = (try? c.decodeIfPresent(RateLimit.self, forKey: .rateLimit)) ?? nil
+        installed = (try? c.decodeIfPresent(Bool.self, forKey: .installed)) ?? nil
+        archived = (try? c.decodeIfPresent(Archive.self, forKey: .archived)) ?? nil
+        notes = (try? c.decodeIfPresent(String.self, forKey: .notes)) ?? nil
+        primaryColor = (try? c.decodeIfPresent(String.self, forKey: .primaryColor)) ?? nil
+    }
+
     public struct Archive: Decodable, Sendable, Equatable {
         public let reason: String
         /// ISO 8601, as swe wrote it.
@@ -212,22 +234,26 @@ public struct RateLimit: Codable, Sendable, Equatable {
         onDemand = nil
     }
 
+    /// Every field tolerates a malformed value: one bad field degrades to
+    /// a default or nil instead of failing the whole HarnessList decode.
+    /// An unreadable status reads as `.timeout`, the "couldn't be read"
+    /// state a card already knows how to show.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        status = try c.decode(Status.self, forKey: .status)
-        usedPercent = try c.decode(Int.self, forKey: .usedPercent)
-        remainingPercent = try c.decode(Int.self, forKey: .remainingPercent)
-        limitReached = try c.decode(Bool.self, forKey: .limitReached)
-        resetAt = try c.decodeIfPresent(Date.self, forKey: .resetAt)
-        window = try c.decodeIfPresent(String.self, forKey: .window)
-        windowSeconds = try c.decodeIfPresent(Int.self, forKey: .windowSeconds)
+        status = (try? c.decode(Status.self, forKey: .status)) ?? .timeout
+        usedPercent = (try? c.decode(Int.self, forKey: .usedPercent)) ?? 0
+        remainingPercent = (try? c.decode(Int.self, forKey: .remainingPercent)) ?? (100 - usedPercent)
+        limitReached = (try? c.decode(Bool.self, forKey: .limitReached)) ?? (usedPercent >= 100)
+        resetAt = (try? c.decodeIfPresent(Date.self, forKey: .resetAt)) ?? nil
+        window = (try? c.decodeIfPresent(String.self, forKey: .window)) ?? nil
+        windowSeconds = (try? c.decodeIfPresent(Int.self, forKey: .windowSeconds)) ?? nil
         // swe writes "—" when a provider names no plan; that is no plan.
-        let plan = try c.decodeIfPresent(String.self, forKey: .planType)?
+        let plan = ((try? c.decodeIfPresent(String.self, forKey: .planType)) ?? nil)?
             .trimmingCharacters(in: .whitespaces)
         planType = (plan == nil || plan == "" || plan == "\u{2014}" || plan == "-") ? nil : plan
-        remainingUnits = try c.decodeIfPresent(Double.self, forKey: .remainingUnits)
-        totalUnits = try c.decodeIfPresent(Double.self, forKey: .totalUnits)
-        fetchedAt = try c.decodeIfPresent(Date.self, forKey: .fetchedAt)
+        remainingUnits = (try? c.decodeIfPresent(Double.self, forKey: .remainingUnits)) ?? nil
+        totalUnits = (try? c.decodeIfPresent(Double.self, forKey: .totalUnits)) ?? nil
+        fetchedAt = (try? c.decodeIfPresent(Date.self, forKey: .fetchedAt)) ?? nil
         // Newer fields: a malformed list must not cost the whole reading.
         windows = (try? c.decodeIfPresent([Window].self, forKey: .windows)) ?? nil
         extraUsageUSD = (try? c.decodeIfPresent(Double.self, forKey: .extraUsageUSD)) ?? nil
