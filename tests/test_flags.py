@@ -317,6 +317,70 @@ class BareFlagRejectionTest(unittest.TestCase):
             _run(cmd_add, ["demo", "demo-cmd"])
         self.assertEqual(save.call_args[0][0]["demo"]["primary_color"], "#112233")
 
+    def test_re_adding_keeps_state_pin_capabilities_and_unknown_fields(self):
+        # A re-add must never silently drop registry vocabulary (state, pin,
+        # capabilities) or user fields the command does not own.
+        existing = {
+            "demo": {
+                "command": "old",
+                "description": "ma description",
+                "state": "starred",
+                "pin": 2,
+                "capabilities": {"skills": {"supported": True, "root": "~/.demo/skills"}},
+                "notes": "à garder",
+                "discovered_via": "init",
+                "custom_field": "x",
+                "tags": ["custom-tag"],
+                "aliases": ["dd"],
+                "version": "9.9",
+                "added": "2020-01-01T00:00:00",
+            }
+        }
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd"])
+        saved = save.call_args[0][0]["demo"]
+        self.assertEqual(saved["command"], "demo-cmd")
+        self.assertEqual(saved["state"], "starred")
+        self.assertEqual(saved["pin"], 2)
+        self.assertEqual(saved["capabilities"]["skills"]["root"], "~/.demo/skills")
+        self.assertEqual(saved["notes"], "à garder")
+        self.assertEqual(saved["discovered_via"], "init")
+        self.assertEqual(saved["custom_field"], "x")
+        self.assertEqual(saved["description"], "ma description")
+        self.assertEqual(saved["tags"], ["custom-tag"])
+        self.assertEqual(saved["aliases"], ["dd"])
+        self.assertEqual(saved["version"], "9.9")
+        self.assertEqual(saved["added"], "2020-01-01T00:00:00")
+
+    def test_re_adding_archived_entry_keeps_state_and_notes_it(self):
+        existing = {"demo": {"command": "old", "state": "archived"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _, out = _run(cmd_add, ["demo", "demo-cmd"])
+        self.assertEqual(save.call_args[0][0]["demo"]["state"], "archived")
+        self.assertIn("still archived", out)
+
+    def test_re_adding_with_explicit_tags_overrides_only_tags(self):
+        existing = {
+            "demo": {"command": "old", "state": "starred", "tags": ["custom-tag"]}
+        }
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd", "--tags=nouveau"])
+        saved = save.call_args[0][0]["demo"]
+        self.assertEqual(saved["tags"], ["nouveau"])
+        self.assertEqual(saved["state"], "starred")
+
     def test_adding_a_new_harness_sets_no_display_name(self):
         with patch("quiver.harness.commands.load_registry", return_value={}), patch(
             "quiver.harness.commands.save_registry"

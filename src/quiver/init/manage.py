@@ -188,7 +188,7 @@ def register(
                 "file": home_relative(instruction_target(root, filename), home),
             }
         entry["capabilities"] = capabilities
-        registry[label] = entry
+        registry[label] = {**registry.get(label, {}), **entry}
     for label, root in declined.items():
         entry = _entry(label, root, home, now)
         entry["state"] = "archived"
@@ -200,7 +200,9 @@ def register(
         entry["capabilities"] = {
             "skills": {"supported": True, "root": home_relative(root, home)},
         }
-        registry[label] = entry
+        merged = {**registry.get(label, {}), **entry}
+        merged.pop("pin", None)  # archived and starred are exclusive
+        registry[label] = merged
     config_dir.mkdir(parents=True, exist_ok=True)
     target = config_dir / "harness.json"
     _paths.atomic_write_text(target, json.dumps(registry, indent=2))

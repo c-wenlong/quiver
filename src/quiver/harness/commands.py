@@ -580,18 +580,13 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
 def _kept_fields(previous: dict | None) -> dict:
     """Fields a re-add carries over from the entry it replaces.
 
-    ``swe add`` rewrites a whole entry; the human name and a chosen
-    colour are user decisions, so a re-add must not erase them.
+    ``swe add`` rewrites a whole entry; state, pins, capabilities and
+    any other field the command does not own are user decisions, so a
+    re-add must not erase them.
     """
     previous = previous or {}
-    kept = {}
-    name = display_name(previous)
-    if name:
-        kept["display_name"] = name
-    colour = previous.get("primary_color")
-    if colour:
-        kept["primary_color"] = colour
-    return kept
+    owned = {"command", "description", "version", "tags", "aliases", "added"}
+    return {k: v for k, v in previous.items() if k not in owned}
 
 
 def cmd_list(args):
@@ -1315,8 +1310,8 @@ def cmd_add(args):
     name = args[0]
     command = args[1]
     desc = ""
-    tags = ["agentic", "coding"]
-    aliases: list[str] = []
+    tags: list[str] | None = None
+    aliases: list[str] | None = None
     no_replace = False
 
     i = 2
@@ -1356,30 +1351,35 @@ def cmd_add(args):
         return 1
     # An alias another harness answers to would redirect `swe use` and
     # `swe remove` for that name.
-    collision = _alias_collision(tools, name, aliases)
+    collision = _alias_collision(tools, name, aliases or [])
     if collision:
         print(c("red", f"  {collision}"), file=refusal)
         return 1
 
     action = "Updated" if name in tools else "Added"
+    previous = tools.get(name) or {}
     tools[name] = {
         "command": command,
-        "description": desc,
-        "version": None,
-        "tags": tags,
-        "aliases": aliases,
-        "added": datetime.now().isoformat(),
-        **_kept_fields(tools.get(name)),
+        "description": desc or previous.get("description", ""),
+        "version": previous.get("version"),
+        "tags": tags if tags is not None else previous.get("tags", ["agentic", "coding"]),
+        "aliases": aliases if aliases is not None else previous.get("aliases", []),
+        "added": previous.get("added") or datetime.now().isoformat(),
+        **_kept_fields(previous),
     }
     save_registry(tools)
     installed = is_installed(command)
+    saved_aliases = tools[name]["aliases"]
+    saved_tags = tools[name]["tags"]
     if json_view:
         return emit({"name": name, "command": command,
                      "action": action.lower(), "installed": installed,
-                     "aliases": aliases, "tags": tags})
+                     "aliases": saved_aliases, "tags": saved_tags})
     status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
-    alias_str = f"  aliases: {', '.join(aliases)}" if aliases else ""
+    alias_str = f"  aliases: {', '.join(saved_aliases)}" if saved_aliases else ""
     print(f"  {c('green', '✓')} {action} '{name}' → '{command}' ({status}){alias_str}")
+    if tools[name].get("state") == "archived":
+        print(c("dim", "  still archived — `swe hs star` brings it back"))
 
 
 def cmd_remove(args):
@@ -1988,23 +1988,16 @@ def cmd_install(args):
     colour = entry.get("primary_color") or catalog.get("primary_color")
 
     entry = {
+        **tools.get(reg_name, {}),
         "command": cmd_name,
         "description": desc,
-        "version": ver,
+        "version": ver or tools.get(reg_name, {}).get("version"),
         "tags": tags,
         "aliases": aliases,
     }
     if colour:
         entry["primary_color"] = colour
     if reg_name in tools:
-        # Preserve display name / notes / added if present
-        prev = tools[reg_name]
-        for keep in ("display_name", "notes", "added"):
-            if keep in prev and keep not in entry:
-                entry[keep] = prev[keep]
-        entry["description"] = desc or prev.get("description", "")
-        entry["tags"] = tags or prev.get("tags", [])
-        entry["aliases"] = aliases or prev.get("aliases", [])
         action = "Updated"
     else:
         entry["added"] = datetime.now().isoformat()
