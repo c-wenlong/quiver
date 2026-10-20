@@ -150,8 +150,11 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         /// when it sits at the newest tick, so a stopped harness drops out
         /// rather than freezing its last figure. `order` is the matchers'
         /// (swe's) order; a harness it does not name keeps its history
-        /// place at the end. The selection's hidden compute harnesses and
-        /// unchosen temperature lines stay out of the file.
+        /// place at the end. Temperatures count only when the newest point
+        /// sits at the tick too: a tick the sensors missed leaves the last
+        /// reading old, and it stays home like a stopped harness. The
+        /// selection's hidden compute harnesses and unchosen temperature
+        /// lines stay out of the file.
         public init(history: ComputeHistory, order: [String],
                     temperatureLines: Set<ThermalComponent>,
                     selection: WidgetSelection) {
@@ -165,9 +168,14 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
                 return Row(harness: name, memoryBytes: point.memoryBytes,
                            cpuPercent: point.cpuPercent, gpuPercent: point.gpuPercent)
             }.prefix(Self.rowCount))
-            let latest = history.temperatures.last?.values ?? [:]
+            // The temperature point runs to the same newest-tick rule:
+            // ticks where the sensors did not answer record no point, so
+            // a last point behind the tick is old and stays home rather
+            // than sitting beside a fresh "as of".
+            let latest = history.temperatures.last
+            let values = latest?.at == tick ? latest?.values ?? [:] : [:]
             var temperatures: [String: Double] = [:]
-            for (component, value) in latest where temperatureLines.contains(component) {
+            for (component, value) in values where temperatureLines.contains(component) {
                 temperatures[component.rawValue] = value
             }
             self.temperatures = temperatures
