@@ -93,6 +93,11 @@ public enum ModelBrands {
         .init(id: "vercel", name: "Vercel", icon: "vercel", keywords: ["vercel"]),
         .init(id: "nebius", name: "Nebius", icon: "nebius", keywords: ["nebius"]),
         .init(id: "featherless", name: "Featherless AI", icon: "featherless", keywords: ["featherless"]),
+        .init(id: "cohere", name: "Cohere", icon: "cohere", keywords: ["cohere"]),
+        .init(id: "perplexity", name: "Perplexity", icon: "perplexity", keywords: ["perplexity"]),
+        .init(id: "github", name: "GitHub", icon: "github", keywords: ["github"]),
+        .init(id: "huggingface", name: "Hugging Face", icon: "huggingface",
+              keywords: ["huggingface", "hugging"]),
         .init(id: "routing-run", name: "Routing.Run", icon: "routing-run",
               keywords: ["routing", "routingrun"]),
         // Inference plan vendors and API key providers, so a key filed

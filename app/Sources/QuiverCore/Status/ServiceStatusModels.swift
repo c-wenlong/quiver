@@ -167,8 +167,9 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     /// The feed's host, for messages ("Couldn't reach status.claude.com").
     public var host: String { feedURL.host() ?? feedURL.absoluteString }
 
-    /// Status pages with no brand in `ModelBrands` whose logo is filed
-    /// under a harness's id.
+    /// Status pages whose logo is deliberately filed under a harness's
+    /// id, ahead of any brand match: githubstatus covers Copilot here,
+    /// so it shows the Copilot mark even though a GitHub logo exists.
     static let logoIDs = ["github": "copilot"]
 
     /// The bundled mark for this service, or nil when there is none. A
@@ -176,10 +177,10 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     /// openrouter), then on its id like a built-in page.
     public var logoID: String? {
         if isCustom, let id = APIKeyProviderLogo.logoID(for: name) { return id }
+        if let id = Self.logoIDs[id], HarnessIcons.icon(for: id) != nil { return id }
         // A company's page shows its brand logo (OpenAI's for "openai"),
         // the one every other page draws for that company.
         if let icon = ModelBrands.brand(id: id)?.icon, HarnessIcons.icon(for: icon) != nil { return icon }
-        let id = Self.logoIDs[id] ?? id
         return HarnessIcons.icon(for: id) != nil ? id : nil
     }
 

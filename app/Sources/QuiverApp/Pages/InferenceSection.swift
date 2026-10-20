@@ -112,8 +112,15 @@ struct InferenceSection: View {
                                            value: value, tested: tested)
                     revealed.remove(draft.name)
                 }
+            }, saveCustom: { provider, entries, tested, testedName in
+                try await model.setAll(entries, provider: provider,
+                                       tested: tested, testedName: testedName)
             }, test: { name, value in
                 await model.test(name: name, value: value)
+            }, testCustom: { key, base in
+                await model.test(key: key, baseURL: base)
+            }, fetchModels: { base, key in
+                try await model.models(baseURL: base, key: key)
             }, remove: { name in
                 try await model.remove(name: name)
                 revealed.remove(name)
@@ -653,13 +660,27 @@ struct KeyDraft: Identifiable {
     var isNew: Bool
 }
 
+/// The model dropdown's row-hover fill, as the picker lists get.
+private struct DropdownRowHover: ViewModifier {
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(hovering ? Theme.rowHover : .clear)
+            .onHover { hovering = $0 }
+    }
+}
+
 /// Add, change or remove one key. A new key first picks its provider from
 /// the catalog: a known provider fixes the variable name (a pick when it
-/// has several) and offers the page that hands out keys; "Other provider"
-/// keeps the free-text provider and variable fields. On an existing key
-/// the provider and the variable name edit as before: a rename, a move
-/// and a new value save together. Saving a non-empty value tests it
-/// first; a rejection shows instead of saving until "Save anyway".
+/// has several) and offers the page that hands out keys; "Custom provider"
+/// takes an OpenAI-compatible base URL, lists its models for a searchable
+/// pick and writes `X_BASE_URL`, `X_API_KEY` and `X_MODEL`; "Other
+/// provider" keeps the free-text provider and variable fields. On an
+/// existing key the provider and the variable name edit as before: a
+/// rename, a move and a new value save together. Saving a non-empty
+/// value tests it first; a rejection shows instead of saving until
+/// "Save anyway".
 private struct KeyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State var draft: KeyDraft
@@ -672,31 +693,67 @@ private struct KeyEditor: View {
     var rows: [APIKeysModel.Row]
     /// provider, name, value, the test verdict to keep.
     var save: (String, String, String, APIKeyCheckResult?) async throws -> Void
+    /// heading, the variables to write, the verdict, the name it belongs to.
+    var saveCustom: (String, [(name: String, value: String)], APIKeyCheckResult?, String) async throws -> Void
     /// name, value -> the provider's verdict.
     var test: (String, String) async -> APIKeyCheckResult
+    /// key, base URL -> the custom endpoint's verdict.
+    var testCustom: (String, String) async -> APIKeyCheckResult
+    /// base URL, key -> the models the endpoint lists.
+    var fetchModels: (String, String) async throws -> [CustomProvider.Model]
     var remove: (String) async throws -> Void
     @State private var showValue = false
     @State private var confirmingRemove = false
     @State private var error: String?
     @State private var working = false
-    /// The new-key pick: "" nothing yet, "other" the free-text path, else
-    /// an `APIKeyProvider.id`.
+    /// The new-key pick: "" nothing yet, "custom" the endpoint path,
+    /// "other" the free-text path, else an `APIKeyProvider.id`.
     @State private var providerChoice = ""
     /// The variable a multi-variable provider saves under.
     @State private var envVarChoice = ""
-    /// The last verdict and the (name, value) it describes.
+    /// The last verdict and the (name, value, base) it describes; the
+    /// custom path's base URL is part of the identity, so pointing the
+    /// endpoint elsewhere asks for a fresh test.
     @State private var testResult: APIKeyCheckResult?
-    @State private var testedFor = (name: "", value: "")
+    @State private var testedFor = (name: "", value: "", base: "")
     @State private var testing = false
     /// A rejected test showed; the next click saves regardless.
     @State private var saveAnyway = false
     /// The test-then-save in flight; closing the sheet cancels it, so a
     /// Cancel during the test never saves.
     @State private var saveTask: Task<Void, Never>?
+    /// The custom provider's name: the heading and the variables' prefix.
+    @State private var customName = ""
+    /// Its OpenAI-compatible root, e.g. https://soclaas-api.comp.nus.edu.sg/v1.
+    @State private var baseURL = ""
+    /// The picked or typed model id; "" writes no `X_MODEL`.
+    @State private var model = ""
+    /// The id a dropdown row last put in `model` — typing away from it is
+    /// what reopens the list after a pick.
+    @State private var pickedModel = ""
+    /// Whether the dropdown is showing: opens on focus and on typing,
+    /// closes on a pick, so an empty field can still browse the list.
+    @State private var modelListOpen = false
+    /// What the last `{base}/models` fetch brought back.
+    @State private var fetchedModels: [CustomProvider.Model] = []
+    @State private var modelsStatus = ModelsFetch.idle
+    @FocusState private var modelFocused: Bool
+
+    /// Where the model fetch stands, painted under the field.
+    private enum ModelsFetch: Equatable {
+        /// Not asked, or the URL and key can't produce an answer yet.
+        case idle
+        case loading
+        case loaded
+        case failed(String)
+    }
 
     init(draft: KeyDraft, providers: [String], rows: [APIKeysModel.Row],
          save: @escaping (String, String, String, APIKeyCheckResult?) async throws -> Void,
+         saveCustom: @escaping (String, [(name: String, value: String)], APIKeyCheckResult?, String) async throws -> Void,
          test: @escaping (String, String) async -> APIKeyCheckResult,
+         testCustom: @escaping (String, String) async -> APIKeyCheckResult,
+         fetchModels: @escaping (String, String) async throws -> [CustomProvider.Model],
          remove: @escaping (String) async throws -> Void) {
         _draft = State(initialValue: draft)
         originalName = draft.name
@@ -704,17 +761,24 @@ private struct KeyEditor: View {
         self.providers = providers
         self.rows = rows
         self.save = save
+        self.saveCustom = saveCustom
         self.test = test
+        self.testCustom = testCustom
+        self.fetchModels = fetchModels
         self.remove = remove
     }
 
-    /// The picked provider on a new key, nil for "other" or none.
+    /// The picked provider on a new key, nil for "custom", "other" or none.
     private var picked: APIKeyProvider? {
         draft.isNew ? APIKeyProviders.provider(forID: providerChoice) : nil
     }
 
+    /// Whether the custom-provider section shows.
+    private var isCustom: Bool { draft.isNew && providerChoice == "custom" }
+
     /// The variable the save writes.
     private var finalName: String {
+        if isCustom { return customPrefix.isEmpty ? "" : customPrefix + "_API_KEY" }
         if let picked {
             return envVarChoice.isEmpty ? picked.envVars[0] : envVarChoice
         }
@@ -723,6 +787,9 @@ private struct KeyEditor: View {
 
     /// The heading the save writes under.
     private var finalProvider: String {
+        if isCustom {
+            return customName.trimmingCharacters(in: .whitespaces)
+        }
         if let picked {
             return APIKeyProviders.heading(for: picked, in: rows)
         }
@@ -746,15 +813,60 @@ private struct KeyEditor: View {
         !draft.isNew || providerChoice == "other"
     }
 
-    /// The verdict still describes the current name and value.
+    /// The env-var prefix the provider name gives: "SoCLaaS" → SOCLAAS.
+    private var customPrefix: String { CustomProvider.envPrefix(for: customName) }
+
+    /// What stops a custom name, or nil: it must read back as a heading
+    /// and prefix three valid variable names.
+    private var customNameProblem: String? {
+        let name = customName.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty { return nil }
+        guard APIKeysFile.isLabel(name) else {
+            return "Use a short label: letters, digits, spaces and ( ) . , & / -"
+        }
+        let prefix = CustomProvider.envPrefix(for: name)
+        if prefix.isEmpty { return "The name needs a letter or digit for the variables' prefix" }
+        if prefix.first?.isNumber == true {
+            return "Start the name with a letter: \(prefix)_API_KEY isn't a variable name"
+        }
+        return nil
+    }
+
+    /// What stops a base URL, or nil.
+    private var baseProblem: String? {
+        let base = baseURL.trimmingCharacters(in: .whitespaces)
+        guard !base.isEmpty else { return nil }
+        return CustomProvider.modelsURL(base) == nil
+            ? "An http(s) URL; the models list comes from {base}/models" : nil
+    }
+
+    /// The variables a custom save would overwrite.
+    private var customCollision: String? {
+        guard !customPrefix.isEmpty else { return nil }
+        let names = [customPrefix + "_API_KEY", customPrefix + "_BASE_URL", customPrefix + "_MODEL"]
+        let existing = names.filter { name in rows.contains(where: { $0.name == name }) }
+        guard !existing.isEmpty else { return nil }
+        return "\(existing.joined(separator: ", ")) already set; saving replaces \(existing.count == 1 ? "it" : "them")."
+    }
+
+    /// The verdict still describes the current name, value and endpoint.
     private var currentTest: APIKeyCheckResult? {
-        testedFor == (finalName, draft.value) ? testResult : nil
+        testedFor == (finalName, draft.value, testedBase) ? testResult : nil
+    }
+
+    /// The base a test answer is bound to; plain providers have none.
+    private var testedBase: String {
+        isCustom ? baseURL.trimmingCharacters(in: .whitespaces) : ""
     }
 
     /// A test is worth offering: a new non-empty value, or an edit that
-    /// changed the value or the variable it answers to.
+    /// changed the value or the variable it answers to. The custom path
+    /// also needs a base URL to test against.
     private var canTest: Bool {
-        !draft.value.isEmpty && (draft.isNew || draft.value != originalValue || finalName != originalName)
+        guard !draft.value.isEmpty,
+              draft.isNew || draft.value != originalValue || finalName != originalName
+        else { return false }
+        return isCustom ? CustomProvider.modelsURL(baseURL) != nil : true
     }
 
     /// Where "Get a key" points on an existing key whose variable the
@@ -767,6 +879,12 @@ private struct KeyEditor: View {
     private var saveDisabled: Bool {
         if working || testing { return true }
         if draft.isNew && providerChoice.isEmpty { return true }
+        if isCustom {
+            if customName.trimmingCharacters(in: .whitespaces).isEmpty
+                || baseURL.trimmingCharacters(in: .whitespaces).isEmpty
+                || customNameProblem != nil || baseProblem != nil
+                || draft.value.isEmpty { return true }
+        }
         if freeFormName && nameProblem != nil { return true }
         return false
     }
@@ -776,10 +894,12 @@ private struct KeyEditor: View {
             Text(draft.isNew ? "Add a key" : "Edit \(originalName)").font(Theme.sectionTitle).tracking(-0.5)
             Group {
                 if draft.isNew { providerPicker }
+                if isCustom { customFields }
                 if freeFormName { providerField }
                 if let picked { knownProviderFields(picked) }
                 if freeFormName { variableField }
                 valueField
+                if isCustom { modelField }
             }
             .disabled(testing)
             if let error {
@@ -811,19 +931,184 @@ private struct KeyEditor: View {
         .frame(width: 520)
         .background(Theme.panel)
         .onDisappear { saveTask?.cancel() }
+        .task(id: fetchSeed) { await loadModels() }
     }
 
-    /// The catalog picker a new key starts with, "Other provider" last.
+    /// The catalog picker a new key starts with: the built-ins, then
+    /// "Custom provider" for an OpenAI-compatible endpoint, then the
+    /// free-text "Other provider".
     private var providerPicker: some View {
         FormField("Provider") {
             PopoverSelect(options: APIKeyProviders.all.map { ($0.id, $0.name, $0.logo) }
-                              + [("other", "Other provider", nil)],
+                              + [("custom", "Custom provider", nil), ("other", "Other provider", nil)],
                           selection: $providerChoice,
                           title: providerChoice.isEmpty ? "Choose a provider" : nil)
             .onChange(of: providerChoice) {
                 envVarChoice = picked?.envVars[0] ?? ""
                 saveAnyway = false
+                fetchedModels = []
+                modelsStatus = .idle
             }
+        }
+    }
+
+    /// The custom provider's own row of fields: the name that heads its
+    /// group and prefixes its variables, then the OpenAI-compatible base
+    /// URL the model list and key check come from.
+    private var customFields: some View {
+        Group {
+            FormField("Provider name", hint: customNameHint, problem: customNameProblem != nil) {
+                TextField("SoCLaaS", text: $customName)
+                    .quiverField()
+                    .onChange(of: customName) { saveAnyway = false }
+            }
+            FormField("Base URL", hint: baseProblem ?? "The OpenAI-compatible root; models list at {base}/models.",
+                      problem: baseProblem != nil) {
+                TextField("https://soclaas-api.comp.nus.edu.sg/v1", text: $baseURL)
+                    .quiverField(monospaced: true)
+                    .onChange(of: baseURL) { saveAnyway = false }
+            }
+            if let collision = customCollision {
+                Text(collision).font(Theme.caption).foregroundStyle(Theme.warningText)
+            }
+        }
+    }
+
+    /// The derived hint under the name field: the three variables the
+    /// save writes, or the reason the name won't do.
+    private var customNameHint: String {
+        if let problem = customNameProblem { return problem }
+        let prefix = customPrefix
+        if prefix.isEmpty { return "The heading in the file; the variables take it as a prefix." }
+        return "Saved as \(prefix)_BASE_URL, \(prefix)_API_KEY and \(prefix)_MODEL."
+    }
+
+    /// The model field: a free-text id with a dropdown of what
+    /// `{base}/models` answered, filtered by the text as it changes.
+    private var modelField: some View {
+        FormField("Model", hint: modelHint, problem: modelProblem) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    TextField("Pick or type a model id", text: $model)
+                        .quiverField(monospaced: true)
+                        .focused($modelFocused)
+                    if case .loading = modelsStatus {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Reload models", systemImage: "arrow.clockwise") {
+                            Task { await loadModels(now: true) }
+                        }
+                        .iconButton()
+                        .disabled(!canLoadModels)
+                        .help("Ask {base}/models again")
+                    }
+                }
+                if modelFocused && modelListOpen && !filteredModels.isEmpty {
+                    modelDropdown
+                }
+            }
+            .onChange(of: modelFocused) { if modelFocused { modelListOpen = true } }
+            .onChange(of: model) { if model != pickedModel { modelListOpen = true } }
+        }
+    }
+
+    /// The fetched ids the field's text leaves, capped so the sheet
+    /// doesn't grow past the screen.
+    private var filteredModels: [CustomProvider.Model] {
+        let query = model.trimmingCharacters(in: .whitespaces).lowercased()
+        let hits = query.isEmpty ? fetchedModels
+            : fetchedModels.filter {
+                $0.id.lowercased().contains(query) || $0.label.lowercased().contains(query)
+            }
+        return Array(hits.prefix(8))
+    }
+
+    /// The dropdown itself: label on the left, id beside it when the
+    /// endpoint names its models something else.
+    private var modelDropdown: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(filteredModels) { item in
+                Button { model = item.id; pickedModel = item.id; modelListOpen = false } label: {
+                    HStack(spacing: 8) {
+                        Text(item.label).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        if item.label != item.id {
+                            Text(item.id).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                                .lineLimit(1).truncationMode(.middle)
+                        }
+                        Spacer(minLength: 8)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .contentShape(.rect)
+                }
+                .plainButton(cornerRadius: 0)
+                .modifier(DropdownRowHover())
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Theme.field, in: .rect(cornerRadius: Theme.fieldRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .padding(.top, 4)
+    }
+
+    /// What the model field's hint reports: the fetch's state, or how to
+    /// get one going.
+    private var modelHint: String? {
+        switch modelsStatus {
+        case .idle:
+            "Optional. The list fills from {base}/models once the URL and key are set."
+        case .loading:
+            "Asking the endpoint for its models…"
+        case .loaded:
+            fetchedModels.isEmpty
+                ? "The endpoint listed no models; type the id it expects."
+                : "\(fetchedModels.count) \(fetchedModels.count == 1 ? "model" : "models") — pick one or type your own."
+        case .failed(let message):
+            message
+        }
+    }
+
+    /// A failed fetch paints the hint red.
+    private var modelProblem: Bool {
+        if case .failed = modelsStatus { return true }
+        return false
+    }
+
+    /// Whether `{base}/models` is worth asking: a valid URL and a key.
+    private var canLoadModels: Bool {
+        CustomProvider.modelsURL(baseURL) != nil && !draft.value.isEmpty
+    }
+
+    /// The inputs a fetch describes, as the `.task` id: changing either
+    /// cancels the pending fetch and starts the debounce over.
+    private var fetchSeed: String {
+        isCustom ? baseURL + "\u{1F}" + draft.value : ""
+    }
+
+    /// Fetches the model list — debounced from `.task` edits, at once
+    /// from the reload button. A fetch that lands after its inputs moved
+    /// on writes nothing, so a stale answer can't erase a newer list.
+    private func loadModels(now: Bool = false) async {
+        guard isCustom, canLoadModels else {
+            fetchedModels = []
+            modelsStatus = .idle
+            return
+        }
+        let seed = fetchSeed
+        if !now {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+        }
+        modelsStatus = .loading
+        let base = baseURL.trimmingCharacters(in: .whitespaces)
+        do {
+            let found = try await fetchModels(base, draft.value)
+            guard seed == fetchSeed else { return }
+            fetchedModels = found
+            modelsStatus = .loaded
+        } catch {
+            guard seed == fetchSeed else { return }
+            fetchedModels = []
+            modelsStatus = .failed(error.localizedDescription)
         }
     }
 
@@ -928,11 +1213,12 @@ private struct KeyEditor: View {
         testing = true
         let name = finalName
         let value = draft.value
+        let base = baseURL.trimmingCharacters(in: .whitespaces)
         Task {
-            let result = await test(name, value)
+            let result = isCustom ? await testCustom(value, base) : await test(name, value)
             testing = false
             testResult = result
-            testedFor = (name, value)
+            testedFor = (name, value, isCustom ? base : "")
         }
     }
 
@@ -958,6 +1244,7 @@ private struct KeyEditor: View {
         let name = finalName
         let provider = finalProvider
         let value = draft.value
+        let base = baseURL.trimmingCharacters(in: .whitespaces)
         saveTask = Task {
             defer { working = false }
             var result = currentTest
@@ -965,10 +1252,14 @@ private struct KeyEditor: View {
             // it asks the provider nothing.
             if canTest, result == nil {
                 testing = true
-                result = await test(name, value)
+                if isCustom {
+                    result = await testCustom(value, base)
+                } else {
+                    result = await test(name, value)
+                }
                 testing = false
                 testResult = result
-                testedFor = (name, value)
+                testedFor = (name, value, isCustom ? base : "")
             }
             guard !Task.isCancelled else { return }
             if case .rejected = result, !saveAnyway {
@@ -976,7 +1267,16 @@ private struct KeyEditor: View {
                 return
             }
             do {
-                try await save(provider, name, value, value.isEmpty ? nil : result)
+                if isCustom {
+                    let entries = CustomProvider.entries(
+                        prefix: customPrefix,
+                        baseURL: baseURL.trimmingCharacters(in: .whitespaces),
+                        key: value,
+                        model: model.trimmingCharacters(in: .whitespaces))
+                    try await saveCustom(provider, entries, value.isEmpty ? nil : result, name)
+                } else {
+                    try await save(provider, name, value, value.isEmpty ? nil : result)
+                }
                 dismiss()
             } catch {
                 self.error = error.localizedDescription
