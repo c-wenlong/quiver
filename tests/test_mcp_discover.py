@@ -361,6 +361,373 @@ class DiscoverReadsTheDiskTest(unittest.TestCase):
         self.assertNotIn("orphaned", [f.status for f in found])
 
 
+class ShieldCredentialsTest(unittest.TestCase):
+    """A literal credential in a harness config must never reach mcp.json.
+
+    redact() only substitutes store values, so `env.API_KEY = "sk-live"`
+    — the common case — landed in the versioned hub in plaintext. Apply
+    now moves credential-shaped fields into the store as ${NAME} refs.
+    """
+
+    def _hub(self, stack):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from quiver.mcp import discover as D
+
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
+        home = Path(tmp)
+        path = home / ".quiver" / "mcp.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"mcpServers": {}}))
+        stack.enter_context(patch.object(D, "MCP_SOURCE_FILE", path))
+        # set_secret resolves Path.home() — point it at the fixture home so
+        # the store lands beside the hub file under test.
+        import os
+
+        stack.enter_context(patch.dict(os.environ, {"HOME": str(home)}))
+        return home, path
+
+    def test_env_credential_moves_to_the_store_as_a_reference(self):
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, resolve
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            res = apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"command": "npx",
+                            "env": {"API_KEY": "sk-live-token-12345",
+                                    "NODE_ENV": "production"}},
+                )])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(res.added, ["svc"])
+            self.assertNotIn("sk-live-token-12345", json.dumps(hub))
+            self.assertEqual(hub["env"]["API_KEY"], "${API_KEY}")
+            # Ordinary env is not credential-shaped and stays literal.
+            self.assertEqual(hub["env"]["NODE_ENV"], "production")
+            self.assertEqual(load_secrets(home)["API_KEY"], "sk-live-token-12345")
+            # Shielding is output-equivalent: resolve() reproduces it.
+            self.assertEqual(resolve(hub["env"], home=home)["API_KEY"],
+                             "sk-live-token-12345")
+
+    def test_header_scheme_and_url_query_credentials_are_shielded(self):
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, resolve
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="remote", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"url": "https://h/mcp?key=TOKEN123&x=1",
+                            "headers": {"Authorization": "Bearer head-tok-987"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["remote"]
+            blob = json.dumps(hub)
+            self.assertNotIn("TOKEN123", blob)
+            self.assertNotIn("head-tok-987", blob)
+            self.assertIn("key=${KEY}", hub["url"])
+            self.assertIn("${AUTHORIZATION}", hub["headers"]["Authorization"])
+            resolved = resolve(hub, home=home)
+            self.assertEqual(resolved["url"], "https://h/mcp?key=TOKEN123&x=1")
+            self.assertEqual(resolved["headers"]["Authorization"],
+                             "Bearer head-tok-987")
+            self.assertTrue(load_secrets(home))
+
+    def test_existing_references_and_nonsecret_fields_are_untouched(self):
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"command": "npx",
+                            "env": {"API_KEY": "${API_KEY}",
+                                    "COLOR": "blue"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(hub["env"], {"API_KEY": "${API_KEY}", "COLOR": "blue"})
+
+    def test_same_literal_reuses_the_existing_secret_name(self):
+        # Two fields carrying the same token share one store entry rather
+        # than minting NAME and NAME_2.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"url": "https://h/mcp?key=same-token-value",
+                            "env": {"API_KEY": "same-token-value"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(hub["env"]["API_KEY"], "${API_KEY}")
+            self.assertIn("key=${API_KEY}", hub["url"])
+            self.assertEqual(load_secrets(home)["API_KEY"], "same-token-value")
+
+    def test_malformed_url_and_bare_query_pairs_do_not_crash_shielding(self):
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    # A query pair with no `=` and a non-str header value
+                    # used to be uncovered edge cases.
+                    server={"url": "https://h/mcp?key=&flag&token=TOKEN9",
+                            "headers": {"X-Api-Key": 42,
+                                        "Authorization": "Bearer ${AUTH}"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertIn("token=${TOKEN}", hub["url"])
+            self.assertIn("flag", hub["url"])
+            self.assertEqual(hub["headers"]["X-Api-Key"], 42)
+            # A scheme-prefixed value whose token is already a ref is left.
+            self.assertEqual(hub["headers"]["Authorization"], "Bearer ${AUTH}")
+
+    def test_a_secret_name_collision_gets_a_suffix(self):
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, set_secret
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            set_secret("API_KEY", "other-value", home)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "new-different-value"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(hub["env"]["API_KEY"], "${API_KEY_2}")
+            self.assertEqual(load_secrets(home)["API_KEY_2"], "new-different-value")
+            self.assertEqual(load_secrets(home)["API_KEY"], "other-value")
+
+    def test_a_value_embedding_a_reference_is_left_alone(self):
+        # redact() can hand discover "prefix-${TOKEN}"; storing that whole
+        # string under a new name would leave ${TOKEN} unexpanded — resolve
+        # substitutes once.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "prefix-${TOKEN}"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(hub["env"]["API_KEY"], "prefix-${TOKEN}")
+
+    def test_an_unstorable_credential_skips_the_server_not_the_run(self):
+        # A multiline value (a PEM block) can't be a secrets-file line:
+        # the rest of the findings still apply, this one is reported and
+        # kept out of the hub rather than written half-shielded.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            res = apply_mcp_findings([
+                McpFinding(
+                    name="bad", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "-----BEGIN-----\nline2\n-----END-----"}}),
+                McpFinding(
+                    name="good", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"command": "npx", "env": {}})])
+            servers = json.loads(path.read_text())["mcpServers"]
+            self.assertIn("good", servers)
+            self.assertNotIn("bad", servers)
+            self.assertEqual(res.added, ["good"])
+            self.assertEqual(load_secrets(home), {})
+
+    def test_a_literal_next_to_a_reference_is_still_shielded(self):
+        # `session=${SESSION}; refresh=literal-secret` has a reference in
+        # it, but the refresh literal would still land in versioned
+        # mcp.json if the whole value were skipped. The reference stays,
+        # the literal moves into the store.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, resolve
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"headers": {
+                        "Cookie": "session=${SESSION}; "
+                                  "refresh=literal-secret-99"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            cookie = hub["headers"]["Cookie"]
+            self.assertNotIn("literal-secret-99", cookie)
+            self.assertIn("session=${SESSION}", cookie)
+            self.assertIn("refresh=${", cookie)
+            resolved = resolve(hub, home=home)
+            # ${SESSION} is not in the store, so it passes through; the
+            # stored refresh literal resolves back to the real value.
+            self.assertEqual(
+                resolved["headers"]["Cookie"],
+                "session=${SESSION}; refresh=literal-secret-99")
+            self.assertIn("literal-secret-99", load_secrets(home).values())
+
+    def test_a_stored_literal_cannot_steal_a_referenced_name(self):
+        # `session=${SESSION}; session=other-token`: storing the literal
+        # as SESSION would rebind the existing reference to the new value.
+        # The literal must land under a different name.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, resolve
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"headers": {
+                        "Cookie": "session=${SESSION}; "
+                                  "session=other-token-7"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            cookie = hub["headers"]["Cookie"]
+            self.assertIn("session=${SESSION}", cookie)
+            self.assertIn("session=${SESSION_2}", cookie)
+            self.assertNotIn("other-token-7", cookie)
+            self.assertEqual(load_secrets(home)["SESSION_2"], "other-token-7")
+            resolved = resolve(hub, home=home)
+            self.assertEqual(
+                resolved["headers"]["Cookie"],
+                "session=${SESSION}; session=other-token-7")
+
+    def test_an_env_segment_literal_next_to_a_reference_is_stored(self):
+        # Same rule inside env: `a=${T}; b=literal` keeps the reference
+        # and stores only the b literal.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "a=${T}; b=literal-9x"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            value = hub["env"]["API_KEY"]
+            self.assertNotIn("literal-9x", value)
+            self.assertIn("a=${T}", value)
+            self.assertIn("b=${", value)
+            self.assertIn("literal-9x", load_secrets(home).values())
+
+    def test_an_unstorable_segment_literal_skips_the_server(self):
+        # A k=v segment whose literal can't be a secrets-file line blocks
+        # the server rather than writing it half-shielded.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "a=${T}; key=line1\nline2"}})])
+            servers = json.loads(path.read_text())["mcpServers"]
+            self.assertNotIn("svc", servers)
+
+    def test_an_opaque_literal_next_to_a_reference_skips_the_server(self):
+        # A credential-shaped run that is not a k=v segment (no safe way
+        # to isolate it) keeps the whole server out of the hub.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            res = apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"headers": {
+                        "Authorization":
+                            "Bearer ${TOKEN} abc123def456ghi789jkl012"}}),
+                McpFinding(
+                    name="ok", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"command": "npx", "env": {}})])
+            servers = json.loads(path.read_text())["mcpServers"]
+            self.assertNotIn("svc", servers)
+            self.assertIn("ok", servers)
+            self.assertEqual(res.added, ["ok"])
+
+
+class ServerSummaryScrubTest(unittest.TestCase):
+    """discover --json must obey the same secrecy contract as list --json."""
+
+    def test_credential_bearing_url_is_masked(self):
+        from quiver.mcp.cli import server_summary
+
+        out = server_summary({"url": "https://h/mcp?key=TOKEN123&x=1"})
+        self.assertNotIn("TOKEN123", out)
+        self.assertIn("key=***", out)
+
+    def test_store_backed_url_still_shows_its_reference(self):
+        from unittest.mock import patch as _patch
+
+        from quiver.mcp.cli import server_summary
+
+        with _patch("quiver.mcp.secrets.load_secrets",
+                    return_value={"K": "TOKEN12345678901234567890"}):
+            out = server_summary({"url": "https://h/mcp?key=TOKEN12345678901234567890"})
+        self.assertIn("${K}", out)
+        self.assertNotIn("TOKEN12345678901234567890", out)
+
+
 class ScannedServersAreRedactedTest(unittest.TestCase):
     """Scanned entries are raw config, so they take the same redact path.
 

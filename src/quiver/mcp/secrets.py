@@ -54,11 +54,41 @@ def load_secrets(home: Path | None = None) -> dict[str, str]:
         m = _EXPORT_RE.match(line)
         if not m:
             continue
-        name, raw = m.group(1), m.group(2).strip()
+        name, raw = m.group(1), _strip_inline_comment(m.group(2).strip())
         if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
             raw = raw[1:-1]
         out[name] = raw
     return out
+
+
+def _strip_inline_comment(raw: str) -> str:
+    """Drop a trailing unquoted `` # comment`` from an export value.
+
+    ``export KEY=value # note`` used to load ``value # note`` — the broken
+    string then resolved ``${KEY}`` into every harness config a sync wrote.
+    A ``#`` starts a comment only after whitespace and outside quotes.
+    Inside double quotes a backslash escapes the next char (``\"`` does
+    not end the value); single quotes are literal, like POSIX sh.
+    """
+    quote = ""
+    i = 0
+    while i < len(raw):
+        ch = raw[i]
+        if quote == '"':
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                quote = ""
+        elif quote == "'":
+            if ch == "'":
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and i > 0 and raw[i - 1] in " \t":
+            return raw[:i].rstrip()
+        i += 1
+    return raw
 
 
 def resolve(value, secrets: dict[str, str] | None = None, home: Path | None = None):
@@ -275,6 +305,223 @@ def scrub_args(args, secrets: dict[str, str] | None = None) -> list[str]:
             arg = f"{assign.group(1)}={_hide(assign.group(2))}"
         out.append(arg)
     return out
+
+
+def _secret_hint(raw: str) -> str:
+    """A field name normalised to a valid store name: ``X-Api-Key`` → ``X_API_KEY``."""
+    hint = re.sub(r"[^A-Za-z0-9_]", "_", raw).upper()
+    if not hint or hint[0].isdigit():
+        hint = "MCP_" + hint if hint else "MCP_SECRET"
+    return hint
+
+
+def _store_literal(hint: str, value: str, secrets: dict[str, str],
+                   home: Path | None = None,
+                   reserved: frozenset[str] = frozenset()) -> str:
+    """Move one plaintext credential into the store; return its ``${NAME}``.
+
+    ``reserved`` holds reference names already used in the config: minting
+    a new secret under one of them would rebind the existing ``${NAME}``
+    to the new literal on the next resolve.
+    """
+    for n, v in secrets.items():
+        if v == value:
+            return f"${{{n}}}"
+    base = _secret_hint(hint)
+    name = base
+    i = 2
+    while name in secrets or name in reserved:
+        name = f"{base}_{i}"
+        i += 1
+    set_secret(name, value, home)
+    secrets[name] = value
+    return f"${{{name}}}"
+
+
+def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict | None, list[str]]:
+    """Move credential-shaped literals in a canonical server dict into the
+    secrets store; return (shielded copy, notes).
+
+    Returns ``None`` for the dict when a field could not be stored (a
+    value no secrets-file line can represent): writing it half-shielded
+    would still leak the failing literal, so the caller must leave the
+    server out of the hub entirely.
+
+    ``swe mcp discover --apply`` copies harness values into the versioned
+    hub file. ``redact()`` only substitutes values already in the store, so
+    a literal ``env.API_KEY = "sk-live"`` — the common case — landed in
+    ``mcp.json`` in plaintext, one ``git add`` from a commit. Fields named
+    like credentials that are not already ``${NAME}`` references are moved
+    into the store and replaced by the reference. Shielding is
+    output-equivalent: ``resolve()`` reproduces the same value in every
+    harness config a sync writes.
+    """
+    secrets = load_secrets(home)
+    out = dict(server)
+    notes: list[str] = []
+    blocked: list[str] = []
+
+    # Every ${NAME} already referenced in this server is taken: storing a
+    # new literal under the same name would rebind the old reference to
+    # the new secret on the next resolve.
+    reserved: set[str] = set()
+
+    def _collect_refs(v) -> None:
+        if isinstance(v, str):
+            reserved.update(_REF_RE.findall(v))
+        elif isinstance(v, dict):
+            for x in v.values():
+                _collect_refs(x)
+        elif isinstance(v, list):
+            for x in v:
+                _collect_refs(x)
+
+    _collect_refs(server)
+
+    def stash(hint: str, value: str) -> str | None:
+        try:
+            ref = _store_literal(hint, value, secrets, home, frozenset(reserved))
+        except ValueError as exc:
+            # A value the store can't represent (multiline PEM, both quote
+            # kinds) must not abort the whole apply — and must not land in
+            # the hub either. The server is skipped wholesale below.
+            blocked.append(f"{hint}: {exc}")
+            return None
+        notes.append(
+            f"{hint}: plaintext credential moved to the secrets store ({ref})")
+        return ref
+
+    def shield_embedded(hint: str, value: str) -> str | None:
+        """Shield literal credentials mixed into a value holding ``${NAME}``.
+
+        A whole ``prefix-${TOKEN}`` style value keeps its reference (storing
+        it wholesale would leave the inner ``${TOKEN}`` unexpanded in every
+        synced config), but a literal sitting next to a reference —
+        ``Cookie: session=${SESSION}; refresh=literal-secret`` — must still
+        move into the store. ``k=v`` segments joined by ``;`` or ``&`` are
+        taken apart so each credential-named segment's literal stores
+        separately. Returns ``None`` when the non-reference remainder still
+        looks credential-shaped but cannot be taken apart safely.
+        """
+        pieces = re.split(r"([;&])", value)
+        for i, piece in enumerate(pieces):
+            key, eq, val = piece.partition("=")
+            # The field was already declared credential-shaped by its
+            # name, so every literal k=v segment holds a credential: a
+            # `refresh=` pair is not matched by _SECRET_FLAG_RE, but its
+            # value still must not reach versioned mcp.json.
+            if eq and val and not _REF_RE.search(val):
+                ref = stash(key.strip(), val)
+                if ref is None:
+                    return None
+                pieces[i] = f"{key}={ref}"
+        rebuilt = "".join(pieces)
+        remainder = _REF_RE.sub("", rebuilt)
+        if any(
+            _looks_opaque(tok)
+            for tok in re.split(r"[^A-Za-z0-9_\-=.%~+]+", remainder)
+        ):
+            return None
+        return rebuilt
+
+    env = out.get("env")
+    if isinstance(env, dict):
+        shielded = dict(env)
+        for key, value in env.items():
+            if (isinstance(value, str) and value
+                    and _SECRET_FLAG_RE.search(str(key))):
+                if not _REF_RE.search(value):
+                    ref = stash(str(key), value)
+                    if ref is not None:
+                        shielded[key] = ref
+                else:
+                    new_value = shield_embedded(str(key), value)
+                    if new_value is None:
+                        blocked.append(
+                            f"{key}: credential literal mixed with a "
+                            "${NAME} reference cannot be stored safely")
+                    elif new_value != value:
+                        shielded[key] = new_value
+        out["env"] = shielded
+
+    headers = out.get("headers")
+    if isinstance(headers, dict):
+        shielded = dict(headers)
+        for key, value in headers.items():
+            if not isinstance(value, str) or not value or _REF_ONLY_RE.fullmatch(value):
+                continue
+            scheme = _SCHEME_VALUE_RE.fullmatch(value)
+            if scheme:
+                token = scheme.group(1)
+                if not _REF_RE.search(token):
+                    ref = stash(str(key), token)
+                    if ref is not None:
+                        shielded[key] = f"{value[: -len(token)]}{ref}"
+                else:
+                    new_token = shield_embedded(str(key), token)
+                    if new_token is None:
+                        blocked.append(
+                            f"{key}: credential literal mixed with a "
+                            "${NAME} reference cannot be stored safely")
+                    elif new_token != token:
+                        shielded[key] = f"{value[: -len(token)]}{new_token}"
+            elif _SECRET_FLAG_RE.search(str(key)):
+                if not _REF_RE.search(value):
+                    ref = stash(str(key), value)
+                    if ref is not None:
+                        shielded[key] = ref
+                else:
+                    new_value = shield_embedded(str(key), value)
+                    if new_value is None:
+                        blocked.append(
+                            f"{key}: credential literal mixed with a "
+                            "${NAME} reference cannot be stored safely")
+                    elif new_value != value:
+                        shielded[key] = new_value
+        out["headers"] = shielded
+
+    url = out.get("url")
+    if isinstance(url, str) and url:
+        from urllib.parse import urlsplit, urlunsplit
+
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            parts = None
+        if parts and parts.query:
+            pairs = []
+            touched = False
+            for pair in parts.query.split("&"):
+                if not pair:
+                    continue
+                key, eq, value = pair.partition("=")
+                if eq and value and _SECRET_FLAG_RE.search(key):
+                    if not _REF_RE.search(value):
+                        ref = stash(key, value)
+                        if ref is not None:
+                            value = ref
+                            touched = True
+                    else:
+                        new_value = shield_embedded(key, value)
+                        if new_value is None:
+                            blocked.append(
+                                f"{key}: credential literal mixed with a "
+                                "${NAME} reference cannot be stored safely")
+                        elif new_value != value:
+                            value = new_value
+                            touched = True
+                pairs.append(key + eq + value)
+            if touched:
+                out["url"] = urlunsplit(
+                    (parts.scheme, parts.netloc, parts.path,
+                     "&".join(pairs), parts.fragment))
+    if blocked:
+        # Any field that failed to store leaves the literal out of the hub
+        # AND keeps the whole server out: a half-shielded entry could still
+        # leak whatever failed. None tells the caller to skip this server.
+        notes.extend(blocked)
+        return None, notes
+    return out, notes
 
 
 def store_env(home: Path | None = None) -> dict[str, str]:
