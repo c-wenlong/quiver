@@ -138,6 +138,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Resumed Codex threads are one session again.** Every `codex resume`
+  writes another `rollout-<iso>-<thread>_<rollout>.jsonl`, and the parser
+  keyed each file on the trailing uuid — the resume's own rollout id, which
+  the session index, the thread store and `codex resume` have never heard
+  of. The thread uuid is the first one, so `swe session` now folds every
+  resume into the thread's single row (the newest file stands for it),
+  emits a resume hint `codex resume` can resolve, and finds the thread's
+  real name. Index records written after the rollout's own timestamp no
+  longer feed the rename check, and a resume that only re-states the live
+  name can't stretch its rename window — resumes stopped reading as renames.
+
 - **Quiver's main window goes fullscreen.** A SwiftUI `Window` scene
   marks its NSWindow `.fullScreenNone`, so Enter Full Screen stayed off
   the green button's tiles and ⌃⌘F even though the window resized. The
