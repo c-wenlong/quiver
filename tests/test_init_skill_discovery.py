@@ -8,6 +8,7 @@ else is never replaced without --force.
 """
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -114,6 +115,24 @@ class SignatureTest(unittest.TestCase):
             found = {str(p.relative_to(home))
                      for p in discover_skill_roots(home, registry)}
             self.assertIn(".pi/agent/skills", found)
+
+    def test_declared_root_cannot_be_the_shared_tree(self):
+        # A malformed capability resolving to ~/.quiver/skills would let
+        # init classify and replace the link target itself.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            registry = {"evil": {"capabilities": {
+                "skills": {"supported": True, "root": "~/.quiver/skills"}}}}
+            found = {str(p.relative_to(home))
+                     for p in discover_skill_roots(home, registry)}
+            self.assertNotIn(".quiver/skills", found)
+
+    def test_declared_root_cannot_escape_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            registry = {"evil": {"capabilities": {
+                "skills": {"supported": True, "root": "~/../escape/skills"}}}}
+            self.assertEqual(discover_skill_roots(home, registry), [])
 
     def test_supported_false_registry_root_is_not_found(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -276,6 +295,51 @@ class ClassifyTest(unittest.TestCase):
             self.assertEqual(state, "keep")
             self.assertIn("1 of 2", detail)
 
+    def test_same_name_different_content_is_kept(self):
+        # A folder-name match is not a copy: absorbing a private "alpha"
+        # with different content would silently swap in an unrelated skill.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".pane" / "skills"
+            _skill(root, "alpha", "completely different body")
+            _skill(root, "beta")
+            state, detail = classify_skill_root(root, home)
+            self.assertEqual(state, "keep")
+            self.assertIn("1 of 2", detail)
+
+    def test_same_name_different_file_set_is_kept(self):
+        # Same SKILL.md but extra private files: not a copy either.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".pane" / "skills"
+            _skill(root, "alpha")
+            _skill(root, "beta")
+            (root / "alpha" / "helper.sh").write_text("#!/bin/sh\n")
+            state, _detail = classify_skill_root(root, home)
+            self.assertEqual(state, "keep")
+
+    def test_nonempty_dir_without_skills_is_kept(self):
+        # "Absorb empty" must mean empty: files that are not skills are
+        # user data, never silently deleted.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".pane" / "skills"
+            (root / "notes").mkdir(parents=True)
+            (root / "notes" / "todo.txt").write_text("keep me\n")
+            state, detail = classify_skill_root(root, home)
+            self.assertEqual(state, "keep")
+            self.assertIn("no skills", detail)
+
+    def test_regular_file_at_root_is_conflict_not_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".qwen" / "skills"
+            root.parent.mkdir(parents=True)
+            root.write_text("not a dir\n")
+            state, detail = classify_skill_root(root, home)
+            self.assertEqual(state, "conflict")
+            self.assertIn("real file", detail)
+
     def test_existing_symlink_reads_as_linked(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -360,6 +424,40 @@ class SafetyTest(unittest.TestCase):
             self._run(home, ["--check"])
             self.assertFalse(dup.is_symlink())
             self.assertTrue((dup / "alpha" / "SKILL.md").is_file())
+
+    def test_file_at_root_does_not_crash_init(self):
+        # A regular file squatting on a skills root reports as a conflict,
+        # not a mid-run FileExistsError after earlier roots already moved.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".qwen" / "skills"
+            root.parent.mkdir(parents=True)
+            root.write_text("not a dir\n")
+            code, _out = self._run(home, [])
+            self.assertEqual(code, 1, "a blocked path reports, not crashes")
+            self.assertTrue(root.is_file())
+            self.assertFalse(root.is_symlink())
+
+    def test_force_never_deletes_under_quiver_or_outside_home(self):
+        # A capability pointing into ~/.quiver is a real file "conflict"
+        # --force used to resolve by deleting it — the registry itself.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            qdir = home / ".quiver" / "config"
+            qdir.mkdir(parents=True)
+            victim = qdir / "harness.json"
+            victim.write_text(
+                json.dumps({
+                    "evil": {"capabilities": {
+                        "instructions": {"file": "~/.quiver/config/harness.json"},
+                        "skills": {"supported": False},
+                    }}
+                })
+            )
+            code, _out = self._run(home, ["--force"])
+            self.assertEqual(code, 1)
+            self.assertTrue(victim.is_file(), "--force deleted inside ~/.quiver")
+            self.assertFalse(victim.is_symlink())
 
     def test_rerun_is_stable(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -67,6 +67,25 @@ def _backup(path: Path, home: Path) -> Path:
     return backup_tree(path, home)
 
 
+def _safe_to_replace(path: Path, home: Path) -> bool:
+    """init deletes only real content inside $HOME that is not quiver's own.
+
+    A registry-declared target can point anywhere — a capability of
+    ``~/.quiver/config/harness.json`` resolving into the data plane, or one
+    slipping out of $HOME — and --force must never carry that through:
+    deleting the registry mid-run or reaching outside the sandbox is a
+    bug the flag was never meant to authorize.
+    """
+    try:
+        resolved = path.resolve()
+        return (
+            resolved.is_relative_to(home.resolve())
+            and not resolved.is_relative_to(quiver_dir(home).resolve())
+        )
+    except OSError:
+        return False
+
+
 def _apply(status: LinkStatus, canonical: Path, home: Path, force: bool) -> str:
     """Carry out one status. Returns a short result word for the report."""
     if status.state in ("linked", "skipped", "ignored"):
@@ -83,6 +102,8 @@ def _apply(status: LinkStatus, canonical: Path, home: Path, force: bool) -> str:
     path = status.path
     if status.state in ("conflict", "absorb", "keep") and not path.is_symlink():
         if path.exists():
+            if not _safe_to_replace(path, home):
+                return "blocked"
             _backup(path, home)
             if path.is_dir():
                 shutil.rmtree(path)

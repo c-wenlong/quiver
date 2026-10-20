@@ -217,6 +217,14 @@ def discover_skill_roots(
 
     declared = _registry_skill_roots(registry, home)
     for path in declared:
+        try:
+            # Same guard as the glob branch: a declared root that resolves
+            # to the shared tree is the target, never a link site — letting
+            # it through would let init replace ~/.quiver/skills itself.
+            if path.resolve() == shared.resolve() and not path.is_symlink():
+                continue
+        except OSError:
+            pass
         if path not in found:
             found.append(path)
 
@@ -246,7 +254,12 @@ def _registry_skill_roots(registry: dict, home: Path) -> dict[Path, str]:
             continue
         root = skills.get("root")
         if isinstance(root, str) and root.startswith("~/"):
-            roots[home / root[2:]] = key
+            rel = Path(root[2:])
+            # "~/../x" must not escape $HOME: a capability path is confined
+            # to home-relative space or it is dropped.
+            if not rel.parts or ".." in rel.parts:
+                continue
+            roots[home / rel] = key
     return roots
 
 
@@ -282,19 +295,18 @@ def skill_root_label(
     return owner[1:] if owner.startswith(".") else owner
 
 
-def skill_folder_names(root: Path) -> set[str]:
-    """Names of skill folders under ``root`` at any depth, following symlinks.
+def _skill_mds(root: Path) -> dict[str, Path]:
+    """dir-name -> its SKILL.md path for every skill folder under ``root``.
 
-    Not ``rglob``: it does not follow symlinks, so it missed skills that are
-    links into a vendor repo and disagreed with what `swe find` reported for
-    the same directory.
+    The walk follows symlinks but de-duplicates by (dev, ino), so a link
+    into a vendor repo is seen exactly once.
     """
     import os
 
+    out: dict[str, Path] = {}
     if not root.is_dir():
-        return set()
+        return out
     seen: set[tuple[int, int]] = set()
-    names: set[str] = set()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
         try:
             st = os.stat(dirpath)
@@ -307,8 +319,53 @@ def skill_folder_names(root: Path) -> set[str]:
             continue
         seen.add(key)
         if "SKILL.md" in filenames:
-            names.add(Path(dirpath).name)
-    return names
+            out[Path(dirpath).name] = Path(dirpath) / "SKILL.md"
+    return out
+
+
+def skill_folder_names(root: Path) -> set[str]:
+    """Names of skill folders under ``root`` at any depth, following symlinks.
+
+    Not ``rglob``: it does not follow symlinks, so it missed skills that are
+    links into a vendor repo and disagreed with what `swe find` reported for
+    the same directory.
+    """
+    return set(_skill_mds(root))
+
+
+def _tree_is_empty(root: Path) -> bool:
+    """True when the tree holds no files at all — dirs alone don't count."""
+    import os
+
+    for _dirpath, _dirnames, filenames in os.walk(root, followlinks=True):
+        if filenames:
+            return False
+    return True
+
+
+def _skill_manifest(skill_dir: Path) -> dict[str, int] | None:
+    """relpath -> size for every file under one skill dir; None if unreadable."""
+    try:
+        return {
+            p.relative_to(skill_dir).as_posix(): p.stat().st_size
+            for p in skill_dir.rglob("*")
+            if p.is_file()
+        }
+    except OSError:
+        return None
+
+
+def _same_skill(private_md: Path, shared_md: Path) -> bool:
+    """True when two same-named skill folders hold the same skill.
+
+    A folder-name match is NOT a copy — a private skill that happens to
+    share a name with a shared one keeps its own content, and absorbing
+    the tree would replace it with an unrelated skill. Compare every
+    file's presence and size plus the SKILL.md bytes.
+    """
+    if _skill_manifest(private_md.parent) != _skill_manifest(shared_md.parent):
+        return False
+    return _same_bytes(private_md, shared_md)
 
 
 def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]:
@@ -332,17 +389,30 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
         return "relink", f"points at {current}"
 
     if not path.is_dir():
+        # A regular file squatting on the root is a conflict, not a gap to
+        # fill: reporting it keeps init from crashing on FileExistsError
+        # halfway through mutating earlier roots.
+        if path.exists():
+            return "conflict", "real file, needs --force"
         return "create", ""
 
-    names = skill_folder_names(path)
-    if not names:
+    mds = _skill_mds(path)
+    if not mds:
+        # Files that are not skills are user data: report the root rather
+        # than deleting it. Only a genuinely empty tree is absorbable.
+        if not _tree_is_empty(path):
+            return "keep", "files but no skills"
         return "absorb", "empty"
 
-    shared_names = skill_folder_names(shared)
-    unique = names - shared_names
+    shared_mds = _skill_mds(shared)
+    unique = set(mds) - set(shared_mds)
     if not unique:
-        return "absorb", f"{len(names)} skills, all already shared"
-    return "keep", f"{len(unique)} of {len(names)} skills exist nowhere else"
+        unique = {
+            name for name, md in mds.items() if not _same_skill(md, shared_mds[name])
+        }
+    if not unique:
+        return "absorb", f"{len(mds)} skills, all already shared"
+    return "keep", f"{len(unique)} of {len(mds)} skills exist nowhere else"
 
 
 SEED_AGENTS_MD = """# Agent instructions
@@ -591,8 +661,12 @@ def _instruction_targets(registry: dict, home: Path) -> list[tuple[str, Path, bo
         file = (caps.get("instructions") or {}).get("file")
         if not (isinstance(file, str) and file.startswith("~/")):
             continue
+        rel = Path(file[2:])
+        # Same confinement as declared skill roots: "~/../x" escapes $HOME.
+        if not rel.parts or ".." in rel.parts:
+            continue
         targets = [t for t in targets if registry_name(t[0]) != key]
-        targets.append((key, Path(file[2:]), False))
+        targets.append((key, rel, False))
     return targets
 
 
