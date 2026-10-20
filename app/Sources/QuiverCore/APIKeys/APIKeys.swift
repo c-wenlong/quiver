@@ -505,7 +505,13 @@ public struct APIKeysStore: Sendable {
         let manager = FileManager.default
         let currentIsThere = manager.fileExists(atPath: current.path)
             || (try? manager.destinationOfSymbolicLink(atPath: current.path)) != nil
-        return !currentIsThere && manager.fileExists(atPath: legacy.path) ? legacy : current
+        // A directory layout (~/.api_keys/<provider>) is legal to the CLI
+        // but not to this file-format: a directory is not the store.
+        var legacyIsDirectory = ObjCBool(false)
+        let legacyIsFile = manager.fileExists(atPath: legacy.path,
+                                              isDirectory: &legacyIsDirectory)
+            && !legacyIsDirectory.boolValue
+        return !currentIsThere && legacyIsFile ? legacy : current
     }
 
     /// The real file behind a symlink, so a save doesn't replace the link.

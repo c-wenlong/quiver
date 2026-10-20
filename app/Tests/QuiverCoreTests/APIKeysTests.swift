@@ -583,6 +583,16 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(APIKeysStore.defaultURL(home: home) == current)
     }
 
+    @Test func aLegacyDirectoryIsNotTheStore() throws {
+        // ~/.api_keys as a directory of per-provider files is a CLI-only
+        // layout; the app reads the file, not the directory.
+        let home = try temp()
+        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let legacy = home.appending(path: ".api_keys")
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        #expect(APIKeysStore.defaultURL(home: home) == current)
+    }
+
     @Test func aFirstSaveCreatesItsFolderPrivatelyAndSealsIt() throws {
         let home = try temp()
         let url = APIKeysStore.defaultURL(home: home)

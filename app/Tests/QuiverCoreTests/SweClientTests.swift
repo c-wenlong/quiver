@@ -74,6 +74,29 @@ func fixture(_ name: String) throws -> Data {
         }
     }
 
+    @Test func aMissingSweReadsAsNotInstalled() async throws {
+        // `/usr/bin/env swe` answers 127 with env's own message.
+        let runner = FakeRunner(.init(status: 127, stdout: Data(),
+                                      stderr: "env: swe: No such file or directory\n"))
+        await #expect(throws: SweError.notInstalled("swe")) {
+            _ = try await SweClient(runner: runner).harnesses(withUsage: false)
+        }
+    }
+
+    @Test func a127WithoutEnvsMessageIsNotNotInstalled() async throws {
+        // swe itself failing hard keeps its real message.
+        let runner = FakeRunner(.init(status: 127, stdout: Data(), stderr: "swe blew up"))
+        await #expect(throws: SweError.commandFailed(status: 127, message: "swe blew up")) {
+            _ = try await SweClient(runner: runner).harnesses(withUsage: false)
+        }
+    }
+
+    @Test func notInstalledPointsAtSettingsNotPip() {
+        let text = SweError.notInstalled("swe").localizedDescription
+        #expect(text.contains("Settings"))
+        #expect(!text.contains("pip"))
+    }
+
     @Test func anOlderSweWithoutJSONIsNamedAsSuch() async throws {
         // A swe from before --json existed rejects the flag in plain text.
         let old = Data("\u{1B}[31m  Unexpected args: --json\u{1B}[0m\n".utf8)

@@ -12,7 +12,7 @@ extension SweError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .notInstalled(let name):
-            "Couldn't find \(name). Install quiver with pip, then reopen the app."
+            "Couldn't find \(name). Fix the swe path in Settings › General, or reinstall the app."
         case .commandFailed(_, let message):
             message.isEmpty ? "swe exited with an error." : message
         case .jsonUnsupported:
@@ -68,6 +68,11 @@ public struct SweClient: Sendable {
             throw SweError.jsonUnsupported
         }
         let isJSON = Self.plain(stdoutText).hasPrefix("{")
+        // `/usr/bin/env <swe>` exits 127 with its own message when the
+        // binary is missing; that is "not installed", not a swe refusal.
+        if result.status == 127, let missing = Self.envNotFoundName(result.stderr) {
+            throw SweError.notInstalled(missing)
+        }
         if result.status != 0 && (!allowFailure || !isJSON) {
             // Refusals go to stderr, but an older swe printed them to stdout.
             let stderr = Self.plain(result.stderr)
@@ -104,6 +109,15 @@ extension SweClient {
                 || plain.contains("Unknown option")
                 // `swe find` from before plugins had --json
                 || plain.contains("--json is only available for skills"))
+    }
+
+    /// The binary `env` could not find, from "env: <name>: No such file
+    /// or directory". Returns nil for anything else.
+    static func envNotFoundName(_ stderr: String) -> String? {
+        let plain = plain(stderr)
+        guard plain.hasPrefix("env: "), plain.hasSuffix(": No such file or directory") else { return nil }
+        let name = plain.dropFirst("env: ".count).dropLast(": No such file or directory".count)
+        return name.isEmpty ? nil : String(name)
     }
 
     /// Text with terminal colour codes removed and edges trimmed.
