@@ -310,6 +310,36 @@ import Testing
         #expect(events[0].accountHome == account)
     }
 
+    /// The cross-profile match must not reach another account: a row for
+    /// the same day bucket, model and instant but keyed under a different
+    /// account id survives the cleanup.
+    @Test func anotherAccountsLookalikeRowKeepsItsUsage() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        // uid-2's event, as its profile stored it under the old scheme:
+        // no conversation, so the day bucket and the rest of the event
+        // identity coincide with uid-1's.
+        let otherAccount = LedgerRecord(
+            key: "cursor-feed:uid-2:1791700000500:composer-1::700:20",
+            authoritative: true,
+            event: UsageEvent(
+                harness: "cursor", accountHome: account,
+                sessionId: "cursor-" + CursorUsageFeed.dayLabel(for: 1791700000.5),
+                model: "composer-1", timestamp: Date(timeIntervalSince1970: 1791700000.5),
+                inputTokens: 700, outputTokens: 20))
+        try await ledger.ingest([otherAccount])
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: nil, headless: false,
+                inputTokens: 1_000, outputTokens: 50,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil),
+            accountKey: "uid-1", accountHome: "/t/cursor-side/desktop")])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 2)
+        #expect(Set(events.map(\.inputTokens)) == [700, 1_000])
+    }
+
     @Test func theWindowStartsAt180DaysThenOverlapsTwo() async throws {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("cache"))

@@ -54,7 +54,7 @@ final class LedgerStore {
     private var selectDim: Statement!
     private var insertDim: Statement!
     private var deleteSameEvent: Statement!
-    private var deleteSameEventAnyProfile: Statement!
+    private var selectSameEventAnyProfile: Statement!
 
     struct DimKey: Hashable {
         var harness, account, session, cwd, model, tier: String
@@ -135,12 +135,12 @@ final class LedgerStore {
         // For accounts several profiles can read (the Cursor feed when
         // swe names an account_id), the same event's stale rows sit under
         // whichever profile imported them — dims.account names the reader,
-        // not the account — so the match drops it and keeps the rest of
-        // the event's identity.
-        deleteSameEventAnyProfile = try db.prepare("""
-            DELETE FROM events WHERE ts = ? AND key != ? AND msg IS NULL AND dim IN (
-                SELECT id FROM dims
-                WHERE harness = ? AND session = ? AND cwd = ? AND model = ? AND tier = ?)
+        // not the account. The candidates share the event's identity; the
+        // key check afterwards confirms they belong to the same account.
+        selectSameEventAnyProfile = try db.prepare("""
+            SELECT e.key, e.input, e.output FROM events e JOIN dims d ON d.id = e.dim
+            WHERE e.ts = ? AND e.key != ? AND e.msg IS NULL
+                AND d.harness = ? AND d.session = ? AND d.cwd = ? AND d.model = ? AND d.tier = ?
             """)
     }
 
@@ -220,11 +220,28 @@ final class LedgerStore {
             // correction double-counts.
             let e = record.event
             if record.accountSpansProfiles {
-                try deleteSameEventAnyProfile.bind([
+                // The old counts-bearing key is this record's key plus
+                // ":\(input):\(output)". Rehashing it with a candidate's
+                // own counts reproduces its key only when the candidate
+                // is the same account's same event — another account's
+                // lookalike row (same day bucket, model and instant)
+                // keeps its own account in the string and is left alone.
+                selectSameEventAnyProfile.bind([
                     .double(e.timestamp.timeIntervalSince1970), .int(key),
                     .text(e.harness), .text(e.sessionId), .text(e.cwd ?? ""),
                     .text(e.model), .text(e.serviceTier ?? ""),
-                ]).run()
+                ])
+                var staleKeys: [Int64] = []
+                while try selectSameEventAnyProfile.step() {
+                    let stale = StableHash.of(
+                        "\(record.key):\(selectSameEventAnyProfile.int(1)):" +
+                            "\(selectSameEventAnyProfile.int(2))")
+                    if stale == selectSameEventAnyProfile.int(0) { staleKeys.append(stale) }
+                }
+                selectSameEventAnyProfile.bind([])
+                for stale in staleKeys {
+                    try deleteEvent.bind([.int(stale)]).run()
+                }
             } else {
                 try deleteSameEvent.bind([
                     .int(dim), .double(e.timestamp.timeIntervalSince1970), .int(key),
