@@ -43,7 +43,7 @@ PASSTHROUGH_DIRS = ("completions", "reports")
 # sealed secrets/.gitignore keeps them out of a `git add .`, while config/
 # is exactly the tree a user versions.
 def _is_credential_file(name: str) -> bool:
-    return name == ".env" or name.startswith(".env.") or name == ".netrc"
+    return name in (".env", ".envrc", ".netrc") or name.startswith(".env.")
 
 # Dead weight from the single-file era, deleted rather than carried across.
 DROP = ("mcp.py", "mcp_formats.py", "mcp_server.py", "tests", "__pycache__", "archive")
@@ -134,6 +134,16 @@ def apply_migration(plan: MigrationPlan, remove_source: bool = True) -> Migratio
                 seal_secrets_dir(home)
                 sealed = True
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_symlink():
+            target = os.readlink(src)
+            if not os.path.isabs(target):
+                # Moving a relative link re-anchors it at the destination:
+                # ../../dotfiles/mcp.json resolved under the legacy root
+                # would point outside the home from the hub. Point the new
+                # link at where the old one actually reached instead.
+                os.symlink(os.path.abspath(src.parent / target), dest)
+                src.unlink()
+                continue
         shutil.move(str(src), str(dest))
 
     for entry in plan.dropped:

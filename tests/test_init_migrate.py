@@ -267,6 +267,40 @@ class PlanMigrationTest(unittest.TestCase):
             self.assertEqual(dest.readlink(), home / "dotfiles" / "mcp.json")
             self.assertTrue((home / ".config" / "swe" / "mcp.json").is_file())
 
+    def test_envrc_lands_under_sealed_secrets_not_versioned_config(self):
+        # direnv files hold credentials exactly like .env; routing them to
+        # config/ puts a key in the tree a user versions.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".envrc": "export KEY=x"})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(
+                dest[".envrc"], paths.secrets_dir_for(home) / ".envrc")
+            apply_migration(plan)
+            self.assertEqual(
+                (paths.secrets_dir_for(home) / ".envrc").read_text(),
+                "export KEY=x")
+            self.assertTrue(
+                (paths.secrets_dir_for(home) / ".gitignore").is_file())
+
+    def test_a_relative_symlink_moves_with_its_target_reanchored(self):
+        # ../../dotfiles/mcp.json resolved inside the legacy root, but the
+        # same bytes under the hub root would point outside the home. The
+        # moved link must point at where the old one reached.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp)
+            real = home / "dotfiles" / "mcp.json"
+            real.parent.mkdir()
+            real.write_text('{"mcpServers":{}}')
+            link = home / ".config" / "swe" / "mcp.json"
+            link.symlink_to(Path("..") / ".." / "dotfiles" / "mcp.json")
+            plan = apply_migration(plan_migration(home))
+            dest = paths.mcp_source_file_for(home)
+            self.assertIn((link, dest), plan.moved)
+            self.assertTrue(dest.is_symlink())
+            self.assertEqual(dest.resolve(), real.resolve())
+            self.assertFalse(link.exists())
+
     def test_drop_list_and_move_lists_do_not_overlap(self):
         self.assertEqual(set(DROP) & set(CONFIG_FILES), set())
         self.assertEqual(set(DROP) & set(CACHE_FILES), set())

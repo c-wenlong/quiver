@@ -10,7 +10,7 @@ from quiver.console import c, elide, sanitize, terminal_width, truncate
 from quiver.find.models import DriftRow
 from quiver.flags import expand_value_flags
 from quiver.harness.registry import load_registry_if_present
-from quiver.init.layout import classify_skill_root, skill_folder_names
+from quiver.init.layout import classify_skill_root, skill_folder_scan
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.find.tree import (
     agents_tree,
@@ -482,13 +482,18 @@ def _skills_json(home: Path, registry: dict, nodes, scope: str) -> dict:
         label = dir_label(node.path, home)
         # The scan keeps the state but drops the reason; the app wants it.
         _state, detail = classify_skill_root(node.path, home)
+        names, scan_complete = skill_folder_scan(node.path)
         roots.append({
             "harness": resolve_harness(label, registry, aliases) or label,
             "path": str(node.path),
             "scope": node_scope(node, home),
             "kind": node.kind,
             "state": node.state,
-            "count": len(skill_folder_names(node.path)),
+            # A capped walk only saw part of the root: the count is a lower
+            # bound, and count_complete says so rather than letting the app
+            # print it as the real total.
+            "count": len(names),
+            "count_complete": scan_complete,
             "detail": detail,
         })
     return {
@@ -625,7 +630,10 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
                   f"{c('dim', elide(n.detail, _path_budget(48)))}")
             # These roots hold the only copy of what is in them, so their
             # contents are the part worth seeing.
-            _flow(sorted(skill_folder_names(n.path)), indent="      ", limit=40)
+            names, scan_complete = skill_folder_scan(n.path)
+            _flow(sorted(names), indent="      ", limit=40)
+            if not scan_complete:
+                print(f"      {c('dim', '… (partial listing: scan hit the directory cap)')}")
 
     if strays:
         print(f"  {c('yellow', f'{len(strays)} on disk but unregistered:')}"

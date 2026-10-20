@@ -341,6 +341,17 @@ def _skill_mds(root: Path) -> tuple[dict[str, list[Path]], bool]:
     return out, True
 
 
+def skill_folder_scan(root: Path) -> tuple[set[str], bool]:
+    """(skill folder names, complete) — see ``_skill_mds`` for the walk rules.
+
+    ``complete=False`` means the directory cap cut the walk short: the names
+    are a lower bound, not a listing, and callers that print a count must
+    say so rather than presenting the partial scan as finished.
+    """
+    mds, complete = _skill_mds(root)
+    return set(mds), complete
+
+
 def skill_folder_names(root: Path) -> set[str]:
     """Names of skill folders under ``root`` at any depth, following symlinks.
 
@@ -348,7 +359,7 @@ def skill_folder_names(root: Path) -> set[str]:
     links into a vendor repo and disagreed with what `swe find` reported for
     the same directory.
     """
-    return set(_skill_mds(root)[0])
+    return skill_folder_scan(root)[0]
 
 
 def _tree_is_empty(root: Path) -> bool:
