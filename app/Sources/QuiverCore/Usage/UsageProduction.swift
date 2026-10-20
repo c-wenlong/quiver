@@ -117,17 +117,49 @@ extension KeychainCLI: SecretStoring {
 /// back without a prompt, while asking `security` for it may prompt.
 /// Claude Code's credentials stay on `KeychainCLI` for the inverse
 /// reason — `security` wrote them, so SecItem would prompt on every read.
+/// The three Security calls behind `SecItemKeychain`, as a seam tests
+/// fake. C functions are not `Sendable`-friendly to store directly, so
+/// each is a closure over the real call.
+struct SecItemCalls: Sendable {
+    var copyMatching: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>) -> OSStatus
+    var update: @Sendable (CFDictionary, CFDictionary) -> OSStatus
+    var add: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    var delete: @Sendable (CFDictionary) -> OSStatus
+
+    static let live = SecItemCalls(
+        copyMatching: { SecItemCopyMatching($0, $1) },
+        update: { SecItemUpdate($0, $1) },
+        add: { SecItemAdd($0, $1) },
+        delete: { SecItemDelete($0) })
+}
+
+/// Quiver's own service keys, through Security.framework.
+///
+/// `KeychainCLI`'s `security add-generic-password -w` puts the value on
+/// argv, where `ps` can see it; SecItem calls carry it in memory. The
+/// reverse of KeychainCLI's read caveat applies too: items the app writes
+/// here read back in-process without a prompt.
+///
+/// Every query asks for `kSecUseAuthenticationUIFail`: an item written by
+/// `security` before the switch (or a locked keychain) can wait forever
+/// on a consent prompt, and a page load must not hang on it. Such a read
+/// answers nil; a write or delete throws, so the failure is visible
+/// instead of a silent hang. Saving a value once recreates the item under
+/// the app's ownership, and reads stop prompting from then on.
 public struct SecItemKeychain: SecretStoring {
-    public init() {}
+    private let calls: SecItemCalls
+
+    public init() { calls = .live }
+    init(calls: SecItemCalls) { self.calls = calls }
 
     /// The item's password, or nil when it is missing, the keychain
-    /// refused, or the value is not UTF-8 text.
+    /// refused, the read would have prompted, or the value is not UTF-8.
     public func genericPassword(service: String, account: String) async -> String? {
         var item: CFTypeRef?
         var query = Self.query(service: service, account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = calls.copyMatching(query as CFDictionary, &item)
         guard status == errSecSuccess, let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -137,13 +169,13 @@ public struct SecItemKeychain: SecretStoring {
     public func setGenericPassword(service: String, account: String, value: String) async throws {
         var query = Self.query(service: service, account: account)
         let data = Data(value.utf8)
-        switch SecItemUpdate(query as CFDictionary,
-                             [kSecValueData as String: data] as CFDictionary) {
+        switch calls.update(query as CFDictionary,
+                            [kSecValueData as String: data] as CFDictionary) {
         case errSecSuccess:
             return
         case errSecItemNotFound:
             query[kSecValueData as String] = data
-            try Self.check(SecItemAdd(query as CFDictionary, nil))
+            try Self.check(calls.add(query as CFDictionary, nil))
         case let status:
             throw Self.error(status)
         }
@@ -151,7 +183,7 @@ public struct SecItemKeychain: SecretStoring {
 
     /// Removes the item; one that was never there is already removed.
     public func deleteGenericPassword(service: String, account: String) async throws {
-        let status = SecItemDelete(Self.query(service: service, account: account) as CFDictionary)
+        let status = calls.delete(Self.query(service: service, account: account) as CFDictionary)
         if status != errSecItemNotFound {
             try Self.check(status)
         }
@@ -160,7 +192,10 @@ public struct SecItemKeychain: SecretStoring {
     private static func query(service: String, account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,
-         kSecAttrAccount as String: account]
+         kSecAttrAccount as String: account,
+         // Never put up a consent prompt: it can wait forever while a
+         // page is trying to load.
+         kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail]
     }
 
     /// What a failed SecItem call throws: `commandFailed` with Security's

@@ -66,6 +66,125 @@ import Testing
     }
 }
 
+extension SecItemKeychainTests {
+    /// A keychain in memory: the SecItemCalls seam answers from `items`
+    /// keyed by (service, account), and records every call.
+    final class FakeKeychain: @unchecked Sendable {
+        var items: [String: Data] = [:]
+        private(set) var calls: [String] = []
+        /// Each query must ask to fail instead of prompting.
+        private(set) var promptsForbidden = true
+
+        func make() -> SecItemCalls {
+            SecItemCalls(
+                copyMatching: { [self] query, result in
+                    calls.append("read")
+                    if (query as? [String: Any])?[kSecUseAuthenticationUI as String] as? String
+                        != kSecUseAuthenticationUIFail as String {
+                        promptsForbidden = false
+                    }
+                    guard let q = query as? [String: Any],
+                          let data = items[key(q)] else {
+                        result.pointee = nil
+                        return errSecItemNotFound
+                    }
+                    result.pointee = data as CFTypeRef
+                    return errSecSuccess
+                },
+                update: { [self] query, attributes in
+                    calls.append("update")
+                    guard let q = query as? [String: Any],
+                          let attrs = attributes as? [String: Any],
+                          let data = attrs[kSecValueData as String] as? Data,
+                          items[key(q)] != nil else { return errSecItemNotFound }
+                    items[key(q)] = data
+                    return errSecSuccess
+                },
+                add: { [self] query, _ in
+                    calls.append("add")
+                    guard let q = query as? [String: Any],
+                          let data = q[kSecValueData as String] as? Data else {
+                        return errSecParam
+                    }
+                    items[key(q)] = data
+                    return errSecSuccess
+                },
+                delete: { [self] query in
+                    calls.append("delete")
+                    guard let q = query as? [String: Any],
+                          items.removeValue(forKey: key(q)) != nil else {
+                        return errSecItemNotFound
+                    }
+                    return errSecSuccess
+                })
+        }
+
+        private func key(_ query: [String: Any]) -> String {
+            let service = query[kSecAttrService as String] as? String ?? ""
+            let account = query[kSecAttrAccount as String] as? String ?? ""
+            return service + "\u{1F}" + account
+        }
+    }
+
+    @Test func aReadReturnsTheStoredValue() async {
+        let keychain = FakeKeychain()
+        keychain.items["svc\u{1F}acct"] = Data("sekrit".utf8)
+        let store = SecItemKeychain(calls: keychain.make())
+        #expect(await store.genericPassword(service: "svc", account: "acct") == "sekrit")
+    }
+
+    @Test func aReadThatWouldPromptIsNilNotAHang() async {
+        let keychain = FakeKeychain()
+        var calls = keychain.make()
+        calls.copyMatching = { _, _ in errSecInteractionNotAllowed }
+        let store = SecItemKeychain(calls: calls)
+        #expect(await store.genericPassword(service: "svc", account: "acct") == nil)
+    }
+
+    @Test func aWriteUpdatesAnExistingItem() async throws {
+        let keychain = FakeKeychain()
+        keychain.items["svc\u{1F}acct"] = Data("old".utf8)
+        let store = SecItemKeychain(calls: keychain.make())
+        try await store.setGenericPassword(service: "svc", account: "acct", value: "new")
+        #expect(keychain.items["svc\u{1F}acct"] == Data("new".utf8))
+        #expect(keychain.calls == ["update"])
+    }
+
+    @Test func aWriteAddsWhenThereIsNothingToUpdate() async throws {
+        let keychain = FakeKeychain()
+        let store = SecItemKeychain(calls: keychain.make())
+        try await store.setGenericPassword(service: "svc", account: "acct", value: "new")
+        #expect(keychain.items["svc\u{1F}acct"] == Data("new".utf8))
+        #expect(keychain.calls == ["update", "add"])
+    }
+
+    @Test func aFailedWriteThrowsItsStatus() async {
+        let keychain = FakeKeychain()
+        var calls = keychain.make()
+        calls.update = { _, _ in errSecAuthFailed }
+        let store = SecItemKeychain(calls: calls)
+        await #expect(throws: SweError.self) {
+            try await store.setGenericPassword(service: "svc", account: "acct", value: "v")
+        }
+    }
+
+    @Test func deletingAMissingItemIsNotAnError() async throws {
+        let keychain = FakeKeychain()
+        let store = SecItemKeychain(calls: keychain.make())
+        try await store.deleteGenericPassword(service: "svc", account: "acct")
+        keychain.items["svc\u{1F}acct"] = Data("v".utf8)
+        try await store.deleteGenericPassword(service: "svc", account: "acct")
+        #expect(keychain.items["svc\u{1F}acct"] == nil)
+    }
+
+    @Test func everyQueryAsksToFailRatherThanPrompt() async throws {
+        let keychain = FakeKeychain()
+        let store = SecItemKeychain(calls: keychain.make())
+        _ = await store.genericPassword(service: "svc", account: "acct")
+        #expect(keychain.promptsForbidden)
+    }
+}
+
 struct ThrowingRunner: CommandRunning {
     func run(_ arguments: [String]) async throws -> CommandResult { throw SweError.notInstalled("security") }
 }
