@@ -208,7 +208,7 @@ def _stdout_error_detail(stdout: str, args: Sequence[str] = ()) -> str:
     for candidate in candidates:
         try:
             record = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, RecursionError):
             continue
         if not isinstance(record, dict):
             continue
@@ -275,7 +275,7 @@ def _decode_json(value: Any) -> Mapping[str, Any] | None:
         candidate = re.sub(r"\s*```$", "", candidate)
     try:
         return _decode_json(json.loads(candidate))
-    except (json.JSONDecodeError, TypeError):
+    except (json.JSONDecodeError, TypeError, RecursionError):
         return None
 
 

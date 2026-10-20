@@ -1688,8 +1688,13 @@ def cmd_edit(args):
 
         try:
             edited = json.loads(tmp_file.read_text())
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeError, RecursionError):
             print("Invalid JSON — no changes saved.")
+            return 0
+        if not isinstance(edited, dict):
+            # A JSON array answers ``name in edited`` by element membership,
+            # so edited[name] then indexes a list with a string.
+            print("The edit must be a JSON object — no changes saved.")
             return 0
         if name in edited and isinstance(edited[name], dict):
             # The temp file holds the server's raw tool-native dict, so it is

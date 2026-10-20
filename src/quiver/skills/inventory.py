@@ -171,11 +171,11 @@ def _claude_plugin_loads(home: Path):
     live_cache: set[tuple[str, str]] = set()   # (marketplace, plugin) cache dirs
     live: dict[Path, bool] = {}
     for ref, entries in (plugins.items() if isinstance(plugins, dict) else []):
-        paths = [entry["installPath"]
+        install_paths = [entry["installPath"]
                  for entry in (entries if isinstance(entries, list) else [entries])
                  if isinstance(entry, dict) and isinstance(entry.get("installPath"), str)
                  and entry["installPath"]]
-        if not paths:
+        if not install_paths:
             continue   # no usable install record: claude has not installed it
         source = _claude_live_source(markets, ref)
         if source is not None:
@@ -185,10 +185,10 @@ def _claude_plugin_loads(home: Path):
                 live[real_source] = live.get(real_source, False) or loads
                 plugin, _, market = ref.partition("@")
                 live_cache.add((market, plugin))
-        for path in paths:
+        for path in install_paths:
             if cache_real is None:
                 continue
-            real = _real_path(Path(path).expanduser())
+            real = _real_path(paths.expand_user(path))
             if real is None or not _under(real, cache_real):
                 continue
             parts = real.relative_to(cache_real).parts

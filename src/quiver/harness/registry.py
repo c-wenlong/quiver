@@ -210,8 +210,15 @@ def _read_legacy_stars() -> list[str]:
     try:
         with open(STARS_FILE) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return []
+    except (OSError, json.JSONDecodeError, RecursionError) as exc:
+        # The migration below retires this file to backup right after
+        # reading it; reading a corrupt one as "no stars" would commit a
+        # harness.json that drops every pin. Fail instead so the file is
+        # still there to fix.
+        raise CorruptConfigurationError(
+            f"{STARS_FILE}: cannot migrate an unreadable stars file"
+            f" ({exc}); fix or remove it and load the registry again"
+        ) from exc
     if isinstance(data, list):
         return [str(x) for x in data if isinstance(x, str) and x]
     if isinstance(data, dict) and isinstance(data.get("stars"), list):
@@ -225,8 +232,13 @@ def _read_legacy_archive() -> dict:
     try:
         with open(ARCHIVE_FILE) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
+    except (OSError, json.JSONDecodeError, RecursionError) as exc:
+        # Same rule as the stars file: committing a migration on an
+        # unreadable archive would silently re-activate shelved tools.
+        raise CorruptConfigurationError(
+            f"{ARCHIVE_FILE}: cannot migrate an unreadable archive file"
+            f" ({exc}); fix or remove it and load the registry again"
+        ) from exc
     return data if isinstance(data, dict) else {}
 
 

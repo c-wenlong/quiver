@@ -96,7 +96,8 @@ def _registered_paths(mcp_tools) -> set:
             continue
         try:
             out.add(Path(str(path)).expanduser().resolve())
-        except OSError:
+        except (OSError, RuntimeError):
+            # RuntimeError: ``~missing-user`` has no home to expand into.
             continue
     return out
 

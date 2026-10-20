@@ -91,7 +91,8 @@ def _ask_yes_no(
 def _display_path(path: Path, home: Path) -> str:
     try:
         relative = path.expanduser().relative_to(home.expanduser())
-    except ValueError:
+    except (ValueError, RuntimeError):
+        # RuntimeError: a ``~user`` path for an account that does not exist.
         return str(path)
     return "~" if str(relative) == "." else f"~/{relative}"
 

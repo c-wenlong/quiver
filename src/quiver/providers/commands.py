@@ -74,7 +74,13 @@ def cmd_list(args: list[str]) -> int:
         filt = args[0].lower()
 
     providers = load_registry()
-    keys_dir = (api_keys_dir or default_keys_dir()).expanduser()
+    try:
+        keys_dir = (api_keys_dir or default_keys_dir()).expanduser()
+    except RuntimeError:
+        # Path.expanduser raises for ``~missing-user``: reject it like any
+        # other flag value that cannot resolve, rather than tracebacking.
+        print(c("red", f"  Cannot expand --api-keys-dir: {api_keys_dir}"))
+        return 1
     rows = discover_provider_keys(providers, keys_dir)
     if filt:
         rows = [
@@ -339,7 +345,11 @@ def cmd_info(args: list[str]) -> int:
         return 1
 
     info = providers[name]
-    keys_dir = (api_keys_dir or default_keys_dir()).expanduser()
+    try:
+        keys_dir = (api_keys_dir or default_keys_dir()).expanduser()
+    except RuntimeError:
+        print(c("red", f"  Cannot expand --api-keys-dir: {api_keys_dir}"))
+        return 1
     row = next(
         iter(discover_provider_keys({name: info}, keys_dir)),
         None,

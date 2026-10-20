@@ -11,6 +11,7 @@ from quiver.init.layout import (
     agents_file,
     inspect,
     link_states,
+    load_registry,
     plan,
     quiver_dir,
     skills_dir,
@@ -594,3 +595,42 @@ class CmdInitViewTest(unittest.TestCase):
                 int(n) for n in re.findall(r"(\d+) (?:linked|would-create|would-relink|would-absorb)", sections)
             )
             self.assertEqual(int(total.group(1)), expected)
+
+
+class InitRegistryReadTest(unittest.TestCase):
+    """init's own registry read must not degrade corrupt files to {} —
+    the callers hand the result to register() and link-state writes."""
+
+    def _home_with_registry(self, tmp: str, body: str) -> Path:
+        home = Path(tmp)
+        cfg = home / ".quiver" / "config"
+        cfg.mkdir(parents=True)
+        (cfg / "harness.json").write_text(body, encoding="utf-8")
+        return home
+
+    def test_missing_registry_still_reads_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(load_registry(Path(tmp)), {})
+
+    def test_corrupt_registry_raises_instead_of_reading_empty(self):
+        from quiver.configuration import CorruptConfigurationError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home_with_registry(tmp, "{corrupt")
+            with self.assertRaises(CorruptConfigurationError):
+                load_registry(home)
+
+    def test_non_object_registry_raises_instead_of_reading_empty(self):
+        from quiver.configuration import CorruptConfigurationError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home_with_registry(tmp, "[1, 2]")
+            with self.assertRaises(CorruptConfigurationError):
+                load_registry(home)
+
+    def test_valid_registry_still_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home_with_registry(
+                tmp, '{"claude": {"command": "claude"}}')
+            self.assertEqual(
+                load_registry(home), {"claude": {"command": "claude"}})

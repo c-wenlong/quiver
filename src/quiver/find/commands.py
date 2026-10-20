@@ -809,7 +809,8 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global",
         if t.path:
             try:
                 known.add(Path(t.path).expanduser().resolve())
-            except OSError:
+            except (OSError, RuntimeError):
+                # RuntimeError: ``~missing-user`` has no home to expand into.
                 pass
     hub_path = (paths.quiver_dir_for(home) / "mcp.json").resolve()
     known.add(hub_path)

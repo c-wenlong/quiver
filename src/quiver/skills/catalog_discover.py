@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from quiver.paths import expand_user
 from quiver.skills.catalogs import (
     DEFAULT_SEARCH_ROOTS,
     add_skill_catalog,
@@ -33,8 +34,8 @@ def _known_root_paths(home: Path, cwd: Path) -> set[Path]:
             continue
     for entry in load_skill_catalogs():
         try:
-            known.add(Path(entry["path"]).expanduser().resolve())
-        except (OSError, KeyError):
+            known.add(expand_user(entry["path"]).resolve())
+        except (OSError, KeyError, RuntimeError):
             continue
     return known
 
