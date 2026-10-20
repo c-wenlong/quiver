@@ -125,17 +125,20 @@ def cmd_models(args):
 
     grand_total = 0
     last_tool = None
+    row_index = 0
+    # Row indices where a new tool group starts; the blank separators have
+    # to land inside the rendered table, not above it — printing them in
+    # this loop ran ahead of the deferred render() and pushed every one
+    # of them to the top.
+    group_starts: list[int] = []
     for tool in sorted(grouped):
         entries = sorted(grouped[tool].items(), key=lambda x: -x[1])
         for model, cnt in entries:
             grand_total += cnt
             provider = classify_provider(model)
             if by_tool:
-                # Visual separator between tool groups (preserves the
-                # blank-line behaviour the old hand-rolled print loop
-                # used to insert).
                 if last_tool is not None and last_tool != tool:
-                    print()
+                    group_starts.append(row_index)
                 t.add_row({
                     "tool": tool,
                     "model": model,
@@ -148,10 +151,16 @@ def cmd_models(args):
                     "provider": provider,
                     "msgs": cnt,
                 })
+            row_index += 1
         if by_tool:
             last_tool = tool
 
-    for line in t.render():
+    lines = t.render()
+    # Header and separator occupy the first two rendered lines; each prior
+    # insertion shifts every later boundary down by one.
+    for i, boundary in enumerate(group_starts):
+        lines.insert(2 + boundary + i, "")
+    for line in lines:
         print(line)
     print()
 

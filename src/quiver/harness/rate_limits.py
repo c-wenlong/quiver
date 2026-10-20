@@ -30,6 +30,7 @@ import shutil
 import sqlite3
 import ssl
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -192,10 +193,14 @@ def _warn_untrusted_ca() -> None:
     if _CA_WARNED:
         return
     _CA_WARNED = True
+    # stderr: `swe list --json --usage` is parsed by the app, so a warning
+    # on stdout would corrupt the payload it expects there.
     print(c("yellow", "  Could not verify the server certificate, so no token was sent."
-                      " Usage for every starred harness is blank until this is fixed."))
-    print(c("dim", "  Install the CA bundle: /Applications/Python\\ 3.x/Install\\ Certificates.command"))
-    print(c("dim", "  or: python3 -m pip install certifi"))
+                      " Usage for every starred harness is blank until this is fixed."),
+          file=sys.stderr)
+    print(c("dim", "  Install the CA bundle: /Applications/Python\\ 3.x/Install\\ Certificates.command"),
+          file=sys.stderr)
+    print(c("dim", "  or: python3 -m pip install certifi"), file=sys.stderr)
 
 
 def _fetch_json(
@@ -2611,7 +2616,12 @@ def _save_cached(
             "cached_at": now,
             "limits": limits,
             "updated_at": updated_at or {name: now for name in limits},
-            "no_data": {name: now for name in (no_data or ())},
+            # A dict carries the marker's own timestamp (entries preserved
+            # across a filtered run); an iterable gets stamped now.
+            "no_data": {
+                name: no_data[name] if isinstance(no_data, dict) else now
+                for name in (no_data or ())
+            },
         }
         with open(RATE_LIMITS_CACHE_FILE, "w") as f:
             json.dump(payload, f)
@@ -2870,6 +2880,8 @@ def get_all_rate_limits(
     with fetched_lock:
         completed = fetched.copy()
     empty_fetchers: set[str] = set()
+    # no_data entries carried over from a filtered run keep their own time.
+    empty_fetchers_ts: dict[str, float] = {}
     for tool_name, _fetcher in fetchers:
         info = completed.get(tool_name)
         if not info and tool_name in upgrade_fallback and tool_name not in result:
@@ -2911,9 +2923,38 @@ def get_all_rate_limits(
             raw_cache[tool_name] = asdict(marker)
             cache_updated_at[tool_name] = time.time()
 
+    if requested is not None:
+        # A filtered run (--exclude, starred-only) never asked the other
+        # providers anything: rewriting the file without them would drop
+        # their cached readings, so carry those entries over untouched —
+        # limits, their own timestamps, and no_data markers alike.
+        try:
+            disk = json.loads(RATE_LIMITS_CACHE_FILE.read_text())
+        except Exception:
+            disk = {}
+        for name, raw in (disk.get("limits") or {}).items():
+            if name not in fetcher_names and name not in raw_cache:
+                raw_cache[name] = raw
+        for name, ts in (disk.get("updated_at") or {}).items():
+            if (name not in fetcher_names and name not in cache_updated_at
+                    and isinstance(ts, (int, float))):
+                cache_updated_at[name] = ts
+        saved_no_data = disk.get("no_data")
+        if isinstance(saved_no_data, dict):
+            for name, ts in saved_no_data.items():
+                if name not in fetcher_names and isinstance(ts, (int, float)):
+                    empty_fetchers_ts[name] = ts
+        elif isinstance(saved_no_data, list):
+            for name in saved_no_data:
+                if name not in fetcher_names:
+                    empty_fetchers_ts[name] = time.time()
+    no_data_marks = dict(empty_fetchers_ts)
+    for name in empty_fetchers:
+        no_data_marks[name] = time.time()
+
     # Cache an empty result only when no recent successful snapshot exists.
     # Partial outages retain each provider's last known value for up to 24h.
-    _save_cached(raw_cache, cache_updated_at, no_data=empty_fetchers)
+    _save_cached(raw_cache, cache_updated_at, no_data=no_data_marks)
 
     return result
 

@@ -15,6 +15,11 @@ _pushback: list[int] = []
 # Same for the text-stream reader, for streams without an fd to poll.
 _stream_pushback: list[str] = []
 
+# How long a CR waits for its LF before counting as a lone terminator:
+# long enough for a paste's second chunk, short enough that a human's
+# Enter never feels it.
+_CRLF_PEEK_TIMEOUT = 0.05
+
 
 def _restore_cooked_tty(fd: int) -> None:
     """Best-effort: ensure Enter maps to newline and line buffering is on."""
@@ -145,11 +150,15 @@ def _read_line_bytes(fd: int, echo: bool = True) -> str:
         if b in (10, 13):  # \n or \r
             if b == 13:
                 saw_cr = True
-                # Swallow optional paired \n of CRLF only; push back anything else
+                # Swallow the \n of a CRLF pair — and give it a beat to
+                # arrive: a paste can split the pair across chunks, and
+                # reading ahead at timeout 0 treats a lone \r as the break
+                # and hands the \n to the next read as a phantom empty
+                # line. Anything that is not \n is pushed back.
                 try:
                     import select
 
-                    if select.select([fd], [], [], 0)[0]:
+                    if select.select([fd], [], [], _CRLF_PEEK_TIMEOUT)[0]:
                         nxt = _read_byte(fd)
                         if nxt == b"\n":
                             saw_lf = True

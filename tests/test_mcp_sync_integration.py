@@ -328,20 +328,58 @@ class McpSyncCodexPeerTest(unittest.TestCase):
         self.assertIn('[features]', text)
         self.assertIn('[plugins."github@openai-curated"]', text)
 
-    def test_prune_flag_now_graph_wide_removes_codex_only_servers(self):
+    def test_prune_scoped_to_source_pool_keeps_codex_only_servers(self):
+        """--only narrows the run: prune deletes only names the source
+        offered but the selection dropped, so codex-only servers — the
+        user's own entries the source never knew — survive."""
         r = self._run("sync", "opencode", "codex", "--only=notion",
                       "--no-interactive", "--force", "--prune")
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
         text = self.codex_path.read_text()
         # Newly synced server is present.
         self.assertIn("[mcp_servers.notion]", text)
-        # Codex-only servers all deleted.
-        self.assertNotIn("[mcp_servers.fathom]", text)
-        self.assertNotIn("[mcp_servers.node_repl]", text)
-        self.assertNotIn("[mcp_servers.miro-mcp]", text)
+        # Codex-only servers preserved under the narrowed selection.
+        self.assertIn("[mcp_servers.fathom]", text)
+        self.assertIn("[mcp_servers.node_repl]", text)
+        self.assertIn("[mcp_servers.miro-mcp]", text)
         # Non-MCP siblings untouched.
         self.assertIn('model = "gpt-5.5"', text)
         self.assertIn('[features]', text)
+
+    def test_prune_unfiltered_still_mirrors_the_target(self):
+        """With the whole source selected, --prune keeps its mirror
+        semantics: target-only entries are deleted."""
+        r = self._run("sync", "opencode", "codex",
+                      "--no-interactive", "--force", "--prune")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        text = self.codex_path.read_text()
+        self.assertIn("[mcp_servers.notion]", text)
+        self.assertNotIn("[mcp_servers.fathom]", text)
+        self.assertNotIn("[mcp_servers.node_repl]", text)
+        self.assertNotIn("[mcp_servers.miro-mcp]", text)
+        self.assertIn('model = "gpt-5.5"', text)
+
+    def test_prune_except_deletes_only_source_known_names(self):
+        """--except narrows the selection: the excluded source-known name
+        is pruned from the target, codex-only entries still survive."""
+        src = self.home / ".config" / "opencode" / "opencode.json"
+        data = json.loads(src.read_text())
+        data["mcp"]["extra"] = {"command": "x", "type": "local"}
+        src.write_text(json.dumps(data, indent=2) + "\n")
+        self.codex_path.write_text(
+            self.codex_path.read_text() + "\n[mcp_servers.extra]\ncommand = 'x'\n"
+        )
+
+        r = self._run("sync", "opencode", "codex", "--except=extra",
+                      "--no-interactive", "--force", "--prune")
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        text = self.codex_path.read_text()
+        self.assertIn("[mcp_servers.notion]", text)
+        # Source-known but excluded: pruned.
+        self.assertNotIn("[mcp_servers.extra]", text)
+        # Codex-only: the user's own entries survive the narrowed run.
+        self.assertIn("[mcp_servers.fathom]", text)
+        self.assertIn("[mcp_servers.miro-mcp]", text)
 
     def test_write_to_codex_dry_run_keeps_file_unchanged(self):
         # --dry-run yields a preview without modifying the codex.toml.

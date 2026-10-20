@@ -146,6 +146,14 @@ def _probe_claude(session: Session, ctx: dict):
     hits = glob.glob(os.path.join(root, "*", session.session_id + ".jsonl"))
     if not hits:
         return None, ""
+    # A session resumed from another cwd leaves a copy per project dir;
+    # the newest write is the live one — probing a stale copy reports a
+    # finished session that is in fact still running.
+    if len(hits) > 1:
+        try:
+            hits.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        except OSError:
+            pass
 
     def walk(records):
         for rec in reversed(records):
@@ -286,9 +294,13 @@ def _probe_devin(session: Session, ctx: dict):
         ).fetchone()
         chat = r[0] if r else None
     if chat is None:
+        # rowid, not node_id: sibling nodes can share an id (a streamed
+        # reply is rewritten under the same parent), and ordering ties
+        # then pick an arbitrary branch. The last written row is the
+        # freshest state either way.
         r = conn.execute(
             "SELECT chat_message FROM message_nodes "
-            "WHERE session_id = ? ORDER BY node_id DESC LIMIT 1",
+            "WHERE session_id = ? ORDER BY rowid DESC LIMIT 1",
             (sid,),
         ).fetchone()
         if not r:
@@ -723,6 +735,10 @@ def _one_status(session: Session, now: float, ctx: dict) -> str:
     if phase == "finished":
         if session.tool_name == "claude":
             state = ctx["claude_jobs"].get(session.session_id)
+            # A bg job the transcript already closed still owns the
+            # session: "working" is live work, not a done turn.
+            if state == "working":
+                return ACTIVE
             if state == "blocked":
                 return FOLLOWUP
             if state == "failed":
