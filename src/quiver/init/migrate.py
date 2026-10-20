@@ -103,20 +103,38 @@ def plan_migration(home: Path | None = None) -> MigrationPlan | None:
 
 def apply_migration(plan: MigrationPlan, remove_source: bool = True) -> MigrationPlan:
     """Carry out a plan. Existing destinations are left alone, not clobbered."""
+    import os
+
+    home = plan.source.parent.parent
+    secrets_dir = paths.secrets_dir_for(home)
+    secrets_blocked = secrets_dir.is_symlink() or (
+        os.path.lexists(secrets_dir) and not secrets_dir.is_dir()
+    )
+    sealed = False
     for src, dest in list(plan.moved):
-        if dest.exists():
+        if os.path.lexists(dest):
+            # lexists, not exists: a dangling symlink at the destination is
+            # invisible to exists() and shutil.move would replace the link
+            # with a standalone file, cutting it off from its real target.
             plan.moved.remove((src, dest))
             plan.skipped.append(dest)
             continue
+        if dest.parent == secrets_dir:
+            if secrets_blocked:
+                # Moving through a linked or non-dir secrets/ lands keys in
+                # an arbitrary place the seal never protects. Keep the file
+                # at its legacy source and report the destination.
+                plan.moved.remove((src, dest))
+                plan.skipped.append(dest)
+                continue
+            if not sealed:
+                # The catch-all .gitignore must be in place before the key
+                # file lands, not after — a crash between the two would
+                # leave a credential sitting in an unsealed directory.
+                seal_secrets_dir(home)
+                sealed = True
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dest))
-
-    # Credential files moved under secrets/ need its catch-all .gitignore
-    # sealed immediately — nothing else guarantees the seal runs before
-    # the user `git add .`s the hub.
-    secrets_dir = paths.secrets_dir_for(plan.source.parent.parent)
-    if any(dest.parent == secrets_dir for _src, dest in plan.moved):
-        seal_secrets_dir(plan.source.parent.parent)
 
     for entry in plan.dropped:
         if entry.is_symlink() or not entry.is_dir():

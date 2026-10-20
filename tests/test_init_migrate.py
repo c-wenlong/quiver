@@ -238,6 +238,35 @@ class PlanMigrationTest(unittest.TestCase):
             self.assertTrue(
                 (paths.secrets_dir_for(home) / ".gitignore").is_file())
 
+    def test_env_stays_at_source_when_secrets_is_a_symlink(self):
+        # Moving through a linked secrets/ would drop the key into a
+        # foreign directory the seal refuses to protect.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".env": "TOKEN=x"})
+            secrets_dir = paths.secrets_dir_for(home)
+            secrets_dir.parent.mkdir(parents=True, exist_ok=True)
+            secrets_dir.symlink_to(home / "foreign")
+            plan = apply_migration(plan_migration(home))
+            self.assertIn(secrets_dir / ".env", plan.skipped)
+            # The credential was not moved through the link; it stays in
+            # the legacy root for the user to deal with.
+            self.assertFalse((home / "foreign" / ".env").exists())
+            self.assertTrue((home / ".config" / "swe" / ".env").is_file())
+
+    def test_a_dangling_symlink_at_the_destination_is_not_replaced(self):
+        # exists() misses dangling links; shutil.move would swap the user's
+        # dotfiles link for a standalone file.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={"mcp.json": '{"mcpServers":{}}'})
+            dest = paths.mcp_source_file_for(home)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.symlink_to(home / "dotfiles" / "mcp.json")
+            plan = apply_migration(plan_migration(home))
+            self.assertIn(dest, plan.skipped)
+            self.assertTrue(dest.is_symlink())
+            self.assertEqual(dest.readlink(), home / "dotfiles" / "mcp.json")
+            self.assertTrue((home / ".config" / "swe" / "mcp.json").is_file())
+
     def test_drop_list_and_move_lists_do_not_overlap(self):
         self.assertEqual(set(DROP) & set(CONFIG_FILES), set())
         self.assertEqual(set(DROP) & set(CACHE_FILES), set())
