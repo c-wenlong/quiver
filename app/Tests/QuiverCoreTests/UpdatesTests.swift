@@ -83,6 +83,17 @@ struct UpdatePreferencesTests {
         #expect(prefs.channel(build: build) == .dev)
     }
 
+    @Test func aProdBuildIgnoresAStoredDevOverride() {
+        let build = BuildInfo(channel: .prod)
+        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        prefs.channelOverride = "dev"
+        #expect(prefs.channel(build: build) == .prod)
+        prefs.channelOverride = "prod"
+        #expect(prefs.channel(build: build) == .prod)
+        prefs.channelOverride = ""
+        #expect(prefs.channel(build: build) == .prod)
+    }
+
     @Test func storedCheckoutWinsAndExpandsTilde() {
         let build = BuildInfo(sourcePath: "/nonexistent/path")
         let prefs = UpdatePreferences(defaults: try! freshDefaults())
@@ -381,6 +392,37 @@ struct UpdatesModelTests {
                 cacheURL: tempDir().appending(path: "latest-release.json")),
             rebuildRunner: rebuildRunner,
             rebuildDir: rebuildDir)
+    }
+
+    /// The dev controls (channel picker, Source checkout, Rebuild) are a
+    /// dev build's; a prod build hides them even with a dev override saved.
+    @Test func aProdBuildHasNoDevControls() {
+        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let prefs = UpdatePreferences(defaults: defaults)
+        prefs.channelOverride = "dev"
+        let model = UpdatesModel(
+            build: BuildInfo(channel: .prod, commit: built),
+            preferences: prefs,
+            releaseCheck: ReleaseCheck(
+                transport: DeadTransport(),
+                cacheURL: tempDir().appending(path: "latest-release.json")))
+        #expect(model.channel == .prod)
+        #expect(!model.showsDevControls)
+        // setChannel can still be called; on a prod build it stays prod.
+        model.setChannel(.dev)
+        #expect(model.channel == .prod)
+    }
+
+    @Test func aDevBuildShowsDevControls() {
+        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let model = UpdatesModel(
+            build: BuildInfo(channel: .dev, commit: built),
+            preferences: UpdatePreferences(defaults: defaults),
+            releaseCheck: ReleaseCheck(
+                transport: DeadTransport(),
+                cacheURL: tempDir().appending(path: "latest-release.json")))
+        #expect(model.channel == .dev)
+        #expect(model.showsDevControls)
     }
 
     @Test func changingTheCheckoutDropsStaleAnswersAndBuilds() async throws {

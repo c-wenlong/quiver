@@ -58,7 +58,8 @@ public struct BuildInfo: Sendable, Equatable {
 
 /// The Updates section's saved choices: a channel override and the
 /// checkout dev updates compare against. Stored values win over what the
-/// build stamped; a blank override falls back to the build.
+/// build stamped, except the channel on a prod build: a release build
+/// must not offer the dev controls, so it ignores the override.
 public struct UpdatePreferences {
     public static let channelKey = "updateChannel"
     public static let checkoutKey = "sourceCheckoutPath"
@@ -79,9 +80,13 @@ public struct UpdatePreferences {
         nonmutating set { defaults.set(newValue, forKey: Self.checkoutKey) }
     }
 
-    /// The stored channel when it names one, else the build's.
+    /// The stored channel when it names one, else the build's. A prod
+    /// build is always prod, whatever was saved — a release has no
+    /// source checkout, so resolving to dev would offer a rebuild it
+    /// cannot do.
     public func channel(build: BuildInfo) -> UpdateChannel {
-        UpdateChannel(rawValue: channelOverride) ?? build.channel
+        guard build.channel == .dev else { return build.channel }
+        return UpdateChannel(rawValue: channelOverride) ?? build.channel
     }
 
     /// The checkout to compare against: the stored path when one is saved
