@@ -6,7 +6,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from quiver.skills.layout import enumerate_skill_roots, layout_groups, sync_link_records_from_filesystem
-from quiver.skills.link_ops import SkillLayoutError, link_skill_root, move_skill, unlink_skill_root
+from quiver.skills.link_ops import (
+    SkillLayoutError,
+    find_skill_directory,
+    link_skill_root,
+    move_skill,
+    unlink_skill_root,
+)
 
 
 class SkillsLayoutTest(unittest.TestCase):
@@ -139,6 +145,28 @@ class SkillsLayoutTest(unittest.TestCase):
                 move_skill("move-me", "shared", "codex", home=home)
             self.assertIn("broken", str(ctx.exception))
             self.assertTrue((shared / "move-me" / "SKILL.md").exists())
+
+    def test_move_reports_a_missing_destination_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            self._write_skill(shared, "move-me", "move-me")
+
+            # kilo is a known label whose root is not on disk.
+            with self.assertRaises(SkillLayoutError) as ctx:
+                move_skill("move-me", "shared", "kilo", home=home)
+            self.assertIn("does not exist", str(ctx.exception))
+            self.assertTrue((shared / "move-me" / "SKILL.md").exists())
+
+    def test_find_skill_directory_with_an_unresolvable_scope(self):
+        # A scope that resolves to nothing answers "No skill matching",
+        # not the resolver's "Unknown skill root" error.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with self.assertRaises(SkillLayoutError) as ctx:
+                find_skill_directory("x", "bogus", home=home, cwd=home)
+            self.assertIn("No skill matching", str(ctx.exception))
 
     def test_move_skill_between_unlinked_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
