@@ -128,13 +128,15 @@ jobs:
     #   MACOS_CERTIFICATE_PASSWORD   the .p12 export password
     #   KEYCHAIN_PASSWORD            password for the throwaway CI keychain;
     #                                any string, lives only inside the run
-    #   NOTARY_APPLE_ID              the Apple ID that owns the Developer ID
-    #   NOTARY_PASSWORD              an app-specific password for that Apple
-    #                                ID (appleid.apple.com -> Sign-In and
-    #                                Security -> App-Specific Passwords),
-    #                                NOT the account password
-    #   NOTARY_TEAM_ID               the 10-character Apple team ID
-    # Optional repository variable:
+    #   NOTARY_KEY                   base64 of the App Store Connect API
+  #                                key's .p8 file (base64 -i AuthKey_*.p8)
+  #   NOTARY_KEY_ID                the key's ID, e.g. ABCDEFGHIJ
+  #   NOTARY_ISSUER                the issuer UUID from App Store Connect ->
+  #                                Integrations -> App Store Connect API
+  #   SPARKLE_PRIVATE_KEY          the EdDSA private key matching the app's
+  #                                SUPublicEDKey (Sparkle bin/generate_keys
+  #                                -x private-key.txt exports it)
+  # Optional repository variable:
     #   SIGNING_IDENTITY             explicit codesign identity, e.g.
     #                                "Developer ID Application: Name (TEAMID)";
     #                                defaults to whatever MACOS_CERTIFICATE
