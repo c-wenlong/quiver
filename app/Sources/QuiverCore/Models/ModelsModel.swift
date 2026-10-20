@@ -615,11 +615,14 @@ public final class ModelsModel {
                 pool.append(leaderboardRow(headline))
             }
             // A logged name can match while its AA name doesn't: a
-            // manual link or a proxy alias.
-            for row in used {
-                guard let id = row.aa?.id, seen.insert(id).inserted,
-                      Self.matches(needle, row.logged) else { continue }
-                pool.append(row)
+            // manual link, a proxy alias, or a merged family's
+            // non-dominant name — check every name the period logged,
+            // not only the one that ended up on the row.
+            for logged in byModel.keys where Self.matches(needle, logged) {
+                guard let matched = index?.match(logged),
+                      seen.insert(matched.model.id).inserted,
+                      let merged = mergedIndex[matched.model.id] else { continue }
+                pool.append(used[merged])
             }
             var result = Self.sort(pool, by: metric)
             // Used names no AA entry covers are rows too when they match.
@@ -632,14 +635,14 @@ public final class ModelsModel {
             }
             // The LiteLLM-only tail, capped; the bare name decides which
             // hits lead, the overflow count becomes the page's footnote.
+            // Keys already shown — as a usage row or through the alias
+            // join — don't count toward either side.
             let lite = unmatchedPrices
                 .filter { Self.matches(needle, $0.key) }
+                .filter { !seen.contains("unmatched:\($0.key)") && index?.match($0.key) == nil }
                 .sorted { Self.liteRank(needle, $0.key) < Self.liteRank(needle, $1.key) }
-            var shown = 0
-            for price in lite where shown < Self.searchLimit {
-                guard seen.insert("unmatched:\(price.key)").inserted,
-                      index?.match(price.key) == nil else { continue }
-                shown += 1
+            searchOverflow = max(0, lite.count - Self.searchLimit)
+            for price in lite.prefix(Self.searchLimit) {
                 result.append(Row(logged: price.key, aa: nil,
                                   listPrice: listPrice(logged: price.key, aa: nil)
                                       ?? ListPrice(key: price.key, source: .liteLLM,
@@ -648,7 +651,6 @@ public final class ModelsModel {
                                                    cacheRead: price.cacheRead * 1e6,
                                                    cacheWrite: price.cacheWrite * 1e6)))
             }
-            searchOverflow = lite.count - shown
             rows = result
             return
         }
