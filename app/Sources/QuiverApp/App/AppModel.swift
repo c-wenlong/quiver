@@ -96,8 +96,18 @@ final class AppModel {
             widgetSelection.save(to: .standard)
             let style = widgetHarnessStyle
             limits.writeWidgets(overview: overview, selection: widgetSelection,
-                                harnessOrder: style.order, harnessColors: style.colors)
+                                harnessOrder: style.order, harnessColors: style.colors,
+                                compute: widgetCompute, force: true)
         }
+    }
+
+    /// The Compute widget's own section: the running harnesses' cost at
+    /// the newest trend tick, with the chosen temperature lines.
+    var widgetCompute: WidgetSnapshot.ComputeSection {
+        WidgetSnapshot.ComputeSection(history: compute.history,
+                                      order: compute.matchers.map(\.harness),
+                                      temperatureLines: compute.temperatureLines,
+                                      selection: widgetSelection)
     }
 
     /// The Settings provider order and each harness's colour as hex, as
@@ -789,15 +799,32 @@ final class AppModel {
                 let changes = Observations { [weak self] in
                     // The series order and colours also feed the file:
                     // a provider reorder or a newly loaded primary colour
-                    // must rewrite it like a reading change does.
+                    // must rewrite it like a reading change does. The
+                    // compute widget's matcher order and chosen
+                    // temperature lines feed it the same way.
                     self.map { ($0.overview?.activity, $0.overview?.recentModels,
-                               $0.limits.readings, $0.providers.rows, $0.compute.matchers) }
+                               $0.limits.readings, $0.providers.rows, $0.compute.matchers,
+                               $0.compute.temperatureLines) }
                 }
                 for await _ in changes {
                     guard let self else { continue }
                     let style = widgetHarnessStyle
                     limits.writeWidgets(overview: overview, selection: widgetSelection,
-                                        harnessOrder: style.order, harnessColors: style.colors)
+                                        harnessOrder: style.order, harnessColors: style.colors,
+                                        compute: widgetCompute)
+                }
+            },
+            Task { [weak self] in
+                // The compute figures move every trend tick, far faster
+                // than the stream above fires; the file picks them up on
+                // a minute cadence while the pushes stay floored.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    guard let self else { return }
+                    let style = widgetHarnessStyle
+                    limits.writeWidgets(overview: overview, selection: widgetSelection,
+                                        harnessOrder: style.order, harnessColors: style.colors,
+                                        compute: widgetCompute)
                 }
             },
         ]

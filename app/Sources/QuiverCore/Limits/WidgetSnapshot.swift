@@ -1,8 +1,8 @@
 import Foundation
 
 /// Everything the widgets show, written by the app and read by the widget
-/// extension. Usage figures and limit readings only: never a credential,
-/// email or session detail.
+/// extension. Usage figures, limit readings and compute numbers only:
+/// never a credential, email or session detail.
 ///
 /// Schema 2 gives each widget its own section, so the Desktop widgets
 /// tab's switches change one widget without touching another's figures.
@@ -105,6 +105,91 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    /// What the Compute widget draws: the running harnesses' cost at the
+    /// newest trend tick, and the whole-Mac temperatures the user charts.
+    /// Figures read as live only while the app keeps ticking; `isOld` dims
+    /// the widget once the last tick ages past the widgets' stale line.
+    public struct ComputeSection: Codable, Sendable, Equatable {
+        /// One running harness's cost at `sampledAt`.
+        public struct Row: Codable, Sendable, Equatable, Identifiable {
+            public var id: String { harness }
+            public var harness: String
+            public var memoryBytes: UInt64
+            public var cpuPercent: Double
+            /// Nil where the Mac's GPU counters never answered.
+            public var gpuPercent: Double?
+
+            public init(harness: String, memoryBytes: UInt64, cpuPercent: Double,
+                        gpuPercent: Double? = nil) {
+                self.harness = harness
+                self.memoryBytes = memoryBytes
+                self.cpuPercent = cpuPercent
+                self.gpuPercent = gpuPercent
+            }
+        }
+
+        /// The newest trend tick the figures came from, nil before the
+        /// first sample.
+        public var sampledAt: Date?
+        /// The harnesses with a point at `sampledAt`, in the matchers' order.
+        public var harnesses: [Row]
+        /// The chosen temperature lines' latest readings, keyed by
+        /// `ThermalComponent` raw value, so the file stays JSON-simple.
+        public var temperatures: [String: Double]
+
+        public init(sampledAt: Date?, harnesses: [Row], temperatures: [String: Double]) {
+            self.sampledAt = sampledAt
+            self.harnesses = harnesses
+            self.temperatures = temperatures
+        }
+
+        /// The most rows the snapshot carries; the widget fits far fewer.
+        static let rowCount = 8
+
+        /// The section for a write: each harness's newest point counts only
+        /// when it sits at the newest tick, so a stopped harness drops out
+        /// rather than freezing its last figure. `order` is the matchers'
+        /// (swe's) order; a harness it does not name keeps its history
+        /// place at the end. Temperatures count only when the newest point
+        /// sits at the tick too: a tick the sensors missed leaves the last
+        /// reading old, and it stays home like a stopped harness. The
+        /// selection's hidden compute harnesses and unchosen temperature
+        /// lines stay out of the file.
+        public init(history: ComputeHistory, order: [String],
+                    temperatureLines: Set<ThermalComponent>,
+                    selection: WidgetSelection) {
+            let tick = history.lastTick
+            sampledAt = tick
+            let extras = history.series.keys.filter { !order.contains($0) }.sorted()
+            harnesses = Array((order + extras).compactMap { name -> Row? in
+                guard selection.shows(harness: name, in: .compute),
+                      let point = history.points(for: name).last, point.at == tick
+                else { return nil }
+                return Row(harness: name, memoryBytes: point.memoryBytes,
+                           cpuPercent: point.cpuPercent, gpuPercent: point.gpuPercent)
+            }.prefix(Self.rowCount))
+            // The temperature point runs to the same newest-tick rule:
+            // ticks where the sensors did not answer record no point, so
+            // a last point behind the tick is old and stays home rather
+            // than sitting beside a fresh "as of".
+            let latest = history.temperatures.last
+            let values = latest?.at == tick ? latest?.values ?? [:] : [:]
+            var temperatures: [String: Double] = [:]
+            for (component, value) in values where temperatureLines.contains(component) {
+                temperatures[component.rawValue] = value
+            }
+            self.temperatures = temperatures
+        }
+
+        /// Whether the figures are stale: no tick yet, or the last one is
+        /// older than the line the limits widget already dims at. A nil
+        /// tick is "collecting", not stale, so the widget can say so.
+        public func isOld(now: Date) -> Bool {
+            guard let sampledAt else { return false }
+            return now.timeIntervalSince(sampledAt) > LimitReading.widgetMaxAge
+        }
+    }
+
     /// What the Activity heatmap widget draws, from its own harnesses.
     public struct HeatmapSection: Codable, Sendable, Equatable {
         /// Days with usage in the heatmap's span, oldest first.
@@ -130,6 +215,8 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
     /// first drag), a source's own windows most used first with current
     /// ones before stale ones, from the limits widget's own sources.
     public var limits: [LimitReading]
+    /// What the Compute widget draws; nil in files older builds wrote.
+    public var compute: ComputeSection?
 
     /// The heatmap's span: 26 weeks, as on the Overview page.
     public static let heatmapWeeks = 26
@@ -139,11 +226,14 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
 
     /// `activity` covers the heatmap's half-year span, `models` the last
     /// 30 days; each is filtered down to the harnesses its widget counts.
-    /// `limits` drops the sources and windows the limits selection hides.
+    /// `limits` drops the sources and windows the limits selection hides,
+    /// and `compute` carries the Compute widget's own section, already
+    /// filtered to its shown harnesses and temperature lines.
     /// `harnessOrder` ranks the summary's per-harness series (the
     /// Settings order; unknown harnesses keep their first-seen places)
     /// and `harnessColors` gives each its hex.
     public static func make(activity: [DailyUsage], models: [DailyUsage], limits: [LimitReading],
+                            compute: ComputeSection? = nil,
                             selection: WidgetSelection = WidgetSelection(),
                             harnessOrder: [String] = [], harnessColors: [String: String] = [:],
                             now: Date, calendar: Calendar) -> WidgetSnapshot {
@@ -206,7 +296,7 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
             models: OverviewModel.models(modelRows).prefix(modelCount)
                 .map { Model(name: $0.model, tokens: $0.totals.totalTokens,
                              share: $0.share, harnesses: $0.harnesses) },
-            limits: Array(limitRows))
+            limits: Array(limitRows), compute: compute)
     }
 
     /// Today's figure, or nothing when the snapshot was written on another day.

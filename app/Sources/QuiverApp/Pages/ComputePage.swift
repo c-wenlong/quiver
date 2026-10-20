@@ -101,7 +101,7 @@ struct ComputePage: View {
 
     /// Whole percent once it is two digits, one decimal below it.
     static func cpu(_ percent: Double) -> String {
-        percent.formatted(.number.precision(.fractionLength(percent >= 10 ? 0 : 1)))
+        ComputeSummary.percent(percent)
     }
 }
 
