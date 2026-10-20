@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.harness.catalog import HARNESS_CATALOG
 
 # The layout itself is defined in quiver.paths so runtime code and this
 # module cannot drift apart. Only the harness target maps live here.
@@ -137,6 +139,47 @@ def _signature_installed(sig: HarnessSignature, home: Path) -> bool:
     return any((home / rel).exists() for rel in marks)
 
 
+def command_on_path(label: str, registry: dict) -> bool:
+    """True when the harness's binary answers on PATH.
+
+    A config dir only exists once a harness has run, so dir evidence alone
+    reads a fresh install — Nix profile, uv tool, anything that never
+    launched — as "not installed" and skips exactly the harnesses that
+    need linking. The registry's own ``command`` wins (a hand-edit is
+    honoured), then the catalog's, which covers labels that are not the
+    binary name (``qwen`` the dir vs ``qwen-code`` the registry key);
+    the label itself is the last guess.
+    """
+    name = registry_name(label)
+    candidates: list[str] = []
+    entry = registry.get(name)
+    if isinstance(entry, dict) and entry.get("command"):
+        candidates.append(str(entry["command"]))
+    for key in (name, label):
+        meta = HARNESS_CATALOG.get(key)
+        if isinstance(meta, dict) and meta.get("command"):
+            candidates.append(str(meta["command"]))
+    candidates += [name, label]
+    return any(shutil.which(cmd) for cmd in dict.fromkeys(candidates))
+
+
+def harness_installed(
+    label: str,
+    sig: HarnessSignature | None,
+    home: Path,
+    registry: dict,
+) -> bool:
+    """Install evidence: a fs footprint from ``sig``, or the binary itself.
+
+    The signature check runs first since it answers without touching PATH;
+    a harness that never ran leaves no footprint, so a missing config dir
+    must not read as "not installed" while its binary still resolves.
+    """
+    if sig is not None and _signature_installed(sig, home):
+        return True
+    return command_on_path(label, registry)
+
+
 # (label, path) view of the signature table, kept for `swe find`'s agents
 # tree and the AGENT_FILENAMES set built from it there.
 INSTRUCTION_TARGETS: tuple[tuple[str, Path], ...] = tuple(
@@ -195,8 +238,8 @@ def discover_skill_roots(
     shared = skills_dir(home)
     found: list[Path] = []
 
-    for sig in HARNESS_SIGNATURES.values():
-        if sig.skills is not None and _signature_installed(sig, home):
+    for label, sig in HARNESS_SIGNATURES.items():
+        if sig.skills is not None and harness_installed(label, sig, home, registry):
             candidate = home / sig.skills
             if candidate not in found:
                 found.append(candidate)
@@ -741,8 +784,9 @@ def _instruction_targets(registry: dict, home: Path) -> list[tuple[str, Path, bo
     labelled by its registry key, and replaces a signature entry for the
     same harness, so a harness that reads ``AGENTS.md`` where the table
     guessed ``CLAUDE.md`` ends up with exactly one target: the right one.
-    Registry rows are never marked installed: a declared file on a machine
-    the harness left behind is skipped noise, not a reason to recreate it.
+    A registry row counts as installed only while its command still
+    resolves: a declared file on a machine the harness left behind is
+    skipped noise, not a reason to recreate it.
     """
     targets: list[tuple[str, Path, bool]] = []
     seen: set[Path] = set()
@@ -750,7 +794,8 @@ def _instruction_targets(registry: dict, home: Path) -> list[tuple[str, Path, bo
         if sig.instructions is None or sig.instructions in seen:
             continue
         seen.add(sig.instructions)
-        targets.append((label, sig.instructions, _signature_installed(sig, home)))
+        targets.append(
+            (label, sig.instructions, harness_installed(label, sig, home, registry)))
     for key, entry in registry.items():
         if not isinstance(entry, dict):
             continue
@@ -763,7 +808,7 @@ def _instruction_targets(registry: dict, home: Path) -> list[tuple[str, Path, bo
         if not rel.parts or ".." in rel.parts:
             continue
         targets = [t for t in targets if registry_name(t[0]) != key]
-        targets.append((key, rel, False))
+        targets.append((key, rel, command_on_path(key, registry)))
     return targets
 
 

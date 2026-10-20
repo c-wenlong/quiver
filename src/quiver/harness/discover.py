@@ -421,6 +421,16 @@ def apply_findings(
             if finding.name not in names:
                 continue
         elif finding.confidence not in conf_ok:
+            # A silent drop made a home-scan find vanish between the dry
+            # run and --apply with no hint it existed. Name the refusal and
+            # its remedy, matching the skips below.
+            skipped.append({
+                "name": finding.name,
+                "reason": (
+                    f"confidence is {finding.confidence}; name it "
+                    f"(swe discover --apply {finding.name}) or use --apply-all"
+                ),
+            })
             continue
         owner = resolve(registry, finding.name)
         if owner is not None:
@@ -452,10 +462,13 @@ def apply_findings(
         }
         if finding.primary_color:
             entry["primary_color"] = finding.primary_color
-        if finding.source == "home_scan":
-            # A home-scan find has no usage history and often no binary, so
-            # it enters shelved: known to the registry, absent from swe
-            # list, one `swe hs star` away if it turns out to matter.
+        if finding.source == "home_scan" and version is None:
+            # A home-scan find whose binary won't answer a version probe —
+            # or that has no binary at all — has only its dotdir for
+            # evidence, so it enters shelved: known to the registry, absent
+            # from swe list, one `swe hs star` away if it turns out to
+            # matter. One that probed live stays active: shelving a tool
+            # that demonstrably runs hides it the moment it registers.
             entry["state"] = "archived"
             entry["archived"] = {
                 "reason": "registered by the home-directory scan; usage unknown",

@@ -62,9 +62,11 @@ def _print_help():
   agent binaries. Then ~ and ~/.config are swept for agent-shaped homes —
   dotdirs holding a skills/ or agents/ dir or an AGENTS.md — which catches
   desktop apps and IDE tools that never put a binary on PATH. Home-scan finds
-  are low confidence and register as archived: known, hidden from swe list,
-  one swe hs star away if they matter. A few known apps that keep a skills/
-  dir but are not harnesses (Aside, Pinokio, TokenTracker, Ollama) are never listed.
+  are low confidence; one whose binary won't answer --version registers
+  archived — known, hidden from swe list, one swe hs star away if it
+  matters — while a binary that probes live registers active. A few known
+  apps that keep a skills/ dir but are not harnesses (Aside, Pinokio,
+  TokenTracker, Ollama) are never listed.
 
 {c('bold', 'See also')}  {c('cyan', 'swe setup')} — interactive onboarding wizard
 """

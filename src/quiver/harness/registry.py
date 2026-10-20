@@ -54,25 +54,27 @@ def load_registry() -> dict:
         return _validated_entries(read_json_object(HARNESS_FILE), HARNESS_FILE)
     if TOOLS_FILE.exists():
         return _migrate_from_legacy()
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    # Empty, not seeded. This file used to be born holding eleven hardcoded
-    # entries, so a machine with three harnesses installed listed eight it
-    # did not have, each printing a version constant as though it had been
-    # probed. The registry answers "what is on this machine", which only
-    # `swe discover` can know; HARNESS_CATALOG is what it matches against.
-    save_registry({})
+    # Empty, not seeded — and not written. This file used to be born
+    # holding eleven hardcoded entries, so a machine with three harnesses
+    # installed listed eight it did not have, each printing a version
+    # constant as though it had been probed. Later the empty {} was still
+    # saved here, which made a read (or a command that then failed, like
+    # `swe --version` on an old release) create ~/.quiver: anything wanting
+    # to place content at that path had to land before the first swe
+    # invocation. The registry answers "what is on this machine", which
+    # only `swe discover` can know; writers scaffold through
+    # save_registry, which makes CONFIG_DIR itself.
     return {}
 
 
 def load_registry_if_present() -> dict:
-    """``load_registry()`` without its side effect of creating one.
+    """``load_registry()`` without the legacy migration write.
 
     A read-only caller — `swe find` and friends promise never to write
-    anything — must not seed ~/.quiver/config/harness.json on a machine
-    that has never run a mutating harness command just by asking what state
-    a harness is in. Returns {} rather than the seeded defaults when
-    nothing is on disk yet; a legacy tools.json with no harness.json is
-    treated the same way, since migrating it is itself a write.
+    anything — must not run the tools.json -> harness.json migration just
+    by asking what state a harness is in. With no harness.json on disk a
+    legacy install reads as empty here; ``load_registry_readonly()`` is
+    the variant that still honours those old entries.
     """
     return load_registry() if HARNESS_FILE.exists() else {}
 

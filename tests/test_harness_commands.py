@@ -100,7 +100,7 @@ def _is_installed_false(_cmd):
     return False
 
 
-def _setup_patches(testcase, *, stars=()):
+def _setup_patches(testcase, *, stars=(), registry=None, archive=None):
     """Common setUp: patch external I/O so cmd_list runs offline."""
     patches = [
         # ``copy.deepcopy`` — same isolation discipline as cmd_check
@@ -109,7 +109,8 @@ def _setup_patches(testcase, *, stars=()):
         # any cmd_list mutation path that may be added later.
         patch(
             "quiver.harness.commands.load_registry",
-            return_value=copy.deepcopy(_REGISTRY),
+            return_value=copy.deepcopy(
+                registry if registry is not None else _REGISTRY),
         ),
         patch("quiver.harness.commands._session_counts", return_value={
             "claude": 42,  # positive → green
@@ -120,7 +121,8 @@ def _setup_patches(testcase, *, stars=()):
         # The archive is per-user state that cmd_list filters on. Without
         # this, anything the developer had archived would drop out of the
         # default scope and a fixture row would simply vanish.
-        patch("quiver.harness.archive.load_archive", dict),
+        patch("quiver.harness.archive.load_archive",
+              return_value=copy.deepcopy(archive or {})),
         patch("quiver.harness.commands.is_installed", side_effect=_is_installed_false),
         patch(
             "quiver.harness.rate_limits.get_all_rate_limits",
@@ -627,6 +629,70 @@ class CmdListRefreshFailedFlagTest(unittest.TestCase):
 # generality beyond the 9-column / mixed-kind cmd_list.
 
 
+# #68 fixture: a shelved row — in the registry but out of active scope.
+_ARCHIVED_HERMES = {
+    "command": "hermes",
+    "description": "",
+    "aliases": [],
+    "tags": [],
+    "version": "0.20.5",
+    "state": "archived",
+    "archived": {
+        "reason": "registered by the home-directory scan; usage unknown",
+        "archived_at": "2026-02-11T12:00:00",
+        "usage": "none",
+    },
+}
+
+
+class CmdListArchivedScopeTest(unittest.TestCase):
+    """#68: `swe list` and `swe check` must count the same registry the
+    same way.
+
+    The footer used to print "3/3 installed" while a fourth, archived row
+    sat in the registry — scope hid it and the count pretended it did not
+    exist, so check (which listed it) disagreed with list.
+    """
+
+    def _registry(self):
+        reg = copy.deepcopy(_REGISTRY)
+        reg["hermes"] = copy.deepcopy(_ARCHIVED_HERMES)
+        return reg
+
+    def _archive(self):
+        return {"hermes": dict(_ARCHIVED_HERMES["archived"])}
+
+    def setUp(self):
+        _pin_columns(self)
+
+    def test_footer_discloses_the_hidden_archived_row(self):
+        _setup_patches(self, registry=self._registry(), archive=self._archive())
+        out = strip_ansi(_run_cmd_list(args=[]))
+        # Denominator and numerator count only what the scope shows.
+        self.assertIn("0/3 installed", out)
+        self.assertIn("1 archived", out)
+        self.assertIn("--scope=all", out)
+        # The shelved row itself stays out of the active table.
+        self.assertNotIn("hermes", out)
+
+    def test_scope_all_renders_and_counts_the_archived_row(self):
+        _setup_patches(self, registry=self._registry(), archive=self._archive())
+        out = strip_ansi(_run_cmd_list(args=["--scope=all"]))
+        self.assertIn("0/4 installed", out)
+        self.assertIn("hermes", out)
+        self.assertNotIn("hidden", out)
+
+    def test_empty_registry_is_an_intentional_empty_state(self):
+        # #68: on a fresh install list used to render a bare table header
+        # over "0/0 installed"; an empty registry is normal, not a bug —
+        # say so and point at discover.
+        _setup_patches(self, registry={}, archive={})
+        out = strip_ansi(_run_cmd_list(args=[]))
+        self.assertIn("No harnesses registered", out)
+        self.assertIn("swe discover", out)
+        self.assertNotIn("COMMAND", out)  # no lonely table header
+
+
 _CHECK_REGISTRY = {
     "auggie": {
         "command": "auggie",
@@ -664,6 +730,7 @@ def _setup_check_patches(
     live_versions=None,
     orphans=(),
     saved_calls=None,
+    registry=None,
 ):
     """Common cmd_check fixture setup.
 
@@ -674,6 +741,7 @@ def _setup_check_patches(
     ``find_off_path_tools`` output.
     ``saved_calls`` is a list that records each call to save_registry
     (used to assert the heal side-effect).
+    ``registry`` overrides the fixture registry wholesale.
     """
     installed_set = set(installed_cmds)
     live_versions = dict(live_versions or {})
@@ -688,7 +756,8 @@ def _setup_check_patches(
     patches = [
         patch(
             "quiver.harness.commands.load_registry",
-            return_value=copy.deepcopy(_CHECK_REGISTRY),
+            return_value=copy.deepcopy(
+                registry if registry is not None else _CHECK_REGISTRY),
         ),
         patch(
             "quiver.harness.commands.is_installed",
@@ -767,8 +836,11 @@ class CmdCheckHeaderTest(unittest.TestCase):
             if not plain.strip():
                 continue
             # Stop past the table body: once we hit text that doesn't
-            # look like a table row (a hint line or footer).
-            if any(marker in plain for marker in ("Registry updated", "Tip:", "Checking AI")):
+            # look like a table row (a hint line, the N/M installed count
+            # line, or a footer).
+            import re
+            if any(marker in plain for marker in ("Registry updated", "Tip:", "Checking AI")) \
+                    or re.match(r"^\s*\d+/\d+ installed", plain):
                 break
             self.assertEqual(expected_width, visible_len(line),
                 f"line {offset} width {visible_len(line)} drifted from "
@@ -967,6 +1039,59 @@ class CmdCheckOffPathFooterTest(unittest.TestCase):
         output = _run_cmd_check()
         plain = strip_ansi(output)
         self.assertNotIn("swe doctor", plain)
+
+
+class CmdCheckArchivedTest(unittest.TestCase):
+    """#68: a shelved harness is listed for completeness — marked ▪ and
+    noted as archived — but kept out of the installed count, matching the
+    scope `swe list` reports. Before this, check counted archived rows as
+    ordinary installs and the two commands disagreed."""
+
+    def _registry(self):
+        reg = copy.deepcopy(_CHECK_REGISTRY)
+        reg["hermes"] = copy.deepcopy(_ARCHIVED_HERMES)
+        return reg
+
+    def test_archived_row_is_marked_and_out_of_the_count(self):
+        _setup_check_patches(
+            self,
+            registry=self._registry(),
+            installed_cmds=("auggie", "claude", "hermes"),
+            live_versions={
+                "auggie": "0.5.0",
+                "claude": "2.1.126",
+                "hermes": "0.20.5",
+            },
+        )
+        plain = strip_ansi(_run_cmd_check())
+        hermes_row = next(l for l in plain.splitlines() if "hermes" in l)
+        self.assertIn("▪", hermes_row)
+        self.assertIn("archived", hermes_row)
+        self.assertNotIn("not installed", hermes_row)
+        # 2 installed + augment missing, over the three active rows only;
+        # the shelved hermes is outside the count entirely.
+        self.assertIn("2/3 installed", plain)
+        self.assertIn("1 archived", plain)
+
+    def test_archived_orphan_is_not_reported_as_off_path(self):
+        # A shelved harness missing from PATH is deliberate, not drift to
+        # fix — the Off-PATH block must skip it.
+        from quiver.harness.path_health import OffPathHit
+        _setup_check_patches(
+            self,
+            registry=self._registry(),
+            installed_cmds=("auggie",),
+            live_versions={"auggie": "0.5.0"},
+            orphans=[(
+                "hermes", "hermes",
+                OffPathHit(command="hermes", path="/nix/bin/hermes",
+                           source="nix profile"),
+            )],
+        )
+        plain = strip_ansi(_run_cmd_check())
+        self.assertNotIn("Off-PATH", plain)
+        self.assertNotIn("/nix/bin/hermes", plain)
+        self.assertIn("1/3 installed", plain)
 
 
 class CmdCheckSortAndPrintTest(unittest.TestCase):
