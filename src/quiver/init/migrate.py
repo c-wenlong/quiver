@@ -31,7 +31,6 @@ CONFIG_FILES = (
     "tools.json",
     "stars.json",
     "archived.json",
-    "mcp.json",
     "skill_catalogs.json",
     "skill_links.json",
     "providers.json",
@@ -39,6 +38,12 @@ CONFIG_FILES = (
 )
 # Directories that keep their name, one level up from config/.
 PASSTHROUGH_DIRS = ("completions", "reports")
+
+# Credential-shaped names move under secrets/ rather than config/ — the
+# sealed secrets/.gitignore keeps them out of a `git add .`, while config/
+# is exactly the tree a user versions.
+def _is_credential_file(name: str) -> bool:
+    return name in (".env", ".envrc", ".netrc") or name.startswith(".env.")
 
 # Dead weight from the single-file era, deleted rather than carried across.
 DROP = ("mcp.py", "mcp_formats.py", "mcp_server.py", "tests", "__pycache__", "archive")
@@ -78,30 +83,76 @@ def plan_migration(home: Path | None = None) -> MigrationPlan | None:
             plan.moved.append((entry, config_dir / name))
         elif name in PASSTHROUGH_DIRS:
             plan.moved.append((entry, quiver / name))
-        elif name.startswith("."):
-            plan.dropped.append(entry)  # .DS_Store and friends
+        elif name == "mcp.json":
+            # The hub lives at ~/.quiver/mcp.json, not in config/: every MCP
+            # reader resolves the root path, so landing it under config/
+            # stranded every server until the user found the file.
+            plan.moved.append((entry, quiver / name))
+        elif _is_credential_file(name):
+            # A stray .env landing in config/ would be one `git add .` from
+            # a committed key: config/ is the versioned tree, so credential
+            # files go under the sealed secrets/ instead.
+            plan.moved.append((entry, paths.secrets_dir_for(home) / name))
         else:
-            # Anything unrecognised is authored until proven otherwise, so it
-            # goes to config/ rather than being dropped on the floor.
+            # Anything unrecognised — dotfiles included — is authored until
+            # proven otherwise, so it moves to config/ rather than being
+            # dropped on the floor (a user's .env or notes are data).
             plan.moved.append((entry, config_dir / name))
     return plan
 
 
 def apply_migration(plan: MigrationPlan, remove_source: bool = True) -> MigrationPlan:
     """Carry out a plan. Existing destinations are left alone, not clobbered."""
+    import os
+
+    home = plan.source.parent.parent
+    secrets_dir = paths.secrets_dir_for(home)
+    secrets_blocked = secrets_dir.is_symlink() or (
+        os.path.lexists(secrets_dir) and not secrets_dir.is_dir()
+    )
+    sealed = False
     for src, dest in list(plan.moved):
-        if dest.exists():
+        if os.path.lexists(dest):
+            # lexists, not exists: a dangling symlink at the destination is
+            # invisible to exists() and shutil.move would replace the link
+            # with a standalone file, cutting it off from its real target.
             plan.moved.remove((src, dest))
             plan.skipped.append(dest)
             continue
+        if dest.parent == secrets_dir:
+            if secrets_blocked:
+                # Moving through a linked or non-dir secrets/ lands keys in
+                # an arbitrary place the seal never protects. Keep the file
+                # at its legacy source and report the destination.
+                plan.moved.remove((src, dest))
+                plan.skipped.append(dest)
+                continue
+            if not sealed:
+                # The catch-all .gitignore must be in place before the key
+                # file lands, not after — a crash between the two would
+                # leave a credential sitting in an unsealed directory.
+                seal_secrets_dir(home)
+                sealed = True
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_symlink():
+            target = os.readlink(src)
+            if not os.path.isabs(target):
+                # Moving a relative link re-anchors it at the destination:
+                # ../../dotfiles/mcp.json resolved under the legacy root
+                # would point outside the home from the hub. Point the new
+                # link at where the old one actually reached instead.
+                os.symlink(os.path.abspath(src.parent / target), dest)
+                src.unlink()
+                continue
         shutil.move(str(src), str(dest))
 
     for entry in plan.dropped:
-        if entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
-        else:
+        if entry.is_symlink() or not entry.is_dir():
+            # A symlinked directory is a link, not a tree: rmtree on it
+            # raises mid-apply and strands the migration half-done.
             entry.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(entry, ignore_errors=True)
 
     if remove_source and plan.source.is_dir():
         leftovers = list(plan.source.iterdir())
@@ -160,7 +211,16 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
         planned.append((old, new, f"move {old_label} to {new_label}"))
 
     secrets_dir = paths.secrets_dir_for(home)
-    if planned or secrets_dir.is_dir():
+    secrets_blocked = secrets_dir.is_symlink() or (
+        os.path.lexists(secrets_dir) and not secrets_dir.is_dir()
+    )
+    if secrets_blocked:
+        # Path ops follow links: mkdir/chmod/writes under it would land in
+        # an arbitrary external directory. The seal below reports it.
+        planned = []
+    if planned or secrets_blocked or secrets_dir.is_dir():
+        # is_dir() follows the link, so a dangling symlink or a regular
+        # file must trigger the seal call itself or the skip goes unreported.
         notes.extend(seal_secrets_dir(home, apply=apply))
     for old, new, note in planned:
         notes.append(note)
@@ -179,7 +239,11 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
     # old path at all. Backfill the link there; ~/.api_keys is left alone,
     # since a home that never had one gains nothing from a new file in it.
     old_mcp, new_mcp = paths.legacy_mcp_secrets_file_for(home), paths.mcp_secrets_file_for(home)
-    if new_mcp.is_file() and not (old_mcp.exists() or old_mcp.is_symlink()):
+    if (
+        not secrets_dir.is_symlink()
+        and new_mcp.is_file()
+        and not (old_mcp.exists() or old_mcp.is_symlink())
+    ):
         notes.append("link secrets/.api_keys to secrets/mcp/.api_keys")
         if apply:
             old_mcp.symlink_to(new_mcp)
@@ -197,6 +261,12 @@ def seal_secrets_dir(home: Path | None = None, *, apply: bool = True) -> list[st
     import os
 
     secrets_dir = paths.secrets_dir_for(home)
+    if secrets_dir.is_symlink():
+        # A foreign directory must never be chmod 0700'd or handed a
+        # catch-all .gitignore through the link.
+        return ["secrets/ is a symlink — left alone"]
+    if os.path.lexists(secrets_dir) and not secrets_dir.is_dir():
+        return ["secrets/ is a file, not a directory — left alone"]
     seal = secrets_dir / ".gitignore"
     if seal.is_file() and seal.read_text(encoding="utf-8", errors="replace") == paths.SECRETS_GITIGNORE_BODY:
         return []

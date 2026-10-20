@@ -177,6 +177,8 @@ def _print_paths(title: str, rows: list[tuple[LinkStatus, str]], home: Path) -> 
 
 def _ensure_scaffold(home: Path, check_only: bool) -> list[str]:
     """Create the .quiver directory, seed file, and skills dir if absent."""
+    import os
+
     notes = []
     root, agents, skills, backups = (
         quiver_dir(home),
@@ -184,17 +186,24 @@ def _ensure_scaffold(home: Path, check_only: bool) -> list[str]:
         skills_dir(home),
         backups_dir(home),
     )
+    # lexists, not exists: a dangling symlink is invisible to exists() but a
+    # mkdir/write through it lands wherever the link points — possibly far
+    # outside ~/.quiver. A scaffold path that is any symlink is left alone.
     for path, label in ((root, "~/.quiver"), (skills, "skills/"), (backups, "backups/")):
-        if not path.exists():
+        if not os.path.lexists(path):
             notes.append(f"create {label}")
             if not check_only:
                 path.mkdir(parents=True, exist_ok=True)
-    if not agents.exists():
+        elif path.is_symlink() and not path.is_dir():
+            notes.append(f"{label} is a dangling symlink — left alone")
+    if not os.path.lexists(agents):
         notes.append("seed AGENTS.md")
         if not check_only:
             agents.write_text(SEED_AGENTS_MD, encoding="utf-8")
+    elif agents.is_symlink() and not agents.is_file():
+        notes.append("AGENTS.md is a dangling symlink — left alone")
     ignore = linkignore_file(home)
-    if not ignore.exists():
+    if not os.path.lexists(ignore):
         notes.append("seed .linkignore")
         if not check_only:
             ignore.write_text(SEED_LINKIGNORE, encoding="utf-8")

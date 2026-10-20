@@ -19,6 +19,7 @@ from quiver.init import commands as init_commands
 from quiver.init.layout import (
     classify_skill_root,
     discover_skill_roots,
+    skill_folder_scan,
     skill_root_label,
 )
 
@@ -519,6 +520,20 @@ class SafetyTest(unittest.TestCase):
                 backups_after_first,
                 "a second run should absorb nothing new",
             )
+
+
+class ScanCompletenessTest(unittest.TestCase):
+    def test_a_capped_scan_reports_incomplete_names(self):
+        # A directory cap must not surface as a finished listing: the
+        # names come back with complete=False so callers can say so.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("one", "two", "three", "four"):
+                _skill(root, name)
+            with mock.patch("quiver.init.layout._WALK_DIR_CAP", 2):
+                names, complete = skill_folder_scan(root)
+            self.assertFalse(complete)
+            self.assertLess(len(names), 4)
 
 
 if __name__ == "__main__":
