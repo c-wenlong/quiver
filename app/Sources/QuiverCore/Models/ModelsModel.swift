@@ -563,6 +563,12 @@ public final class ModelsModel {
         }
     }
 
+    /// Waits out a pending coalesced rebuild: tests await the rows a
+    /// typed query produces without racing the delay.
+    func settleSearch() async {
+        await searchTask?.value
+    }
+
     /// The effort and mode words a parsed name carried, display-cased.
     private func qualifier(_ parsed: ModelMatcher.Parsed) -> String? {
         var words: [String] = []
