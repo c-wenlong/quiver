@@ -115,6 +115,29 @@ class SetupWizardTest(unittest.TestCase):
         self.assertIn("Completed stages remain saved", output.getvalue())
         self.assertIn("Harnesses", output.getvalue())
 
+    def test_eof_in_a_stage_stops_the_wizard_at_130(self):
+        # Regression: the stage loop's `except Exception` used to catch
+        # EOFError before the outer (EOFError, KeyboardInterrupt) handler,
+        # so Ctrl-D marked every remaining stage failed yet still exited 0.
+        first = Mock(return_value=StageOutcome("harnesses", "Harnesses", "changed", "one"))
+        second = Mock(side_effect=EOFError)
+        later = Mock(return_value=StageOutcome("mcp", "MCP", "ready", "ok"))
+        stages = {
+            "harnesses": first,
+            "providers": second,
+            "mcp": later,
+            "skills": Mock(),
+            "report": Mock(),
+            "check": Mock(),
+        }
+        output = io.StringIO()
+        with patch.dict("quiver.setup.wizard._STAGES", stages, clear=True), redirect_stdout(output):
+            result = run_setup_wizard()
+
+        self.assertEqual(result, 130)
+        later.assert_not_called()
+        self.assertIn("Completed stages remain saved", output.getvalue())
+
     def test_failed_stage_is_reported_and_later_stages_continue(self):
         failed = Mock(side_effect=RuntimeError("broken registry"))
         later = Mock(return_value=StageOutcome("providers", "Providers", "ready", "ok"))

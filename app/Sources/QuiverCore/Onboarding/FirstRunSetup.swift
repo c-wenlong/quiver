@@ -94,6 +94,10 @@ public struct SetupOutcome: Decodable, Sendable, Equatable {
     public let mcp: [String]
     public let starred: Starred?
     public let links: Links?
+    /// Apply steps that failed part way ("harness: …", "mcp: …"). The run
+    /// exits 1 but still emits the envelope, so without this field a
+    /// half-applied setup would read as success here.
+    public let errors: [String]?
 
     /// Picks swe has no registry or catalog entry for, so it couldn't
     /// star them (Settings › Providers knows a few more than swe does).
@@ -262,7 +266,8 @@ public final class FirstRunSetupModel {
             outcome = try await swe().applySetup(starred: starredList(order: order), adopt: adopt)
             appliedSelection = picks
             if outcome?.links?.adopted != nil { adopted = true }
-            if let error = outcome?.links?.error { applyError = error }
+            let failures = (outcome?.errors ?? []) + (outcome?.links?.error.map { [$0] } ?? [])
+            if !failures.isEmpty { applyError = failures.joined(separator: "\n") }
         } catch {
             applyError = error.localizedDescription
         }

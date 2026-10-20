@@ -461,7 +461,7 @@ class CmdListMigrationTest(unittest.TestCase):
             )
             with patches[0], patches[1], patches[2]:
                 output = _run_cmd_list([])
-            idx_notice = output.find("No keys directory")
+            idx_notice = output.find("No key store")
             idx_dashes = output.find("\u2500" * 10)
             self.assertGreater(idx_dashes, 0)
             self.assertGreater(idx_notice, idx_dashes)
@@ -1139,6 +1139,27 @@ class CmdAddTest(unittest.TestCase):
             DEFAULT_PROVIDERS["together_ai"]["env_vars"],
         )
 
+    def test_add_rejects_a_flag_token_as_the_name(self):
+        # `providers add --env=FOO_API_KEY` used to register a provider
+        # literally named "--env": after expansion the flag sat in the
+        # name slot and was never validated.
+        with TemporaryDirectory() as tmp:
+            patches, registry_file = self._patches(Path(tmp))
+            with patches[0], patches[1]:
+                rc, out = self._run_add(["--env=FOO_API_KEY"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--env", out)
+        self.assertFalse(registry_file.exists())
+
+    def test_add_rejects_a_short_flag_as_the_name(self):
+        with TemporaryDirectory() as tmp:
+            patches, registry_file = self._patches(Path(tmp))
+            with patches[0], patches[1]:
+                rc, out = self._run_add(["-d"])
+        self.assertEqual(rc, 1)
+        self.assertIn("not valid", out)
+
+
 class CmdRemoveHelpTest(unittest.TestCase):
     def test_remove_help_token_prints_help_not_lookup(self):
         # `providers remove --help` used to look up a provider literally
@@ -1200,6 +1221,143 @@ class CmdRemoveHelpTest(unittest.TestCase):
                     rc = cmd_remove(argv)
                 self.assertEqual(rc, 0)
                 self.assertIn("swe providers remove", buf.getvalue())
+
+
+class CmdStoreWordingTest(unittest.TestCase):
+    """Printed key-store instructions must match the layout that is read.
+
+    The default store is one shell-export file
+    (``~/.quiver/secrets/providers/.api_keys``); a directory of
+    bare-key files only exists under ``--api-keys-dir=DIR`` or a legacy
+    ``~/.api_keys/`` directory.
+    """
+
+    def _patches(self, tmp_path: Path):
+        return _registry_patches(
+            tmp_path / ".config" / "swe",
+            tmp_path / ".config" / "swe" / "providers.json",
+        )
+
+    def test_missing_default_store_advises_export_lines(self):
+        # The default store is a single file: telling users to "add a file
+        # per provider" made them create a directory the app's key editor
+        # cannot write.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            missing_store = tmp_path / ".quiver" / "secrets" / "providers" / ".api_keys"
+            patches = self._patches(tmp_path) + (
+                patch(
+                    "quiver.providers.commands.default_keys_dir",
+                    return_value=missing_store,
+                ),
+            )
+            with patches[0], patches[1], patches[2]:
+                output = _run_cmd_list([])
+            self.assertIn("No key store", output)
+            self.assertIn("export NAME=<key>", output)
+            self.assertNotIn("file per provider", output)
+
+    def test_missing_custom_dir_offers_both_layouts(self):
+        # An explicit --api-keys-dir that does not exist yet can honestly
+        # become either layout; the advice names both.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            patches = self._patches(tmp_path)
+            missing_dir = tmp_path / "keys"
+            with patches[0], patches[1]:
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    cmd_list([f"--api-keys-dir={missing_dir}"])
+                output = buf.getvalue()
+            self.assertIn("No key store", output)
+            self.assertIn("one bare-key file per provider", output)
+            self.assertIn("export NAME=<key>", output)
+
+    def _remove_with_store(self, tmp_path: Path, store: Path,
+                           env_vars=("OPENAI_API_KEY",)) -> str:
+        import json
+
+        from quiver.providers.commands import cmd_remove
+
+        config_dir = tmp_path / ".config" / "swe"
+        registry_file = config_dir / "providers.json"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        registry_file.write_text(json.dumps({
+            "openai": {"env_vars": list(env_vars), "key_filename": "openai"},
+        }))
+        patches = _registry_patches(config_dir, registry_file) + (
+            patch(
+                "quiver.providers.commands.default_keys_dir",
+                return_value=store,
+            ),
+        )
+        buf = io.StringIO()
+        with patches[0], patches[1], patches[2], redirect_stdout(buf):
+            rc = cmd_remove(["openai"])
+        self.assertEqual(rc, 0)
+        return buf.getvalue()
+
+    def test_remove_names_the_export_line_for_a_file_store(self):
+        # With the real store the key is a line inside .api_keys, not a
+        # file at ".api_keys/openai".
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / ".api_keys"
+            store.write_text("export OPENAI_API_KEY=sk-x\n")
+            out = self._remove_with_store(tmp_path, store)
+        self.assertIn("OPENAI_API_KEY", out)
+        self.assertIn(str(store), out)
+        self.assertNotIn(f"{store}/openai", out)
+
+    def test_remove_names_the_key_file_for_a_directory_store(self):
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / "keys"
+            store.mkdir()
+            out = self._remove_with_store(tmp_path, store)
+        self.assertIn(f"{store}/openai", out)
+
+    def test_remove_names_the_export_the_file_actually_holds(self):
+        # env_vars[0] is only the first accepted name: a provider whose
+        # secondary name is the one exported must not be told its
+        # primary-named line survived.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / ".api_keys"
+            store.write_text("export SECONDARY_API_KEY=sk-x\n")
+            out = self._remove_with_store(
+                tmp_path, store,
+                env_vars=("PRIMARY_API_KEY", "SECONDARY_API_KEY"),
+            )
+        self.assertIn("SECONDARY_API_KEY", out)
+        self.assertNotIn("PRIMARY_API_KEY", out)
+
+    def test_remove_lists_accepted_names_when_no_key_is_stored(self):
+        # No matching export in the file — name all accepted names rather
+        # than guessing env_vars[0].
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / ".api_keys"
+            store.write_text("")
+            out = self._remove_with_store(
+                tmp_path, store,
+                env_vars=("PRIMARY_API_KEY", "SECONDARY_API_KEY"),
+            )
+        self.assertIn("PRIMARY_API_KEY or SECONDARY_API_KEY", out)
+
+    def test_remove_survives_a_store_with_invalid_utf8(self):
+        # A non-UTF-8 .api_keys used to raise UnicodeDecodeError after the
+        # removal was already saved — traceback on a completed remove.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / ".api_keys"
+            store.write_bytes(b"export PRIMARY_API_KEY=\xff\xfe\n")
+            out = self._remove_with_store(
+                tmp_path, store,
+                env_vars=("PRIMARY_API_KEY", "SECONDARY_API_KEY"),
+            )
+        self.assertIn("Removed 'openai'", out)
+        self.assertIn("PRIMARY_API_KEY or SECONDARY_API_KEY", out)
 
 
 if __name__ == "__main__":

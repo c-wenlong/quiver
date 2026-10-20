@@ -163,6 +163,86 @@ class RegistryLoadSeedingTest(unittest.TestCase):
             self.assertEqual(registry_file.read_text(), "{not-json}")
 
 
+class RegistryEntryValidationTest(unittest.TestCase):
+    """Malformed entries raise CorruptConfigurationError, not a bare
+    TypeError/ValueError from ``dict(info)`` or ``.get()`` mid-merge."""
+
+    def _write(self, tmp_path: Path, payload) -> Path:
+        config_dir = tmp_path / ".config" / "swe"
+        registry_file = config_dir / "providers.json"
+        registry_file.parent.mkdir(parents=True, exist_ok=True)
+        registry_file.write_text(json.dumps(payload))
+        return registry_file
+
+    def test_string_entry_raises_naming_the_row(self):
+        from quiver.configuration import CorruptConfigurationError
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            registry_file = self._write(tmp_path, {"openai": "oops"})
+            p1, p2 = _registry_patches(tmp_path / ".config" / "swe", registry_file)
+            with p1, p2:
+                with self.assertRaises(CorruptConfigurationError) as ctx:
+                    load_registry()
+            self.assertIn("openai", str(ctx.exception))
+            # The file is left alone for manual recovery.
+            self.assertIn('"oops"', registry_file.read_text())
+
+    def test_list_entry_raises_even_when_dict_would_parse_it(self):
+        # ``dict([["env_vars", ["X"]]])`` happily builds a dict — the check
+        # must be isinstance, not a try/except around the conversion.
+        from quiver.configuration import CorruptConfigurationError
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            registry_file = self._write(tmp_path, {"sneaky": [["env_vars", ["X"]]]})
+            p1, p2 = _registry_patches(tmp_path / ".config" / "swe", registry_file)
+            with p1, p2:
+                with self.assertRaises(CorruptConfigurationError):
+                    load_registry()
+
+    def test_removed_must_be_a_list(self):
+        # ``set("kimi")`` was silently accepted as four one-letter removals.
+        from quiver.configuration import CorruptConfigurationError
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            registry_file = self._write(
+                tmp_path,
+                {
+                    "_removed": "kimi",
+                    "openai": {"env_vars": ["OPENAI_API_KEY"]},
+                },
+            )
+            p1, p2 = _registry_patches(tmp_path / ".config" / "swe", registry_file)
+            with p1, p2:
+                with self.assertRaises(CorruptConfigurationError) as ctx:
+                    load_registry()
+            self.assertIn("_removed", str(ctx.exception))
+
+    def test_removed_items_must_be_strings(self):
+        # ``[["openai"]]`` passed the bare list check, then ``set(...)``
+        # raised an uncaught TypeError on the unhashable item.
+        from quiver.configuration import CorruptConfigurationError
+
+        for bad in ([["openai"]], ["openai", 1], [None]):
+            with self.subTest(bad=bad), TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                registry_file = self._write(
+                    tmp_path,
+                    {
+                        "_removed": bad,
+                        "openai": {"env_vars": ["OPENAI_API_KEY"]},
+                    },
+                )
+                p1, p2 = _registry_patches(tmp_path / ".config" / "swe",
+                                           registry_file)
+                with p1, p2:
+                    with self.assertRaises(CorruptConfigurationError) as ctx:
+                        load_registry()
+                self.assertIn("_removed", str(ctx.exception))
+
+
 class RegistrySaveRoundtripTest(unittest.TestCase):
     def test_save_then_load_roundtrips(self):
         with TemporaryDirectory() as tmp:

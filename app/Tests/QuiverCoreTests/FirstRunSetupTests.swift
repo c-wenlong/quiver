@@ -190,4 +190,21 @@ private func applied(leftAlone: Bool) -> String {
         #expect(setup.step == .links)
         #expect(setup.applyError == "Fix ~/.quiver/.linkignore")
     }
+
+    @Test func anApplyStepErrorIsShownAndHoldsTheStep() async {
+        // A step that failed inside --apply lands in applied.errors with
+        // exit 1; the envelope still decodes, so the error must surface.
+        let runner = SetupRunner(preview: previewJSON, applied: """
+            {"applied": {"harness": ["claude"], "mcp": [], "skills": [],
+             "errors": ["mcp: disk full"],
+             "links": {"adopted": null, "rows": []}}}
+            """)
+        runner.appliedStatus = 1
+        let setup = model(runner)
+        await setup.load()
+        await setup.next(order: [])
+        await setup.next(order: [])
+        #expect(setup.step == .links)
+        #expect(setup.applyError == "mcp: disk full")
+    }
 }
