@@ -320,6 +320,120 @@ class SetupLinksTest(_SetupHarness):
                 payload = json.loads(out.getvalue())["data"]
                 self.assertIn("config dir gone", str(payload[key]))
 
+    def test_starred_failure_lands_in_errors_not_a_traceback(self):
+        code, out, _ = self._run(["--apply", "--json", "--starred=claude"])
+        # _set_starred is patched per-test below; this happy path must not
+        # invent an errors key.
+        self.assertEqual(code, 0)
+        self.assertNotIn("errors", json.loads(out)["data"]["applied"])
+
+    def test_starred_failure_is_reported_in_errors(self):
+        from quiver.setup import commands as sc
+
+        with patch.object(
+            sc, "_set_starred", Mock(side_effect=OSError("registry locked"))
+        ):
+            code, out, _ = self._run(["--apply", "--json", "--starred=claude"])
+        self.assertEqual(code, 1)
+        applied = json.loads(out)["data"]["applied"]
+        self.assertIn("starred: registry locked", applied["errors"])
+        self.assertNotIn("starred", applied)
+
+    def test_preview_linking_failure_is_an_error_field_not_a_traceback(self):
+        from quiver.setup import commands as sc
+
+        with patch.object(
+            sc, "run_init", Mock(side_effect=OSError("linkignore unreadable"))
+        ):
+            code, out, _ = self._run(["--json"])
+        self.assertEqual(code, 0)
+        instructions = json.loads(out)["data"]["instructions"]
+        self.assertEqual(instructions["error"], "linkignore unreadable")
+
+    def test_eof_and_interrupt_still_propagate_through_every_guard(self):
+        # The widened guards report Exception but must never swallow
+        # Ctrl-D / Ctrl-C.
+        import contextlib
+
+        from quiver.setup import commands as sc
+
+        none = MergeResult(added=[], updated=[], orphaned=[], pruned=[])
+        quiet = {
+            "discover_harnesses": lambda: [],
+            "discover_mcp_servers": lambda **k: [],
+            "skills_symlink_hints": lambda **k: [],
+            "apply_findings": Mock(return_value=([], [])),
+            "apply_mcp_findings": Mock(return_value=none),
+            "apply_skills_symlink_hints": Mock(return_value=[]),
+        }
+        cases = [
+            # (extra patches, argv, exception that must reach the caller)
+            ({"discover_harnesses": Mock(side_effect=EOFError)},
+             ["--json"], EOFError),
+            # Non-JSON discovery failures re-raise too: only the JSON
+            # contract owes the app an envelope instead of a traceback.
+            ({"discover_harnesses": Mock(side_effect=OSError)},
+             [], OSError),
+            ({"discover_harnesses": lambda: [_finding()],
+              "apply_findings": Mock(side_effect=EOFError)},
+             ["--apply", "--json"], EOFError),
+            ({"_set_starred": Mock(side_effect=KeyboardInterrupt)},
+             ["--apply", "--json", "--starred=claude"], KeyboardInterrupt),
+            ({"run_init": Mock(side_effect=KeyboardInterrupt)},
+             ["--apply", "--json"], KeyboardInterrupt),
+            ({"run_init": Mock(side_effect=EOFError)},
+             ["--json"], EOFError),
+        ]
+        for extra, argv, exc_type in cases:
+            with self.subTest(argv=argv, extra=sorted(extra)):
+                patches = dict(quiet)
+                patches.update(extra)
+                stack = [
+                    patch.object(sc, key, mock) for key, mock in patches.items()
+                ]
+                stack.append(patch("sys.stdin.isatty", return_value=False))
+                with contextlib.ExitStack() as es:
+                    for p in stack:
+                        es.enter_context(p)
+                    with self.assertRaises(exc_type):
+                        cmd_setup(argv)
+
+    def test_interactive_accept_apply_failure_reports_instead_of_traceback(self):
+        from quiver.setup import commands as sc
+
+        with patch.object(sc, "discover_harnesses", lambda: [_finding("kiro")]), \
+                patch.object(sc, "discover_mcp_servers", lambda **k: []), \
+                patch.object(sc, "skills_symlink_hints", lambda **k: []), \
+                patch.object(
+                    sc, "apply_findings",
+                    Mock(side_effect=OSError("disk full")),
+                ), \
+                patch("sys.stdin.isatty", return_value=True), \
+                patch.object(sc, "read_line", return_value="y"):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = cmd_setup(["--non-interactive"])
+        self.assertEqual(code, 1)
+        self.assertIn("stopped part way", out.getvalue())
+        self.assertIn("disk full", out.getvalue())
+
+    def test_interactive_accept_eof_still_propagates(self):
+        # The apply-step guard re-raises Ctrl-D/Ctrl-C instead of
+        # reporting it as an apply failure.
+        from quiver.setup import commands as sc
+
+        with patch.object(sc, "discover_harnesses", lambda: [_finding("kiro")]), \
+                patch.object(sc, "discover_mcp_servers", lambda **k: []), \
+                patch.object(sc, "skills_symlink_hints", lambda **k: []), \
+                patch.object(
+                    sc, "apply_findings", Mock(side_effect=KeyboardInterrupt),
+                ), \
+                patch("sys.stdin.isatty", return_value=True), \
+                patch.object(sc, "read_line", return_value="y"):
+            with redirect_stdout(io.StringIO()):
+                self.assertRaises(KeyboardInterrupt, cmd_setup,
+                                  ["--non-interactive"])
+
     def test_an_apply_failure_exits_1_and_says_so_in_text_mode(self):
         code, out, _ = self._run(
             ["--apply"],
