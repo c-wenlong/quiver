@@ -22,6 +22,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("tags", "Show all tags"),
     ("aliases", "Show aliases"),
     ("mcp", "Manage MCP servers"),
+    ("gh", "GitHub: pinned repos, PRs, issues, CI, inbox"),
     ("harness", "Harness registry utils"),
     ("find", "Locate shared assets across harnesses"),
     ("plugins", "Browse every marketplace, install per harness"),
@@ -299,6 +300,20 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--json", "Print discovery preview as JSON"),
         ("--non-interactive", "Preview without prompts or writes"),
     ],
+    "gh": [
+        ("--repo", "Repo as owner/name or a github.com URL"),
+        ("--state", "Row state filter (open/closed/…)"),
+        ("--limit", "Rows to fetch"),
+        ("--web", "Open the github.com page instead"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
+    "gh repo": [
+        ("--json", "Print the {schema, data} envelope"),
+    ],
+    "gh repo search": [
+        ("--limit", "Rows to fetch"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
 }
 
 # Nested flag tables: cmd -> {subcommand: _COMMAND_FLAGS key}. `swe mcp sync
@@ -325,6 +340,16 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "list": "mcp list", "ls": "mcp list", "status": "mcp status",
         "secret": "mcp secret set", "secret set": "mcp secret set",
         "add": "mcp add", "remove": "mcp remove",
+    },
+    "gh": {
+        "pr": "gh", "prs": "gh", "pulls": "gh",
+        "issue": "gh", "issues": "gh",
+        "run": "gh", "runs": "gh", "actions": "gh", "ci": "gh",
+        "pages": "gh", "page": "gh",
+        "release": "gh", "releases": "gh", "tag": "gh", "tags": "gh",
+        "branch": "gh", "branches": "gh",
+        "inbox": "gh", "notifications": "gh", "notifs": "gh",
+        "repo": "gh repo", "repo search": "gh repo search",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
@@ -385,6 +410,16 @@ _NESTED_PROVIDER_TARGETS: dict[str, frozenset[str]] = {
 
 # Third level of subcommands, e.g. `swe report followup <TAB>`.
 _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("gh", "repo"): [
+        ("list", "Pinned repos"),
+        ("add", "Pin a repo"),
+        ("remove", "Unpin a repo"),
+        ("search", "Search github.com for repos to pin"),
+    ],
+    ("gh", "pr"): [
+        ("list", "List pull requests"),
+        ("status", "Current branch, authored, needs-review"),
+    ],
     ("report", "followup"): [
         ("add", "Record a follow-up"),
         ("edit", "Edit a follow-up"),
@@ -456,6 +491,18 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("secret", "Store a ${NAME} value"),
         ("doctor", "Deep diagnostics"),
         ("help", "Detailed help for one command"),
+    ],
+    "gh": [
+        ("repo", "Pin or search the repos the dashboard watches"),
+        ("pr", "Pull requests (alias: prs, pulls)"),
+        ("issue", "Issues (alias: issues)"),
+        ("run", "Workflow runs (alias: runs, actions, ci)"),
+        ("pages", "GitHub Pages site and latest build"),
+        ("releases", "Releases (alias: release)"),
+        ("tags", "Tags (alias: tag)"),
+        ("branches", "Branches (alias: branch)"),
+        ("inbox", "GitHub notifications (alias: notifications)"),
+        ("help", "Detailed help"),
     ],
     "find": [
         ("amd", "Locate AGENTS.md / CLAUDE.md instruction files"),

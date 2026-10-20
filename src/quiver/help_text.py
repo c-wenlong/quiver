@@ -583,6 +583,38 @@ to use their own login state and environment."""
   The completion script calls {c('cyan', 'swe __complete')} under the hood to
   provide dynamic completions for tool names, aliases, tags, and flags."""
     ),
+    "gh": (
+        "GitHub surfaces: PRs, issues, actions, inbox, pinned repos",
+        f"""\
+  {c('cyan', 'swe gh')}                          gh status + pinned repos
+  {c('cyan', 'swe gh repo list|add|remove|search')}   The repos the dashboard watches
+  {c('cyan', 'swe gh pr [--repo=R] [--state=S]')}     Pull requests (default: open)
+  {c('cyan', 'swe gh pr status')}                Current branch, authored, needs-review
+  {c('cyan', 'swe gh issue [--repo=R]')}          Issues
+  {c('cyan', 'swe gh run [--repo=R]')}            Workflow runs (alias: actions)
+  {c('cyan', 'swe gh pages [--repo=R]')}          GitHub Pages site + latest build
+  {c('cyan', 'swe gh releases|tags|branches')}    Auxiliary repo surfaces
+  {c('cyan', 'swe gh inbox')}                    Your GitHub notifications
+
+  Repo resolution: {c('cyan', '--repo=owner/name')} wins, else the working
+  directory's git remote, else every pinned repo. So a bare
+  {c('cyan', 'swe gh pr')} inside a checkout shows that repo; outside one it
+  shows all pinned repos in turn.
+
+  {c('bold', 'Flags')}
+  {c('cyan', '--repo=owner/name')}   Repo (a github.com URL works too)
+  {c('cyan', '--state=open|closed|…')}  pr: open/closed/merged/all; issue: open/closed/all
+  {c('cyan', '--limit=N')}            Rows to fetch (default 30, cap 200)
+  {c('cyan', '--web')}                Open the matching github.com page instead
+  {c('cyan', '--json')}               {{schema, data}} envelope; data is
+                          {{github: {{status, login}}, results: [...]}} with one
+                          entry per repo: ok → rows, else a typed status
+                          (not-found, upstream-error) plus the error text
+
+  Auth is ambient: swe gh uses your {c('cyan', 'gh auth login')} and never
+  stores tokens. Read-only on purpose — create/merge/comment stay with the
+  agent inside a session."""
+    ),
     "version": (
         "Print the swe version",
         f"""\
@@ -630,6 +662,9 @@ COMMAND_CATEGORIES = [
     ]),
     ("MCP", [
         ("mcp",     None),
+    ]),
+    ("GitHub", [
+        ("gh",      None),
     ]),
     ("Shell", [
         ("autocomplete", None),
