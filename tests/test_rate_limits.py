@@ -3477,17 +3477,23 @@ class BundledLibcryptoLoadTest(unittest.TestCase):
 
             def fake_cdll(name):
                 calls.append(name)
-                return object()
+                return MagicMock()
 
             import ctypes
             import ctypes.util  # noqa: F401 — it uses CDLL at import time
             with patch.dict(os.environ, {"QUIVER_BUNDLED_PYTHON": "1"}), \
                     patch.object(sys, "executable", str(exe)), \
                     patch.object(ctypes, "CDLL", fake_cdll):
-                self.rl._load_libcrypto()
+                lib = self.rl._load_libcrypto()
             # The wrong dylib crashes this interpreter rather than
             # raising; only the bundle's own lib dir may be tried.
             self.assertEqual(calls, [str(dylib.resolve())])
+            # A loadable library becomes the cached configured handle.
+            self.assertIsNotNone(lib)
+            self.assertIs(lib, self.rl._LIBCRYPTO)
+            self.assertEqual(lib.EVP_aes_256_gcm.restype, ctypes.c_void_p)
+            self.assertIs(self.rl._load_libcrypto(), lib)
+            self.assertEqual(len(calls), 1)
 
     def test_bundled_without_dylib_loads_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

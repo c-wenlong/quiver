@@ -91,7 +91,15 @@ find "$py" -name '__pycache__' -type d -prune -exec rm -rf {} +
 # libcrypto that codesign then signs with the app goes in lib/, the only
 # place _load_libcrypto looks when QUIVER_BUNDLED_PYTHON is set.
 libcrypto=""
-for cand in ${QUIVER_LIBCRYPTO:+"$QUIVER_LIBCRYPTO"}             /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib             /usr/local/opt/openssl@3/lib/libcrypto.3.dylib; do
+# Arch-ordered defaults: an Intel Python under Rosetta needs /usr/local's
+# library, an arm64 one needs /opt/homebrew's; the wrong arch's dylib
+# cannot load on either.
+if [ "$triple" = "aarch64-apple-darwin" ]; then
+  brew_libs="/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib /usr/local/opt/openssl@3/lib/libcrypto.3.dylib"
+else
+  brew_libs="/usr/local/opt/openssl@3/lib/libcrypto.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib"
+fi
+for cand in ${QUIVER_LIBCRYPTO:+"$QUIVER_LIBCRYPTO"} $brew_libs; do
   if [ -f "$cand" ]; then libcrypto="$cand"; break; fi
 done
 if [ -z "$libcrypto" ]; then
@@ -99,11 +107,15 @@ if [ -z "$libcrypto" ]; then
 else
   cp "$libcrypto" "$py/lib/libcrypto.3.dylib"
   openssl_share="$(dirname "$(dirname "$libcrypto")")/share/openssl"
-  for license in "$openssl_share/LICENSE.txt"                  "$(dirname "$libcrypto")/../LICENSE.txt"; do
-    if [ -f "$license" ]; then
-      cp "$license" "$py/lib/OPENSSL-LICENSE.txt"; break
-    fi
+  license="${QUIVER_LIBCRYPTO_LICENSE:-}"
+  for cand in ${license:+"$license"} "$openssl_share/LICENSE.txt"              "$(dirname "$libcrypto")/../LICENSE.txt"; do
+    if [ -f "$cand" ]; then license="$cand"; break; fi
   done
+  if [ ! -f "$license" ]; then
+    echo "bundle-swe: no OpenSSL LICENSE.txt next to $libcrypto; set QUIVER_LIBCRYPTO_LICENSE" >&2
+    exit 1
+  fi
+  cp "$license" "$py/lib/OPENSSL-LICENSE.txt"
 fi
 
 # The package, without anything a previous run left behind.
