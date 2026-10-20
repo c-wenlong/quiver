@@ -38,6 +38,22 @@ branches can't leave a half-finished app installed. A failed build changes
 nothing. `QUIVER_INSTALL_REF` builds another ref and `QUIVER_INSTALL_DIR`
 installs somewhere else.
 
+## Package a DMG
+
+```bash
+QUIVER_CHANNEL=prod app/script/build-app.sh release   # clean checkout, arm64
+app/script/make-dmg.sh                                # writes build/Quiver-<version>.dmg
+```
+
+Prod builds need a Developer ID certificate (or `QUIVER_SIGN_IDENTITY=-` to
+force ad-hoc) and refuse a dirty or tagless checkout. The DMG step notarizes
+and staples the app and the image when `QUIVER_NOTARY_PROFILE` or the
+`NOTARY_*` App Store Connect key are set; a Developer-ID-signed app without
+either stops instead of writing a DMG Gatekeeper would reject. A
+credential-free DMG for local testing needs an ad-hoc bundle:
+`QUIVER_SIGN_IDENTITY=-` on the prod build, or a plain debug build.
+BOOTSTRAP.md lists where the credentials live.
+
 ## Layout
 
 | Path | What |
@@ -53,6 +69,7 @@ installs somewhere else.
 | `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/Quiver.app` |
 | `script/bundle-swe.sh` | Puts `swe` and its own Python into the bundle; `build-app.sh` runs it and signs the Python binaries |
 | `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Developer ID on `QUIVER_CHANNEL=prod`, Apple Development otherwise, else ad-hoc) |
+| `script/make-dmg.sh` | Packages a built Quiver.app into a DMG (/Applications symlink plus LICENSE and notices), signing, notarizing and stapling when `QUIVER_NOTARY_PROFILE` or the `NOTARY_*` key are set |
 | `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.quiver/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
 | `THIRD_PARTY_NOTICES.md` | Licences for the LiteLLM snapshot and ported OpenUsage rules |
