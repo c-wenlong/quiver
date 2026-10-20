@@ -357,6 +357,30 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Usage: swe add", out)
 
+    def test_list_scope_value_spelling_a_boolean_flag_is_not_smuggled(self):
+        # `--scope=-u` expands to ("--scope", "-u"); the -u must be consumed
+        # as the scope value, not stripped as --usage, which used to leave a
+        # bare --scope and crash on args[i+1].
+        code, out = _run(cmd_list, ["--scope=-u"])
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown scope", out)
+
+    def test_list_exclude_value_spelling_a_flag_does_not_refresh(self):
+        with patch(
+            "quiver.sessions.usage.invalidate_counts_cache"
+        ) as invalidate:
+            code, _ = _run(cmd_list, ["--exclude=-r"])
+        self.assertEqual(code, 0)
+        invalidate.assert_not_called()
+
+    def test_list_real_boolean_flags_still_work(self):
+        with patch(
+            "quiver.sessions.usage.invalidate_counts_cache"
+        ) as invalidate:
+            code, _ = _run(cmd_list, ["-r"])
+        self.assertEqual(code, 0)
+        invalidate.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
