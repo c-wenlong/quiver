@@ -40,6 +40,7 @@ import re
 from datetime import date, datetime, time
 from pathlib import Path
 
+from quiver.configuration import CorruptConfigurationError
 from quiver.paths import atomic_write_text
 
 import tomllib
@@ -57,11 +58,18 @@ _MCP_HEADER_RE = re.compile(
 
 
 def _is_mcp_header(stripped_line: str) -> bool:
-    """True for a ``[mcp_servers…]`` table header (``.``/``]`` next char)."""
-    if not stripped_line.startswith("[mcp_servers"):
-        return False
-    rest = stripped_line[len("[mcp_servers"):]
-    return not rest or rest[0] in (".", "]")
+    """True for a ``[mcp_servers…]`` table header (``.``/``]`` next char).
+
+    ``[[mcp_servers.x]]`` array-of-tables headers count too: they still
+    declare mcp_servers content, and leaving them in pre/post let the
+    strict loader read the file as "no mcp region" — which a later
+    discover --prune then deleted real entries over.
+    """
+    for prefix in ("[mcp_servers", "[[mcp_servers"):
+        if stripped_line.startswith(prefix):
+            rest = stripped_line[len(prefix):]
+            return not rest or rest[0] in (".", "]")
+    return False
 
 
 def _table_headers(lines: list[str]) -> list[int]:
@@ -169,20 +177,38 @@ def parse_codex_mcp_region(region: str) -> dict[str, dict]:
     Returns deep copies of the parsed mappings so callers can freely mutate
     nested ``env`` / ``headers`` / codex-specific dicts without affecting the
     ``tomllib``-owned internals.
+
+    Strict, like ``load_json``: a region that cannot be parsed raises
+    :class:`CorruptConfigurationError` rather than reading as ``{}`` — a
+    silent empty result lets a later ``sync``/``discover --apply --prune``
+    overwrite or delete the real entries the file actually holds. The same
+    guard covers shapes the writer cannot round-trip (``mcp_servers`` not a
+    table, a ``[[mcp_servers.x]]`` array-of-tables, a scalar server value):
+    reading them as "absent" would silently drop those entries on save.
+    Read paths catch and warn; write paths let it propagate.
     """
     if not region.strip():
         return {}
     try:
         parsed = tomllib.loads(region)
-    except tomllib.TOMLDecodeError:
-        return {}
+    except tomllib.TOMLDecodeError as exc:
+        raise CorruptConfigurationError(
+            f"Cannot parse the [mcp_servers] region of codex config: {exc}"
+        ) from exc
     mcp = parsed.get("mcp_servers", {})
     if not isinstance(mcp, dict):
-        return {}
+        raise CorruptConfigurationError(
+            "Cannot parse the [mcp_servers] region of codex config: "
+            "'mcp_servers' is not a table"
+        )
     out: dict[str, dict] = {}
     for name, cfg in mcp.items():
-        if isinstance(cfg, dict):
-            out[name] = copy.deepcopy(cfg)
+        if not isinstance(cfg, dict):
+            raise CorruptConfigurationError(
+                "Cannot parse the [mcp_servers] region of codex config: "
+                f"server '{name}' is not a table"
+            )
+        out[name] = copy.deepcopy(cfg)
     return out
 
 
@@ -314,8 +340,8 @@ def load_codex_servers(path: Path = CODEX_CONFIG) -> dict[str, dict]:
         return {}
     try:
         text = path.read_text()
-    except OSError:
-        return {}
+    except OSError as exc:
+        raise CorruptConfigurationError(f"Cannot read {path}: {exc}") from exc
     _, region, _ = split_codex_toml(text)
     return parse_codex_mcp_region(region)
 
@@ -329,8 +355,14 @@ def save_codex_servers(servers: dict[str, dict], path: Path = CODEX_CONFIG) -> b
     Caller is expected to pre-filter ``servers`` to exactly the set they want
     on disk (including any ``--prune`` decisions). This keeps the engine
     cohesive — it just merges; the CLI makes policy.
+
+    Refuses to write over an existing ``[mcp_servers*]`` region that cannot
+    be parsed: the merge would otherwise replace the whole block and wipe
+    the entries the file really holds.
     """
     text = path.read_text() if path.exists() else ""
+    _, existing_region, _ = split_codex_toml(text)
+    parse_codex_mcp_region(existing_region)  # raises CorruptConfigurationError
     final = apply_merges(text, servers)
     if final == text:
         return False
