@@ -492,5 +492,315 @@ class C1StStripTest(unittest.TestCase):
         )
 
 
+class CellWidthEdgeCasesTest(unittest.TestCase):
+    """19-continued: every zero-width class, and the boundary branches of
+    the cell-measured truncate/elide helpers."""
+
+    def test_zero_width_classes_measure_zero(self):
+        from quiver.console import _char_cells
+
+        self.assertEqual(_char_cells("\u0301"), 0)       # combining mark
+        self.assertEqual(_char_cells("\u200d"), 0)       # ZWJ
+        self.assertEqual(_char_cells("\ufe0f"), 0)       # variation selector
+        self.assertEqual(_char_cells("\U0001f3fb"), 0)   # skin-tone modifier
+        self.assertEqual(_char_cells("\U000e0061"), 0)   # tag char
+        self.assertEqual(_char_cells("\U0001f1e6"), 2)   # regional indicator
+        self.assertEqual(_char_cells("開"), 2)
+        self.assertEqual(_char_cells("x"), 1)
+
+    def test_joined_sequences_still_count_once(self):
+        from quiver.console import cell_len
+
+        self.assertEqual(cell_len("a\u200db"), 1)                 # ZWJ merge
+        self.assertEqual(cell_len("\U0001f1fa\U0001f1f8"), 2)     # flag pair
+        self.assertEqual(cell_len("e\u0301"), 1)                  # precomposed-ish
+
+    def test_take_cells_end_drops_dangling_mark(self):
+        from quiver.console import _take_cells_end
+
+        # Scanning backwards ends on the combining mark whose base char
+        # was cut — leaving it would paint the mark against the ellipsis.
+        self.assertEqual(_take_cells_end("q\u0301zz", 2), "zz")
+
+    def test_truncate_and_elide_edges(self):
+        from quiver.console import elide_cells, truncate_cells
+
+        self.assertEqual(truncate_cells("abcdef", 0), "")
+        # A budget too small for "..." falls back to a bare cut.
+        self.assertEqual(truncate_cells("abcdef", 3), "abc")
+        self.assertEqual(elide_cells("abcdef", 0), "")
+        self.assertEqual(elide_cells("abcdef", 1), "…")
+
+
+class EscAbortsSequenceTest(unittest.TestCase):
+    """6-continued: an Esc arriving mid-CSI aborts it — the widget still
+    sees a single cancel rather than a swallowed pair."""
+
+    def test_esc_mid_sequence_is_escape(self):
+        from quiver.keys import read_key
+
+        r, w = os.pipe()
+        os.write(w, b"\x1b[\x1b")
+        os.close(w)
+        try:
+            self.assertEqual(read_key(r), "escape")
+        finally:
+            os.close(r)
+
+
+class JsoncEdgeCasesTest(unittest.TestCase):
+    """7-continued: the surgical writer bails on layouts it cannot map,
+    and the caller falls back to a full save with a stderr warning."""
+
+    def test_key_span_returns_none_on_unmapped_layouts(self):
+        from quiver.mcp.cli import _jsonc_key_span
+
+        self.assertIsNone(_jsonc_key_span("[1, 2]", "mcp"))        # not an object
+        self.assertIsNone(_jsonc_key_span("{}", "mcp"))            # key absent
+        self.assertIsNone(_jsonc_key_span('{ 5: 1 }', "mcp"))      # bare member
+        self.assertIsNone(_jsonc_key_span('{ "mcp" 5 }', "mcp"))   # no colon
+        self.assertIsNone(_jsonc_key_span('{"mcp": {', "mcp"))     # unterminated
+
+    def test_block_comments_are_skipped(self):
+        from quiver.mcp.cli import _jsonc_key_span
+
+        # A /* */ before the root, ahead of the value, and mid-value.
+        text = ('/* head */\n{\n  "mcp": /* inline */ '
+                '{"a": /* mid */ 1}\n}\n')
+        span = _jsonc_key_span(text, "mcp")
+        self.assertIsNotNone(span)
+        self.assertIsNone(_jsonc_key_span('{/* never closed', "mcp"))
+
+    def test_slice_save_insert_paths_and_failures(self):
+        from quiver.mcp.cli import _save_jsonc_slice, load_json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Empty object: member inserted after the opening brace.
+            p1 = Path(tmp) / "a.jsonc"
+            p1.write_text("{}\n")
+            self.assertTrue(_save_jsonc_slice(p1, "mcp", {"s": {"command": "x"}}))
+            self.assertEqual(load_json(p1)["mcp"], {"s": {"command": "x"}})
+
+            # Trailing comma: member inserted without doubling it.
+            p2 = Path(tmp) / "b.jsonc"
+            p2.write_text('{\n  "theme": "dark",\n}\n')
+            self.assertTrue(_save_jsonc_slice(p2, "mcp", {}))
+            self.assertEqual(load_json(p2)["theme"], "dark")
+
+            # No closing brace at all: refuse rather than guess.
+            p3 = Path(tmp) / "c.jsonc"
+            p3.write_text("// just a note\n")
+            self.assertFalse(_save_jsonc_slice(p3, "mcp", {}))
+
+            # Unreadable file: False, not a traceback.
+            self.assertFalse(
+                _save_jsonc_slice(Path(tmp) / "absent.jsonc", "mcp", {}))
+
+    def test_unmapped_layout_warns_then_fails_cleanly(self):
+        from quiver.mcp.cli import CorruptConfigurationError, get_tool_saver
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "kilo.jsonc"
+            p.write_text("// only a comment, no object\n")
+            err = io.StringIO()
+            # The slice fails, the warning fires, and the strict loader
+            # refuses to treat the file as {} — write paths propagate.
+            with redirect_stderr(err), self.assertRaises(
+                CorruptConfigurationError
+            ):
+                get_tool_saver("kilo")({"s": {"command": "x"}}, p)
+            self.assertIn("comments could not be preserved", err.getvalue())
+            # And the file itself was never rewritten.
+            self.assertEqual(p.read_text(), "// only a comment, no object\n")
+
+    def test_unreadable_file_falls_back_without_warning(self):
+        from quiver.mcp.cli import CorruptConfigurationError, get_tool_saver
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "kilo.jsonc"
+            p.write_text('{\n  // note\n  "mcp": {}\n}\n')
+            err = io.StringIO()
+            with redirect_stderr(err), \
+                 patch("pathlib.Path.read_text", side_effect=OSError("busy")), \
+                 self.assertRaises(CorruptConfigurationError):
+                get_tool_saver("kilo")({"s": {"command": "x"}}, p)
+            self.assertNotIn("comments could not be preserved", err.getvalue())
+
+
+class RateLimitLegacyNoDataTest(unittest.TestCase):
+    """3-continued: the pre-timestamp ``no_data: [name, ...]`` list form
+    also survives a filtered run."""
+
+    def test_legacy_list_no_data_entries_carry_over(self):
+        from quiver.harness import rate_limits
+        from quiver.harness.models import RateLimitInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "rate_limits.json"
+            now = 1_700_000_000.0
+            cache.write_text(json.dumps({
+                "cached_at": now,
+                "limits": {},
+                "updated_at": {},
+                "no_data": ["gemini"],
+            }))
+
+            def fake():
+                return RateLimitInfo(
+                    tool_name="claude", used_percent=10,
+                    limit_reached=False, reset_at=0.0, plan_type="pro",
+                    window_seconds=0,
+                )
+
+            with patch.object(rate_limits, "RATE_LIMITS_CACHE_FILE", cache), \
+                 patch.object(rate_limits, "_FETCHERS", {"claude": fake}), \
+                 patch.object(rate_limits.time, "time", return_value=now):
+                rate_limits.get_all_rate_limits(
+                    use_cache=False, tool_names={"claude"})
+
+            saved = json.loads(cache.read_text())
+        self.assertIn("gemini", saved["no_data"])
+        self.assertIn("claude", saved["limits"])
+
+
+class CopilotStrictNullArgsTest(unittest.TestCase):
+    """5-continued: an explicit ``args: null`` is also not a lossy
+    conversion when the emitter stamps ``args: []``."""
+
+    def test_null_args_is_not_lossy(self):
+        from quiver.mcp.formats import (
+            McpFormatHandler, get_conversion_issues, register_format_handler,
+        )
+
+        class _Stub(McpFormatHandler):
+            def parse(self, raw):
+                return {"command": "x", "args": None}
+
+            def emit(self, canonical):
+                return dict(canonical)
+
+        register_format_handler("_stub_null_args", _Stub())
+        try:
+            issues = get_conversion_issues({}, "_stub_null_args", "copilot")
+        finally:
+            from quiver.mcp import formats
+            formats._FORMAT_MCP_HANDLERS.pop("_stub_null_args", None)
+        self.assertNotIn("args", "; ".join(issues))
+
+
+class CodexPluginNoFlagTest(unittest.TestCase):
+    """16-continued: a plugins block without ``enabled`` is skipped."""
+
+    def test_block_without_enabled_is_skipped(self):
+        from quiver.find.plugins import _from_codex_toml
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cfg = home / ".codex"
+            cfg.mkdir()
+            (cfg / "config.toml").write_text(
+                '[plugins."declared@openai-curated"]\n'
+                'note = "no flag here"\n'
+                '[plugins."github@openai-curated"]\n'
+                "enabled = true\n"
+            )
+            found = _from_codex_toml(home)
+        self.assertEqual([p.name for p in found], ["github"])
+
+
+class ClaudeTranscriptStatFailureTest(unittest.TestCase):
+    """13-continued: a stat failure still records the path (mtime 0.0),
+    and a sid-less session survives the dedupe filter."""
+
+    def test_stat_oserror_falls_back_to_zero(self):
+        from quiver.sessions import parsers
+
+        class _Entry:
+            def __init__(self, name, path, is_dir=False, broken=False):
+                self.name, self.path = name, path
+                self._dir, self._broken = is_dir, broken
+
+            def is_dir(self):
+                return self._dir
+
+            def stat(self):
+                if self._broken:
+                    raise OSError("vanished")
+                return os.stat(self.path)
+
+        project = _Entry("-proj", "/proj", is_dir=True)
+        entry = _Entry("s1.jsonl", "/proj/s1.jsonl", broken=True)
+
+        def _scandir(path):
+            m = unittest.mock.MagicMock()
+            m.__enter__.return_value = iter(
+                [project] if path == "base" else [entry])
+            m.__exit__.return_value = False
+            return m
+
+        with patch("os.scandir", side_effect=_scandir):
+            paths = parsers._claude_transcript_paths("base")
+        self.assertEqual(paths["s1"], "/proj/s1.jsonl")
+
+    def test_dedupe_keeps_sessions_without_id(self):
+        from quiver.sessions import parsers
+        from quiver.sessions.models import Session
+
+        anon = Session(timestamp=0, agent="claude", path="/x",
+                       session_id="", tool_name="claude")
+        older = Session(timestamp=1, agent="claude", path="/a",
+                        session_id="s1", tool_name="claude")
+        newer = Session(timestamp=2, agent="claude", path="/b",
+                        session_id="s1", tool_name="claude")
+        with patch.object(
+            parsers, "parse_jsonl_projects",
+            return_value=[anon, older, newer],
+        ), patch.object(
+            parsers, "_claude_transcript_paths", return_value={}
+        ):
+            sessions = parsers.parse_claude()
+        self.assertEqual(len(sessions), 2)
+        self.assertIn(anon, sessions)
+        self.assertIn(newer, sessions)
+
+
+class ClaudeProbeStatFailureTest(unittest.TestCase):
+    """13-continued: an OSError while ordering transcript copies falls
+    back to glob order rather than dropping the probe."""
+
+    def test_getmtime_failure_still_probes(self):
+        from quiver.sessions import status
+        from quiver.sessions.models import Session
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".claude" / "projects"
+            for name in ("-a", "-b"):
+                d = root / name
+                d.mkdir(parents=True)
+                (d / "s1.jsonl").write_text(
+                    json.dumps({
+                        "type": "assistant",
+                        "message": {"content": [
+                            {"type": "text", "text": "live"}
+                        ], "stop_reason": "end_turn"},
+                    }) + "\n"
+                )
+            real = os.path.getmtime
+
+            def _flaky(p):
+                if str(p).endswith(".jsonl"):
+                    raise OSError("boom")
+                return real(p)
+
+            sess = Session(timestamp=0, agent="claude", path="/p",
+                           session_id="s1", tool_name="claude")
+            with patch.dict(os.environ, {"HOME": tmp}), patch(
+                "os.path.getmtime", side_effect=_flaky
+            ):
+                phase, text = status._probe_claude(sess, {})
+        self.assertEqual(phase, "finished")
+        self.assertEqual(text, "live")
+
+
 if __name__ == "__main__":
     unittest.main()

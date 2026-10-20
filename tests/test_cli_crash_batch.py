@@ -418,7 +418,9 @@ class UsageEventsParseTest(unittest.TestCase):
 # ── 6. Cyclic/over-deep JSON in configuration readers ───────────────
 
 
-def _deep_json(depth: int = 60000) -> str:
+def _deep_json(depth: int = 300000) -> str:
+    # 300k frames, not 60k: the C scanner's recursion budget is measured in
+    # remaining C stack, so on 3.15+ 60k nests parse without ever raising.
     return '{"a":' * depth + "1" + "}" * depth
 
 
