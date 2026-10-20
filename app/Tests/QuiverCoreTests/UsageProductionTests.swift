@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import QuiverCore
 
@@ -35,6 +36,161 @@ import Testing
 
     @Test func theRealToolRunsSecurity() {
         #expect(KeychainCLI.securityPath == "/usr/bin/security")
+    }
+}
+
+/// SecItemKeychain's OSStatus mapping: the thrown error is a
+/// commandFailed carrying Security's message for the code, never a
+/// stored value. The keychain itself stays out of tests.
+@Suite struct SecItemKeychainTests {
+    @Test func aStatusBecomesCommandFailedWithSecuritysMessage() {
+        let error = SecItemKeychain.error(errSecAuthFailed)
+        guard case .commandFailed(let status, let message) = error else {
+            Issue.record("expected commandFailed, got \(error)")
+            return
+        }
+        #expect(status == errSecAuthFailed)
+        #expect(!message.isEmpty)
+    }
+
+    @Test func everyStatusMapsToSomeMessage() {
+        // SecCopyErrorMessageString knows the common codes; the fallback
+        // covers the rest, so a failure is never a blank error.
+        for status in [errSecSuccess, errSecItemNotFound, errSecNotAvailable] {
+            guard case .commandFailed(_, let message) = SecItemKeychain.error(status) else {
+                Issue.record("expected commandFailed for \(status)")
+                continue
+            }
+            #expect(!message.isEmpty)
+        }
+    }
+}
+
+extension SecItemKeychainTests {
+    /// A keychain in memory: the SecItemCalls seam answers from `items`
+    /// keyed by (service, account), and records every call.
+    final class FakeKeychain: @unchecked Sendable {
+        var items: [String: Data] = [:]
+        private(set) var calls: [String] = []
+        /// Reads must ask to fail instead of prompting; writes may prompt.
+        private(set) var promptsForbidden = true
+        private(set) var writesMayPrompt = true
+
+        func make() -> SecItemCalls {
+            SecItemCalls(
+                copyMatching: { [self] query, result in
+                    calls.append("read")
+                    if (query as? [String: Any])?[kSecUseAuthenticationUI as String] as? String
+                        != kSecUseAuthenticationUIFail as String {
+                        promptsForbidden = false
+                    }
+                    guard let q = query as? [String: Any],
+                          let data = items[key(q)] else {
+                        result.pointee = nil
+                        return errSecItemNotFound
+                    }
+                    result.pointee = data as CFTypeRef
+                    return errSecSuccess
+                },
+                update: { [self] query, attributes in
+                    calls.append("update")
+                    if (query as? [String: Any])?[kSecUseAuthenticationUI as String] != nil {
+                        writesMayPrompt = false
+                    }
+                    guard let q = query as? [String: Any],
+                          let attrs = attributes as? [String: Any],
+                          let data = attrs[kSecValueData as String] as? Data,
+                          items[key(q)] != nil else { return errSecItemNotFound }
+                    items[key(q)] = data
+                    return errSecSuccess
+                },
+                add: { [self] query, _ in
+                    calls.append("add")
+                    guard let q = query as? [String: Any],
+                          let data = q[kSecValueData as String] as? Data else {
+                        return errSecParam
+                    }
+                    items[key(q)] = data
+                    return errSecSuccess
+                },
+                delete: { [self] query in
+                    calls.append("delete")
+                    guard let q = query as? [String: Any],
+                          items.removeValue(forKey: key(q)) != nil else {
+                        return errSecItemNotFound
+                    }
+                    return errSecSuccess
+                })
+        }
+
+        private func key(_ query: [String: Any]) -> String {
+            let service = query[kSecAttrService as String] as? String ?? ""
+            let account = query[kSecAttrAccount as String] as? String ?? ""
+            return service + "\u{1F}" + account
+        }
+    }
+
+    @Test func aReadReturnsTheStoredValue() async {
+        let keychain = FakeKeychain()
+        keychain.items["svc\u{1F}acct"] = Data("sekrit".utf8)
+        let store = SecItemKeychain(calls: keychain.make())
+        #expect(await store.genericPassword(service: "svc", account: "acct") == "sekrit")
+    }
+
+    @Test func aReadThatWouldPromptIsNilNotAHang() async {
+        let keychain = FakeKeychain()
+        var calls = keychain.make()
+        calls.copyMatching = { _, _ in errSecInteractionNotAllowed }
+        let store = SecItemKeychain(calls: calls)
+        #expect(await store.genericPassword(service: "svc", account: "acct") == nil)
+    }
+
+    @Test func aWriteUpdatesAnExistingItem() async throws {
+        let keychain = FakeKeychain()
+        keychain.items["svc\u{1F}acct"] = Data("old".utf8)
+        let store = SecItemKeychain(calls: keychain.make())
+        try await store.setGenericPassword(service: "svc", account: "acct", value: "new")
+        #expect(keychain.items["svc\u{1F}acct"] == Data("new".utf8))
+        #expect(keychain.calls == ["update"])
+    }
+
+    @Test func aWriteAddsWhenThereIsNothingToUpdate() async throws {
+        let keychain = FakeKeychain()
+        let store = SecItemKeychain(calls: keychain.make())
+        try await store.setGenericPassword(service: "svc", account: "acct", value: "new")
+        #expect(keychain.items["svc\u{1F}acct"] == Data("new".utf8))
+        #expect(keychain.calls == ["update", "add"])
+    }
+
+    @Test func aFailedWriteThrowsItsStatus() async {
+        let keychain = FakeKeychain()
+        var calls = keychain.make()
+        calls.update = { _, _ in errSecAuthFailed }
+        let store = SecItemKeychain(calls: calls)
+        await #expect(throws: SweError.self) {
+            try await store.setGenericPassword(service: "svc", account: "acct", value: "v")
+        }
+    }
+
+    @Test func deletingAMissingItemIsNotAnError() async throws {
+        let keychain = FakeKeychain()
+        let store = SecItemKeychain(calls: keychain.make())
+        try await store.deleteGenericPassword(service: "svc", account: "acct")
+        keychain.items["svc\u{1F}acct"] = Data("v".utf8)
+        try await store.deleteGenericPassword(service: "svc", account: "acct")
+        #expect(keychain.items["svc\u{1F}acct"] == nil)
+    }
+
+    @Test func readsNeverPromptButWritesMay() async throws {
+        // A consent prompt on a read can wait forever under a page load;
+        // a save the user just clicked may prompt once, which is how keys
+        // written by `security` before the switch become readable.
+        let keychain = FakeKeychain()
+        let store = SecItemKeychain(calls: keychain.make())
+        _ = await store.genericPassword(service: "svc", account: "acct")
+        try await store.setGenericPassword(service: "svc", account: "acct", value: "v")
+        #expect(keychain.promptsForbidden)
+        #expect(keychain.writesMayPrompt)
     }
 }
 

@@ -350,10 +350,12 @@ final class AppModel {
             files: LocalFiles(),
             cacheURL: quiver.appending(path: "cache/app-usage.json"))
         // Quiver's own service keys live in Keychain under their own
-        // service; only dates go in config/services.json. A test build
-        // swaps the keychain service so it never touches the real items.
+        // service, written and read in-process so the value never sits
+        // on a tool's argv; only dates go in config/services.json. A
+        // test build swaps the keychain service so it never touches the
+        // real items.
         let serviceCredentials = ServiceCredentials(
-            secrets: KeychainCLI(),
+            secrets: SecItemKeychain(),
             service: ProcessInfo.processInfo.environment["QUIVER_SERVICES_KEYCHAIN"]
                 ?? ServiceCredentials.keychainService,
             metadataURL: quiver.appending(path: "config/services.json"))
