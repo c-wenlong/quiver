@@ -140,7 +140,7 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 
 **Phase 4. Release pipeline**
 - [x] Prod builds hide the channel picker and Rebuild ([#409](https://github.com/c-wenlong/quiver/pull/409)). Releases build with `QUIVER_CHANNEL=prod` once the release job below exists.
-- [ ] Sign with Developer ID, hardened runtime and `--timestamp`, then notarize and staple. Implemented ([#414](https://github.com/c-wenlong/quiver/pull/414)): prod signs Developer ID with runtime+timestamp (verified locally, `spctl` = Unnotarized Developer ID), `QUIVER_NOTARY_PROFILE` zips+submits+staples. Unticked until a real submission runs — needs the notarytool keychain profile.
+- [x] Sign with Developer ID, hardened runtime and `--timestamp`, then notarize and staple ([#414](https://github.com/c-wenlong/quiver/pull/414)). Prod signs Developer ID with runtime+timestamp; `QUIVER_NOTARY_PROFILE=quiver-notary` zips+submits+staples — a local prod build was notarized `Accepted` and passes `spctl` as Notarized Developer ID.
 - [x] A macOS 26 release job that builds, signs, notarizes, makes the DMG and attaches it to the GitHub release ([#415](https://github.com/c-wenlong/quiver/pull/415), [#417](https://github.com/c-wenlong/quiver/pull/417)). Runs unsigned until the `MACOS_CERTIFICATE`, `NOTARY_*` and `SPARKLE_PRIVATE_KEY` secrets land.
 - [x] Version stamps come from `git describe`, which reads `0.0.0` on a shallow CI checkout. Fetch tags or pass the version in. ([#411](https://github.com/c-wenlong/quiver/pull/411))
 - [x] Universal build or Apple Silicon only: Apple Silicon only, decided. macOS 26 is the floor; release notes and the download page should say so.

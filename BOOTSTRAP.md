@@ -37,7 +37,7 @@ Phases 0–3: **done**. Phase 4: code-complete, credential-gated.
 | `NSAppleEventsUsageDescription` | Merged | #412 |
 | Repo public for release check | Done | — |
 | Bundled libcrypto for Droid limits | Merged | #413 |
-| Developer ID + hardened runtime + timestamp; notarize+staple via `QUIVER_NOTARY_PROFILE` | Merged; **first real submission pending** | #414 |
+| Developer ID + hardened runtime + timestamp; notarize+staple via `QUIVER_NOTARY_PROFILE` | Merged and **verified end-to-end**: `spctl` = Notarized Developer ID | #414 |
 | macOS release job (build → sign → notarize → DMG → appcast → attach) | Merged; unsigned until secrets land | #415, #417 |
 | Sparkle in-app updates + appcast feed | Merged | #416, #417 |
 | Apple Silicon only (decided; no universal) | Done — say so on the download page | — |
@@ -46,16 +46,9 @@ Phases 0–3: **done**. Phase 4: code-complete, credential-gated.
 
 Two things stand between "code complete" and "shipping":
 
-1. **Issuer ID** — UUID at App Store Connect › Users and Access › Integrations › App Store Connect API. Once known:
-   ```sh
-   xcrun notarytool store-credentials quiver-notary \
-     --key ~/Downloads/AuthKey_2JD7N46XV7.p8 \
-     --key-id 2JD7N46XV7 --issuer <UUID>
-   QUIVER_NOTARY_PROFILE=quiver-notary QUIVER_CHANNEL=prod \
-     app/script/build-app.sh release   # local signed+notarized build
-   ```
+1. ~~Issuer ID~~ **done** — `91aefe4d-1257-43a8-8376-24943a38a5b0`; the `quiver-notary` keychain profile exists (`notarytool store-credentials`, validated) and a local `QUIVER_NOTARY_PROFILE=quiver-notary QUIVER_CHANNEL=prod app/script/build-app.sh release` build came back `Accepted` + stapled.
 
-2. **GitHub secrets** (repo Settings › Secrets and variables › Actions):
+2. **GitHub secrets** — all values/paths are also in the local `.env` (gitignored) (repo Settings › Secrets and variables › Actions):
 
    | Secret | Value |
    |---|---|
@@ -67,7 +60,7 @@ Two things stand between "code complete" and "shipping":
    | `NOTARY_ISSUER` | the UUID above |
    | `SPARKLE_PRIVATE_KEY` | contents of `~/.quiver/secrets/sparkle-ed25519.txt` (0600, already exported) |
 
-   After these land, pushing a `v*` tag produces a signed, notarized DMG plus a signed `appcast.xml` that prod builds' Check for Updates reads.
+   After these land, pushing a `v*` tag produces a signed, notarized DMG plus a signed `appcast.xml` that prod builds' Check for Updates reads. The `.p8` itself lives at `.admin/[1] Passwords/AuthKey_2JD7N46XV7.p8`, not Downloads.
 
 ## Then cut a release
 
