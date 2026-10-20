@@ -57,6 +57,26 @@ class ModelsByToolSeparatorsTest(unittest.TestCase):
         self.assertEqual(lines[i1 + 1], "")
         self.assertEqual(lines[i2 - 1], "")
 
+    def test_one_separator_per_group_not_per_row(self):
+        from quiver.sessions.commands import cmd_models
+
+        raw = {
+            "claude": {("", "m-a"): 3},
+            "codex": {("", "m-b"): 2, ("", "m-c"): 1},
+        }
+        out = io.StringIO()
+        with patch(
+            "quiver.sessions.commands.collect_model_usage", return_value=raw
+        ), redirect_stdout(out):
+            cmd_models(["-t"])
+        lines = out.getvalue().splitlines()
+        ib = next(i for i, l in enumerate(lines) if "m-b" in l)
+        ic = next(i for i, l in enumerate(lines) if "m-c" in l)
+        # The group's second row follows its first with no gap.
+        self.assertEqual(ic - ib, 1)
+        # And the boundary still lands once, before the group.
+        self.assertEqual(lines[ib - 1], "")
+
 
 class RateLimitCacheMergeTest(unittest.TestCase):
     """3: a filtered run must not drop unrequested providers' readings."""
@@ -211,11 +231,27 @@ class BrokenCountsPreservedTest(unittest.TestCase):
             cache = Path(tmp) / "counts.json"
             with patch.object(usage, "SESSION_COUNTS_CACHE_FILE", cache):
                 usage._save_cached_counts(7, {"claude": 3}, {"bad.jsonl"})
-                usage._save_cached_counts(7, {"claude": 4}, set())
+                usage._save_cached_counts(
+                    7, {"claude": 4}, set(), merge_prior=True)
             windows = json.loads(cache.read_text())["windows"]
         entry = next(iter(windows.values()))
         self.assertEqual(entry["broken"], ["bad.jsonl"])
         self.assertEqual(entry["counts"]["claude"], 4)
+
+    def test_fresh_scan_replaces_broken_list(self):
+        # A fresh parse is authoritative: a recovered file must stop
+        # reading as broken once the scan runs clean.
+        from quiver.sessions import usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "counts.json"
+            with patch.object(usage, "SESSION_COUNTS_CACHE_FILE", cache):
+                usage._save_cached_counts(7, {"claude": 3}, {"bad.jsonl"})
+                usage._save_cached_counts(
+                    7, {"claude": 4}, set(), merge_prior=False)
+            windows = json.loads(cache.read_text())["windows"]
+        entry = next(iter(windows.values()))
+        self.assertEqual(entry["broken"], [])
 
 
 class HereFilterSkipsBadPathsTest(unittest.TestCase):
@@ -479,6 +515,14 @@ class WideGlyphTableTest(unittest.TestCase):
         cut = truncate_cells("開発テスト", 5)
         self.assertLessEqual(cell_len(cut), 5)
 
+    def test_vs16_promotion_counts_in_the_cut(self):
+        from quiver.console import cell_len, truncate_cells
+
+        # ❤ + VS16 renders 2 cells each; a naive per-char scan let the
+        # ellipsis push the result to 7 cells and shifted later columns.
+        cut = truncate_cells("❤️❤️❤️", 5)
+        self.assertLessEqual(cell_len(cut), 5)
+
 
 class C1StStripTest(unittest.TestCase):
     """20: a C1 ST terminates an OSC sequence — text after it survives."""
@@ -587,6 +631,16 @@ class JsoncEdgeCasesTest(unittest.TestCase):
             self.assertTrue(_save_jsonc_slice(p2, "mcp", {}))
             self.assertEqual(load_json(p2)["theme"], "dark")
 
+            # A // comment trailing the last member: the comma must land
+            # before it, not inside the comment where it would vanish.
+            p4 = Path(tmp) / "d.jsonc"
+            p4.write_text('{\n  "theme": "dark"\n  // keep\n}\n')
+            self.assertTrue(_save_jsonc_slice(p4, "mcp", {"s": {}}))
+            data = load_json(p4)
+            self.assertEqual(data["theme"], "dark")
+            self.assertEqual(data["mcp"], {"s": {}})
+            self.assertIn("// keep", p4.read_text())
+
             # No closing brace at all: refuse rather than guess.
             p3 = Path(tmp) / "c.jsonc"
             p3.write_text("// just a note\n")
@@ -663,6 +717,86 @@ class RateLimitLegacyNoDataTest(unittest.TestCase):
         self.assertIn("claude", saved["limits"])
 
 
+class RateLimitMergeRobustnessTest(unittest.TestCase):
+    """3-continued: a cache that parses but is the wrong shape merges as
+    empty, and carried readings keep their original age."""
+
+    def _run_filtered(self, cache, now=1_700_000_000.0):
+        from quiver.harness import rate_limits
+        from quiver.harness.models import RateLimitInfo
+
+        def fake():
+            return RateLimitInfo(
+                tool_name="claude", used_percent=10,
+                limit_reached=False, reset_at=0.0, plan_type="pro",
+                window_seconds=0,
+            )
+
+        with patch.object(rate_limits, "RATE_LIMITS_CACHE_FILE", cache), \
+             patch.object(rate_limits, "_FETCHERS", {"claude": fake}), \
+             patch.object(rate_limits.time, "time", return_value=now):
+            return rate_limits.get_all_rate_limits(
+                use_cache=False, tool_names={"claude"})
+
+    def test_malformed_cache_shapes_do_not_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for body in ("[]", '{"limits": [1]}', '"text"'):
+                cache = Path(tmp) / "rate_limits.json"
+                cache.write_text(body)
+                result = self._run_filtered(cache)
+                self.assertIn("claude", result)
+
+    def test_carried_reading_keeps_its_age(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "rate_limits.json"
+            old = 1_600_000_000.0          # the file's own cached_at
+            now = 1_700_000_000.0
+            cache.write_text(json.dumps({
+                "cached_at": old,
+                "limits": {
+                    "cursor": {"tool_name": "cursor", "used_percent": 7,
+                               "limit_reached": False, "reset_at": 0.0,
+                               "plan_type": "p", "window_seconds": 0},
+                },
+                # cursor has no updated_at entry: its age is the file's.
+                "updated_at": {},
+            }))
+            self._run_filtered(cache, now=now)
+            saved = json.loads(cache.read_text())
+        self.assertIn("cursor", saved["limits"])
+        self.assertEqual(saved["updated_at"]["cursor"], old)
+
+
+class ClaudeWorkingJobStalenessTest(unittest.TestCase):
+    """11-continued: a day-old ``working`` mark is a killed job, not a
+    live one."""
+
+    def _write_state(self, home, state, age):
+        d = Path(home) / ".claude" / "jobs" / "j1"
+        d.mkdir(parents=True)
+        f = d / "state.json"
+        f.write_text(json.dumps({"sessionId": "s1", "state": state}))
+        old = os.path.getmtime(str(f)) - age
+        os.utime(f, (old, old))
+
+    def test_stale_working_state_is_dropped(self):
+        from quiver.sessions import status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, "working", status._JOB_WORKING_STALE_S + 10)
+            with patch.dict(os.environ, {"HOME": tmp}):
+                self.assertEqual(status._claude_job_states(), {})
+
+    def test_fresh_working_state_is_kept(self):
+        from quiver.sessions import status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, "working", 0)
+            with patch.dict(os.environ, {"HOME": tmp}):
+                self.assertEqual(
+                    status._claude_job_states(), {"s1": "working"})
+
+
 class CopilotStrictNullArgsTest(unittest.TestCase):
     """5-continued: an explicit ``args: null`` is also not a lossy
     conversion when the emitter stamps ``args: []``."""
@@ -689,7 +823,22 @@ class CopilotStrictNullArgsTest(unittest.TestCase):
 
 
 class CodexPluginNoFlagTest(unittest.TestCase):
-    """16-continued: a plugins block without ``enabled`` is skipped."""
+    """16-continued: a plugins block without ``enabled`` is skipped, and
+    an indented header still counts as a header."""
+
+    def test_indented_header_is_found(self):
+        from quiver.find.plugins import _from_codex_toml
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cfg = home / ".codex"
+            cfg.mkdir()
+            (cfg / "config.toml").write_text(
+                '  [plugins."nested@openai-curated"]\n'
+                "  enabled = true\n"
+            )
+            found = _from_codex_toml(home)
+        self.assertEqual([p.name for p in found], ["nested"])
 
     def test_block_without_enabled_is_skipped(self):
         from quiver.find.plugins import _from_codex_toml

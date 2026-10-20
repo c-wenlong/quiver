@@ -84,14 +84,18 @@ def _load_cached_counts(days: int | None) -> dict[str, int] | None:
 
 
 def _save_cached_counts(days: int | None, counts: dict[str, int],
-                        broken: set[str] | None = None) -> None:
+                        broken: set[str] | None = None,
+                        merge_prior: bool = False) -> None:
     try:
         data = _read_cache()
         windows = dict(data.get("windows") or {})
-        # Union, don't replace: a second pass fed entirely by the sessions
-        # cache parses nothing and reports no failures — overwriting the
-        # list would forget which transcripts were actually broken.
-        prior = windows.get(_window_key(days), {}).get("broken") or []
+        # Union, don't replace — but only when this pass was fed by the
+        # sessions cache and so parsed nothing: overwriting the list then
+        # would forget which transcripts were actually broken. After a
+        # fresh scan the new list is authoritative, so a recovered file
+        # stops reading as broken.
+        prior = (windows.get(_window_key(days), {}).get("broken") or []
+                 if merge_prior else [])
         windows[_window_key(days)] = {
             "cached_at": time.time(),
             "counts": counts,
@@ -143,9 +147,13 @@ def session_counts(days: int | None = 100, use_cache: bool = True) -> dict[str, 
                 cached.setdefault(name, 0)
             return cached
 
-    from quiver.sessions import failures
+    from quiver.sessions import aggregator, failures
 
     failures.clear()
+    # A cache-fed session list parses nothing, so failures stays empty and
+    # this save must keep the prior broken list; a fresh scan's list is
+    # authoritative and replaces it.
+    snapshot_cached = aggregator._load_cached_sessions() is not None
     cutoff = 0.0 if days is None else (time.time() - days * 86400) * 1000
     counts: dict[str, int] = {name: 0 for name in tracked_tool_names()}
     for session in get_all_sessions(limit=None, use_cache=True):
@@ -156,7 +164,7 @@ def session_counts(days: int | None = 100, use_cache: bool = True) -> dict[str, 
     broke = set(failures.snapshot())
     _CACHED_BROKEN.clear()
     _CACHED_BROKEN.update(broke)
-    _save_cached_counts(days, counts, broke)
+    _save_cached_counts(days, counts, broke, merge_prior=snapshot_cached)
     return counts
 
 

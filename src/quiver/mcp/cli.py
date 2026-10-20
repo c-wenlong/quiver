@@ -424,6 +424,60 @@ def _jsonc_key_span(text: str, key: str) -> tuple[int, int] | None:
             return None
 
 
+def _jsonc_last_value_end(text: str) -> int | None:
+    """Offset just past the last top-level member's value, or None.
+
+    Unlike ``text.rfind("}")``, comments and whitespace trailing the last
+    member are left out of the result. Inserting ``", member"`` here keeps
+    them attached to the closing brace — a plain ``rstrip`` head would
+    drop the comma onto a comment line and break the file.
+    """
+    i = _skip_jsonc_ws_comments(text, 0)
+    if i >= len(text) or text[i] != "{":
+        return None
+    i += 1
+    n = len(text)
+    last_end: int | None = None
+    while True:
+        i = _skip_jsonc_ws_comments(text, i)
+        if i >= n or text[i] == "}":
+            return last_end
+        if text[i] == ",":
+            i += 1
+            continue
+        if text[i] != '"':
+            return last_end
+        i = _skip_jsonc_ws_comments(text, _skip_jsonc_string(text, i))
+        if i >= n or text[i] != ":":
+            return last_end
+        i = _skip_jsonc_ws_comments(text, i + 1)
+        depth = 0
+        vend: int | None = None
+        while i < n:
+            ch = text[i]
+            if ch == '"':
+                i = _skip_jsonc_string(text, i)
+                vend = i
+                continue
+            if ch == "/" and text[i + 1 : i + 2] in ("/", "*"):
+                i = _skip_jsonc_ws_comments(text, i)
+                continue
+            if ch in "[{":
+                depth += 1
+            elif ch in "]}":
+                if depth == 0:
+                    return vend
+                depth -= 1
+            elif ch == "," and depth == 0:
+                break
+            i += 1
+            if ch not in " \t\r\n":
+                vend = i
+        else:
+            return last_end
+        last_end = vend
+
+
 def _jsonc_member_indent(text: str, vstart: int) -> str:
     """Leading whitespace of the line holding the member that owns vstart."""
     line_start = text.rfind("\n", 0, vstart) + 1
@@ -464,7 +518,13 @@ def _save_jsonc_slice(path: Path, key: str, value) -> bool:
         elif head.endswith(","):
             new_text = head + "\n  " + member + "\n" + raw[close:]
         else:
-            new_text = head + ",\n  " + member + "\n" + raw[close:]
+            # The comma must land on live JSON: when a // comment trails
+            # the last member, splicing at head would park it inside the
+            # comment and break the file. Insert after the value instead.
+            vend = _jsonc_last_value_end(raw)
+            if vend is None:
+                return False
+            new_text = raw[:vend] + ",\n  " + member + "\n" + raw[vend:]
     atomic_write_text(path, new_text, private=True)
     return True
 

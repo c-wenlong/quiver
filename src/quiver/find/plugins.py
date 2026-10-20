@@ -154,7 +154,7 @@ def _from_codex_toml(home: Path) -> list[Plugin]:
     # ``enabled`` need not be the block's first key — match the header,
     # then look for the flag anywhere inside that table's own lines.
     for m in re.finditer(
-        r'^\[plugins\."([^"]+)"\][^\n]*\n(.*?)(?=^\s*\[|\Z)',
+        r'^[ \t]*\[plugins\."([^"]+)"\][^\n]*\n(.*?)(?=^\s*\[|\Z)',
         text, re.M | re.S,
     ):
         ref, body = m.groups()

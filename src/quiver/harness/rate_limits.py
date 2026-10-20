@@ -2658,6 +2658,8 @@ def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
     try:
         with open(RATE_LIMITS_CACHE_FILE) as f:
             data = json.load(f)
+        if not isinstance(data, dict):
+            return {}, {}
         cached_at = float(data.get("cached_at", 0))
         limits = data.get("limits", {})
         timestamps = data.get("updated_at", {})
@@ -2932,13 +2934,31 @@ def get_all_rate_limits(
             disk = json.loads(RATE_LIMITS_CACHE_FILE.read_text())
         except Exception:
             disk = {}
-        for name, raw in (disk.get("limits") or {}).items():
-            if name not in fetcher_names and name not in raw_cache:
-                raw_cache[name] = raw
-        for name, ts in (disk.get("updated_at") or {}).items():
-            if (name not in fetcher_names and name not in cache_updated_at
-                    and isinstance(ts, (int, float))):
-                cache_updated_at[name] = ts
+        if not isinstance(disk, dict):
+            # A cache that parses but isn't the expected shape — a list,
+            # or limits stored as one — merges as empty rather than
+            # raising AttributeError and taking the listing down with it.
+            disk = {}
+        carried: set[str] = set()
+        saved_limits = disk.get("limits")
+        if isinstance(saved_limits, dict):
+            for name, raw in saved_limits.items():
+                if name not in fetcher_names and name not in raw_cache:
+                    raw_cache[name] = raw
+                    carried.add(name)
+        saved_updated = disk.get("updated_at")
+        if isinstance(saved_updated, dict):
+            for name, ts in saved_updated.items():
+                if (name not in fetcher_names and name not in cache_updated_at
+                        and isinstance(ts, (int, float))):
+                    cache_updated_at[name] = ts
+        # A carried reading with no per-provider timestamp must keep the
+        # age of the file it came from — re-stamping it now would let
+        # repeated filtered runs keep a stale quota fresh forever.
+        base_ts = disk.get("cached_at")
+        if isinstance(base_ts, (int, float)):
+            for name in carried - set(cache_updated_at):
+                cache_updated_at[name] = base_ts
         saved_no_data = disk.get("no_data")
         if isinstance(saved_no_data, dict):
             for name, ts in saved_no_data.items():

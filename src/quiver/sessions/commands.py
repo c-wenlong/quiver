@@ -139,6 +139,10 @@ def cmd_models(args):
             if by_tool:
                 if last_tool is not None and last_tool != tool:
                     group_starts.append(row_index)
+                # Update inside the row loop: last_tool must trail the
+                # current row, not lag a whole group, or every row after
+                # the first would read as a new boundary.
+                last_tool = tool
                 t.add_row({
                     "tool": tool,
                     "model": model,
@@ -152,8 +156,6 @@ def cmd_models(args):
                     "msgs": cnt,
                 })
             row_index += 1
-        if by_tool:
-            last_tool = tool
 
     lines = t.render()
     # Header and separator occupy the first two rendered lines; each prior
