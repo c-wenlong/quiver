@@ -107,5 +107,8 @@ public struct WidgetCatalog: Sendable, Identifiable {
         WidgetCatalog(kind: "models", title: "Top models",
                       detail: "Your most used models over the last 30 days, by token share.",
                       symbol: "list.number"),
+        WidgetCatalog(kind: "compute", title: "Compute",
+                      detail: "What each running harness costs in RAM, CPU and GPU, with the Mac's temperatures.",
+                      symbol: "cpu"),
     ]
 }

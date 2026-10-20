@@ -25,9 +25,10 @@ import Testing
     }
 
     func make(activity: [DailyUsage] = [], models: [DailyUsage] = [],
-              limits: [LimitReading] = [], selection: WidgetSelection = WidgetSelection()) -> WidgetSnapshot {
+              limits: [LimitReading] = [], compute: WidgetSnapshot.ComputeSection? = nil,
+              selection: WidgetSelection = WidgetSelection()) -> WidgetSnapshot {
         WidgetSnapshot.make(activity: activity, models: models, limits: limits,
-                            selection: selection, now: now, calendar: calendar)
+                            compute: compute, selection: selection, now: now, calendar: calendar)
     }
 
     @Test func todayAndTheLastSevenDaysAddUpTheirDays() {
@@ -235,10 +236,17 @@ import Testing
         // Only these keys reach the widget. A new field must be added here on purpose.
         var r = reading("claude-work", used: 40, resetsAt: now, fetchedAt: now)
         r.title = "Claude: Work"
+        var history = ComputeHistory()
+        history.append("claude", TrendPoint(at: now, memoryBytes: 1, cpuPercent: 2, gpuPercent: 3))
+        let compute = WidgetSnapshot.ComputeSection(history: history, order: ["claude"],
+                                                    temperatureLines: [.cpu],
+                                                    selection: WidgetSelection())
         let snapshot = make(activity: [row(0, tokens: 1, cost: 1)],
-                            models: [row(-1, tokens: 1, model: "m")], limits: [r])
+                            models: [row(-1, tokens: 1, model: "m")], limits: [r],
+                            compute: compute)
         let json = try JSONSerialization.jsonObject(with: WidgetSnapshot.encoder.encode(snapshot)) as! [String: Any]
-        #expect(Set(json.keys) == ["schema", "generatedAt", "summary", "heatmap", "models", "limits"])
+        #expect(Set(json.keys) == ["schema", "generatedAt", "summary", "heatmap", "models", "limits",
+                                   "compute"])
         let summary = json["summary"] as! [String: Any]
         #expect(Set(summary.keys) == ["today", "week", "days", "series", "showsTotal"])
         let series = (summary["series"] as! [[String: Any]])[0]
@@ -250,6 +258,62 @@ import Testing
                                     "fetchedAt", "isStale"])
         let model = (json["models"] as! [[String: Any]])[0]
         #expect(Set(model.keys) == ["name", "tokens", "share", "harnesses"])
+        let computeJson = json["compute"] as! [String: Any]
+        #expect(Set(computeJson.keys) == ["sampledAt", "harnesses", "temperatures"])
+        let harness = (computeJson["harnesses"] as! [[String: Any]])[0]
+        #expect(Set(harness.keys) == ["harness", "memoryBytes", "cpuPercent", "gpuPercent"])
+    }
+
+    @Test func theComputeSectionTakesOnlyWhatRanAtTheLastTick() {
+        var history = ComputeHistory()
+        // codex stopped a tick ago; its old point must not draw.
+        history.append("codex", TrendPoint(at: now - 10, memoryBytes: 9, cpuPercent: 9, gpuPercent: nil))
+        history.append("claude", TrendPoint(at: now, memoryBytes: 4, cpuPercent: 80, gpuPercent: 20))
+        let section = WidgetSnapshot.ComputeSection(history: history,
+                                                    order: ["codex", "claude"],
+                                                    temperatureLines: [],
+                                                    selection: WidgetSelection())
+        #expect(section.sampledAt == now)
+        #expect(section.harnesses.map(\.harness) == ["claude"])
+    }
+
+    @Test func theComputeSectionHonoursHiddenHarnessesAndChosenLines() {
+        var selection = WidgetSelection()
+        selection.setShown(false, harness: "codex", in: .compute)
+        var history = ComputeHistory()
+        history.append("claude", TrendPoint(at: now, memoryBytes: 4, cpuPercent: 80, gpuPercent: nil))
+        history.append("codex", TrendPoint(at: now, memoryBytes: 2, cpuPercent: 10, gpuPercent: nil))
+        history.appendTemperature(TemperaturePoint(at: now,
+                                                   values: [.cpu: 61, .battery: 33]))
+        let section = WidgetSnapshot.ComputeSection(history: history, order: ["claude", "codex"],
+                                                    temperatureLines: [.battery],
+                                                    selection: selection)
+        #expect(section.harnesses.map(\.harness) == ["claude"])
+        // The cpu line is off; only the chosen battery reading ships.
+        #expect(section.temperatures == ["battery": 33])
+    }
+
+    @Test func aComputeSectionWithoutTicksIsCollectingNotOld() {
+        let section = WidgetSnapshot.ComputeSection(history: ComputeHistory(), order: [],
+                                                    temperatureLines: [],
+                                                    selection: WidgetSelection())
+        #expect(section.sampledAt == nil)
+        #expect(section.harnesses.isEmpty)
+        #expect(!section.isOld(now: now))
+        var stale = section
+        stale.sampledAt = now - LimitReading.widgetMaxAge - 1
+        #expect(stale.isOld(now: now))
+    }
+
+    @Test func aSnapshotWithoutComputeDecodes() throws {
+        // A file an older build wrote has no compute key.
+        let snapshot = make(activity: [row(-1, tokens: 50)])
+        var json = try JSONSerialization.jsonObject(with: WidgetSnapshot.encoder.encode(snapshot)) as! [String: Any]
+        json["compute"] = nil
+        let decoded = try WidgetSnapshot.decoder.decode(WidgetSnapshot.self,
+                                                        from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.compute == nil)
+        #expect(decoded.limits == snapshot.limits)
     }
 
     @Test func theStoreWritesAndReadsBack() throws {
