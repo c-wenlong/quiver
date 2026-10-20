@@ -45,6 +45,14 @@ struct ModelCard: View {
                 if row.tokens > 0 {
                     line("Your use", "\(UsageFormat.tokens(row.tokens)) tokens \(periodLabel)")
                 }
+                // A LiteLLM-only search hit still has a price to show.
+                if row.listPrice != nil {
+                    Divider().overlay(Theme.border)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Cost").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                        priceTiles()
+                    }
+                }
             }
         }
         .padding(16)
@@ -89,17 +97,23 @@ struct ModelCard: View {
     @ViewBuilder private func cost(_ model: AALanguageModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Cost").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-            HStack(spacing: 6) {
-                priceTile("Input", row.listPrice?.input, highlighted: true)
-                priceTile("Output", row.listPrice?.output)
-                priceTile("Cache read", row.listPrice?.cacheRead)
-            }
-            .help(row.listPrice.map { "\($0.key) in the price list" } ?? "No LiteLLM price for this model")
+            priceTiles()
             line("AA blended", model.priceBlended.map { Self.price($0) + " / 1M" })
             if let rank = row.costPercentile {
                 CostDotScale(name: title, rank: rank)
             }
         }
+    }
+
+    /// The list price as input, output and cache-read tiles; the hover
+    /// names the LiteLLM key they came from.
+    private func priceTiles() -> some View {
+        HStack(spacing: 6) {
+            priceTile("Input", row.listPrice?.input, highlighted: true)
+            priceTile("Output", row.listPrice?.output)
+            priceTile("Cache read", row.listPrice?.cacheRead)
+        }
+        .help(row.listPrice.map { "\($0.key) in the price list" } ?? "No LiteLLM price for this model")
     }
 
     private func priceTile(_ label: String, _ price: Double?,

@@ -472,6 +472,22 @@ extension CatalogDatabase {
             return result
         } ?? [:]
     }
+
+    /// The rows in force of every priced key that names no AA model: the
+    /// part of LiteLLM's list the Models page's search can still price.
+    public func currentPricesUnmatched() -> [PriceRow] {
+        withDB { db in
+            let statement = try db.prepare("""
+                SELECT \(Self.priceColumns) FROM prices p
+                JOIN model_aliases a ON a.name = p.key
+                WHERE a.model_id IS NULL AND p.valid_to IS NULL
+                ORDER BY p.key
+                """)
+            var result: [PriceRow] = []
+            while try statement.step() { result.append(Self.priceRow(from: statement)) }
+            return result
+        } ?? []
+    }
 }
 
 // MARK: - Artificial Analysis
