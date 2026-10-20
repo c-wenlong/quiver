@@ -180,8 +180,18 @@ public final class ModelsModel {
     public var harnessFilter: Set<String> = []
     /// The search box's text. A non-empty value swaps the scoped board
     /// for a catalog-wide match: every AA family a name matches, plus
-    /// LiteLLM price keys no AA model claims. Not persisted.
-    public var query = "" { didSet { rebuild() } }
+    /// LiteLLM price keys no AA model claims. Not persisted. Keystrokes
+    /// coalesce through `searchDelay` so typing never waits on a rebuild.
+    public var query = "" {
+        didSet {
+            guard Self.normalized(query) != Self.normalized(oldValue) else { return }
+            if searchDelay == .zero {
+                rebuild()
+            } else {
+                scheduleSearch()
+            }
+        }
+    }
     /// Whether the query is driving the row list — the scope picker's
     /// population (yours, top 10, top 25) no longer applies.
     public var searching: Bool { !Self.normalized(query).isEmpty }
@@ -200,7 +210,18 @@ public final class ModelsModel {
     public private(set) var unmatched: [Unmatched] = []
     /// Every AA model, for the link sheet's searchable list and the
     /// page's own search.
-    public private(set) var allModels: [AALanguageModel] = [] { didSet { matchIndex = nil } }
+    public private(set) var allModels: [AALanguageModel] = [] {
+        didSet {
+            matcherInputsChanged()
+            modelsByID = allModels.reduce(into: [:]) { $0[$1.id] = $1 }
+            aaHay = allModels.map {
+                (model: $0, hay: [Self.normalized($0.name), Self.normalized($0.slug),
+                                  Self.normalized($0.creatorName),
+                                  Self.normalized($0.creatorSlug)])
+            }
+            costPercentiles = Self.costRanks(in: allModels)
+        }
+    }
     public private(set) var isLoading = false
     public private(set) var isRefreshing = false
     /// When the models feed last landed.
@@ -215,7 +236,7 @@ public final class ModelsModel {
     private let transport: any HTTPTransport
     /// `~/.quiver/config/model-links.json`.
     private let linksURL: URL
-    private var links: [String: String] = [:] { didSet { matchIndex = nil } }
+    private var links: [String: String] = [:] { didSet { matcherInputsChanged() } }
     /// The period's per-model-per-harness usage; overridable in tests.
     private let slices: @Sendable (DateInterval) async -> [ModelUsage]
     /// The price catalog the ledger charges with; nil leaves used rows
@@ -223,13 +244,45 @@ public final class ModelsModel {
     private let pricing: @Sendable () async -> PricingCatalog?
     private var pricingCatalog: PricingCatalog?
     /// Current LiteLLM rows per AA model id, from the catalog join.
-    private var catalogPrices: [String: [CatalogDatabase.PriceRow]] = [:]
+    private var catalogPrices: [String: [CatalogDatabase.PriceRow]] = [:] {
+        didSet {
+            catalogHay = catalogPrices
+                .map { (id: $0.key, hay: $0.value.map { Self.normalized($0.key) }) }
+                .sorted { $0.id < $1.id }
+        }
+    }
     /// Current LiteLLM rows no alias links to an AA model: the search's
     /// price-only side.
-    private var unmatchedPrices: [CatalogDatabase.PriceRow] = []
+    private var unmatchedPrices: [CatalogDatabase.PriceRow] = [] {
+        didSet {
+            liteHay = unmatchedPrices.map {
+                (row: $0, hay: Self.normalized($0.key),
+                 bare: Self.normalized(PricingCatalog.bareName($0.key)))
+            }
+        }
+    }
     /// The parse index over `allModels` and `links`, built once and
     /// reused across per-keystroke rebuilds; nilled when either changes.
     private var matchIndex: ModelMatcher.Index?
+    /// `match` and `parse` answers by name: both run a dozen regexes per
+    /// call, which a per-keystroke search felt. `matchCache` drops with
+    /// `matchIndex` since links and `allModels` decide it; a stored nil
+    /// still means "checked, no match". `parse` is a pure function of
+    /// the name, so `parsedCache` never expires.
+    private var matchCache: [String: (model: AALanguageModel, linked: Bool)?] = [:]
+    private var parsedCache: [String: ModelMatcher.Parsed] = [:]
+    /// The lookup tables `allModels`, `catalogPrices` and
+    /// `unmatchedPrices` fill once: the id join, the normalized
+    /// haystacks a query scans, and the percentile every row reads.
+    private var modelsByID: [String: AALanguageModel] = [:]
+    private var aaHay: [(model: AALanguageModel, hay: [String])] = []
+    private var catalogHay: [(id: String, hay: [String])] = []
+    private var liteHay: [(row: CatalogDatabase.PriceRow, hay: String, bare: String)] = []
+    private var costPercentiles: [String: Double] = [:]
+    /// Typing coalesces: each keystroke re-arms this instead of
+    /// rebuilding, so a fast typist waits for one rebuild, not seven.
+    private var searchTask: Task<Void, Never>?
+    private let searchDelay: Duration
     private let now: () -> Date
     private let calendar: Calendar
     /// The usage the last load saw, kept so the scope/metric pickers can
@@ -264,7 +317,8 @@ public final class ModelsModel {
                 linksURL: URL,
                 slices: (@Sendable (DateInterval) async -> [ModelUsage])?,
                 pricing: @escaping @Sendable () async -> PricingCatalog? = { nil },
-                now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
+                now: @escaping () -> Date = Date.init, calendar: Calendar = .current,
+                searchDelay: Duration = .milliseconds(150)) {
         self.store = store
         self.keyReader = keyReader
         self.transport = transport
@@ -273,6 +327,7 @@ public final class ModelsModel {
         self.pricing = pricing
         self.now = now
         self.calendar = calendar
+        self.searchDelay = searchDelay
     }
 
     /// Loads the stored AA data and the period's usage, then rebuilds.
@@ -414,7 +469,7 @@ public final class ModelsModel {
 
     /// The matcher answer for a logged name, for hover cards elsewhere.
     public func resolve(_ logged: String) -> AALanguageModel? {
-        matcherIndex?.match(logged)?.model
+        cachedMatch(logged)?.model
     }
 
     /// A logged name's card data for other pages' hovers: the AA model it
@@ -428,11 +483,10 @@ public final class ModelsModel {
             if !harnesses.contains(slice.harness) { harnesses.append(slice.harness) }
             tokens += slice.totals.totalTokens
         }
-        let parsed = ModelMatcher.parse(logged)
         return Row(logged: logged, aa: aa, harnesses: harnesses, tokens: tokens,
                    value: aa.flatMap { metric.value(of: $0) },
-                   costPercentile: aa.flatMap { CostPercentile.rank(of: $0, in: allModels) },
-                   qualifier: qualifier(parsed),
+                   costPercentile: aa.flatMap { costPercentiles[$0.id] },
+                   qualifier: qualifier(parsed(logged)),
                    listPrice: listPrice(logged: logged, aa: aa))
     }
 
@@ -474,6 +528,45 @@ public final class ModelsModel {
             matchIndex = ModelMatcher.Index(models: allModels, links: links)
         }
         return matchIndex
+    }
+
+    /// `match` through `matchCache`: the index's parse runs once per
+    /// name, then the answer is a dictionary read.
+    private func cachedMatch(_ name: String) -> (model: AALanguageModel, linked: Bool)? {
+        if let cached = matchCache[name] { return cached }
+        let result = matcherIndex?.match(name)
+        matchCache[name] = result
+        return result
+    }
+
+    /// `ModelMatcher.parse` memoized for `qualifier`.
+    private func parsed(_ name: String) -> ModelMatcher.Parsed {
+        if let hit = parsedCache[name] { return hit }
+        let hit = ModelMatcher.parse(name)
+        parsedCache[name] = hit
+        return hit
+    }
+
+    /// `allModels` or `links` changed: every matcher-derived answer goes.
+    private func matcherInputsChanged() {
+        matchIndex = nil
+        matchCache = [:]
+    }
+
+    /// Rebuild once the typist pauses; a fresh keystroke re-arms.
+    private func scheduleSearch() {
+        searchTask?.cancel()
+        searchTask = Task {
+            try? await Task.sleep(for: searchDelay)
+            guard !Task.isCancelled else { return }
+            rebuild()
+        }
+    }
+
+    /// Waits out a pending coalesced rebuild: tests await the rows a
+    /// typed query produces without racing the delay.
+    func settleSearch() async {
+        await searchTask?.value
     }
 
     /// The effort and mode words a parsed name carried, display-cased.
@@ -533,16 +626,15 @@ public final class ModelsModel {
         // Per AA model, the logged name with the most tokens: its ledger
         // price is the row's list price.
         var pricedNames: [String: String] = [:]
-        // One index for every name: `ModelMatcher.match` re-parses the
-        // whole AA list per call, which held the main thread over a second
-        // with a month of usage. The cached index survives per-keystroke
-        // rebuilds; `didSet` on `allModels` or `links` drops it.
-        let index = matcherIndex
+        // One match answer per name: `ModelMatcher.match` re-parses the
+        // name's dozen regexes per call, which held the main thread over a
+        // second with a month of usage. `cachedMatch` reads its index and
+        // memoizes; `didSet` on `allModels` or `links` drops both.
         // Sorted, so which alias names a merged row (on a token tie) and
         // the order rows enter the sort don't follow dictionary order.
         for (logged, entry) in byModel.sorted(by: { $0.key < $1.key }) {
-            let aa = index?.match(logged)?.model
-            let parsed = ModelMatcher.parse(logged)
+            let aa = cachedMatch(logged)?.model
+            let parsedName = parsed(logged)
             guard let aa else {
                 // Unmatched names only surface in the warning popover.
                 stillUnmatched.append(Unmatched(model: logged, tokens: entry.tokens))
@@ -558,7 +650,7 @@ public final class ModelsModel {
                     dominantTokens[aa.id] = entry.tokens
                     pricedNames[aa.id] = logged
                     used[index].logged = logged
-                    used[index].qualifier = qualifier(parsed)
+                    used[index].qualifier = qualifier(parsedName)
                 }
             } else {
                 mergedIndex[aa.id] = used.count
@@ -567,8 +659,8 @@ public final class ModelsModel {
                 used.append(Row(logged: logged, aa: aa, harnesses: entry.harnesses,
                                 tokens: entry.tokens,
                                 value: metric.value(of: aa),
-                                costPercentile: CostPercentile.rank(of: aa, in: allModels),
-                                qualifier: qualifier(parsed)))
+                                costPercentile: costPercentiles[aa.id],
+                                qualifier: qualifier(parsedName)))
                 pricedNames[aa.id] = logged
             }
         }
@@ -588,29 +680,31 @@ public final class ModelsModel {
             used.first(where: { $0.aa?.id == model.id })
                 ?? Row(logged: model.name, aa: model,
                        value: metric.value(of: model),
-                       costPercentile: CostPercentile.rank(of: model, in: allModels),
+                       costPercentile: costPercentiles[model.id],
                        listPrice: listPrice(logged: nil, aa: model))
         }
 
         // A query swaps the scoped board for a catalog-wide match: every
         // AA family a name, slug or lab hits — one headline row each,
         // reusing the used row when it ran — then LiteLLM price keys no
-        // AA model claims. `searching` is what the toolbar reads.
+        // AA model claims. `searching` is what the toolbar reads. Every
+        // haystack below was normalized once, so a keystroke only pays
+        // substring scans and dictionary reads.
         let needle = Self.normalized(query)
         if !needle.isEmpty {
             var seen: Set<String> = []
             var pool: [Row] = []
-            for model in allModels where Self.matches(needle, model) {
-                let headline = index?.match(model.name)?.model ?? model
+            for (model, hay) in aaHay where hay.contains(where: { $0.contains(needle) }) {
+                let headline = cachedMatch(model.name)?.model ?? model
                 guard seen.insert(headline.id).inserted else { continue }
                 pool.append(leaderboardRow(headline))
             }
             // A price key can name an AA model its name can't reach:
             // "moonshot/kimi-k3" finds Kimi K3 through the alias join.
-            for (id, keys) in catalogPrices
-            where keys.contains(where: { Self.matches(needle, $0.key) }) {
-                guard let entry = allModels.first(where: { $0.id == id }) else { continue }
-                let headline = index?.match(entry.name)?.model ?? entry
+            for (id, hay) in catalogHay
+            where hay.contains(where: { $0.contains(needle) }) {
+                guard let entry = modelsByID[id] else { continue }
+                let headline = cachedMatch(entry.name)?.model ?? entry
                 guard seen.insert(headline.id).inserted else { continue }
                 pool.append(leaderboardRow(headline))
             }
@@ -619,7 +713,7 @@ public final class ModelsModel {
             // non-dominant name — check every name the period logged,
             // not only the one that ended up on the row.
             for logged in byModel.keys where Self.matches(needle, logged) {
-                guard let matched = index?.match(logged),
+                guard let matched = cachedMatch(logged),
                       seen.insert(matched.model.id).inserted,
                       let merged = mergedIndex[matched.model.id] else { continue }
                 pool.append(used[merged])
@@ -637,12 +731,14 @@ public final class ModelsModel {
             // hits lead, the overflow count becomes the page's footnote.
             // Keys already shown — as a usage row or through the alias
             // join — don't count toward either side.
-            let lite = unmatchedPrices
-                .filter { Self.matches(needle, $0.key) }
-                .filter { !seen.contains("unmatched:\($0.key)") && index?.match($0.key) == nil }
-                .sorted { Self.liteRank(needle, $0.key) < Self.liteRank(needle, $1.key) }
+            let lite = liteHay
+                .filter { $0.hay.contains(needle) }
+                .filter { !seen.contains("unmatched:\($0.row.key)")
+                          && cachedMatch($0.row.key) == nil }
+                .sorted { Self.liteRank(needle, $0) < Self.liteRank(needle, $1) }
             searchOverflow = max(0, lite.count - Self.searchLimit)
-            for price in lite.prefix(Self.searchLimit) {
+            for hit in lite.prefix(Self.searchLimit) {
+                let price = hit.row
                 result.append(Row(logged: price.key, aa: nil,
                                   listPrice: listPrice(logged: price.key, aa: nil)
                                       ?? ListPrice(key: price.key, source: .liteLLM,
@@ -717,14 +813,6 @@ public final class ModelsModel {
         name.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    /// An AA model matches on its name, its slug or its lab.
-    private static func matches(_ needle: String, _ model: AALanguageModel) -> Bool {
-        normalized(model.name).contains(needle)
-            || normalized(model.slug).contains(needle)
-            || normalized(model.creatorName).contains(needle)
-            || normalized(model.creatorSlug).contains(needle)
-    }
-
     /// A logged name or LiteLLM key matches anywhere, provider prefix
     /// and reseller tags included.
     private static func matches(_ needle: String, _ key: String) -> Bool {
@@ -733,11 +821,42 @@ public final class ModelsModel {
 
     /// LiteLLM-only hits rank a bare-name exact match first, then a
     /// bare-name prefix, then anything the key merely contains; shorter
-    /// keys lead inside each so "kimi-k3" beats "vendor/kimi-k3-eu".
-    private static func liteRank(_ needle: String, _ key: String) -> (Int, Int, String) {
-        let bare = normalized(PricingCatalog.bareName(key))
-        let group = bare == needle ? 0 : bare.hasPrefix(needle) ? 1 : bare.contains(needle) ? 2 : 3
-        return (group, key.count, key)
+    /// keys lead inside each so "kimi-k3" beats "vendor/kimi-k3-eu". The
+    /// caller's `liteHay` carried the normalized forms already.
+    private static func liteRank(
+        _ needle: String,
+        _ hit: (row: CatalogDatabase.PriceRow, hay: String, bare: String)
+    ) -> (Int, Int, String) {
+        let group = hit.bare == needle ? 0 : hit.bare.hasPrefix(needle) ? 1
+            : hit.bare.contains(needle) ? 2 : 3
+        return (group, hit.row.key.count, hit.row.key)
+    }
+
+    /// Every priced model's percentile against the rest, from one pass
+    /// over the sorted prices; `CostPercentile.rank` rescans the whole
+    /// list per row, which a per-keystroke rebuild felt.
+    private static func costRanks(in models: [AALanguageModel]) -> [String: Double] {
+        let priced = models.compactMap(\.priceBlended).filter { $0 > 0 }.sorted()
+        guard priced.count > 1 else { return [:] }
+        // First index the predicate stops holding: `< price` counts the
+        // cheaper, `<= price` the equal run's end.
+        func bound(_ pred: (Double) -> Bool) -> Int {
+            var lo = priced.startIndex, hi = priced.endIndex
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2
+                if pred(priced[mid]) { lo = mid + 1 } else { hi = mid }
+            }
+            return lo
+        }
+        var ranks: [String: Double] = [:]
+        for model in models {
+            guard let price = model.priceBlended, price > 0 else { continue }
+            let lower = bound { $0 < price }
+            let equal = bound { $0 <= price } - lower - 1
+            ranks[model.id] = min(max((Double(lower) + 0.5 * Double(equal))
+                                      / Double(priced.count - 1), 0), 1)
+        }
+        return ranks
     }
 }
 
