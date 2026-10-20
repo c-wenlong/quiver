@@ -1149,6 +1149,27 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(transport.requests.first?.url?.absoluteString == "https://proxy.test/v1/models")
     }
 
+    /// A sibling base URL that restates the catalogue's own host keeps
+    /// the catalogue probe: OpenRouter's docs publish OPENROUTER_BASE_URL
+    /// for its canonical endpoint, and the catalogue asks /key — which
+    /// validates the key — while the generic /models is public and would
+    /// pass even a bad key.
+    @Test func aBaseURLOnTheCatalogueHostKeepsTheCatalogueCheck() async throws {
+        let transport = FakeTransport()
+        transport.reply(401, body: Data(#"{"error":{"message":"bad key"}}"#.utf8))
+        let (model, _) = try model(text: """
+            export OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
+            export OPENROUTER_API_KEY="sk-or-bad"
+            """, transport: transport)
+        await model.load()
+        await model.check(name: "OPENROUTER_API_KEY")
+        #expect(transport.requests.first?.url?.absoluteString == "https://openrouter.ai/api/v1/key")
+        guard case .rejected = model.checks["OPENROUTER_API_KEY"]?.result else {
+            Issue.record("expected rejected, got \(String(describing: model.checks["OPENROUTER_API_KEY"]))")
+            return
+        }
+    }
+
     /// A sibling base URL that can't parse is no check at all; falling
     /// back to the catalogue would leak the key the same way.
     @Test func aBrokenBaseURLKeepsTheKeyFromTheCatalogueHost() async throws {

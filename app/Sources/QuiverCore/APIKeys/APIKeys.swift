@@ -955,28 +955,43 @@ public final class APIKeysModel {
         return CustomProvider.models(in: body)
     }
 
-    /// The probe a check sends a key to. A `X_BASE_URL` sitting next to
-    /// a `X_API_KEY` wins over the catalog: the file points that provider
-    /// at a custom endpoint on purpose, and the catalog host would see a
-    /// key it was never meant for. An unparseable sibling is no check at
-    /// all, never a fall back to the catalog.
-    private func probe(for name: String) -> APIKeyProbe? {
+    /// The custom endpoint a `X_API_KEY` row answers to: the sibling
+    /// `X_BASE_URL`'s value, unless the catalogue knows the name AND the
+    /// base restates the catalogue probe's own host. OpenRouter's docs
+    /// publish `OPENROUTER_BASE_URL` for its canonical endpoint, and its
+    /// catalogue probe asks `/key`, which actually validates the key —
+    /// the generic `/models` is public and would pass every key.
+    private func customBase(for name: String) -> String? {
         let suffix = "_API_KEY"
-        if name.hasSuffix(suffix), name.count > suffix.count,
-           let baseURL = rows.first(where: { $0.name == name.dropLast(suffix.count) + "_BASE_URL" })?.value {
-            return CustomProvider.probe(baseURL: baseURL)
+        guard name.hasSuffix(suffix), name.count > suffix.count,
+              let base = rows.first(where: { $0.name == name.dropLast(suffix.count) + "_BASE_URL" })?.value,
+              !base.isEmpty else { return nil }
+        if let catalogProbe = APIKeyProbe.probe(forName: name),
+           let baseHost = URLComponents(string: base)?.host?.lowercased(),
+           catalogProbe.hosts.contains(where: { $0.host?.lowercased() == baseHost }) {
+            return nil
+        }
+        return base
+    }
+
+    /// The probe a check sends a key to. A `X_BASE_URL` pointing at a
+    /// host the catalogue doesn't ask wins over the catalogue: the file
+    /// points that provider at a custom endpoint on purpose, and the
+    /// catalogue host would see a key it was never meant for. An
+    /// unparseable sibling is no check at all, never a fall back to the
+    /// catalogue.
+    private func probe(for name: String) -> APIKeyProbe? {
+        if let base = customBase(for: name) {
+            return CustomProvider.probe(baseURL: base)
         }
         return APIKeyProbe.probe(forName: name)
     }
 
     /// The value a check's fingerprint covers for a row: the key itself,
-    /// plus the sibling base URL when it has one. Repointing the custom
-    /// endpoint then retires the verdict the old endpoint earned.
+    /// plus the custom base URL when one drives its probe. Repointing
+    /// the endpoint then retires the verdict the old endpoint earned.
     private func checkAnchor(for row: Row) -> String {
-        let suffix = "_API_KEY"
-        guard row.name.hasSuffix(suffix), row.name.count > suffix.count,
-              let base = rows.first(where: { $0.name == row.name.dropLast(suffix.count) + "_BASE_URL" })?.value,
-              !base.isEmpty else { return row.value }
+        guard let base = customBase(for: row.name) else { return row.value }
         return row.value + "\u{1F}" + base
     }
 
