@@ -63,6 +63,10 @@ jobs:
           # this equals `github.ref`, so both entry points check out the same
           # thing.
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          # Full history: the Python job only builds dists, but the macOS
+          # app job joins this workflow and `git describe --tags` in
+          # app/script/build-app.sh needs every tag; depth 1 stamps 0.0.0.
+          fetch-depth: 0
 
       - name: Set up Python 3.13
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
