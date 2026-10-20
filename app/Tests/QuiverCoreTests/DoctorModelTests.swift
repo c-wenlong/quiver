@@ -59,7 +59,8 @@ import Testing
             Issue.record("expected failed, got \(model.state)")
             return
         }
-        #expect(message.contains("No such file"))
+        #expect(message.contains("Couldn't find swe"))
+        #expect(message.contains("Settings"))
     }
 
     @Test func doctorAsksForJSON() async {
