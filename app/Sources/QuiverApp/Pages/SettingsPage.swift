@@ -373,7 +373,10 @@ private struct SettingsSectionView: View {
 
     private var releaseRow: some View {
         let updates = app.updates
-        let prod = updates.channel == .prod
+        // Sparkle is gated on the stamped channel, not the saved pick: a
+        // dev build pointed at "GitHub releases" still gets the plain
+        // release controls, since its updater never starts.
+        let prod = updates.build.channel == .prod
         return SettingRow(
             title: "Latest release",
             detail: releaseDetail(updates.release)) {
