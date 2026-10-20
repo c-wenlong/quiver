@@ -361,7 +361,16 @@ def get_tool_loader(tool_name: str):
     if not cfg:
         return None
     if cfg.get("io_type") == "toml_region":
-        return load_codex_servers
+        def _load_toml(p):
+            if not p.exists():
+                return {}
+            try:
+                return load_codex_servers(p)
+            except CorruptConfigurationError as exc:
+                # Read paths degrade; writes refuse via save_codex_servers.
+                print(c("yellow", f"  {exc}"), file=sys.stderr)
+                return {}
+        return _load_toml
     key = cfg["key"]
     def _load(p):
         if not p.exists():

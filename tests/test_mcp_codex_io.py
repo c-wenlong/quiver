@@ -14,6 +14,7 @@ import unittest
 
 import tomllib
 
+from quiver.configuration import CorruptConfigurationError
 from quiver.mcp.codex_io import (
     apply_merges,
     load_codex_servers,
@@ -396,6 +397,61 @@ x = 1
         out = apply_merges(doc, servers)
         parsed = tomllib.loads(out)
         self.assertEqual(str(parsed["mcp_servers"]["a"]["created"]), "2024-01-02 03:04:05+00:00")
+
+
+class CodexCorruptRegionTest(unittest.TestCase):
+    """A corrupt [mcp_servers] region must raise, never read as zero servers.
+
+    Read paths degrade to a warning; write paths (save) must refuse, or a
+    malformed file loses its real entries on the next sync/prune.
+    """
+
+    CORRUPT = '[mcp_servers.a]\ncommand = "unterminated\n'
+
+    def test_parse_raises_on_malformed_toml(self):
+        with self.assertRaises(CorruptConfigurationError):
+            parse_codex_mcp_region(self.CORRUPT)
+
+    def test_parse_raises_on_non_table_server(self):
+        # [[mcp_servers.a]] array-of-tables: valid TOML, but a shape the
+        # writer cannot round-trip — reading it as absent would drop the
+        # entry on the next save.
+        with self.assertRaises(CorruptConfigurationError):
+            parse_codex_mcp_region('[[mcp_servers.a]]\ncommand = "x"\n')
+
+    def test_load_raises_on_corrupt_region(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "codex.toml"
+            p.write_text('model = "gpt-5.5"\n\n' + self.CORRUPT)
+            with self.assertRaises(CorruptConfigurationError):
+                load_codex_servers(p)
+
+    def test_load_raises_on_unreadable_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "codex.toml"
+            p.mkdir()  # a directory: exists but cannot be read as a file
+            with self.assertRaises(CorruptConfigurationError):
+                load_codex_servers(p)
+
+    def test_save_refuses_over_corrupt_region(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "codex.toml"
+            original = 'model = "gpt-5.5"\n\n' + self.CORRUPT
+            p.write_text(original)
+            with self.assertRaises(CorruptConfigurationError):
+                save_codex_servers({"x": {"command": "node"}}, p)
+            self.assertEqual(p.read_text(), original)
+
+    def test_tool_loader_degrades_on_corrupt_region(self):
+        # get_tool_loader is a read path: warn + empty, like JSON tools.
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "codex.toml"
+            p.write_text(self.CORRUPT)
+            from quiver.mcp.cli import get_tool_loader
+
+            loader = get_tool_loader("codex")
+            self.assertIsNotNone(loader)
+            self.assertEqual(loader(p), {})
 
 
 if __name__ == "__main__":
