@@ -94,6 +94,34 @@ class ReportStoreTest(unittest.TestCase):
             self.store.advance_cursor("daily", "2026-07-28", "daily-older")
         self.assertEqual(self.store.cursors_file.read_bytes(), before)
 
+    def test_cursor_accepts_an_equal_instant_across_timezone_formats(self):
+        # A timezone change can make the same instant sort lexically
+        # earlier; the string compare raised after the report was saved.
+        self.store.advance_cursor("daily", "2026-07-29T23:59:59.999+08:00", "daily-1")
+
+        cursor = self.store.advance_cursor(
+            "daily", "2026-07-29T15:59:59.999+00:00", "daily-2"
+        )
+
+        self.assertEqual(cursor.report_id, "daily-2")
+        self.assertEqual(cursor.through, "2026-07-29T15:59:59.999+00:00")
+
+    def test_cursor_rejects_an_earlier_instant_despite_later_spelling(self):
+        # "2026-07-30T00:00:00+08:00" sorts after the stored value but is
+        # the earlier instant 2026-07-29T16:00:00Z.
+        self.store.advance_cursor("daily", "2026-07-29T23:59:59.999+00:00", "daily-1")
+        before = self.store.cursors_file.read_bytes()
+        with self.assertRaises(ValueError):
+            self.store.advance_cursor("daily", "2026-07-30T00:00:00+08:00", "daily-older")
+        self.assertEqual(self.store.cursors_file.read_bytes(), before)
+
+    def test_cursor_keeps_lexical_order_for_non_iso_values(self):
+        self.store.advance_cursor("daily", "later-string", "r1")
+        with self.assertRaises(ValueError):
+            self.store.advance_cursor("daily", "earlier-string", "r2")
+        self.store.advance_cursor("daily", "zebra", "r3")
+        self.assertEqual(self.store.get_cursor("daily").report_id, "r3")
+
     def test_exclusions_deduplicate_by_tool_session_and_digest(self):
         first = ExclusionRecord("s1", "d1", "greeting", source_tool="codex")
         second = ExclusionRecord("s1", "d1", "empty", source_tool="codex")

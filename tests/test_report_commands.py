@@ -6,7 +6,7 @@ import shlex
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -45,7 +45,7 @@ class ReportCommandsTest(unittest.TestCase):
             over_budget=over_budget,
         )
 
-    def _run_generate(self, pipeline, approval="y"):
+    def _run_generate(self, pipeline, approval="y", input_fn=None):
         query = Mock()
         query.apply.return_value = [object()]
         patches = (
@@ -63,7 +63,9 @@ class ReportCommandsTest(unittest.TestCase):
         output = io.StringIO()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             with redirect_stdout(output):
-                result = _generate("daily", [], input_fn=lambda _prompt: approval)
+                result = _generate(
+                    "daily", [], input_fn=input_fn or (lambda _prompt: approval)
+                )
         return result, output.getvalue()
 
     def test_generate_flags_are_explained_by_distinct_fields(self):
@@ -119,6 +121,46 @@ class ReportCommandsTest(unittest.TestCase):
 
         self.assertLess(datetime.fromisoformat(start), datetime.fromisoformat(end))
         self.assertEqual(datetime.fromisoformat(end).weekday(), 6)
+
+    def test_cursor_at_period_end_produces_an_inverted_window(self):
+        # After a successful daily report the cursor sits at the period
+        # end, so a rerun starts one millisecond past it.
+        now = datetime.now().astimezone()
+        end_dt = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo) - timedelta(
+            milliseconds=1
+        )
+        store = SimpleNamespace(
+            get_cursor=lambda _cadence: SimpleNamespace(through=end_dt.isoformat())
+        )
+
+        start_ms, end_ms, _start, _end = _default_period("daily", store)
+
+        self.assertGreater(start_ms, end_ms)
+
+    def test_covered_period_is_a_clean_noop_not_a_failure(self):
+        # The inverted window used to reach SessionQuery and come back as
+        # "Report failed". Sessions must never even be loaded.
+        get_sessions = Mock()
+        patches = (
+            patch("quiver.reports.commands.load_resolved_config", return_value={}),
+            patch("quiver.reports.commands.validate_config", return_value=[]),
+            patch("quiver.reports.commands.report_setup_complete", return_value=True),
+            patch("quiver.reports.commands.ReportStore"),
+            patch(
+                "quiver.reports.commands._source_period",
+                return_value=(2, 1, "start", "end", True),
+            ),
+            patch("quiver.reports.commands.get_all_sessions", get_sessions),
+        )
+        output = io.StringIO()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            with redirect_stdout(output):
+                # No SessionQuery patch: the inverted range must not reach it.
+                result = _generate("daily", [])
+        self.assertEqual(result, 0)
+        self.assertIn("No new sessions", output.getvalue())
+        self.assertNotIn("Report failed", output.getvalue())
+        get_sessions.assert_not_called()
 
     @patch("quiver.reports.commands.load_resolved_config")
     def test_invalid_resolved_config_is_reported_without_traceback(self, load_config):
@@ -234,6 +276,32 @@ class ReportCommandsTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("Report failed: writer exited", output)
 
+    def test_generate_eof_at_approval_cancels_without_traceback(self):
+        # `swe report daily </dev/null` prints the preview, then EOFError
+        # escaped as a traceback instead of cancelling like a "no".
+        pipeline = Mock()
+        pipeline.preview.return_value = self._preview()
+
+        result, output = self._run_generate(
+            pipeline, input_fn=Mock(side_effect=EOFError)
+        )
+
+        self.assertEqual(result, 130)
+        self.assertIn("no model calls were started", output)
+        pipeline.run.assert_not_called()
+
+    def test_generate_ctrl_c_at_approval_cancels_without_traceback(self):
+        pipeline = Mock()
+        pipeline.preview.return_value = self._preview()
+
+        result, output = self._run_generate(
+            pipeline, input_fn=Mock(side_effect=KeyboardInterrupt)
+        )
+
+        self.assertEqual(result, 130)
+        self.assertIn("no model calls were started", output)
+        pipeline.run.assert_not_called()
+
     def test_followup_lifecycle_routes_to_persistent_ledger(self):
         with tempfile.TemporaryDirectory() as tmp:
             ledger = FollowUpLedger(root=tmp, clock=lambda: "2026-08-01T00:00:00+00:00")
@@ -260,6 +328,44 @@ class ReportCommandsTest(unittest.TestCase):
 
         self.assertEqual(result, 1)
         work.assert_not_called()
+
+    def test_followup_add_keeps_literal_harness_text_in_the_note(self):
+        # add has no --harness flag (only work does); expanding it used to
+        # split `--harness=codex` into two words inside the note, and eat
+        # note text that contained it.
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = FollowUpLedger(
+                root=tmp, clock=lambda: "2026-08-01T00:00:00+00:00"
+            )
+            with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+                self.assertEqual(
+                    _followup(
+                        ["add", "fix", "--harness=codex", "config", f"--project={tmp}"]
+                    ),
+                    0,
+                )
+            item = ledger.list()[0]
+            self.assertEqual(item.text, "fix --harness=codex config")
+            self.assertEqual(item.project_root, tmp)
+
+    def test_followup_work_eof_at_prompts_cancels_without_traceback(self):
+        item = FollowUp(id="fu_test", text="Finish", project_root="/tmp")
+        ledger = Mock()
+        ledger.get.return_value = item
+        for argv in (["work", item.id], ["work", item.id, "--new"]):
+            with self.subTest(argv=argv):
+                with patch(
+                    "quiver.reports.commands.FollowUpLedger", return_value=ledger
+                ), patch(
+                    "quiver.reports.commands.work_on_follow_up"
+                ) as work, patch(
+                    "builtins.input", side_effect=EOFError
+                ):
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        result = _followup(argv)
+                self.assertEqual(result, 130)
+                work.assert_not_called()
 
 
 class HelpRoutesTest(unittest.TestCase):

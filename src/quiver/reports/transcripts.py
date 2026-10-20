@@ -373,18 +373,21 @@ def _find_session_file(root: Path, session_id: str, patterns: tuple[str, ...] = 
         direct = Path(session_id).expanduser()
         if direct.is_file():
             return direct
+    sid = Path(session_id).stem if session_id else ""
+    if not sid:
+        # An empty id cannot name a transcript. Falling back to the newest
+        # file under the tool root would attribute an unrelated session's
+        # content to this one (Pi legitimately emits session_id="").
+        return None
     if not root.exists():
         return None
-    sid = Path(session_id).stem if session_id else ""
     candidates: list[Path] = []
     for pattern in patterns:
         candidates.extend(root.glob(f"**/{pattern}"))
-    if sid:
-        for path in candidates:
-            if sid == path.stem or sid in path.parts:
-                return path
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime, default=None)
+    for path in candidates:
+        if sid == path.stem or sid in path.parts:
+            return path
+    return None
 
 
 def _jsonl_reader(root: str, patterns: tuple[str, ...] = ("*.jsonl",)) -> Reader:
