@@ -128,13 +128,15 @@ jobs:
     #   MACOS_CERTIFICATE_PASSWORD   the .p12 export password
     #   KEYCHAIN_PASSWORD            password for the throwaway CI keychain;
     #                                any string, lives only inside the run
-    #   NOTARY_APPLE_ID              the Apple ID that owns the Developer ID
-    #   NOTARY_PASSWORD              an app-specific password for that Apple
-    #                                ID (appleid.apple.com -> Sign-In and
-    #                                Security -> App-Specific Passwords),
-    #                                NOT the account password
-    #   NOTARY_TEAM_ID               the 10-character Apple team ID
-    # Optional repository variable:
+    #   NOTARY_KEY                   base64 of the App Store Connect API
+  #                                key's .p8 file (base64 -i AuthKey_*.p8)
+  #   NOTARY_KEY_ID                the key's ID, e.g. ABCDEFGHIJ
+  #   NOTARY_ISSUER                the issuer UUID from App Store Connect ->
+  #                                Integrations -> App Store Connect API
+  #   SPARKLE_PRIVATE_KEY          the EdDSA private key matching the app's
+  #                                SUPublicEDKey (Sparkle bin/generate_keys
+  #                                -x private-key.txt exports it)
+  # Optional repository variable:
     #   SIGNING_IDENTITY             explicit codesign identity, e.g.
     #                                "Developer ID Application: Name (TEAMID)";
     #                                defaults to whatever MACOS_CERTIFICATE
@@ -214,26 +216,25 @@ jobs:
       - name: Notarize and staple
         if: steps.cert.outputs.have_cert == 'true'
         env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
         run: |
-          if [ -z "$NOTARY_APPLE_ID" ] || [ -z "$NOTARY_PASSWORD" ] || [ -z "$NOTARY_TEAM_ID" ]; then
-            echo "::error::A signed build needs NOTARY_APPLE_ID, NOTARY_PASSWORD and NOTARY_TEAM_ID; Gatekeeper rejects a signed-but-unnotarized app."
+          if [ -z "$NOTARY_KEY" ] || [ -z "$NOTARY_KEY_ID" ] || [ -z "$NOTARY_ISSUER" ]; then
+            echo "::error::A signed build needs NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER; Gatekeeper rejects a signed-but-unnotarized app."
             exit 1
           fi
+          # The .p8 lands in the runner temp dir and leaves with it.
+          keyfile="$RUNNER_TEMP/AuthKey_$NOTARY_KEY_ID.p8"
+          printf '%s' "$NOTARY_KEY" | base64 --decode > "$keyfile"
           # notarytool accepts the zipped .app; --keepParent puts
           # Quiver.app at the zip root, which is the layout it wants.
           zip="$RUNNER_TEMP/Quiver.zip"
           ditto -c -k --keepParent app/build/Quiver.app "$zip"
-          # Apple ID + app-specific password auth.  The App Store Connect
-          # API-key form (--key/--key-id/--issuer) is the alternative if
-          # the account ever moves to one.
           xcrun notarytool submit "$zip" \
-            --apple-id "$NOTARY_APPLE_ID" \
-            --password "$NOTARY_PASSWORD" \
-            --team-id "$NOTARY_TEAM_ID" \
-            --wait
+            --key "$keyfile" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER" --wait
+          rm -f "$keyfile"
           # Writes Apple's ticket into the bundle so Gatekeeper passes it
           # even on a Mac that is offline at first launch.
           xcrun stapler staple app/build/Quiver.app
@@ -252,41 +253,32 @@ jobs:
             -ov -format UDZO "app/build/macos-app/Quiver-${RELEASE_TAG#v}.dmg"
           ls -lh app/build/macos-app/
 
-      - name: Write the Sparkle appcast
+      - name: Build the Sparkle appcast
         if: steps.cert.outputs.have_cert == 'true'
         env:
           GH_REPO: ${{ github.repository }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          app="app/build/Quiver.app"
-          dmg="Quiver-${RELEASE_TAG#v}.dmg"
-          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
-          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
-          size="$(stat -f %z "app/build/macos-app/$dmg")"
-          url="https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/$dmg"
-          # sparkle:edSignature is a placeholder: a real signature needs
-          # Sparkle's sign_update tool and the app's EdDSA key, which the
-          # Sparkle integration PR introduces.  Until then the feed is
-          # structural only and Sparkle would reject the enclosure.
-          cat > app/build/macos-app/appcast.xml <<APPCAST
-          <?xml version="1.0" encoding="utf-8"?>
-          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
-            <channel>
-              <title>Quiver updates</title>
-              <link>https://github.com/$GH_REPO/releases</link>
-              <description>Most recent Quiver release.</description>
-              <language>en</language>
-              <item>
-                <title>Quiver $version</title>
-                <pubDate>$(date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
-                <sparkle:shortVersionString>$version</sparkle:shortVersionString>
-                <sparkle:version>$build</sparkle:version>
-                <enclosure url="$url"
-                  sparkle:edSignature="REPLACE_VIA_sign_update"
-                  length="$size" type="application/octet-stream" />
-              </item>
-            </channel>
-          </rss>
-          APPCAST
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::error::The release needs SPARKLE_PRIVATE_KEY, the EdDSA key matching SUPublicEDKey in the app; Sparkle rejects unsigned enclosures."
+            exit 1
+          fi
+          # Sparkle's own generator writes the appcast for the archives in
+          # a folder; the version pins to what the app links (Package.swift)
+          # so the enclosure signature matches SUPublicEDKey.
+          tools="$RUNNER_TEMP/sparkle"
+          mkdir -p "$tools"
+          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip" \
+            -o "$tools/sparkle.zip"
+          ditto -x -k "$tools/sparkle.zip" "$tools"
+          chmod +x "$tools/bin/"*
+          # --ed-key-file - reads the key from stdin, so the secret never
+          # sits on the runner's argv or in a file.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$tools/bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/" \
+            app/build/macos-app
+          xmllint --noout app/build/macos-app/appcast.xml
 
       - name: Stage a notice when the build is unsigned
         # Keeps the `macos-app` artifact non-empty so attach-to-release's
