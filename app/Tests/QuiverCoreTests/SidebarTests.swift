@@ -7,7 +7,7 @@ import Testing
         #expect(SidebarGroup.usage.sections == [.overview, .sessions, .calendar, .pricing])
         #expect(SidebarGroup.manage.sections == [.accounts, .harnesses, .compute])
         #expect(SidebarGroup.primitives.sections == [.plugins, .skills, .agentsMd, .mcpServers, .models])
-        #expect(SidebarGroup.system.sections == [.menuBar, .widgets, .serviceStatus, .doctor, .settings])
+        #expect(SidebarGroup.system.sections == [.menuBar, .widgets, .serviceStatus, .settings])
     }
 
     @Test func everySectionHasATitleAndSymbol() {

@@ -604,16 +604,28 @@ struct ExpandRow: View {
 
 // MARK: - States
 
-/// Something went wrong: the message in danger red, selectable.
+/// Something went wrong: the message in danger red, selectable, with an
+/// optional retry on the right like EmptyCard's.
 struct ErrorCard: View {
     var message: String
+    var actionTitle: String? = nil
+    var actionShortcut: KeyboardShortcut? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
         Card {
-            Label(message, systemImage: "exclamationmark.triangle")
-                .font(Theme.bodySmall)
-                .foregroundStyle(Theme.dangerText)
-                .textSelection(.enabled)
+            HStack {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(Theme.bodySmall)
+                    .foregroundStyle(Theme.dangerText)
+                    .textSelection(.enabled)
+                Spacer()
+                if let actionTitle, let action {
+                    Button(actionTitle, action: action)
+                        .secondaryButton()
+                        .keyboardShortcut(actionShortcut)
+                }
+            }
         }
     }
 }
@@ -623,6 +635,7 @@ struct EmptyCard: View {
     var text: String
     var icon: String
     var actionTitle: String? = nil
+    var actionShortcut: KeyboardShortcut? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
@@ -633,7 +646,9 @@ struct EmptyCard: View {
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 if let actionTitle, let action {
-                    Button(actionTitle, action: action).secondaryButton()
+                    Button(actionTitle, action: action)
+                        .secondaryButton()
+                        .keyboardShortcut(actionShortcut)
                 }
             }
         }
