@@ -11,6 +11,7 @@ from quiver.skills.discovery import discover_skills
 from quiver.skills.layout import (
     SHARED_LABEL,
     SkillLayoutError,
+    check_link_records_writable,
     enumerate_skill_roots,
     record_symlink,
     remove_link_record,
@@ -33,6 +34,9 @@ def link_skill_root(
 ) -> tuple[str, Path, Path]:
     """Point source root at target via symlink. Default target: shared."""
     home = home or Path.home()
+    # The record write comes after the symlink lands; a records file that
+    # cannot be read must fail here, before the filesystem moves at all.
+    check_link_records_writable()
     target_ref = target_ref or SHARED_LABEL
     src_label, src_path = resolve_root_ref(source_ref, home=home, cwd=cwd)
     _tgt_label, tgt_path = resolve_root_ref(target_ref, home=home, cwd=cwd)
@@ -78,6 +82,9 @@ def unlink_skill_root(
 ) -> tuple[str, Path]:
     """Remove a skill-root symlink; optionally replace with an empty directory."""
     home = home or Path.home()
+    # Same pre-flight as link_skill_root: record removal happens after
+    # the unlink, so an unreadable records file fails before it.
+    check_link_records_writable()
     src_label, src_path = resolve_root_ref(source_ref, home=home, cwd=cwd)
 
     # lexists, not exists: a dangling symlink still occupies the path, and
