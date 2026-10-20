@@ -12,6 +12,7 @@ from quiver.flags import expand_value_flags
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.markdown import render_markdown
 from quiver.sessions import failures
+from quiver.sessions import search_index
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.identity import launch_tool
 from quiver.sessions.models import SessionRow
@@ -125,17 +126,24 @@ def cmd_models(args):
 
     grand_total = 0
     last_tool = None
+    row_index = 0
+    # Row indices where a new tool group starts; the blank separators have
+    # to land inside the rendered table, not above it — printing them in
+    # this loop ran ahead of the deferred render() and pushed every one
+    # of them to the top.
+    group_starts: list[int] = []
     for tool in sorted(grouped):
         entries = sorted(grouped[tool].items(), key=lambda x: -x[1])
         for model, cnt in entries:
             grand_total += cnt
             provider = classify_provider(model)
             if by_tool:
-                # Visual separator between tool groups (preserves the
-                # blank-line behaviour the old hand-rolled print loop
-                # used to insert).
                 if last_tool is not None and last_tool != tool:
-                    print()
+                    group_starts.append(row_index)
+                # Update inside the row loop: last_tool must trail the
+                # current row, not lag a whole group, or every row after
+                # the first would read as a new boundary.
+                last_tool = tool
                 t.add_row({
                     "tool": tool,
                     "model": model,
@@ -148,10 +156,14 @@ def cmd_models(args):
                     "provider": provider,
                     "msgs": cnt,
                 })
-        if by_tool:
-            last_tool = tool
+            row_index += 1
 
-    for line in t.render():
+    lines = t.render()
+    # Header and separator occupy the first two rendered lines; each prior
+    # insertion shifts every later boundary down by one.
+    for i, boundary in enumerate(group_starts):
+        lines.insert(2 + boundary + i, "")
+    for line in lines:
         print(line)
     print()
 
@@ -297,6 +309,11 @@ def _resume_cmd_args(session) -> list[str]:
                 )
             )
     return cmd_args
+
+
+def _hit_evidence(hit) -> dict:
+    """The ``evidence`` payload one FTS hit adds to a ``--json`` row."""
+    return {"snippet": hit.snippet, "role": hit.role, "ts": hit.ts}
 
 
 def _filter_search(sessions, search: str | None):
@@ -632,6 +649,48 @@ def cmd_session(args):
     result_limit = limit if parsed.limit_explicit or not has_date_filter else None
     if use_index is not None:
         result_limit = max(result_limit or 0, use_index)
+
+    # With the app's FTS index present, --search also matches transcript
+    # content: metadata matches union with the sessions the index names.
+    # ``search_ids`` carries those ids through SessionQuery's shared
+    # filters; ``evidence`` holds the winning snippet for --json rows.
+    search_ids: set[str] | None = None
+    evidence: dict[str, dict] = {}
+    if search:
+        home = Path.home()
+        if search_index.available(home):
+            hits = search_index.search(
+                home,
+                search,
+                limit=max(limit, search_index.DEFAULT_LIMIT),
+                agents=search_index.tool_names_for(agent_filter),
+            )
+            if hits:
+                search_ids = {h.session_id for h in hits if h.session_id}
+                hit_by_key = {
+                    key: h
+                    for h in hits
+                    for key in search_index.match_keys(h.session_id)
+                }
+                for s in sessions:
+                    if not s.session_id:
+                        continue
+                    hit = next(
+                        (
+                            hit_by_key[k]
+                            for k in search_index.match_keys(s.session_id)
+                            if k in hit_by_key
+                        ),
+                        None,
+                    )
+                    if hit is not None:
+                        search_ids.add(s.session_id)
+                        evidence[s.session_id] = _hit_evidence(hit)
+                sessions.extend(search_index.resolve_hit_sessions(hits, sessions))
+                for h in hits:
+                    if h.session_id:
+                        evidence.setdefault(h.session_id, _hit_evidence(h))
+
     if has_date_filter:
         start_ms, end_ms = calendar_range_ms(
             days=parsed.days,
@@ -642,20 +701,33 @@ def cmd_session(args):
         query = SessionQuery(
             start_ms=start_ms,
             end_ms=end_ms,
+            agent=agent_filter,
+            cwd=cwd_filter,
             search=search,
+            search_ids=frozenset(search_ids) if search_ids else None,
             limit=result_limit,
         )
     else:
-        query = SessionQuery(search=search, limit=result_limit)
+        query = SessionQuery(
+            agent=agent_filter,
+            cwd=cwd_filter,
+            search=search,
+            search_ids=frozenset(search_ids) if search_ids else None,
+            limit=result_limit,
+        )
     sessions = query.apply(sessions)
 
     if json_view:
         statuses = session_statuses(sessions)
+        rows = []
+        for s, status in zip(sessions, statuses):
+            row = SessionRow.of(s, status, resume_json(s)).to_json()
+            ev = evidence.get(s.session_id)
+            if ev is not None:
+                row["evidence"] = ev
+            rows.append(row)
         return emit({
-            "sessions": [
-                SessionRow.of(s, status, resume_json(s)).to_json()
-                for s, status in zip(sessions, statuses)
-            ],
+            "sessions": rows,
             # A parser that crashed returns nothing, which reads exactly like
             # a harness with no history unless it is named.
             "failures": [

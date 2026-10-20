@@ -27,6 +27,11 @@ def _print_json(value) -> None:
     print(json.dumps(value, indent=2, sort_keys=True))
 
 
+# None is a real value in this file — ``report.writer.model`` ships as
+# null — so the absent-key sentinel has to be something it can never equal.
+_MISSING = object()
+
+
 def _setup_report() -> int:
     installed = [name for name in ("claude", "codex") if shutil.which(name)]
     if installed:
@@ -56,11 +61,13 @@ def cmd_config(args: list[str]) -> int:
         if command == "get":
             if len(args) != 2:
                 raise ConfigurationError("Usage: swe config get <key>")
-            value = dotted_get(load_resolved_config(), args[1], None)
-            if value is None:
+            value = dotted_get(load_resolved_config(), args[1], _MISSING)
+            if value is _MISSING:
                 print(c("red", f"  Unknown configuration key: {args[1]}"))
                 return 1
-            if isinstance(value, (dict, list)):
+            if value is None:
+                print("null")
+            elif isinstance(value, (dict, list)):
                 _print_json(value)
             else:
                 print(value)
