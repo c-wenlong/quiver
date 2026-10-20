@@ -32,6 +32,9 @@ SKILLS_SUBDIR = "skills"
 HOOKS_SUBDIR = "hooks"
 PLUGINS_SUBDIR = "plugins"
 CONFIG_SUBDIR = "config"
+DATA_SUBDIR = "data"
+SEARCH_SUBDIR = "search"
+SEARCH_INDEX_BASENAME = "search.sqlite"
 CACHE_SUBDIR = "cache"
 MCP_SUBDIR = "mcp"
 MCP_SERVERS_SUBDIR = "servers"
@@ -79,6 +82,16 @@ def config_dir_for(home: Path | None = None) -> Path:
 
 def cache_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / CACHE_SUBDIR
+
+
+def data_dir_for(home: Path | None = None) -> Path:
+    """``~/.quiver/data`` — app-owned stores (ledger, catalog, search index)."""
+    return quiver_dir_for(home) / DATA_SUBDIR
+
+
+def search_index_for(home: Path | None = None) -> Path:
+    """The app's FTS5 transcript-search index. The Python side only reads it."""
+    return data_dir_for(home) / SEARCH_SUBDIR / SEARCH_INDEX_BASENAME
 
 
 def mcp_dir_for(home: Path | None = None) -> Path:
@@ -208,6 +221,10 @@ data/ledger/
 # Devin cloud sessions the app syncs from the API: titles, links, repos and
 # message times of your own sessions. Personal, and rewritten on each sync.
 data/devin-cloud/
+
+# The app's full-text search index: message text from every local session.
+# Personal, and rebuilt by the app whenever it is missing.
+data/search/
 
 # Credential values: provider API keys in secrets/providers/ and the values
 # behind mcp.json's ${NAME} references in secrets/mcp/. Keeping them out is

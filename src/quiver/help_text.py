@@ -207,7 +207,9 @@ HELP = {
 {c('bold', 'Flags')}
   {c('cyan', '--agent=<name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
-  {c('cyan', '--search=<text>')}              Filter title/path/agent/session id (alias: -q, --grep)
+  {c('cyan', '--search=<text>')}              Filter title/path/agent/session id, and transcript
+                                            content when the Quiver app's search index exists
+                                            (alias: -q, --grep)
   {c('cyan', '-d N, --days=<N>')}             Include today and the preceding N-1 calendar dates
   {c('cyan', '-w N, --weeks=<N>')}            Include the latest N times 7 calendar dates
   {c('cyan', '-s, --start=<YYYY-MM-DD>')}     Inclusive range start; use together with --end
