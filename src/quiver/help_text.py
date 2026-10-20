@@ -689,7 +689,8 @@ def cmd_help(args):
     try:
         tools = load_registry()
         n_total = len(tools)
-        n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
+        n_inst = sum(1 for i in tools.values()
+                     if i.get("command") and is_installed(i["command"]))
     except Exception:
         pass
     print(f"  {c('dim', 'REGISTRY')}  {HARNESS_FILE}")

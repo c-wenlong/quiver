@@ -19,7 +19,7 @@ import json
 import shutil
 from datetime import datetime
 
-from quiver.configuration import read_json_object
+from quiver.configuration import CorruptConfigurationError, read_json_object
 from quiver.paths import (
     ARCHIVE_FILE,
     CONFIG_DIR,
@@ -30,11 +30,28 @@ from quiver.paths import (
 )
 
 
+def _validated_entries(tools: dict, source) -> dict:
+    """Every registry value must be an object.
+
+    The top-level shape is already checked by read_json_object, but a
+    hand-edited entry like ``"claude": "oops"`` used to get through and
+    crash the first caller that ran ``entry.get(...)`` on it — a bare
+    AttributeError instead of a controlled error naming the bad row.
+    """
+    for name, entry in tools.items():
+        if not isinstance(entry, dict):
+            raise CorruptConfigurationError(
+                f"{source}: entry {name!r} must be a JSON object,"
+                f" got {type(entry).__name__}: fix or remove the file"
+            )
+    return tools
+
+
 def load_registry() -> dict:
     if HARNESS_FILE.exists():
         # Strict: a malformed registry must not read as empty — every caller
         # that follows with save_registry would wipe whatever it held.
-        return read_json_object(HARNESS_FILE)
+        return _validated_entries(read_json_object(HARNESS_FILE), HARNESS_FILE)
     if TOOLS_FILE.exists():
         return _migrate_from_legacy()
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -71,7 +88,9 @@ def load_registry_readonly() -> dict:
     """
     if HARNESS_FILE.exists():
         return load_registry()
-    return read_json_object(TOOLS_FILE) if TOOLS_FILE.exists() else {}
+    if TOOLS_FILE.exists():
+        return _validated_entries(read_json_object(TOOLS_FILE), TOOLS_FILE)
+    return {}
 
 
 def save_registry(tools: dict) -> None:
@@ -118,7 +137,13 @@ def is_active(entry: dict) -> bool:
 
 def starred_names(reg: dict) -> list[str]:
     """Starred harness names in pin order (1 = top)."""
-    starred = [(name, entry.get("pin") or 0) for name, entry in reg.items()
+    def pin_of(entry: dict) -> float:
+        pin = entry.get("pin")
+        # A hand-edited pin could be a string; sorting "x" against 3 used
+        # to raise TypeError. Non-numeric pins sort as unpinned.
+        return pin if isinstance(pin, (int, float)) else 0
+
+    starred = [(name, pin_of(entry)) for name, entry in reg.items()
                if state_of(entry) == "starred"]
     starred.sort(key=lambda pair: pair[1])
     return [name for name, _ in starred]
@@ -147,13 +172,16 @@ def _migrate_from_legacy() -> dict:
     data plane migrated by hand already, and re-merging on top of it would
     silently clobber whatever it wrote.
     """
-    tools = read_json_object(TOOLS_FILE)
+    tools = _validated_entries(read_json_object(TOOLS_FILE), TOOLS_FILE)
 
     stars = _read_legacy_stars()
     archived = _read_legacy_archive()
 
     reg = {name: dict(info) for name, info in tools.items()}
     for pin, name in enumerate(stars, start=1):
+        # A star can name a harness tools.json doesn't know (the stars shim
+        # deliberately supports state-only rows); keep the state, the
+        # readers are the ones that must tolerate a missing command.
         reg.setdefault(name, {})
         reg[name]["state"] = "starred"
         reg[name]["pin"] = pin

@@ -909,7 +909,7 @@ def cmd_list(args):
 
         row = {"mark": mark_cell, "name": name}
         if "command" in wanted:
-            row["command"] = info["command"]
+            row["command"] = info.get("command") or "—"
         if "version" in wanted:
             row["version"] = ver
         if "aliases" in wanted:
@@ -944,7 +944,8 @@ def cmd_list(args):
         print(line)
 
     print()
-    n_inst = sum(1 for i in tools.values() if is_installed(i["command"]))
+    n_inst = sum(1 for i in tools.values()
+                 if i.get("command") and is_installed(i["command"]))
     n_star = sum(1 for n in tools if n in starred_set)
     hints = "swe use <name>  │  swe hs star <name>  │  swe hs archive <name>  │  swe info <name>"
     # Elide the finished line, not the hints alone: the counts in front of
@@ -1057,8 +1058,9 @@ def cmd_info(args):
         return 1
 
     info = tools[name]
-    installed = is_installed(info["command"])
-    path = shutil.which(info["command"]) or "not found"
+    command = info.get("command") or ""
+    installed = bool(command) and is_installed(command)
+    path = (shutil.which(command) or "not found") if command else "not found"
     aliases = [a for a in info.get("aliases", []) if a != name]
 
     print(f"\n  {c('bold', name)}")
@@ -1083,7 +1085,7 @@ def cmd_info(args):
     )
 
     rows = [
-        ("Command:", info["command"]),
+        ("Command:", command or "—"),
         ("Aliases:", ", ".join(aliases) if aliases else "—"),
         ("Description:", info.get("description") or "—"),
         ("Version:", info.get("version") or "unknown"),
@@ -1449,8 +1451,8 @@ def cmd_check(args):
 
     for name, info in sorted(tools.items()):
         aliases = [a for a in info.get("aliases", []) if a != name]
-        command = info["command"]
-        if is_installed(command):
+        command = info.get("command") or ""
+        if command and is_installed(command):
             # Probe live version + heal stored version BEFORE we render
             # the row (this is the check-and-heal flow's side-effect,
             # not just a display step).
