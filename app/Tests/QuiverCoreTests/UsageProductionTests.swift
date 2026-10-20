@@ -72,8 +72,9 @@ extension SecItemKeychainTests {
     final class FakeKeychain: @unchecked Sendable {
         var items: [String: Data] = [:]
         private(set) var calls: [String] = []
-        /// Each query must ask to fail instead of prompting.
+        /// Reads must ask to fail instead of prompting; writes may prompt.
         private(set) var promptsForbidden = true
+        private(set) var writesMayPrompt = true
 
         func make() -> SecItemCalls {
             SecItemCalls(
@@ -93,6 +94,9 @@ extension SecItemKeychainTests {
                 },
                 update: { [self] query, attributes in
                     calls.append("update")
+                    if (query as? [String: Any])?[kSecUseAuthenticationUI as String] != nil {
+                        writesMayPrompt = false
+                    }
                     guard let q = query as? [String: Any],
                           let attrs = attributes as? [String: Any],
                           let data = attrs[kSecValueData as String] as? Data,
@@ -177,11 +181,16 @@ extension SecItemKeychainTests {
         #expect(keychain.items["svc\u{1F}acct"] == nil)
     }
 
-    @Test func everyQueryAsksToFailRatherThanPrompt() async throws {
+    @Test func readsNeverPromptButWritesMay() async throws {
+        // A consent prompt on a read can wait forever under a page load;
+        // a save the user just clicked may prompt once, which is how keys
+        // written by `security` before the switch become readable.
         let keychain = FakeKeychain()
         let store = SecItemKeychain(calls: keychain.make())
         _ = await store.genericPassword(service: "svc", account: "acct")
+        try await store.setGenericPassword(service: "svc", account: "acct", value: "v")
         #expect(keychain.promptsForbidden)
+        #expect(keychain.writesMayPrompt)
     }
 }
 

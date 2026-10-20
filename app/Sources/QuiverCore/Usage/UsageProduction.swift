@@ -140,12 +140,16 @@ struct SecItemCalls: Sendable {
 /// reverse of KeychainCLI's read caveat applies too: items the app writes
 /// here read back in-process without a prompt.
 ///
-/// Every query asks for `kSecUseAuthenticationUIFail`: an item written by
+/// Reads ask for `kSecUseAuthenticationUIFail`: an item written by
 /// `security` before the switch (or a locked keychain) can wait forever
 /// on a consent prompt, and a page load must not hang on it. Such a read
-/// answers nil; a write or delete throws, so the failure is visible
-/// instead of a silent hang. Saving a value once recreates the item under
-/// the app's ownership, and reads stop prompting from then on.
+/// answers nil.
+///
+/// Writes and deletes are explicit user actions — the Save or Remove a
+/// person just clicked — so they may prompt. One consent puts Quiver on
+/// the item's access list, which is how a key saved before the switch
+/// becomes readable again: the first save after the upgrade prompts
+/// once, and reads stop returning nil for it from then on.
 public struct SecItemKeychain: SecretStoring {
     private let calls: SecItemCalls
 
@@ -167,7 +171,9 @@ public struct SecItemKeychain: SecretStoring {
     /// Upserts the item: update first, add when it is not there yet. The
     /// value rides in the query dictionary, never on a tool's argv.
     public func setGenericPassword(service: String, account: String, value: String) async throws {
-        var query = Self.query(service: service, account: account)
+        // Explicit save: the consent prompt is acceptable here, and one
+        // consent on an item written by `security` grants Quiver access.
+        var query = Self.query(service: service, account: account, interactive: true)
         let data = Data(value.utf8)
         switch calls.update(query as CFDictionary,
                             [kSecValueData as String: data] as CFDictionary) {
@@ -183,19 +189,24 @@ public struct SecItemKeychain: SecretStoring {
 
     /// Removes the item; one that was never there is already removed.
     public func deleteGenericPassword(service: String, account: String) async throws {
-        let status = calls.delete(Self.query(service: service, account: account) as CFDictionary)
+        let status = calls.delete(Self.query(service: service, account: account,
+                                             interactive: true) as CFDictionary)
         if status != errSecItemNotFound {
             try Self.check(status)
         }
     }
 
-    private static func query(service: String, account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: account,
-         // Never put up a consent prompt: it can wait forever while a
-         // page is trying to load.
-         kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail]
+    private static func query(service: String, account: String,
+                              interactive: Bool = false) -> [String: Any] {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account]
+        if !interactive {
+            // Never put up a consent prompt on a read: it can wait
+            // forever while a page is trying to load.
+            query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        }
+        return query
     }
 
     /// What a failed SecItem call throws: `commandFailed` with Security's
