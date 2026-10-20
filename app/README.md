@@ -48,8 +48,11 @@ app/script/make-dmg.sh                                # writes build/Quiver-<ver
 Prod builds need a Developer ID certificate (or `QUIVER_SIGN_IDENTITY=-` to
 force ad-hoc) and refuse a dirty or tagless checkout. The DMG step notarizes
 and staples the app and the image when `QUIVER_NOTARY_PROFILE` or the
-`NOTARY_*` App Store Connect key are set; without them it still writes an
-unsigned DMG for local use. BOOTSTRAP.md lists where the credentials live.
+`NOTARY_*` App Store Connect key are set; a Developer-ID-signed app without
+either stops instead of writing a DMG Gatekeeper would reject. A
+credential-free DMG for local testing needs an ad-hoc bundle:
+`QUIVER_SIGN_IDENTITY=-` on the prod build, or a plain debug build.
+BOOTSTRAP.md lists where the credentials live.
 
 ## Layout
 
