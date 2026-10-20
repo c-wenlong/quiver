@@ -33,12 +33,14 @@ import Testing
         #expect(names.label(for: "/Users/k/.quiver/accounts/codex/codex-side/home") == "Codex: Side")
     }
 
-    @Test func homesWithoutAProfileShowAShortPath() {
+    @Test func homesWithoutAProfileShowTheirHarness() {
         let names = directory([])
-        #expect(names.label(for: "/Users/k/.claude") == "~/.claude")
+        #expect(names.label(for: "/Users/k/.claude") == "Claude")
+        #expect(names.label(for: "/Users/k/Library/Application Support/Cursor") == "Cursor")
         #expect(names.label(for: "/Users/k/.local/share/opencode") == "OpenCode")
         #expect(names.label(for: "/Users/k/.local/share/devin/cli") == "Devin")
         #expect(names.label(for: "/opt/elsewhere") == "/opt/elsewhere")
+        #expect(names.label(for: "/Users/k/elsewhere") == "~/elsewhere")
     }
 
     @Test func theDirectoryRebuildsOnlyWhenProfilesChange() throws {
