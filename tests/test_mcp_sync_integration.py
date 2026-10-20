@@ -462,6 +462,15 @@ class McpSyncCodexPeerTest(unittest.TestCase):
     def test_edit_opencode_real_edit_keeps_other_keys(self):
         """An actual edit updates the touched field and leaves every other
         key of the entry — and every other server — untouched."""
+        oc_path = self.home / ".config" / "opencode" / "opencode.json"
+        fixture = json.loads(oc_path.read_text())
+        fixture["mcp"]["linear"] = {
+            "command": ["bun", "/tmp/linear.js"],
+            "environment": {"LINEAR_KEY": "lk"},
+            "enabled": True,
+            "type": "local",
+        }
+        oc_path.write_text(json.dumps(fixture, indent=2) + "\n")
         script = (
             "import json, sys\n"
             "p = sys.argv[1]\n"
@@ -476,15 +485,23 @@ class McpSyncCodexPeerTest(unittest.TestCase):
             env=env, capture_output=True, text=True,
         )
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
-        data = json.loads(
-            (self.home / ".config" / "opencode" / "opencode.json").read_text()
-        )
+        data = json.loads(oc_path.read_text())
         self.assertEqual(
             data["mcp"]["notion"],
             {
                 "command": ["node", "/tmp/notion.js"],
                 "environment": {"NOTION_TOKEN": "tok"},
                 "enabled": False,
+                "type": "local",
+            },
+        )
+        # The untouched server must survive the save byte-for-byte.
+        self.assertEqual(
+            data["mcp"]["linear"],
+            {
+                "command": ["bun", "/tmp/linear.js"],
+                "environment": {"LINEAR_KEY": "lk"},
+                "enabled": True,
                 "type": "local",
             },
         )
