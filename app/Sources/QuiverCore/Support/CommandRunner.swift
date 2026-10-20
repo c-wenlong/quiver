@@ -19,6 +19,10 @@ public protocol CommandRunning: Sendable {
     /// `input` goes to the child's stdin, then stdin closes. Secret values
     /// travel this way, never through argv, which `ps` would show.
     func run(_ arguments: [String], input: Data?) async throws -> CommandResult
+    /// `timeout` bounds the whole run: past it the child is stopped and
+    /// the call throws, even if something still holds the pipes open.
+    /// nil asks for the runner's own default bound.
+    func run(_ arguments: [String], input: Data?, timeout: Duration?) async throws -> CommandResult
 }
 
 public extension CommandRunning {
@@ -26,6 +30,11 @@ public extension CommandRunning {
     /// without input. The real runner overrides it.
     func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
         try await run(arguments)
+    }
+    /// Conformers that can't bound a run (the fakes) ignore the deadline;
+    /// the real runner enforces it.
+    func run(_ arguments: [String], input: Data?, timeout: Duration?) async throws -> CommandResult {
+        try await run(arguments, input: input)
     }
 }
 
@@ -39,18 +48,30 @@ public extension CommandRunning {
 public struct ProcessRunner: CommandRunning {
     public var executable: String
     public var environment: [String: String]?
+    /// The longest a run may take before the child is stopped and the
+    /// call throws `SweError.timedOut`. `run(_:input:timeout:)` overrides
+    /// it per call. Long enough for swe's slowest replies (a `--usage`
+    /// list polling every provider); a wedged child still gets found.
+    public var defaultTimeout: Duration
 
     public init(executable: String = SweLocation.executable(override: nil),
-                environment: [String: String]? = nil) {
+                environment: [String: String]? = nil,
+                defaultTimeout: Duration = .seconds(120)) {
         self.executable = executable
         self.environment = environment
+        self.defaultTimeout = defaultTimeout
     }
 
     public func run(_ arguments: [String]) async throws -> CommandResult {
-        try await run(arguments, input: nil)
+        try await run(arguments, input: nil, timeout: nil)
     }
 
     public func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+        try await run(arguments, input: input, timeout: nil)
+    }
+
+    public func run(_ arguments: [String], input: Data?, timeout: Duration?) async throws -> CommandResult {
+        let timeout = timeout ?? defaultTimeout
         let env: [String: String]
         if let environment {
             env = environment
@@ -79,6 +100,8 @@ public struct ProcessRunner: CommandRunning {
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                let once = ResumeOnce(continuation)
+                let deadline = DeadlineBox()
                 // One reader per pipe, each reading to EOF, and the result is
                 // assembled only once both readers and the exit are in. A
                 // callback-per-chunk reader can still be holding bytes when
@@ -96,7 +119,12 @@ public struct ProcessRunner: CommandRunning {
                     group.leave()
                 }
                 group.enter()
-                process.terminationHandler = { _ in group.leave() }
+                process.terminationHandler = { _ in
+                    group.leave()
+                    // A timed-out run reports the stop as soon as the
+                    // child is actually gone, not when the pipes drain.
+                    if deadline.isExpired { once.resume(throwing: SweError.timedOut) }
+                }
                 // No child started: close our write ends so the readers see
                 // EOF and finish, and leave the exit entry the termination
                 // handler will never leave, so the group does not leak.
@@ -104,12 +132,18 @@ public struct ProcessRunner: CommandRunning {
                     group.leave()
                     try? out.fileHandleForWriting.close()
                     try? err.fileHandleForWriting.close()
-                    continuation.resume(throwing: error)
+                    once.resume(throwing: error)
                 }
                 do {
                     guard try gate.launch() else { return abandon(CancellationError()) }
-                } catch {
-                    return abandon(SweError.notInstalled(executable))
+                } catch let error as NSError {
+                    // env(1) itself failed to spawn — the box is out of
+                    // processes or env is broken — which is a system
+                    // problem, not swe missing. A missing swe answers
+                    // exit 127 and is named in SweClient.
+                    return abandon(SweError.commandFailed(
+                        status: Int32(clamping: error.code),
+                        message: "Couldn't start \(executable): \(error.localizedDescription)"))
                 }
                 if let input {
                     // A child that exits before reading (an older swe that
@@ -122,8 +156,67 @@ public struct ProcessRunner: CommandRunning {
                         try? inputPipe.fileHandleForWriting.close()
                     }
                 }
+                // A hung run must not wedge the caller forever: past the
+                // deadline the whole command tree is stopped — a child
+                // like `bash` leaves `swift build` running otherwise —
+                // and the call throws once the run's own process is gone
+                // (the termination handler may report it sooner). Both
+                // blocks are cancelled when the run answers, so a pid
+                // reused after the child exited is never signalled.
+                let tagged = PidBox()
+                let killBlock = DispatchWorkItem {
+                    if process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
+                        Self.stopDescendants(of: process.processIdentifier, signal: SIGKILL)
+                    }
+                    // Orphans reparented to launchd vanish from the tree
+                    // walk, so tagged pids are re-signalled by number —
+                    // but only while the number still identifies the
+                    // same process. A descendant that obeyed SIGTERM and
+                    // whose pid was reused is left alone.
+                    for descendant in Set(tagged.all)
+                    where Self.tag(descendant.pid) == descendant {
+                        kill(descendant.pid, SIGKILL)
+                    }
+                    // SIGKILL cannot be ignored, so this waits out the
+                    // kernel's reaping rather than a live child.
+                    process.waitUntilExit()
+                    once.resume(throwing: SweError.timedOut)
+                }
+                let deadlineBlock = DispatchWorkItem {
+                    deadline.expire()
+                    // A child that already exited left nothing to
+                    // signal, and its pid may already belong to another
+                    // process — report the timeout, never sweep.
+                    guard process.isRunning else {
+                        once.resume(throwing: SweError.timedOut)
+                        return
+                    }
+                    // Children first: the parent must stay alive until
+                    // the tree is tagged or they reparent and vanish.
+                    tagged.set(Self.stopDescendants(
+                        of: process.processIdentifier, signal: SIGTERM))
+                    process.terminate()
+                    // A dying parent may spawn during the sweep; one
+                    // more pass catches the strays while attached.
+                    tagged.set(tagged.all + Self.stopDescendants(
+                        of: process.processIdentifier, signal: SIGTERM))
+                    // SIGTERM is a request; whatever ignores it is
+                    // killed outright a moment later.
+                    DispatchQueue.global().asyncAfter(
+                        deadline: .now() + .seconds(2), execute: killBlock)
+                }
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + timeout.timeInterval, execute: deadlineBlock)
                 group.notify(queue: .global()) {
-                    continuation.resume(returning: CommandResult(
+                    // A finished run disarms the deadline; a timed-out
+                    // one keeps the kill pass so survivors cannot
+                    // outlive the call.
+                    if !deadline.isExpired {
+                        deadlineBlock.cancel()
+                        killBlock.cancel()
+                    }
+                    once.resume(CommandResult(
                         status: process.terminationStatus,
                         stdout: box.stdout,
                         stderr: String(decoding: box.stderr, as: UTF8.self)))
@@ -134,6 +227,81 @@ public struct ProcessRunner: CommandRunning {
             gate.cancel()
         }
     }
+
+    /// Sends `signal` to every process under `pid`, walking the tree with
+    /// `proc_listchildpids`, and returns the processes it tagged so a
+    /// later pass can reach orphans that reparented off the tree.
+    /// Children may outlive their parent — a `bash` script's `swift
+    /// build` survives bash's own terminate — so a timeout sweeps the
+    /// descendants too. Never call this on a child that has already
+    /// exited: its pid may belong to another process by then.
+    @discardableResult
+    private static func stopDescendants(of pid: pid_t, signal: Int32) -> [TaggedPid] {
+        var found: [TaggedPid] = []
+        var seen: Set<pid_t> = [pid]
+        var queue = [pid]
+        while let parent = queue.popLast() {
+            var buffer = [pid_t](repeating: 0, count: 512)
+            let bytes = proc_listchildpids(parent, &buffer,
+                                         Int32(MemoryLayout<pid_t>.stride * buffer.count))
+            guard bytes > 0 else { continue }
+            for child in buffer.prefix(Int(bytes) / MemoryLayout<pid_t>.stride)
+            where seen.insert(child).inserted {
+                // A child that exited since the listing has no start tag
+                // and its number may already serve another process, so
+                // only a tagged pid is ever signalled. Its own children
+                // are still walked either way.
+                if let tagged = Self.tag(child) {
+                    found.append(tagged)
+                    kill(child, signal)
+                }
+                queue.append(child)
+            }
+        }
+        return found
+    }
+
+    /// The process's start instant, nil once it has exited — the
+    /// identity check that keeps a signal off a pid the system reused.
+    private static func tag(_ pid: pid_t) -> TaggedPid? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return TaggedPid(pid: pid,
+                         seconds: info.pbi_start_tvsec,
+                         micros: info.pbi_start_tvusec)
+    }
+}
+
+/// Set when a run passes its deadline; read by the termination handler
+/// to report the stop as soon as the child is gone.
+private final class DeadlineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var expired = false
+
+    var isExpired: Bool { lock.withLock { expired } }
+
+    func expire() { lock.withLock { expired = true } }
+}
+
+/// A descendant process's pid plus its start instant. The pair survives
+/// the process reparenting to launchd, so a later signal can still tell
+/// the tagged process from an unrelated one that reused the number.
+private struct TaggedPid: Hashable, Sendable {
+    var pid: pid_t
+    var seconds: UInt64
+    var micros: UInt64
+}
+
+/// The descendants a deadline sweep tagged, shared with the SIGKILL
+/// pass so orphans that reparented off the tree are still stopped.
+private final class PidBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pids: [TaggedPid] = []
+
+    var all: [TaggedPid] { lock.withLock { pids } }
+
+    func set(_ newValue: [TaggedPid]) { lock.withLock { pids = newValue } }
 }
 
 /// The one place a run's cancel and its launch meet. Both take the lock, so
@@ -260,19 +428,32 @@ public enum LoginShell {
     }
 }
 
-/// Resumes a continuation with the first value offered, ignoring the rest.
+/// Resumes a continuation with the first offer, ignoring the rest.
 private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<T, Never>?
+    private var action: (@Sendable (Result<T, any Error>) -> Void)?
 
-    init(_ continuation: CheckedContinuation<T, Never>) { self.continuation = continuation }
-
-    func resume(_ value: T) {
-        let pending = lock.withLock { () -> CheckedContinuation<T, Never>? in
-            defer { continuation = nil }
-            return continuation
+    init(_ continuation: CheckedContinuation<T, Never>) {
+        action = { result in
+            guard case .success(let value) = result else { return }
+            continuation.resume(returning: value)
         }
-        pending?.resume(returning: value)
+    }
+
+    init(_ continuation: CheckedContinuation<T, any Error>) {
+        action = { continuation.resume(with: $0) }
+    }
+
+    func resume(_ value: T) { offer(.success(value)) }
+
+    func resume(throwing error: any Error) { offer(.failure(error)) }
+
+    private func offer(_ result: Result<T, any Error>) {
+        let pending = lock.withLock { () -> (@Sendable (Result<T, any Error>) -> Void)? in
+            defer { action = nil }
+            return action
+        }
+        pending?(result)
     }
 }
 

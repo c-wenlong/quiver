@@ -374,39 +374,10 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
     }
 }
 
-/// KeychainCLI's argv: writes upsert with `-w` under Quiver's service,
-/// deletes tolerate a missing item, and no path logs the value.
+/// Quiver's service keys write through `SecItemKeychain` in-process;
+/// `KeychainCLI` no longer writes, so a value never sits on `security`'s
+/// argv where `ps` could read it.
 @Suite struct ServiceKeychainTests {
-    @Test func setUpsertsAGenericPassword() async throws {
-        let runner = FakeRunner(.init(status: 0, stdout: Data(), stderr: ""))
-        try await KeychainCLI(runner: runner).setGenericPassword(
-            service: "com.cwenlong.quiver.services.test", account: "DEVIN_API_KEY", value: "v")
-        #expect(runner.calls == [["add-generic-password", "-U",
-                                  "-s", "com.cwenlong.quiver.services.test",
-                                  "-a", "DEVIN_API_KEY", "-w", "v",
-                                  "-T", "/usr/bin/security"]])
-    }
-
-    @Test func deleteOnAMissingItemIsNotAnError() async throws {
-        let runner = FakeRunner(.init(status: 44, stdout: Data(), stderr: "not found"))
-        try await KeychainCLI(runner: runner).deleteGenericPassword(
-            service: "com.cwenlong.quiver.services.test", account: "DEVIN_API_KEY")
-        #expect(runner.calls == [["delete-generic-password",
-                                  "-s", "com.cwenlong.quiver.services.test",
-                                  "-a", "DEVIN_API_KEY"]])
-    }
-
-    @Test func aFailedWriteThrowsTheStderrNotTheValue() async throws {
-        let runner = FakeRunner(.init(status: 1, stdout: Data(), stderr: "keychain locked"))
-        do {
-            try await KeychainCLI(runner: runner).setGenericPassword(
-                service: "s", account: "DEVIN_API_KEY", value: "secret-value")
-            Issue.record("the write should have thrown")
-        } catch {
-            #expect(!error.localizedDescription.contains("secret-value"))
-        }
-    }
-
     @Test func servicesIsASettingsSection() {
         #expect(SettingsGroup.order.contains(.services))
         #expect(!SettingsSection.services.title.isEmpty)

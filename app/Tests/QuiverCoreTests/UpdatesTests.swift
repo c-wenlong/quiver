@@ -330,11 +330,11 @@ private final class RecordingRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
-/// Blocks inside run until finishCall, so a test can change the checkout
-/// while a build is in flight.
+/// Blocks inside run until finishCall or failCall, so a test can change
+/// the checkout while a build is in flight.
 private final class GateRunner: CommandRunning, @unchecked Sendable {
     private(set) var calls: [[String]] = []
-    private var finish: CheckedContinuation<CommandResult, Never>?
+    private var finish: CheckedContinuation<CommandResult, any Error>?
     private var waiter: CheckedContinuation<Void, Never>?
     private var called = false
 
@@ -343,7 +343,7 @@ private final class GateRunner: CommandRunning, @unchecked Sendable {
         called = true
         waiter?.resume()
         waiter = nil
-        return await withCheckedContinuation { finish = $0 }
+        return try await withCheckedThrowingContinuation { finish = $0 }
     }
 
     func waitUntilCalled() async {
@@ -354,6 +354,28 @@ private final class GateRunner: CommandRunning, @unchecked Sendable {
     func finishCall(_ result: CommandResult) {
         finish?.resume(returning: result)
         finish = nil
+    }
+
+    func failCall(_ error: any Error) {
+        finish?.resume(throwing: error)
+        finish = nil
+    }
+}
+
+/// Throws `SweError.timedOut` the way a run past its deadline does on the
+/// first call, then answers like a finished build, so a test can see the
+/// rebuild state recover instead of sticking at .building.
+private final class FlakyRunner: CommandRunning, @unchecked Sendable {
+    private var failures: Int
+
+    init(failures: Int = 1) { self.failures = failures }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        if failures > 0 {
+            failures -= 1
+            throw SweError.timedOut
+        }
+        return CommandResult(status: 0, stdout: Data(), stderr: "")
     }
 }
 
@@ -464,6 +486,21 @@ struct UpdatesModelTests {
         #expect(model.rebuildState == .idle)
     }
 
+    @Test func aBuildFailureThatOutlivesItsCheckoutIsDiscarded() async throws {
+        // Same race on the error path: a timed-out or failed build from
+        // the old checkout must not paint .failed on the new row.
+        let dir = tempDir()
+        let gate = GateRunner()
+        let model = makeModel(
+            checkout: dir.path, rebuildRunner: gate, rebuildDir: tempDir())
+        async let build: Void = model.rebuild()
+        await gate.waitUntilCalled()
+        model.setCheckout("")
+        gate.failCall(SweError.timedOut)
+        await build
+        #expect(model.rebuildState == .idle)
+    }
+
     @Test func rebuildRunsTheScriptIntoTheRebuildCache() async throws {
         let dir = tempDir()
         let rebuildDir = tempDir()
@@ -568,6 +605,26 @@ struct UpdatesModelTests {
         #expect(model.relaunchURL() == nil)
         #expect(model.rebuildState == .idle)
         #expect(model.rebuildNotice == "The build was cleaned up. Rebuild to try again.")
+    }
+
+    @Test func aTimedOutBuildFailsAndTheNextBuildCanRun() async throws {
+        let dir = tempDir()
+        let model = makeModel(checkout: dir.path, rebuildRunner: FlakyRunner(),
+                              rebuildDir: tempDir())
+        await model.rebuild()
+        guard case .failed(let message) = model.rebuildState else {
+            Issue.record("expected a failed rebuild, got \(model.rebuildState)")
+            return
+        }
+        #expect(message.contains("timed out"))
+        // The wedge would have left .building and blocked this rebuild.
+        model.resetRebuild()
+        #expect(model.rebuildState == .idle)
+        await model.rebuild()
+        guard case .built = model.rebuildState else {
+            Issue.record("expected a built rebuild, got \(model.rebuildState)")
+            return
+        }
     }
 
     @Test func aFailedRebuildKeepsTheLastLines() async throws {
