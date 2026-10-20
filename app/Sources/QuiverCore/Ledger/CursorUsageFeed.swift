@@ -213,16 +213,20 @@ public actor CursorUsageFeed {
     /// One feed event as a ledger record. `accountKey` is the account the
     /// profile reports (its `account_id`), or the profile home when swe
     /// cannot name one; `accountHome` is always the profile that read it.
-    /// The key names the account, event instant and token counts, so an
+    /// The key names the account, event instant, model and conversation —
+    /// the event's identity — and never its counts: Cursor reports a
+    /// correction as new counts on the same event, and a key that embedded
+    /// them stored it as a second event instead of replacing the row. An
     /// overlapping refetch — or a second profile on the same account —
-    /// writes the same rows again rather than adding new ones.
+    /// writes the same rows again rather than adding new ones, and the
+    /// store's lookalike cleanup removes rows the old key scheme left.
     static func record(for event: CursorUsageEvent, accountKey: String,
                        accountHome: String) -> LedgerRecord {
         let harness = ModelBrands.forModel(event.model).id == "grok-bot" ? "grok-bot" : "cursor"
         let milliseconds = Int64((event.timestamp * 1000).rounded())
         let session = event.conversationId ?? "cursor-" + dayLabel(for: event.timestamp)
-        let key = "cursor-feed:\(accountKey):\(milliseconds):\(event.model):"
-            + "\(event.conversationId ?? ""):\(event.inputTokens):\(event.outputTokens)"
+        let key = "cursor-feed:\(accountKey):\(milliseconds):\(event.model):" +
+            "\(event.conversationId ?? "")"
         return LedgerRecord(
             key: key, messageId: nil, authoritative: true,
             event: UsageEvent(

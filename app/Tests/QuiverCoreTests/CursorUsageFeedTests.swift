@@ -234,6 +234,53 @@ import Testing
         #expect(totals.costUSD == 0.04)
     }
 
+    /// The dedup key names the event, not its counts: when Cursor corrects
+    /// an event's counts, the row is replaced rather than doubled.
+    @Test func aCountCorrectionReplacesTheRow() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        func event(input: Int, output: Int) -> CursorUsageEvent {
+            CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: "conv-1", headless: false,
+                inputTokens: input, outputTokens: output,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil)
+        }
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: event(input: 1_000, output: 50), accountKey: "uid-1", accountHome: account)])
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: event(input: 2_000, output: 60), accountKey: "uid-1", accountHome: account)])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events[0].inputTokens == 2_000)
+        #expect(events[0].outputTokens == 60)
+    }
+
+    /// Rows written under the old key — which embedded the counts — are
+    /// removed when the corrected event lands, not left double-counting.
+    @Test func aRowKeyedByTheOldCountsSchemeIsCleanedUp() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let stale = LedgerRecord(
+            key: "cursor-feed:uid-1:1791700000500:composer-1:conv-1:1000:50",
+            authoritative: true,
+            event: UsageEvent(
+                harness: "cursor", accountHome: account, sessionId: "conv-1",
+                model: "composer-1", timestamp: Date(timeIntervalSince1970: 1791700000.5),
+                inputTokens: 1_000, outputTokens: 50))
+        try await ledger.ingest([stale])
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: "conv-1", headless: false,
+                inputTokens: 2_000, outputTokens: 60,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil),
+            accountKey: "uid-1", accountHome: account)])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events[0].inputTokens == 2_000)
+    }
+
     @Test func theWindowStartsAt180DaysThenOverlapsTwo() async throws {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("cache"))

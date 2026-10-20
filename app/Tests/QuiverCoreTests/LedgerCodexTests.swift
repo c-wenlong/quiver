@@ -108,4 +108,29 @@ import Testing
         // A session with no model metadata is priced as gpt-5, as ccusage does.
         #expect(first.first?.event.model == "gpt-5")
     }
+
+    /// A resumed thread replays `total_token_usage` snapshots from however
+    /// far back it has to. The dedup used to be a 32-entry ring, so past 32
+    /// turns an old snapshot fell out and its usage emitted a second time.
+    /// Every seen total is remembered now, across cursor state too.
+    @Test func aReplayedSnapshotFromLongAgoIsStillSkipped() throws {
+        let url = URL(fileURLWithPath: "/tmp/rollout-x.jsonl")
+        var parser = CodexFileParser(file: url, accountHome: "/h", savedState: nil)
+        func line(total: Int, last: Int, at second: Int) -> Data {
+            Data(#"{"timestamp":"2026-10-04T09:\#(String(format: "%02d", second / 60)):\#(String(format: "%02d", second % 60)).000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\#(total),"output_tokens":10,"total_tokens":\#(total + 10)},"last_token_usage":{"input_tokens":\#(last),"output_tokens":10,"total_tokens":\#(last + 10)}}}}"#.utf8)
+        }
+        for i in 1...40 {
+            #expect(parser.records(fromLine: line(total: i * 100, last: 100, at: i)).count == 1)
+        }
+        // A replay of the first snapshot emits nothing a second time.
+        #expect(parser.records(fromLine: line(total: 100, last: 100, at: 55)).isEmpty)
+        // ... and still does after a save/restore through cursor state.
+        var restored = CodexFileParser(file: url, accountHome: "/h", savedState: parser.savedState())
+        #expect(restored.records(fromLine: line(total: 200, last: 100, at: 56)).isEmpty)
+
+        // A state written by the old ring migrates: its entries dedup.
+        let legacy = Data(#"{"sessionId":"rollout-x","sawSessionMeta":false,"recentTotals":[{"input":300,"cached":0,"cacheWrite":0,"output":10,"reasoning":0,"total":310}],"usesRecords":false}"#.utf8)
+        var migrated = CodexFileParser(file: url, accountHome: "/h", savedState: legacy)
+        #expect(migrated.records(fromLine: line(total: 300, last: 100, at: 57)).isEmpty)
+    }
 }

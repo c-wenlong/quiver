@@ -42,8 +42,9 @@ public enum LedgerLocation {
     ///
     /// The source is held in an exclusive lock from before the copy until
     /// its files are gone, so no other connection can write a row the copy
-    /// misses. Taking the lock fails at once while any other connection has
-    /// it open (an older Quiver still running), and the move waits.
+    /// misses. While any other connection has it open (an older Quiver
+    /// still running) taking the lock fails after the busy timeout, and
+    /// the move waits.
     static func move(_ source: URL, to target: URL) throws {
         let files = FileManager.default
         let directory = target.deletingLastPathComponent()

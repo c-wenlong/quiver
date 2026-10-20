@@ -111,6 +111,111 @@ func claudeLine(
         #expect(await s.total() == 11 * 5)
     }
 
+    /// One unreadable transcript must not take the rest of the scan down
+    /// with it: it becomes a note, the good file still reads, and a later
+    /// scan retries the file once it is readable again.
+    @Test func anUnreadableFileSkipsWithANoteAndTheRestStillScans() async throws {
+        let s = try Setup()
+        // Sorts before s1.jsonl, so the scan hits it first.
+        let bad = s.home.appendingPathComponent("projects/-p/aaa-bad.jsonl")
+        try Data(claudeLine(message: "m9", request: "r9").utf8).write(to: bad)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: bad.path)
+        try s.write(claudeLine(message: "m1"))
+
+        var report = try await s.ledger.scan(roots: s.roots)
+        #expect(report.filesRead == 1)
+        #expect(report.notes.count == 1)
+        #expect(report.notes.first?.contains("aaa-bad.jsonl") == true)
+        #expect(await s.total() == 11)
+
+        // No cursor was saved: readable again, the next scan picks it up.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: bad.path)
+        report = try await s.ledger.scan(roots: s.roots)
+        #expect(report.filesRead == 1)
+        #expect(report.notes.isEmpty)
+        #expect(await s.total() == 22)
+    }
+
+    /// A cancelled pass is not a completed one: `scan` throws so the
+    /// Overview does not count it or clear the error state.
+    @Test func aCancelledScanThrowsRatherThanReportingCompletion() async throws {
+        let s = try Setup()
+        try s.write(claudeLine(message: "m1"))
+        let ledger = s.ledger
+        let roots = s.roots
+        // The task cancels itself first, so the check fires with no timing.
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await ledger.scan(roots: roots)
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    /// A rewrite that preserves size and mtime still moves ctime, which the
+    /// unchanged check now compares.
+    @Test func aMetadataPreservedRewriteIsCaughtByTheChangeTime() async throws {
+        let s = try Setup()
+        try s.write(claudeLine(message: "m1") + claudeLine(message: "m2"))
+        try await s.ledger.scan(roots: s.roots)
+
+        let mtime = try s.file.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate!
+        // Same inode, same length, mtime stamped back: only ctime moves.
+        let handle = try FileHandle(forWritingTo: s.file)
+        try handle.write(contentsOf: Data((claudeLine(message: "m5") + claudeLine(message: "m6")).utf8))
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: s.file.path)
+
+        let report = try await s.ledger.scan(roots: s.roots)
+        #expect(report.filesRescanned == 1)
+        #expect(report.filesUnchanged == 0)
+        #expect(await s.total() == 11 * 4)
+    }
+
+    /// A same-length edit between the head and tail samples used to pass
+    /// the fingerprint; the middle sample catches it.
+    @Test func aSameLengthEditBetweenTheEndsIsCaughtByTheFingerprint() async throws {
+        let s = try Setup()
+        try s.write(claudeLine(message: "m1", padding: 9_000))
+        try await s.ledger.scan(roots: s.roots)
+
+        // Flip one byte in the middle of the padding: beyond the head
+        // sample and, after the append below, short of the tail sample.
+        var data = try Data(contentsOf: s.file)
+        let offset = 4_500
+        #expect(data[offset] == UInt8(ascii: "x"))
+        data[offset] = UInt8(ascii: "y")
+        try data.write(to: s.file)
+        try s.append(claudeLine(message: "m3"))
+
+        let report = try await s.ledger.scan(roots: s.roots)
+        #expect(report.filesRescanned == 1)
+        #expect(await s.total() == 22)
+    }
+
+    /// A cursor whose saved tail reaches past its offset underflowed the
+    /// fingerprint arithmetic. It fails the check and the file rescans.
+    @Test func aMalformedCursorFailsClosedInsteadOfCrashing() async throws {
+        let s = try Setup()
+        try s.write(claudeLine(message: "m1") + claudeLine(message: "m2"))
+        let info = try #require(FileInfo(path: s.file.path))
+        // A second store on the same file, so the row can say anything:
+        // an offset short of EOF keeps the unchanged fast path out, and a
+        // tail length past it trips the underflow the guard now rejects.
+        let store = try LedgerStore(url: s.temp.path("cache/ledger.sqlite"))
+        try store.save(FileCursor(
+            path: s.file.resolvingSymlinksInPath().path,
+            inode: info.inode, size: info.size, modified: info.modified,
+            changed: info.changed, offset: 100,
+            headHash: StableHash.of(""), headLength: 0,
+            tailHash: 0, tailLength: 500,
+            state: nil, skippedLines: 0))
+
+        let report = try await s.ledger.scan(roots: s.roots)
+        #expect(report.filesRescanned == 1)
+        #expect(await s.total() == 22)
+    }
+
     @Test func anOversizedLineIsSkippedAndTheRestStillCounts() async throws {
         let temp = try TempDir()
         let home = temp.path("claude")

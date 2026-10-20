@@ -16,6 +16,9 @@ final class SQLiteDatabase: @unchecked Sendable {
     /// Opens (and creates) a read-write database.
     init(url: URL) throws {
         try open(url.path, flags: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX)
+        // Same grace the read-only connections get: without it a WAL
+        // reader's snapshot fails the write at once with SQLITE_BUSY.
+        sqlite3_busy_timeout(handle, 2_000)
     }
 
     /// Opens another app's database strictly read-only. Nothing is created,
