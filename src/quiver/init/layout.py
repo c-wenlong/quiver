@@ -301,19 +301,25 @@ def skill_root_label(
 _WALK_DIR_CAP = 20_000
 
 
-def _skill_mds(root: Path) -> dict[str, Path]:
-    """dir-name -> its SKILL.md path for every skill folder under ``root``.
+def _skill_mds(root: Path) -> tuple[dict[str, list[Path]], bool]:
+    """(dir-name -> SKILL.md paths, complete) for skill folders under ``root``.
 
-    The walk follows symlinks but de-duplicates by (dev, ino), so a link
-    into a vendor repo is seen exactly once, and caps at _WALK_DIR_CAP
-    visited directories so a link cycle or a link out to a huge tree
-    cannot make init scan it all.
+    One name can map to several folders — ``live/alpha`` and
+    ``.sources/alpha`` are different skills that happen to share a name,
+    and keeping only the last one seen would let an unchecked private
+    copy hide behind a matching one. The walk follows symlinks but
+    de-duplicates by (dev, ino), so a link into a vendor repo is seen
+    exactly once, and stops at _WALK_DIR_CAP visited directories so a
+    link cycle or a link out to a huge tree cannot make init scan it
+    all. A capped scan returns ``complete=False``: callers that decide
+    deletion must treat a partial view as "unknown", never as
+    "everything matched".
     """
     import os
 
-    out: dict[str, Path] = {}
+    out: dict[str, list[Path]] = {}
     if not root.is_dir():
-        return out
+        return out, True
     seen: set[tuple[int, int]] = set()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
         try:
@@ -326,12 +332,13 @@ def _skill_mds(root: Path) -> dict[str, Path]:
             dirnames[:] = []
             continue
         seen.add(key)
-        if len(seen) >= _WALK_DIR_CAP:
-            dirnames[:] = []
-            continue
+        if len(seen) > _WALK_DIR_CAP:
+            # Break, not just prune: clearing dirnames skips this dir's
+            # children but os.walk still visits every queued sibling.
+            return out, False
         if "SKILL.md" in filenames:
-            out[Path(dirpath).name] = Path(dirpath) / "SKILL.md"
-    return out
+            out.setdefault(Path(dirpath).name, []).append(Path(dirpath) / "SKILL.md")
+    return out, True
 
 
 def skill_folder_names(root: Path) -> set[str]:
@@ -341,14 +348,30 @@ def skill_folder_names(root: Path) -> set[str]:
     links into a vendor repo and disagreed with what `swe find` reported for
     the same directory.
     """
-    return set(_skill_mds(root))
+    return set(_skill_mds(root)[0])
 
 
 def _tree_is_empty(root: Path) -> bool:
-    """True when the tree holds no files at all — dirs alone don't count."""
+    """True when the tree holds no files at all — dirs alone don't count.
+
+    Follows symlinks like ``_skill_mds``, with the same (dev, ino) visit
+    guard: two links pointing back into the tree would otherwise make the
+    walk explore every cycle combination until the OS stops resolving.
+    """
     import os
 
-    for _dirpath, _dirnames, filenames in os.walk(root, followlinks=True):
+    seen: set[tuple[int, int]] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        try:
+            st = os.stat(dirpath)
+        except OSError:
+            dirnames[:] = []
+            continue
+        key = (st.st_dev, st.st_ino)
+        if key in seen:
+            dirnames[:] = []
+            continue
+        seen.add(key)
         if filenames:
             return False
     return True
@@ -371,12 +394,47 @@ def _same_skill(private_md: Path, shared_md: Path) -> bool:
 
     A folder-name match is NOT a copy — a private skill that happens to
     share a name with a shared one keeps its own content, and absorbing
-    the tree would replace it with an unrelated skill. Compare every
-    file's presence and size plus the SKILL.md bytes.
+    the tree would replace it with an unrelated skill. Same file set and
+    sizes is necessary but not sufficient: an edited helper of exactly
+    the same length must not pass either, so every file's bytes compare.
     """
-    if _skill_manifest(private_md.parent) != _skill_manifest(shared_md.parent):
+    manifest = _skill_manifest(private_md.parent)
+    if manifest is None or manifest != _skill_manifest(shared_md.parent):
         return False
-    return _same_bytes(private_md, shared_md)
+    private_dir, shared_dir = private_md.parent, shared_md.parent
+    return all(
+        _same_bytes(private_dir / rel, shared_dir / rel)
+        for rel in manifest
+    )
+
+
+def _files_outside_skills(root: Path, mds: dict[str, list[Path]]) -> bool:
+    """True when ``root`` holds any file not inside a discovered skill dir.
+
+    ``absorb`` removes the root wholesale — a private ``notes.txt`` sitting
+    beside an all-shared skill tree would vanish with it.
+    """
+    import os
+
+    skill_dirs = [md.parent for paths in mds.values() for md in paths]
+    seen: set[tuple[int, int]] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        try:
+            st = os.stat(dirpath)
+        except OSError:
+            dirnames[:] = []
+            continue
+        key = (st.st_dev, st.st_ino)
+        if key in seen:
+            dirnames[:] = []
+            continue
+        seen.add(key)
+        here = Path(dirpath)
+        if any(here == sd or sd in here.parents for sd in skill_dirs):
+            continue
+        if filenames:
+            return True
+    return False
 
 
 def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]:
@@ -407,7 +465,12 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
             return "conflict", "real file, needs --force"
         return "create", ""
 
-    mds = _skill_mds(path)
+    mds, complete = _skill_mds(path)
+    if not complete:
+        # A capped scan saw only part of the tree: a unique skill could be
+        # sitting past the cap, invisible to the checks below. "keep" is
+        # the only answer a partial view can support.
+        return "keep", "scan hit the directory cap"
     if not mds:
         # Files that are not skills are user data: report the root rather
         # than deleting it. Only a genuinely empty tree is absorbable.
@@ -415,12 +478,24 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
             return "keep", "files but no skills"
         return "absorb", "empty"
 
-    shared_mds = _skill_mds(shared)
+    shared_mds, shared_complete = _skill_mds(shared)
+    if not shared_complete:
+        return "keep", "shared skill scan hit the directory cap"
     unique = set(mds) - set(shared_mds)
     if not unique:
+        # A name match is not a copy match: every private copy of a shared
+        # name must be content-identical to a shared copy, or the absorb
+        # would replace a same-named-but-different private skill.
         unique = {
-            name for name, md in mds.items() if not _same_skill(md, shared_mds[name])
+            name
+            for name, copies in mds.items()
+            if not all(
+                any(_same_skill(md, smd) for smd in shared_mds[name])
+                for md in copies
+            )
         }
+    if not unique and _files_outside_skills(path, mds):
+        return "keep", "files besides the shared skills"
     if not unique:
         return "absorb", f"{len(mds)} skills, all already shared"
     return "keep", f"{len(unique)} of {len(mds)} skills exist nowhere else"

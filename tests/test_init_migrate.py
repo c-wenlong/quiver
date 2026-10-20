@@ -207,17 +207,36 @@ class PlanMigrationTest(unittest.TestCase):
             self.assertEqual(dest["mcp.json"], paths.mcp_source_file_for(home))
 
     def test_dotfiles_are_moved_not_dropped(self):
-        # A user .env or notes file in the old root is data, not .DS_Store.
+        # A user notes file in the old root is data, not .DS_Store.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".notes": "remember this"})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(
+                dest[".notes"], paths.config_dir_for(home) / ".notes")
+            self.assertNotIn(".notes", {p.name for p in plan.dropped})
+            apply_migration(plan)
+            self.assertEqual(
+                (paths.config_dir_for(home) / ".notes").read_text(),
+                "remember this")
+
+    def test_env_lands_under_sealed_secrets_not_versioned_config(self):
+        # config/ is the tree a user versions — a stray .env there is one
+        # `git add .` from a committed key. Credential files move into the
+        # sealed secrets/ instead.
         with tempfile.TemporaryDirectory() as tmp:
             home = _legacy_home(tmp, extra={".env": "TOKEN=x"})
             plan = plan_migration(home)
             dest = {src.name: dst for src, dst in plan.moved}
             self.assertEqual(
-                dest[".env"], paths.config_dir_for(home) / ".env")
-            self.assertNotIn(".env", {p.name for p in plan.dropped})
+                dest[".env"], paths.secrets_dir_for(home) / ".env")
             apply_migration(plan)
             self.assertEqual(
-                (paths.config_dir_for(home) / ".env").read_text(), "TOKEN=x")
+                (paths.secrets_dir_for(home) / ".env").read_text(), "TOKEN=x")
+            # Sealed at apply time: the move cannot outrun the .gitignore
+            # that keeps it out of the hub's git.
+            self.assertTrue(
+                (paths.secrets_dir_for(home) / ".gitignore").is_file())
 
     def test_drop_list_and_move_lists_do_not_overlap(self):
         self.assertEqual(set(DROP) & set(CONFIG_FILES), set())
@@ -494,6 +513,32 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertFalse((outside / "providers" / ".api_keys").exists())
             self.assertEqual(outside.stat().st_mode & 0o777, 0o755)
             self.assertFalse((home / ".api_keys").is_symlink())
+
+    def test_a_dangling_secrets_symlink_still_warns(self):
+        # is_dir() follows the link, so a dangling one used to skip the
+        # seal call entirely — the credential move was dropped silently.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            secrets_dir = paths.secrets_dir_for(home)
+            secrets_dir.parent.mkdir(parents=True, exist_ok=True)
+            secrets_dir.symlink_to(home / "gone")
+            _keys(home / ".api_keys")
+            notes = move_secrets(home)
+            self.assertIn("left alone", " ".join(notes))
+            # The key file was not moved anywhere through the dead link.
+            self.assertTrue((home / ".api_keys").is_file())
+            self.assertFalse((home / ".api_keys").is_symlink())
+
+    def test_a_regular_file_at_secrets_path_warns_and_skips(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            secrets_dir = paths.secrets_dir_for(home)
+            secrets_dir.parent.mkdir(parents=True, exist_ok=True)
+            secrets_dir.write_text("not a dir")
+            _keys(home / ".api_keys")
+            notes = move_secrets(home)
+            self.assertIn("left alone", " ".join(notes))
+            self.assertTrue((home / ".api_keys").is_file())
 
 
 class CmdInitMigrationTest(unittest.TestCase):

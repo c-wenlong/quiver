@@ -39,6 +39,12 @@ CONFIG_FILES = (
 # Directories that keep their name, one level up from config/.
 PASSTHROUGH_DIRS = ("completions", "reports")
 
+# Credential-shaped names move under secrets/ rather than config/ — the
+# sealed secrets/.gitignore keeps them out of a `git add .`, while config/
+# is exactly the tree a user versions.
+def _is_credential_file(name: str) -> bool:
+    return name == ".env" or name.startswith(".env.") or name == ".netrc"
+
 # Dead weight from the single-file era, deleted rather than carried across.
 DROP = ("mcp.py", "mcp_formats.py", "mcp_server.py", "tests", "__pycache__", "archive")
 
@@ -82,6 +88,11 @@ def plan_migration(home: Path | None = None) -> MigrationPlan | None:
             # reader resolves the root path, so landing it under config/
             # stranded every server until the user found the file.
             plan.moved.append((entry, quiver / name))
+        elif _is_credential_file(name):
+            # A stray .env landing in config/ would be one `git add .` from
+            # a committed key: config/ is the versioned tree, so credential
+            # files go under the sealed secrets/ instead.
+            plan.moved.append((entry, paths.secrets_dir_for(home) / name))
         else:
             # Anything unrecognised — dotfiles included — is authored until
             # proven otherwise, so it moves to config/ rather than being
@@ -99,6 +110,13 @@ def apply_migration(plan: MigrationPlan, remove_source: bool = True) -> Migratio
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dest))
+
+    # Credential files moved under secrets/ need its catch-all .gitignore
+    # sealed immediately — nothing else guarantees the seal runs before
+    # the user `git add .`s the hub.
+    secrets_dir = paths.secrets_dir_for(plan.source.parent.parent)
+    if any(dest.parent == secrets_dir for _src, dest in plan.moved):
+        seal_secrets_dir(plan.source.parent.parent)
 
     for entry in plan.dropped:
         if entry.is_symlink() or not entry.is_dir():
@@ -165,11 +183,16 @@ def move_secrets(home: Path | None = None, *, apply: bool = True) -> list[str]:
         planned.append((old, new, f"move {old_label} to {new_label}"))
 
     secrets_dir = paths.secrets_dir_for(home)
-    if secrets_dir.is_symlink():
+    secrets_blocked = secrets_dir.is_symlink() or (
+        os.path.lexists(secrets_dir) and not secrets_dir.is_dir()
+    )
+    if secrets_blocked:
         # Path ops follow links: mkdir/chmod/writes under it would land in
         # an arbitrary external directory. The seal below reports it.
         planned = []
-    if planned or secrets_dir.is_dir():
+    if planned or secrets_blocked or secrets_dir.is_dir():
+        # is_dir() follows the link, so a dangling symlink or a regular
+        # file must trigger the seal call itself or the skip goes unreported.
         notes.extend(seal_secrets_dir(home, apply=apply))
     for old, new, note in planned:
         notes.append(note)
@@ -214,6 +237,8 @@ def seal_secrets_dir(home: Path | None = None, *, apply: bool = True) -> list[st
         # A foreign directory must never be chmod 0700'd or handed a
         # catch-all .gitignore through the link.
         return ["secrets/ is a symlink — left alone"]
+    if os.path.lexists(secrets_dir) and not secrets_dir.is_dir():
+        return ["secrets/ is a file, not a directory — left alone"]
     seal = secrets_dir / ".gitignore"
     if seal.is_file() and seal.read_text(encoding="utf-8", errors="replace") == paths.SECRETS_GITIGNORE_BODY:
         return []
