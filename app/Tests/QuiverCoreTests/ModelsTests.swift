@@ -454,7 +454,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                     linksURL: dir.path("config/model-links.json"),
                     slices: { _ in slices },
                     now: { Date(timeIntervalSince1970: 1_800_000_000) },
-                    calendar: Calendar(identifier: .gregorian))
+                    calendar: Calendar(identifier: .gregorian),
+                    searchDelay: .zero)
     }
 
     private func slice(_ model: String, _ harness: String, tokens: Int) -> ModelUsage {
@@ -1181,7 +1182,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                                 linksURL: dir.path("config/model-links.json"),
                                 slices: { _ in [] },
                                 now: { Date(timeIntervalSince1970: 1_800_000_000) },
-                                calendar: Calendar(identifier: .gregorian))
+                                calendar: Calendar(identifier: .gregorian),
+                                searchDelay: .zero)
         await model.load(allowRefresh: false)
         model.query = "wisp"
         // Bare-name hits rank before provider-prefixed ones.
@@ -1219,7 +1221,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                                 linksURL: dir.path("config/model-links.json"),
                                 slices: { _ in [] },
                                 now: { Date(timeIntervalSince1970: 1_800_000_000) },
-                                calendar: Calendar(identifier: .gregorian))
+                                calendar: Calendar(identifier: .gregorian),
+                                searchDelay: .zero)
         await model.load(allowRefresh: false)
         model.query = "openrouter"
         #expect(model.rows.map(\.aa?.id) == ["sol"])
@@ -1291,7 +1294,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                                                    overrides: [:])
                                 },
                                 now: { Date(timeIntervalSince1970: 1_800_000_000) },
-                                calendar: Calendar(identifier: .gregorian))
+                                calendar: Calendar(identifier: .gregorian),
+                                searchDelay: .zero)
         await model.load(allowRefresh: false)
         model.query = "wisp"
         #expect(model.rows.map(\.logged) == ["wisp-9"])
@@ -1318,7 +1322,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                                 linksURL: dir.path("config/model-links.json"),
                                 slices: { _ in [] },
                                 now: { Date(timeIntervalSince1970: 1_800_000_000) },
-                                calendar: Calendar(identifier: .gregorian))
+                                calendar: Calendar(identifier: .gregorian),
+                                searchDelay: .zero)
         await model.load(allowRefresh: false)
         model.query = "flood"
         #expect(model.rows.count == ModelsModel.searchLimit)
