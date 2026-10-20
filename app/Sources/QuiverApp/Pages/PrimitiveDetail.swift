@@ -333,6 +333,9 @@ struct PartsCard: View {
     var onChanged: () -> Void
 
     @State private var tree: PrimitiveTree?
+    /// The running tree walk, kept so a new reload cancels it before a
+    /// stale tree can land over a newer one.
+    @State private var treeTask: Task<Void, Never>?
     @State private var selected: String?
     /// Whether `selected` can preview, checked off the main actor before
     /// any document is opened for it; nil while the check still runs.
@@ -365,7 +368,10 @@ struct PartsCard: View {
                     .font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
         }
-        .task { reload() }
+        // Keyed on the root: a catalog reload can move the plugin's
+        // folder, and cancelling the old task drops a walk that still
+        // lands for it.
+        .task(id: root) { reload() }
         .task(id: selected) {
             previewTask?.cancel()
             guard let selected else {
@@ -524,10 +530,19 @@ struct PartsCard: View {
     }
 
     private func reload() {
-        tree = PrimitiveTree(root: root)
-        if let selected {
-            let all = (tree?.sections.flatMap(\.entries) ?? []).flatMap { [$0] + $0.children }
-            if !all.contains(where: { $0.previewPath == selected }) { self.selected = nil }
+        // The walk is disk work, and a big marketplace tree would freeze
+        // the page if it ran here: it goes off the main actor like the
+        // previewability check in `.task(id: selected)`.
+        treeTask?.cancel()
+        let root = root
+        treeTask = Task {
+            let walked = await Task.detached { PrimitiveTree(root: root) }.value
+            guard !Task.isCancelled else { return }
+            tree = walked
+            if let selected {
+                let all = walked.sections.flatMap(\.entries).flatMap { [$0] + $0.children }
+                if !all.contains(where: { $0.previewPath == selected }) { self.selected = nil }
+            }
         }
     }
 
@@ -876,10 +891,18 @@ struct PluginDetailView: View {
         }
         guard editable, let dir else { return }
         let codex = dir.appending(path: ".codex-plugin/plugin.json")
+        // Only a plugin that ships a Codex manifest has one to update; a
+        // manifest that exists but cannot be read or written must be
+        // reported, or the rename looks saved while the file keeps the
+        // old name.
+        guard FileManager.default.fileExists(atPath: codex.path) else { return }
         let shown = trimmed.isEmpty ? plugin.name : trimmed
-        if let text = try? String(contentsOf: codex, encoding: .utf8),
-           let edited = try? PluginManifestFields.setCodexDisplayName(shown, in: text) {
-            try? Data(edited.utf8).write(to: codex, options: .atomic)
+        do {
+            let text = try String(contentsOf: codex, encoding: .utf8)
+            let edited = try PluginManifestFields.setCodexDisplayName(shown, in: text)
+            try Data(edited.utf8).write(to: codex, options: .atomic)
+        } catch {
+            nameError = "Renamed, but couldn't update the Codex manifest: \(error.localizedDescription)"
         }
     }
 
