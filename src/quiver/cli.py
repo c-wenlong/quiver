@@ -63,10 +63,13 @@ def cmd_version(args):
 def cmd_complete(args):
     """Hidden command for shell completion. Outputs candidates to stdout."""
     from quiver.completion import get_completions
+    from quiver.console import sanitize
 
     completions = get_completions(args)
     for candidate, desc in completions:
-        print(f"{candidate}\t{desc}")
+        # One candidate per line is the whole protocol — a server name or
+        # description carrying \n or \t would inject extra lines into it.
+        print(f"{sanitize(candidate)}\t{sanitize(desc)}")
     # Directive: 4 = NoFileComp (suppress file completion fallback)
     print(":4")
     return 0

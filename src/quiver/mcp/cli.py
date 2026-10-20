@@ -346,6 +346,189 @@ def save_json(path: Path, data: dict):
     atomic_write_text(path, json.dumps(data, indent=2) + "\n", private=True)
 
 
+def _skip_jsonc_ws_comments(text: str, i: int) -> int:
+    """Advance past whitespace and ``//`` / ``/* */`` comments."""
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in " \t\r\n":
+            i += 1
+        elif ch == "/" and text[i + 1 : i + 2] == "/":
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+        elif ch == "/" and text[i + 1 : i + 2] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+        else:
+            break
+    return i
+
+
+def _skip_jsonc_string(text: str, i: int) -> int:
+    """Advance past the string starting at ``text[i] == '"'``."""
+    i += 1
+    n = len(text)
+    while i < n and text[i] != '"':
+        i += 2 if text[i] == "\\" else 1
+    return min(i + 1, n)
+
+
+def _jsonc_key_span(text: str, key: str) -> tuple[int, int] | None:
+    """``(start, end)`` of the value bound to top-level ``key``, or None.
+
+    Only the value span is returned — the ``"key":`` prefix is left in
+    place, so a rewrite touches nothing else in the file.
+    """
+    i = _skip_jsonc_ws_comments(text, 0)
+    if i >= len(text) or text[i] != "{":
+        return None
+    i += 1
+    n = len(text)
+    while True:
+        i = _skip_jsonc_ws_comments(text, i)
+        if i >= n or text[i] == "}":
+            return None
+        if text[i] == ",":
+            i += 1
+            continue
+        if text[i] != '"':
+            return None
+        content = text[i + 1 : _skip_jsonc_string(text, i) - 1]
+        i = _skip_jsonc_ws_comments(text, _skip_jsonc_string(text, i))
+        if i >= n or text[i] != ":":
+            return None
+        vstart = _skip_jsonc_ws_comments(text, i + 1)
+        # Walk the value; it ends at the next depth-0 comma or bracket.
+        depth = 0
+        i = vstart
+        while i < n:
+            ch = text[i]
+            if ch == '"':
+                i = _skip_jsonc_string(text, i)
+                continue
+            if ch == "/" and text[i + 1 : i + 2] in ("/", "*"):
+                i = _skip_jsonc_ws_comments(text, i)
+                continue
+            if ch in "[{":
+                depth += 1
+            elif ch in "]}":
+                if depth == 0:
+                    return (vstart, i) if content == key else None
+                depth -= 1
+            elif ch == "," and depth == 0:
+                if content == key:
+                    return (vstart, i)
+                break
+            i += 1
+        else:
+            return None
+
+
+def _jsonc_last_value_end(text: str) -> int | None:
+    """Offset just past the last top-level member's value, or None.
+
+    Unlike ``text.rfind("}")``, comments and whitespace trailing the last
+    member are left out of the result. Inserting ``", member"`` here keeps
+    them attached to the closing brace — a plain ``rstrip`` head would
+    drop the comma onto a comment line and break the file.
+    """
+    i = _skip_jsonc_ws_comments(text, 0)
+    if i >= len(text) or text[i] != "{":
+        return None
+    i += 1
+    n = len(text)
+    last_end: int | None = None
+    while True:
+        i = _skip_jsonc_ws_comments(text, i)
+        if i >= n or text[i] == "}":
+            return last_end
+        if text[i] == ",":
+            i += 1
+            continue
+        if text[i] != '"':
+            return last_end
+        i = _skip_jsonc_ws_comments(text, _skip_jsonc_string(text, i))
+        if i >= n or text[i] != ":":
+            return last_end
+        i = _skip_jsonc_ws_comments(text, i + 1)
+        depth = 0
+        vend: int | None = None
+        while i < n:
+            ch = text[i]
+            if ch == '"':
+                i = _skip_jsonc_string(text, i)
+                vend = i
+                continue
+            if ch == "/" and text[i + 1 : i + 2] in ("/", "*"):
+                i = _skip_jsonc_ws_comments(text, i)
+                continue
+            if ch in "[{":
+                depth += 1
+            elif ch in "]}":
+                if depth == 0:
+                    return vend
+                depth -= 1
+            elif ch == "," and depth == 0:
+                break
+            i += 1
+            if ch not in " \t\r\n":
+                vend = i
+        else:
+            return last_end
+        last_end = vend
+
+
+def _jsonc_member_indent(text: str, vstart: int) -> str:
+    """Leading whitespace of the line holding the member that owns vstart."""
+    line_start = text.rfind("\n", 0, vstart) + 1
+    line = text[line_start:vstart]
+    return line[: len(line) - len(line.lstrip())]
+
+
+def _save_jsonc_slice(path: Path, key: str, value) -> bool:
+    """Rewrite only ``key``'s value in a .jsonc file, keeping its comments.
+
+    Returns False when the member cannot be found or inserted cleanly —
+    the caller then falls back to a full reserialize (and warns).
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    rendered = json.dumps(value, indent=2, ensure_ascii=False)
+    span = _jsonc_key_span(raw, key)
+    if span is not None:
+        vstart, vend = span
+        indent = _jsonc_member_indent(raw, vstart)
+        new_text = (
+            raw[:vstart]
+            + rendered.replace("\n", "\n" + indent)
+            + raw[vend:]
+        )
+    else:
+        # Member absent: append inside the root object, matching the two-
+        # space indent these files use.
+        close = raw.rfind("}")
+        if close == -1:
+            return False
+        head = raw[:close].rstrip()
+        member = f'"{key}": {rendered.replace(chr(10), chr(10) + "  ")}'
+        if head.endswith("{"):
+            new_text = head + "\n  " + member + "\n" + raw[close:]
+        elif head.endswith(","):
+            new_text = head + "\n  " + member + "\n" + raw[close:]
+        else:
+            # The comma must land on live JSON: when a // comment trails
+            # the last member, splicing at head would park it inside the
+            # comment and break the file. Insert after the value instead.
+            vend = _jsonc_last_value_end(raw)
+            if vend is None:
+                return False
+            new_text = raw[:vend] + ",\n  " + member + "\n" + raw[vend:]
+    atomic_write_text(path, new_text, private=True)
+    return True
+
+
 # ── Server helpers ────────────────────────────────────────────────────
 
 
@@ -409,6 +592,19 @@ def get_tool_saver(tool_name: str):
         return lambda servers, p: save_codex_servers(servers, p)
     key = cfg["key"]
     def _save(servers, p):
+        if p.suffix == ".jsonc" and p.exists():
+            # A full reserialize would strip every comment the file
+            # carries; rewrite just the managed member instead.
+            if _save_jsonc_slice(p, key, servers):
+                return
+            try:
+                raw = p.read_text(encoding="utf-8")
+            except OSError:
+                raw = ""
+            if "//" in raw or "/*" in raw:
+                print(c("yellow", f"  {p}: layout not recognised — "
+                                "comments could not be preserved"),
+                      file=sys.stderr)
         existing = load_json(p) if p.exists() else {}
         existing[key] = servers
         save_json(p, existing)
@@ -1081,6 +1277,11 @@ def _sync(args, report: dict | None):
             print(f"{source} has no MCP servers.")
         return 0
 
+    # Every name the source could have offered, before --only/--except
+    # narrow it: --prune may only delete inside this pool, so a filtered
+    # run never removes servers it was never asked to look at.
+    pool_names = set(source_servers)
+
     if only_flag:
         source_servers, unmatched = _filter_by_patterns(source_servers, only_flag)
         if unmatched:
@@ -1217,9 +1418,23 @@ def _sync(args, report: dict | None):
                 target_servers[name] = converted
                 added.append(name)
 
+        # --only/--except or a picker deselection narrowed the run.
+        narrowed = (
+            bool(only_flag or except_flag)
+            or set(selected) != set(server_names)
+        )
         pruned: list[str] = []
         if prune:
-            target_only = sorted(set(target_servers.keys()) - set(selected))
+            # Narrowed runs prune only inside the source's pool — names it
+            # offered but this selection dropped — never entries the source
+            # doesn't know, which are the user's own. Unfiltered runs keep
+            # the mirror semantics: anything off the selection goes.
+            if narrowed:
+                target_only = sorted(
+                    set(target_servers) & (pool_names - set(selected))
+                )
+            else:
+                target_only = sorted(set(target_servers.keys()) - set(selected))
             for name in target_only:
                 del target_servers[name]
                 pruned.append(name)
@@ -1242,7 +1457,12 @@ def _sync(args, report: dict | None):
         if skipped:
             parts.append(f"{len(skipped)} {'would skip' if dry_run else 'skipped'}")
         if pruned:
-            parts.append(f"{len(pruned)} {'would prune' if dry_run else 'pruned'}")
+            # A narrowed run names what it removed — a delete that can no
+            # longer be inferred from the selection must not be silent.
+            names = f" ({', '.join(pruned)})" if narrowed else ""
+            parts.append(
+                f"{len(pruned)} {'would prune' if dry_run else 'pruned'}{names}"
+            )
 
         if parts:
             status = c('cyan', '•') if dry_run else c('green', '✓')
@@ -1915,7 +2135,10 @@ MCP_HELP = {
   --no-interactive    Disable interactive picker (select all)
   --dry-run           Preview changes without writing files
   --strict            Fail if conversion would be lossy
-  --prune             Also delete target servers not in the selection
+  --prune             Also delete target servers outside the selection.
+                      With --only/--except or a picker deselection the
+                      delete stays inside the source's own names: servers
+                      it never offered are the target's own and survive.
   --json              Print what moved as one JSON document (implies
                       --no-interactive); names only, never configs
 

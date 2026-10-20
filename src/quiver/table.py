@@ -28,12 +28,12 @@ from typing import Any, Callable, Dict, Literal, Union
 
 from quiver.console import (
     c,
+    cell_len,
     cpad,
-    elide,
+    elide_cells,
     sanitize,
     terminal_width,
-    truncate,
-    visible_len,
+    truncate_cells,
     wrap_ansi,
 )
 
@@ -119,8 +119,8 @@ def _register_default_kinds() -> None:
         # use ``kind="preformatted"`` or ``trust_cell_width=True``;
         # ``text`` is plain-only by design.
         plain = sanitize(raw)
-        truncated = truncate(plain, width)
-        return truncated + " " * max(width - visible_len(truncated), 0)
+        truncated = truncate_cells(plain, width)
+        return truncated + " " * max(width - cell_len(truncated), 0)
 
     @register_kind("path")
     def _path(value, width, attrs):
@@ -130,24 +130,34 @@ def _register_default_kinds() -> None:
         # same workspace looking identical, so a column of paths that share a
         # long prefix becomes unreadable exactly when it matters most.
         plain = sanitize("" if value is None else str(value))
-        shortened = elide(plain, width)
-        return shortened + " " * max(width - visible_len(shortened), 0)
+        shortened = elide_cells(plain, width)
+        return shortened + " " * max(width - cell_len(shortened), 0)
 
     @register_kind("number")
     def _number(value, width, attrs):
-        if value is None:
+        try:
+            n = None if value is None else int(value)
+        except (TypeError, ValueError):
+            # A missing key substitutes the ``empty`` marker itself — a
+            # string in a numeric column renders as the placeholder, not
+            # a traceback.
+            n = None
+        if n is None:
             plain = attrs.get("empty", "-")
         else:
-            plain = f"{int(value):,}" if attrs.get("thousands") else str(int(value))
+            plain = f"{n:,}" if attrs.get("thousands") else str(n)
         return plain.rjust(width)
 
     @register_kind("count_threshold")
     def _count_threshold(value, width, attrs):
         threshold = attrs.get("threshold", 0)
-        if value is None:
+        try:
+            n = None if value is None else int(value)
+        except (TypeError, ValueError):
+            n = None
+        if n is None:
             plain = attrs.get("empty", "-")
             return plain.rjust(width)
-        n = int(value)
         plain = str(n)
         if n >= threshold:
             return c("green", plain.rjust(width))
@@ -163,7 +173,7 @@ def _register_default_kinds() -> None:
         if not value:
             return cpad(color, empty, width)
         joined = ", ".join(sanitize(str(v)) for v in value)
-        return cpad(color, truncate(joined, width), width)
+        return cpad(color, truncate_cells(joined, width), width)
 
     @register_kind("timestamp")
     def _timestamp(value, width, attrs):
@@ -173,7 +183,9 @@ def _register_default_kinds() -> None:
         formatter: Callable[[Any], str] | None = attrs.get("formatter")
         empty = attrs.get("empty", "-")
         right = attrs.get("right", False)
-        if value is None or formatter is None:
+        if value is None or isinstance(value, str) or formatter is None:
+            # Missing-key rows substitute the marker string itself, and a
+            # formatter fed "-" must not traceback.
             return empty.rjust(width) if right else empty.ljust(width)
         label = formatter(value)
         return label.rjust(width) if right else label.ljust(width)
@@ -189,7 +201,7 @@ def _register_default_kinds() -> None:
         s = str(value)
         if width <= 0:
             return ""
-        gap = width - visible_len(s)
+        gap = width - cell_len(s)
         if gap < 0:
             return wrap_ansi(s, width)[0]
         if gap == 0:
@@ -293,7 +305,7 @@ class Table:
             self._column_gap_width: int = column_gap
             self._column_gap_str: str = " " * column_gap
         else:
-            self._column_gap_width = visible_len(column_gap)
+            self._column_gap_width = cell_len(column_gap)
             self._column_gap_str = column_gap
 
     # ------------------------------------------------------------------ API
@@ -357,7 +369,7 @@ class Table:
                 for r in self._rows
             ]
             samples.append(col.header)
-            observed = max((visible_len(s) for s in samples), default=0)
+            observed = max((cell_len(s) for s in samples), default=0)
             if col.fit == "fixed":
                 widths[col.name] = col.width
             elif col.fit == "shrink":
@@ -366,7 +378,7 @@ class Table:
                 # enough for the worst case stayed that wide for every table
                 # that never hit it: NAME held 16 columns for names of 11.
                 # The header still has to fit, or its label would truncate.
-                widths[col.name] = max(visible_len(col.header),
+                widths[col.name] = max(cell_len(col.header),
                                        min(col.width, observed))
             elif col.fit == "content":
                 widths[col.name] = max(col.width, observed)
@@ -410,9 +422,9 @@ class Table:
     def _render_header(self, widths: Dict[str, int]) -> str:
         parts: list[str] = []
         for i, col in enumerate(self._columns):
-            label = truncate(col.header, widths[col.name])
+            label = truncate_cells(col.header, widths[col.name])
             parts.append(
-                c(self.header_style, label + " " * max(widths[col.name] - visible_len(label), 0))
+                c(self.header_style, label + " " * max(widths[col.name] - cell_len(label), 0))
             )
             if i < len(self._columns) - 1:
                 parts.append(self._column_gap_str)

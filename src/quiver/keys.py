@@ -78,8 +78,13 @@ LETTERS = {
 }
 
 
-def _read_sequence(fd: int) -> bytes:
-    """The bytes of one escape sequence after the Esc, or b"" if it is not one.
+def _read_sequence(fd: int) -> bytes | None:
+    """The bytes of one escape sequence after the Esc.
+
+    ``b""`` when what followed was not a sequence (an Alt chord, a dead
+    terminal). ``None`` when a fresh Esc cut it short — Esc Esc is two
+    presses, and eating the second as part of a mangled sequence meant a
+    cancel needed a third press.
 
     The cap stops a terminal that never sends a final byte from spinning
     here, and a short read (stdin closed mid-sequence) drops the sequence
@@ -88,6 +93,8 @@ def _read_sequence(fd: int) -> bytes:
     leave the widget on an os.read that could never finish.
     """
     intro = os.read(fd, 1)
+    if intro == b"\x1b":
+        return None                     # Esc Esc: the second press was no sequence
     if intro not in (b"[", b"O"):
         return b""                        # Esc plus a plain byte: an Alt chord
     seq = intro
@@ -98,6 +105,8 @@ def _read_sequence(fd: int) -> bytes:
         byte = os.read(fd, 1)
         if not byte:
             return b""
+        if byte == b"\x1b":
+            return None                 # a new Esc aborts the sequence
         seq += byte
         if 0x40 <= byte[0] <= 0x7E:
             return seq
@@ -136,6 +145,9 @@ def read_key(fd: int, letters: dict[bytes, str] | None = None,
         if not ready:
             return "escape"
         seq = _read_sequence(fd)
+        if seq is None:
+            # Esc Esc — the pair collapses to one cancel rather than none.
+            return "escape"
         if seq[:2] == b"[<":
             return _mouse_key(seq)
         if sequences and seq in sequences:

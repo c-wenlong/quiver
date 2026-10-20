@@ -415,7 +415,7 @@ class KiloMcpConfigTest(unittest.TestCase):
                 load_json(p)
 
     def test_jsonc_round_trip_preserves_other_keys(self):
-        from quiver.mcp.cli import get_tool_loader, get_tool_saver
+        from quiver.mcp.cli import get_tool_loader, get_tool_saver, load_json
 
         with TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -426,7 +426,12 @@ class KiloMcpConfigTest(unittest.TestCase):
             saver = get_tool_saver("kilo")
             saver({"srv": {"type": "local", "command": ["echo"],
                            "enabled": True}}, p)
-            data = json.loads(p.read_text())
+            raw = p.read_text()
+            # The write is surgical: the comment and every sibling key
+            # survive, so plain json.loads cannot read the file back —
+            # that's what load_json is for.
+            self.assertIn("// keep me", raw)
+            data = load_json(p)
         self.assertEqual(data["theme"], "dark")
         self.assertIn("srv", data["mcp"])
 
