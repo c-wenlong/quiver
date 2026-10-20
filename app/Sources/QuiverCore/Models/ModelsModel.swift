@@ -192,9 +192,11 @@ public final class ModelsModel {
             }
         }
     }
-    /// Whether the query is driving the row list — the scope picker's
-    /// population (yours, top 10, top 25) no longer applies.
-    public var searching: Bool { !Self.normalized(query).isEmpty }
+    /// Whether a query produced the rows on screen, so the scope
+    /// picker's population no longer applies. Stored, not derived from
+    /// `query`: flipping only when a debounced rebuild lands means a
+    /// keystroke never invalidates the rows below the field.
+    public private(set) var searching = false
     /// Matches a search didn't list — LiteLLM-only keys over
     /// `searchLimit` plus rows over `searchResultLimit` — for the
     /// page's "+N more" note.
@@ -760,9 +762,11 @@ public final class ModelsModel {
             searchOverflow = lite.count - min(lite.count, Self.searchLimit)
                 + result.count - shown.count
             rows = Array(shown)
+            searching = true
             return
         }
         searchOverflow = 0
+        searching = false
 
         let all: [Row]
         switch scope {

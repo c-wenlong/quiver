@@ -1345,9 +1345,11 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         await model.load()
         let scoped = model.rows.map(\.logged)
         model.query = "kimi k3"
-        #expect(model.searching)
+        // The flag waits with the rows: nothing flips mid-typing.
+        #expect(!model.searching)
         #expect(model.rows.map(\.logged) == scoped)
         await model.settleSearch()
+        #expect(model.searching)
         #expect(model.rows.map(\.aa?.id) == ["kimi"])
     }
 
