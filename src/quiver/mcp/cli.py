@@ -1682,14 +1682,15 @@ def cmd_edit(args):
             print("Invalid JSON — no changes saved.")
             return 0
         if name in edited and isinstance(edited[name], dict):
-            # Bypass the format handler for toml_region tools (codex) so that
-            # bespoke scalar extras like `startup_timeout_sec = 120` survive
-            # the save round-trip. JSON tools still go through emit() so that
-            # Copilot's "type": "stdio" remains auto-set.
-            if tool_cfg.get("io_type") == "toml_region":
-                tool_servers[name] = edited[name]
-            else:
-                tool_servers[name] = get_mcp_handler(tool).emit(edited[name])
+            # The temp file holds the server's raw tool-native dict, so it is
+            # written back verbatim. Routing it through emit() treated raw
+            # fields as canonical and corrupted entries on every save:
+            # opencode's command list was nested one level deeper and lost
+            # `environment`/`enabled`, claude's `disabled`/`autoApprove`
+            # were stripped (a disabled server was re-enabled by an edit),
+            # droid's transport type could be rewritten. Format conversion
+            # is sync's job; a no-change save must be a no-op.
+            tool_servers[name] = edited[name]
             saver(tool_servers, tool_cfg["path"])
             print(f"Updated '{sanitize(name)}' in {sanitize(tool)}")
         else:
