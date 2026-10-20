@@ -14,6 +14,7 @@ claude	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/claude-col
 cline	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cline.svg	MIT (LobeHub icons); cline/cline Apache-2.0	filled robot mark; outline variant exists at cline/cline assets/branding/logos/cline-icon-dark.svg
 cloudflare	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cloudflare-color.svg	MIT (LobeHub icons); Cloudflare trademark	Cloudflare colour mark
 codex	color	TokenTracker dashboard/public/brand-logos/codex.svg	MIT (TokenTracker)	OpenAI Codex colour mark
+cohere	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cohere-color.svg	MIT (LobeHub icons); Cohere trademark	Cohere colour mark, for API keys
 commandcode	color	TokenTracker dashboard/public/brand-logos/commandcode.svg	MIT (TokenTracker)	Command Code mark, white on its black tile
 continue	mono	https://raw.githubusercontent.com/continuedev/continue/main/docs/logo/light.svg	Apache-2.0 repo; logo trademark	hexagon mark, black fill; docs/logo/dark.svg is the white variant
 copilot	mono	TokenTracker dashboard/public/brand-logos/copilot.svg	MIT (TokenTracker)	GitHub Copilot mark
@@ -29,11 +30,13 @@ fireworks	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/firewor
 forge	mono	https://forgecode.dev/shared/brand/favicon-light.svg	trademark, no licence stated	{F} mark, fill #1c1d1f; favicon-dark.svg (white) and favicon.svg (media-query) also on site
 freebuff	mono	https://freebuff.com/logo.svg	trademark, no licence stated	white F on black rounded square, from Freebuff official site
 gemini	color	TokenTracker dashboard/public/brand-logos/gemini.svg	MIT (TokenTracker)	Google Gemini colour mark
+github	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/github.svg	MIT (LobeHub icons); GitHub trademark	GitHub Octocat-in-circle mark, for tokens
 goose	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/goose.svg	MIT (LobeHub icons); Block/goose Apache-2.0 repo	goose silhouette matches block/goose docs logo; mono
 grok	mono	TokenTracker dashboard/public/brand-logos/grok.svg	MIT (TokenTracker)	xAI Grok mark
 groq	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/groq.svg	MIT (LobeHub icons); Groq trademark	Groq mark
 homebrew	mono	https://unpkg.com/simple-icons@16.34.0/icons/homebrew.svg	CC0-1.0 (Simple Icons); Homebrew trademark	Homebrew mug, for brew and cask installs
 huaweicloud	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/huaweicloud-color.svg	MIT (LobeHub icons); Huawei trademark	Huawei petal mark, for Huawei Cloud Token Plan
+huggingface	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/huggingface-color.svg	MIT (LobeHub icons); Hugging Face trademark	Hugging Face colour mark, for tokens
 iflytek	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/iflytekcloud-color.svg	MIT (LobeHub icons); iFlytek trademark	iFlytek Open Platform cloud mark, for Astron plans
 jdcloud	color	https://img1.jcloudcs.com/portal/header/jdcloud-logo-2021.svg	trademark, no licence stated	red knot symbol, 京东云 text paths dropped and its stylesheet colour inlined, for JD Cloud Token Plan
 jules	mono	https://jules.google/docs/_astro/logo.CRRa4vtC.svg	trademark, no licence stated	Google Jules squid mark; shown in #B2A3FF on the docs site, kept mono; Illustrator export reduced to the mark, viewBox squared to 26
@@ -55,6 +58,7 @@ ollama	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/ollama.svg	
 openai	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/openai.svg	MIT (LobeHub icons); OpenAI trademark	OpenAI mark
 opencode	color	TokenTracker dashboard/public/brand-logos/opencode.svg	MIT (TokenTracker)	OpenCode mark in its purple
 openrouter	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/openrouter-color.svg	MIT (LobeHub icons); OpenRouter trademark	OpenRouter colour mark
+perplexity	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/perplexity-color.svg	MIT (LobeHub icons); Perplexity trademark	Perplexity colour mark, for API keys
 pi	mono	TokenTracker dashboard/public/brand-logos/pi.svg	MIT (TokenTracker)	Pi mark from pi.dev
 poe	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/poe.svg	MIT (LobeHub icons); Quora/Poe trademark	Poe speech-bubble mark
 qoder	mono	TokenTracker dashboard/public/brand-logos/qoder.svg	MIT (TokenTracker)	Qoder mono mark (LobeHub icons)
