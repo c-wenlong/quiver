@@ -138,6 +138,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Quiver's main window goes fullscreen.** A SwiftUI `Window` scene
+  marks its NSWindow `.fullScreenNone`, so Enter Full Screen stayed off
+  the green button's tiles and ⌃⌘F even though the window resized. The
+  scene's content now opts in with `.windowFullScreenBehavior(.enabled)`.
+
 - **Quiver's Pricing and Models pages open without the wait.** Their
   per-model usage read now runs on its own read-only ledger connection,
   off the main thread, instead of queueing behind a log scan (up to 3s

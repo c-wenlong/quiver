@@ -12,6 +12,10 @@ struct QuiverApp: App {
             MainWindow()
                 .environment(model)
                 .frame(minWidth: 900, minHeight: 600)
+                // A `Window` scene's NSWindow ships .fullScreenNone, so
+                // the green button's tiles and ^⌘F never offer fullscreen
+                // on an otherwise resizable window. Opt the main window in.
+                .windowFullScreenBehavior(.enabled)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1180, height: 800)
