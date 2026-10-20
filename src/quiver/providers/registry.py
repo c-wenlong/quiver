@@ -39,7 +39,7 @@ _REMOVED_KEY = "_removed"
 
 
 def _validated_entries(registry: dict, source) -> dict:
-    """Every provider entry must be an object; ``_removed`` must be a list.
+    """Every provider entry must be an object; ``_removed`` a list of strings.
 
     The top-level shape is already checked by ``read_json_object``, but a
     hand-edited entry like ``"openai": "oops"`` used to get through and
@@ -48,9 +48,10 @@ def _validated_entries(registry: dict, source) -> dict:
     """
     for name, entry in registry.items():
         if name == _REMOVED_KEY:
-            if not isinstance(entry, list):
+            if (not isinstance(entry, list)
+                    or not all(isinstance(item, str) for item in entry)):
                 raise CorruptConfigurationError(
-                    f"{source}: entry {name!r} must be a list,"
+                    f"{source}: entry {name!r} must be a list of strings,"
                     f" got {type(entry).__name__}: fix or remove the file"
                 )
             continue

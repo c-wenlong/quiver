@@ -241,11 +241,15 @@ def cmd_setup(args):
         else:
             data["instructions"] = _instructions_preview(home)
         emit(data)
-        # An apply step or a linking pass that stopped part way is not a
-        # finished setup, even though what came before it was applied and
-        # is reported above.
+        # An apply step, a linking pass or the preview that stopped part
+        # way is not a finished setup, even though what came before it
+        # was applied and is reported above.
         applied = data.get("applied", {})
-        failed = applied.get("errors") or applied.get("links", {}).get("error")
+        preview_error = data.get("instructions", {}).get("error")
+        if preview_error:
+            print(c("red", f"  setup failed: {preview_error}"), file=sys.stderr)
+        failed = (applied.get("errors") or applied.get("links", {}).get("error")
+                  or preview_error)
         return 1 if failed else 0
 
     print(f"\n{c('bold', 'quiver setup')}\n")

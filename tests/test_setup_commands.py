@@ -4,7 +4,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -342,13 +342,18 @@ class SetupLinksTest(_SetupHarness):
     def test_preview_linking_failure_is_an_error_field_not_a_traceback(self):
         from quiver.setup import commands as sc
 
+        err = io.StringIO()
         with patch.object(
             sc, "run_init", Mock(side_effect=OSError("linkignore unreadable"))
-        ):
+        ), redirect_stderr(err):
             code, out, _ = self._run(["--json"])
-        self.assertEqual(code, 0)
+        # A failed preview is a failed run: exit 1 and a stderr line, so a
+        # caller that only reads failures (the app throws on nonzero exit)
+        # still sees what went wrong.
+        self.assertEqual(code, 1)
         instructions = json.loads(out)["data"]["instructions"]
         self.assertEqual(instructions["error"], "linkignore unreadable")
+        self.assertIn("linkignore unreadable", err.getvalue())
 
     def test_eof_and_interrupt_still_propagate_through_every_guard(self):
         # The widened guards report Exception but must never swallow

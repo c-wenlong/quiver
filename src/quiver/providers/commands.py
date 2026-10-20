@@ -10,7 +10,7 @@ from quiver.flags import expand_value_flags
 from quiver.providers.defaults import DEFAULT_PROVIDERS, derived_alias
 from quiver.providers.discover import discover_provider_keys
 from quiver.providers.help_text import print_providers_help
-from quiver.providers.keys import default_keys_dir
+from quiver.providers.keys import default_keys_dir, read_shell_export_keys
 from quiver.providers.registry import load_registry, resolve, save_registry
 from quiver.table import Table
 
@@ -623,8 +623,17 @@ def cmd_remove(args: list[str]) -> int:
         # Directory layout: the key is a bare file named by key_filename.
         kept = f"Your {_display_keys_dir(store)}/{key_filename} file"
     else:
-        # Shell-export layout: the key is an export line inside the file.
-        which = f"{env_vars[0]} export" if env_vars else "key"
+        # Shell-export layout: name the export the file actually holds —
+        # env_vars[0] is only the first accepted name (gemini also reads
+        # GOOGLE_API_KEY), so naming it unconditionally can point at an
+        # export the user never had.
+        matched = read_shell_export_keys(store, env_vars)
+        if matched:
+            which = f"{matched[1]} export"
+        elif env_vars:
+            which = f"{' or '.join(env_vars)} export"
+        else:
+            which = "key"
         kept = f"Your {which} line in {_display_keys_dir(store)}"
     print(
         c(

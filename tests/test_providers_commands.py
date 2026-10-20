@@ -1273,7 +1273,8 @@ class CmdStoreWordingTest(unittest.TestCase):
             self.assertIn("one bare-key file per provider", output)
             self.assertIn("export NAME=<key>", output)
 
-    def _remove_with_store(self, tmp_path: Path, store: Path) -> str:
+    def _remove_with_store(self, tmp_path: Path, store: Path,
+                           env_vars=("OPENAI_API_KEY",)) -> str:
         import json
 
         from quiver.providers.commands import cmd_remove
@@ -1282,7 +1283,7 @@ class CmdStoreWordingTest(unittest.TestCase):
         registry_file = config_dir / "providers.json"
         config_dir.mkdir(parents=True, exist_ok=True)
         registry_file.write_text(json.dumps({
-            "openai": {"env_vars": ["OPENAI_API_KEY"], "key_filename": "openai"},
+            "openai": {"env_vars": list(env_vars), "key_filename": "openai"},
         }))
         patches = _registry_patches(config_dir, registry_file) + (
             patch(
@@ -1315,6 +1316,34 @@ class CmdStoreWordingTest(unittest.TestCase):
             store.mkdir()
             out = self._remove_with_store(tmp_path, store)
         self.assertIn(f"{store}/openai", out)
+
+    def test_remove_names_the_export_the_file_actually_holds(self):
+        # env_vars[0] is only the first accepted name: a provider whose
+        # secondary name is the one exported must not be told its
+        # primary-named line survived.
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / ".api_keys"
+            store.write_text("export SECONDARY_API_KEY=sk-x\n")
+            out = self._remove_with_store(
+                tmp_path, store,
+                env_vars=("PRIMARY_API_KEY", "SECONDARY_API_KEY"),
+            )
+        self.assertIn("SECONDARY_API_KEY", out)
+        self.assertNotIn("PRIMARY_API_KEY", out)
+
+    def test_remove_lists_accepted_names_when_no_key_is_stored(self):
+        # No matching export in the file — name all accepted names rather
+        # than guessing env_vars[0].
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / ".api_keys"
+            store.write_text("")
+            out = self._remove_with_store(
+                tmp_path, store,
+                env_vars=("PRIMARY_API_KEY", "SECONDARY_API_KEY"),
+            )
+        self.assertIn("PRIMARY_API_KEY or SECONDARY_API_KEY", out)
 
 
 if __name__ == "__main__":

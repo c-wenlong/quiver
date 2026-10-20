@@ -191,13 +191,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (exit 130) instead of marking every remaining stage failed and exiting
   0; `swe setup --apply --json` reports a failed apply step inside the
   `applied.errors` list and still emits its JSON envelope, so a run that
-  half-applied no longer reads as success to the app. `swe providers`
-  messages name the real key store: a missing default store asks for one
-  `export NAME=<key>` line per provider rather than a file-per-provider
-  directory, and `swe providers remove` says which export line it left
-  alone. `swe providers add` refuses a flag token as the provider name,
-  and a `providers.json` entry that is not an object raises
-  CorruptConfigurationError naming the row instead of crashing mid-merge.
+  half-applied no longer reads as success to the app. A failed
+  instructions preview (`instructions.error`) exits 1 with a stderr line
+  instead of looking like a clean run. `swe providers` messages name the
+  real key store: a missing default store asks for one `export
+  NAME=<key>` line per provider rather than a file-per-provider
+  directory, and `swe providers remove` names the export line it left
+  alone — the one the file actually holds, or every accepted name.
+  `swe providers add` refuses a flag token as the provider name, and a
+  `providers.json` entry that is not an object (or a `_removed` list
+  holding non-strings) raises CorruptConfigurationError naming the row
+  instead of crashing mid-merge.
 
 ### Added
 

@@ -220,6 +220,28 @@ class RegistryEntryValidationTest(unittest.TestCase):
                     load_registry()
             self.assertIn("_removed", str(ctx.exception))
 
+    def test_removed_items_must_be_strings(self):
+        # ``[["openai"]]`` passed the bare list check, then ``set(...)``
+        # raised an uncaught TypeError on the unhashable item.
+        from quiver.configuration import CorruptConfigurationError
+
+        for bad in ([["openai"]], ["openai", 1], [None]):
+            with self.subTest(bad=bad), TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                registry_file = self._write(
+                    tmp_path,
+                    {
+                        "_removed": bad,
+                        "openai": {"env_vars": ["OPENAI_API_KEY"]},
+                    },
+                )
+                p1, p2 = _registry_patches(tmp_path / ".config" / "swe",
+                                           registry_file)
+                with p1, p2:
+                    with self.assertRaises(CorruptConfigurationError) as ctx:
+                        load_registry()
+                self.assertIn("_removed", str(ctx.exception))
+
 
 class RegistrySaveRoundtripTest(unittest.TestCase):
     def test_save_then_load_roundtrips(self):
