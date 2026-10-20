@@ -316,15 +316,21 @@ def _secret_hint(raw: str) -> str:
 
 
 def _store_literal(hint: str, value: str, secrets: dict[str, str],
-                   home: Path | None = None) -> str:
-    """Move one plaintext credential into the store; return its ``${NAME}``."""
+                   home: Path | None = None,
+                   reserved: frozenset[str] = frozenset()) -> str:
+    """Move one plaintext credential into the store; return its ``${NAME}``.
+
+    ``reserved`` holds reference names already used in the config: minting
+    a new secret under one of them would rebind the existing ``${NAME}``
+    to the new literal on the next resolve.
+    """
     for n, v in secrets.items():
         if v == value:
             return f"${{{n}}}"
     base = _secret_hint(hint)
     name = base
     i = 2
-    while name in secrets:
+    while name in secrets or name in reserved:
         name = f"{base}_{i}"
         i += 1
     set_secret(name, value, home)
@@ -355,9 +361,26 @@ def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict | N
     notes: list[str] = []
     blocked: list[str] = []
 
+    # Every ${NAME} already referenced in this server is taken: storing a
+    # new literal under the same name would rebind the old reference to
+    # the new secret on the next resolve.
+    reserved: set[str] = set()
+
+    def _collect_refs(v) -> None:
+        if isinstance(v, str):
+            reserved.update(_REF_RE.findall(v))
+        elif isinstance(v, dict):
+            for x in v.values():
+                _collect_refs(x)
+        elif isinstance(v, list):
+            for x in v:
+                _collect_refs(x)
+
+    _collect_refs(server)
+
     def stash(hint: str, value: str) -> str | None:
         try:
-            ref = _store_literal(hint, value, secrets, home)
+            ref = _store_literal(hint, value, secrets, home, frozenset(reserved))
         except ValueError as exc:
             # A value the store can't represent (multiline PEM, both quote
             # kinds) must not abort the whole apply — and must not land in

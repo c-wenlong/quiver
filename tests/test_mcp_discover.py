@@ -608,6 +608,36 @@ class ShieldCredentialsTest(unittest.TestCase):
                 "session=${SESSION}; refresh=literal-secret-99")
             self.assertIn("literal-secret-99", load_secrets(home).values())
 
+    def test_a_stored_literal_cannot_steal_a_referenced_name(self):
+        # `session=${SESSION}; session=other-token`: storing the literal
+        # as SESSION would rebind the existing reference to the new value.
+        # The literal must land under a different name.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, resolve
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"headers": {
+                        "Cookie": "session=${SESSION}; "
+                                  "session=other-token-7"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            cookie = hub["headers"]["Cookie"]
+            self.assertIn("session=${SESSION}", cookie)
+            self.assertIn("session=${SESSION_2}", cookie)
+            self.assertNotIn("other-token-7", cookie)
+            self.assertEqual(load_secrets(home)["SESSION_2"], "other-token-7")
+            resolved = resolve(hub, home=home)
+            self.assertEqual(
+                resolved["headers"]["Cookie"],
+                "session=${SESSION}; session=other-token-7")
+
     def test_an_env_segment_literal_next_to_a_reference_is_stored(self):
         # Same rule inside env: `a=${T}; b=literal` keeps the reference
         # and stores only the b literal.
