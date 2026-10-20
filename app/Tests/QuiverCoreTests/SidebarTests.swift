@@ -3,8 +3,9 @@ import Testing
 
 @Suite struct SidebarTests {
     @Test func sectionsAreGroupedAsTheRoadmapSays() {
-        #expect(SidebarGroup.allCases.map(\.title) == ["Usage", "Manage", "Primitives", "System"])
+        #expect(SidebarGroup.allCases.map(\.title) == ["Usage", "GitHub", "Manage", "Primitives", "System"])
         #expect(SidebarGroup.usage.sections == [.overview, .sessions, .calendar, .pricing])
+        #expect(SidebarGroup.github.sections == [.repositories, .inbox])
         #expect(SidebarGroup.manage.sections == [.accounts, .harnesses, .compute])
         #expect(SidebarGroup.primitives.sections == [.plugins, .skills, .agentsMd, .mcpServers, .models])
         #expect(SidebarGroup.system.sections == [.menuBar, .widgets, .serviceStatus, .settings])
@@ -26,8 +27,10 @@ import Testing
         #expect(SidebarGroup.order.first == .overview)
         #expect(AppSection.sessions.step(1) == .calendar)
         #expect(AppSection.calendar.step(1) == .pricing)
-        #expect(AppSection.pricing.step(1) == .accounts)
-        #expect(AppSection.accounts.step(-1) == .pricing)
+        #expect(AppSection.pricing.step(1) == .repositories)
+        #expect(AppSection.repositories.step(1) == .inbox)
+        #expect(AppSection.inbox.step(1) == .accounts)
+        #expect(AppSection.accounts.step(-1) == .inbox)
         #expect(AppSection.pricing.step(-1) == .calendar)
         // Models closes the Primitives group.
         #expect(AppSection.mcpServers.step(1) == .models)

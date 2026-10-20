@@ -605,6 +605,7 @@ to use their own login state and environment."""
   {c('cyan', '--repo=owner/name')}   Repo (a github.com URL works too)
   {c('cyan', '--state=open|closed|…')}  pr: open/closed/merged/all; issue: open/closed/all
   {c('cyan', '--limit=N')}            Rows to fetch (default 30, cap 200)
+  {c('cyan', '--all')}                inbox: include read notifications
   {c('cyan', '--web')}                Open the matching github.com page instead
   {c('cyan', '--json')}               {{schema, data}} envelope; data is
                           {{github: {{status, login}}, results: [...]}} with one
