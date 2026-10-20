@@ -52,7 +52,7 @@ installs somewhere else.
 | `Tests/QuiverCoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
 | `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/Quiver.app` |
 | `script/bundle-swe.sh` | Puts `swe` and its own Python into the bundle; `build-app.sh` runs it and signs the Python binaries |
-| `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Apple Development identity if you have one, else ad-hoc) |
+| `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Developer ID on `QUIVER_CHANNEL=prod`, Apple Development otherwise, else ad-hoc) |
 | `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.quiver/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
 | `THIRD_PARTY_NOTICES.md` | Licences for the LiteLLM snapshot and ported OpenUsage rules |
@@ -126,8 +126,11 @@ exceptions.
 - Privacy grants (Desktop folder access, Accessibility) stick across
   rebuilds only when the app is signed with a stable identity.
   `build-app.sh` uses your first "Apple Development" certificate, or
-  `QUIVER_SIGN_IDENTITY`. Without one it falls back to ad-hoc signing, and
-  every rebuild looks like a new app that asks again.
+  `QUIVER_SIGN_IDENTITY`; `QUIVER_CHANNEL=prod` instead requires a
+  "Developer ID Application" certificate and adds the hardened runtime
+  and a secure timestamp. A dev build without a certificate falls back
+  to ad-hoc signing, and every rebuild looks like a new app that asks
+  again.
 - `QUIVER_BUILD_DIR` overrides where the bundle lands (default
   `app/build`); the app ends up at `$QUIVER_BUILD_DIR/Quiver.app`.
   Settings > Updates uses this so a rebuild never overwrites the running
