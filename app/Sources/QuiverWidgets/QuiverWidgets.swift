@@ -3,8 +3,8 @@ import QuiverWidgetsUI
 import SwiftUI
 import WidgetKit
 
-/// Quiver's desktop and Notification Center widgets, after TokenTracker's
-/// four. They draw the snapshot the app writes to
+/// Quiver's desktop and Notification Center widgets, after TokenTracker's.
+/// They draw the snapshot the app writes to
 /// `~/.quiver/cache/widgets/snapshot.json`; the extension is sandboxed with
 /// read access to that folder only, and never fetches anything itself.
 @main
@@ -14,6 +14,7 @@ struct QuiverWidgets: WidgetBundle {
         UsageSummaryWidget()
         ActivityHeatmapWidget()
         TopModelsWidget()
+        ComputeWidget()
     }
 }
 
@@ -27,15 +28,23 @@ struct SnapshotProvider: TimelineProvider {
         completion(SnapshotEntry(date: .now, snapshot: snapshot ?? (context.isPreview ? .preview : nil)))
     }
 
-    /// The app asks for a reload whenever the file changes. Between those,
-    /// redraw every 15 minutes so reset countdowns and passed resets move on.
+    /// The minutes between entries: how fast relative labels ("45m ago",
+    /// reset countdowns) march on once an entry shows.
+    static let step: TimeInterval = 900
+    /// Entries cover eight hours, so a starved timeline keeps dating the
+    /// figures honestly instead of freezing the last one at "45m ago".
+    static let entries = 32
+
+    /// The file is re-read about every 15 minutes; the app's own reload
+    /// pushes are floored so WidgetKit's reload budget lasts the day.
+    /// Between reads the entries' dates move every label that counts on.
     func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
         let snapshot = WidgetSnapshotStore(file: WidgetSnapshotStore.defaultFile()).read()
         let now = Date.now
-        let entries = (0..<4).map { step in
-            SnapshotEntry(date: now.addingTimeInterval(Double(step) * 900), snapshot: snapshot)
+        let entries = (0..<Self.entries).map { step in
+            SnapshotEntry(date: now.addingTimeInterval(Double(step) * Self.step), snapshot: snapshot)
         }
-        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(3_600))))
+        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(Self.step))))
     }
 }
 
@@ -80,5 +89,16 @@ struct TopModelsWidget: Widget {
         .configurationDisplayName("Top models")
         .description("Your most used models over the last 30 days, by token share.")
         .supportedFamilies([.systemMedium])
+    }
+}
+
+struct ComputeWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "compute", provider: SnapshotProvider()) { entry in
+            WidgetFrame(entry: entry) { ComputeView(snapshot: $0, now: entry.date) }
+        }
+        .configurationDisplayName("Compute")
+        .description("What each running harness costs in RAM, CPU and GPU, with the Mac's temperatures.")
+        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }

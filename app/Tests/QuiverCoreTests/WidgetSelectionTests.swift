@@ -113,6 +113,10 @@ import Testing
         #expect(!selection.shows(harness: "codex", in: .summary))
         #expect(selection.shows(harness: "codex", in: .heatmap))
         #expect(selection.shows(harness: "codex", in: .models))
+        #expect(selection.shows(harness: "codex", in: .compute))
+        selection.setShown(false, harness: "claude", in: .compute)
+        #expect(!selection.shows(harness: "claude", in: .compute))
+        #expect(selection.shows(harness: "claude", in: .summary))
     }
 
     @Test func aHarnessAddedLaterShows() {
