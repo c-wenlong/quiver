@@ -20,6 +20,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,7 +29,22 @@ from quiver.sessions.parsers import _codex_is_rename, codex_thread_id, parse_cod
 
 THREAD_ID = "01a084f0-b4fe-72d0-9b7b-1a5214957f73"
 ROLLOUT = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
+# A resumed rollout carries its own uuid after the thread's: the thread uuid
+# comes first, then ``_<rollout uuid>`` for the resume's own file.
+RESUME_ROLLOUT_ID = "01a1530f-510c-7cd1-ba9a-ef92d4f14b17"
+RESUMED_ROLLOUT = (
+    f"rollout-2026-10-19T15-27-55-{THREAD_ID}_{RESUME_ROLLOUT_ID}.jsonl"
+)
 REAL_EXPANDUSER = os.path.expanduser
+
+
+def _iso(epoch_s):
+    """Epoch seconds -> the ISO string codex writes as ``updated_at``."""
+    return (
+        datetime.fromtimestamp(epoch_s, tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _session_meta(cwd="/Users/kaichen/project"):
@@ -285,6 +301,172 @@ class CodexResumeArgsTest(unittest.TestCase):
         # argument it rejects outright, which is what `--resume <stem>` did.
         self.assertEqual([], _codex_resume_args("rollout-legacy"))
         self.assertEqual([], _codex_resume_args(""))
+
+    def test_a_resumed_rollout_yields_the_thread_uuid(self):
+        stem = RESUMED_ROLLOUT.removesuffix(".jsonl")
+        # The trailing uuid is the resume's own rollout id, which the index,
+        # the store and `codex resume` have never heard of.
+        self.assertEqual(THREAD_ID, codex_thread_id(stem))
+        self.assertEqual(["resume", THREAD_ID], _codex_resume_args(stem))
+
+
+class CodexResumedThreadsTest(unittest.TestCase):
+    """Every ``codex resume`` writes another rollout file; the thread is one row.
+
+    The resumed file is ``rollout-<iso>-<thread uuid>_<rollout uuid>.jsonl``:
+    the same thread uuid up front plus the resume's own rollout uuid after an
+    underscore. Folding them by thread id keeps one row per thread, lets the
+    store/index lookups hit, and gives ``codex resume`` an id that resolves.
+    """
+
+    # epoch seconds for the two rollout times used below
+    T0 = datetime(2026, 9, 9, 14, 52, 42, tzinfo=timezone.utc).timestamp()
+    T1 = datetime(2026, 10, 19, 7, 27, 55, tzinfo=timezone.utc).timestamp()
+
+    def _run(self, rollout_names, index_lines=None, store_rows=None,
+             mtimes=None):
+        """Write one rollout file per name; ``mtimes`` pins each file's mtime
+        (epoch seconds), matching ``Session.timestamp`` in ms. Returns the
+        parsed sessions, not just the first."""
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / ".codex"
+            day_dir = codex_home / "sessions" / "2026" / "09" / "09"
+            day_dir.mkdir(parents=True)
+            for i, name in enumerate(rollout_names):
+                fp = day_dir / name
+                with open(fp, "w") as f:
+                    for rec in (_session_meta(), _user_message("Fix the login bug")):
+                        f.write(json.dumps(rec) + "\n")
+                if mtimes and i < len(mtimes) and mtimes[i] is not None:
+                    os.utime(fp, (mtimes[i], mtimes[i]))
+
+            if index_lines is not None:
+                with open(codex_home / "session_index.jsonl", "w") as f:
+                    for line in index_lines:
+                        f.write(line if isinstance(line, str) else json.dumps(line))
+                        f.write("\n")
+            if store_rows is not None:
+                _write_store(str(codex_home / "state_5.sqlite"), store_rows)
+
+            def fake_expanduser(path):
+                if path.startswith("~/.codex"):
+                    return str(codex_home) + path[len("~/.codex"):]
+                return REAL_EXPANDUSER(path)
+
+            with patch(
+                "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+            ):
+                return parse_codex()
+
+    def test_resumed_rollouts_share_one_row(self):
+        sessions = self._run(
+            [RESUMED_ROLLOUT, ROLLOUT], mtimes=[self.T1, self.T0]
+        )
+        self.assertEqual(1, len(sessions))
+        # The newest rollout stands for the thread. Its stem still ends in
+        # the resume's own uuid, but the thread id — the first uuid — is what
+        # the resume hint has to emit for `codex resume` to resolve it.
+        self.assertEqual(
+            RESUMED_ROLLOUT.removesuffix(".jsonl"),
+            sessions[0].session_id,
+        )
+        self.assertEqual(THREAD_ID, codex_thread_id(sessions[0].session_id))
+        self.assertEqual(
+            ["resume", THREAD_ID], _codex_resume_args(sessions[0].session_id)
+        )
+
+    def test_different_threads_keep_their_own_rows(self):
+        other = "02b084f0-b4fe-72d0-9b7b-1a5214957f73"
+        sessions = self._run(
+            [
+                ROLLOUT,
+                RESUMED_ROLLOUT,
+                f"rollout-2026-10-20T10-55-33-{other}.jsonl",
+            ],
+            mtimes=[self.T0, self.T1, self.T1 + 100],
+        )
+        self.assertEqual(2, len(sessions))
+
+    def test_uuidless_rollouts_stay_separate_rows(self):
+        sessions = self._run(["rollout-legacy.jsonl", "rollout-legacy-2.jsonl"])
+        self.assertEqual(2, len(sessions))
+
+    def test_a_resumed_thread_finds_its_store_name(self):
+        sessions = self._run(
+            [RESUMED_ROLLOUT],
+            store_rows=[(THREAD_ID, "vendor-table", "Fix the login bug")],
+        )
+        self.assertEqual(1, len(sessions))
+        self.assertEqual("vendor-table", sessions[0].title)
+
+    def test_an_empty_preview_still_hides_a_resumed_thread(self):
+        sessions = self._run(
+            [ROLLOUT, RESUMED_ROLLOUT],
+            store_rows=[(THREAD_ID, "", "")],
+            mtimes=[self.T0, self.T1],
+        )
+        self.assertEqual(0, len(sessions))
+
+    def test_a_resume_re_emit_is_not_a_rename(self):
+        # Codex re-stating the live name when the thread resumes must not
+        # stretch the span past the auto-title window.
+        sessions = self._run(
+            [ROLLOUT, RESUMED_ROLLOUT],
+            mtimes=[self.T0 + 600, self.T1 + 600],
+            index_lines=[
+                _index("Login redirect fix", at=_iso(self.T0)),
+                _index("Login redirect fix", at=_iso(self.T1)),
+            ],
+        )
+        self.assertEqual(1, len(sessions))
+        self.assertEqual("Login redirect fix", sessions[0].title)
+        self.assertEqual("", sessions[0].title_source)
+
+    def test_placeholder_then_generated_then_resume_is_not_a_rename(self):
+        sessions = self._run(
+            [ROLLOUT, RESUMED_ROLLOUT],
+            mtimes=[self.T0 + 600, self.T1 + 600],
+            store_rows=[(THREAD_ID, "", "Fix the login bug")],
+            index_lines=[
+                _index("fix the login bu", at=_iso(self.T0)),
+                _index("Login redirect fix", at=_iso(self.T0 + 6)),
+                _index("Login redirect fix", at=_iso(self.T1)),
+            ],
+        )
+        self.assertEqual(1, len(sessions))
+        self.assertEqual("Login redirect fix", sessions[0].title)
+        self.assertEqual("", sessions[0].title_source)
+
+    def test_a_rename_during_a_resumed_session_still_counts(self):
+        sessions = self._run(
+            [RESUMED_ROLLOUT],
+            mtimes=[self.T1 + 3600],
+            store_rows=[(THREAD_ID, "", "Fix the login bug")],
+            index_lines=[
+                _index("fix the login bu", at=_iso(self.T0)),
+                _index("Login redirect fix", at=_iso(self.T0 + 6)),
+                _index("Login redirect fix", at=_iso(self.T1)),
+                _index("my-name", at=_iso(self.T1 + 300)),
+            ],
+        )
+        self.assertEqual("my-name", sessions[0].title)
+        self.assertEqual("rename", sessions[0].title_source)
+
+    def test_records_long_after_the_rollout_do_not_count(self):
+        # A rename written forty days after the rollout last moved belongs to
+        # a different era of the thread than this rollout's.
+        sessions = self._run(
+            [RESUMED_ROLLOUT],
+            mtimes=[self.T1],
+            store_rows=[(THREAD_ID, "", "Fix the login bug")],
+            index_lines=[
+                _index("fix the login bu", at=_iso(self.T0)),
+                _index("Login redirect fix", at=_iso(self.T0 + 6)),
+                _index("much-later-name", at=_iso(self.T1 + 40 * 86400)),
+            ],
+        )
+        self.assertEqual("Login redirect fix", sessions[0].title)
+        self.assertEqual("", sessions[0].title_source)
 
 
 if __name__ == "__main__":
