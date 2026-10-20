@@ -609,6 +609,7 @@ struct ExpandRow: View {
 struct ErrorCard: View {
     var message: String
     var actionTitle: String? = nil
+    var actionShortcut: KeyboardShortcut? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
@@ -620,7 +621,9 @@ struct ErrorCard: View {
                     .textSelection(.enabled)
                 Spacer()
                 if let actionTitle, let action {
-                    Button(actionTitle, action: action).secondaryButton()
+                    Button(actionTitle, action: action)
+                        .secondaryButton()
+                        .keyboardShortcut(actionShortcut)
                 }
             }
         }
@@ -632,6 +635,7 @@ struct EmptyCard: View {
     var text: String
     var icon: String
     var actionTitle: String? = nil
+    var actionShortcut: KeyboardShortcut? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
@@ -642,7 +646,9 @@ struct EmptyCard: View {
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 if let actionTitle, let action {
-                    Button(actionTitle, action: action).secondaryButton()
+                    Button(actionTitle, action: action)
+                        .secondaryButton()
+                        .keyboardShortcut(actionShortcut)
                 }
             }
         }

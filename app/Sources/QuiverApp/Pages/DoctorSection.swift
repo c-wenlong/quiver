@@ -9,6 +9,8 @@ struct DoctorSection: View {
     @State private var model: DoctorModel?
     /// The findings card folds past this many rows.
     private static let foldLimit = 8
+    /// ⌘R re-runs the checks on every state card, like the old page header.
+    private static let refreshShortcut = KeyboardShortcut("r", modifiers: .command)
     @State private var showsAll = false
 
     var body: some View {
@@ -17,10 +19,12 @@ struct DoctorSection: View {
             case .idle, .loading:
                 LoadingCard(text: "Running checks…")
             case .failed(let message):
-                ErrorCard(message: message, actionTitle: "Try again", action: reload)
+                ErrorCard(message: message, actionTitle: "Try again",
+                          actionShortcut: Self.refreshShortcut, action: reload)
             case .loaded(let report) where report.findings.isEmpty:
                 EmptyCard(text: "Everything checks out.", icon: "checkmark.seal",
-                          actionTitle: "Check again", action: reload)
+                          actionTitle: "Check again", actionShortcut: Self.refreshShortcut,
+                          action: reload)
             case .loaded(let report):
                 findingsCard(report)
             }
@@ -67,7 +71,7 @@ struct DoctorSection: View {
         Button("Refresh", systemImage: "arrow.clockwise", action: reload)
             .iconButton()
             .disabled(isLoading)
-            .keyboardShortcut("r", modifiers: .command)
+            .keyboardShortcut(Self.refreshShortcut)
             .help("Run the checks again (⌘R)")
     }
 }
