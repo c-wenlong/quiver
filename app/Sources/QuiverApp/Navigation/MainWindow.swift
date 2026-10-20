@@ -356,8 +356,6 @@ struct PageView: View {
             ComputePage()
         case .skills:
             SkillsPage()
-        case .doctor:
-            DoctorPage()
         case .settings:
             SettingsPage()
         }

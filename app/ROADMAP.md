@@ -13,7 +13,7 @@ remembering CLI commands.
 | Look | The TokenTracker style package in design-systems (`systems/tokentracker`); values come from its `tokens.json`. Borderless sidebar on the window wash, rounded content panel, hairline cards, sentence case everywhere (no all caps), green only for money and "on" states, and a visible focus ring. |
 | Data that refreshes often | Native Swift: usage, cost, limits, account profiles |
 | Data that writes harness config | `swe … --json`, so the tested Python code stays the only writer |
-| Sidebar | Usage: Overview, Sessions. Manage: Accounts, Harnesses, Compute, Skills, AGENTS.md, MCP servers, Plugins. System: Menu bar, Widgets, Service status, Doctor, Settings |
+| Sidebar | Usage: Overview, Sessions. Manage: Accounts, Harnesses, Compute, Skills, AGENTS.md, MCP servers, Plugins. System: Menu bar, Widgets, Service status, Settings |
 | Accounts page | Limits merged with Switchboard-style profiles: each account card has its limit bars, when they were fetched, and Open app / Terminal buttons |
 | Kept from TokenTracker | Sessions and Limits (the most important), menu bar and widgets, Skills (built on quiver hub), Service Status (extended to more services), Settings, Tokens overview. Claude IP Check at low priority. |
 | Out of scope | Leaderboard, Achievements, Pet, Cloud sync |
