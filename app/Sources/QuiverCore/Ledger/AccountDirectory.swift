@@ -8,6 +8,9 @@ public struct AccountDirectory: Sendable {
     /// legend's always-on account split: default homes plus every extra
     /// profile's, keyed the way activity names the account.
     private let harnessHomes: [String: [String]]
+    /// `harnessHomes` flattened the other way, so a stock home no profile
+    /// names can still read as its harness rather than a path.
+    private let homeHarness: [String: String]
     private let home: URL
 
     public init(profiles: [Profile], paths: (Profile) -> ProfilePaths,
@@ -50,6 +53,11 @@ public struct AccountDirectory: Sendable {
         }
         self.names = names
         self.harnessHomes = harnessHomes
+        homeHarness = Dictionary(
+            harnessHomes.flatMap { harness, homes in
+                homes.map { (URL(fileURLWithPath: $0).standardizedFileURL.path, harness) }
+            },
+            uniquingKeysWith: { first, _ in first })
         roots = .standard(home: home, claudeProfiles: extra[.claude] ?? [], codexProfiles: extra[.codex] ?? [])
     }
 
@@ -60,15 +68,18 @@ public struct AccountDirectory: Sendable {
         harnessHomes[harness] ?? []
     }
 
-    /// The profile's name, or a short form of the path for homes no profile owns.
+    /// The profile's name, else the owning harness's name, else a short
+    /// form of the path for homes neither claims.
     public func label(for accountHome: String) -> String {
         // Not a folder: cloud sessions have no home on this Mac.
         if accountHome == DevinCloud.accountHome { return HarnessMark(DevinCloud.harness).name }
         let path = URL(fileURLWithPath: accountHome).standardizedFileURL.path
         if let name = names[path] { return name }
+        // A stock harness home (the unprofiled ~/.claude, Cursor's own
+        // user-data dir) has no profile; it reads as the harness.
+        if let harness = homeHarness[path] { return HarnessMark.accountName(harness) }
         let share = home.appendingPathComponent(".local/share").path
         if path == share + "/opencode" { return HarnessMark("opencode").name }
-        if path == share + "/devin/cli" { return HarnessMark("devin").name }
         let base = home.path
         if path.hasPrefix(base + "/") { return "~" + path.dropFirst(base.count) }
         return path
