@@ -56,6 +56,7 @@ half never mix:
   completions/       generated shell completion scripts
   data/ledger/       app usage ledger + daily backups          (gitignored)
   data/devin-cloud/  Devin cloud sessions synced by the app    (gitignored)
+  data/search/       app-built FTS index of session text       (gitignored)
   cache/             sessions, rate limits, counts             (gitignored)
   backups/           pre-overwrite copies                      (gitignored)
 ```
@@ -87,7 +88,8 @@ so a machine's actual state can never land in this repo by accident.
 `~/.quiver` carries its own `.gitignore` — written by `swe init` from
 `paths.GITIGNORE_BODY`, and listing `cache/`, `backups/`, `data/ledger/` (the
 app's usage ledger: personal and ~30 MB), `data/devin-cloud/` (your Devin
-session titles and links), `secrets/` (provider API keys and MCP credential
+session titles and links), `data/search/` (the app's FTS index of session
+message text), `secrets/` (provider API keys and MCP credential
 values) and `mcp/servers/` —
 plus its own git history, independent of this one. `swe init` writes that
 file only when there is none, so it never rewrites one the operator has
