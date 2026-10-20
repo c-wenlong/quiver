@@ -444,6 +444,33 @@ func decodedInventory() throws -> [Skill] {
         #expect(sources[1].countLine(searching: false) == "1 marketplace · 4 plugins")
     }
 
+    @Test func anOpenedPluginFollowsItsRefAcrossAReload() async throws {
+        let runner = catalogRunner()
+        let model = PluginCatalogModel()
+        await model.load(swe: SweClient(runner: runner))
+        let index = try #require(model.index)
+        // drawer lives under the hub source; the lookup a detail view
+        // makes after a reload finds it by ref.
+        #expect(index.entry(for: "drawer@kit")?.row.plugin.version == "2.0.0")
+        #expect(index.entry(for: "nobody@kit") == nil)
+        // A plugin under two sources resolves to the first in order.
+        #expect(index.entry(for: "vercel@official")?.id == "claude/vercel@official")
+
+        // A reload swaps the index wholesale: the ref resolves to the
+        // new catalog's entry, not the snapshot a view was holding.
+        let bumped = catalogJSON.replacingOccurrences(of: #""version": "2.0.0", "category""#,
+                                                    with: #""version": "3.0.0", "category""#)
+        runner.set(["plugins", "catalog", "--json"], json(bumped))
+        await model.load(swe: SweClient(runner: runner))
+        #expect(try #require(model.index).entry(for: "drawer@kit")?.row.plugin.version == "3.0.0")
+        // And a ref the reload dropped resolves to nothing, which is
+        // what sends the detail back to the list.
+        runner.set(["plugins", "catalog", "--json"],
+                   json(bumped.replacingOccurrences(of: #""ref": "drawer@kit""#, with: #""ref": "moved@kit""#)))
+        await model.load(swe: SweClient(runner: runner))
+        #expect(try #require(model.index).entry(for: "drawer@kit") == nil)
+    }
+
     @Test func sourcesComeInOrderAndNoPluginIsLost() {
         func plugin(_ name: String, _ market: String, _ states: [String: PluginHarnessState]) -> CatalogPlugin {
             CatalogPlugin(name: name, marketplace: market, harnesses: states)

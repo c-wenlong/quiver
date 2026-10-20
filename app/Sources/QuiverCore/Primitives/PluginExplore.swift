@@ -147,6 +147,19 @@ public struct PluginExploreIndex: Sendable, Equatable {
 
     public var total: Int { rows.count }
 
+    /// The entry `ref` sits under now, for a detail view holding a row
+    /// an older index produced: a reload swaps the index wholesale, and
+    /// the opened plugin follows its ref rather than the snapshot. One
+    /// plugin can sit under two sources; the first in source order wins.
+    public func entry(for ref: String) -> ExplorePlugin? {
+        for source in sources {
+            for market in source.marketplaces {
+                for entry in market.plugins where entry.row.id == ref { return entry }
+            }
+        }
+        return nil
+    }
+
     /// Local first, then each harness in swe's order, then the
     /// unregistered; marketplaces and plugins in the catalog's order.
     private static func sources(_ catalog: PluginCatalog, rows: [String: ExploreRow]) -> [ExploreSource] {

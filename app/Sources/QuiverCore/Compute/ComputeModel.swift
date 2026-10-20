@@ -132,8 +132,10 @@ public final class ComputeModel {
     /// Pids launchd manages; refreshed with the matchers and once a minute.
     private var managedPIDs: Set<Int32> = []
     private var managedPIDsLoadedAt: Date?
-    /// When each pid was last sent SIGTERM, for the stillRunning mark.
-    private var signalledAt: [Int32: Date] = [:]
+    /// When each pid was last sent SIGTERM, for the stillRunning mark —
+    /// plus the process's start time, so a pid the OS has handed to a new
+    /// process is not mistaken for the one that was signalled.
+    private var signalledAt: [Int32: (at: Date, startedAt: Date)] = [:]
     /// Tickets refreshes so a slower earlier one can never republish.
     private var request = 0
     private var trendTask: Task<Void, Never>?
@@ -364,13 +366,14 @@ public final class ComputeModel {
         let sampler = self.sampler
         let fresh = await runOffPool { sampler.sample() }
         let ancestors = selfAncestors(in: fresh)
+        let startedAt = Dictionary(fresh.map { ($0.pid, $0.startedAt) }, uniquingKeysWith: { a, _ in a })
         var seen: Set<Int32> = []
         for item in items {
             let order = ComputeSummary.killOrder(for: item, in: fresh,
                                                  selfPID: selfPID, ancestors: ancestors)
             for pid in order where !seen.contains(pid) && signaller.signal(pid, force ? SIGKILL : SIGTERM) {
                 seen.insert(pid)
-                if !force { signalledAt[pid] = .now }
+                if !force, let started = startedAt[pid] { signalledAt[pid] = (at: .now, startedAt: started) }
             }
         }
         await refresh()
@@ -413,7 +416,7 @@ public final class ComputeModel {
                     cpuPercent: cpu[sample.pid],
                     flags: ComputeSummary.flags(for: sample, busy: meter.isBusy(sample.pid), limits: limits),
                     isMain: matcher.map { ProcessAttribution.isMainProcess(sample, of: $0) } ?? false,
-                    stillRunning: isStillRunning(sample.pid, at: now))
+                    stillRunning: isStillRunning(sample.pid, startedAt: sample.startedAt, at: now))
             }.sorted { $0.sample.memoryBytes > $1.sample.memoryBytes }
         }
         processes = rows
@@ -424,7 +427,7 @@ public final class ComputeModel {
             let flags = ComputeSummary.flags(for: tree, limits: limits, now: now)
             orphanFlags[tree.root.pid] = flags
             return OrphanRow(tree: tree, flags: flags,
-                             stillRunning: isStillRunning(tree.root.pid, at: now))
+                             stillRunning: isStillRunning(tree.root.pid, startedAt: tree.root.startedAt, at: now))
         }
         .sorted { $0.tree.memoryBytes > $1.tree.memoryBytes }
 
@@ -446,14 +449,17 @@ public final class ComputeModel {
             threads: all.reduce(0) { $0 + $1.threads },
             processCount: all.count)
 
-        // Dead pids forget they were signalled.
-        let alive = Set(samples.map(\.pid))
-        signalledAt = signalledAt.filter { alive.contains($0.key) }
+        // Dead pids forget they were signalled — and so does a pid whose
+        // process changed, since its new owner was never signalled.
+        let startedAt = Dictionary(samples.map { ($0.pid, $0.startedAt) }, uniquingKeysWith: { a, _ in a })
+        signalledAt = signalledAt.filter { startedAt[$0.key] == $0.value.startedAt }
     }
 
-    /// A pid counts as still running five seconds after its SIGTERM.
-    private func isStillRunning(_ pid: Int32, at now: Date) -> Bool {
-        guard let at = signalledAt[pid] else { return false }
-        return now.timeIntervalSince(at) >= 5
+    /// A pid counts as still running five seconds after its SIGTERM, but
+    /// only for the process the signal went to: told apart from a pid the
+    /// OS recycled onto a new process by its start time.
+    private func isStillRunning(_ pid: Int32, startedAt: Date, at now: Date) -> Bool {
+        guard let mark = signalledAt[pid], mark.startedAt == startedAt else { return false }
+        return now.timeIntervalSince(mark.at) >= 5
     }
 }
