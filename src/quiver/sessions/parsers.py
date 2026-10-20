@@ -556,10 +556,13 @@ def parse_droid():
     )
 
 
-# Rollout files are named ``rollout-<iso timestamp>-<thread uuid>.jsonl``, and
-# the uuid is the id the session index and ``codex resume`` both use.
+# Rollout files are named ``rollout-<iso timestamp>-<thread uuid>.jsonl``.
+# Resuming a thread writes a new file that carries its own rollout uuid after
+# the thread's: ``rollout-<iso>-<thread uuid>_<rollout uuid>.jsonl``. The
+# thread uuid — the first one — is the id the session index, the thread store
+# and ``codex resume`` all use; the trailing one is the resume's own rollout.
 _CODEX_ROLLOUT_ID_RE = re.compile(
-    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
 
@@ -570,7 +573,8 @@ def codex_thread_id(session_id: str) -> str:
     A codex ``Session.session_id`` is the rollout file's stem, because that
     is what the transcript readers look a session up by. Everything else
     codex exposes — the session index, the thread store, ``codex resume`` —
-    is keyed by the uuid at the end of it.
+    is keyed by the thread uuid, the first uuid in the stem: a resumed
+    rollout appends its own ``_<rollout uuid>`` that only names the file.
     """
     match = _CODEX_ROLLOUT_ID_RE.search(session_id or "")
     return match.group(1).lower() if match else ""
@@ -652,23 +656,20 @@ def _codex_thread_store() -> dict[str, tuple[str, str]]:
     return out
 
 
-def _codex_index_history() -> dict[str, tuple[list[str], float]]:
-    """Thread id -> ``(names, span_ms)`` from ``~/.codex/session_index.jsonl``.
+def _codex_index_history() -> dict[str, list[tuple[float, str]]]:
+    """Thread id -> chronological ``(ts_ms, name)`` records from the index.
 
     Codex keeps thread names outside the rollout transcript and appends
-    ``{"id", "thread_name", "updated_at"}`` here every time one changes, so
-    the last record for an id is the name its TUI shows and the ones before
-    it are the names it replaced.
-
-    ``names`` drops consecutive duplicates, because codex re-emits the
-    current name on events that did not rename anything, and ``span_ms`` is
-    the wall time from a thread's first record to its last. Ids are
-    lower-cased so a lookup keyed off the rollout filename matches whatever
-    case either side wrote.
+    ``{"id", "thread_name", "updated_at"}`` to
+    ``~/.codex/session_index.jsonl`` every time one changes — and on some
+    resume bookkeeping events too, re-emitting the name unchanged. The
+    records stay in append order so each rollout can pick out the entries
+    that existed while it ran. Ids are lower-cased so a lookup keyed off the
+    rollout filename matches whatever case either side wrote; a record with
+    an unreadable ``updated_at`` keeps its name with a 0 timestamp.
     """
     path = os.path.expanduser("~/.codex/session_index.jsonl")
-    names: dict[str, list[str]] = {}
-    span: dict[str, list[float]] = {}
+    records: dict[str, list[tuple[float, str]]] = {}
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -686,25 +687,52 @@ def _codex_index_history() -> dict[str, tuple[list[str], float]]:
                     continue
                 if not isinstance(name, str) or not name.strip():
                     continue
-                sid = sid.strip().lower()
-                name = name.strip()
-                seq = names.setdefault(sid, [])
-                if not seq or seq[-1] != name:
-                    seq.append(name)
-                ends = span.setdefault(sid, [])
                 ts = parse_iso_ts(entry.get("updated_at")) or 0.0
-                if not ends:
-                    ends.append(ts)
-                elif len(ends) == 1:
-                    ends.append(ts)
-                else:
-                    ends[1] = ts
+                records.setdefault(sid.strip().lower(), []).append(
+                    (ts, name.strip())
+                )
     except Exception:
         return {}
-    return {
-        sid: (seq, (span[sid][-1] - span[sid][0]) if sid in span else 0.0)
-        for sid, seq in names.items()
-    }
+    return records
+
+
+def _codex_index_state(
+    records: list[tuple[float, str]], rollout_ts: float
+) -> tuple[list[str], float]:
+    """``(names, span_ms)`` for the index state one rollout ran under.
+
+    A resumed thread's index records span every resume it ever had, so the
+    run ends at the entry closest to the rollout's own timestamp — later
+    entries describe a thread this rollout predates — while entries written
+    while the rollout was live always count even when an earlier one sits
+    closer. A missing ``rollout_ts`` keeps the whole history.
+
+    Within the kept run, consecutive repeats drop out because codex
+    re-emits the current name on events that are not renames, and
+    ``span_ms`` runs from the first record to the last one that introduced
+    a name — so a resume that only re-states the name cannot stretch the
+    rename window on its own.
+    """
+    if rollout_ts and records:
+        past = -1
+        near, best = 0, None
+        for i, (ts, _name) in enumerate(records):
+            if ts <= rollout_ts:
+                past = i
+            dist = abs(ts - rollout_ts)
+            if best is None or dist < best:
+                best, near = dist, i
+        records = records[: max(past, near) + 1]
+    names: list[str] = []
+    first_ts = last_name_ts = 0.0
+    for ts, name in records:
+        if names and names[-1] == name:
+            continue
+        if not names:
+            first_ts = ts
+        names.append(name)
+        last_name_ts = ts
+    return names, last_name_ts - first_ts
 
 
 def _codex_is_rename(names: list[str], span_ms: float, first_prompt: str) -> bool:
@@ -767,6 +795,24 @@ def parse_codex():
         )
     )
 
+    # Resuming a thread writes another rollout file, and every file of one
+    # thread carries the same thread uuid in its stem — so the files collapse
+    # to one session per thread. The newest rollout wins: it holds the
+    # resumed conversation and is where the thread last moved. Files with no
+    # uuid have nothing to collapse on and stay one row each.
+    freshest: dict[str, int] = {}
+    tids = [codex_thread_id(sess.session_id) for sess in sessions]
+    for i, tid in enumerate(tids):
+        if not tid:
+            continue
+        if tid not in freshest or sessions[i].timestamp > sessions[freshest[tid]].timestamp:
+            freshest[tid] = i
+    paired = [
+        (tid, sess)
+        for i, (tid, sess) in enumerate(zip(tids, sessions))
+        if not tid or freshest[tid] == i
+    ]
+
     # A codex thread's name lives outside its rollout, in two places that say
     # different halves of the truth: the store holds the current name and
     # whether the thread was ever used, the index holds the history that says
@@ -776,17 +822,16 @@ def parse_codex():
     store = _codex_thread_store()
     history = _codex_index_history()
     if not store and not history:
-        return sessions
+        return [sess for _, sess in paired]
 
     kept: list[Session] = []
-    for sess in sessions:
-        tid = codex_thread_id(sess.session_id)
+    for tid, sess in paired:
         stored_name, preview = store.get(tid, ("", ""))
         # Only the store can say a thread was never used, so a thread it has
         # never heard of is kept rather than guessed at.
         if tid in store and not preview:
             continue
-        names, span_ms = history.get(tid, ([], 0.0))
+        names, span_ms = _codex_index_state(history.get(tid, []), sess.timestamp)
         # The store holds the live name; the index is the audit trail behind
         # it and stands in when the store has none. With no name at all,
         # codex's own note of the first user message still beats the
