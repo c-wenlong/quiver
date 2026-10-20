@@ -305,8 +305,15 @@ def get_conversion_issues(cfg: dict, source_format: str, target_format: str) -> 
         if k not in roundtrip_canonical:
             issues.append(f"lost field '{k}'")
         elif k not in source_canonical:
+            # Emitters stamp ``args: []`` when the source left it out —
+            # an empty list carries no arguments either, so the roundtrip
+            # added nothing that was not already implied.
+            if k == "args" and roundtrip_canonical[k] == []:
+                continue
             issues.append(f"added field '{k}'")
         elif source_canonical[k] != roundtrip_canonical[k]:
+            if k == "args" and source_canonical[k] is None and roundtrip_canonical[k] == []:
+                continue
             issues.append(f"changed field '{k}'")
 
     return issues

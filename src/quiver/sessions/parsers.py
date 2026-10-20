@@ -395,6 +395,7 @@ def _claude_transcript_paths(base: str) -> dict[str, str]:
     file reads.
     """
     out: dict[str, str] = {}
+    mtimes: dict[str, float] = {}
     try:
         with os.scandir(base) as projects:
             for project in projects:
@@ -402,8 +403,20 @@ def _claude_transcript_paths(base: str) -> dict[str, str]:
                     continue
                 with os.scandir(project.path) as entries:
                     for entry in entries:
-                        if entry.name.endswith(".jsonl"):
-                            out[entry.name.removesuffix(".jsonl")] = entry.path
+                        if not entry.name.endswith(".jsonl"):
+                            continue
+                        sid = entry.name.removesuffix(".jsonl")
+                        # A session resumed from a different cwd leaves a
+                        # transcript under each project dir — the newest
+                        # write is the live copy, not whichever scandir
+                        # visited last.
+                        try:
+                            mtime = entry.stat().st_mtime
+                        except OSError:
+                            mtime = 0.0
+                        if sid not in out or mtime >= mtimes.get(sid, -1):
+                            out[sid] = entry.path
+                            mtimes[sid] = mtime
     except Exception:
         return out
     return out
@@ -493,6 +506,22 @@ def parse_claude():
             require_path=True,
         )
     )
+
+    # The same session id resumed under a second project dir would list
+    # twice: one conversation, one row — the newest timestamp is the
+    # current copy.
+    best_by_id: dict[str, int] = {}
+    for i, sess in enumerate(sessions):
+        sid = sess.session_id
+        if not sid:
+            continue
+        if sid not in best_by_id or sess.timestamp > sessions[best_by_id[sid]].timestamp:
+            best_by_id[sid] = i
+    if len(best_by_id) != sum(1 for s in sessions if s.session_id):
+        sessions = [
+            s for i, s in enumerate(sessions)
+            if not s.session_id or best_by_id[s.session_id] == i
+        ]
 
     # One conversation continued across two transcripts is one session, and
     # both files carry the same title, so listing both reads as a duplicate.
