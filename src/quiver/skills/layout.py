@@ -259,7 +259,23 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
         or os.sep in ref
     )
     if not looks_like_path:
-        known = sorted({label for label, _ in all_skill_root_candidates(home, cwd)})
+        # A root the on-disk scan found but no builtin label covers still
+        # resolves by the label `swe find skills` reports for it:
+        # --from=opencode reaches ~/.config/opencode/skills. Only a bare
+        # word can be a label; a path-shaped ref falls through below.
+        from quiver.init.layout import discover_skill_roots, skill_root_label
+
+        discovered = [
+            (skill_root_label(path, home), path)
+            for path in discover_skill_roots(home)
+        ]
+        for label, path in discovered:
+            if label.lower() == ref.lower():
+                return label, path
+        known = sorted(
+            {label for label, _ in all_skill_root_candidates(home, cwd)}
+            | {label for label, _ in discovered}
+        )
         raise SkillLayoutError(
             f"Unknown skill root {ref!r}. "
             f"Pass a known root ({', '.join(known[:8])}...) "

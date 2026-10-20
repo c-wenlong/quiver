@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -39,7 +40,10 @@ def link_skill_root(
     if src_path.resolve() == tgt_path.resolve():
         raise SkillLayoutError(f"{src_label} already resolves to {tgt_path}")
 
-    if src_path.exists():
+    # lexists, not exists: a dangling symlink at the source is invisible to
+    # exists() but still occupies the path, so falling through to
+    # symlink_to() died with FileExistsError instead of replacing it.
+    if os.path.lexists(src_path):
         if src_path.is_symlink():
             src_path.unlink()
         elif src_path.is_dir():
@@ -76,7 +80,10 @@ def unlink_skill_root(
     home = home or Path.home()
     src_label, src_path = resolve_root_ref(source_ref, home=home, cwd=cwd)
 
-    if not src_path.exists():
+    # lexists, not exists: a dangling symlink still occupies the path, and
+    # exists() made one report "does not exist" so it could never be
+    # removed.
+    if not os.path.lexists(src_path):
         raise SkillLayoutError(f"{src_path} does not exist")
     if not src_path.is_symlink():
         raise SkillLayoutError(
@@ -100,12 +107,34 @@ def _find_skill_matches(name: str, scope: str, home: Path, cwd: Path) -> list[di
     quietly moved whichever single skill happened to contain it. An exact
     name now wins outright, and the looser match only applies when nothing
     matches exactly.
+
+    ``scope`` is a root ref, not only a label: resolve_root_ref turns a
+    literal path (``--from=~/.foo/skills``) or a discovered-root label into
+    the label discovery reports and the root it sits at. Containment under
+    the resolved root also covers a scope that is itself a symlink — the
+    skills there are reported under the link target's label.
     """
     needle = name.lower()
-    skills = [
-        s for s in discover_skills(home=home, cwd=cwd)
-        if s["scope"].lower() == scope.lower()
-    ]
+    try:
+        scope_label, scope_root = resolve_root_ref(scope, home=home, cwd=cwd)
+    except SkillLayoutError:
+        scope_label, scope_root = scope, None
+    scope_resolved = None
+    if scope_root is not None:
+        try:
+            scope_resolved = scope_root.resolve()
+        except OSError:
+            scope_resolved = None
+    skills = []
+    for s in discover_skills(home=home, cwd=cwd):
+        s_scope = s["scope"].lower()
+        if s_scope in (scope.lower(), scope_label.lower()):
+            skills.append(s)
+            continue
+        if scope_resolved is not None and Path(s["path"]).is_relative_to(
+            scope_resolved
+        ):
+            skills.append(s)
     exact = [s for s in skills if s["name"].lower() == needle]
     if exact:
         return exact
@@ -164,10 +193,12 @@ def move_skill(
             f"Unlink one harness first to give it a private skills folder, then move."
         )
 
-    if not to_root.exists():
-        raise SkillLayoutError(f"Destination root does not exist: {to_root}")
+    # The broken-link check must run first: a dangling symlink fails
+    # exists() too, so the old order always reported it as a missing root.
     if to_root.is_symlink() and not to_root.exists():
         raise SkillLayoutError(f"Destination symlink is broken: {to_root}")
+    if not to_root.exists():
+        raise SkillLayoutError(f"Destination root does not exist: {to_root}")
 
     skill_dir = find_skill_directory(name, from_scope, home=home, cwd=cwd)
     try:
